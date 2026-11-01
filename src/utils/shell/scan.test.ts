@@ -9,6 +9,7 @@ import {
     splitPipeline,
     stripShellNoise,
     tokenize,
+    wordsFrom,
 } from "./scan";
 
 describe("lastSimpleCommandOnLine", () => {
@@ -77,6 +78,207 @@ describe("scanShell", () => {
         expect(texts("cat <<EOF\n`git restore fixture.ts`\nEOF")).toContain("git restore fixture.ts");
         expect(texts("bash <<'EOF'\necho `git restore fixture.ts`\nEOF")).toContain("git restore fixture.ts");
     });
+
+    it("keeps a statement that starts with $(...), so the next one is not adjacent to the one before", () => {
+        const outer = (command: string) => scanShell(command).units[0]?.map((unit) => unit.text.trim());
+
+        expect(outer("$(ls a) && b")).toEqual(["$______", "b"]);
+        // One word with a path glued to it, from the opening quote of a quoted one.
+        expect(outer("$(npm bin)/biome check")).toEqual(["$_________/biome check"]);
+        const quoted = 'cd x; "$(ls a)" | wc -l';
+        expect(scanShell(quoted).units[0]?.[1]).toEqual({ text: "$_______  | wc -l", start: quoted.indexOf('"') });
+        const escaped = 'bash -c "\\"$(ls a)\\" | wc -l"';
+        expect(scanShell(escaped).units[2]?.[0]?.start).toBe(escaped.indexOf("\\"));
+        // A substitution in an argument stays blank.
+        expect(outer("echo $(ls a) && b")).toEqual(["echo", "b"]);
+        expect(
+            detectShellViolations("false | tail -1\n$(ls a) && echo $?").map((violation) => violation.ruleId)
+        ).not.toContain("exit-code-after-pipeline");
+        // The substitution's output is the left element: `$?` is tail's.
+        expect(detectShellViolations("$(cmd) | tail -1; echo $?")[0]).toMatchObject({
+            ruleId: "exit-code-after-pipeline",
+            matched: "$(cmd) | tail -1",
+        });
+    });
+
+    it("finds the command word of a statement that starts with $(...): glued to it, or the word after it", () => {
+        const fired = (command: string) =>
+            detectShellViolations(command).map(({ ruleId, matched, suggestion }) => ({ ruleId, matched, suggestion }));
+
+        expect(fired("$(brew --prefix)/bin/rg -rn foo src")).toContainEqual({
+            ruleId: "rg-replace-cluster",
+            matched: "-rn",
+            suggestion: "$(brew --prefix)/bin/rg -n foo src",
+        });
+        expect(fired("ls | $(brew --prefix)/bin/rg -rn x")).toContainEqual({
+            ruleId: "rg-replace-cluster",
+            matched: "-rn",
+            suggestion: "ls | $(brew --prefix)/bin/rg -n x",
+        });
+        expect(fired("$(npm bin)/biome check --write --unsafe src")).toContainEqual({
+            ruleId: "biome-unsafe-deletes-comments",
+            matched: "$(npm bin)/biome check --write --unsafe src",
+            suggestion: "$(npm bin)/biome check --write --unsafe --skip=correctness/noUnusedImports src",
+        });
+
+        for (const command of [
+            "$(which bunx) biome check --write --unsafe src",
+            '"$(which bunx)" biome check --write --unsafe src',
+        ]) {
+            expect(fired(command).map(({ ruleId }) => ruleId)).toContain("biome-unsafe-deletes-comments");
+        }
+
+        expect(fired("$(brew --prefix)/bin/find ~ -name x")).toContainEqual({
+            ruleId: "find-from-root",
+            matched: "$(brew --prefix)/bin/find ~ -name x",
+            suggestion: "mdfind -name x",
+        });
+        expect(fired("$(brew --prefix)/bin/fd -H x ~").map(({ ruleId }) => ruleId)).toContain("find-from-root");
+        expect(fired("$(brew --prefix)/bin/rg -l foo ~").map(({ ruleId }) => ruleId)).toContain("search-from-root");
+    });
+
+    it("starts the corrected command of a statement that starts with a quoted $(...) before its quote", () => {
+        const pipefail = (command: string) =>
+            detectShellViolations(command).find((violation) => violation.ruleId === "exit-code-after-pipeline");
+
+        expect(pipefail('"$(cmd)" | tail -1; echo $?')).toMatchObject({
+            matched: '"$(cmd)" | tail -1',
+            suggestion: '(set -o pipefail; "$(cmd)" | tail -1); echo $?',
+        });
+        expect(pipefail('cd x && "$(which tsgo)" --noEmit 2>&1 | tail -5; echo "exit=$?"')?.suggestion).toBe(
+            'cd x && (set -o pipefail; "$(which tsgo)" --noEmit 2>&1 | tail -5); echo "exit=$?"'
+        );
+        expect(pipefail('bash -c "\\"\\$(cmd)\\" | tail -1; echo \\$?"')?.suggestion).toBe(
+            'bash -c "(set -o pipefail; \\"\\$(cmd)\\" | tail -1); echo \\$?"'
+        );
+        expect(
+            detectShellViolations('"$(which ls)" missing 2>/dev/null | wc -l').find(
+                (violation) => violation.ruleId === "stderr-discarded-then-counted"
+            )?.matched
+        ).toBe('"$(which ls)" missing 2>/dev/null | wc -l');
+    });
+
+    it("reads a double-quoted -c body and a backtick body with one level of escapes removed", () => {
+        const body = (command: string) => scanShell(command).units[1]?.map(({ text, start }) => ({ text, start }));
+        const command = 'bash -c "false | tail -1; echo \\$?"';
+
+        expect(body(command)).toEqual([
+            { text: "false | tail -1", start: command.indexOf("false") },
+            // The backslash the outer shell removes is a blank, so every offset still points into the command.
+            { text: "echo  $?", start: command.indexOf("echo") },
+        ]);
+        expect(body("echo `false | tail -1; echo \\$?`")?.[1]?.text).toBe("echo  $?");
+        expect(body('zsh -c "ls \\"\\$d\\" 2>/dev/null | wc -l"')?.[0]?.text).toBe("ls    $d   2>/dev/null | wc -l");
+        // A single-quoted body reaches its shell as typed: `\$?` stays a literal there.
+        expect(body("bash -c 'false | tail -1; echo \\$?'")?.[1]?.text).toBe("echo   ?");
+    });
+
+    it("lets the rules see a pipeline's $? in an escaped double-quoted or backtick body", () => {
+        const pipelineBy = (command: string) =>
+            detectShellViolations(command).find((violation) => violation.ruleId === "exit-code-after-pipeline");
+
+        expect(pipelineBy('bash -c "false | tail -1; echo \\$?"')).toMatchObject({
+            matched: "false | tail -1",
+            suggestion: 'bash -c "(set -o pipefail; false | tail -1); echo \\$?"',
+        });
+        expect(pipelineBy('zsh -c "false | tail -1; echo \\"rc=\\$?\\""')?.matched).toBe("false | tail -1");
+        expect(pipelineBy("echo `false | tail -1; echo \\$?`")?.matched).toBe("false | tail -1");
+        expect(pipelineBy("bash -c 'false | tail -1; echo \\$?'")).toBeUndefined();
+        expect(pipelineBy("bash -c 'false | tail -1; echo $?'")?.matched).toBe("false | tail -1");
+    });
+
+    it("reads a `\\$` in a double-quoted body as the body shell's, and an unescaped `$` as the outer shell's", () => {
+        const by = (command: string, ruleId: string) =>
+            detectShellViolations(command).find((violation) => violation.ruleId === ruleId);
+
+        expect(by('zsh -c "false | tail -1; echo \\$pipestatus[2]"', "pipestatus-index-mismatch")?.matched).toBe(
+            "false | tail -1; echo \\$pipestatus[2]"
+        );
+        expect(by('zsh -c "false | tail -1; echo $pipestatus[2]"', "pipestatus-index-mismatch")).toBeUndefined();
+        // The inserted `$` gets the backslash too, or the outer shell would expand it to nothing.
+        expect(by('bash -c "false | rg x; echo \\$?"', "exit-code-after-grep")?.suggestion).toBe(
+            'bash -c "false | rg x; echo \\$? left_exit=\\${PIPESTATUS[0]}"'
+        );
+        expect(by('zsh -c "false | rg x; rc=\\$?"', "exit-code-after-grep")?.suggestion).toBe(
+            'zsh -c "false | rg x; rc=\\$? left_rc=\\${pipestatus[1]}"'
+        );
+        expect(by('zsh -c "false | rg x; rc=\\"\\$?\\""', "exit-code-after-grep")?.suggestion).toBe(
+            'zsh -c "false | rg x; rc=\\"\\$?\\" left_rc=\\${pipestatus[1]}"'
+        );
+
+        // The outer shell expands these `$?` before the body runs, so pipefail in the body changes nothing.
+        for (const command of [
+            'bash -c "false | tail -1; echo $?"',
+            'bash -c "false | tail -1; echo \\\\$?"',
+            "bash <<EOF\nfalse | tail -1; echo $?\nEOF",
+            'bash -c "git worktree remove /tmp/wt/x 2>&1 | tail -2; echo $?"; git worktree list | rg x',
+        ]) {
+            const ids = detectShellViolations(command).map(({ ruleId }) => ruleId);
+            expect(ids.filter((id) => id.startsWith("exit-code-after-pipeline"))).toEqual([]);
+        }
+
+        expect(by("bash <<'EOF'\nfalse | tail -1; echo $?\nEOF", "exit-code-after-pipeline")?.matched).toBe(
+            "false | tail -1"
+        );
+    });
+
+    it("reports the heredoc bodies a shell reads, in command offsets", () => {
+        const command = "bash <<'EOF'\nfalse | tail -1\nEOF\ncat <<EOF\ndata\nEOF";
+        const body = command.indexOf("false");
+
+        expect(scanShell(command).heredocs).toEqual([
+            { opener: command.indexOf("<<"), start: body, end: command.indexOf("\nEOF", body) + 1, quoted: true },
+        ]);
+
+        const nested = 'zsh -c \'bash <<X\nls\nX\'; bash -c "sh <<\\"Y\\"\nls\nY"';
+        const heredocs = scanShell(nested).heredocs;
+
+        expect(heredocs.map(({ start, end }) => nested.slice(start, end))).toEqual(["ls\n", "ls\n"]);
+        expect(heredocs.map(({ opener, quoted }) => [nested.slice(opener, opener + 2), quoted])).toEqual([
+            ["<<", false],
+            ["<<", true],
+        ]);
+
+        // A `$(…)` in a double-quoted body is scanned with the command and with the body: one entry.
+        const twice = "zsh -c \"x=$(bash <<'EOF'\nfalse | tail -1\nEOF\n)\"";
+        expect(scanShell(twice).heredocs.map(({ opener }) => opener)).toEqual([twice.indexOf("<<")]);
+    });
+});
+
+describe("wordsFrom", () => {
+    const words = (command: string, after: string, max?: number) => {
+        const scan = scanShell(command);
+        return wordsFrom(scan, command.indexOf(after) + after.length, max).words;
+    };
+
+    it("cuts at an unquoted operator and at the end of the body that holds the start", () => {
+        expect(words("find ~ -maxdepth 1;echo", "-maxdepth")).toEqual(["1"]);
+        expect(words("(find ~ -maxdepth 1) && ls", "-maxdepth")).toEqual(["1"]);
+        expect(words("bash -c 'tools rm approve --help' && ls x", "approve")).toEqual(["--help"]);
+        // The outer shell removes the backslashes, and the body's shell the quotes.
+        expect(words('zsh -c "biome --only \\"$R\\""', "--only")).toEqual(["$R"]);
+        expect(words("x --only a|tail", "--only")).toEqual(["a"]);
+        expect(words("x --only a # note", "--only")).toEqual(["a"]);
+        // A start on a body's closing quote is past the body; one right after an unquoted body reads on.
+        expect(words("zsh -c 'biome' && ls", "biome")).toEqual([]);
+        expect(words("bash -c ls 2>/dev/null", "-c ls")).toEqual(["2>/dev/null"]);
+    });
+
+    it("removes quotes, keeps $, substitutions and backticks whole, and splits a word from a glued redirection", () => {
+        expect(words("x --only 'a b' \"c\"d e", "--only")).toEqual(["a b", "cd", "e"]);
+        expect(words("x --only $R `r` $(cat f) ${a:-b c}", "--only")).toEqual(["$R", "`r`", "$(cat f)", "${a:-b c}"]);
+        expect(words("x approve 2>&1 &>/dev/null >log abc", "approve")).toEqual(["2>&1", "&>/dev/null", ">log", "abc"]);
+        expect(words("x --only=a>/tmp/log b", "x")).toEqual(["--only=a", ">/tmp/log", "b"]);
+        expect(words("x --only a b c", "--only", 1)).toEqual(["a"]);
+    });
+
+    it("says whether the words end at |&", () => {
+        const command = "ls a |& wc -l; ls b | wc -l";
+        const scan = scanShell(command);
+
+        expect(wordsFrom(scan, 0).pipesStderr).toBe(true);
+        expect(wordsFrom(scan, command.indexOf("ls b")).pipesStderr).toBe(false);
+    });
 });
 
 describe("the helpers the rules match with", () => {
@@ -105,6 +307,16 @@ describe("the helpers the rules match with", () => {
         const tokens = tokenize(statement);
 
         expect(commandTokenIndex(tokens)).toBeGreaterThan(0);
+    });
+
+    it("passes a word that is only a substitution, as typed or as marked at a statement start", () => {
+        const index = (...words: string[]) => commandTokenIndex(words.map((text) => ({ text, start: 0 })));
+
+        expect(index("$(which ls)", "missing")).toBe(1);
+        expect(index("$__________", "biome")).toBe(1);
+        expect(index("$__________")).toBe(-1);
+        expect(index("$_________/biome", "check")).toBe(0);
+        expect(index("$HOME/bin/rg", "x")).toBe(0);
     });
 
     it("reads a wrapper's value-taking options per wrapper, so `sudo -n` does not eat the command", () => {

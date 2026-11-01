@@ -1,18 +1,23 @@
 // `2>/dev/null` rules: discarding stderr and then reading the (possibly empty)
 // stdout makes "the command failed" and "there is no data" the same output.
 
+import { homedir } from "node:os";
+import { isAbsolute, normalize, resolve } from "node:path";
 import {
+    cleanedBody,
     commandTokenIndex,
     commandWord,
     originalSlice,
+    RESERVED_PREFIX,
+    readWords,
     type ShellScan,
     type Span,
     simpleCommandWord,
     splitPipeline,
     splitStatements,
     splitSubstitutions,
-    stripShellNoise,
     tokenize,
+    wordsFrom,
 } from "../scan";
 import type { ShellMatch, ShellRule } from "./types";
 
@@ -47,20 +52,74 @@ const READERS = new Set([
     "yq",
 ]);
 
-function isCounter(element: string): boolean {
-    const word = simpleCommandWord(element);
+const AWKS = new Set(["awk", "gawk", "mawk"]);
+
+function isCounter(scan: ShellScan, element: Span): boolean {
+    const word = simpleCommandWord(element.text);
 
     if (word === "wc") {
         return true;
+    }
+
+    if (AWKS.has(word)) {
+        return awkCounts(wordsFrom(scan, element.start).words);
     }
 
     if (word !== "grep" && word !== "egrep" && word !== "fgrep" && word !== "rg") {
         return false;
     }
 
-    return tokenize({ text: element, start: 0 }).some(
+    return tokenize(element).some(
         (t) => t.text === "--count" || t.text === "--count-matches" || /^-[A-Za-z]*c[A-Za-z]*$/.test(t.text)
     );
+}
+
+// An awk that prints only in its END block turns an empty input into a number
+// (`END {print s}` prints 0), like `wc -l`. A program read with -f is unknown.
+function awkCounts(words: readonly string[]): boolean {
+    const cmd = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
+    const { words: operands, flags } = positionals(words.slice(cmd + 1), { short: "Fvf", long: new Set() });
+    const program = (operands[0] ?? "").replace(/"(?:[^"\\]|\\.)*"/g, '""');
+
+    return !flags.has("-f") && /\bEND\s*\{/.test(program) && !mainRulesPrint(program);
+}
+
+// Whether a rule outside BEGIN and END prints: its action has print or printf,
+// or it is a pattern with no action (`/x/;`, `NR<5`), which prints each line it matches.
+function mainRulesPrint(program: string): boolean {
+    let pattern = "";
+
+    for (let j = 0; j < program.length; j++) {
+        const c = program[j];
+
+        if (c === "{") {
+            const start = j;
+            let depth = 0;
+
+            while (j < program.length && !(program[j] === "}" && --depth === 0)) {
+                depth += program[j] === "{" ? 1 : 0;
+                j++;
+            }
+
+            const special = /\b(?:BEGIN|END)\s*$/.exec(pattern);
+
+            if (special ? pattern.slice(0, special.index).trim() !== "" : /\bprintf?\b/.test(program.slice(start, j))) {
+                return true;
+            }
+
+            pattern = "";
+        } else if (c === ";" || c === "\n") {
+            if (pattern.trim() !== "") {
+                return true;
+            }
+
+            pattern = "";
+        } else {
+            pattern += c;
+        }
+    }
+
+    return pattern.trim() !== "";
 }
 
 // An element that reads the piped output for the model. `xargs` is a wrapper
@@ -100,6 +159,13 @@ function passesNothing(element: string): boolean {
     );
 }
 
+// The elements after element `k` that read its output: up to a zero count.
+function laterElements(elements: readonly Span[], k: number): Span[] {
+    const later = elements.slice(k + 1);
+    const cut = later.findIndex((e) => passesNothing(e.text));
+    return cut === -1 ? later : later.slice(0, cut);
+}
+
 interface DevnullHit {
     statement: Span;
     /** The pipeline element that discards stderr. */
@@ -112,7 +178,7 @@ interface DevnullHit {
 // `consumes`, across all units, statements and elements, lowest offset first. A
 // `$(…)` inside `bash -c "…"` is reached through the outer unit and through the
 // body, so a token found twice is kept once.
-function devnullHits(scan: ShellScan, consumes: (later: string[]) => boolean): DevnullHit[] {
+function devnullHits(scan: ShellScan, consumes: (later: Span[]) => boolean): DevnullHit[] {
     const hits = new Map<number, DevnullHit>();
 
     for (const statements of scan.units) {
@@ -131,10 +197,7 @@ function devnullHits(scan: ShellScan, consumes: (later: string[]) => boolean): D
                     continue;
                 }
 
-                const later = elements.slice(k + 1).map((e) => e.text);
-                const cut = later.findIndex(passesNothing);
-
-                if (!consumes(cut === -1 ? later : later.slice(0, cut))) {
+                if (!consumes(laterElements(elements, k))) {
                     continue;
                 }
 
@@ -155,166 +218,99 @@ function devnullHits(scan: ShellScan, consumes: (later: string[]) => boolean): D
     );
 }
 
-function matchFromHits(scan: ShellScan, hits: readonly DevnullHit[]): ShellMatch {
+interface Edit {
+    from: number;
+    to: number;
+    text: string;
+}
+
+// Drops each redirect. With `wrapCompilers`, a tsc or tsgo producer is wrapped
+// instead: it prints its errors on stdout, where the counter drops them, so the
+// corrected command prints its exit status on stderr.
+function matchFromHits(scan: ShellScan, hits: readonly DevnullHit[], wrapCompilers = false): ShellMatch {
     const { statement } = hits[0];
     const matched = originalSlice(scan, statement.start, statement.start + statement.text.length);
+    const edits: Edit[] = [];
+    const wrapped = new Set<number>();
+
+    for (const hit of hits) {
+        const echo = wrapCompilers ? statusEcho(scan, hit.producer) : null;
+
+        if (echo === null) {
+            edits.push(dropping(scan.command, hit.redirect));
+        } else if (!wrapped.has(hit.producer.start)) {
+            wrapped.add(hit.producer.start);
+            edits.push(wrapping(scan, hit, hits, echo));
+        }
+    }
+
+    // Highest offset first, so the lower offsets stay valid.
     let suggestion = scan.command;
 
-    // Drop each redirect and the one space before it, highest offset first so
-    // the lower offsets stay valid.
-    for (const { redirect } of [...hits].sort((a, b) => b.redirect.start - a.redirect.start)) {
-        const from = suggestion[redirect.start - 1] === " " ? redirect.start - 1 : redirect.start;
-        suggestion = suggestion.slice(0, from) + suggestion.slice(redirect.start + redirect.text.length);
+    for (const { from, to, text } of edits.sort((a, b) => b.from - a.from)) {
+        suggestion = suggestion.slice(0, from) + text + suggestion.slice(to);
     }
 
     return { matched, index: statement.start, suggestion };
 }
 
+// Drops the redirect and the one space before it.
+function dropping(command: string, redirect: Span): Edit {
+    const from = command[redirect.start - 1] === " " ? redirect.start - 1 : redirect.start;
+    return { from, to: redirect.start + redirect.text.length, text: "" };
+}
+
+// `{ <producer without its redirects>; echo "tsgo rc=$?" >&2; } |`, through the
+// pipe after it. A leading `do` or `then` stays outside the braces, and `|&`
+// becomes `|`, so the status line does not go into the counter.
+function wrapping(scan: ShellScan, hit: DevnullHit, hits: readonly DevnullHit[], echo: string): Edit {
+    const { producer, statement } = hit;
+    const tokens = tokenize(producer);
+    const first = tokens.findIndex((t, i) => i === tokens.length - 1 || !RESERVED_PREFIX.has(t.text));
+    const from = tokens[first].start;
+    // A counted producer always has a later element, so the pipe is there.
+    const pipe = statement.start + statement.text.indexOf("|", producer.start - statement.start + producer.text.length);
+    let text = scan.command.slice(from, pipe).trimEnd();
+    const own = hits.filter((h) => h.producer.start === producer.start);
+
+    for (const { redirect } of own.sort((a, b) => b.redirect.start - a.redirect.start)) {
+        const cut = dropping(scan.command, redirect);
+        text = text.slice(0, cut.from - from) + text.slice(cut.to - from);
+    }
+
+    return { from, to: pipe + (scan.command[pipe + 1] === "&" ? 2 : 1), text: `{ ${text}; ${echo}; } |` };
+}
+
+// The status line for a tsc or tsgo producer (run directly or through bunx, npx
+// or `bun x`), escaped once inside a double-quoted `sh -c "…"` body. Null for
+// any other producer, and inside a backtick or two double-quoted bodies, where
+// the corrected command only drops the redirect.
+function statusEcho(scan: ShellScan, producer: Span): string | null {
+    const { words } = wordsFrom(scan, producer.start);
+    let at = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
+    const runner = commandWord(words[at] ?? "");
+
+    if (runner === "bunx" || runner === "npx" || (runner === "bun" && words[at + 1] === "x")) {
+        const skip = runner === "bun" ? at + 1 : at;
+        at = words.findIndex((w, i) => i > skip && !w.startsWith("-"));
+    }
+
+    const word = commandWord(words[at] ?? "");
+    const quotes = scan.executableRanges
+        .filter((range) => producer.start >= range.start && producer.start < range.end)
+        .map((range) => scan.command[range.start - 1]);
+    const doubled = quotes.filter((q) => q === '"').length;
+
+    if ((word !== "tsc" && word !== "tsgo") || quotes.includes("`") || doubled > 1) {
+        return null;
+    }
+
+    return doubled === 1 ? `echo \\"${word} rc=\\$?\\" >&2` : `echo "${word} rc=$?" >&2`;
+}
+
 // ---------------------------------------------------------------------------
 // Coverage: another command in the same call prints the path's error
 // ---------------------------------------------------------------------------
-
-// The index of the `"` that closes the double-quoted string opening at `i`.
-function closingQuote(command: string, i: number, end: number): number {
-    for (let j = i + 1; j < end; j++) {
-        const c = command[j];
-
-        if (c === "\\") {
-            j++;
-        } else if (c === '"') {
-            return j;
-        } else if (c === "`" || (c === "$" && (command[j + 1] === "(" || command[j + 1] === "{"))) {
-            j = groupEnd(command, j, end) - 1;
-        }
-    }
-
-    return end;
-}
-
-// The index just past the `$(…)`, `<(…)`, `${…}` or backtick group opening at `i`.
-function groupEnd(command: string, i: number, end: number): number {
-    if (command[i] === "`") {
-        const close = command.indexOf("`", i + 1);
-        return close === -1 || close >= end ? end : close + 1;
-    }
-
-    const open = command[i + 1];
-    const close = open === "(" ? ")" : "}";
-    let depth = 0;
-
-    for (let j = i + 1; j < end; j++) {
-        const c = command[j];
-
-        if (c === "\\") {
-            j++;
-        } else if (c === "'") {
-            const q = command.indexOf("'", j + 1);
-
-            if (q === -1 || q >= end) {
-                return end;
-            }
-
-            j = q;
-        } else if (c === '"') {
-            j = closingQuote(command, j, end);
-        } else if (c === open) {
-            depth++;
-        } else if (c === close && --depth === 0) {
-            return j + 1;
-        }
-    }
-
-    return end;
-}
-
-interface ElementWords {
-    words: string[];
-    /** Whether the element ends in `|&`, which pipes its stderr along with its stdout. */
-    pipesStderr: boolean;
-}
-
-// The words of the pipeline element at `start` as the shell splits them, read
-// from the original command: the cleaned text blanks a quoted operand
-// (`"$L/Archive"` scans as `$L`). Quotes and backslashes are removed, `$(…)`,
-// `${…}` and backticks stay whole. Stops at an unquoted `|`, `;`, `&`, `(`, `)`,
-// `#` or newline, and at the end of the `sh -c` body that holds `start`. In a
-// double-quoted body, the backslashes the outer shell removes go first.
-function elementWords(scan: ShellScan, start: number): ElementWords {
-    const body = scan.executableRanges
-        .filter((range) => start >= range.start && start < range.end)
-        .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-
-    if (body && scan.command[body.start - 1] === '"') {
-        const text = scan.command
-            .slice(start, body.end)
-            .replace(/\\([$`"\\\n])/g, (_, c: string) => (c === "\n" ? "" : c));
-        return readWords(text, 0, text.length);
-    }
-
-    return readWords(scan.command, start, body?.end ?? scan.command.length);
-}
-
-function readWords(command: string, from: number, end: number): ElementWords {
-    const words: string[] = [];
-    let word: string | null = null;
-    let pipesStderr = false;
-    let i = from;
-
-    while (i < end) {
-        const ch = command[i];
-
-        if (ch === "\\") {
-            word = (word ?? "") + (command[i + 1] === "\n" ? "" : (command[i + 1] ?? ""));
-            i += 2;
-        } else if (ch === "'") {
-            const close = command.indexOf("'", i + 1);
-            const stop = close === -1 || close > end ? end : close;
-            word = (word ?? "") + command.slice(i + 1, stop);
-            i = stop + 1;
-        } else if (ch === '"') {
-            const stop = closingQuote(command, i, end);
-            word =
-                (word ?? "") +
-                command.slice(i + 1, stop).replace(/\\([$`"\\\n])/g, (_, c: string) => (c === "\n" ? "" : c));
-            i = stop + 1;
-        } else if (
-            ch === "`" ||
-            ((ch === "$" || ch === "<" || ch === ">") && command[i + 1] === "(") ||
-            (ch === "$" && command[i + 1] === "{")
-        ) {
-            const stop = groupEnd(command, i, end);
-            word = (word ?? "") + command.slice(i, stop);
-            i = stop;
-        } else if (ch === " " || ch === "\t") {
-            if (word !== null) {
-                words.push(word);
-                word = null;
-            }
-
-            i++;
-        } else if (
-            ch === "\n" ||
-            ch === "|" ||
-            ch === ";" ||
-            ch === "(" ||
-            ch === ")" ||
-            (ch === "#" && word === null) ||
-            (ch === "&" && !(word !== null && /[<>]$/.test(word)) && command[i + 1] !== ">")
-        ) {
-            pipesStderr = ch === "|" && command[i + 1] === "&";
-            break;
-        } else {
-            word = (word ?? "") + ch;
-            i++;
-        }
-    }
-
-    if (word !== null) {
-        words.push(word);
-    }
-
-    return { words, pipesStderr };
-}
 
 interface ProgramFlags {
     /** Short flags that take a value: the rest of the cluster (`-d1`) or the next word (`-d 1`). */
@@ -327,11 +323,14 @@ interface Positionals {
     words: string[];
     /** Every flag seen, a cluster split into its letters (`-ie` gives `-i` and `-e`). */
     flags: Set<string>;
+    /** Each value a flag took, as `[flag, value]`. */
+    values: Array<[string, string]>;
 }
 
 function positionals(args: readonly string[], program: ProgramFlags): Positionals {
     const words: string[] = [];
     const flags = new Set<string>();
+    const values: Array<[string, string]> = [];
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -345,7 +344,10 @@ function positionals(args: readonly string[], program: ProgramFlags): Positional
             const [flag = ""] = arg.split("=", 1);
             flags.add(flag);
 
-            if (program.long.has(flag) && !arg.includes("=")) {
+            if (arg.includes("=")) {
+                values.push([flag, arg.slice(flag.length + 1)]);
+            } else if (program.long.has(flag)) {
+                values.push([flag, args[i + 1] ?? ""]);
                 i++;
             }
 
@@ -357,6 +359,8 @@ function positionals(args: readonly string[], program: ProgramFlags): Positional
                 flags.add(`-${arg[k]}`);
 
                 if (program.short.includes(arg[k])) {
+                    values.push([`-${arg[k]}`, k === arg.length - 1 ? (args[i + 1] ?? "") : arg.slice(k + 1)]);
+
                     if (k === arg.length - 1) {
                         i++;
                     }
@@ -371,7 +375,7 @@ function positionals(args: readonly string[], program: ProgramFlags): Positional
         words.push(arg);
     }
 
-    return { words, flags };
+    return { words, flags, values };
 }
 
 // find [-H|-L|-P|-E|-X|-d|-s|-x] [-f path] <start points…> <expression>: the
@@ -613,7 +617,7 @@ interface ParsedElement extends Operands {
 }
 
 function parseElement(scan: ShellScan, element: Span): ParsedElement | null {
-    const { words, pipesStderr } = elementWords(scan, element.start);
+    const { words, pipesStderr } = wordsFrom(scan, element.start);
     const cmd = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
     const operandsOf = cmd === -1 ? undefined : PATH_OPERANDS.get(commandWord(words[cmd]));
 
@@ -656,7 +660,7 @@ const PRINTS_ITS_INPUT = new Set([
 ]);
 
 function printsItsInput(scan: ShellScan, element: Span): boolean {
-    const { words } = elementWords(scan, element.start);
+    const { words } = wordsFrom(scan, element.start);
     const cmd = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
 
     if (
@@ -734,6 +738,8 @@ interface StatementInfo {
     compounds: FdLayer[];
     /** The `exec` redirects before it, latest first. */
     execs: FdLayer[];
+    /** Ids of the `( … )` subshells around it in its unit. */
+    subshells: number[];
 }
 
 interface Frame {
@@ -742,6 +748,8 @@ interface Frame {
     /** The current branch of an `if` or `case`, or the body of a loop after `do`. */
     branch: number | null;
     members: StatementInfo[];
+    /** The id of a `( … )` group, which runs in a subshell. */
+    subshell?: number;
 }
 
 const OPENS: ReadonlyMap<string, Frame["kind"]> = new Map([
@@ -788,7 +796,7 @@ function shellHeredoc(scan: ShellScan, elements: readonly Span[]): ShellHeredoc 
             continue;
         }
 
-        const { words } = elementWords(scan, elements[k].start);
+        const { words } = wordsFrom(scan, elements[k].start);
         const at = words.findIndex((word) => /^<<-?(?!<)/.test(word));
         const op = /^<<(-?)(.*)$/.exec(words[at] ?? "");
         const delim = op ? op[2] || (words[at + 1] ?? "") : "";
@@ -854,7 +862,8 @@ function walkUnit(scan: ShellScan, unit: ShellUnit, nextId: () => number): State
                     top.branch = nextId();
                 }
             } else if (token === "(" || token === "{") {
-                stack.push({ kind: "group", conds: pending, branch: null, members: [] });
+                const subshell = token === "(" ? { subshell: nextId() } : {};
+                stack.push({ kind: "group", conds: pending, branch: null, members: [], ...subshell });
                 pending = [];
             } else if ((token === ")" || token === "}") && stack.at(-1)?.kind === "group") {
                 closed = stack.pop() ?? null;
@@ -881,12 +890,12 @@ function walkUnit(scan: ShellScan, unit: ShellUnit, nextId: () => number): State
             const piped = statement.text.startsWith("|");
             wrap(
                 closed.members,
-                piped ? [] : elementWords(scan, statement.start).words,
+                piped ? [] : wordsFrom(scan, statement.start).words,
                 piped ? elements : elements.slice(1)
             );
         } else if (top && CLOSES.get(first) === top.kind) {
             stack.pop();
-            wrap(top.members, elementWords(scan, statement.start).words.slice(1), elements.slice(1));
+            wrap(top.members, wordsFrom(scan, statement.start).words.slice(1), elements.slice(1));
         } else if (opens) {
             stack.push({ kind: opens, conds: pending, branch: opens === "case" ? nextId() : null, members: [] });
             pending = [];
@@ -901,6 +910,7 @@ function walkUnit(scan: ShellScan, unit: ShellUnit, nextId: () => number): State
             conds: [...stack.flatMap((f) => (f.branch === null ? f.conds : [...f.conds, f.branch])), ...pending],
             compounds: [],
             execs: [...execs],
+            subshells: stack.flatMap((f) => (f.subshell === undefined ? [] : [f.subshell])),
         };
         const previous = infos.at(-1);
 
@@ -925,7 +935,7 @@ function walkUnit(scan: ShellScan, unit: ShellUnit, nextId: () => number): State
         }
 
         if (first === "exec") {
-            const { out, err } = replayRedirects(elementWords(scan, statement.start).words.slice(1));
+            const { out, err } = replayRedirects(wordsFrom(scan, statement.start).words.slice(1));
             execs.unshift({ out, err, downstream: [] });
         }
 
@@ -944,7 +954,7 @@ function walkUnit(scan: ShellScan, unit: ShellUnit, nextId: () => number): State
 // Every statement of the call, in the same units as scan.units: the command,
 // its substitutions, and each executable body with its substitutions.
 function callStructure(scan: ShellScan): StatementInfo[] {
-    const units: ShellUnit[] = splitSubstitutions(scan.cleaned).map((span, i) => ({
+    const units: ShellUnit[] = splitSubstitutions(scan.cleaned, 0, scan.command).map((span, i) => ({
         span,
         end: span.start + span.text.length,
         capture: i > 0,
@@ -952,7 +962,11 @@ function callStructure(scan: ShellScan): StatementInfo[] {
 
     for (const range of scan.executableRanges) {
         const backtick = scan.command[range.start - 1] === "`";
-        const spans = splitSubstitutions(stripShellNoise(scan.command.slice(range.start, range.end)), range.start);
+        const spans = splitSubstitutions(
+            cleanedBody(scan.command, range),
+            range.start,
+            scan.command.slice(range.start, range.end)
+        );
 
         spans.forEach((span, i) => {
             const body = i === 0 && !backtick ? { body: range } : {};
@@ -1011,7 +1025,7 @@ function reaches(scan: ShellScan, info: StatementInfo, stream: string): boolean 
     const elements = splitPipeline(host.span);
     const k = elements.findLastIndex((e) => e.start <= body.start);
     const close = scan.command[body.end];
-    const after = elementWords(scan, close === '"' || close === "'" ? body.end + 1 : body.end);
+    const after = wordsFrom(scan, close === '"' || close === "'" ? body.end + 1 : body.end);
     const { out, err } = replayRedirects(after.pipesStderr ? [...after.words, "2>&1"] : after.words);
     dest = dest === "stderr" ? err : out;
 
@@ -1107,16 +1121,550 @@ function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean 
     });
 }
 
-// The counted hits, when their coverage is `covered`: the block and the context
-// rule split one set of hits, so a command never gets both.
-function countedMatch(scan: ShellScan, covered: boolean): ShellMatch | null {
-    const hits = devnullHits(scan, (later) => later.some(isCounter));
+// A literal path under /tmp: nothing there refuses a listing, so the only
+// failure is a missing path, and a missing path is the honest 0.
+const SCRATCH_PATH = /^\/(?:private\/)?tmp\/[^$`*?[{~]*$/;
 
-    if (hits.length === 0 || everyHitCovered(scan, hits) !== covered) {
+// A mistyped ls, du or stat flag also prints 0, so their flags must be known.
+function everyHitScratch(scan: ShellScan, hits: readonly DevnullHit[]): boolean {
+    return hits.every((hit) => {
+        const p = parseElement(scan, hit.producer);
+        const known = p && KNOWN_FLAGS.get(p.word);
+        return (
+            !!p &&
+            COVERABLE_PRODUCERS.has(p.word) &&
+            p.paths.length > 0 &&
+            p.paths.every((path) => SCRATCH_PATH.test(path) && !path.split("/").includes("..")) &&
+            (!known || flagsValid(known, positionals(wordsOf(scan, hit.producer).args, known)))
+        );
+    });
+}
+
+type CountedRoute = "block" | "covered" | "scratch";
+
+// The counted hits, when they take `route`: the block and its context rules
+// split one set of hits, so a command never gets two of them.
+function countedMatch(scan: ShellScan, route: CountedRoute): ShellMatch | null {
+    const hits = devnullHits(scan, (later) => later.some((e) => isCounter(scan, e)));
+
+    if (hits.length === 0) {
         return null;
     }
 
-    return matchFromHits(scan, hits);
+    const taken = everyHitCovered(scan, hits) ? "covered" : everyHitScratch(scan, hits) ? "scratch" : "block";
+    return taken === route ? matchFromHits(scan, hits, route === "block") : null;
+}
+
+// ---------------------------------------------------------------------------
+// The read note's exceptions: an empty result that can only mean "none"
+// ---------------------------------------------------------------------------
+
+const HOME = homedir();
+// A listing or a search can be refused in these trees (TCC, root only, another
+// volume) and in a child of these folders.
+const PROTECTED_TREES = [
+    "/System",
+    "/Library",
+    "/private/var",
+    "/var",
+    "/Volumes",
+    ...["Library", "Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music"].map((d) => `${HOME}/${d}`),
+].map((p) => p.toLowerCase());
+const PROTECTED_FOLDERS = new Set(["/", "/users", HOME.toLowerCase()]);
+
+// Whether `path` may sit where a listing is refused. An unknown path may. A
+// glob counts from the folder its first wildcard sits in.
+function isProtected(path: string | null): boolean {
+    if (path === null) {
+        return true;
+    }
+
+    const glob = path.search(/[*?[]/);
+    const fixed = (glob === -1 ? path : path.slice(0, path.lastIndexOf("/", glob))) || "/";
+    const p = normalize(fixed)
+        .replace(/(.)\/+$/, "$1")
+        .toLowerCase();
+    return PROTECTED_FOLDERS.has(p) || PROTECTED_TREES.some((root) => p === root || p.startsWith(`${root}/`));
+}
+
+// A path as the shell reads it, against `folder`. Null when it holds an
+// expansion the guard cannot know. A variable in `loopVars` runs over bare
+// words with no `/`, so it names a child of the folder.
+function resolvePath(arg: string, folder: string | null, loopVars: ReadonlySet<string> = new Set()): string | null {
+    const path = arg
+        .replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, HOME)
+        .replace(/^\$\{?(\w+)\}?(?=\/|$)/, (m, name: string) => (loopVars.has(name) ? "_" : m));
+
+    if (/[$`~]/.test(path) || path === "-") {
+        return null;
+    }
+
+    return isAbsolute(path) ? normalize(path) : folder === null ? null : resolve(folder, path);
+}
+
+// The command word, the words before it, its arguments, and where its stderr goes (`|&` included).
+function wordsOf(scan: ShellScan, element: Span): { word: string; before: string[]; args: string[]; err: string } {
+    const { words, pipesStderr } = wordsFrom(scan, element.start);
+    const cmd = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
+    const own = cmd === -1 ? [] : words.slice(cmd + 1);
+    const { args, err } = replayRedirects(pipesStderr ? [...own, "2>&1"] : own);
+    return { word: cmd === -1 ? "" : commandWord(words[cmd]), before: words.slice(0, Math.max(cmd, 0)), args, err };
+}
+
+function subshellsOf(info: StatementInfo): number[] {
+    return info.unit.host ? [...info.subshells, ...subshellsOf(info.unit.host)] : info.subshells;
+}
+
+const MOVES = /(?:^|[\s;&|({])(?:cd|pushd|popd)(?=[\s;&|)}]|$)/;
+
+// The folder a statement runs in: scan.cwd, moved by each `cd` before it in the
+// outer command and in its own unit. A `cd` in a `( … )` that closed before it
+// changes nothing. The folder is unknown after a `cd` the guard cannot resolve,
+// one that may not run when the statement runs, one in another substitution or
+// body or in a pipeline, and after a pushd or popd.
+function folderAt(scan: ShellScan, statement: Span, structure: readonly StatementInfo[]): string | null {
+    const at = structure.find((s) => s.span.start === statement.start);
+
+    if (!at) {
+        return null;
+    }
+
+    const conds = new Set(allConds(at));
+    const subshells = new Set(subshellsOf(at));
+    let folder = scan.cwd ?? null;
+
+    for (const info of structure) {
+        if (info.span.start >= statement.start || !MOVES.test(info.span.text)) {
+            continue;
+        }
+
+        const elements = splitPipeline(info.span);
+        const moves = elements.map((e) => wordsOf(scan, e)).filter((w) => /^(?:cd|pushd|popd)$/.test(w.word));
+        const outer = !info.unit.capture && !info.unit.body;
+
+        if (moves.length === 0 || subshellsOf(info).some((id) => !subshells.has(id))) {
+            continue;
+        }
+
+        if (
+            (!outer && info.unit !== at.unit) ||
+            elements.length > 1 ||
+            moves[0].word !== "cd" ||
+            allConds(info).some((cond) => !conds.has(cond))
+        ) {
+            return null;
+        }
+
+        folder = resolvePath(moves[0].args.find((a) => a === "-" || !a.startsWith("-")) ?? "~", folder);
+    }
+
+    return folder;
+}
+
+// Variables of a `for name in a b c` whose words are bare names, when `at` lies
+// in that loop's body and nothing assigns the name in between.
+function loopVars(scan: ShellScan, at: number): Set<string> {
+    const vars = new Set<string>();
+
+    for (const unit of scan.units) {
+        const before = unit.filter((u) => u.start < at);
+
+        before.forEach((s, i) => {
+            const { words } = wordsFrom(scan, s.start);
+            const name = words[1] ?? "";
+            let depth = 1;
+
+            if (
+                words[0] !== "for" ||
+                words[2] !== "in" ||
+                words.length <= 3 ||
+                !words.slice(3).every((w) => /^[\w.-]+$/.test(w) && w !== "." && w !== "..")
+            ) {
+                return;
+            }
+
+            for (const later of before.slice(i + 1)) {
+                const first = tokenize(later).find((t) => !RESERVED_PREFIX.has(t.text))?.text ?? "";
+                depth += OPENS.get(first) === "loop" ? 1 : first === "done" ? -1 : 0;
+
+                if (depth === 0 || first.startsWith(`${name}=`)) {
+                    return;
+                }
+            }
+
+            vars.add(name);
+        });
+    }
+
+    return vars;
+}
+
+interface KnownFlags extends ProgramFlags {
+    /** Every short flag the command accepts. */
+    letters: string;
+    /** Every long flag the command accepts. */
+    names: ReadonlySet<string>;
+    /** Flags that can fail whatever their value (a regex engine the build may lack). */
+    risky: ReadonlySet<string>;
+    /** The values each value flag accepts for sure. A value flag missing here can always fail (a type, a file, an encoding). */
+    values: ReadonlyMap<string, RegExp>;
+}
+
+const longFlags = (list: string) => new Set(list.split(" ").map((name) => `--${name}`));
+const valueFlags = (list: string, value: RegExp) => list.split(" ").map((flag): [string, RegExp] => [flag, value]);
+const NUMBER = /^\d+$/;
+const ANY_VALUE = /^/;
+// A glob with no alternation, class or escape always parses.
+const PLAIN_GLOB = /^[^{}[\]\\]*$/;
+const RADIX = /^[dox]$/;
+
+// The producers an exception may clear. A mistyped flag or a bad flag value
+// fails on stderr alone, so a producer with either keeps the note.
+const KNOWN_FLAGS: ReadonlyMap<string, KnownFlags> = new Map([
+    [
+        "ls",
+        {
+            short: "D",
+            long: new Set(),
+            letters: "@ABCFGHILOPRSTUWXabcdefghiklmnopqrstuvwxy1%,",
+            names: longFlags("color directory"),
+            risky: new Set(),
+            values: new Map([
+                ["-D", ANY_VALUE],
+                ["--color", /^(?:always|auto|never)$/],
+            ]),
+        },
+    ],
+    [
+        "du",
+        {
+            short: "BdIt",
+            long: new Set(),
+            letters: "AHLPBIacdghklmnstx",
+            names: new Set(),
+            risky: new Set(),
+            values: new Map([
+                ["-B", /^\d+[kmgtKMGT]?$/],
+                ["-d", NUMBER],
+                ["-I", ANY_VALUE],
+                ["-t", /^-?\d+[kmgtpKMGTP]?$/],
+            ]),
+        },
+    ],
+    [
+        "stat",
+        {
+            short: "ft",
+            long: new Set(),
+            letters: "FLnqflrsxt",
+            names: new Set(),
+            risky: new Set(),
+            values: new Map(valueFlags("-f -t", ANY_VALUE)),
+        },
+    ],
+    [
+        "strings",
+        {
+            short: "nt",
+            long: new Set(),
+            letters: "aont",
+            names: new Set(),
+            risky: new Set(),
+            values: new Map([
+                ["-n", NUMBER],
+                ["-t", RADIX],
+            ]),
+        },
+    ],
+    [
+        "nm",
+        {
+            short: "t",
+            long: new Set(),
+            letters: "aABgjlmnopPrstuUx",
+            names: new Set(),
+            risky: new Set(),
+            values: new Map([["-t", RADIX]]),
+        },
+    ],
+    [
+        "rg",
+        {
+            ...RG_FLAGS,
+            letters: "0AaBbCcdEeFfgHhIijLlMmNnoPpqrSsTtUuVvwxz",
+            names: longFlags(
+                "after-context before-context context case-sensitive color colors column count count-matches files " +
+                    "files-with-matches files-without-match fixed-strings follow glob iglob heading no-heading hidden " +
+                    "ignore-case invert-match json line-number no-line-number max-count max-depth max-filesize " +
+                    "max-columns max-columns-preview multiline multiline-dotall no-filename with-filename no-ignore " +
+                    "no-ignore-vcs no-messages null only-matching passthru pretty quiet replace smart-case sort sortr " +
+                    "text trim vimgrep word-regexp line-regexp binary search-zip unrestricted byte-offset no-config " +
+                    "one-file-system include-zero stats encoding type type-not type-add pre engine pcre2 file regexp"
+            ),
+            risky: new Set(["-P", "--pcre2"]),
+            values: new Map([
+                ...valueFlags(
+                    "-A -B -C -d -j -M -m --after-context --before-context --context --max-depth --threads " +
+                        "--max-columns --max-count",
+                    NUMBER
+                ),
+                ...valueFlags("-g --glob --iglob", PLAIN_GLOB),
+                ...valueFlags("-e --regexp -r --replace", ANY_VALUE),
+                ...valueFlags("--sort --sortr", /^(?:none|path|modified|accessed|created)$/),
+                ["--color", /^(?:never|auto|always|ansi)$/],
+                ["--max-filesize", /^\d+[KMG]?$/],
+            ]),
+        },
+    ],
+    [
+        "grep",
+        {
+            ...GREP_FLAGS,
+            letters: "AaBbCcDdEeFfGHhIiJLlMmnOopqRrSsUuVvwXxyZz",
+            names: longFlags(
+                "include exclude exclude-dir include-dir color colour recursive dereference-recursive ignore-case " +
+                    "files-with-matches files-without-match count line-number regexp file fixed-strings extended-regexp " +
+                    "basic-regexp invert-match word-regexp line-regexp only-matching null binary-files context " +
+                    "after-context before-context max-count no-messages quiet silent text with-filename no-filename " +
+                    "directories devices perl-regexp"
+            ),
+            risky: new Set(["-P", "--perl-regexp"]),
+            values: new Map([
+                ...valueFlags("-A -B -C -m --after-context --before-context --context --max-count", NUMBER),
+                // grep's globs go to fnmatch, which rejects nothing.
+                ...valueFlags("-e --regexp --include --exclude --exclude-dir --include-dir", ANY_VALUE),
+                ...valueFlags("-d --directories", /^(?:read|skip|recurse)$/),
+                ...valueFlags("-D --devices", /^(?:read|skip)$/),
+                ...valueFlags("--color --colour", /^(?:never|always|auto)$/),
+                ["--binary-files", /^(?:binary|text|without-match)$/],
+            ]),
+        },
+    ],
+]);
+
+// Whether every flag is in the producer's table, none can fail whatever its
+// value, and every value is one the flag accepts.
+function flagsValid(known: KnownFlags, { flags, values }: Positionals): boolean {
+    return (
+        [...flags].every(
+            (flag) =>
+                !known.risky.has(flag) &&
+                (flag.startsWith("--") ? known.names.has(flag) : known.letters.includes(flag[1]))
+        ) && values.every(([flag, value]) => known.values.get(flag)?.test(value) ?? false)
+    );
+}
+
+// A pattern no regex engine rejects: no group, class, repeat or interval, and a
+// backslash only before `|`, `.`, `/` or `-`.
+function literalPattern(pattern: string): boolean {
+    return pattern !== "" && !/[()[\]{}*+?\\]/.test(pattern.replace(/\\[|./-]/g, ""));
+}
+
+// `$(rg -l x .)`, `$(fd …)`, `$(find …)`: paths that a lister just found.
+function listsFiles(operand: string): boolean {
+    const m = /^\$\(([\s\S]*)\)$/.exec(operand);
+
+    if (!m) {
+        return false;
+    }
+
+    const words = readWords(m[1], 0, m[1].length).words;
+    const cmd = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
+    const word = cmd === -1 ? "" : commandWord(words[cmd]);
+    const known = KNOWN_FLAGS.get(word);
+
+    if (word === "fd" || word === "find") {
+        return true;
+    }
+
+    if ((word !== "rg" && word !== "grep") || !known) {
+        return false;
+    }
+
+    const { flags } = positionals(words.slice(cmd + 1), known);
+    return flags.has("-l") || flags.has("--files-with-matches") || (word === "rg" && flags.has("--files"));
+}
+
+// A stage that parses all of stdin as JSON throws on an empty or cut input, on
+// its own stderr. jq and yq accept an empty input in silence.
+const CODE_FLAGS: ReadonlyMap<string, readonly string[]> = new Map([
+    ["bun", ["-e", "--eval"]],
+    ["node", ["-e", "--eval", "-p", "--print"]],
+    ["deno", ["eval"]],
+    ["python3", ["-c"]],
+]);
+
+// JSON.parse or json.load(s) applied straight to the whole of stdin, with no
+// fallback (`|| "[]"`) that turns an empty input into valid JSON.
+const PARSES_STDIN =
+    /JSON\.parse\(\s*(?:await\s+Bun\.stdin\.text\(\)|(?:require\(\s*["'](?:node:)?fs["']\s*\)\.|\w+\.)?readFileSync\(\s*(?:0|["']\/dev\/stdin["'])\s*(?:,\s*(?:"[^"]*"|'[^']*'|\{[^}]*\})\s*)?\))\s*\)|json\.load\(\s*sys\.stdin\s*\)|json\.loads\(\s*sys\.stdin\.read\(\)\s*\)/;
+
+// Whether element `k` of the statement parses all of stdin strictly and its
+// parse error reaches the terminal. Code that can catch the error does not count.
+function parsesStdin(scan: ShellScan, statement: Span, k: number, structure: () => StatementInfo[]): boolean {
+    const elements = splitPipeline(statement);
+    const { word, args, err } = wordsOf(scan, elements[k]);
+    const at = args.findIndex((arg) => CODE_FLAGS.get(word)?.includes(arg));
+    const code = at === -1 ? "" : (args[at + 1] ?? "");
+
+    if (!PARSES_STDIN.test(code) || /\b(?:try|catch|except)\b/.test(code)) {
+        return false;
+    }
+
+    const info = structure().find((s) => s.span.start === statement.start);
+    return !!info && stderrShown(scan, info, elements, k, err);
+}
+
+/** A command of the call and the operands it names. */
+interface Sibling {
+    statement: Span;
+    operands: string[];
+    /** A `[ -d X ]` test, which prints nothing: it counts only when it gates the producer. */
+    test: boolean;
+    /** Whether it lists a folder operand, so it shows a refused listing. */
+    lists: boolean;
+}
+
+const TESTS = new Set(["[", "[[", "test"]);
+// Commands whose words are not paths they read.
+const NAMES_NO_PATH = new Set(
+    (
+        "echo printf print true false : for select case export local declare typeset readonly set unset shift " +
+        "return exit continue break sleep kill wait read done fi esac"
+    ).split(" ")
+);
+
+// Every test of a path, and every command whose stderr reaches the terminal.
+function siblingsOf(scan: ShellScan, structure: readonly StatementInfo[]): Sibling[] {
+    const siblings: Sibling[] = [];
+
+    for (const info of structure) {
+        const statement = info.span;
+        const elements = splitPipeline(statement);
+
+        elements.forEach((element, k) => {
+            const { word, before, args, err } = wordsOf(scan, element);
+
+            if (word === "" || NAMES_NO_PATH.has(word) || before.some((w) => commandWord(w) === "xargs")) {
+                return;
+            }
+
+            if (TESTS.has(word)) {
+                const operands = args.filter((_, i) => /^-[edf]$/.test(args[i - 1] ?? ""));
+                siblings.push({ statement, operands: args.includes("!") ? [] : operands, test: true, lists: false });
+            } else if (stderrShown(scan, info, elements, k, err)) {
+                const parsed = PATH_OPERANDS.get(word)?.(args);
+                const operands = parsed?.paths ?? args.filter((a) => !a.startsWith("-"));
+                siblings.push({ statement, operands, test: false, lists: !!parsed?.lists });
+            }
+        });
+    }
+
+    return siblings;
+}
+
+// Whether the test statement must pass for the statement at `at` to run:
+// `[ -d X ] || continue` before it, `[ -d X ] && …` chained into it, or
+// `if [ -d X ]; then` around it.
+function gates(scan: ShellScan, test: Span, at: number): boolean {
+    if (test.start >= at) {
+        return false;
+    }
+
+    const after = scan.cleaned.slice(test.start + test.text.length);
+    const between = after.slice(0, at - test.start - test.text.length);
+
+    return (
+        (/^\s*\|\|\s*(?:continue|break|exit|return)\b/.test(between) && !/\bdone\b/.test(between)) ||
+        (/^\s*&&/.test(between) && !/[;\n]|\|\|/.test(between)) ||
+        (/^if\s/.test(test.text) && /^[\s;]*then\s/.test(after) && !/\b(?:fi|elif|else)\b/.test(between))
+    );
+}
+
+// Whether an empty output of the hit's producer can only mean "none": a strict
+// JSON parser downstream shows a failure, or the producer cannot fail unseen.
+// An `ls -d` or a listing of several operands in a known folder shows which
+// operands are missing; a fixed-pattern search over the folder cannot fail; and
+// an operand that another command of the call creates, tests or reads with
+// stderr visible is known to be there.
+function emptyMeansNone(
+    scan: ShellScan,
+    hit: DevnullHit,
+    structure: () => StatementInfo[],
+    siblings: () => Sibling[]
+): boolean {
+    const elements = splitPipeline(hit.statement);
+    const k = elements.findIndex((e) => e.start === hit.producer.start);
+    const later = laterElements(elements, k).length;
+
+    for (let j = k + 1; j <= k + later; j++) {
+        if (parsesStdin(scan, hit.statement, j, structure)) {
+            return true;
+        }
+    }
+
+    const { word, args } = wordsOf(scan, hit.producer);
+    const known = KNOWN_FLAGS.get(word);
+
+    if (!known) {
+        return false;
+    }
+
+    const given = positionals(args, known);
+    const { words, flags } = given;
+    const search = word === "rg" || word === "grep";
+    const fixed = flags.has("-F") || flags.has("--fixed-strings") || flags.has("--files");
+    const byFlag = flags.has("-e") || flags.has("--regexp");
+
+    if (!flagsValid(known, given) || (search && !fixed && (byFlag || !literalPattern(words[0] ?? "")))) {
+        return false;
+    }
+
+    const parsed = PATH_OPERANDS.get(word)?.(args);
+    const paths = parsed?.paths ?? words;
+    const folder = folderAt(scan, hit.statement, structure());
+    // `.` cannot be missing; a folder is an error only to a grep without -r, strings or nm.
+    const here = (path: string) =>
+        (path === "." || path === "./") && !isProtected(folder) && !!parsed && (word !== "grep" || parsed.lists);
+    let vars: Set<string> | undefined;
+    const outside = (path: string) => {
+        vars ??= loopVars(scan, hit.statement.start);
+        return !isProtected(resolvePath(path, folder, vars));
+    };
+
+    if (word === "ls" && (flags.has("-d") || flags.has("--directory") || paths.length > 1)) {
+        if (!isProtected(folder) && paths.every(outside)) {
+            return true;
+        }
+    }
+
+    // rg with no path searches the folder; a grep with no path reads stdin, or the folder under -r.
+    const searchesFolder = word === "rg" || (word === "grep" && !!parsed?.lists && paths.length > 0);
+
+    if (searchesFolder && !isProtected(folder) && paths.every((path) => here(path) || listsFiles(path))) {
+        return true;
+    }
+
+    const operands = word === "rg" && paths.length === 0 ? ["."] : paths;
+    const same = (a: string, b: string) => a.replace(/(.)\/+$/, "$1") === b.replace(/(.)\/+$/, "$1");
+    // A test, cd, stat or mkdir succeeds on a folder whose listing is refused, so
+    // for a listing it counts only outside the protected roots.
+    const witness = (s: Sibling, operand: string) => !parsed?.lists || s.lists || outside(operand);
+
+    return (
+        operands.length > 0 &&
+        operands.every(
+            (operand) =>
+                here(operand) ||
+                siblings().some(
+                    (s) =>
+                        s.statement.start !== hit.statement.start &&
+                        s.operands.some((named) => same(named, operand)) &&
+                        (!s.test || gates(scan, s.statement, hit.statement.start)) &&
+                        witness(s, operand)
+                )
+        )
+    );
 }
 
 export const stderrDiscardedThenCounted: ShellRule = {
@@ -1133,13 +1681,14 @@ export const stderrDiscardedThenCounted: ShellRule = {
     wrong: "ls ~/Downloads/*.har 2>/dev/null | wc -l",
     right:
         "ls ~/Downloads/*.har | wc -l   # or keep stderr readable: ls … 2>/tmp/err | wc -l; cat /tmp/err" +
-        '   # a path that may be absent: [ -d "$p" ] && ls "$p" | wc -l || echo "absent: $p"',
+        '   # a path that may be absent: [ -d "$p" ] && ls "$p" | wc -l || echo "absent: $p"' +
+        '   # tsc and tsgo print their errors on stdout, where the count drops them: { tsgo …; echo "tsgo rc=$?" >&2; } | rg -c x',
     evidence:
         "932 calls in 90 days, 45 sampled, none where the redirect was needed. CLAUDE.md records three " +
         "wrong conclusions on separate days, including `ls ~/Downloads/*.har 2>/dev/null | wc -l` printing " +
         "0 while eight files existed (macOS TCC had refused the listing).",
     detect(scan) {
-        return countedMatch(scan, false);
+        return countedMatch(scan, "block");
     },
 };
 
@@ -1161,7 +1710,72 @@ export const stderrDiscardedThenCountedCovered: ShellRule = {
         "judges rated each block maybe-incorrect. The rule takes 10 of them: in the 11th the only sibling was " +
         "`ls -lOd`, which prints a missing path but succeeds on a folder it may not list.",
     detect(scan) {
-        return countedMatch(scan, true);
+        return countedMatch(scan, "covered");
+    },
+};
+
+export const stderrDiscardedThenCountedScratch: ShellRule = {
+    id: "stderr-discarded-then-counted-scratch",
+    kind: "misread",
+    title: "2>/dev/null then a count of a literal path under /tmp",
+    severity: "context",
+    why:
+        "stderr is discarded before the count, so a failure reads as 0 (or as a blank from `rg -c`). Every " +
+        "counted path is a literal path under /tmp, where nothing refuses a listing, so the only failure left is " +
+        "a missing path, and a missing path is the honest 0. A mistyped path reads as 0 too: check it before " +
+        "you trust a 0.",
+    wrong: "ls /tmp/cc/x/out 2>/dev/null | wc -l",
+    right: "ls /tmp/cc/x/out | wc -l",
+    evidence:
+        "The 2026-11-01 audit of the guard log: six counted blocks counted a literal path the user owns, and both " +
+        "judges rated each block maybe-incorrect because a missing path was the true 0. Under the home folder an " +
+        "Apple data store can refuse a listing, and the list of such stores is open-ended, so only /tmp is exempt.",
+    detect(scan) {
+        return countedMatch(scan, "scratch");
+    },
+};
+
+export const ddSkipSilentShortRead: ShellRule = {
+    id: "dd-skip-silent-short-read",
+    kind: "misread",
+    title: "dd skip= with status=none, then a count: an offset past the end counts as 0",
+    severity: "context",
+    why:
+        "dd reports a read past end of file only on stderr (0+0 records in), and status=none hides that line, " +
+        "so an offset past the end counts as 0; compare skip x bs with the file size first. status=none still " +
+        "shows a real error, such as a missing input file.",
+    wrong: "dd if=f.log bs=1048576 skip=2700 count=1 status=none | LC_ALL=C tr -d '\\000' | wc -c",
+    right: "stat -f %z f.log; dd if=f.log bs=1048576 skip=2700 count=1 | LC_ALL=C tr -d '\\000' | wc -c",
+    evidence:
+        "The 2026-11-01 audit of the guard log: after a correct block of `dd … skip=$off 2>/dev/null | … | wc -c`, " +
+        "the agent switched to status=none and printed the same false zeros for offsets past the end of a 2585 MiB " +
+        "file. A skip past the end exits 0, writes nothing and says 0+0 records in on stderr only.",
+    detect(scan) {
+        for (const statements of scan.units) {
+            for (const statement of statements) {
+                if (!statement.text.includes("status=none")) {
+                    continue;
+                }
+
+                const elements = splitPipeline(statement);
+
+                for (let k = 0; k + 1 < elements.length; k++) {
+                    const words = tokenize(elements[k]).map((t) => t.text);
+
+                    if (
+                        simpleCommandWord(elements[k].text) === "dd" &&
+                        words.includes("status=none") &&
+                        words.some((w) => /^(?:skip|iseek)=/.test(w)) &&
+                        laterElements(elements, k).some((e) => isCounter(scan, e))
+                    ) {
+                        const matched = originalSlice(scan, statement.start, statement.start + statement.text.length);
+                        return { matched, index: statement.start };
+                    }
+                }
+            }
+        }
+
+        return null;
     },
 };
 
@@ -1181,7 +1795,21 @@ export const stderrDiscardedThenRead: ShellRule = {
         "silence a chatty tool on purpose, hence context rather than block.",
     // A pipeline with a counter downstream is the counted rule's, not this one's.
     detect(scan) {
-        const hits = devnullHits(scan, (later) => !later.some(isCounter) && later.some(isReader));
+        let structure: StatementInfo[] | undefined;
+        let siblings: Sibling[] | undefined;
+        const statements = () => {
+            structure ??= callStructure(scan);
+            return structure;
+        };
+        const known = () => {
+            siblings ??= siblingsOf(scan, statements());
+            return siblings;
+        };
+        const hits = devnullHits(
+            scan,
+            (later) => !later.some((e) => isCounter(scan, e)) && later.some((e) => isReader(e.text))
+        ).filter((hit) => !emptyMeansNone(scan, hit, statements, known));
+
         return hits.length > 0 ? matchFromHits(scan, hits) : null;
     },
 };
@@ -1189,5 +1817,7 @@ export const stderrDiscardedThenRead: ShellRule = {
 export const devnullRules: readonly ShellRule[] = [
     stderrDiscardedThenCounted,
     stderrDiscardedThenCountedCovered,
+    stderrDiscardedThenCountedScratch,
+    ddSkipSilentShortRead,
     stderrDiscardedThenRead,
 ];

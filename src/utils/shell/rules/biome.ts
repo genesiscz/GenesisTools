@@ -10,7 +10,15 @@
 // the corrected form, and an --only that leaves noUnusedImports out is no risk at all.
 // When --only names noUnusedImports itself, the safe run lists the imports instead and
 // each is removed by hand.
+//
+// On Biome 2.5.11 the loss reaches every comment above the last import, also across empty
+// lines (two adjacent imports removed take a header that an empty line parts from them), and
+// any comment inside or behind an import on its lines. A comment below the last import stays.
+// When the command names every target as a plain script file, the rule reads them and stays
+// quiet when none has a comment before the end of its last import.
 
+import { readFileSync, statSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import {
     commandTokenIndex,
     commandWord,
@@ -19,13 +27,16 @@ import {
     type Span,
     splitPipeline,
     tokenize,
+    wordsFrom,
 } from "../scan";
-import { wordsFrom } from "./find";
 import type { ShellMatch, ShellRule } from "./types";
 
 /** Runners that start the next word as the command: `bunx biome`, `npx biome`, `pnpm biome`. */
 const RUNNERS = new Set(["bunx", "npx", "pnpx", "pnpm", "yarn"]);
 const EXEC_RUNNERS = new Set(["yarn", "pnpm", "npm"]);
+// Runners whose folder the rule does not read targets against: `yarn biome` (1.x) starts biome in the
+// package root, and where pnpm starts it was not verified. `yarn exec` keeps the current folder.
+const ROOT_RUNNERS = new Set(["pnpm", "pnpx", "yarn"]);
 const BIOME = new Set(["biome", "@biomejs/biome"]);
 const UNSAFE = new Set(["--unsafe", "--apply-unsafe"]);
 // The --only / --skip spellings that select noUnusedImports: the rule itself, and the groups that hold it.
@@ -37,6 +48,23 @@ const UNUSED_IMPORTS_RULE = new Set([
 ]);
 const UNUSED_IMPORTS_GROUP = new Set(["correctness", "lint/correctness", "lint"]);
 const SKIP_UNUSED_IMPORTS = "--skip=correctness/noUnusedImports";
+// The files biome reads as JavaScript or TypeScript, and the read limits.
+const SCRIPT = /\.(?:[mc]?[jt]s|[jt]sx)$/;
+const MAX_FILES = 50;
+const MAX_BYTES = 1024 * 1024;
+// What may run before the runner: literal `cd <dir>` statements, plain assignments, and plain
+// assignments in front of it. Anything else could move the folder (`env -C`, `sudo -D`), add
+// targets (`xargs`) or write one before biome reads it. Each part matches one way only, so a long
+// prefix cannot backtrack.
+const PREFIX =
+    /^(?:\s*(?:cd[ \t]+(?!-)[^\s;&|()<>$`'"\\{}*?~#]+|[A-Za-z_]\w*=[^\s;&|()<>$`'"\\{}#]*)[ \t]*(?:;|&&|\n))*\s*(?:[A-Za-z_]\w*=[^\s;&|()<>$`'"\\{}#]*[ \t]+)*$/;
+// The import keyword, not `import(` or `import.meta`; it starts a declaration after a line end, `;`,
+// a brace or `*/`, with only JavaScript whitespace other than a line end between.
+const IMPORT = /import(?![\w$]|[ \t]*[(.])/g;
+const SPACE = /[^\S\n\r\u2028\u2029]/;
+const ATTRIBUTES = /\s*(?:with|assert)\s*\{/y;
+const REST_OF_LINE = /.*/y;
+const COMMENT = /\/[/*]/;
 
 interface Edit {
     start: number;
@@ -74,6 +102,142 @@ function selectsUnusedImports(value: string): boolean {
 }
 
 /**
+ * The end of the import whose keyword ends at `from`: past its module string and any `with { … }`
+ * clause. -1 when a comment comes first or the statement never ends.
+ */
+function importEnd(text: string, from: number): number {
+    let depth = 0;
+    let clause = false;
+
+    for (let i = from; i < text.length; i++) {
+        const ch = text[i];
+
+        if (ch === "/" && (text[i + 1] === "/" || text[i + 1] === "*")) {
+            return -1;
+        }
+
+        if (ch === "{") {
+            depth++;
+        } else if (ch === "}" && --depth === 0 && clause) {
+            return i + 1;
+        } else if (ch === '"' || ch === "'") {
+            i = text.indexOf(ch, i + 1);
+
+            if (i === -1) {
+                return -1;
+            }
+
+            if (depth === 0) {
+                ATTRIBUTES.lastIndex = i + 1;
+
+                if (!ATTRIBUTES.test(text)) {
+                    return i + 1;
+                }
+
+                i = ATTRIBUTES.lastIndex - 1;
+                depth = 1;
+                clause = true;
+            }
+        }
+    }
+
+    return -1;
+}
+
+/** Whether `text` has a comment before the end of its last import (a shebang aside), or on that line. */
+function importCarriesComment(text: string): boolean {
+    let last = -1;
+
+    for (const match of text.matchAll(IMPORT)) {
+        let i = match.index;
+
+        while (i > 0 && SPACE.test(text[i - 1])) {
+            i--;
+        }
+
+        if (i === 0 || "\n\r\u2028\u2029;{}".includes(text[i - 1]) || text.startsWith("*/", i - 2)) {
+            last = match.index + match[0].length;
+        }
+    }
+
+    if (last === -1) {
+        return false;
+    }
+
+    const start = /^#!.*/.exec(text)?.[0].length ?? 0;
+    const end = importEnd(text, last);
+
+    if (COMMENT.test(text.slice(start, last)) || end === -1) {
+        return true;
+    }
+
+    REST_OF_LINE.lastIndex = end;
+    return COMMENT.test(REST_OF_LINE.exec(text)?.[0] ?? "");
+}
+
+/**
+ * Whether the biome call whose runner starts at `start` names only script files, every one readable,
+ * none with a comment the fix could delete. `words` are its arguments after `biome`.
+ */
+function nothingToDelete(scan: ShellScan, start: number, words: string[]): boolean {
+    const prefix = scan.command.slice(0, start);
+
+    if (!PREFIX.test(prefix)) {
+        return false;
+    }
+
+    let folder = scan.cwd ?? null;
+
+    for (const [, dir] of prefix.matchAll(/(?:^|[;&\n])\s*cd[ \t]+([^\s;&]+)/g)) {
+        folder = isAbsolute(dir) ? dir : folder && resolve(folder, dir);
+    }
+
+    const files: string[] = [];
+    let subcommand = false;
+
+    for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+
+        if (word === "--only" || word === "--skip") {
+            i++;
+        } else if (word === "--" || /^--(?:changed|staged)(?:=|$)/.test(word) || /[$`*?[{~(]/.test(word)) {
+            return false;
+        } else if (/^(?:\d+|&)?[<>]/.test(word)) {
+            // A bare `>` or `2>` takes the next word as its file. With none, a zsh `>|` ended the words
+            // and hid the targets after it; a `>(…)` file ended them at its `)`.
+            if (/[<>]$/.test(word) && (++i === words.length || words[i].includes("("))) {
+                return false;
+            }
+        } else if (!word.startsWith("-")) {
+            if (subcommand) {
+                const file = isAbsolute(word) ? word : folder && resolve(folder, word);
+
+                if (!file || !SCRIPT.test(file)) {
+                    return false;
+                }
+
+                files.push(file);
+            }
+
+            subcommand = true;
+        }
+    }
+
+    if (files.length === 0 || files.length > MAX_FILES) {
+        return false;
+    }
+
+    try {
+        return files.every((file) => {
+            const stat = statSync(file);
+            return stat.isFile() && stat.size <= MAX_BYTES && !importCarriesComment(readFileSync(file, "utf8"));
+        });
+    } catch {
+        return false;
+    }
+}
+
+/**
  * The edits that make one biome call safe, or null when it is safe already. Option values are read
  * as the shell passes them.
  */
@@ -88,11 +252,11 @@ function correction(scan: ShellScan, flags: Span[]): Edit[] | null {
     const values = (option: string) =>
         flags.flatMap((flag) => {
             if (flag.text === option) {
-                return wordsFrom(scan, flag.start + flag.text.length, 1);
+                return wordsFrom(scan, flag.start + flag.text.length, 1).words;
             }
 
             return flag.text.startsWith(`${option}=`)
-                ? wordsFrom(scan, flag.start, 1).map((word) => word.slice(option.length + 1))
+                ? wordsFrom(scan, flag.start, 1).words.map((word) => word.slice(option.length + 1))
                 : [];
         });
     const only = values("--only");
@@ -166,13 +330,26 @@ export const biomeUnsafeDeletesComments: ShellRule = {
                     const flags = tokens.slice(cmd + 1).map(cut);
                     const args = flags.map((flag) => flag.text);
 
-                    if (biomeIndex(commandWord(tokens[cmd].text), args) === -2) {
+                    const word = commandWord(tokens[cmd].text);
+                    const index = biomeIndex(word, args);
+
+                    if (index === -2) {
                         continue;
                     }
 
                     const fix = correction(scan, flags);
+                    const biome = tokens[cmd + 1 + index];
+                    const inPlace = !ROOT_RUNNERS.has(word) || (word === "yarn" && index > 0);
 
-                    if (!fix) {
+                    if (
+                        !fix ||
+                        (inPlace &&
+                            nothingToDelete(
+                                scan,
+                                tokens[cmd].start,
+                                wordsFrom(scan, biome.start + biome.text.length).words
+                            ))
+                    ) {
                         continue;
                     }
 
