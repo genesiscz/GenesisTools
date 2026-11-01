@@ -63,12 +63,16 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         branch: 3,
         why: "the Swift format owner of the Claude and Codex transcript lines it indexes (the counterpart of the TS readers/, which the guard owns): the bytes of a line pick the indexer; one indexer file per harness is a follow-up that needs a Swift build",
     },
+    "src/macos/GenesisKit/Sources/GenesisKit/Widgets/DecisionDetails.swift": {
+        branch: 1,
+        why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
+    },
     "src/macos/GenesisKit/Sources/GenesisKit/Widgets/LiveWidgetView.swift": {
         branch: 1,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
     },
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift": {
-        branch: 2,
+        branch: 1,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
     },
     "src/mcp-manager/utils/harnesses.ts": {

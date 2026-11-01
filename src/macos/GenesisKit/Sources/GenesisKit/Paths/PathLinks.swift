@@ -469,6 +469,27 @@ public extension View {
     func pathLinkMenu(markdown: String) -> some View {
         modifier(PathLinkMenu(markdown: markdown))
     }
+
+    /// A right-click (or Control-click) on this view lists the ways to open `link`: for a file a view names itself,
+    /// not through markdown (a decision's cited code). Outside `.pathLinks(_:)` the view keeps its own menu.
+    func pathLinkMenu(_ link: PathLinkRef) -> some View {
+        modifier(PathRefMenu(link: link))
+    }
+}
+
+private struct PathRefMenu: ViewModifier {
+    let link: PathLinkRef
+    @Environment(\.pathLinkHandler) private var handler
+
+    func body(content: Content) -> some View {
+        if let handler {
+            content.contextMenu {
+                PathLinkMenuItems(handler: handler, links: [link])
+            }
+        } else {
+            content
+        }
+    }
 }
 
 private struct PathLinkMenu: ViewModifier {
