@@ -265,3 +265,15 @@ export function fillExcerpts(
 ): InboxRef[] {
     return refs.slice(0, MAX_REFS).map((ref) => fillRef(ref, cwd, deps));
 }
+
+/**
+ * The refs a decision card draws: `fillExcerpts`, without the refs that have nothing to show (a file found but named
+ * without a line). The hub's Swift card filters the same way (`DecisionRef.hasContent`).
+ */
+export function shownExcerpts(
+    refs: readonly InboxRef[],
+    cwd: string | undefined,
+    deps: ReadDeps = realDeps
+): InboxRef[] {
+    return fillExcerpts(refs, cwd, deps).filter((ref) => (ref.excerpt?.length ?? 0) > 0 || ref.missing);
+}
