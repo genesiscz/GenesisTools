@@ -1,6 +1,7 @@
 // `2>/dev/null` rules: discarding stderr and then reading the (possibly empty)
 // stdout makes "the command failed" and "there is no data" the same output.
 
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, normalize, resolve } from "node:path";
 import {
@@ -1160,13 +1161,41 @@ function names(operand: string, producerLists: boolean, named: string, siblingLi
     return b.startsWith(`${a}/`) || (siblingLists && a.startsWith(`${b}/`));
 }
 
-// Whether every hit's producer is ls, du, stat, find or fd, and every path it
-// names is named by another listing or search that runs whenever the producer
-// runs and whose stderr reaches the terminal.
+// A path that names the same file from any folder: absolute, or under the home folder.
+const ANCHORED_PATH = /^(?:\/|~(?:\/|$)|\$HOME(?:\/|$)|\$\{HOME\}(?:\/|$))/;
+
+// Whether two statements run in the same folder. Without the folder the command
+// starts in, two statements that no `cd`, `pushd` or `popd` precedes both run there.
+function sameFolder(scan: ShellScan, structure: readonly StatementInfo[], a: Span, b: Span): boolean {
+    const folderA = folderAt(scan, a, structure);
+    const folderB = folderAt(scan, b, structure);
+
+    if (scan.cwd || folderA !== null || folderB !== null) {
+        return folderA !== null && folderA === folderB;
+    }
+
+    const later = Math.max(a.start, b.start);
+    return !structure.some((info) => info.span.start < later && MOVES.test(info.span.text));
+}
+
+// Whether every hit's producer is ls, du, stat, find or fd with flags and
+// primaries that fail only on a path, and every path it names is named by
+// another listing or search that runs whenever the producer runs, in the same
+// folder for a relative path, and whose stderr reaches the terminal.
 function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean {
     const producers = hits.map((hit) => parseElement(scan, hit.producer));
 
-    if (producers.some((p) => !p || !COVERABLE_PRODUCERS.has(p.word) || p.paths.length === 0)) {
+    if (
+        hits.some((hit, i) => {
+            const p = producers[i];
+            return (
+                !p ||
+                !COVERABLE_PRODUCERS.has(p.word) ||
+                p.paths.length === 0 ||
+                !producerFlagsSafe(p.word, wordsOf(scan, hit.producer).args)
+            );
+        })
+    ) {
         return false;
     }
 
@@ -1207,14 +1236,35 @@ function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean 
         const witnesses = siblings.filter((s) => allConds(s.info).every((cond) => runs.has(cond)));
 
         return producer.paths.every((path) =>
-            witnesses.some((s) => s.parsed.paths.some((named) => names(path, producer.lists, named, s.parsed.lists)))
+            witnesses.some((s) =>
+                s.parsed.paths.some(
+                    (named) =>
+                        names(path, producer.lists, named, s.parsed.lists) &&
+                        ((ANCHORED_PATH.test(path) && ANCHORED_PATH.test(named)) ||
+                            sameFolder(scan, statements, hit.statement, s.info.span))
+                )
+            )
         );
     });
 }
 
-// A literal path under /tmp: nothing there refuses a listing, so the only
-// failure is a missing path, and a missing path is the honest 0.
-const SCRATCH_PATH = /^\/(?:private\/)?tmp\/[^$`*?[{~]*$/;
+// A literal path in a folder under /tmp. /tmp itself holds other users' folders.
+const SCRATCH_PATH = /^\/(?:private\/)?tmp\/[^/$`*?[{~][^$`*?[{~]*$/;
+
+// Whether a listing of `path` fails only when it is missing, the honest 0. A
+// folder under /tmp can belong to another user, refuse a listing by its mode,
+// or be a link into a protected tree, so the path as it is now must be missing,
+// or stay under /tmp once its links are followed and be readable (a folder
+// searchable too). The folders under it are the scratch of the one who can read it.
+function scratchListable(path: string): boolean {
+    try {
+        const real = realpathSync(path);
+        accessSync(real, statSync(real).isDirectory() ? constants.R_OK | constants.X_OK : constants.F_OK);
+        return SCRATCH_PATH.test(`${real}/`);
+    } catch (err) {
+        return err instanceof Error && "code" in err && err.code === "ENOENT";
+    }
+}
 
 // A mistyped flag, primary or value also prints 0, and a find primary or fd flag
 // can name a path outside /tmp or run a command, so each must be in a safe table.
@@ -1225,8 +1275,10 @@ function everyHitScratch(scan: ShellScan, hits: readonly DevnullHit[]): boolean 
             !!p &&
             COVERABLE_PRODUCERS.has(p.word) &&
             p.paths.length > 0 &&
-            p.paths.every((path) => SCRATCH_PATH.test(path) && !path.split("/").includes("..")) &&
-            scratchFlagsSafe(p.word, wordsOf(scan, hit.producer).args)
+            p.paths.every(
+                (path) => SCRATCH_PATH.test(path) && !path.split("/").includes("..") && scratchListable(path)
+            ) &&
+            producerFlagsSafe(p.word, wordsOf(scan, hit.producer).args)
         );
     });
 }
@@ -1666,7 +1718,9 @@ function fdSafe({ words, flags }: Positionals): boolean {
     return has("-g", "--glob") ? PLAIN_GLOB.test(pattern) : core === "" || literalPattern(core);
 }
 
-function scratchFlagsSafe(word: string, args: readonly string[]): boolean {
+// Whether a producer's flags, primaries and values are all in the safe tables:
+// the covered and the scratch routes both trust a count that fails only on a path.
+function producerFlagsSafe(word: string, args: readonly string[]): boolean {
     if (word === "find") {
         return findSafe(args);
     }

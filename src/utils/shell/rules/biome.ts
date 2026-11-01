@@ -343,6 +343,9 @@ export const biomeUnsafeDeletesComments: ShellRule = {
     detect(scan): ShellMatch | null {
         let hit: { matched: string; index: number } | null = null;
         const edits: Edit[] = [];
+        // A `$(…)` in a double-quoted `-c` body is scanned with the command and again with the body. Its edits
+        // applied twice at the same offsets add the skip twice, or cut the text after a removed flag a second time.
+        const handled = new Set<number>();
 
         for (const statements of scan.units) {
             for (const statement of statements) {
@@ -354,9 +357,11 @@ export const biomeUnsafeDeletesComments: ShellRule = {
                     const tokens = tokenize(element);
                     const cmd = commandTokenIndex(tokens, scan.command);
 
-                    if (cmd === -1) {
+                    if (cmd === -1 || handled.has(tokens[cmd].start)) {
                         continue;
                     }
+
+                    handled.add(tokens[cmd].start);
 
                     // A scanned token ends at a glued `;` or `|` already, but not at a glued redirection.
                     const cut = (token: Span) => ({ ...token, text: token.text.split(/[<>]/)[0] });

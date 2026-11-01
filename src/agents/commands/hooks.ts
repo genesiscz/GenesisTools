@@ -45,7 +45,7 @@ import {
     stopHookWired,
     type WiringStatus,
 } from "../lib/hooks/install";
-import { firedLogPath } from "../lib/hooks/log";
+import { type DecisionLogRead, firedLogPath, readDecisionLog } from "../lib/hooks/log";
 import {
     claudePlugin,
     claudeUserSettingsPath,
@@ -458,36 +458,19 @@ export function registerHooksCommands(program: Command): void {
 
             const config = loadHooksConfig();
             const path = options.fired ? firedLogPath(config.logPath) : config.logPath;
-            const records: Record<string, unknown>[] = [];
-            let skipped = 0;
-
-            if (options.fired && !existsSync(path)) {
-                // The fired log starts with the first guard decision that is not an allow.
-                out.result([]);
-                return;
-            }
+            let read: DecisionLogRead;
 
             try {
-                // Concurrent hook processes append to this file, so a torn or partial line is
-                // a realistic state. One of them used to make the whole log unreadable, and
-                // this reader is the only way to inspect a shadow run.
-                for (const line of readFileSync(path, "utf8").split("\n")) {
-                    if (line.length === 0) {
-                        continue;
-                    }
-
-                    try {
-                        records.push(SafeJSON.parse(line, { strict: true }) as Record<string, unknown>);
-                    } catch {
-                        skipped += 1;
-                    }
-                }
+                // The fired log starts with the first guard decision that is not an allow, so a missing one is empty.
+                // A torn line is skipped, not fatal: this reader is the only way to inspect a shadow run.
+                read = readDecisionLog(path, { missingOk: Boolean(options.fired) });
             } catch (err) {
                 logger.error({ err, path }, "Cannot read the decision log");
                 process.exitCode = 1;
                 return;
             }
 
+            const { records, skipped } = read;
             const filtered = records
                 .filter((record) => !options.session || record.session === options.session)
                 .filter((record) => !options.decision || record.decision === options.decision)

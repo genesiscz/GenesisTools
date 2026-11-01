@@ -18,7 +18,7 @@ const FRESH = "git-checkout-in-fresh-worktree";
 const SAVED = "git-checkout-overwrites-saved-file";
 const FORCE = "git-push-force-without-lease";
 const gate = (paths: string, git = "git") =>
-    `test -z "$(${git} status --porcelain --untracked-files=all -- ${paths})" && `;
+    `test -z "$(${git} status --porcelain --untracked-files=all --ignored -- ${paths} || echo status-failed)" && `;
 
 function blockedWithoutSuggestion(commands: string[]): void {
     for (const command of commands) {
@@ -49,9 +49,7 @@ describe("git-checkout-overwrites-file: fires", () => {
         const v = only("git checkout origin/master -- README.md", CHECKOUT);
 
         expect(v?.severity).toBe("block");
-        expect(v?.suggestion).toBe(
-            'test -z "$(git status --porcelain --untracked-files=all -- README.md)" && git checkout origin/master -- README.md'
-        );
+        expect(v?.suggestion).toBe(`${gate("README.md")}git checkout origin/master -- README.md`);
     });
 
     it("git checkout -- . and the dot-slash form", () => {
@@ -198,6 +196,12 @@ describe("git-checkout-overwrites-file: conflict re-creation", () => {
         expect(ids("git restore --conflict=zdiff3 -- src/a.ts")).toEqual([]);
     });
 
+    it("a word after -- is a file, not a restore option", () => {
+        for (const command of ["git restore -- -m", "git restore -- --ours", "git restore -- --staged"]) {
+            expect(ids(command)).toEqual([CHECKOUT]);
+        }
+    });
+
     it("a conflict flag with a tree-ish before -- still fires", () => {
         expect(ids("git checkout --conflict=diff3 main -- src/a.ts")).toEqual([CHECKOUT]);
         expect(ids("git checkout --conflict diff3 HEAD -- src/a.ts")).toEqual([CHECKOUT]);
@@ -330,9 +334,47 @@ describe("git-checkout-overwrites-file: a checkout from another ref", () => {
 
     it("gates on every untracked file whatever status.showUntrackedFiles says, so the plain status is no gate", () => {
         expect(only("git checkout main -- a.ts", CHECKOUT)?.suggestion).toBe(
-            'test -z "$(git status --porcelain --untracked-files=all -- a.ts)" && git checkout main -- a.ts'
+            `${gate("a.ts")}git checkout main -- a.ts`
         );
         expect(ids('test -z "$(git status --porcelain -- a.ts)" && git checkout main -- a.ts')).toEqual([CHECKOUT]);
+    });
+
+    it("gates on ignored files and on a status that fails, so a gate without either is no gate", () => {
+        // An ignored local file the ref tracks prints nothing without --ignored, and the checkout overwrites it.
+        expect(
+            ids('test -z "$(git status --porcelain --untracked-files=all -- a.ts)" && git checkout main -- a.ts')
+        ).toEqual([CHECKOUT]);
+        // A failed status prints nothing on stdout, so without the `|| echo` the test passes and the checkout runs.
+        expect(
+            ids(
+                'test -z "$(git status --porcelain --untracked-files=all --ignored -- a.ts)" && git checkout main -- a.ts'
+            )
+        ).toEqual([CHECKOUT]);
+        expect(
+            ids(
+                `${gate("a.ts", "git -c status.relativePaths=bogus")}git -c status.relativePaths=bogus checkout main -- a.ts`
+            )
+        ).toEqual([]);
+    });
+
+    it("the gate stops the checkout in a real shell when the status fails or lists an ignored file", () => {
+        const repo = mkdtempSync(join(tmpdir(), "git-gate-"));
+        const sh = (script: string) => Bun.spawnSync(["/bin/sh", "-c", script], { cwd: repo, env: process.env });
+
+        sh("git init -q && echo a.ts > .gitignore && echo local > a.ts");
+
+        // A failed status: `-c` with a bad boolean breaks status alone.
+        const failed = sh(`${gate("a.ts", "git -c status.relativePaths=bogus")}echo ran`);
+        // An ignored file the gate must see.
+        const ignored = sh(`${gate("a.ts")}echo ran`);
+        // A clean path lets it run.
+        const clean = sh(`${gate("b.ts")}echo ran`);
+
+        expect(failed.stdout.toString()).toBe("");
+        expect(ignored.stdout.toString()).toBe("");
+        expect(clean.stdout.toString()).toBe("ran\n");
+
+        rmSync(repo, { recursive: true, force: true });
     });
 
     it("passes the exact gate written with a line continuation", () => {
@@ -389,6 +431,18 @@ describe("git-checkout-overwrites-file: a fresh worktree and the command's own s
             []
         );
         expect(ids("git worktree add /tmp/w/x main && cd /tmp/w/x && git restore a.ts")).toEqual([]);
+    });
+
+    it("blocks when the checkout writes another tree than the worktree the chain entered", () => {
+        for (const revert of [
+            "git -C /existing-repo checkout -- a.ts",
+            "git --work-tree=/existing-repo checkout -- a.ts",
+            "git --git-dir /existing-repo/.git checkout -- a.ts",
+            "GIT_WORK_TREE=/existing-repo git checkout -- a.ts",
+            "env -C /existing-repo git checkout -- a.ts",
+        ]) {
+            expect(ids(`git worktree add /tmp/new-wt main && cd /tmp/new-wt && ${revert}`)).toEqual([CHECKOUT]);
+        }
     });
 
     it("is a context note when a ; can let the checkout run in an old folder (case 89), from the add on", () => {
@@ -703,6 +757,53 @@ describe("git-checkout-overwrites-file: paths that do not exist only create file
             "git restore missing.ts",
         ]) {
             expect(ids(command, root)).toEqual([CHECKOUT]);
+        }
+    });
+
+    it("still fires for a checkout from a ref when the index holds the absent path, which it would reset", () => {
+        const repo = mkdtempSync(join(tmpdir(), "git-rule-index-"));
+        writeFileSync(join(repo, "staged.ts"), "work");
+        mkdirSync(join(repo, "lib"));
+        writeFileSync(join(repo, "lib", "deep.ts"), "work");
+        Bun.spawnSync(["/bin/sh", "-c", "git init -q && git add staged.ts lib/deep.ts"], {
+            cwd: repo,
+            env: process.env,
+        });
+        // Staged, then deleted from the working tree: the index entry is the only copy of the work.
+        rmSync(join(repo, "staged.ts"));
+        rmSync(join(repo, "lib", "deep.ts"));
+
+        for (const command of [
+            "git checkout HEAD -- staged.ts",
+            "git checkout main -- STAGED.ts",
+            "cd lib && git checkout main -- deep.ts",
+        ]) {
+            expect(ids(command, repo)).toEqual([CHECKOUT]);
+        }
+
+        // A path the index does not hold, and a restore or show, which leave the index alone, still only create.
+        for (const command of [
+            "git checkout main -- missing.ts",
+            "git restore --source main staged.ts",
+            "git show main:staged.ts > staged.ts",
+        ]) {
+            expect(ids(command, repo)).toEqual([]);
+        }
+
+        // A linked worktree's `.git` file names the git dir whose index counts.
+        const linked = mkdtempSync(join(tmpdir(), "git-rule-linked-"));
+        writeFileSync(join(linked, ".git"), `gitdir: ${join(repo, ".git")}\n`);
+        expect(ids("git checkout main -- staged.ts", linked)).toEqual([CHECKOUT]);
+        expect(ids("git checkout main -- missing.ts", linked)).toEqual([]);
+
+        // An index the search cannot read (version 4 shortens paths) may hold every path.
+        const v4 = mkdtempSync(join(tmpdir(), "git-rule-v4-"));
+        mkdirSync(join(v4, ".git"));
+        writeFileSync(join(v4, ".git", "index"), Buffer.from([0x44, 0x49, 0x52, 0x43, 0, 0, 0, 4, 0, 0, 0, 0]));
+        expect(ids("git checkout main -- missing.ts", v4)).toEqual([CHECKOUT]);
+
+        for (const dir of [repo, linked, v4]) {
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 });

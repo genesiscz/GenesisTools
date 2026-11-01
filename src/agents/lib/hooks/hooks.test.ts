@@ -58,6 +58,7 @@ import {
 import {
     firedLogPath,
     logDecision,
+    readDecisionLog,
     releaseRotationLock,
     setDiagLogPath,
     setMaxLogBytes,
@@ -1784,6 +1785,52 @@ describe("the decision log is bounded", () => {
             .split("\n")
             .map((line) => SafeJSON.parse(line));
         expect(fired.map((r) => r.toolUseId)).toEqual(["t1", "t2"]);
+
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("hooks log reads the rotated generation before the current one, so a rotation hides no record", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-log-read-"));
+        const path = join(dir, "agents-hooks.jsonl");
+
+        writeFileSync(`${path}.1`, '{"n":1}\n{"n":2}\n');
+        writeFileSync(path, '{"n":3}\n{"n":\n');
+
+        expect(readDecisionLog(path, { missingOk: false })).toEqual({
+            records: [{ n: 1 }, { n: 2 }, { n: 3 }],
+            skipped: 1,
+        });
+
+        // Right after a rotation the current log is gone, and the records are all in `.1`.
+        rmSync(path);
+        expect(readDecisionLog(path, { missingOk: false }).records).toEqual([{ n: 1 }, { n: 2 }]);
+
+        rmSync(`${path}.1`);
+        writeFileSync(path, '{"n":4}\n');
+        expect(readDecisionLog(path, { missingOk: false }).records).toEqual([{ n: 4 }]);
+
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("hooks log reads a missing fired log as empty, and an unreadable one as an error", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-log-read-missing-"));
+        const path = join(dir, "logs", "agents-hooks-fired.jsonl");
+
+        expect(readDecisionLog(path, { missingOk: true })).toEqual({ records: [], skipped: 0 });
+        expect(() => readDecisionLog(path, { missingOk: false })).toThrow("ENOENT");
+
+        // A folder that refuses search is no missing log. Root reads it anyway, so the check needs another user.
+        if (process.getuid?.() !== 0) {
+            mkdirSync(join(dir, "logs"));
+            writeFileSync(path, '{"n":1}\n');
+            chmodSync(join(dir, "logs"), 0o000);
+
+            try {
+                expect(() => readDecisionLog(path, { missingOk: true })).toThrow("EACCES");
+            } finally {
+                chmodSync(join(dir, "logs"), 0o700);
+            }
+        }
 
         rmSync(dir, { recursive: true, force: true });
     });

@@ -58,6 +58,16 @@ const FD_ROOT_FLAGS = new Set(["--base-directory", "--search-path"]);
 // Primaries and flags that act on each entry: a command run per entry can walk it whatever the
 // depth limit (`find ~ -maxdepth 1 -exec du -sh {} +`), and `-delete` at depth 1 still empties ~.
 const FIND_PER_ENTRY = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete"]);
+// find primaries (GNU, BSD and bfs) whose next word is their value: a name, a pattern, a number or a file, never a
+// primary. `-name '-exec'` matches a file called -exec. `-newerXY` takes one value too, and `-fprintf` two.
+const FIND_VALUE_PRIMARIES = new Set(
+    (
+        "-name -iname -path -ipath -wholename -iwholename -regex -iregex -lname -ilname -type -xtype -user -group " +
+        "-uid -gid -perm -size -newer -anewer -cnewer -mnewer -Bnewer -amin -atime -Bmin -Btime -cmin -ctime -mmin " +
+        "-mtime -used -inum -links -samefile -fstype -mindepth -maxdepth -flags -context -regextype -printf -fprint " +
+        "-fprint0 -fls"
+    ).split(" ")
+);
 const FD_PER_ENTRY = new Set(["--exec", "--exec-batch"]);
 // fd's depth flags, the hidden `--maxdepth` alias included. With several, the last one wins.
 const FD_DEPTH_FLAGS = new Set(["--max-depth", "--maxdepth", "--exact-depth"]);
@@ -84,6 +94,12 @@ function readsOneLevel(scan: ShellScan, word: "find" | "fd", start: number): boo
 
             if (arg === "-maxdepth") {
                 limits.push(argv[i + 1] ?? "");
+            }
+
+            if (FIND_VALUE_PRIMARIES.has(arg) || /^-newer[aBcmt][aBcmt]$/.test(arg)) {
+                i++;
+            } else if (arg === "-fprintf") {
+                i += 2;
             }
 
             continue;

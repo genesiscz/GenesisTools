@@ -193,6 +193,10 @@ describe("find-from-root: a depth limit of 1 reads one directory", () => {
         "fd --max-depth=1 -H x ~",
         "fd x ~ -d 1",
         "fd --search-path ~ -d 1 x",
+        // A primary's value is a name, not a primary: these match files called -exec and -delete.
+        "find ~ -maxdepth 1 -name '-exec'",
+        "find ~ -maxdepth 1 -iname -delete -type f",
+        "find ~ -maxdepth 1 -fprintf /tmp/cc/out -exec -print",
     ])("does not fire on %j", (command) => {
         expect(fires(command)).toBe(false);
     });
@@ -207,6 +211,7 @@ describe("find-from-root: a depth limit of 1 reads one directory", () => {
         "find ~ -maxdepth 1 -okdir du -sh {} \\;",
         "find ~ -exec find {} -maxdepth 1 \\;",
         "find ~ -maxdepth 1 -name '*.log' -delete",
+        "find ~ -maxdepth 1 -name '-exec' -delete",
         "find ~ -mindepth 1 -name x",
         "fd -d 2 x ~",
         "fd -d $D x ~",
