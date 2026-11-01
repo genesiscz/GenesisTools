@@ -374,10 +374,19 @@ struct RmWindowContent {
         guard item.kind != "missing" else { return [] }
         var notes: [ApprovalChip] = []
         if let name = nameNote(item, cwd: cwd, project: project) { notes.append(name) }
-        if item.kind == "dir", item.empty == true || item.folderStats?.files == 0 {
+        if emptyFolder(item) {
             notes.append(ApprovalChip("empty folder", help: "Nothing inside: deleting it loses no files.", tone: .quiet))
         }
         return notes
+    }
+
+    /// A folder known to hold nothing: the CLI says `empty`, or a walk that read the whole tree found no file. A walk
+    /// that stopped at its cap (`capped`) counted only the entries it read, so its 0 files proves nothing.
+    static func emptyFolder(_ item: RmApproveItem) -> Bool {
+        guard item.kind == "dir" else { return false }
+        if item.empty == true { return true }
+        guard let stats = item.folderStats else { return false }
+        return stats.files == 0 && stats.capped != true
     }
 
     /// "same name as its folder" (`ReservineBack/ReservineBack`) or "same name as the repository" (a `shop-web` folder
@@ -418,11 +427,10 @@ struct RmWindowContent {
     /// it, so a person looks first.
     static func risk(_ item: RmApproveItem) -> ApprovalRisk {
         if item.kind == "missing" { return ApprovalRisk(.low, why: "Already gone: there is nothing left to lose.") }
-        if item.kind == "dir", item.empty == true || item.folderStats?.files == 0 {
-            return ApprovalRisk(.low, why: "An empty folder: there is nothing inside to lose.")
-        }
-        if item.kind == "file", item.bytes == 0 { return ApprovalRisk(.low, why: "An empty file: there is nothing inside to lose.") }
+        // A rule that found unsaved work outranks an empty-looking row: the CLI looked deeper than the row's stats.
         if let rule = item.rule, let why = unsavedRules[rule] { return ApprovalRisk(.unsaved, why: why) }
+        if emptyFolder(item) { return ApprovalRisk(.low, why: "An empty folder: there is nothing inside to lose.") }
+        if item.kind == "file", item.bytes == 0 { return ApprovalRisk(.low, why: "An empty file: there is nothing inside to lose.") }
         switch item.git?.state {
         case "untracked": return ApprovalRisk(.unsaved, why: "Not in git: it may be new work nothing else holds.")
         case "modified": return ApprovalRisk(.unsaved, why: "Changes not committed: git cannot bring them back.")

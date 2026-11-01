@@ -101,29 +101,101 @@ describe("the session argument", () => {
 });
 
 describe("the Bash writes a session recorded", () => {
-    test("names when a Bash row last wrote a path; an Edit row or another path answers null", () => {
+    const row = (session: string, path: string, source: string, ts: string, began?: string) =>
+        SafeJSON.stringify({
+            ts,
+            provider: "claude",
+            session,
+            turn: "t",
+            tool: "Bash",
+            cwd: "/w",
+            path,
+            source,
+            ...(began ? { began } : {}),
+        });
+
+    test("lists every Bash row of a path with its command's start and end; an Edit row or another path gives none", () => {
         const session = `bash-writes-${process.pid}`;
         const log = sessionChangesPath(session);
-        const row = (path: string, source: string, ts: string) =>
-            SafeJSON.stringify({ ts, provider: "claude", session, turn: "t", tool: "Bash", cwd: "/w", path, source });
         mkdirSync(dirname(log), { recursive: true });
         writeFileSync(
             log,
             [
-                row("/w/made.txt", "bash", "2026-11-01T10:00:00.000Z"),
-                row("/w/edited.ts", "edit", "2026-11-01T10:01:00.000Z"),
-                row("/w/made.txt", "bash", "2026-11-01T10:05:00.000Z"),
+                row(session, "/w/made.txt", "bash", "2026-11-01T10:00:00.000Z"),
+                row(session, "/w/edited.ts", "edit", "2026-11-01T10:01:00.000Z"),
+                row(session, "/w/made.txt", "bash", "2026-11-01T10:05:00.000Z", "2026-11-01T10:04:58.000Z"),
                 "{ torn",
                 "",
             ].join("\n")
         );
         const lookup = bashWriteLookup(session);
 
-        expect(lookup("/w/made.txt")).toBe("2026-11-01T10:05:00.000Z");
-        expect(lookup("/w/edited.ts")).toBeNull();
-        expect(lookup("/w/other.txt")).toBeNull();
-        expect(bashWriteLookup("no-such-session")("/w/made.txt")).toBeNull();
-        expect(bashWriteLookup("../escape")("/w/made.txt")).toBeNull();
+        expect(lookup("/w/made.txt")).toEqual([
+            { ended: "2026-11-01T10:00:00.000Z" },
+            { began: "2026-11-01T10:04:58.000Z", ended: "2026-11-01T10:05:00.000Z" },
+        ]);
+        expect(lookup("/w/edited.ts")).toEqual([]);
+        expect(lookup("/w/other.txt")).toEqual([]);
+        expect(bashWriteLookup("no-such-session")("/w/made.txt")).toEqual([]);
+        expect(bashWriteLookup("../escape")("/w/made.txt")).toEqual([]);
+    });
+
+    test("the start the Bash recorder writes is the one the lookup reads back", () => {
+        const session = `bash-writes-began-${process.pid}`;
+        const dir = mkdtempSync(join(tmpdir(), "changes-began-"));
+        const made = join(dir, "made.txt");
+        writeFileSync(made, "new");
+        const began = new Date(Date.now() - 5000).toISOString();
+        const sink = { hash: (bytes: Buffer) => bytes.toString("utf8"), log: () => undefined };
+        const event = { provider: "claude", session, turn: "t1", tool: "Bash", cwd: dir, began };
+
+        recordScriptedEdits(
+            sessionChangesPath(session),
+            `cp a ${made}`,
+            event,
+            [{ path: made, after: Buffer.from("new") }],
+            sink
+        );
+
+        const [write] = bashWriteLookup(session)(made);
+        expect(write?.began).toBe(began);
+        expect(Date.parse(write?.ended ?? "")).toBeGreaterThanOrEqual(Date.parse(began));
+    });
+
+    test("only the log's last maxBytes are read, from the first whole row on", () => {
+        const session = `bash-writes-cap-${process.pid}`;
+        const log = sessionChangesPath(session);
+        mkdirSync(dirname(log), { recursive: true });
+        const old = row(session, "/w/old.txt", "bash", "2026-11-01T09:00:00.000Z", "2026-11-01T08:59:00.000Z");
+        const recent = row(session, "/w/recent.txt", "bash", "2026-11-01T10:00:00.000Z", "2026-11-01T09:59:00.000Z");
+        writeFileSync(log, `${old}\n${recent}\n`);
+        // The cap starts inside the old row: it is cut, so it is skipped, and the recent one is whole.
+        const lookup = bashWriteLookup(session, { maxBytes: recent.length + 10 });
+
+        expect(lookup("/w/recent.txt")).toHaveLength(1);
+        expect(lookup("/w/old.txt")).toEqual([]);
+        expect(bashWriteLookup(session)("/w/old.txt")).toHaveLength(1);
+    });
+
+    test("a lookup made after the log grew sees the new row; one made before keeps what it read", () => {
+        const session = `bash-writes-grow-${process.pid}`;
+        const log = sessionChangesPath(session);
+        mkdirSync(dirname(log), { recursive: true });
+        writeFileSync(
+            log,
+            `${row(session, "/w/a.txt", "bash", "2026-11-01T10:00:00.000Z", "2026-11-01T09:59:59.000Z")}\n`
+        );
+        const before = bashWriteLookup(session);
+
+        expect(before("/w/a.txt")).toHaveLength(1);
+        appendFileSync(
+            log,
+            `${row(session, "/w/b.txt", "bash", "2026-11-01T10:01:00.000Z", "2026-11-01T10:00:59.000Z")}\n`
+        );
+
+        expect(before("/w/b.txt")).toEqual([]);
+        expect(bashWriteLookup(session)("/w/b.txt")).toHaveLength(1);
+        expect(bashWriteLookup(session)("/w/a.txt")).toHaveLength(1);
     });
 });
 

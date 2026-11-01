@@ -2063,6 +2063,8 @@ function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: 
             tool: payload.tool,
             ...(payload.toolUseId ? { toolUseId: payload.toolUseId } : {}),
             cwd: payload.cwd,
+            // tools rm counts a file as made by this command only when it was born after this.
+            ...(Number.isFinite(since) ? { began: new Date(since).toISOString() } : {}),
         };
 
         captureChunks(captures).forEach((chunk, at) => {

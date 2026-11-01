@@ -57,7 +57,7 @@ import { type Command, CommanderError } from "commander";
 import { describePolicy } from "../commands/profiles";
 import { approveMany, askForApproval, denyPicked, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
-import { agentMayDrainEarly } from "../commands/trash";
+import { agentMayDrainEarly, drainFailures } from "../commands/trash";
 import { createRmProgram } from "../program";
 import {
     type ApprovalRowDeps,
@@ -1741,6 +1741,7 @@ describe("a rule that covers a request now", () => {
         const request = asideRequest("ruled-at-approve");
         const asked: string[] = [];
         const lines: string[] = [];
+        let kicked = 0;
         const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
             lines.push(stripAnsi(String(raw ?? "")));
         });
@@ -1752,7 +1753,9 @@ describe("a rule that covers a request now", () => {
                     asked.push(prompt.title);
                     throw new Error("no window may open for a request a rule covers");
                 },
-                kickDrainer: () => undefined,
+                kickDrainer: () => {
+                    kicked++;
+                },
             });
         } finally {
             println.mockRestore();
@@ -1760,10 +1763,74 @@ describe("a rule that covers a request now", () => {
         }
 
         expect(asked).toEqual([]);
+        // The rule's trash batch needs the drainer, though no answer (the other start) ever comes.
+        expect(kicked).toBe(1);
         expect(loadRmRequest(request.id)).toMatchObject({ status: "ruled", decidedVia: "rule tmp-small" });
         expect(request.targets.every((target) => !existsSync(target.stored ?? ""))).toBe(true);
         expect(lines.filter((line) => line.includes("refused: rule tmp-small"))).toHaveLength(2);
         expect(lines.some((line) => line.includes("deleted without a request"))).toBe(true);
+    });
+
+    test("ask on a request a rule covers starts the drainer for the rule's batch, and no window opens", async () => {
+        const request = asideRequest("ruled-at-ask");
+        let kicked = 0;
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            lines.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+        const refuse = () => {
+            throw new Error("no window may open for a request a rule covers");
+        };
+        const confirm: ApprovalDeps = {
+            interactive: () => false,
+            platform: "darwin",
+            typed: async () => refuse(),
+            dialog: () => refuse(),
+            app: async () => refuse(),
+        };
+
+        try {
+            await askForApproval(request.id, ruled(), {
+                confirm,
+                kickDrainer: () => {
+                    kicked++;
+                },
+            });
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        expect(kicked).toBe(1);
+        expect(loadRmRequest(request.id)).toMatchObject({ status: "ruled", decidedVia: "rule tmp-small" });
+    });
+
+    test("a request no rule covers starts no drainer at the sweep", async () => {
+        const request = asideRequest("not-ruled-at-approve");
+        let kicked = 0;
+        const println = spyOn(out, "println").mockImplementation(() => undefined);
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany([request.id], context(), {
+                ask: async () => ({
+                    approved: false,
+                    deniedByPerson: false,
+                    via: "cancelled",
+                    choices: { selected: null, disposal: "trash", remember: "once", note: null },
+                }),
+                kickDrainer: () => {
+                    kicked++;
+                },
+            });
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        expect(kicked).toBe(0);
+        expect(loadRmRequest(request.id)?.status).toBe("pending");
     });
 
     test("the listing shows which requests a rule covers and reads only; --all shows a ruled one as ruled", () => {
@@ -1855,7 +1922,8 @@ describe("tools rm ask: an agent opens the person's window", () => {
 
         try {
             process.exitCode = 0;
-            await askForApproval(id, ctx, { confirm });
+            // No real drainer: a detached `rm drain --background` would recover the journal the prune -n test plants.
+            await askForApproval(id, ctx, { confirm, kickDrainer: () => undefined });
             code = process.exitCode;
         } finally {
             println.mockRestore();
@@ -2486,6 +2554,17 @@ describe("the trash view", () => {
         expect(renderTrash([], { now })).toEqual(["The trash is empty."]);
     });
 
+    test("a failed batch is never the next drain: the drainer leaves it for drain --now", () => {
+        const [first, second] = batches;
+        const failed = first ? [{ ...first, failed: { at: minutes(-1), reason: "EACCES" } }] : [];
+        const waiting = second ? [{ ...second, incomplete: undefined, drainAfter: minutes(55) }] : [];
+        const lines = renderTrash([...failed, ...waiting], { now }).map(stripAnsi);
+
+        expect(lines[0]).toMatch(/· next drain \d\d:\d\d \(in 55 min\)$/);
+        expect(lines.some((line) => line.includes("failed: drain --now retries"))).toBe(true);
+        expect(renderTrash(failed, { now }).map(stripAnsi)[0]).not.toContain("next drain");
+    });
+
     test("a batch id tail restores exactly one batch, and an ambiguous or short one is refused", () => {
         const ids = ["20261101-153000-111-fc7b", "20261101-160000-333-0fc7b", "20261101-153500-222-a1c3"];
 
@@ -2496,6 +2575,38 @@ describe("the trash view", () => {
         expect(resolveBatchSuffix("fc7b", ids)).toEqual({ ambiguous: [ids[0], ids[1]] });
         expect(resolveBatchSuffix("c3", ids)).toBeNull();
         expect(resolveBatchSuffix("zzzz", ids)).toBeNull();
+    });
+});
+
+describe("the drain's failures", () => {
+    const failure = (id: string) => ({
+        batch: { id, createdAt: "", drainAfter: "", caller: null, items: [] },
+        items: [{ path: `/work/${id}`, reason: "EACCES" }],
+    });
+
+    test("each is told once, settle waits for every post, and any failure makes it answer true", async () => {
+        const told: string[] = [];
+        let posted = 0;
+        const failures = drainFailures(async (item) => {
+            told.push(item.batch.id);
+            await Bun.sleep(1);
+            posted++;
+        });
+
+        failures.onFailure(failure("a"));
+        failures.onFailure(failure("b"));
+
+        expect(await failures.settle()).toBe(true);
+        expect(told).toEqual(["a", "b"]);
+        expect(posted).toBe(2);
+    });
+
+    test("a drain with no failure settles false, so the command keeps exit code 0", async () => {
+        const failures = drainFailures(async () => {
+            throw new Error("nothing failed, so nothing is told");
+        });
+
+        expect(await failures.settle()).toBe(false);
     });
 });
 
