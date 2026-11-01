@@ -52,6 +52,15 @@ struct WidgetDecisionOutcome: View {
                 }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             }
+            // Where the answer went and when, in the hub Inbox footer's words: "Sent 18:31 to the original Claude
+            // session", or "Waiting to send since 18:31: why" in orange.
+            if let delivery = card.decision?.delivery {
+                Text(delivery.line)
+                    .font(.system(size: 11))
+                    .foregroundStyle(delivery.isQueued ? KitPalette.modified : SessionPalette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
             ForEach(Array((card.comments ?? []).enumerated()), id: \.offset) { _, comment in
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "text.bubble").font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, 2)

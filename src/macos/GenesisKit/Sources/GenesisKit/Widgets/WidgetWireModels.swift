@@ -95,6 +95,28 @@ public struct WidgetChoice: Codable, Identifiable, Equatable, Sendable {
     public var id: String
     public var title: String
     public var recommended: Bool
+    /// Why this option, when the agent gave a reason (the hub's `InboxChoice.rationale`); nil from an older hub.
+    public var rationale: String? = nil
+}
+/// A decision-log card's details, in the shape of the hub's Inbox decision (`WidgetDecisionDetails` in
+/// src/hub/lib/widget/snapshot.ts, read through `fromRecord` like the hub's): each field is nil when the decision has
+/// none, and nil all together from an older hub. The card's `body` holds only the question's own text.
+public struct WidgetDecisionDetails: Codable, Equatable, Sendable {
+    /// The findings that lead to the decision, markdown.
+    public var context: String? = nil
+    /// Text under the options about this decision.
+    public var notes: String? = nil
+    /// The agent's pick with its reason ("a): it matches both of your instructions").
+    public var proposal: String? = nil
+    /// "high", "medium" or "low".
+    public var confidence: String? = nil
+    /// The recommended option's letter.
+    public var recommended: String? = nil
+    public var blocking: Bool? = nil
+    /// The cited `file:line` refs: the lines read from disk, or a file that could not be found.
+    public var refs: [DecisionRef]? = nil
+    /// Where the last send took the answer ("Sent 18:31 to …").
+    public var delivery: DecisionDelivery? = nil
 }
 public struct WidgetFormChoice: Codable, Identifiable, Equatable, Sendable {
     public var id: String
@@ -170,11 +192,23 @@ public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     /// A staged decision's unsent pick and note (the decision log's `drafted` state); sent with the other staged ones.
     public var draftOption: String? = nil
     public var draft: String? = nil
+    /// A decision-log card's context, proposal, notes, confidence, cited code and delivery; nil from an older hub.
+    public var decision: WidgetDecisionDetails? = nil
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var needsAnswer: Bool {
         (kind == "decision" && ["open", "drafted"].contains(status))
             || (kind == "dialog" && status == "waiting")
             || (kind == "form" && status == "pending")
+    }
+
+    /// The card as one text, for every reader that takes it whole (read aloud, a row's preview line, a reply's
+    /// excerpt, the staged list): the body, then a decision's context, proposal and notes, which the snapshot carries
+    /// apart from the body since the decision details came in.
+    public var fullText: String {
+        [body, decision?.context, decision?.proposal, decision?.notes]
+            .compactMap { $0 }
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
     }
 }
 public struct WidgetVideoSettings: Codable, Equatable, Sendable {
@@ -368,6 +402,13 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     /// A click on a file link in a card, a prompt or a transcript (`FileLinkClick`): "genesis-markdown" (default, a
     /// note in Genesis Markdown when it is installed, any other file in its default app), "default-app" or "ask".
     public var fileLinkClick: String?
+    /// A decision card's Context section: "folded" (default, at the hub card's height with Show all) or "open".
+    public var decisionContext: String?
+    /// A decision card's Code section, the lines of each file it cites: "show" (default) or "hide".
+    public var decisionCode: String?
+    /// Where a decision card puts the agent's reason for its pick: "option" (default, under the recommended option)
+    /// or "above" (above the options, as the hub's Inbox card).
+    public var decisionProposal: String?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
@@ -397,7 +438,7 @@ public struct WidgetReplyTo: Codable, Equatable, Sendable {
         number = card.kind == "decision" ? card.number : nil
         let title = Self.line(card.title)
         self.title = title.isEmpty ? nil : title
-        let excerpt = title.isEmpty ? Self.line(card.body) : ""
+        let excerpt = title.isEmpty ? Self.line(card.fullText) : ""
         self.excerpt = excerpt.isEmpty ? nil : excerpt
     }
 

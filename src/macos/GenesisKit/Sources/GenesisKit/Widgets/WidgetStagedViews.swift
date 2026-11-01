@@ -332,7 +332,7 @@ struct WidgetStagedDecisionRow: View {
 
     private var detail: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let body = model.card(for: item)?.body, !body.isEmpty {
+            if let body = model.card(for: item)?.fullText, !body.isEmpty {
                 WidgetMarkdown(text: body)
             }
             if let options = item.options, !options.isEmpty {
