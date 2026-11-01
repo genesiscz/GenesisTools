@@ -27,11 +27,16 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
 - **Nothing is removed before it is verified.** Output goes through `atomicWriteFileStreamed` (temp file, fsync,
   rename). A file is decompressed and compared by size and sha256; a folder archive is listed and every file's sha256
   compared with the folder. The original goes only after that, and a file only when its size and mtime did not change
-  while it was read.
+  while it was read: `compressFile` throws and writes nothing when the source is cut or extended during the read.
+- **One daily pass per logs folder.** `runDailyCompression` holds `<logs>/.daily-compress.lock` for the whole pass,
+  and a second caller returns `null` at once. `tools compress daily` opens the logger, which can start the detached
+  pass beside it, and two passes over one file once deleted its only copy. A plain file that is already gone when it
+  is to be retired keeps its verified `.zst`.
 - **A removed file can still hold its blocks.** A process that has the file open keeps every block after the unlink:
   on 2026-11-01 31 handles of launchers and idle loggers kept 1.2 GB of removed day logs. So the logger opens its
   day file close-on-exec and closes it at midnight (an unref'd timer), and the daily pass cuts a removed plain file
-  to zero through its own handle after a 10 s grace (`releaseGraceMs`), when no folder names it any more.
+  to zero through its own handle 10 s after its own removal (`releaseGraceMs`), when no folder names it any more. Each
+  file has its own timer, so a pass over a backlog frees each file while it compresses the next one.
 - **A reader of compressed data opens either form.** Day files (`<date>.log`, `<date>-profiling.log`,
   `<date>-failures.jsonl`): `dayLogPath` / `listDayLogs` (`@genesiscz/utils/logger/day-logs`, kind `log`,
   `profiling` or `failures`) and `readLinesSync` / `readTextChunks` / `readLastLines` (`@genesiscz/utils/fs/read-lines`),
