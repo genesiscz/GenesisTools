@@ -48,7 +48,8 @@ Folders are walked for `.mp4`, `.m4v`, `.mov` and `.mkv`. The output keeps the i
 Flags and defaults:
 
 - `--quality <n>`: 58. SSIM against libx265 crf 26 was equal or better on three clips; 50 is visibly lower.
-- `--codec <name>`: `hevc`, the only value. Encoders are a table in `src/utils/video/reencode.ts`.
+- `--codec [name]`: `hevc`, the only value. A bare `--codec` lists the values (a picker in a terminal). Encoders are a
+  table in `src/utils/video/reencode.ts`.
 - `--jobs <n>`: 2. The hardware encoder has few sessions.
 - `--min-saving <percent>`: 25. A smaller saving discards the output.
 - `--dry-run`: lists each file with its size and skip reason, writes nothing.
@@ -56,6 +57,8 @@ Flags and defaults:
   printed. An agent may not replace a file that the `tools rm` rules mark "ask": the verified result stays beside it
   as `<name>.hevc.<ext>` (status `kept-beside`) and the summary prints the `tools rm <originals>` command a person runs
   to finish. A person at a terminal replaces as asked, and a "deny" verdict stops everyone. See "Undo a replace". Without it the result is `<name>.hevc.<ext>` beside the input.
+  When the result cannot take the original path after the move, the original is put back and the row is `failed`; if
+  that also fails, the row keeps its `trashBatch` and the summary prints the `tools rm restore <batch>` command.
 - `--json`: one row per file (input, output, sizes, saving, kept, status, reason, trashBatch).
 
 Skipped with a reason: files already HEVC, files with a data track (an iPhone `.MOV` with `mebx` metadata),
@@ -63,8 +66,16 @@ non-video files, containers that cannot hold HEVC, and earlier `.hevc` outputs.
 
 A result is kept only when it is at least `--min-saving` smaller, its duration is within 0.5 s of the input, its video
 is HEVC, audio is present when the input had audio, and a full hardware decode (`ffmpeg -v error -xerror`) prints
-nothing. Otherwise the output is discarded and the input stays. Each ffmpeg runs under `nice -n 10`; background QoS
-(`taskpolicy -b`) starved the jobs on a loaded Mac, so it is not used.
+nothing. Otherwise the output is discarded and the input stays. Each ffmpeg (the encoder check, the encode and the
+decode check) runs under `nice -n 10`; background QoS (`taskpolicy -b`) starved the jobs on a loaded Mac, so it is not
+used.
+
+Each encode is written into a new hidden folder beside its input (`.<name>.<ext>.hevc-XXXXXX`), which only that run
+uses and removes when it finishes. The folder walk skips hidden folders, ffmpeg runs with `-n` so it never writes over
+a file, and the result takes its final name only when nothing is there yet. Two runs on the same folder therefore never
+touch each other's files. The encode maps the first playable video stream (`0:V:0`), never a cover picture.
+
+The command exits 1 when any file failed (ffmpeg, a probe or the replace); skipped and discarded files exit 0.
 
 ### Undo a replace
 
