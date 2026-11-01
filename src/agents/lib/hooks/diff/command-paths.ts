@@ -49,9 +49,45 @@ export function plainArgument(raw: string | null): string | null {
 
 /** `NAME=` at the head of a token: a shell assignment, never a path. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
+/** `NAME=value` in the original text: the value quoted whole, or unquoted up to the shell's next separator. */
+const ASSIGNMENT_TEXT = /^([A-Za-z_][A-Za-z0-9_]*)=('[^']*'|"[^"]*"|[^\s;&|()<>'"]*)/;
+/** Where the shell ends an unquoted word, whatever follows without a space. */
+const WORD_END = /[;&|()<>]/;
 const DECLARING = new Set(["export", "readonly", "declare", "typeset"]);
 /** A bare variable reference, with or without braces. */
 const VARIABLE = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$/;
+
+/**
+ * The raw argument up to where the shell ends the word. `rawToken` and `nextRawArgument` read to the next space, so a
+ * separator that touches the word comes along: `cd dir;`, `cd dir&& x`, `(cd dir)`, `a.ts|| exit`. Such a word names a
+ * path that never exists, and the folder or the file went unwatched (2026-11-01: 743 calls began `cd <dir>;`). A
+ * quoted word ends at its own quote and is returned whole.
+ */
+function shellWord(raw: string | null): string | null {
+    if (!raw || raw.startsWith('"') || raw.startsWith("'")) {
+        return raw;
+    }
+
+    const end = raw.search(WORD_END);
+
+    return end === -1 ? raw : raw.slice(0, end) || null;
+}
+
+/**
+ * The value of `NAME=value` at `start` of the original text, as written (quotes kept), and where it ends. `text` is
+ * `null` when the value is not one plain word (`V=a"b"`, `V=$(pwd)x`): it goes on past what the pattern read.
+ */
+function assignedText(command: string, start: number): { text: string | null; end: number } {
+    const match = ASSIGNMENT_TEXT.exec(command.slice(start));
+    const end = start + (match?.[0].length ?? 0);
+    const next = command[end];
+
+    if (!match || (next !== undefined && !/\s/.test(next) && !WORD_END.test(next))) {
+        return { text: null, end };
+    }
+
+    return { text: match[2] ?? null, end };
+}
 
 function scan(command: string, what: string): ShellScan | null {
     try {
@@ -79,6 +115,9 @@ function scan(command: string, what: string): ShellScan | null {
  * V=/two; cat "$V/b"` names `/one/a` and `/two/b`. Only an element made of assignments alone
  * keeps them (`V=/x cat "$V"` sets V for that one command), and a value `plainArgument` does not
  * accept (`V=$(pwd)`) forgets the earlier one rather than keep a value the shell no longer has.
+ *
+ * A value may start with a variable the command set before it (`W=$S/worktrees/x`, also left to right in one
+ * statement, `S=/a W=$S/b`): a `cd $W` after it was dropped, and a worktree's edit printed nothing (2026-11-01).
  */
 function applyAssignments({
     command,
@@ -90,10 +129,19 @@ function applyAssignments({
     known: Map<string, string>;
 }): void {
     const assigned: Array<[string, string | null]> = [];
+    // What the shell has assigned so far in this statement, which a later value may name.
+    const scope = new Map(known);
     // `export P=/x` (and `readonly`, `declare`) sets P for the rest of the command as a bare assignment does.
     const declares = tokens.length > 0 && DECLARING.has(rawToken(command, tokens[0] as Span));
 
+    // The end of the value read last: `W="$B/x"` scans as `W=` and `$B`, and `$B` is part of the value.
+    let valueEnd = -1;
+
     for (const token of declares ? tokens.slice(1) : tokens) {
+        if (token.start < valueEnd) {
+            continue;
+        }
+
         const raw = rawToken(command, token);
         const head = ASSIGNMENT.exec(raw);
         const name = head?.[1];
@@ -107,8 +155,20 @@ function applyAssignments({
             return;
         }
 
-        // `V=/x; cat "$V/a"`: the statement's `;` comes with the token and is not part of the value.
-        assigned.push([name, plainArgument(raw.slice(head[0].length).replace(/;+$/, ""))]);
+        // Read from the original text, which keeps the quotes `rawToken` strips and stops at a `;` that touches it.
+        const { text, end } = assignedText(command, token.start);
+        // A value with a space is never kept: bash splits an unquoted `$V` there, zsh does not, so a use cannot be read.
+        const value = text !== null && /\s/.test(text) ? null : (plainArgument(text) ?? expandVariable(text, scope));
+
+        valueEnd = end;
+
+        assigned.push([name, value]);
+
+        if (value) {
+            scope.set(name, value);
+        } else {
+            scope.delete(name);
+        }
     }
 
     for (const [name, value] of assigned) {
@@ -165,11 +225,12 @@ function cdTargets(command: string): string[] {
                 const token = index === -1 ? undefined : tokens[index];
 
                 if (token && commandWord(token.text) === "cd") {
-                    const raw = nextRawArgument(command, token.start + token.text.length);
+                    const raw = shellWord(nextRawArgument(command, token.start + token.text.length));
                     const target = plainArgument(raw) ?? variableValue(raw, known) ?? expandVariable(raw, known);
 
+                    // The shell expands `~` in `cd ~/x`; resolved against the cwd it named a folder that never exists.
                     if (target) {
-                        targets.push(target);
+                        targets.push(expandHome(target));
                     }
                 }
 
@@ -299,7 +360,7 @@ function add({
 }): void {
     // The statement's `;` comes with its last token (`perl -pi … a.ts; echo ok`), and `a.ts;` is a
     // file that never exists, so the edit went unwatched (2026-10-15, a background `perl -pi`).
-    const token = raw?.replace(/;+$/, "") ?? null;
+    const token = shellWord(raw);
     const plain = plainArgument(token) ?? expandVariable(token, known);
 
     if (plain === null) {
@@ -389,7 +450,8 @@ function gitDirectory({
             continue;
         }
 
-        const value = plainArgument(raw) ?? variableValue(raw, known) ?? expandVariable(raw, known);
+        const word = shellWord(raw);
+        const value = plainArgument(word) ?? variableValue(word, known) ?? expandVariable(word, known);
 
         if (!value) {
             return null;
