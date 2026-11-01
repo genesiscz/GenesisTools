@@ -131,7 +131,12 @@ export async function checkInstances(input: {
         const embed = instanceEmbed(instance);
 
         if (!embed) {
-            findings.push({ level: "err", subject: id, message: "no TOOLS_<ALIAS>_EMBED_ACCOUNT variable", fix: null });
+            findings.push({
+                level: "err",
+                subject: id,
+                message: "no embed account variable (TOOLS_<AGENT>_EMBED_ACCOUNT) in its environment",
+                fix: null,
+            });
             continue;
         }
 

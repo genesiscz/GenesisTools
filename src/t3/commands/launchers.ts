@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus } from "@genesiscz/utils/table";
 import {
@@ -45,7 +46,11 @@ export async function launchersInstallCommand(options: LaunchersInstallOptions):
     const table = createBoxTable(["LAUNCHER", "ACCOUNT", "STATUS"]);
 
     for (const result of results) {
-        table.push([result.path, result.spec.account ?? "(from TOOLS_<ALIAS>_EMBED_ACCOUNT)", statusCell(result)]);
+        table.push([
+            result.path,
+            result.spec.account ?? `(from ${embedAccountEnvVar(result.spec.alias)})`,
+            statusCell(result),
+        ]);
     }
 
     out.println(table.toString());
