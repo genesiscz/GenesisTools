@@ -313,6 +313,7 @@ export async function applyFolderRetention(
                 long: preset.long,
                 frameBytes: preset.frameBytes,
                 threads: preset.threads,
+                inputSha256: packed.sha256,
                 removedOriginal: true,
                 startedAt,
                 endedAt: new Date().toISOString(),
