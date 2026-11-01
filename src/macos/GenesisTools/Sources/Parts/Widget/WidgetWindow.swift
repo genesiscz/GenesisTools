@@ -97,8 +97,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         let hub = application.addItem(withTitle: "Open Hub", action: #selector(showHub), keyEquivalent: "")
         hub.target = self
         WidgetKeymap.shared.bind(hub, to: WidgetKeymap.hub)
-        let quit = application.addItem(
-            withTitle: "Quit Widget", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        let quit = application.addItem(withTitle: "Quit Widget", action: #selector(requestQuit), keyEquivalent: "")
+        quit.target = self
         WidgetKeymap.shared.bind(quit, to: WidgetKeymap.quit)
         root.submenu = application
         menu.addItem(root)
@@ -176,6 +176,9 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showWidgetSettings() { coordinator?.showSettings() }
     @objc private func showHub() { WidgetLaunch.start(["--hub", "--mode", "agents"]) }
+    /// ⌘Q asks before it quits while other GenesisTools parts run (Host/PartQuit): on 2026-11-01 the widget quit
+    /// through this item and nobody noticed it was gone.
+    @objc private func requestQuit() { PartQuit.request(face: "--widget") }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
