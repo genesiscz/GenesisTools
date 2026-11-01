@@ -467,6 +467,8 @@ export function denyRequest(
         path: resolve(request.cwd),
         via: options.via,
         note,
+        // `cli` is the asking agent's own cancel; every other way is a person's answer.
+        person: options.via === "cli" ? undefined : { via: options.via },
     });
     return { back, waiting, lost };
 }
@@ -528,7 +530,14 @@ export function saveApproved(input: {
         batchId: batchId ?? request.batchId,
         batchIds: batchId ? [...requestBatchIds(request), batchId] : request.batchIds,
     });
-    appendRmLedger({ action: "approve", requestId: request.id, via: answer.via, caller: ctx.caller, batchId });
+    appendRmLedger({
+        action: "approve",
+        requestId: request.id,
+        via: answer.via,
+        caller: ctx.caller,
+        batchId,
+        person: { via: answer.via },
+    });
 }
 
 function exitPendingFor(id: string, pending: readonly RmRequestTarget[]): void {

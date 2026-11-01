@@ -46,6 +46,11 @@ export interface RmLedgerEntry {
     via?: string;
     /** The person's note on a deny in the approval window, for the agent to read. */
     note?: string;
+    /**
+     * Set when a person check decided it (Touch ID, the dialog, a typed code). `caller` stays the environment the
+     * command ran in, which is the agent's session when a person types `! tools rm approve` inside it.
+     */
+    person?: { via: string };
 }
 
 export function rmLedgerPath(): string {
@@ -170,9 +175,13 @@ export interface RmLedgerFilter {
     path?: string;
 }
 
-/** Who did it, as one word: the agent, or `person` for a run outside any agent. */
+/** Who did it, as one word: the agent, or `person` for a run outside any agent or a person's check. */
 export function ledgerAgent(entry: RmLedgerEntry): string {
     const caller = entry.caller;
+
+    if (entry.person) {
+        return "person";
+    }
 
     if (!caller) {
         return "unknown";
@@ -225,7 +234,7 @@ export interface RmLedgerTotal {
 function groupKey(entry: RmLedgerEntry, by: RmLedgerGroup): string {
     switch (by) {
         case "agent":
-            return entry.caller?.isInAgent || !entry.caller
+            return entry.person || entry.caller?.isInAgent || !entry.caller
                 ? ledgerAgent(entry)
                 : `person${entry.caller.user ? ` (${entry.caller.user})` : ""}`;
         case "session":
