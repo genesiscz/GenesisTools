@@ -4,6 +4,7 @@ import { basename, delimiter, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * The plugin of Claude Code mods in this repository's marketplace (`plugins/genesis-tools-mods/`). The
@@ -185,7 +186,12 @@ export function modsPluginDisabled(paths = modsSettingsPaths()): boolean {
         try {
             settings = SafeJSON.parse(readFileSync(path, "utf8"));
         } catch (err) {
-            logger.debug({ err, path }, "Claude settings unreadable: they decide nothing about the mods plugin");
+            // Most projects have no `.claude/settings.local.json`, and this runs in every hook process: logged with its
+            // stack, a missing file was about 14,000 day-log lines an hour on 2026-11-01.
+            if (!isMissingFileError(err)) {
+                logger.debug({ err, path }, "Claude settings unreadable: they decide nothing about the mods plugin");
+            }
+
             continue;
         }
 

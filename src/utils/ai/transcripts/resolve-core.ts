@@ -4,6 +4,7 @@ import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/util
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import type { TranscriptProvider } from "./types";
 
 export function idMatches(query: string, candidate: string): boolean {
@@ -22,21 +23,10 @@ export function mtimeOf(path: string): number {
     try {
         return statSync(path).mtimeMs;
     } catch (err) {
-        if (!isMissing(err)) {
+        if (!isMissingFileError(err)) {
             logger.debug({ err, path }, "[transcripts] could not stat a transcript");
         }
         return 0;
-    }
-}
-
-export function listDir(path: string): string[] {
-    try {
-        return readdirSync(path);
-    } catch (err) {
-        if (!isMissing(err)) {
-            logger.debug({ err, path }, "[transcripts] could not list a directory");
-        }
-        return [];
     }
 }
 
@@ -44,8 +34,15 @@ export function listDir(path: string): string[] {
  * Most project folders have no `subagents/` and most homes no `~/.config/claude`, so a missing path is the normal
  * answer. Logged with its stack it was 80% of the day log (159,223 of 200,000 lines on 2026-11-01, about 1 GB a day).
  */
-function isMissing(err: unknown): boolean {
-    return err instanceof Error && "code" in err && err.code === "ENOENT";
+export function listDir(path: string): string[] {
+    try {
+        return readdirSync(path);
+    } catch (err) {
+        if (!isMissingFileError(err)) {
+            logger.debug({ err, path }, "[transcripts] could not list a directory");
+        }
+        return [];
+    }
 }
 
 export function isDir(path: string): boolean {
