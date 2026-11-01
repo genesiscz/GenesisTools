@@ -77,6 +77,8 @@ export function clonesGuide(): string {
         "  ~/.genesis-tools/macos-clones/reclaim/<id>.jsonl  what a reclaim run saw",
         "  ~/.genesis-tools/macos-clones/process/<id>.jsonl  what an apply changed",
         "  ~/.genesis-tools/logs/<date>-profiling.log        phase timings",
+        "  Only today and yesterday of the day logs stay plain; an older day is",
+        `  <name>.zst. Read it with ${toolCommand("compress cat", "<plain name>")} or rg -z.`,
         "  Phase timings need PROFILE=clones in the environment; PROFILE=clones",
         "  with profiling.detail=all also times each spawned command and directory.",
     ].join("\n");

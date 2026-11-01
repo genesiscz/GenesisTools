@@ -6,7 +6,9 @@ Developer tools for GenesisTools itself: what failed, crashed or ran slow, and w
 
 Every tool run through `runTool` (and the few entry points without commander, through `watchToolRun`) writes one
 JSON line per failed run to `~/.genesis-tools/logs/<date>-failures.jsonl`
-(`src/utils/cli/failures/`). Kinds:
+(`src/utils/cli/failures/`). Only today and yesterday stay plain: the daily pass stores an older day as
+`<date>-failures.jsonl.zst`, the same as the day log and the profiling log, and every `logs` command below that reads a
+day file opens both forms (`dayLogPath` / `listDayLogs`). By hand: `tools compress cat <plain name>` or `rg -z`. Kinds:
 
 | kind | when |
 |---|---|

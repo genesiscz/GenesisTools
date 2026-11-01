@@ -88,12 +88,15 @@ performance budget, not only a layout one. Count a window's elements before blam
 
 `import { profiler } from "@genesiscz/utils/profile"`, one `const prof = profiler.scope("<scope>")` per module,
 then `prof.measure`, `prof.measureAsync`, `prof.start`, `prof.mark`, `prof.summary`. Enable per run with
-`PROFILE=<scope,scope>` or `PROFILE=*`; lines go to `~/.genesis-tools/logs/<date>-profiling.log`. A new scope name
+`PROFILE=<scope,scope>` or `PROFILE=*`; lines go to `~/.genesis-tools/logs/<date>-profiling.log` (only today and
+yesterday stay plain; an older day is `.zst`, read by `tools genesis-tools logs profile` and
+`listDayLogs({ kind: "profiling" })` with `readLinesSync`). A new scope name
 goes into `PROFILER_SCOPE_NAMES` (`src/utils/profile/scopes.ts`). A disabled scope costs nothing.
 
 The usage daemon logs every tick's phases with CPU (`[profile:ai-usage] tick.session-rows cpu=…ms … pid=…`). Join
 those lines by pid with the day log's `"[ai-usage] session rows cache"` lines (`"via":"server"` or `"local"`) to get
-real production distributions. On 2026-10-12: via the hub server median 26 ms (369 ticks), built locally median
+real production distributions. For a day before yesterday, read both files with `tools compress cat <plain name>`
+(or `rg -z`), since both are `.zst` by then. On 2026-10-12: via the hub server median 26 ms (369 ticks), built locally median
 1,940 ms (240 ticks), start plus setup median 542 ms per tick.
 
 ## 6. Raw `bun --cpu-prof`

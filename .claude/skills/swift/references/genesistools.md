@@ -22,7 +22,9 @@ GenesisTools checkout.
   `@MainActor`, wrap in `MainActor.assumeIsolated` from a non-isolated method on the main queue),
   `LayoutLoopWatch` / `.measuredWidth(label, $width)`, `RenderProbe` (`GENESIS_RENDER_PROBE=1`).
 - Logs: `~/.genesis-tools/logs/app-perf.log` (app, all processes mixed), `logs/hangs/` (hang samples and
-  stack files), `logs/<date>-profiling.log` (CLI timers, `[profile:cli]` one line per command run).
+  stack files), `logs/<date>-profiling.log` (CLI timers, `[profile:cli]` one line per command run). Only today
+  and yesterday stay plain; an older day is `.zst` (hangs too): `tools genesis-tools logs profile --since <when>`,
+  `tools compress cat <plain name>`, or `rg -z`.
 - Rank today's app→CLI calls by total time from `mark call t=… via=… ms=… argv=…` lines.
 - HubBench: `GENESIS_HUB_BENCH_ONLY=open GENESIS_HUB_BENCH_OPEN=<id>,<id> GENESIS_HUB_BENCH_AX=1
   ~/Applications/GenesisTools.app/Contents/MacOS/GenesisTools --hub --bench <out.json> --panes transcript,changes`.

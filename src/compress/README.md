@@ -29,6 +29,10 @@ tools compress daily --dry-run                # what the once-a-day pass would c
   `tree` (folders), `binary` (app bundles), `database`, `media` (store), `fast`, `max`.
 - **Ledger.** `~/.genesis-tools/compress/ledger.jsonl`, one line per operation: paths, sizes, ratio, preset, level,
   long mode, frame size, threads, sha256 in and out, start and end time, host, Bun and zstd versions. The automatic
-  passes (day logs, ai-proxy transcripts, migrate-home backups, retired app bundles) record there too.
-- **Reading compressed files.** `rg -z` reads a `.zst` (it needs the `zstd` CLI); `tools compress cat` needs nothing.
-  Every GenesisTools reader of day logs and transcripts opens either form itself.
+  passes (day logs, profiling logs, failure logs, ai-proxy transcripts, hang captures, migrate-home backups, retired
+  app bundles) record there too.
+- **Reading compressed files.** Of the day files in `~/.genesis-tools/logs/` (`<date>.log`, `<date>-profiling.log`,
+  `<date>-failures.jsonl`) only today and yesterday stay plain. `tools compress cat` needs nothing and also takes the
+  plain name of a file the daily pass replaced (`tools compress cat ~/.genesis-tools/logs/2026-10-20.log | rg <pattern>`);
+  `rg -z` reads a `.zst` (it needs the `zstd` CLI). Every GenesisTools reader of day files and transcripts opens either
+  form itself (`tools genesis-tools logs day|failures|profile`, `tools daemon stats`, `tools jev sessions`).
