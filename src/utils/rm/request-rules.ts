@@ -171,7 +171,7 @@ function closeRuled(id: string, options: RmSweepOptions & { dir: string; now: Da
                     paths: options.paths,
                     onRefused: (move, reason) => {
                         refused.add(move.target);
-                        logger.info({ id, path: move.original, reason }, "rm: a ruled path did not move");
+                        logger.warn({ id, path: move.original, reason }, "rm: a ruled path did not move");
                     },
                 }
             );
@@ -216,7 +216,7 @@ function closeRuled(id: string, options: RmSweepOptions & { dir: string; now: Da
             reason: closed ? `ruled: ${rules}` : `ruled in part: ${ruled.length} of ${fresh.targets.length} paths`,
             caller: options.caller,
         });
-        logger.info({ id, closed, ruled: ruled.length, rules }, "rm: a rule decided paths of a pending request");
+        logger.debug({ id, closed, ruled: ruled.length, rules }, "rm: a rule decided paths of a pending request");
         return { id, closed, ruled };
     } finally {
         lock.release();
