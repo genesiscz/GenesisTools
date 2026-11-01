@@ -1412,6 +1412,105 @@ describe("nothing left to decide", () => {
     });
 });
 
+describe("an aside copy deleted outside tools rm (macOS tmp_cleaner)", () => {
+    const CAUSE = "deleted outside tools rm, by macOS tmp_cleaner or a person";
+
+    /** Runs `args` as `tools rm ...` and returns what it printed, without colours. */
+    async function run(args: string[]): Promise<string> {
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            printed.push(stripAnsi(String(raw ?? "")));
+        });
+
+        try {
+            await createRmProgram().parseAsync(args, { from: "user" });
+        } finally {
+            println.mockRestore();
+        }
+
+        return printed.join("\n");
+    }
+
+    /** Takes the aside copy of `target` away, as the cleaner does (renamed out of reach instead of deleted). */
+    function clean(stored: string | undefined, name: string): void {
+        renameSync(stored ?? "", join(base, `${name}-cleaned`));
+    }
+
+    test("requests names the request and the lost path, and approve closes it as gone without failing", async () => {
+        const request = asideRequest("tmp-cleaned");
+        const [first, second] = request.targets;
+
+        if (!first?.stored || !second?.stored) {
+            throw new Error("expected two aside copies");
+        }
+
+        clean(first.stored, "tmp-cleaned-a");
+        clean(second.stored, "tmp-cleaned-b");
+        const exitCode = process.exitCode;
+
+        try {
+            const list = await run(["requests"]);
+            const row = list.split("\n").find((line) => line.trimStart().startsWith(request.id)) ?? "";
+            expect(row).toContain("copy lost");
+            expect(list).toContain(`copy lost = the set-aside copy is gone: ${CAUSE}`);
+
+            const detail = await run(["requests", request.id]);
+            expect(detail).toContain(`gone: ${CAUSE} (it waited at ${first.stored})`);
+            expect(detail).not.toContain(`stored at ${first.stored}`);
+
+            const approve = await run(["approve", request.id]);
+            expect(approve).toContain(`gone ${first.path}: its set-aside copy was ${CAUSE}`);
+            expect(approve).toContain(`gone ${second.path}: its set-aside copy was ${CAUSE}`);
+            expect(loadRmRequest(request.id)?.status).toBe("gone");
+            expect(process.exitCode ?? 0).toBe(0);
+            expect(
+                readRmLedger()
+                    .filter((entry) => entry.action === "lost" && entry.requestId === request.id)
+                    .map((entry) => entry.path)
+            ).toEqual([first.path, second.path]);
+        } finally {
+            process.exitCode = exitCode;
+        }
+    });
+
+    test("an approval moves the copies that are left and closes the request with the lost one reported", async () => {
+        const request = asideRequest("tmp-cleaned-half");
+        const [lost, kept] = request.targets;
+
+        if (!lost?.stored || !kept?.stored) {
+            throw new Error("expected two aside copies");
+        }
+
+        clean(lost.stored, "tmp-cleaned-half");
+        const shown: string[] = [];
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany([request.id], context(), {
+                ask: async (_ctx, prompt) => {
+                    shown.push(...(prompt.request?.items.map((item) => item.path) ?? []));
+                    return {
+                        approved: true,
+                        via: "touch-id",
+                        choices: { selected: null, disposal: "trash", remember: "once", note: null },
+                        deniedByPerson: false,
+                    };
+                },
+                kickDrainer: () => undefined,
+            });
+            const saved = loadRmRequest(request.id);
+
+            expect(shown).toEqual([kept.path]);
+            expect(saved?.status).toBe("approved");
+            expect(saved?.decided?.approved).toEqual([kept.path]);
+            expect(existsSync(kept.stored)).toBe(false);
+            expect(process.exitCode ?? 0).toBe(0);
+        } finally {
+            process.exitCode = exitCode;
+        }
+    });
+});
+
 describe("every batch of a request", () => {
     const answer: PersonAnswer = {
         approved: true,
