@@ -28,6 +28,7 @@ import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { accountFromPinJournal } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { keychainOwnerUuidOffline } from "@genesiscz/utils/claude/keychain";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -62,6 +63,13 @@ interface StartOptions {
     crossMessages?: boolean;
     sdk?: boolean;
 }
+
+interface PickOptions extends StartOptions {
+    /** The account the resumed session last ran on (pin journal), kept by an automatic pick while it can serve. */
+    resumedAccount?: string | null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Same bound findClaudeCommand uses — an rc file that blocks must not hang the launch. */
 const CMUX_PROBE_TIMEOUT_MS = 3000;
@@ -593,9 +601,57 @@ async function plainSelect(withToken: AIAccountEntry[], defaultName: string): Pr
     return picked as string;
 }
 
+/** An automatic pick never lands on an account that cannot serve a turn. */
+function canAutopick(account: ScoredAccount): boolean {
+    return (
+        !account.subscriptionExpired &&
+        account.group !== "dead" &&
+        account.group !== "expired" &&
+        account.tier !== "weekly-blocked"
+    );
+}
+
+/**
+ * The account a resumed session last ran on, while it can still serve: its week is open and its 5h window is not
+ * nearly spent. The prompt cache does not cross accounts, so a thread that moves pays its whole context again, and
+ * T3 Code relaunches a thread's claude often (2026-11-01: session 4c749d15 moved accounts on a resume).
+ */
+export function stickyResumePick(scored: ScoredAccount[], previous: string | null | undefined): ScoredAccount | null {
+    if (!previous) {
+        return null;
+    }
+
+    const entry = scored.find((s) => s.accountName === previous);
+
+    if (!entry || !canAutopick(entry) || entry.tier === "session-starved") {
+        return null;
+    }
+
+    return entry;
+}
+
+/** The session id the passthrough resumes (`--resume <id>`, `--resume=<id>`, `-r <id>`), or null. */
+export function resumedSessionIdOf(passthrough: string[]): string | null {
+    for (let i = 0; i < passthrough.length; i++) {
+        const arg = passthrough[i];
+        const value =
+            arg === "--resume" || arg === "-r"
+                ? passthrough[i + 1]
+                : arg.startsWith("--resume=")
+                  ? arg.slice("--resume=".length)
+                  : undefined;
+
+        if (value !== undefined) {
+            return /^\w[\w-]*$/.test(value) ? value : null;
+        }
+    }
+
+    return null;
+}
+
 async function pickAccount(
     withToken: AIAccountEntry[],
-    opts: StartOptions,
+    opts: PickOptions,
     modelId: string | undefined,
     aiConfig: AIConfig
 ): Promise<string> {
@@ -621,12 +677,28 @@ async function pickAccount(
             process.exit(1);
         }
 
-        // An auto-pick must never land on an account that cannot serve a turn.
-        // The interactive table still SHOWS these rows; only the automatic
-        // choice skips them.
-        const eligible = scored.filter(
-            (s) => !s.subscriptionExpired && s.group !== "dead" && s.group !== "expired" && s.tier !== "weekly-blocked"
-        );
+        const sticky = stickyResumePick(scored, opts.resumedAccount);
+
+        if (sticky) {
+            logger.info(
+                { account: sticky.accountName, tier: sticky.tier },
+                "[start] autopick keeps the resumed session's account"
+            );
+            out.printlnErr(
+                `${TIER_BADGE[sticky.tier]} ${pc.cyan(sticky.accountName)} — the resumed session's account · ${scoredHint(sticky)}`
+            );
+            return sticky.accountName;
+        }
+
+        if (opts.resumedAccount) {
+            logger.info(
+                { previous: opts.resumedAccount },
+                "[start] the resumed session's account cannot serve; picking again"
+            );
+        }
+
+        // The interactive table still SHOWS the accounts that cannot serve; only the automatic choice skips them.
+        const eligible = scored.filter(canAutopick);
         const best = eligible[0] ?? scored[0];
 
         if (eligible.length === 0) {
@@ -915,23 +987,30 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     const modelId =
         explicitModelId ?? (alias === "opus" ? OPUS_MODEL_OPTION : alias === "fable" ? FABLE_MODEL_OPTION : undefined);
 
+    const resumedSessionId =
+        resumedSessionIdOf(passthrough) ??
+        (typeof opts.resume === "string" && UUID_RE.test(opts.resume) ? opts.resume : null);
+    const pickOpts: PickOptions = {
+        ...opts,
+        resumedAccount: resumedSessionId ? accountFromPinJournal(resumedSessionId) : null,
+    };
     let accountName: string;
 
     if (alias) {
         accountName =
             (await resolveSmartAlias(alias, withToken, modelId)) ??
-            (await pickAccount(withToken, opts, modelId, aiConfig));
+            (await pickAccount(withToken, pickOpts, modelId, aiConfig));
     } else if (
         isAutoAccount(
             nameArg,
             withToken.map((a) => a.name)
         )
     ) {
-        accountName = await pickAccount(withToken, { ...opts, autopick: true }, modelId, aiConfig);
+        accountName = await pickAccount(withToken, { ...pickOpts, autopick: true }, modelId, aiConfig);
     } else if (nameArg) {
         accountName = await resolveAccountName(nameArg, withToken, opts, modelId, aiConfig);
     } else {
-        accountName = await pickAccount(withToken, opts, modelId, aiConfig);
+        accountName = await pickAccount(withToken, pickOpts, modelId, aiConfig);
     }
 
     const account = withToken.find((a) => a.name === accountName)!;
