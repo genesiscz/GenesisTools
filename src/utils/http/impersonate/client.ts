@@ -1,25 +1,32 @@
-import { join } from "node:path";
-import { moduleDir } from "@genesiscz/utils/fs/module-dir";
-import { SafeJSON } from "@genesiscz/utils/json";
+import type { Pointer } from "bun:ffi";
 import { logger } from "@genesiscz/utils/logger";
-import type { Subprocess } from "bun";
+import { openLibcurl } from "./libcurl";
+import { ensureLibcurlImpersonate } from "./library";
+import type { FromWorker, ToWorker, WorkerReply } from "./protocol";
 
 /**
  * HTTP with a real Chrome TLS/HTTP2/header fingerprint, for sites behind Cloudflare Bot Management that answer
- * Bun's fetch with a 403 challenge page (Alza: measured 2026-11-01, plain fetch and every `impit` profile 403,
- * curl_cffi 200). A long-lived Python sidecar (`sidecar.py`) runs curl_cffi through `uv`, so the only machine
- * requirement is `uv` on PATH; the first start downloads curl_cffi into uv's cache.
+ * Bun's fetch with a 403 challenge page (Alza: measured 2026-11-01, plain fetch, every `impit` profile and wreq-js
+ * 403, curl_cffi 200). It loads libcurl-impersonate, the library curl_cffi wraps, through bun:ffi in a worker
+ * thread (`worker.ts`), with the browser targets curl_cffi 0.17 picks, so the wire fingerprint is curl_cffi's own.
+ * The first request downloads the pinned library (`library.ts`); nothing else has to be installed.
  */
 
-const SIDECAR_PATH = join(moduleDir(import.meta), "sidecar.py");
 const DEFAULT_TIMEOUT_MS = 60_000;
-/** The sidecar enforces `timeoutMs`; this margin covers its start and the reply line. */
+/** curl enforces `timeoutMs`; this margin covers the worker start and the reply message. */
 const REPLY_MARGIN_MS = 15_000;
-const STDERR_TAIL_CHARS = 2_000;
-/** How long close() waits for the sidecar to exit after its stdin closes before it kills it. */
+/** How long close() waits for the worker to release its curl handles before it terminates it anyway. */
 const CLOSE_GRACE_MS = 2_000;
 
 export type ImpersonateProfile = "chrome" | "safari" | "firefox" | "edge";
+
+/** curl_cffi 0.17's DEFAULT_CHROME / DEFAULT_SAFARI / DEFAULT_FIREFOX / DEFAULT_EDGE. */
+const PROFILE_TARGETS: Record<ImpersonateProfile, string> = {
+    chrome: "chrome152",
+    safari: "safari270",
+    firefox: "firefox155",
+    edge: "edge101",
+};
 
 export interface ImpersonatedRequest {
     url: string;
@@ -28,7 +35,7 @@ export interface ImpersonatedRequest {
     body?: string;
     timeoutMs?: number;
     followRedirects?: boolean;
-    /** Rejects the wait when it aborts. The sidecar still finishes the request; its reply is dropped. */
+    /** Rejects the wait when it aborts, and cancels the transfer. */
     signal?: AbortSignal;
 }
 
@@ -47,25 +54,22 @@ export interface ImpersonatedHttpClientOptions {
     /** Names the client in log lines. */
     label?: string;
     /**
-     * Ends the sidecar after this many ms with no request in flight; the next request starts a new one (with an
-     * empty cookie jar). For a long-lived server, so an idle server holds no Python process.
+     * Ends the worker after this many ms with no request in flight; the next request starts a new one (with an
+     * empty cookie jar). For a long-lived server, so an idle server holds no curl connections.
      */
     idleCloseMs?: number;
 }
 
-interface SidecarReply {
-    id: number;
-    status: number;
-    url: string;
-    headers: Record<string, string>;
-    body: string;
-    error: string | null;
-}
-
 interface Pending {
-    resolve: (reply: SidecarReply) => void;
+    resolve: (reply: WorkerReply) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
+}
+
+interface Engine {
+    worker: Worker;
+    wakeup: () => void;
+    closed: Promise<void>;
 }
 
 export class ImpersonatedHttpError extends Error {
@@ -76,10 +80,9 @@ export class ImpersonatedHttpError extends Error {
 }
 
 export class ImpersonatedHttpClient {
-    private proc: Subprocess<"pipe", "pipe", "pipe"> | null = null;
+    private engine: Promise<Engine> | null = null;
     private readonly pending = new Map<number, Pending>();
     private nextId = 1;
-    private stderrTail = "";
     private idleTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly profile: ImpersonateProfile;
     private readonly label: string;
@@ -90,26 +93,16 @@ export class ImpersonatedHttpClient {
     }
 
     async request(req: ImpersonatedRequest): Promise<ImpersonatedResponse> {
-        const proc = this.ensureStarted();
-        const id = this.nextId++;
-        const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-        const started = performance.now();
-        const line = SafeJSON.stringify({
-            id,
-            url: req.url,
-            method: req.method ?? "GET",
-            headers: req.headers ?? {},
-            body: req.body === undefined ? undefined : Buffer.from(req.body, "utf8").toString("base64"),
-            impersonate: this.profile,
-            timeoutMs,
-            followRedirects: req.followRedirects ?? true,
-        });
-
         req.signal?.throwIfAborted();
         this.cancelIdleClose();
-        let reply: SidecarReply;
+        const id = this.nextId++;
+        const method = req.method ?? "GET";
+        const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+        const started = performance.now();
+        let reply: WorkerReply;
         try {
-            reply = await new Promise<SidecarReply>((resolve, reject) => {
+            const engine = await this.ensureStarted();
+            reply = await new Promise<WorkerReply>((resolve, reject) => {
                 const onAbort = () => {
                     const waiter = this.pending.get(id);
                     if (!waiter) {
@@ -118,12 +111,14 @@ export class ImpersonatedHttpClient {
 
                     clearTimeout(waiter.timer);
                     this.pending.delete(id);
-                    reject(new ImpersonatedHttpError(`${req.method ?? "GET"} ${req.url}: aborted`));
+                    this.send(engine, { type: "abort", id });
+                    reject(new ImpersonatedHttpError(`${method} ${req.url}: aborted`));
                 };
                 const timer = setTimeout(() => {
                     this.pending.delete(id);
                     req.signal?.removeEventListener("abort", onAbort);
-                    reject(new ImpersonatedHttpError(`${req.method ?? "GET"} ${req.url}: no reply in ${timeoutMs} ms`));
+                    this.send(engine, { type: "abort", id });
+                    reject(new ImpersonatedHttpError(`${method} ${req.url}: no reply in ${timeoutMs} ms`));
                 }, timeoutMs + REPLY_MARGIN_MS);
                 this.pending.set(id, {
                     resolve: (value) => {
@@ -137,8 +132,16 @@ export class ImpersonatedHttpClient {
                     timer,
                 });
                 req.signal?.addEventListener("abort", onAbort, { once: true });
-                proc.stdin.write(`${line}\n`);
-                proc.stdin.flush();
+                this.send(engine, {
+                    type: "request",
+                    id,
+                    url: req.url,
+                    method,
+                    headers: req.headers ?? {},
+                    body: req.body,
+                    timeoutMs,
+                    followRedirects: req.followRedirects ?? true,
+                });
             });
         } finally {
             this.scheduleIdleClose();
@@ -147,53 +150,60 @@ export class ImpersonatedHttpClient {
         const ms = Math.round(performance.now() - started);
         if (reply.error) {
             logger.debug({ label: this.label, url: req.url, ms, error: reply.error }, "impersonated request failed");
-            throw new ImpersonatedHttpError(`${req.method ?? "GET"} ${req.url}: ${reply.error}`);
+            throw new ImpersonatedHttpError(`${method} ${req.url}: ${reply.error}`);
         }
 
-        logger.debug(
-            { label: this.label, method: req.method ?? "GET", url: req.url, status: reply.status, ms },
-            "impersonated request"
-        );
+        logger.debug({ label: this.label, method, url: req.url, status: reply.status, ms }, "impersonated request");
         return {
             status: reply.status,
             url: reply.url,
             headers: reply.headers,
-            text: Buffer.from(reply.body, "base64").toString("utf8"),
+            text: Buffer.from(reply.body).toString("utf8"),
         };
     }
 
-    /** Ends the sidecar. A CLI run must call it, or the open pipes keep the process alive. */
+    /** Ends the worker and its connections. Pending requests are rejected. */
     async close(): Promise<void> {
         this.cancelIdleClose();
-        const proc = this.proc;
-        if (!proc) {
+        const starting = this.engine;
+        if (!starting) {
             return;
         }
 
-        this.proc = null;
+        this.engine = null;
+        let engine: Engine;
         try {
-            proc.stdin.end();
+            engine = await starting;
         } catch (error) {
-            logger.debug({ error, label: this.label }, "impersonate sidecar stdin already closed");
+            logger.debug({ error, label: this.label }, "impersonate worker never started, nothing to close");
+            return;
         }
 
-        // A cleared timer, not Bun.sleep: a pending sleep keeps the process alive for its full 2 s after the exit.
+        this.rejectAll("impersonate client closed");
+        engine.worker.postMessage({ type: "close" } satisfies ToWorker);
+        // A cleared timer, not Bun.sleep: a pending sleep keeps the process alive for its full grace after the exit.
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const exited = await Promise.race([
-            proc.exited.then(() => true),
+        const released = await Promise.race([
+            engine.closed.then(() => true),
             new Promise<false>((resolve) => {
                 timer = setTimeout(() => resolve(false), CLOSE_GRACE_MS);
             }),
         ]);
         clearTimeout(timer);
-        if (!exited) {
-            logger.debug({ label: this.label }, "impersonate sidecar did not exit after stdin closed, killing it");
-            proc.kill();
+        if (!released) {
+            logger.debug({ label: this.label }, "impersonate worker did not confirm close, terminating it");
         }
+
+        engine.worker.terminate();
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
         await this.close();
+    }
+
+    private send(engine: Engine, message: ToWorker): void {
+        engine.worker.postMessage(message);
+        engine.wakeup();
     }
 
     private cancelIdleClose(): void {
@@ -205,80 +215,88 @@ export class ImpersonatedHttpClient {
 
     private scheduleIdleClose(): void {
         const idleMs = this.options.idleCloseMs;
-        if (idleMs === undefined || this.pending.size > 0 || !this.proc) {
+        if (idleMs === undefined || this.pending.size > 0 || !this.engine) {
             return;
         }
 
         this.cancelIdleClose();
         this.idleTimer = setTimeout(() => {
             this.idleTimer = null;
-            logger.debug({ label: this.label, idleMs }, "impersonate sidecar idle, closing it");
+            logger.debug({ label: this.label, idleMs }, "impersonate worker idle, closing it");
             void this.close();
         }, idleMs);
         this.idleTimer.unref?.();
     }
 
-    private ensureStarted(): Subprocess<"pipe", "pipe", "pipe"> {
-        if (this.proc) {
-            return this.proc;
-        }
-
-        const uv = Bun.which("uv");
-        if (!uv) {
-            throw new ImpersonatedHttpError(
-                "uv is not installed. The Chrome-fingerprint HTTP client runs curl_cffi through uv: brew install uv"
-            );
-        }
-
-        const cmd = [uv, "run", "--no-project", "--quiet", "--with", "curl_cffi", "python", "-I", SIDECAR_PATH];
-        logger.debug({ label: this.label, cmd, profile: this.profile }, "starting impersonate sidecar");
-        const proc = Bun.spawn(cmd, {
-            stdin: "pipe",
-            stdout: "pipe",
-            stderr: "pipe",
-            env: { ...process.env, IMPERSONATE_PROXY_URL: this.options.proxyUrl ?? "" },
+    private ensureStarted(): Promise<Engine> {
+        this.engine ??= this.start().catch((error: unknown) => {
+            this.engine = null;
+            throw error;
         });
-        this.proc = proc;
-        this.stderrTail = "";
-        void this.readReplies(proc);
-        void this.readStderr(proc);
-        void proc.exited.then((code) => this.onExit(proc, code));
-        return proc;
+        return this.engine;
     }
 
-    private async readReplies(proc: Subprocess<"pipe", "pipe", "pipe">): Promise<void> {
-        const decoder = new TextDecoder();
-        let buffer = "";
-        for await (const chunk of proc.stdout) {
-            buffer += decoder.decode(chunk, { stream: true });
-            let newline = buffer.indexOf("\n");
-            while (newline >= 0) {
-                const line = buffer.slice(0, newline).trim();
-                buffer = buffer.slice(newline + 1);
-                if (line) {
-                    this.deliver(line);
+    private async start(): Promise<Engine> {
+        const files = await ensureLibcurlImpersonate();
+        const target = PROFILE_TARGETS[this.profile];
+        logger.debug({ label: this.label, library: files.library, target }, "starting impersonate worker");
+        const worker = new Worker(new URL("./worker.ts", import.meta.url));
+        // Requests in flight hold their reply timers, so an idle worker need not keep the process alive. Bun's
+        // Worker has unref(); the DOM Worker type the compiler sees does not.
+        if ("unref" in worker && typeof worker.unref === "function") {
+            worker.unref();
+        }
+
+        let markClosed: () => void = () => {};
+        const closed = new Promise<void>((resolve) => {
+            markClosed = resolve;
+        });
+        const multi = await new Promise<number>((resolve, reject) => {
+            worker.onmessage = (event: MessageEvent<FromWorker>) => {
+                const message = event.data;
+                switch (message.type) {
+                    case "ready":
+                        resolve(message.multi);
+                        return;
+                    case "failed":
+                        reject(new ImpersonatedHttpError(`impersonate worker failed: ${message.error}`));
+                        return;
+                    case "reply":
+                        this.deliver(message);
+                        return;
+                    case "closed":
+                        markClosed();
+                        return;
                 }
+            };
+            worker.onerror = (event: ErrorEvent) => {
+                const error = new ImpersonatedHttpError(`impersonate worker crashed: ${event.message}`);
+                logger.warn(
+                    { label: this.label, error: event.message, pending: this.pending.size },
+                    "impersonate worker crashed"
+                );
+                this.engine = null;
+                this.rejectAll(error.message);
+                reject(error);
+            };
+            worker.postMessage({
+                type: "init",
+                library: files.library,
+                caBundle: files.caBundle,
+                target,
+                proxyUrl: this.options.proxyUrl,
+            } satisfies ToWorker);
+        });
 
-                newline = buffer.indexOf("\n");
-            }
-        }
+        const curl = openLibcurl(files.library);
+        const multiHandle = multi as Pointer;
+        return { worker, closed, wakeup: () => void curl.multiWakeup(multiHandle) };
     }
 
-    private deliver(line: string): void {
-        let reply: SidecarReply;
-        try {
-            reply = SafeJSON.parse(line, { strict: true }) as SidecarReply;
-        } catch (error) {
-            logger.warn(
-                { error, label: this.label, line: line.slice(0, 200) },
-                "impersonate sidecar wrote a non-JSON line"
-            );
-            return;
-        }
-
+    private deliver(reply: WorkerReply): void {
         const waiter = this.pending.get(reply.id);
         if (!waiter) {
-            logger.debug({ label: this.label, id: reply.id }, "impersonate reply for a request that already timed out");
+            logger.debug({ label: this.label, id: reply.id }, "impersonate reply for a request that already ended");
             return;
         }
 
@@ -287,30 +305,10 @@ export class ImpersonatedHttpClient {
         waiter.resolve(reply);
     }
 
-    private async readStderr(proc: Subprocess<"pipe", "pipe", "pipe">): Promise<void> {
-        const decoder = new TextDecoder();
-        for await (const chunk of proc.stderr) {
-            this.stderrTail = (this.stderrTail + decoder.decode(chunk, { stream: true })).slice(-STDERR_TAIL_CHARS);
-        }
-    }
-
-    private onExit(proc: Subprocess<"pipe", "pipe", "pipe">, code: number | null): void {
-        if (this.proc === proc) {
-            this.proc = null;
-        }
-
-        if (this.pending.size === 0) {
-            logger.debug({ label: this.label, code }, "impersonate sidecar exited");
-            return;
-        }
-
-        const tail = this.stderrTail.trim();
-        logger.warn({ label: this.label, code, pending: this.pending.size, stderr: tail }, "impersonate sidecar died");
+    private rejectAll(reason: string): void {
         for (const [id, waiter] of this.pending) {
             clearTimeout(waiter.timer);
-            waiter.reject(
-                new ImpersonatedHttpError(`impersonate sidecar exited with code ${code}${tail ? `: ${tail}` : ""}`)
-            );
+            waiter.reject(new ImpersonatedHttpError(reason));
             this.pending.delete(id);
         }
     }

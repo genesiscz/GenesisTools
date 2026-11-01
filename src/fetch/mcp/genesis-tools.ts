@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Fetcher } from "../lib/fetcher";
 import { FETCH_TOOLS, toolText } from "./tools";
 
-/** The genesis-tools server is resident: an idle Chrome sidecar ends after a minute and restarts on demand. */
+/** The genesis-tools server is resident: an idle Chrome worker ends after a minute and restarts on demand. */
 const IDLE_CLOSE_MS = 60_000;
 
 let fetcher: Fetcher | undefined;
@@ -31,7 +31,7 @@ export function fetchToolEntries(): Record<string, ToolEntry> {
     );
 }
 
-/** Ends the shared Chrome sidecar; the server calls it when its stdin ends. */
+/** Ends the shared Chrome worker; the server calls it when its stdin ends. */
 export async function closeFetchTools(): Promise<void> {
     await fetcher?.close();
 }

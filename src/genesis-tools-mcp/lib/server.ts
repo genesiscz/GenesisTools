@@ -363,7 +363,7 @@ function loadControlEntries(): Promise<Record<string, ToolEntry>> {
 }
 
 /**
- * The fetch tools import the HTML converter and start a Python sidecar on their first chrome request, so they load
+ * The fetch tools import the HTML converter and start a curl worker on their first chrome request, so they load
  * only for a capability list that can expose them: unset (everything) or one naming `fetch`.
  */
 function loadFetchEntries(): Promise<Record<string, ToolEntry>> {
@@ -390,7 +390,7 @@ function loadWazeEntries(): Promise<Record<string, ToolEntry>> {
 }
 
 /**
- * Ends what a loaded group holds open (the fetch and Alza groups' Chrome sidecars, the Waze group's live-map tab). A
+ * Ends what a loaded group holds open (the fetch and Alza groups' Chrome workers, the Waze group's live-map tab). A
  * group that never loaded holds nothing.
  */
 async function closeLoadedGroups(): Promise<void> {
@@ -504,8 +504,8 @@ export async function startMcpServer(): Promise<void> {
     await server.connect(transport);
     log.info("genesis-tools MCP server started (stdio)");
 
-    // The stdio transport does not close on EOF, and an open child (the fetch group's Chrome sidecar) would keep the
-    // process alive after the host has gone, so stdin's end releases the groups' children.
+    // The stdio transport does not close on EOF, and an open child (the Waze group's browser tab) would keep the
+    // process alive after the host has gone, so stdin's end releases what the groups hold.
     process.stdin.once("end", () => {
         log.info("genesis-tools MCP server: stdin ended, closing loaded groups");
         void closeLoadedGroups().finally(() => server.close());

@@ -27,7 +27,7 @@ export interface SetCookie {
 }
 
 /**
- * The sidecar joins repeated `set-cookie` headers with ", ". Split only before a `name=` that follows a comma, so the
+ * The impersonated client joins repeated `set-cookie` headers with ", ". Split only before a `name=` that follows a comma, so the
  * comma inside `expires=Sun, 01-Nov-26 …` stays in its cookie.
  */
 export function splitSetCookie(header: string, now = Date.now()): SetCookie[] {

@@ -63,7 +63,7 @@ export async function startMcpServer(opts: { storefront?: StorefrontId; includeR
     };
 
     await server.connect(new StdioServerTransport());
-    // The sidecar's pipes keep the process alive, so the client closing stdin must end it explicitly.
+    // The stdio transport does not close on EOF, so the client closing stdin must end the server explicitly.
     process.stdin.on("end", () => shutdown("stdin EOF"));
     process.stdin.on("close", () => shutdown("stdin close"));
     process.on("SIGTERM", () => shutdown("SIGTERM"));

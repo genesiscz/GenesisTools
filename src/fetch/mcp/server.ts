@@ -16,7 +16,7 @@ const { log } = logger.scoped("fetch-mcp");
 
 const SERVER_NAME = "fetch";
 const SERVER_VERSION = "1.0.0";
-/** A resident server ends its idle Chrome sidecar after a minute; the next chrome request starts a new one. */
+/** A resident server ends its idle Chrome worker after a minute; the next chrome request starts a new one. */
 const IDLE_CLOSE_MS = 60_000;
 
 function errorMessage(error: unknown): string {
@@ -76,8 +76,8 @@ export function createFetchServer(fetcher: Fetcher): Server {
 }
 
 /**
- * Serves until stdin ends. The stdio transport does not close on EOF, and the Chrome sidecar's pipes would keep the
- * process alive, so stdin's end closes the fetcher and the server explicitly.
+ * Serves until stdin ends. The stdio transport does not close on EOF, so stdin's end closes the fetcher (its Chrome
+ * worker and connections) and the server explicitly.
  */
 export async function startFetchMcpServer(): Promise<void> {
     const fetcher = new Fetcher({ idleCloseMs: IDLE_CLOSE_MS });

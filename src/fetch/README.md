@@ -28,10 +28,10 @@ The result goes to stdout. A status line goes to stderr: the HTTP status, the tr
 | Transport | What it does |
 |---|---|
 | `plain` | Bun's fetch with a desktop Chrome User-Agent. Fast, no extra process. Bot walls refuse it. |
-| `chrome` | curl_cffi with `impersonate="chrome"`, through the long-lived Python sidecar `ImpersonatedHttpClient` (`src/utils/http/impersonate/`). The sidecar starts on the first request and keeps one cookie jar. |
+| `chrome` | libcurl-impersonate (the library curl_cffi wraps) with curl_cffi's `chrome152` target, through `ImpersonatedHttpClient` (`src/utils/http/impersonate/`) in a worker thread. The worker starts on the first request and keeps one cookie jar. |
 | `auto` (default) | `plain` first. On HTTP 403, 429 or 503, or on a recognised challenge page with any status, it retries once through `chrome`. The result says which transport answered and why it escalated. |
 
-The `chrome` transport needs `uv` on PATH (`brew install uv`); the first start downloads curl_cffi into uv's cache. Without `uv` the error names that command.
+The first `chrome` request downloads the pinned libcurl-impersonate shared library (checked against its sha256) into `~/.genesis-tools/impersonate/`; nothing else has to be installed. Upstream publishes no Windows shared library, so the `chrome` transport fails there with an error that says so.
 
 A challenge page is never returned as content. When the last transport tried still gets one, the command fails (exit 1, or an MCP error result) with a message that names the vendor, the signal and every transport tried, for example:
 
@@ -104,7 +104,7 @@ The same three tools are in the `genesis-tools` MCP server under the capability 
 
 All three are read-only and default to `transport: "auto"`. A markdown or raw result starts with one HTML comment line that names the final URL, the status and the transport (`<!-- fetched https://… (HTTP 200) via chrome, escalated after plain got … -->`), because many MCP clients do not show `_meta`. The jsonld result is the JSON document above. A blocked page is an error result with the message from the Transports section.
 
-Both servers end the Chrome sidecar when their stdin ends, and after one minute without a request; the next chrome request starts a new one. A CLI run ends it before it exits. Nothing is left behind: `pgrep -fl impersonate/sidecar.py` prints nothing after a run.
+Both servers end the Chrome worker when their stdin ends, and after one minute without a request; the next chrome request starts a new one. A CLI run ends it before it exits. The worker runs in the same process, so nothing is left behind.
 
 ## Code
 

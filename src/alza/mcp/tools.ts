@@ -107,7 +107,7 @@ export interface AlzaToolset {
     close(): Promise<void>;
 }
 
-/** A self-contained toolset for another MCP server: opens the account context, and closes it (and its sidecar) on close(). */
+/** A self-contained toolset for another MCP server: opens the account context, and closes it (and its Chrome worker) on close(). */
 export function createAlzaToolset(opts: AlzaToolsetOptions & { storefront?: StorefrontId } = {}): AlzaToolset {
     const ctx = openAccountContext({ storefront: opts.storefront });
     return {

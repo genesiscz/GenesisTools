@@ -1,7 +1,7 @@
 import { ImpersonatedHttpClient } from "@genesiscz/utils/http/impersonate/client";
 import type { HttpTransport, TransportName, TransportRequest, TransportResponse } from "./types";
 
-/** A desktop Chrome User-Agent for the plain transport. The chrome transport sends curl_cffi's own, matching set. */
+/** A desktop Chrome User-Agent for the plain transport. The chrome transport sends libcurl-impersonate's own, matching set. */
 const PLAIN_HEADERS = {
     "User-Agent":
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
@@ -31,13 +31,13 @@ class PlainTransport implements HttpTransport {
 }
 
 export interface ChromeTransportOptions {
-    /** Ends the idle sidecar after this many ms; for a long-lived server. */
+    /** Ends the idle worker after this many ms; for a long-lived server. */
     idleCloseMs?: number;
 }
 
 /**
- * A real Chrome TLS, HTTP/2 and header fingerprint through the curl_cffi sidecar (`ImpersonatedHttpClient`). The
- * sidecar starts on the first request and keeps one cookie jar, so a clearance cookie carries over to later requests.
+ * A real Chrome TLS, HTTP/2 and header fingerprint through libcurl-impersonate (`ImpersonatedHttpClient`). Its
+ * worker starts on the first request and keeps one cookie jar, so a clearance cookie carries over to later requests.
  */
 class ChromeTransport implements HttpTransport {
     readonly name = "chrome" as const;
