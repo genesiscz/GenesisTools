@@ -44,7 +44,9 @@ public enum MarkdownKeymap {
         KeymapCommand("markdown.file.reload", "Reload from Disk", group: "Files", keys: [.character("r", .command)]),
         KeymapCommand("markdown.file.reveal", "Reveal in Finder", group: "Files", keys: [.character("r", [.shift, .command])]),
         KeymapCommand("markdown.file.copyPath", "Copy Path", group: "Files", keys: [.character("c", [.control, .shift])]),
-        KeymapCommand("markdown.file.goto", "Go to Location…", group: "Files", keys: [.character("g", [.shift, .command])]),
+        KeymapCommand("markdown.file.goto", "Go to Location…", group: "Files",
+                      detail: "A path, with the folders and notes that match it listed under it. While Find is open, ⇧⌘G is Previous Match.",
+                      keys: [.character("g", [.shift, .command])]),
         KeymapCommand("markdown.file.pdf", "Save as PDF…", group: "Files", keys: [.character("s", [.shift, .command])]),
         KeymapCommand("markdown.file.print", "Print…", group: "Files", keys: [.character("p", .command)]),
         // View

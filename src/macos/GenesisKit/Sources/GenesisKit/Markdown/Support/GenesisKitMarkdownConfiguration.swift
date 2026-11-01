@@ -44,6 +44,30 @@ public enum MarkdownShareBrowser: String, CaseIterable, Sendable {
     }
 }
 
+/// Which files "Go to Location…" (⇧⌘G) lists besides folders.
+public enum MarkdownGoToFiles: String, CaseIterable, Sendable {
+    /// Markdown, canvas and base files, as the file sidebar's "Show only notes". The default.
+    case notes
+    /// Every file the viewer opens as a tab: text, JSON, YAML, code.
+    case readable
+}
+
+/// The folder "Go to Location…" starts in.
+public enum MarkdownGoToStart: String, CaseIterable, Sendable {
+    /// The open note's folder; the file sidebar's folder when no note is open. The default.
+    case noteFolder
+    /// The folder the file sidebar shows.
+    case sidebarFolder
+}
+
+/// How "Go to Location…" opens a file.
+public enum MarkdownGoToOpen: String, CaseIterable, Sendable {
+    /// A kept tab, or the file's own tab when it is open. The default.
+    case tab
+    /// The preview tab that the next preview replaces, as a single click in the file sidebar does.
+    case previewTab
+}
+
 @MainActor
 public final class GenesisKitMarkdownConfiguration: ObservableObject {
     public static let shared = GenesisKitMarkdownConfiguration()
@@ -117,6 +141,19 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     /// The source editor opens the list of notes after `[[` and of tags after `#word` by itself. Off: Esc opens it.
     @Published public var completeWhileTyping: Bool { didSet { store(completeWhileTyping, "completeWhileTyping") } }
 
+    // MARK: Go to Location (⇧⌘G)
+
+    /// Which files the list under the path lists besides folders.
+    @Published public var goToFiles: MarkdownGoToFiles { didSet { store(goToFiles.rawValue, "goToFiles") } }
+    /// Names that start with a dot are listed from the first letter. Off: only once the typed name starts with a dot.
+    @Published public var goToShowsHidden: Bool { didSet { store(goToShowsHidden, "goToShowsHidden") } }
+    /// The files opened lately head the list while the field still holds the folder it opened with.
+    @Published public var goToRecents: Bool { didSet { store(goToRecents, "goToRecents") } }
+    /// The folder the field holds when it opens.
+    @Published public var goToStartsIn: MarkdownGoToStart { didSet { store(goToStartsIn.rawValue, "goToStartsIn") } }
+    /// A kept tab or the preview tab for the file picked.
+    @Published public var goToOpensAs: MarkdownGoToOpen { didSet { store(goToOpensAs.rawValue, "goToOpensAs") } }
+
     // MARK: Git
 
     /// Every git control: the file's state, the gutter, the Changes mode, the history and the tree marks. A note
@@ -182,6 +219,11 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         stickySection = bool("stickySection", true)
         scrollbarMatchMarks = bool("scrollbarMatchMarks", true)
         completeWhileTyping = bool("completeWhileTyping", true)
+        goToFiles = string("goToFiles").flatMap(MarkdownGoToFiles.init(rawValue:)) ?? .notes
+        goToShowsHidden = bool("goToShowsHidden", false)
+        goToRecents = bool("goToRecents", true)
+        goToStartsIn = string("goToStartsIn").flatMap(MarkdownGoToStart.init(rawValue:)) ?? .noteFolder
+        goToOpensAs = string("goToOpensAs").flatMap(MarkdownGoToOpen.init(rawValue:)) ?? .tab
         git = bool("git", true)
         gitGutter = bool("gitGutter", true)
         gitTreeDecorations = bool("gitTreeDecorations", true)
