@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import {
     type CallToolResult,
@@ -23,7 +24,7 @@ const INSTRUCTIONS =
     "list_category_filters → list_category for brand and parameter filters; get_deals for discounts. " +
     "Account: account_status first; cart_show / cart_add / cart_remove and favorites_list work without a sign-in " +
     "(a visitor basket kept between runs); orders_list, order_show and watchdog_* need one. Sign-in is a browser step the " +
-    "user runs in a terminal: tools alza auth login. Nothing here places an order or pays. " +
+    `user runs in a terminal: ${toolCommand("alza auth login")}. Nothing here places an order or pays. ` +
     "Products accept a code, a numeric id or a product URL.";
 
 /** Both tables as one tool list. A catalog tool only reads; an account tool says what it does. */
