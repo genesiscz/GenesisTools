@@ -846,6 +846,10 @@ export function flushDeferred({
     }
 
     const parent = dirname(callDir(payload.harness, session, call));
+    // The main agent and its subagents share one session folder. A task is printed only to a later call of the agent
+    // that started it, or a subagent's background test run lands in the main agent's output (2026-11-01).
+    const agent = payload.raw.agent_id ?? payload.raw.agentId;
+    const caller = typeof agent === "string" ? agent : undefined;
     const decisions: DiffDecision[] = [];
     let spent = 0;
     let names: string[];
@@ -868,7 +872,7 @@ export function flushDeferred({
             continue;
         }
 
-        if (!taskEnded(deferred.output)) {
+        if (deferred.agent !== caller || !taskEnded(deferred.output)) {
             continue;
         }
 
