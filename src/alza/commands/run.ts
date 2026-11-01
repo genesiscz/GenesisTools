@@ -3,9 +3,11 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
+import { openAccountContext } from "../lib/account";
+import { findAccountOperation } from "../lib/account-operations";
 import { AlzaApi } from "../lib/api";
 import { money, ratingText } from "../lib/format";
-import { findOperation } from "../lib/operations";
+import { findOperation, type OperationResult } from "../lib/operations";
 import { isStorefrontId, STOREFRONT_IDS, type StorefrontId } from "../lib/storefront";
 import type { ListingPage, ProductSummary } from "../lib/types";
 
@@ -87,6 +89,42 @@ export async function runOperation(command: Command, name: string, input: Record
         process.exitCode = 1;
     } finally {
         await api.close();
+    }
+}
+
+/**
+ * Runs one account operation: the persisted visitor and the stored tokens, `--json` data or markdown. Returns the
+ * result (undefined after a printed failure, which also sets exit code 1). A diagnostic never saves the visitor state.
+ */
+export async function runAccountOperation(
+    command: Command,
+    name: string,
+    input: Record<string, unknown>
+): Promise<OperationResult | undefined> {
+    const storefront = await resolveStorefront(command);
+    if (!storefront) {
+        return undefined;
+    }
+
+    const json = command.optsWithGlobals<GlobalOptions>().json ?? false;
+    const op = findAccountOperation(name);
+    const ctx = openAccountContext({ storefront });
+    try {
+        const result = await op.run(ctx, input);
+        if (json) {
+            out.result(result.data);
+        } else {
+            out.println(result.markdown);
+        }
+
+        return result;
+    } catch (error) {
+        logger.debug({ error, operation: name }, "alza account command failed");
+        out.log.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+        return undefined;
+    } finally {
+        await ctx.close({ save: op.kind !== "diagnostic" });
     }
 }
 

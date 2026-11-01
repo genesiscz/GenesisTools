@@ -38,3 +38,38 @@ from the server-rendered category pages. The route inventory comes from
 [Hlídač shopů](https://www.hlidacshopu.cz). Postal codes are geocoded with OpenStreetMap Nominatim.
 
 Question posts upstream carry the asker's email address; the tool never reads it.
+
+## Account
+
+Sign in once in a browser; the tool never sees your password. Then the basket, orders, watchdogs and favourites work
+from the CLI and as MCP tools. Placing orders, payments, cancellations and account changes are not implemented.
+
+```bash
+tools alza auth login                   # opens the sign-in page, then asks for the alza://identity?code=… URL
+tools alza auth login --print-url       # the same in two steps, without a terminal prompt …
+tools alza auth login --redirect-url 'alza://identity?code=…&state=…'   # … step 2
+tools alza auth status                  # reads only: expiry, user id, one check that Alza accepts the token
+tools alza auth logout
+tools alza cart                         # works signed out too: a visitor basket kept between runs
+tools alza cart add AUPR65708 --qty 2   # code, numeric id or product URL; orders nothing
+tools alza cart remove AUPR65708
+tools alza favorites                    # the Oblíbené list
+tools alza orders list --limit 20       # active and archived orders (signed in)
+tools alza orders show 1058423434
+tools alza watchdog list                # price and stock watchdogs (Hlídací pes), signed in
+tools alza watchdog add AUPR65708 --price 1999 --stock
+tools alza watchdog remove <id|product>
+```
+
+After the sign-in the browser tries to open `alza://identity?code=…` and cannot; copy that URL from the address bar,
+the "open this app?" message, or the DevTools Network tab (turn on "Preserve log" first). The code expires within
+minutes.
+
+Files, all mode 0600, under `~/.genesis-tools/alza/`: `tokens.json` (access and refresh token, user id),
+`pending-login.json` (the PKCE verifier between the two sign-in steps, removed after the exchange) and `state.json`
+(the visitor id and the `IDOX`/`VST` cookies: the anonymous basket is keyed by the `IDOX` cookie, not by the visitor
+id). An account command renews an expiring access token with the refresh token; `auth status` never does.
+
+MCP tools: `account_status`, `cart_show`, `cart_add`, `cart_remove`, `favorites_list`, `orders_list`, `order_show`,
+`watchdog_list`, `watchdog_add`, `watchdog_remove`. The four that change the basket or the watchdogs are annotated
+`readOnlyHint: false`. A tool that needs a sign-in answers "Sign in first: tools alza auth login".
