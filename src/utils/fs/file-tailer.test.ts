@@ -49,6 +49,22 @@ describe("FileTailer<T>", () => {
         expect(existsSync(missing)).toBe(false);
     });
 
+    it("keeps reading after a torn row: later appends are not stuck behind the malformed line", () => {
+        const f = join(mkdtempSync(join(tmpdir(), "ft-")), "log.jsonl");
+        // A writer killed mid-row: the next writer's row lands on the same line, which can never parse.
+        writeFileSync(f, `${SafeJSON.stringify({ id: "a" })}\n{"id":`);
+        const seen: string[] = [];
+        const t = new FileTailer<{ id: string }>(f, { onLine: (e) => seen.push(e.id) }, { from: 0 });
+        t.start();
+        t.flush();
+        appendFileSync(f, `${SafeJSON.stringify({ id: "b" })}\n${SafeJSON.stringify({ id: "c" })}\n`);
+        t.flush();
+        appendFileSync(f, `${SafeJSON.stringify({ id: "d" })}\n`);
+        t.flush();
+        t.stop();
+        expect(seen).toEqual(["a", "c", "d"]);
+    });
+
     it("drops a buffered partial line on restart, since the restart reads those bytes again", () => {
         const f = join(mkdtempSync(join(tmpdir(), "ft-")), "log.jsonl");
         writeFileSync(f, `${SafeJSON.stringify({ id: "a" })}\n{"id":`);

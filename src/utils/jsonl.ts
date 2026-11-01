@@ -33,12 +33,31 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
     const combined = existingRemainder?.length ? Buffer.concat([existingRemainder, data]) : data;
 
     if (hasBunJsonl && Bun.JSONL) {
-        const result = Bun.JSONL.parseChunk(combined);
+        const jsonl = Bun.JSONL;
+        const values: T[] = [];
+        let read = 0;
+
+        // The native parser stops at a malformed line. A line with its newline is complete, so it is skipped, as the
+        // fallback does; without that, a torn row kept every later append in the remainder and a tailer saw none.
+        // Only an unterminated last line stays in the remainder, to be completed by the next append.
+        for (;;) {
+            const result = jsonl.parseChunk(combined.subarray(read));
+            values.push(...(result.values as T[]));
+            read += result.read;
+            const newline = combined.indexOf(0x0a, read);
+
+            if (result.done || read >= combined.length || newline === -1) {
+                break;
+            }
+
+            read = newline + 1;
+        }
+
         return {
-            values: result.values as T[],
-            read: result.read,
-            done: result.done,
-            remainder: Buffer.from(combined.subarray(result.read)),
+            values,
+            read,
+            done: read >= combined.length,
+            remainder: Buffer.from(combined.subarray(read)),
         };
     }
 
