@@ -1406,6 +1406,50 @@ describe("retention", () => {
         expect(listArchive(join(dir, "r3.zst")).some((entry) => entry.path === "r3/data.jsonl")).toBe(true);
     });
 
+    it("a skipped pack keeps the older archive and the drop it outranked, and a later pack retires them", async () => {
+        const dir = scratch("retention-skipped");
+        const day = 86_400_000;
+        const now = new Date("2026-10-13T12:00:00Z");
+        const age = (name: string, days: number) => {
+            const seconds = (now.getTime() - days * day) / 1000;
+            utimesSync(join(dir, name), seconds, seconds);
+        };
+
+        for (const [name, days] of [
+            ["r1", 3],
+            ["r2", 5],
+        ] as const) {
+            mkdirSync(join(dir, name));
+            writeFileSync(join(dir, name, "data.jsonl"), logText(20));
+            age(name, days);
+        }
+
+        writeFileSync(join(dir, "r0.zst"), "an older packed run");
+        age("r0.zst", 40);
+        const names = (paths: string[]) => paths.map((path) => path.split("/").pop());
+        const options = { root: dir, keep: 0, maxArchives: 1, now };
+        const plan = planFolderRetention(options);
+
+        expect(names(plan.pack.map((item) => item.folder))).toEqual(["r1"]);
+        expect(names(plan.drop)).toEqual(["r2"]);
+        expect(names(plan.deleteArchives)).toEqual(["r0.zst"]);
+
+        // No free space: r1 stays a folder, so it pushes out neither r2 nor r0.zst.
+        const skipped = await applyFolderRetention(plan, { caller: "test", minFreeBytes: Number.MAX_SAFE_INTEGER });
+
+        expect(names(skipped.skippedLowDisk)).toEqual(["r1"]);
+        expect(skipped.removed).toEqual([]);
+        expect(names(skipped.spared)).toEqual(["r2", "r0.zst"]);
+        expect(readdirSync(dir).sort()).toEqual(["r0.zst", "r1", "r2"]);
+
+        // With room, r1 is packed and takes the one place: the drop and the older archive go as planned.
+        const packed = await applyFolderRetention(planFolderRetention(options), { caller: "test", minFreeBytes: 0 });
+
+        expect(names(packed.removed)).toEqual(["r2", "r0.zst"]);
+        expect(packed.spared).toEqual([]);
+        expect(readdirSync(dir).sort()).toEqual(["r1.zst"]);
+    });
+
     it("compresses old day files in place, leaves today's and recently written ones plain", async () => {
         const dir = scratch("days");
         const now = new Date("2026-10-13T12:00:00");

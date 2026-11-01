@@ -17,6 +17,7 @@ import { listArchive } from "@genesiscz/utils/compress/tar";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
+import { Storage } from "@genesiscz/utils/storage";
 import {
     type BackupPolicy,
     DEFAULT_BACKUP_POLICY,
@@ -28,6 +29,7 @@ import {
     migrateHome,
     normaliseRootPath,
     planBackupRetention,
+    readBackupPolicy,
     retainBackups,
     SESSION_INDEX_FILE,
 } from "./migrate-home";
@@ -1037,6 +1039,36 @@ describe("packed backup snapshots", () => {
         plantArchives(root, [100, 200]);
         await retainBackups(root, NOW, { keepArchives: 0, keepArchiveDays: 0 });
         expect(names(root)).toEqual(["20260900-120000.zst"]);
+    });
+
+    test("a saved negative or non-numeric setting falls back to its default, and zero stays valid", async () => {
+        const storage = new Storage("codex");
+        const cases: Array<[unknown, BackupPolicy]> = [
+            [undefined, DEFAULT_BACKUP_POLICY],
+            [{ keepArchives: -3, keepArchiveDays: -14 }, DEFAULT_BACKUP_POLICY],
+            [{ keepArchives: "5", keepArchiveDays: null }, DEFAULT_BACKUP_POLICY],
+            [
+                { keepArchives: -1, keepArchiveDays: 7 },
+                { keepArchives: 2, keepArchiveDays: 7 },
+            ],
+            [
+                { keepArchives: 0, keepArchiveDays: 0 },
+                { keepArchives: 1, keepArchiveDays: 0 },
+            ],
+            [
+                { keepArchives: 5.7, keepArchiveDays: 3.5 },
+                { keepArchives: 5, keepArchiveDays: 3.5 },
+            ],
+        ];
+
+        try {
+            for (const [saved, expected] of cases) {
+                await storage.setConfigValue("migrateHome.backups", saved);
+                expect(await readBackupPolicy()).toEqual(expected);
+            }
+        } finally {
+            await storage.setConfigValue("migrateHome.backups", undefined);
+        }
     });
 
     test("the plan names what would go and removes nothing", () => {

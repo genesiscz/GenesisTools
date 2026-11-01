@@ -78,6 +78,23 @@ export interface PlannedPack {
     timeMs: number;
 }
 
+/** The archive limits a plan was made with, so {@link applyFolderRetention} can rank the archives again after packing. */
+export interface ArchiveLimits {
+    maxArchiveAgeDays?: number;
+    maxArchives?: number;
+    keepYoungArchives?: boolean;
+    /** The plan's clock, in ms. */
+    nowMs: number;
+}
+
+/** An archive the plan ranked: one already on disk, or the one a folder would be packed into. */
+export interface RankedArchive {
+    path: string;
+    timeMs: number;
+    /** Set when the archive does not exist yet: the folder it would be packed from (a planned pack or drop). */
+    folder?: string;
+}
+
 export interface FolderRetentionPlan {
     root: string;
     kept: string[];
@@ -86,15 +103,54 @@ export interface FolderRetentionPlan {
     drop: string[];
     deleteArchives: string[];
     staleTemps: string[];
+    /**
+     * Every archive the plan ranked, newest first, with the limits it used. A pack that is skipped or fails leaves no
+     * archive, so {@link applyFolderRetention} ranks them again without it before it removes anything.
+     */
+    ranking: { archives: RankedArchive[]; limits: ArchiveLimits };
+}
+
+/**
+ * For each archive (newest first), whether it is past the limits. Its rank is the number of newer entries that
+ * `counts`: the plan counts every entry, {@link applyFolderRetention} only the archives that exist after packing.
+ */
+function pastArchiveLimits(
+    archives: readonly RankedArchive[],
+    limits: ArchiveLimits,
+    counts: (archive: RankedArchive) => boolean = () => true
+): boolean[] {
+    const { maxArchiveAgeDays, maxArchives, nowMs } = limits;
+    const unionKeep = limits.keepYoungArchives && maxArchiveAgeDays !== undefined && maxArchives !== undefined;
+    let rank = 0;
+
+    return archives.map((archive) => {
+        const expired = maxArchiveAgeDays !== undefined && nowMs - archive.timeMs > maxArchiveAgeDays * DAY_MS;
+        const overCount = maxArchives !== undefined && rank >= maxArchives;
+
+        if (counts(archive)) {
+            rank++;
+        }
+
+        return unionKeep ? expired && overCount : expired || overCount;
+    });
 }
 
 /** What a retention run would do. Reads only: this is the dry run. */
 export function planFolderRetention(options: FolderRetentionOptions): FolderRetentionPlan {
-    const { root, keep, keepMaxAgeDays, maxArchiveAgeDays, maxArchives } = options;
+    const { root, keep, keepMaxAgeDays, maxArchiveAgeDays, maxArchives, keepYoungArchives } = options;
     const include = options.include ?? ((name: string) => !name.startsWith("."));
     const timeOf = options.timeOf ?? ((entry: { mtimeMs: number }) => entry.mtimeMs);
     const now = (options.now ?? new Date()).getTime();
-    const plan: FolderRetentionPlan = { root, kept: [], pack: [], drop: [], deleteArchives: [], staleTemps: [] };
+    const limits: ArchiveLimits = { maxArchiveAgeDays, maxArchives, keepYoungArchives, nowMs: now };
+    const plan: FolderRetentionPlan = {
+        root,
+        kept: [],
+        pack: [],
+        drop: [],
+        deleteArchives: [],
+        staleTemps: [],
+        ranking: { archives: [], limits },
+    };
 
     if (!existsSync(root)) {
         return plan;
@@ -139,7 +195,7 @@ export function planFolderRetention(options: FolderRetentionOptions): FolderRete
     const repacked = new Set(older.map((folder) => `${folder.path}${FOLDER_ARCHIVE_SUFFIX}`));
     // A folder and its own archive both present means an earlier run stopped between packing and removing: the
     // folder is packed again (the rename replaces the archive), so the archive is not counted twice.
-    const candidates = [
+    const candidates: RankedArchive[] = [
         ...archives.filter((archive) => !repacked.has(archive.path)),
         ...older.map((folder) => ({
             path: `${folder.path}${FOLDER_ARCHIVE_SUFFIX}`,
@@ -147,12 +203,11 @@ export function planFolderRetention(options: FolderRetentionOptions): FolderRete
             folder: folder.path,
         })),
     ].sort((a, b) => b.timeMs - a.timeMs);
+    plan.ranking.archives = candidates;
+    const pastLimits = pastArchiveLimits(candidates, limits);
 
     candidates.forEach((candidate, index) => {
-        const expired = maxArchiveAgeDays !== undefined && now - candidate.timeMs > maxArchiveAgeDays * DAY_MS;
-        const overCount = maxArchives !== undefined && index >= maxArchives;
-        const unionKeep = options.keepYoungArchives && maxArchiveAgeDays !== undefined && maxArchives !== undefined;
-        const past = unionKeep ? expired && overCount : expired || overCount;
+        const past = pastLimits[index];
 
         if (candidate.folder) {
             if (past) {
@@ -173,6 +228,21 @@ export interface FolderRetentionReport {
     packed: Array<{ folder: string; archive: string; archiveBytes: number; tarBytes: number; entries: number }>;
     failed: Array<{ folder: string; reason: string }>;
     skippedLowDisk: string[];
+    /** Planned drops and archive deletions that were carried out. */
+    removed: string[];
+    /** Planned drops and archive deletions kept, because a newer pack that outranked them left no archive. */
+    spared: string[];
+}
+
+/**
+ * The drops and archive deletions still past the limits when only the archives that exist after packing outrank them
+ * (those already on disk and the packs that worked). A skipped or failed pack, or a folder kept by this check, is still
+ * a folder, so it never pushes out an archive it was to replace. Keyed by folder for a drop and by path for an archive.
+ */
+function stillPastLimits(plan: FolderRetentionPlan, packed: ReadonlySet<string>): Set<string> {
+    const { archives, limits } = plan.ranking;
+    const past = pastArchiveLimits(archives, limits, (archive) => !archive.folder || packed.has(archive.folder));
+    return new Set(archives.filter((_, index) => past[index]).map((archive) => archive.folder ?? archive.path));
 }
 
 export interface ApplyRetentionOptions {
@@ -189,7 +259,8 @@ export interface ApplyRetentionOptions {
 /**
  * Carries out a plan from {@link planFolderRetention}: each older folder is packed into `<folder>.tar.zst`, the archive
  * is checked against the folder (every entry, size and file sha256), and only then is the folder retired. A failed
- * check removes the new archive and keeps the folder.
+ * check removes the new archive and keeps the folder. Drops and archive deletions run last, ranked again without the
+ * packs that left no archive, so a skipped or failed pack never costs an older archive its place.
  */
 export async function applyFolderRetention(
     plan: FolderRetentionPlan,
@@ -198,7 +269,7 @@ export async function applyFolderRetention(
     const retire = options.retire ?? removePath;
     const preset = options.preset ?? PRESETS.tree;
     const minFree = options.minFreeBytes ?? DEFAULT_MIN_FREE_BYTES;
-    const report: FolderRetentionReport = { plan, packed: [], failed: [], skippedLowDisk: [] };
+    const report: FolderRetentionReport = { plan, packed: [], failed: [], skippedLowDisk: [], removed: [], spared: [] };
 
     for (const temp of plan.staleTemps) {
         retire(temp);
@@ -284,14 +355,18 @@ export async function applyFolderRetention(
         }
     }
 
-    for (const folder of plan.drop) {
-        retire(folder);
-        logger.info({ folder }, "[compress] removed a folder past the archive limits");
-    }
+    const stillPast = stillPastLimits(plan, new Set(report.packed.map((item) => item.folder)));
 
-    for (const archive of plan.deleteArchives) {
-        retire(archive);
-        logger.info({ archive }, "[compress] removed an archive past the archive limits");
+    for (const path of [...plan.drop, ...plan.deleteArchives]) {
+        if (!stillPast.has(path)) {
+            logger.info({ path }, "[compress] kept: a newer pack that would have replaced it left no archive");
+            report.spared.push(path);
+            continue;
+        }
+
+        retire(path);
+        report.removed.push(path);
+        logger.info({ path }, "[compress] removed past the archive limits");
     }
 
     return report;

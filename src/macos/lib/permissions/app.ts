@@ -1711,7 +1711,8 @@ export async function packRetiredBundles(retiredRoot: string): Promise<void> {
                 kept: plan.kept.length,
                 pinned: pinned.size,
                 packed: report.packed.length,
-                removed: plan.drop.length + plan.deleteArchives.length,
+                removed: report.removed.length,
+                spared: report.spared.length,
                 failed: report.failed.length,
             },
             "packed retired app bundles"

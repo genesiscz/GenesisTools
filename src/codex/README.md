@@ -162,7 +162,9 @@ Safety rules, all of them load-bearing:
 - **Packed backups are capped when a run is applied.** A `<stamp>.zst` stays while it is among
   the newest 2 or younger than 14 days, whichever keeps more; the newest always stays. Change it
   with `migrateHome.backups.keepArchives` and `keepArchiveDays` in
-  `~/.genesis-tools/codex/config.json`. A dry run never deletes.
+  `~/.genesis-tools/codex/config.json`; a negative or non-numeric value falls back to the default.
+  A run whose pack is skipped (low disk) or fails its check never pushes an older `.zst` out.
+  A dry run never deletes.
 - **Every copy is verified** by size and SHA-256 before the run counts it.
 - **The date tree is preserved verbatim.** Paths are never re-derived from the rollout header
   timestamp, which differs from the filename timestamp.
