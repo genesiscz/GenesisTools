@@ -68,6 +68,7 @@ import {
     priorDenials,
     probeGit,
     probeItemGit,
+    pruneRmRequests,
     RM_REQUEST_TTL_MS,
     type RmCaller,
     type RmConfig,
@@ -76,6 +77,7 @@ import {
     type RmRuleContext,
     readRmLedger,
     readRmLedgerNewest,
+    readRmRequestFile,
     recheckAfterWait,
     recordRmMeasurement,
     recoverAsideJournals,
@@ -88,6 +90,7 @@ import {
     restoreBatch,
     returnAside,
     rmLedgerPath,
+    rmRequestLockFile,
     runDrainer,
     saveRmConfig,
     saveRmRequest,
@@ -2009,5 +2012,78 @@ describe("the git facts of a big request", () => {
         expect(calls).toBe(41);
         expect(most).toBeLessThanOrEqual(4);
         expect(facts.size).toBe(40);
+    });
+});
+
+describe("prune", () => {
+    test("closes gone and expired requests, keeps aside, lost and busy ones, and moves no file", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rm-prune-"));
+        const dir = join(root, "requests");
+        const here = join(root, "files");
+        mkdirSync(join(here, "aside"), { recursive: true });
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(here, "kept.txt"), "x");
+        writeFileSync(join(here, "aside", "copy.txt"), "x");
+        const fields = { kind: "delete" as const, caller: null, cwd: here, reason: null, status: "pending" as const };
+        const target = (path: string, stored?: string) => ({
+            path: join(here, path),
+            kind: "file" as const,
+            rule: "default",
+            reason: "r",
+            ...(stored ? { stored: join(here, stored) } : {}),
+        });
+        saveRmRequest(
+            { ...fields, id: "gone11", createdAt: "2026-11-01T13:00:00.000Z", targets: [target("missing.txt")] },
+            dir
+        );
+        saveRmRequest(
+            { ...fields, id: "expd22", createdAt: "2026-10-30T13:00:00.000Z", targets: [target("kept.txt")] },
+            dir
+        );
+        saveRmRequest(
+            {
+                ...fields,
+                id: "asid33",
+                createdAt: "2026-10-27T13:00:00.000Z",
+                targets: [target("orig.txt", "aside/copy.txt")],
+            },
+            dir
+        );
+        saveRmRequest(
+            {
+                ...fields,
+                id: "lost44",
+                createdAt: "2026-10-27T13:00:00.000Z",
+                targets: [target("orig2.txt", "aside/nope.txt")],
+            },
+            dir
+        );
+        saveRmRequest(
+            { ...fields, id: "busy55", createdAt: "2026-11-01T13:00:00.000Z", targets: [target("missing2.txt")] },
+            dir
+        );
+        writeFileSync(rmRequestLockFile("busy55", dir), String(process.ppid));
+        const now = new Date("2026-11-01T14:00:00.000Z");
+
+        expect(pruneRmRequests({ dir, now, dryRun: true }).closed.map((c) => c.id)).toEqual([
+            "busy55",
+            "expd22",
+            "gone11",
+        ]);
+        const result = pruneRmRequests({ dir, now });
+        expect(result.closed).toEqual([
+            { id: "expd22", status: "expired" },
+            { id: "gone11", status: "gone" },
+        ]);
+        expect(result.busy).toEqual(["busy55"]);
+        const status = (id: string) => readRmRequestFile(join(dir, `${id}.json`))?.status;
+        expect(["gone11", "expd22", "asid33", "lost44", "busy55"].map(status)).toEqual([
+            "gone",
+            "expired",
+            "pending",
+            "pending",
+            "pending",
+        ]);
+        expect(existsSync(join(here, "kept.txt")) && existsSync(join(here, "aside", "copy.txt"))).toBe(true);
     });
 });

@@ -13,6 +13,7 @@ import {
     lockRmRequest,
     mayDenyRmRequest,
     measureRmRequest,
+    pruneRmRequests,
     type RmRequest,
     type RmRequestTarget,
     recheckAfterWait,
@@ -470,6 +471,34 @@ export function registerRequestCommands(program: Command): void {
 
             if (!done) {
                 process.exitCode = 1;
+            }
+        });
+
+    program
+        .command("prune")
+        .description("close the requests nobody can decide: every path gone, or in place past 24 h (moves no file)")
+        .option("-n, --dry-run", "list what would close")
+        .option("--json", "print as JSON")
+        .action((flags: { dryRun?: boolean; json?: boolean }) => {
+            const ctx = runContext();
+            recoverAsideJournals();
+            const result = pruneRmRequests({ dryRun: flags.dryRun, caller: ctx.caller });
+
+            if (flags.json) {
+                out.result(result);
+                return;
+            }
+
+            for (const closed of result.closed) {
+                out.println(`${flags.dryRun ? "would close" : "closed"} ${pc.bold(closed.id)}: ${closed.status}`);
+            }
+
+            for (const id of result.busy) {
+                out.println(pc.yellow(`left ${id}: it is open in an approval window`));
+            }
+
+            if (result.closed.length === 0 && result.busy.length === 0) {
+                out.println("Nothing to close.");
             }
         });
 }

@@ -10,7 +10,7 @@ import { effectiveConfig } from "./profiles";
 import type { RmCaller, RmTargetKind } from "./rules";
 
 export type RmRequestKind = "delete" | "root";
-export type RmRequestStatus = "pending" | "approved" | "denied" | "expired";
+export type RmRequestStatus = "pending" | "approved" | "denied" | "expired" | "gone";
 
 export interface RmRequestTarget {
     path: string;

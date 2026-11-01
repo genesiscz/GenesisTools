@@ -22,7 +22,9 @@ export type RmLedgerAction =
     | "root-remove"
     | "profile-set"
     | "profile-remove"
-    | "config-set";
+    | "config-set"
+    | "close"
+    | "lost";
 
 /** One line of `~/.genesis-tools/rm/ledger.jsonl`: every move, deletion, restore, refusal and decision. */
 export interface RmLedgerEntry {
