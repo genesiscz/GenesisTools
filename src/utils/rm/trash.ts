@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { createStopwatch } from "@genesiscz/utils/format";
+import { createStopwatch, formatCount } from "@genesiscz/utils/format";
 import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
 import { keepFromTmpCleaner } from "@genesiscz/utils/fs/tmp-cleaner";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -854,7 +854,7 @@ export function trashRootChangeBlocker(
     }
 
     return (
-        `the trash at ${config.trashRoot} still holds ${batches} batch(es) or leftover folders. ` +
+        `the trash at ${config.trashRoot} still holds ${formatCount(batches, "batch", "batches")} or leftover folders. ` +
         `Restore what you want back, ${drainCommand ? `run ${drainCommand}` : "drain the trash"}, then change trash-root.`
     );
 }

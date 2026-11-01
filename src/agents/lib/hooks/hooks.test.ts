@@ -2343,13 +2343,13 @@ describe("rm request notice", () => {
         const payload = payloadOf("tools rm ./.smoke.tmp.ts > /dev/null 2>&1");
         const notice = payload ? await rmRequestNotice(payload, deps) : null;
 
-        expect(notice).toContain("rm request k7m2qd: 1 path(s) wait for the user. Do not run approve yourself.");
+        expect(notice).toContain("rm request k7m2qd: 1 path waits for the user. Do not run approve yourself.");
         expect(notice).not.toContain("old111");
         expect(notice).not.toContain("othr22");
     });
 
     it("stays quiet when the output already named the request, and for any other command", async () => {
-        const shown = payloadOf("tools rm ./.smoke.tmp.ts", "rm request k7m2qd: 1 path(s) wait for the user.");
+        const shown = payloadOf("tools rm ./.smoke.tmp.ts", "rm request k7m2qd: 1 path waits for the user.");
         const other = payloadOf("ls -la");
 
         expect(shown ? await rmRequestNotice(shown, deps) : "missing").toBeNull();

@@ -1,5 +1,6 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
+import { formatCount } from "@genesiscz/utils/format";
 import type { CmdToolVerb, TransclusionHints } from "@genesiscz/utils/transclude";
 
 /**
@@ -96,7 +97,7 @@ export function transclusionHints(): TransclusionHints {
 export function rmRequestHintLine(id: string, count: number): string {
     const rm = toolCommand("rm");
     return (
-        `rm request ${id}: ${count} path(s) wait for the user. Do not run approve yourself. ` +
+        `rm request ${id}: ${formatCount(count, "path")} ${count === 1 ? "waits" : "wait"} for the user. Do not run approve yourself. ` +
         `Tell the user: ! ${rm} approve ${id}. Cancel your own: ${rm} deny ${id}`
     );
 }

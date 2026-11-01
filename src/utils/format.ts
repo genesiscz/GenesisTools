@@ -346,6 +346,11 @@ export function formatList(items: string[], maxShow = 5): string {
     return `${shown.join(", ")} +${remaining} more`;
 }
 
+/** A count with its noun, "1 item" or "5 items"; `plural` for a noun that does not take an `s` ("batches"). */
+export function formatCount(count: number, noun: string, plural = `${noun}s`): string {
+    return `${count} ${count === 1 ? noun : plural}`;
+}
+
 // ============= Number =============
 
 /**
