@@ -34,11 +34,23 @@ export const VIDEO_ENCODERS = {
 
 export type VideoEncoderCodec = keyof typeof VIDEO_ENCODERS;
 
+export function isVideoEncoderCodec(value: string): value is VideoEncoderCodec {
+    return Object.hasOwn(VIDEO_ENCODERS, value);
+}
+
+export const VIDEO_ENCODER_CODECS: readonly VideoEncoderCodec[] =
+    Object.keys(VIDEO_ENCODERS).filter(isVideoEncoderCodec);
+
 export function findEncoder(codec: string): VideoEncoder | undefined {
     return Object.values<VideoEncoder>(VIDEO_ENCODERS).find((encoder) => encoder.codec === codec);
 }
 
 export const DURATION_TOLERANCE_SEC = 0.5;
+
+/** Every ffmpeg this module starts runs through here, so each one is under `nice -n 10`. */
+export function ffmpegCommand(args: readonly string[]): string[] {
+    return ["nice", "-n", "10", "ffmpeg", ...args];
+}
 
 /** Why the encoder cannot run here, or null. */
 export async function encoderUnavailableReason(encoder: VideoEncoder): Promise<string | null> {
@@ -46,7 +58,7 @@ export async function encoderUnavailableReason(encoder: VideoEncoder): Promise<s
         return `${encoder.ffmpegName} runs only on ${encoder.platforms.join(", ")}, this is ${process.platform}`;
     }
 
-    const result = await boundedCommand({ command: ["ffmpeg", "-hide_banner", "-encoders"], timeoutMs: 30_000 });
+    const result = await boundedCommand({ command: ffmpegCommand(["-hide_banner", "-encoders"]), timeoutMs: 30_000 });
 
     if (result.error || result.status !== 0) {
         return `ffmpeg is not available: ${result.error?.message ?? result.stderr.slice(-200)}`;
@@ -132,7 +144,10 @@ export function judgeOutput({
     return { keep: true, reason: `${saving.toFixed(1)}% smaller` };
 }
 
-/** The ffmpeg argument list (without `nice`); the output keeps the input's container. */
+/**
+ * The ffmpeg command line, under `nice`; the output keeps the input's container. `-n` refuses to write over an
+ * existing file, and `0:V:0` is the first playable video, never a cover picture (the stream `skipReason` judged).
+ */
 export function encodeArgs({
     encoder,
     input,
@@ -144,17 +159,16 @@ export function encodeArgs({
     output: string;
     quality: number;
 }): string[] {
-    return [
-        "ffmpeg",
+    return ffmpegCommand([
         "-nostdin",
-        "-y",
+        "-n",
         "-v",
         "error",
         ...encoder.decodeArgs,
         "-i",
         input,
         "-map",
-        "0:v:0",
+        "0:V:0",
         "-map",
         "0:a?",
         "-map_metadata",
@@ -165,7 +179,7 @@ export function encodeArgs({
         "-movflags",
         "+faststart+use_metadata_tags",
         output,
-    ];
+    ]);
 }
 
 /** Decodes the whole file and returns what ffmpeg printed; empty means clean. */
@@ -179,21 +193,7 @@ export async function decodeErrors({
     signal?: AbortSignal;
 }): Promise<string> {
     const result = await boundedCommand({
-        command: [
-            "nice",
-            "-n",
-            "10",
-            "ffmpeg",
-            "-v",
-            "error",
-            "-xerror",
-            ...encoder.decodeArgs,
-            "-i",
-            path,
-            "-f",
-            "null",
-            "-",
-        ],
+        command: ffmpegCommand(["-v", "error", "-xerror", ...encoder.decodeArgs, "-i", path, "-f", "null", "-"]),
         timeoutMs: 30 * 60_000,
         signal,
     });
