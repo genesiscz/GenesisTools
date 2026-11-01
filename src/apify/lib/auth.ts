@@ -1,4 +1,5 @@
 import { ApifyClient, ApifyError, type ApifyUser } from "@app/apify/lib/client";
+import { toolCommand } from "@genesiscz/utils/cli";
 import { secretSnapshot, secrets } from "@genesiscz/utils/security/SecretStore";
 
 export const APIFY_SECRET_PATH = "apify/api-token";
@@ -46,13 +47,13 @@ export async function login(options: {
 }
 
 export function status(credentials: ApifyCredentials = vaultCredentials) {
-    return { stored: credentials.has(), storage: "encrypted-vault", next: "tools apify status --check" };
+    return { stored: credentials.has(), storage: "encrypted-vault", next: toolCommand("apify status --check") };
 }
 
 export async function requireToken(credentials: ApifyCredentials = vaultCredentials): Promise<string> {
     const token = await credentials.get();
     if (!token) {
-        throw new ApifyError("No saved Apify token. Run tools apify login.");
+        throw new ApifyError(`No saved Apify token. Run ${toolCommand("apify login")}.`);
     }
 
     return token;
