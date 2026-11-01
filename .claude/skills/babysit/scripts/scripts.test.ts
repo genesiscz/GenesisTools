@@ -2669,9 +2669,10 @@ describe("round 7 review regressions", () => {
 
     test("reclaim reads SwiftPM package caches as build output in a dead session, and still spares a real clone", () => {
         const s = reclaimFixture();
+        // No dead id contains the running id's first 8 digits: the live-session shield matches that short form anywhere in a path.
         const running = "99999999-9999-4999-8999-999999999991";
-        const swiftpmDead = "99999999-9999-4999-8999-999999999992";
-        const cloneDead = "99999999-9999-4999-8999-999999999993";
+        const swiftpmDead = "a2000000-0000-4000-8000-000000000002";
+        const cloneDead = "a3000000-0000-4000-8000-000000000003";
         const sessions = join(s.dir, "home", ".claude", "sessions");
         const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
         fs.mkdirSync(sessions, { recursive: true });
@@ -2717,9 +2718,9 @@ describe("round 7 review regressions", () => {
             join(sessions, `${process.pid}.json`),
             SafeJSON.stringify({ pid: process.pid, sessionId: "99999999-9999-4999-8999-999999999990" })
         );
-        const borrows = "99999999-9999-4999-8999-999999999994";
-        const noAlternates = "99999999-9999-4999-8999-999999999995";
-        const foreign = "99999999-9999-4999-8999-999999999996";
+        const borrows = "a4000000-0000-4000-8000-000000000004";
+        const noAlternates = "a5000000-0000-4000-8000-000000000005";
+        const foreign = "a6000000-0000-4000-8000-000000000006";
         // A killed resolve leaves `repositories/` and `checkouts/` before SwiftPM writes any of its state files.
         const interruptedBuild = (id: string, alternates: ((build: string) => string) | null) => {
             const build = join(s.root, "cc", "fixture-project", id, "gk-build");
