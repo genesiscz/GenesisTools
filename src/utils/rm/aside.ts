@@ -349,33 +349,6 @@ export function stillAside(targets: readonly RmRequestTarget[], back: ReturnResu
     );
 }
 
-export interface DenyResult extends ReturnResult {
-    /** Aside copies that could not go home (the path is taken): the request stays pending for them. */
-    waiting: RmRequestTarget[];
-}
-
-/**
- * Puts a request's aside copies back and closes it as denied. A copy that cannot go back keeps the request pending,
- * with only those copies left in it, so its aside folder stays guarded until the user decides about them.
- */
-export function denyRmRequest(
-    request: RmRequest,
-    caller: RmCaller | null,
-    options: { requestsDir?: string; now?: Date; hooks?: ReturnHooks } = {}
-): DenyResult {
-    const back = returnAside(request.targets, caller, request.id, options.hooks);
-    const waiting = stillAside(request.targets, back);
-    const decidedAt = (options.now ?? new Date()).toISOString();
-
-    if (waiting.length > 0) {
-        saveRmRequest({ ...request, targets: waiting }, options.requestsDir);
-    } else {
-        saveRmRequest({ ...request, status: "denied", decidedAt, decidedVia: "cli" }, options.requestsDir);
-    }
-
-    return { ...back, waiting };
-}
-
 function isLink(path: string): boolean {
     try {
         return lstatSync(path).isSymbolicLink();
