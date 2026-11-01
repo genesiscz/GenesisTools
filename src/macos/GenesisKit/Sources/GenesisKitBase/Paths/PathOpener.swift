@@ -227,6 +227,13 @@ public enum PathOpener {
 
     /// "Open in Genesis Markdown": the file in Genesis Markdown directly, so it opens without the link router.
     public static func genesisMarkdown(_ path: String) {
+        genesisMarkdown(path, opening: fileURL(path))
+    }
+
+    /// `item` handed to Genesis Markdown by its bundle id, so neither the link router nor another app that claims the
+    /// scheme gets it: the file at `path` itself, or a `genesis-md://open?path=…&range=…` link, the only way a line
+    /// reaches the viewer (a file open loses `#L5` in Launch Services, `MarkdownViewerApp.application(_:open:)`).
+    public static func genesisMarkdown(_ path: String, opening item: URL) {
         let url = fileURL(path)
         guard let app = genesisMarkdownApp() else {
             KitHost.log("path.genesisMarkdown no app for \(url.path)")
@@ -234,8 +241,8 @@ public enum PathOpener {
             return
         }
 
-        KitHost.log("path.genesisMarkdown \(url.path)")
-        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+        KitHost.log("path.genesisMarkdown \(item.isFileURL ? url.path : item.absoluteString)")
+        NSWorkspace.shared.open([item], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
             if let error {
                 KitHost.log("path.genesisMarkdown failed for \(url.path): \(error.localizedDescription)")
                 CopyToast.post(title: "Genesis Markdown did not open it", detail: PathDisplay.tilde(url.path), style: .problem)

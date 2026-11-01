@@ -338,6 +338,31 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertEqual(ask.pathLinks.click(), .ask)
     }
 
+    /// A link to a file that is gone says so in the widget's own note, which is announced, holds on hover and stays for
+    /// the note duration setting; the default `CopyToast` at the pointer did none of that. Under every setting, and
+    /// from the right-click menu's "Not on Disk" too. Nothing opens: the file is not there.
+    func testALinkToAMissingFileSaysSoInTheWidgetsNote() throws {
+        let gone = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("no-such-folder-\(UUID().uuidString)/Gone.md").path
+        let shown = "Not on disk: " + PathDisplay.tilde(gone)
+        XCTAssertTrue(shown.hasPrefix("Not on disk: ~/no-such-folder-"), shown)
+        for click in ["genesis-markdown", "default-app", "ask"] {
+            let model = try model(preferences: ["fileLinkClick": click])
+            defer { model.stop() }
+            XCTAssertEqual(model.pathLinks.perform(path: gone, lines: nil, menu: false), .missing(gone), click)
+            XCTAssertEqual(model.notice, shown, click)
+            XCTAssertEqual(model.noticeTone, .warning, click)
+
+            model.notice = nil
+            let entries = model.pathLinks.contextEntries([PathLinkRef(label: "Gone.md", path: gone, lines: nil)])
+            guard case .item(let missing) = try XCTUnwrap(entries.first), missing.title == "Not on Disk" else {
+                return XCTFail("no Not on Disk item for \(click)")
+            }
+            missing.run()
+            XCTAssertEqual(model.notice, shown, "the menu item posts the same note (\(click))")
+        }
+    }
+
     /// F21: Discard checked waits behind the model's Undo window, and while it waits no view reads those decisions as
     /// staged (the session card, the overview row, the alert's option).
     func testADiscardInItsUndoWindowNoLongerReadsAsStaged() throws {

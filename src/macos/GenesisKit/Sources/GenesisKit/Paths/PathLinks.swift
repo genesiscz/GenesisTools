@@ -16,8 +16,8 @@ import SwiftUI
 /// What a link points at, as far as a click goes.
 public enum PathLinkTarget: Equatable {
     /// A file or folder: a schemeless path (`/Users/…`, `~/…`, or relative) or a `file:` URL, percent-decoded,
-    /// with a `:12`, `:12:5` or `#L10-L20` suffix taken off into `line`.
-    case path(String, line: Int?)
+    /// with a `:12`, `:12:5` or `#L10-L20` suffix taken off into `lines` (both ends of a range).
+    case path(String, lines: MarkdownLineRange?)
     /// Anything else: a web page, an app's scheme, an in-page anchor.
     case other(URL)
 }
@@ -40,14 +40,15 @@ public enum FileLinkClick: String, CaseIterable, Sendable {
 /// The one thing a click on a file link does. Decided from the link, what is on disk and the setting, so a
 /// test pins it without opening anything.
 public enum PathLinkStep: Equatable {
-    case genesisMarkdown(URL)
+    /// Genesis Markdown, scrolled to `lines` with them marked when the link names some.
+    case genesisMarkdown(URL, lines: MarkdownLineRange?)
     /// The default app, at `line` when it is an editor with a line scheme (`DefaultApp.open`).
     case defaultApp(URL, line: Int?)
     case folderInFinder(URL)
     /// A package (an `.app`) is selected in its folder, never launched by a link.
     case revealInFinder(URL)
     /// The menu of every way to open it (`PathLinkHandler.menuEntries`).
-    case menu(URL, kind: PathItemKind, line: Int?)
+    case menu(URL, kind: PathItemKind, lines: MarkdownLineRange?)
     /// Nothing is there, or the link is a relative path with no folder to resolve it against.
     case missing(String)
 }
@@ -57,12 +58,12 @@ public struct PathLinkRef: Hashable {
     /// The link's text ("Plan.md"); the file name when the text is empty.
     public let label: String
     public let path: String
-    public let line: Int?
+    public let lines: MarkdownLineRange?
 
-    public init(label: String, path: String, line: Int?) {
+    public init(label: String, path: String, lines: MarkdownLineRange?) {
         self.label = label
         self.path = path
-        self.line = line
+        self.lines = lines
     }
 }
 
@@ -75,20 +76,10 @@ public enum PathLink {
         let raw = url.path
         guard !raw.isEmpty else { return .other(url) }
 
+        // A fragment (`#L10-L20`, `#L7`, `#10-20`) keeps both ends; `#intro` is a heading, no lines.
         let split = splitLine(raw)
-        return .path(split.path, line: line(fragment: url.fragment) ?? split.line)
-    }
-
-    /// `L10`, `L10-L20`, `L10-20` or `10`: the first line. nil for any other fragment.
-    static func line(fragment: String?) -> Int? {
-        guard var fragment, !fragment.isEmpty else { return nil }
-        if fragment.first == "L" || fragment.first == "l" {
-            fragment.removeFirst()
-        }
-        let digits = fragment.prefix { $0.isASCII && $0.isNumber }
-        let rest = fragment.dropFirst(digits.count)
-        guard !digits.isEmpty, rest.isEmpty || rest.first == "-", let line = Int(digits), line > 0 else { return nil }
-        return line
+        let suffix = split.line.flatMap { MarkdownLineRange(first: $0, last: $0) }
+        return .path(split.path, lines: MarkdownLineRange.parse(url.fragment) ?? suffix)
     }
 
     /// `/a/b.md:12` and `/a/b.md:12:5` (line and column): the path and line 12. A colon followed by anything but
@@ -133,12 +124,12 @@ public enum PathLink {
     }
 
     public static func step(
-        url: URL?, path: String, kind: PathItemKind, line: Int?, click: FileLinkClick, menu: Bool,
+        url: URL?, path: String, kind: PathItemKind, lines: MarkdownLineRange?, click: FileLinkClick, menu: Bool,
         genesisMarkdownInstalled: Bool
     ) -> PathLinkStep {
         guard let url, kind != .missing else { return .missing(url?.path ?? path) }
         if menu || click == .ask {
-            return .menu(url, kind: kind, line: line)
+            return .menu(url, kind: kind, lines: lines)
         }
 
         switch kind {
@@ -148,10 +139,17 @@ public enum PathLink {
             return .revealInFinder(url)
         case .file, .missing:
             if click == .genesisMarkdown, genesisMarkdownInstalled, isMarkdown(url) {
-                return .genesisMarkdown(url)
+                return .genesisMarkdown(url, lines: lines)
             }
-            return .defaultApp(url, line: line)
+            // An editor takes one line, the first of a range.
+            return .defaultApp(url, line: lines?.first)
         }
+    }
+
+    /// "at Line 40" or "at Lines 40-60", for a menu item that opens there; empty without lines.
+    static func atLines(_ lines: MarkdownLineRange?) -> String {
+        guard let lines else { return "" }
+        return lines.first == lines.last ? " at Line \(lines.first)" : " at Lines \(lines.first)-\(lines.last)"
     }
 
     private final class Found: NSObject {
@@ -176,10 +174,10 @@ public enum PathLink {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         if let attributed = try? AttributedString(markdown: markdown, options: options) {
             for (link, range) in attributed.runs[\.link] {
-                guard let link, case let .path(path, line) = target(for: link),
-                      seen.insert(path + ":" + String(line ?? 0)).inserted else { continue }
+                guard let link, case let .path(path, lines) = target(for: link),
+                      seen.insert(path + ":" + (lines?.queryValue ?? "")).inserted else { continue }
                 let text = String(attributed[range].characters).trimmingCharacters(in: .whitespacesAndNewlines)
-                links.append(PathLinkRef(label: text.isEmpty ? (path as NSString).lastPathComponent : text, path: path, line: line))
+                links.append(PathLinkRef(label: text.isEmpty ? (path as NSString).lastPathComponent : text, path: path, lines: lines))
             }
         }
         cache.setObject(Found(links), forKey: markdown as NSString)
@@ -197,7 +195,8 @@ public protocol PathLinkSystem: PathWorkspace {
     var cursorInstalled: Bool { get }
     /// The app macOS opens the file with; nil when none does, or when it is this app.
     func defaultApp(for url: URL) -> DefaultApp?
-    func openInGenesisMarkdown(_ url: URL)
+    /// The note in Genesis Markdown, scrolled to `lines` with them marked when there are some.
+    func openInGenesisMarkdown(_ url: URL, lines: MarkdownLineRange?)
     func openInDefaultApp(_ url: URL, line: Int?)
     func copyPath(_ path: String)
     /// Shows `entries` as a menu at the pointer.
@@ -206,15 +205,26 @@ public protocol PathLinkSystem: PathWorkspace {
 
 public struct SystemPathLinks: PathLinkSystem {
     private let workspace = SystemPathWorkspace()
+    private let missing: (@MainActor (String) -> Void)?
 
-    public init() {}
+    /// `missing` tells the user that a link's file is not on disk, in the host's own note (the widget's note under
+    /// its header: announced, held on hover, for the note duration setting). Without it, a `CopyToast` at the
+    /// pointer says it.
+    public init(missing: (@MainActor (String) -> Void)? = nil) {
+        self.missing = missing
+    }
 
     public func kind(of url: URL) -> PathItemKind { workspace.kind(of: url) }
     public func openFolderInFinder(_ url: URL) { workspace.openFolderInFinder(url) }
     public func revealInFinder(_ url: URL) { workspace.revealInFinder(url) }
     public func openFile(_ url: URL) { workspace.openFile(url) }
     public func editFile(_ url: URL, line: Int?) { workspace.editFile(url, line: line) }
-    public func reportMissing(_ path: String) { workspace.reportMissing(path) }
+
+    /// From a click or a menu item, so on the main thread.
+    public func reportMissing(_ path: String) {
+        guard let missing else { return workspace.reportMissing(path) }
+        MainActor.assumeIsolated { missing(path) }
+    }
 
     public var genesisMarkdownInstalled: Bool { PathOpener.genesisMarkdownApp() != nil }
 
@@ -228,7 +238,7 @@ public struct SystemPathLinks: PathLinkSystem {
         return app
     }
 
-    public func openInGenesisMarkdown(_ url: URL) { PathOpener.genesisMarkdown(url.path) }
+    public func openInGenesisMarkdown(_ url: URL, lines: MarkdownLineRange?) { PathOpener.genesisMarkdown(url.path, lines: lines) }
 
     public func openInDefaultApp(_ url: URL, line: Int?) {
         if let app = DefaultApp.forFile(url) {
@@ -246,6 +256,27 @@ public struct SystemPathLinks: PathLinkSystem {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { _ = PathMenu.popUp(entries) }
         }
+    }
+}
+
+public extension PathOpener {
+    /// `genesis-md://open?path=<absolute path>&range=40-60`: the note at those lines, the shape the `genesis open` CLI
+    /// and Genesis's own launcher send. nil without lines, since a plain file open says the same.
+    static func genesisMarkdownURL(for path: String, lines: MarkdownLineRange?) -> URL? {
+        guard let lines else { return nil }
+        var components = URLComponents()
+        components.scheme = "genesis-md"
+        components.host = "open"
+        components.queryItems = [
+            URLQueryItem(name: "path", value: fileURL(path).path),
+            URLQueryItem(name: "range", value: lines.queryValue),
+        ]
+        return components.url
+    }
+
+    /// "Open in Genesis Markdown" at `lines`: the `genesis-md:` link when there are some, else the file itself.
+    static func genesisMarkdown(_ path: String, lines: MarkdownLineRange?) {
+        genesisMarkdown(path, opening: genesisMarkdownURL(for: path, lines: lines) ?? fileURL(path))
     }
 }
 
@@ -281,38 +312,39 @@ public final class PathLinkHandler {
     /// For `OpenURLAction`: `.handled` for a file link, `.systemAction` for anything else.
     @MainActor
     public func open(_ url: URL) -> OpenURLAction.Result {
-        guard case let .path(path, line) = PathLink.target(for: url) else {
+        guard case let .path(path, lines) = PathLink.target(for: url) else {
             return .systemAction
         }
 
-        perform(path: path, line: line, menu: menuClick())
+        perform(path: path, lines: lines, menu: menuClick())
         return .handled
     }
 
     @MainActor
     @discardableResult
-    public func perform(path: String, line: Int?, menu: Bool) -> PathLinkStep {
+    public func perform(path: String, lines: MarkdownLineRange?, menu: Bool) -> PathLinkStep {
         let url = PathLink.fileURL(path)
         let kind = url.map(system.kind(of:)) ?? .missing
         let step = PathLink.step(
-            url: url, path: path, kind: kind, line: line, click: click(), menu: menu,
+            url: url, path: path, kind: kind, lines: lines, click: click(), menu: menu,
             genesisMarkdownInstalled: system.genesisMarkdownInstalled)
-        GenesisKit.log("pathLink \(path)\(line.map { ":\($0)" } ?? "") -> \(step)")
+        GenesisKit.log("pathLink \(path)\(lines.map { ":\($0.queryValue)" } ?? "") -> \(step)")
         switch step {
-        case .genesisMarkdown(let url): system.openInGenesisMarkdown(url)
+        case let .genesisMarkdown(url, lines): system.openInGenesisMarkdown(url, lines: lines)
         case let .defaultApp(url, line): system.openInDefaultApp(url, line: line)
         case .folderInFinder(let url): system.openFolderInFinder(url)
         case .revealInFinder(let url): system.revealInFinder(url)
-        case let .menu(url, kind, line): system.showMenu(menuEntries(url: url, kind: kind, line: line))
+        case let .menu(url, kind, lines): system.showMenu(menuEntries(url: url, kind: kind, lines: lines))
         case .missing(let path): system.reportMissing(path)
         }
         return step
     }
 
-    /// Every way to open one file or folder: Genesis Markdown for a note when it is installed, the default app by
-    /// name, Cursor at the line when it is installed, then Reveal in Finder and Copy Path.
+    /// Every way to open one file or folder: Genesis Markdown for a note when it is installed (at the link's lines),
+    /// the default app by name, Cursor at the first line when it is installed, then Reveal in Finder and Copy Path.
     @MainActor
-    public func menuEntries(url: URL, kind: PathItemKind, line: Int?) -> [PathMenuEntry] {
+    public func menuEntries(url: URL, kind: PathItemKind, lines: MarkdownLineRange?) -> [PathMenuEntry] {
+        let line = lines?.first
         let system = system
         var open: [PathMenuItem] = []
         switch kind {
@@ -326,8 +358,9 @@ public final class PathLinkHandler {
         case .file:
             let markdown = system.genesisMarkdownInstalled && PathLink.isMarkdown(url)
             if markdown {
-                open.append(PathMenuItem(id: "genesis-markdown", title: "Open in Genesis Markdown", systemImage: "doc.richtext") {
-                    system.openInGenesisMarkdown(url)
+                let title = "Open in Genesis Markdown" + PathLink.atLines(lines)
+                open.append(PathMenuItem(id: "genesis-markdown", title: title, systemImage: "doc.richtext") {
+                    system.openInGenesisMarkdown(url, lines: lines)
                 })
             }
             if let app = system.defaultApp(for: url), !(markdown && app.bundleIdentifier == PathOpener.genesisMarkdownBundleID) {
@@ -376,7 +409,7 @@ public final class PathLinkHandler {
                 .item(PathMenuItem(id: "copy", title: "Copy Path", systemImage: "doc.on.doc") { system.copyPath(shown) }),
             ]
         }
-        return menuEntries(url: url, kind: kind, line: link.line)
+        return menuEntries(url: url, kind: kind, lines: link.lines)
     }
 }
 
