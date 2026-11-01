@@ -1,14 +1,19 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+    chmodSync,
     closeSync,
+    constants,
+    copyFileSync,
     existsSync,
     ftruncateSync,
+    lstatSync,
     mkdirSync,
     mkdtempSync,
     openSync,
     readdirSync,
     readFileSync,
+    readlinkSync,
     realpathSync,
     renameSync,
     rmSync,
@@ -16,6 +21,7 @@ import {
     symlinkSync,
     utimesSync,
     writeFileSync,
+    writeSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
@@ -137,7 +143,7 @@ describe("capturePre", () => {
         const current = begin();
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
 
-        expect(existsSync(join(dir, "1.tar"))).toBe(true);
+        expect(readFileSync(join(dir, "1", "kept.ts"), "utf8")).toBe("alpha\nDIRTY\ncharlie\ndelta\necho\n");
         expect(existsSync(join(dir, "stamp"))).toBe(true);
 
         git(["checkout", "--", "kept.ts"]);
@@ -715,7 +721,8 @@ describe("the capture is private and option-safe", () => {
         // wrote. On Linux and in CI `tmpdir()` is a world-readable /tmp, so the platform
         // cannot be relied on for this.
         expect(statSync(dir).mode & 0o777).toBe(0o700);
-        expect(statSync(join(dir, "1.tar")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(dir, "1")).mode & 0o777).toBe(0o700);
+        expect(statSync(join(dir, "1", "kept.ts")).mode & 0o777).toBe(0o600);
         expect(statSync(join(dir, "stamp")).mode & 0o777).toBe(0o600);
 
         git(["checkout", "--", "kept.ts"]);
@@ -841,7 +848,7 @@ describe("a staged deletion does not cost the root its capture", () => {
         const current = begin();
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
 
-        expect(existsSync(join(dir, "1.tar"))).toBe(true);
+        expect(existsSync(join(dir, "1", "kept.ts"))).toBe(true);
 
         writeFileSync(join(repo, "kept.ts"), "alpha\nSURVIVES-THE-DELETION\ncharlie\ndelta\necho\n");
 
@@ -1182,7 +1189,8 @@ describe("files the command NAMES rather than works in", () => {
         symlinkSync(cloudDir, linked);
         symlinkSync(local, localLink);
 
-        const current = payload({ command: `ls -l ${cloudNote} ${linkedNote} ${dotted} ${local} ${localLink}` });
+        // A command that writes: an `ls` takes no copy at all since 2026-11-01, so it would prove nothing here.
+        const current = payload({ command: `touch ${cloudNote} ${linkedNote} ${dotted} ${local} ${localLink}` });
 
         calls += 1;
         current.toolUseId = `call-cloud-${calls}`;
@@ -1207,7 +1215,7 @@ describe("files the command NAMES rather than works in", () => {
 
     // `isDatalessFile` is macOS only, so on Linux a sparse file is an ordinary file and is copied.
     it.skipIf(process.platform !== "darwin")(
-        "never copies a named cloud placeholder, so an ls downloads nothing",
+        "never copies a named cloud placeholder, so a command that names one downloads nothing",
         () => {
             // A sparse file is the stand-in for a dataless placeholder: bytes, no blocks. A copy would read it, and on a
             // real placeholder that read downloads the file (Dropbox, 2026-11-01).
@@ -1222,7 +1230,7 @@ describe("files the command NAMES rather than works in", () => {
             writeFileSync(local, "alpha\n");
             expect(statSync(placeholder).blocks).toBe(0);
 
-            const current = payload({ command: `ls -l ${placeholder} ${local}` });
+            const current = payload({ command: `touch ${placeholder} ${local}` });
 
             calls += 1;
             current.toolUseId = `call-placeholder-${calls}`;
@@ -1579,8 +1587,9 @@ describe("a tree too dirty to capture whole", () => {
     });
 
     it("never reports a file it could not capture as one the command created", () => {
-        // Budget below even the small file, so nothing in this root has a before-state.
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureMB: 0.000001 };
+        // A per-entry cap below even the small file, so nothing in this root has a before-state. (The
+        // total cap would not do: it binds only real copies, and a clone writes no bytes.)
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFileMB: 0.000001 };
         const current = begin({ cwd: big, toolUseId: "bigtree-2" }, diff);
 
         writeFileSync(small, "alpha\nNOT-ADDED\ncharlie\n");
@@ -1598,7 +1607,7 @@ describe("a tree too dirty to capture whole", () => {
         const diff = {
             ...DEFAULT_HOOKS_CONFIG.diff,
             highlight: "none" as const,
-            maxCaptureMB: 0.000001,
+            maxCaptureFileMB: 0.000001,
             maxFiles: 1,
             fullDiff: "path" as const,
         };
@@ -1735,9 +1744,9 @@ describe("the capture budget sees what an entry really weighs", () => {
         expect(result.skipped.join(" ")).toContain("1 of 2 dirty entries left out");
     });
 
-    // `isDatalessFile` is macOS only, so on Linux a sparse file is an ordinary file and goes into the tar.
+    // `isDatalessFile` is macOS only, so on Linux a sparse file is an ordinary file and goes into the capture.
     it.skipIf(process.platform !== "darwin")(
-        "leaves dirty cloud placeholders out of the tar and names them, since tar would read them and a read downloads them",
+        "leaves dirty cloud placeholders out of the capture and names them, since a copy would read them and a read downloads them",
         () => {
             const placeholders = [1, 2, 3, 4, 5, 6].map((index) => join(tree, `placeholder-${index}.bin`));
 
@@ -1755,19 +1764,19 @@ describe("the capture budget sees what an entry really weighs", () => {
             try {
                 const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
                 const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
-                const members = spawnSync("tar", ["-tf", join(dir, "1.tar")], {
-                    encoding: "utf8",
-                    env: process.env,
-                }).stdout;
 
                 // The reason names the first five and counts the rest; the `.left` file has every one.
                 expect(result.skipped.join(" ")).toContain(
                     "6 hold cloud placeholders a read would download (placeholder-1.bin, placeholder-2.bin, placeholder-3.bin, placeholder-4.bin, placeholder-5.bin and 1 more)"
                 );
                 expect(readFileSync(join(dir, "1.left"), "utf8")).toContain("placeholder-6.bin");
-                expect(members).not.toContain("placeholder-");
-                // The control: the ordinary dirty file in the same root still goes into the tar.
-                expect(members.trim().length).toBeGreaterThan(0);
+
+                for (const placeholder of placeholders) {
+                    expect(existsSync(join(dir, "1", basename(placeholder)))).toBe(false);
+                }
+
+                // The control: the ordinary dirty file in the same root still goes into the capture.
+                expect(existsSync(join(dir, "1", "note.md"))).toBe(true);
             } finally {
                 for (const placeholder of placeholders) {
                     rmSync(placeholder, { force: true });
@@ -1810,10 +1819,9 @@ describe("the capture budget sees what an entry really weighs", () => {
         capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
 
         const call = callDir(current.harness, "gt-diff-test", "budget-3");
-        const members = spawnSync("tar", ["-tf", join(call, "1.tar")], { encoding: "utf8", env: process.env }).stdout;
 
-        expect(members).toContain("scratch/draft.md");
-        expect(members).not.toContain("secret.env");
+        expect(existsSync(join(call, "1", "scratch", "draft.md"))).toBe(true);
+        expect(existsSync(join(call, "1", "scratch", "secret.env"))).toBe(false);
         rmSync(call, { recursive: true, force: true });
     });
 });
@@ -1935,7 +1943,7 @@ describe("a dirty submodule", () => {
     it("is never archived as a directory, while the dirty file beside it still is", () => {
         const current = begin({ cwd: outer, toolUseId: `submodule-${calls}` });
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
-        const listing = spawnSync("tar", ["-tf", join(dir, "1.tar")], { encoding: "utf8", env: process.env }).stdout;
+        const listing = readdirSync(join(dir, "1"));
 
         // The precondition, asserted rather than assumed: git reports `child` as a dirty submodule.
         const status = spawnSync("git", ["-C", outer, "status", "--porcelain=v2"], {
@@ -1946,6 +1954,275 @@ describe("a dirty submodule", () => {
         expect(status.stdout).toMatch(/^1 \S+ S\S* .* child$/m);
         expect(listing).toContain("seed.txt");
         expect(listing).not.toContain("child");
+    });
+});
+
+describe("the before-state: clones of the dirty files, and none for a command that only reads", () => {
+    // Measured 2026-11-01: every Bash call wrote a `tar` of every dirty file (about 770 KB in this
+    // checkout) and a copy of every file it named, `ls` and `tail` included. A command that only reads
+    // changes nothing the post phase shows, and an APFS clone of a file moves no bytes at all.
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0, showTempScratch: true },
+    };
+    const CLONE_ONLY = constants.COPYFILE_FICLONE_FORCE | constants.COPYFILE_EXCL;
+    type CopyFile = (source: string, destination: string, mode: number) => void;
+    let tree: string;
+    let outside: string;
+    let turn = 0;
+
+    const run = (args: string[]) => spawnSync("git", ["-C", tree, ...args], { encoding: "utf8", env: process.env });
+
+    /** One pre phase in `tree`, with `copyFile` standing in for the clone primitive when given. */
+    function pre(command: string, options: { copyFile?: CopyFile; diff?: DiffConfig } = {}) {
+        turn += 1;
+        calls += 1;
+
+        const current = payload({ cwd: tree, command, toolUseId: `clone-${turn}` });
+        const result = capturePre(current, options.diff ?? plain.diff, { copyFile: options.copyFile });
+        const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+
+        return { current, result, dir };
+    }
+
+    beforeAll(() => {
+        tree = realpathSync(mkdtempSync(join(tmpdir(), "gt-clone-")));
+        outside = realpathSync(mkdtempSync(join(tmpdir(), "gt-clone-outside-")));
+        run(["init", "-q"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        writeFileSync(join(tree, "tracked.ts"), "one\ntwo\nthree\n");
+        writeFileSync(join(tree, "staged-gone.ts"), "gone\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "init"]);
+    });
+
+    beforeEach(() => {
+        run(["reset", "-q", "--hard", "HEAD"]);
+        run(["clean", "-qfdx"]);
+        // Dirty before every command: what the pre phase has to keep a before-state of.
+        writeFileSync(join(tree, "tracked.ts"), "one\nDIRTY\nthree\n");
+        writeFileSync(join(outside, "named.log"), "first\nsecond\n");
+    });
+
+    afterAll(() => {
+        rmSync(tree, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+    });
+
+    it("takes no tar, no clone tree and no named copy for ls, tail or rg", () => {
+        for (const command of ["ls", `tail -n 5 ${join(outside, "named.log")}`, "rg x tracked.ts"]) {
+            const copies: string[] = [];
+            const { dir } = pre(command, {
+                copyFile: (source) => {
+                    copies.push(source);
+                    throw new Error("a reading command must not copy anything");
+                },
+            });
+
+            // Everything the post phase reads stays: the root, the start, what the call names, the HEAD.
+            for (const kept of ["roots.txt", "stamp", "started-ms", "named.txt", "heads.txt", "call.json"]) {
+                expect(existsSync(join(dir, kept))).toBe(true);
+            }
+
+            expect(
+                readdirSync(dir).filter((name) => name === "1" || name.endsWith(".tar") || name === "named")
+            ).toEqual([]);
+            expect(copies).toEqual([]);
+        }
+    });
+
+    it("keeps the post phase of a reading command exactly as it was", () => {
+        // A deletion already in `git status`, a dirty file and a named log that ANOTHER writer changes
+        // while the command runs. Pinned on the tar code (2026-11-01): silent, both changes another
+        // writer's, the deletion counted as already gone.
+        run(["rm", "-q", "staged-gone.ts"]);
+
+        const log = join(outside, "named.log");
+        const { current } = pre(`tail -n 5 ${log}`);
+
+        writeFileSync(join(tree, "tracked.ts"), "one\nOTHER-WRITER\nthree\n");
+        writeFileSync(log, "first\nsecond\nthird\n");
+        utimesSync(log, new Date(), new Date(Date.now() + 5_000));
+
+        const decision = runDiffPost({ payload: current, config: plain, record: () => {} });
+
+        expect(decision).toEqual({
+            decision: "silent",
+            reason: "nothing left to print: 1 deletion(s) already gone before this command began; 2 changed by another writer, not this session",
+            files: [],
+            others: [join(tree, "tracked.ts"), log],
+        });
+    });
+
+    it("holds each dirty file as a 0600 clone in a 0700 tree, made with the clone-only flag", () => {
+        mkdirSync(join(tree, "fresh"), { recursive: true });
+        writeFileSync(join(tree, "fresh", "deep.ts"), "deep\n");
+
+        const named = join(outside, "named.log");
+        const seen: Array<{ source: string; mode: number }> = [];
+        const { dir, result } = pre(`bun /x/edit.ts ${named}`, {
+            copyFile: (source, destination, mode) => {
+                seen.push({ source, mode });
+                copyFileSync(source, destination, mode);
+            },
+        });
+
+        expect(result.captured).toBe(2);
+        expect(existsSync(join(dir, "1.tar"))).toBe(false);
+        expect(statSync(join(dir, "1")).mode & 0o777).toBe(0o700);
+        expect(statSync(join(dir, "1", "fresh")).mode & 0o777).toBe(0o700);
+        expect(statSync(join(dir, "1", "tracked.ts")).mode & 0o777).toBe(0o600);
+        expect(readFileSync(join(dir, "1", "tracked.ts"), "utf8")).toBe("one\nDIRTY\nthree\n");
+        expect(readFileSync(join(dir, "1", "fresh", "deep.ts"), "utf8")).toBe("deep\n");
+        expect(statSync(join(dir, "named", "1")).mode & 0o777).toBe(0o600);
+        expect(seen.map((call) => call.source).sort()).toEqual(
+            [join(tree, "fresh", "deep.ts"), join(tree, "tracked.ts"), named].sort()
+        );
+        expect(seen.every((call) => call.mode === CLONE_ONLY)).toBe(true);
+    });
+
+    it("diffs an edit made IN PLACE against the clone, which kept the old blocks", () => {
+        const { current } = pre("bun /x/edit.ts");
+        const fd = openSync(join(tree, "tracked.ts"), "r+");
+
+        // Same inode, same length: the bytes change under the clone.
+        writeSync(fd, "one\nIN-PLC\nthree\n", 0);
+        closeSync(fd);
+
+        const decision = runDiffPost({ payload: current, config: plain, record: () => {} });
+
+        expect(decision.message).toContain("IN-PLC");
+        expect(decision.message).toContain("Updated");
+        expect(decision.message).toContain("(+1 -1)");
+    });
+
+    it("diffs a rewrite through a rename, a deletion and a creation", () => {
+        const { current } = pre("bun /x/edit.ts");
+
+        writeFileSync(join(tree, "tracked.ts.tmp"), "one\nRENAMED-IN\nthree\n");
+        renameSync(join(tree, "tracked.ts.tmp"), join(tree, "tracked.ts"));
+        rmSync(join(tree, "staged-gone.ts"));
+        writeFileSync(join(tree, "created.ts"), "brand new\n");
+
+        const decision = runDiffPost({ payload: current, config: plain, record: () => {} });
+        const message = decision.message ?? "";
+
+        expect(message).toContain("RENAMED-IN");
+        expect(message).not.toContain("+one");
+        expect(message).toMatch(/Deleted.*staged-gone\.ts/);
+        expect(message).toMatch(/Added.*created\.ts/);
+    });
+
+    it("diffs a file inside a wholly untracked directory, and a name git would C-quote", () => {
+        const quoted = 'quo"te\ttab é.txt';
+
+        mkdirSync(join(tree, "fresh"), { recursive: true });
+        writeFileSync(join(tree, "fresh", "deep.ts"), "deep\none\n");
+        writeFileSync(join(tree, quoted), "alpha\nbravo\n");
+
+        const { current, dir } = pre("bun /x/edit.ts");
+
+        expect(existsSync(join(dir, "1", quoted))).toBe(true);
+        writeFileSync(join(tree, "fresh", "deep.ts"), "deep\nDEEP-EDIT\n");
+        writeFileSync(join(tree, quoted), "alpha\nQUOTED-EDIT\n");
+
+        const decision = runDiffPost({ payload: current, config: plain, record: () => {} });
+
+        expect(decision.files).toEqual(expect.arrayContaining([join(tree, "fresh", "deep.ts"), join(tree, quoted)]));
+        expect(decision.message).toContain("DEEP-EDIT");
+        expect(decision.message).toContain("QUOTED-EDIT");
+        expect(decision.message).not.toContain("Added");
+    });
+
+    it("stores a symlink as a link, never the file it points to", () => {
+        const secret = join(outside, "not-in-the-repo.txt");
+
+        writeFileSync(secret, "outside the repository\n");
+        symlinkSync(secret, join(tree, "link.txt"));
+
+        const { current, dir } = pre("bun /x/edit.ts");
+        const stored = join(dir, "1", "link.txt");
+
+        expect(lstatSync(stored).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(stored)).toBe(secret);
+
+        // The post phase stats through a link, so the new target is fresh, as one the command wrote.
+        writeFileSync(join(outside, "elsewhere.txt"), "the new target\n");
+        rmSync(join(tree, "link.txt"));
+        symlinkSync(join(outside, "elsewhere.txt"), join(tree, "link.txt"));
+
+        const message = stripAnsi(runDiffPost({ payload: current, config: plain, record: () => {} }).message ?? "");
+
+        // The link's target changed, and the diff says so: the before-state is the old link, not a file.
+        expect(message).toContain("Updated link.txt (+1 -1)");
+        expect(message).toContain(`-${secret}`);
+        expect(message).toContain(`+${join(outside, "elsewhere.txt")}`);
+    });
+
+    it("copies when the volume cannot clone, inside the byte caps a copy still needs", () => {
+        writeFileSync(join(tree, "small.ts"), "s\n");
+        writeFileSync(join(tree, "large.ts"), `${"l".repeat(3_000)}\n`);
+
+        // 2 KB in total: room for the two small files, not for the large one.
+        const diff = { ...plain.diff, maxCaptureMB: 0.002 };
+        const cannotClone: CopyFile = () => {
+            throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
+        };
+        const copied = pre("bun /x/edit.ts", { copyFile: cannotClone, diff });
+
+        expect(lstatSync(join(copied.dir, "1", "small.ts")).isFile()).toBe(true);
+        expect(readFileSync(join(copied.dir, "1", "tracked.ts"), "utf8")).toBe("one\nDIRTY\nthree\n");
+        expect(statSync(join(copied.dir, "1", "tracked.ts")).mode & 0o777).toBe(0o600);
+        expect(existsSync(join(copied.dir, "1", "large.ts"))).toBe(false);
+        expect(readFileSync(join(copied.dir, "1.left"), "utf8")).toBe("large.ts\n");
+        expect(copied.result.skipped.join(" ")).toContain("1 of 3 dirty entries left out");
+
+        writeFileSync(join(tree, "tracked.ts"), "one\nAFTER-A-COPY\nthree\n");
+        expect(runDiffPost({ payload: copied.current, config: plain, record: () => {} }).message).toContain("(+1 -1)");
+
+        // The same caps with a working clone: a clone writes no bytes, so the total cap does not apply.
+        writeFileSync(join(tree, "tracked.ts"), "one\nDIRTY\nthree\n");
+
+        const cloned = pre("bun /x/edit.ts", { copyFile: (s, d, m) => copyFileSync(s, d, m), diff });
+
+        expect(readFileSync(join(cloned.dir, "1", "large.ts"), "utf8")).toBe(`${"l".repeat(3_000)}\n`);
+        expect(existsSync(join(cloned.dir, "1.left"))).toBe(false);
+    });
+
+    it("copies a write-protected file instead of cloning it, so the capture can still be removed", () => {
+        // A clone carries the source's flags: a Finder-locked (uchg) file cloned into the capture could
+        // never be deleted again. Such a file fails `access(W_OK)`, and so does a mode 0444 one.
+        writeFileSync(join(tree, "locked.ts"), "locked\n");
+        chmodSync(join(tree, "locked.ts"), 0o444);
+
+        const cloned: string[] = [];
+        const { dir } = pre("bun /x/edit.ts", {
+            copyFile: (source, destination, mode) => {
+                cloned.push(source);
+                copyFileSync(source, destination, mode);
+            },
+        });
+
+        expect(cloned).not.toContain(join(tree, "locked.ts"));
+        expect(cloned).toContain(join(tree, "tracked.ts"));
+        expect(readFileSync(join(dir, "1", "locked.ts"), "utf8")).toBe("locked\n");
+        expect(statSync(join(dir, "1", "locked.ts")).mode & 0o777).toBe(0o600);
+        chmodSync(join(tree, "locked.ts"), 0o644);
+    });
+
+    it("still reads a capture an older hook wrote as a tar", () => {
+        // A background call captured before the upgrade is diffed after it, when its task ends.
+        const { current, dir } = pre("bun /x/edit.ts");
+
+        rmSync(join(dir, "1"), { recursive: true, force: true });
+        spawnSync("tar", ["-C", tree, "-cf", join(dir, "1.tar"), "--", "tracked.ts"], { env: process.env });
+        writeFileSync(join(tree, "tracked.ts"), "one\nAFTER-THE-UPGRADE\nthree\n");
+
+        const copy = beforeCopy({ dir, root: tree, absolute: join(tree, "tracked.ts") });
+
+        expect(readFileSync(copy ?? "", "utf8")).toBe("one\nDIRTY\nthree\n");
+        expect(runDiffPost({ payload: current, config: plain, record: () => {} }).message).toContain("(+1 -1)");
     });
 });
 
