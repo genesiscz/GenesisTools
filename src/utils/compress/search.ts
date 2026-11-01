@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { type FileIdentity, FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { storedFilePath } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { isZstdPath, readZstdFrames } from "./zstd";
 
@@ -109,8 +110,10 @@ export async function ripgrepFiles({
     timeoutMs?: number;
     onLine?: (line: string) => void;
 }): Promise<RipgrepRun> {
-    const plain = files.filter((file) => !isZstdPath(file));
-    const compressed = files.filter(isZstdPath);
+    // A plain file the daily pass replaced since the caller listed it is searched as its `.zst`.
+    const stored = files.map((file) => storedFilePath(file) ?? file);
+    const plain = stored.filter((file) => !isZstdPath(file));
+    const compressed = stored.filter(isZstdPath);
     // One compressed file at a time (beside the plain run): five in parallel peaked at 355 MB RSS for a week of logs.
     const zstRuns = (async () => {
         const results: RipgrepRun[] = [];
