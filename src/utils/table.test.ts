@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { createBoxTable, formatDotStatus, formatTable, truncateDisplay } from "./table";
 
 describe("formatTable", () => {
@@ -53,6 +54,22 @@ describe("createBoxTable", () => {
         expect(text).toContain("alice");
         expect(text).toContain("┌");
         expect(text).toContain("│");
+    });
+
+    it("draws a rule between rows by default, and none with rowRules: false", () => {
+        const rows = [
+            ["alice", "ok"],
+            ["bob", "ok"],
+            ["carol", "ok"],
+        ];
+        const ruled = createBoxTable(["NAME", "STATUS"]);
+        const plain = createBoxTable(["NAME", "STATUS"], { rowRules: false });
+        ruled.push(...rows);
+        plain.push(...rows);
+
+        expect(stripAnsi(ruled.toString())).toContain("├");
+        expect(stripAnsi(plain.toString())).not.toContain("├");
+        expect(stripAnsi(plain.toString()).split("\n")).toHaveLength(6);
     });
 
     /**

@@ -233,10 +233,9 @@ export interface RmLedgerTotal {
 
 function groupKey(entry: RmLedgerEntry, by: RmLedgerGroup): string {
     switch (by) {
+        // A person at a plain shell is `person`: the operating-system account never reaches a listing (`--json` keeps it).
         case "agent":
-            return entry.person || entry.caller?.isInAgent || !entry.caller
-                ? ledgerAgent(entry)
-                : `person${entry.caller.user ? ` (${entry.caller.user})` : ""}`;
+            return entry.person || entry.caller?.isInAgent || !entry.caller ? ledgerAgent(entry) : "person";
         case "session":
             return `${ledgerAgent(entry)} ${entry.caller?.sessionId ? entry.caller.sessionId.slice(0, 8) : "no session"}`;
         case "day":
