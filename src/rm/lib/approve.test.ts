@@ -774,6 +774,47 @@ describe("a run that asks", () => {
             process.exitCode = exitCode;
         }
     });
+
+    /** Runs `tools rm <path> --no-aside` for `caller`, as an agent would, and returns the request id it got. */
+    async function askInPlace(path: string, caller: RmCaller, started: string[]): Promise<string | null> {
+        const verdict = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
+        const exitCode = process.exitCode;
+
+        try {
+            const result = await executePlan(
+                [{ target: resolveTarget(path, base), verdict }],
+                { ...context(), caller },
+                { aside: false },
+                { startMeasurement: (id) => started.push(id), kickDrainer: () => undefined }
+            );
+            return result.requestId;
+        } finally {
+            process.exitCode = exitCode;
+        }
+    }
+
+    test("the same session asking again for an in-place path reuses its open request", async () => {
+        const path = file(join(base, "ask-twice", "smoke.tmp.ts"));
+        const started: string[] = [];
+        const first = await askInPlace(path, AGENT, started);
+        const second = await askInPlace(path, AGENT, started);
+        const naming = listRmRequests().filter((request) => request.targets.some((target) => target.path === path));
+
+        expect(first).not.toBeNull();
+        expect(second).toBe(first);
+        expect(started).toEqual([first ?? ""]);
+        expect(naming.map((request) => request.id)).toEqual([first ?? ""]);
+    });
+
+    test("another session asking for the same path gets its own request", async () => {
+        const path = file(join(base, "ask-other", "smoke.tmp.ts"));
+        const started: string[] = [];
+        const first = await askInPlace(path, AGENT, started);
+        const second = await askInPlace(path, { ...AGENT, sessionId: "sess-3333" }, started);
+
+        expect(second).not.toBe(first);
+        expect(started).toHaveLength(2);
+    });
 });
 
 interface Seen {
