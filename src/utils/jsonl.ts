@@ -42,7 +42,11 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
         // Only an unterminated last line stays in the remainder, to be completed by the next append.
         for (;;) {
             const result = jsonl.parseChunk(combined.subarray(read));
-            values.push(...(result.values as T[]));
+            // One push per row: a whole log in one batch is too many arguments for a spread.
+            for (const value of result.values as T[]) {
+                values.push(value);
+            }
+
             read += result.read;
             const newline = combined.indexOf(0x0a, read);
 
