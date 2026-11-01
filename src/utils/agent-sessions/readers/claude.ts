@@ -1,14 +1,13 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
-import { createInterface } from "node:readline";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import { readJsonlBackward, readJsonlTurnBoundary } from "@genesiscz/utils/agent-sessions/read-backward";
 import { readJsonlForward } from "@genesiscz/utils/agent-sessions/read-forward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
-import { readLastLines } from "@genesiscz/utils/fs/read-lines";
+import { readLastLines, splitLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { profiler } from "@genesiscz/utils/profile";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -361,16 +360,15 @@ async function scanMetadataSegment(options: {
 }): Promise<void> {
     const stream = createReadStream(options.source.filePath, {
         ...(options.start === undefined ? {} : { start: options.start }),
-        encoding: "utf8",
         signal: options.signal,
     });
-    const lines = createInterface({ input: stream, crlfDelay: Infinity });
     let physicalLine = 0;
     let records = 0;
     let first = true;
 
     try {
-        for await (const original of lines) {
+        // Cut at "\n" only: readline also ends a line at U+2028 and U+2029, which JSON strings carry raw.
+        for await (const original of splitLines(stream)) {
             options.signal?.throwIfAborted();
             physicalLine++;
             if (first && options.skipFirst) {
@@ -398,7 +396,6 @@ async function scanMetadataSegment(options: {
             }
         }
     } finally {
-        lines.close();
         stream.destroy();
     }
 }

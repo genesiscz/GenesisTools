@@ -9,11 +9,10 @@
  * with exact jsonl path + line so another agent can jump straight to the event.
  */
 
-import { createReadStream } from "node:fs";
 import { basename, dirname } from "node:path";
-import { createInterface } from "node:readline";
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@genesiscz/utils/claude/projects";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { readLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -420,18 +419,11 @@ async function listJsonlFiles(root: string): Promise<string[]> {
  * test would.
  */
 async function matchesPrefilter(file: string, prefilter: RegExp): Promise<boolean> {
-    const stream = createReadStream(file, { encoding: "utf8" });
-    const rl = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
-
-    try {
-        for await (const line of rl) {
-            if (prefilter.test(line)) {
-                return true;
-            }
+    // Leaving the loop early stops the read. Cut at "\n" only, as rg does.
+    for await (const line of readLines(file)) {
+        if (prefilter.test(line)) {
+            return true;
         }
-    } finally {
-        rl.close();
-        stream.destroy();
     }
 
     return false;
@@ -619,11 +611,9 @@ async function scanFile(
     const sessionId = basename(filePath, ".jsonl").replace(/^agent-/, "");
     const subagent = isSubagentPath(filePath);
 
-    const fileStream = createReadStream(filePath, { encoding: "utf8" });
-    const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
-
     let lineNo = 0;
-    for await (const raw of rl) {
+    // Cut at "\n" only: readline also ends a line at U+2028 and U+2029, which JSON strings carry raw.
+    for await (const raw of readLines(filePath)) {
         lineNo++;
         const line = raw.trim();
         if (!line) {
