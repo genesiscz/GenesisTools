@@ -1,6 +1,5 @@
 import { existsSync, lstatSync, readdirSync, statfsSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import {
     compressFile,
@@ -28,6 +27,7 @@ import {
     listArchive,
     packDirectory,
     type TarEntry,
+    tarCreateCommand,
     unpackArchive,
     verifyArchiveAgainstFolder,
 } from "./tar";
@@ -100,6 +100,11 @@ export interface CompressPathOptions {
     removeOriginal?: boolean;
     /** Compress even when the trial saves too little or the preset stores. */
     force?: boolean;
+    /**
+     * Pack only these files of the folder `source` (relative to it, or absolute inside it), under the folder's name;
+     * `removeOriginal` then removes only them. Folders are refused: list the files.
+     */
+    files?: readonly string[];
     caller: string;
 }
 
@@ -122,15 +127,17 @@ export interface CompressPathPlan {
     /** Why the run would not compress (too little saving, an existing output); undefined when it would. */
     refusal?: string;
     reason: string;
+    /** The checked file list of a list pack: relative to the folder, `/` separators, each once. */
+    files?: string[];
 }
 
-/** The first `bytes` of a folder's tar stream: the sample a folder's trial compresses. */
-export async function sampleFolder(path: string, bytes = 32 * 1024 * 1024): Promise<Uint8Array> {
-    const proc = Bun.spawn(["tar", "--no-xattrs", "-cf", "-", "-C", dirname(path), basename(path)], {
-        stdout: "pipe",
-        stderr: "ignore",
-        env: { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" },
-    });
+/** The first `bytes` of a folder's tar stream (of only `files` of it, when given): the sample its trial compresses. */
+export async function sampleFolder(
+    path: string,
+    { bytes = 32 * 1024 * 1024, files }: { bytes?: number; files?: readonly string[] } = {}
+): Promise<Uint8Array> {
+    const tar = tarCreateCommand(path, files);
+    const proc = Bun.spawn(tar.cmd, { stdin: tar.stdin ?? "ignore", stdout: "pipe", stderr: "ignore", env: tar.env });
     const chunks: Uint8Array[] = [];
     let total = 0;
 
@@ -149,6 +156,52 @@ export async function sampleFolder(path: string, bytes = 32 * 1024 * 1024): Prom
 }
 
 /**
+ * The file list of a list pack, checked before anything is written: every path inside the folder, there, not a
+ * folder, and reached through real folders only (a symlinked folder on the way would pack as a link). Returned
+ * relative to the folder with `/` separators, each path once.
+ */
+function checkFileList(source: string, files: readonly string[]): string[] {
+    const checked = new Set<string>();
+
+    for (const listed of files) {
+        const absolute = resolve(source, listed);
+        const inside = relative(source, absolute);
+
+        if (inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+            throw new CompressRefusal(`${listed} is not inside ${source}`);
+        }
+
+        const parts = inside.split(/[/\\]/);
+
+        for (let depth = 1; depth < parts.length; depth++) {
+            const folder = join(source, ...parts.slice(0, depth));
+
+            if (existsSync(folder) && !lstatSync(folder).isDirectory()) {
+                throw new CompressRefusal(`${listed}: ${folder} is not a folder (a link or a file); list real paths`);
+            }
+        }
+
+        const stat = lstatSync(absolute, { throwIfNoEntry: false });
+
+        if (!stat) {
+            throw new CompressRefusal(`${listed} does not exist in ${source}`);
+        }
+
+        if (stat.isDirectory()) {
+            throw new CompressRefusal(`${listed} is a folder; list the files to pack`);
+        }
+
+        checked.add(parts.join("/"));
+    }
+
+    if (checked.size === 0) {
+        throw new CompressRefusal(`the list for ${source} lists no files`);
+    }
+
+    return [...checked];
+}
+
+/**
  * What {@link compressPath} would do, from a trial on a sample (1 MiB of a file, the first 32 MiB of a folder's tar
  * stream). Writes nothing: this is the dry run, and the numbers `tools compress pack --dry-run` prints.
  */
@@ -162,6 +215,12 @@ export async function planCompressPath(
     }
 
     const isFolder = statSync(source).isDirectory();
+
+    if (options.files && !isFolder) {
+        throw new CompressRefusal(`${source} is not a folder; a file list names files of a folder`);
+    }
+
+    const files = options.files ? checkFileList(source, options.files) : undefined;
     const choice = resolvePreset(source);
     const preset = options.preset ?? choice.preset;
     const level = options.level ?? preset.level;
@@ -171,8 +230,12 @@ export async function planCompressPath(
         assertArchiveOutsideSource(source, target);
     }
 
-    const inputBytes = isFolder ? folderBytes(source) : statSync(source).size;
-    const saving = isFolder ? trialSaving(await sampleFolder(source), { level: 3 }) : choice.trialSaving;
+    const inputBytes = files
+        ? files.reduce((sum, file) => sum + lstatSync(join(source, file)).size, 0)
+        : isFolder
+          ? folderBytes(source)
+          : statSync(source).size;
+    const saving = isFolder ? trialSaving(await sampleFolder(source, { files }), { level: 3 }) : choice.trialSaving;
     const minSaving = options.minSaving ?? DEFAULT_MIN_SAVING;
     const plan: CompressPathPlan = {
         source,
@@ -186,6 +249,7 @@ export async function planCompressPath(
         reason: isFolder
             ? choice.sniffed.reason
             : `${choice.sniffed.reason}, ${choice.sniffed.entropy.toFixed(2)} bits/byte`,
+        files,
     };
 
     if (existsSync(target)) {
@@ -219,15 +283,15 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
         throw new CompressRefusal(`${source}: ${plan.refusal}`);
     }
 
-    const { isFolder, preset, level, target, inputBytes, trialSaving: saving } = plan;
+    const { isFolder, preset, level, target, inputBytes, trialSaving: saving, files } = plan;
     assertRoomFor({ outputDir: dirname(target), inputBytes, keptShare: Number.isFinite(saving) ? 1 - saving : 1 });
     const startedAt = new Date().toISOString();
     const params = { level, long: preset.long, frameBytes: preset.frameBytes, threads: preset.threads };
     let record: LedgerRecord;
 
     if (isFolder) {
-        const packed = await packDirectory({ source, archive: target, ...params });
-        const check = verifyArchiveAgainstFolder({ archive: target, source });
+        const packed = await packDirectory({ source, archive: target, files, ...params });
+        const check = verifyArchiveAgainstFolder({ archive: target, source, files });
 
         if (!check.ok) {
             removePath(target);
@@ -237,7 +301,9 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
         }
 
         if (options.removeOriginal) {
-            removePath(source);
+            for (const path of files ? files.map((file) => join(source, file)) : [source]) {
+                removePath(path);
+            }
         }
 
         record = recordCompression({
@@ -252,6 +318,7 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
             ...params,
             outputSha256: sha256File(target),
             removedOriginal: options.removeOriginal === true,
+            files: files?.length,
             startedAt,
             endedAt: new Date().toISOString(),
         });
@@ -407,10 +474,24 @@ export interface VerifyResult {
  * Reads a `.zst` end to end (every frame's checksum is checked by the decoder) and, with `against`, compares it with
  * the original: a folder entry by entry with sha256, a file by size and sha256.
  */
-export function verifyPath({ archive, against }: { archive: string; against?: string }): VerifyResult {
+export function verifyPath({
+    archive,
+    against,
+    files,
+}: {
+    archive: string;
+    against?: string;
+    /** The list a list pack was made from: only those files of `against` are compared. */
+    files?: readonly string[];
+}): VerifyResult {
     if (isTarArchive(archive)) {
         if (against) {
-            const check = verifyArchiveAgainstFolder({ archive, source: against });
+            const source = resolve(against);
+            const check = verifyArchiveAgainstFolder({
+                archive,
+                source,
+                files: files ? checkFileList(source, files) : undefined,
+            });
             return {
                 ok: check.ok,
                 kind: "folder",
