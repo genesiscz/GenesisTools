@@ -115,6 +115,15 @@ struct InboxItem: Decodable, Identifiable, Hashable {
         return echoes.contains { $0.trimmed.caseInsensitiveCompare(answer) == .orderedSame } ? nil : answer
     }
     var date: Date? { HubFormat.date(at) }
+    /// The question's own text under the card's heading: a dialog's prompt, and a titled decision's prompt, which the
+    /// widget's decision card draws as its body too. An untitled decision's heading is its prompt already. The loader
+    /// leaves out the prompt's "a) …" lines that only repeat the option rows (`shownDecisionText`).
+    var shownPrompt: String? {
+        guard let prompt, !prompt.isEmpty, prompt != title else { return nil }
+        if answerRoute == .dialog { return prompt }
+        guard let title, !title.trimmed.isEmpty else { return nil }
+        return prompt
+    }
     /// The excerpt cards to draw: refs the loader could read, or that name a missing file.
     var excerptRefs: [InboxRef] { (refs ?? []).filter(\.hasContent) }
     /// The text ⌘F searches for this item: question, context, notes, options with reasons, ref paths.
@@ -139,7 +148,7 @@ extension InboxItem {
     /// (`FindText(_, field:)` and `.findField`). Styled texts are given as their shown characters.
     var findFields: [PanelFindField] {
         var fields = [PanelFindField("title", title ?? prompt ?? "")]
-        if answerRoute == .dialog, let prompt, !prompt.isEmpty, prompt != title {
+        if let prompt = shownPrompt {
             fields.append(PanelFindField("prompt", String(inlineMarkdown(prompt).characters)))
         }
         if let context, !context.isEmpty {
@@ -2196,7 +2205,7 @@ struct InboxDecisionCard: View, Equatable {
         let _ = RenderProbe.hit("inbox.decisionCard.body")
         VStack(alignment: .leading, spacing: 9) {
             headerRow
-            if item.answerRoute == .dialog, let prompt = item.prompt, !prompt.isEmpty, prompt != item.title {
+            if let prompt = item.shownPrompt {
                 FindText(inlineMarkdown(prompt), field: "prompt")
                     .font(.system(size: 12.5))
                     .textSelection(.enabled)
