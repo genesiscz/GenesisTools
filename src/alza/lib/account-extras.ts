@@ -166,7 +166,7 @@ export async function gdprInfo(ctx: AccountContext): Promise<{ personalDetails: 
     return { personalDetails, gdprDialog };
 }
 
-/** Row S1 in the reference: the link is seen live in the signed-in navigation, its answer shape is not verified. */
+/** Row S1 in the reference. Signed in on 2026-11-01 it answered a form (`self`, `form.value[]`), not a summary, so it stays raw. */
 export async function subscriptionOverview(ctx: AccountContext): Promise<unknown> {
     const uid = await userId(ctx);
     return read(ctx, `${WEBAPI}/api/users/${uid}/v1/subscription?country=${ctx.api.storefront.country}`, {
