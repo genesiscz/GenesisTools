@@ -1,10 +1,11 @@
-import { getConversationStats, getQuickStatsFromCache } from "@app/claude/lib/history/search";
+import { history } from "@app/claude-history-dashboard/src/server/history";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/stats")({
 	server: {
 		handlers: {
 			GET: async () => {
+				const { getConversationStats, getQuickStatsFromCache } = await history();
 				const cached = getQuickStatsFromCache();
 
 				if (cached) {

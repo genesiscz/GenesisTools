@@ -1,4 +1,4 @@
-import { getConversationBySessionId } from "@app/claude/lib/history/search";
+import { history } from "@app/claude-history-dashboard/src/server/history";
 import {
 	extractMessageContent,
 	extractToolResults,
@@ -12,6 +12,7 @@ export const Route = createFileRoute("/api/conversations/$id")({
 	server: {
 		handlers: {
 			GET: async ({ params }: { params: { id: string } }) => {
+				const { getConversationBySessionId } = await history();
 				const result = await getConversationBySessionId(params.id);
 
 				if (!result) {

@@ -1,4 +1,5 @@
-import { getAllConversations, type SearchFilters, searchConversations } from "@app/claude/lib/history/search";
+import type { SearchFilters } from "@app/claude/lib/history/search";
+import { history } from "@app/claude-history-dashboard/src/server/history";
 import { serializeResult } from "@app/claude-history-dashboard/src/server/serializers";
 import { profiler } from "@genesiscz/utils/profile";
 import { createFileRoute } from "@tanstack/react-router";
@@ -15,6 +16,7 @@ export const Route = createFileRoute("/api/conversations")({
 
 				const filters: Omit<SearchFilters, "onProgress"> = { limit, query, project };
 
+				const { getAllConversations, searchConversations } = await history();
 				const results = query ? await searchConversations(filters) : await getAllConversations({ ...filters, limit });
 
 				// `serializeResult` may reach a synchronous SQLite read per row when hydrated counts

@@ -3,19 +3,9 @@
  * Using TanStack Start's createServerFn for type-safe server/client data fetching
  */
 
-import {
-	type DateRange,
-	getAvailableProjects,
-	getConversationBySessionId,
-	getConversationStats,
-	getConversationStatsWithCache,
-	getQuickStatsFromCache,
-	getSessionListing,
-	getStatsForDateRange,
-	type SearchFilters,
-	searchConversations,
-} from "@app/claude/lib/history/search";
+import type { DateRange, SearchFilters } from "@app/claude/lib/history/search";
 import { createServerFn } from "@tanstack/react-start";
+import { history } from "./history";
 import {
 	extractMessageContent,
 	extractToolResults,
@@ -44,6 +34,8 @@ export type {
 export const getConversations = createServerFn({ method: "GET" })
 	.inputValidator((filters: Omit<SearchFilters, "onProgress">) => filters)
 	.handler(async ({ data: filters }) => {
+		const { getSessionListing, searchConversations } = await history();
+
 		if (filters.query) {
 			const results = await searchConversations(filters);
 			return results.map(serializeResult);
@@ -62,6 +54,7 @@ export const getConversations = createServerFn({ method: "GET" })
  * Lightweight session list for sidebar tree (no message content)
  */
 export const getSidebarSessions = createServerFn({ method: "GET" }).handler(async () => {
+	const { getSessionListing } = await history();
 	const { sessions } = await getSessionListing({ limit: 200, excludeSubagents: false });
 
 	const seen = new Set<string>();
@@ -87,6 +80,7 @@ export const getSidebarSessions = createServerFn({ method: "GET" }).handler(asyn
 export const getConversation = createServerFn({ method: "GET" })
 	.inputValidator((id: string) => id)
 	.handler(async ({ data: id }) => {
+		const { getConversationBySessionId } = await history();
 		const result = await getConversationBySessionId(id);
 
 		if (!result) {
@@ -111,6 +105,7 @@ export const getConversation = createServerFn({ method: "GET" })
  * Get conversation statistics (legacy - full scan)
  */
 export const getStats = createServerFn({ method: "GET" }).handler(async () => {
+	const { getConversationStats } = await history();
 	const stats = await getConversationStats();
 	return stats as SerializableStats;
 });
@@ -120,6 +115,7 @@ export const getStats = createServerFn({ method: "GET" }).handler(async () => {
  * Returns cached totals without scanning files
  */
 export const getQuickStats = createServerFn({ method: "GET" }).handler(async () => {
+	const { getConversationStats, getConversationStatsWithCache, getQuickStatsFromCache } = await history();
 	const cached = getQuickStatsFromCache();
 
 	if (cached) {
@@ -199,6 +195,7 @@ export const getFullStats = createServerFn({ method: "GET" })
 
 		const dateRange: DateRange | undefined = data.from || data.to ? { from: data.from, to: data.to } : undefined;
 
+		const { getConversationStatsWithCache } = await history();
 		const stats = await getConversationStatsWithCache({
 			forceRefresh: data.forceRefresh,
 			dateRange,
@@ -220,6 +217,7 @@ export const getStatsInRange = createServerFn({ method: "GET" })
 			throw new Error(validation.error);
 		}
 
+		const { getStatsForDateRange } = await history();
 		const stats = await getStatsForDateRange({ from: data.from, to: data.to });
 		return stats as SerializableStats;
 	});
@@ -228,5 +226,6 @@ export const getStatsInRange = createServerFn({ method: "GET" })
  * Get available projects
  */
 export const getProjects = createServerFn({ method: "GET" }).handler(async () => {
+	const { getAvailableProjects } = await history();
 	return getAvailableProjects();
 });

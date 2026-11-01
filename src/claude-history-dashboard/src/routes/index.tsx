@@ -11,8 +11,20 @@ import { getConversations } from "@/server/conversations";
 
 export const Route = createFileRoute("/")({
 	component: IndexPage,
+	// The list comes from the history index (a walk of every transcript, then a read). The server sends the page
+	// shell at once and the browser loads the list, so a first visit never waits on it.
+	ssr: false,
+	pendingComponent: IndexPending,
 	loader: () => getConversations({ data: { limit: 100 } }),
 });
+
+function IndexPending() {
+	return (
+		<div className="min-h-screen bg-[#050508] flex items-center justify-center text-sm text-muted-foreground">
+			Loading conversations...
+		</div>
+	);
+}
 
 function IndexPage() {
 	const rawConversations = Route.useLoaderData();
