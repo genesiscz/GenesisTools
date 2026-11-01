@@ -43,7 +43,8 @@ async function runHook(payload: string, env: Record<string, string> = {}): Promi
             CLAUDE_CODE_OAUTH_TOKEN: "",
             CMUX_WORKSPACE_ID: "",
             // This suite may run inside a T3 Code thread, whose marker would give every pin a host.
-            T3CODE_THREAD_ID: "",
+            // Every host marker the hook reads, so a run inside T3 Code does not record its host here.
+            ...Object.fromEntries(AGENT_HOST_MARKERS.map((marker) => [marker.envKey, ""])),
             ...env,
         },
     });
@@ -542,8 +543,11 @@ describe("the app that hosts a session", () => {
             },
         });
         agentHostFromEnv(recorder);
-        const source = asked.map((envKey) => ({ kind: agentHostFromEnv({ [envKey]: "x" })?.kind, envKey }));
+        const source = asked.map((envKey) => {
+            const host = agentHostFromEnv({ [envKey]: "x" });
+            return { kind: host?.kind, envKey, carriesId: host?.id !== undefined };
+        });
 
-        expect(source).toEqual(AGENT_HOST_MARKERS.map(({ kind, envKey }) => ({ kind, envKey })));
+        expect(source).toEqual(AGENT_HOST_MARKERS.map(({ kind, envKey, carriesId }) => ({ kind, envKey, carriesId })));
     });
 });

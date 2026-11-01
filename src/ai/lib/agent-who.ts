@@ -57,7 +57,7 @@ function surfaceCell(entry: ActiveAgentSession): string {
     }
 
     if (entry.host) {
-        return pc.cyan(truncateDisplay(`${entry.host.kind}:${entry.host.id}`, 18));
+        return pc.cyan(truncateDisplay(entry.host.id ? `${entry.host.kind}:${entry.host.id}` : entry.host.kind, 18));
     }
 
     return entry.tty === "??" ? pc.dim("—") : pc.dim(entry.tty);

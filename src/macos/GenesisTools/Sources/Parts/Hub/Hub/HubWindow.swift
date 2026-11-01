@@ -2953,7 +2953,7 @@ private struct SessionRowView: View, Equatable {
                             .layoutPriority(-1)
                     }
                     if let host = session.host {
-                        Badge(host.badge, tooltip: "Ran in \(host.appName), thread \(host.id)")
+                        Badge(host.badge, tooltip: host.id.map { "Ran in \(host.appName), thread \($0)" } ?? "Ran in \(host.appName)")
                     }
                     Spacer(minLength: 0)
                     if let activity, activity.showsWord {

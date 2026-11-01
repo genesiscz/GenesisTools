@@ -42,10 +42,11 @@ public struct SessionCmuxRef: Equatable, Sendable, Codable {
 public struct SessionHost: Equatable, Sendable, Codable {
     /// `t3` for T3 Code; the hook's marker table (`AGENT_HOST_MARKERS`) names every kind.
     public var kind: String
-    /// The host's id for this session: a T3 Code thread id.
-    public var id: String
+    /// The host's id for this session: a T3 Code thread id; nil when the process served the host without one
+    /// (T3 Code names no thread on a Codex app-server or a Grok ACP process).
+    public var id: String?
 
-    public init(kind: String, id: String) {
+    public init(kind: String, id: String?) {
         self.kind = kind
         self.id = id
     }
