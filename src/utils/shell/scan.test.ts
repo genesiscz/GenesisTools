@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { commandTokenIndex, commandWord, lastSimpleCommandOnLine, scanShell, splitPipeline, tokenize } from "./scan";
+import { detectShellViolations } from "./rules";
+import {
+    commandTokenIndex,
+    commandWord,
+    lastSimpleCommandOnLine,
+    originalSlice,
+    scanShell,
+    splitPipeline,
+    stripShellNoise,
+    tokenize,
+} from "./scan";
 
 describe("lastSimpleCommandOnLine", () => {
     it("retains fully quoted commands and ignores comment-only trailing spans", () => {
@@ -125,6 +135,148 @@ describe("the helpers the rules match with", () => {
         expect(commandAfter("xargs -l rm")).toBe("rm");
         expect(commandAfter("xargs -J % rm % /tmp/x")).toBe("rm");
         expect(commandAfter("xargs -- rm -rf")).toBe("rm");
+    });
+});
+
+describe("originalSlice", () => {
+    const sliceOf = (command: string, from: string, to: string = from): string => {
+        const start = command.indexOf(from);
+        return originalSlice(scanShell(command), start, command.indexOf(to, start) + to.length);
+    };
+    const matchedBy = (command: string, ruleId: string): string | undefined =>
+        detectShellViolations(command).find((violation) => violation.ruleId === ruleId)?.matched;
+
+    it("keeps a quoted last argument outside an executable body", () => {
+        expect(sliceOf("log show --predicate 'x'", "log", "--predicate")).toBe("log show --predicate 'x'");
+        expect(matchedBy("log show --predicate 'x'", "bare-log-command")).toBe("log show --predicate 'x'");
+        expect(sliceOf("ls 'a b' | wc -l", "ls")).toBe("ls 'a b'");
+    });
+
+    it("ends at the span's own statement inside a -c body, where the whole body is blank in the outer text", () => {
+        expect(sliceOf(`zsh -c 'git checkout -- f; echo done; cat f'`, "git", "-- f")).toBe("git checkout -- f");
+        expect(sliceOf(`bash -c 'ls a 2>/dev/null | wc -l && echo hi'`, "ls a", "-l")).toBe("ls a 2>/dev/null | wc -l");
+        expect(sliceOf(`zsh -c 'log show --predicate "x"\necho next'`, "log", "--predicate")).toBe(
+            'log show --predicate "x"'
+        );
+        expect(sliceOf(`zsh -c '(set -o pipefail; false | tail -1); echo "rc=$?"'`, "false", "-1")).toBe(
+            "false | tail -1"
+        );
+    });
+
+    it("ends at the span's own statement in a body nested in another body", () => {
+        const command = `zsh -c 'bash -c "git restore f; ls" ; echo outer'`;
+        expect(sliceOf(command, "git", "restore f")).toBe("git restore f");
+    });
+
+    it("never returns the body's closing quote for an empty tail at the body's end", () => {
+        const command = "zsh -c 'git restore --'";
+        const end = command.indexOf("--") + 2;
+        expect(originalSlice(scanShell(command), end, end)).toBe("");
+    });
+
+    it("carries a quoted $(...) at the end of a statement up to its closing quote", () => {
+        const command = `git show HEAD:$f 2>/dev/null | rg -c -F "$(sed -n "\${n}p" $f)" ; done`;
+        expect(sliceOf(command, "git", "-F")).toBe(`git show HEAD:$f 2>/dev/null | rg -c -F "$(sed -n "\${n}p" $f)"`);
+        expect(sliceOf("echo $(\n  date\n) | wc -l", "echo")).toBe("echo $(\n  date\n)");
+    });
+
+    it("stays inside the command substitution a span sits in", () => {
+        const command = `echo "n=$(ls 2>/dev/null | wc -l)"; ls`;
+        expect(sliceOf(command, "ls 2>", "-l")).toBe("ls 2>/dev/null | wc -l");
+    });
+
+    it("gives the rules a matched excerpt that is exactly the offending statement", () => {
+        expect(
+            matchedBy(`zsh -c 'false | tail -1; echo "rc=$?"; cd /tmp; echo done'`, "exit-code-after-pipeline")
+        ).toBe("false | tail -1");
+        expect(matchedBy(`bash -c 'false | tail -1; echo rc=$?'`, "exit-code-after-pipeline")).toBe("false | tail -1");
+        expect(matchedBy(`zsh -c 'ls a 2>/dev/null | wc -l; echo hi; ls b'`, "stderr-discarded-then-counted")).toBe(
+            "ls a 2>/dev/null | wc -l"
+        );
+        expect(matchedBy(`zsh -c 'git checkout -- f; echo done; cat f'`, "git-checkout-overwrites-file")).toBe(
+            "git checkout -- f"
+        );
+        // Logged case 148: the excerpt stopped at the opening quote of the `$(...)` argument.
+        const loop =
+            'for spec in "a.ts:3"; do f=${spec%:*}; n=${spec##*:}; git show HEAD:$f 2>/dev/null | rg -c -F "$(sed -n "${n}p" $f)" ; done';
+        expect(matchedBy(loop, "stderr-discarded-then-counted")).toBe(
+            'git show HEAD:$f 2>/dev/null | rg -c -F "$(sed -n "${n}p" $f)"'
+        );
+        expect(matchedBy("command log show --predicate 'x' | tail -3; echo $?", "exit-code-after-pipeline")).toBe(
+            "command log show --predicate 'x' | tail -3"
+        );
+    });
+
+    it("stops before a comment, in a -c body and outside one", () => {
+        expect(sliceOf("false | tail -1 # c\necho $?", "false", "-1")).toBe("false | tail -1");
+        expect(sliceOf(`zsh -c 'false | tail -1 # c\necho $?'`, "false", "-1")).toBe("false | tail -1");
+        expect(sliceOf(`zsh -c 'false | tail -1 "$(date)" # note\necho $?'`, "false", "-1")).toBe(
+            'false | tail -1 "$(date)"'
+        );
+        expect(matchedBy(`zsh -c 'git checkout -- f # undo\necho done'`, "git-checkout-overwrites-file")).toBe(
+            "git checkout -- f"
+        );
+    });
+
+    it("keeps a # that is quoted, escaped or inside a word", () => {
+        expect(sliceOf("log show --predicate 'a #b'", "log", "--predicate")).toBe("log show --predicate 'a #b'");
+        expect(sliceOf(`zsh -c 'ls "a #b" | wc -l; ls'`, "ls", "-l")).toBe(`ls "a #b" | wc -l`);
+        expect(sliceOf("ls a \\#b 'x' | wc -l", "ls", "\\#b")).toBe("ls a \\#b 'x'");
+        expect(sliceOf("ls a#b 'x' | wc -l", "ls", "a#b")).toBe("ls a#b 'x'");
+    });
+
+    it("drops a line continuation that ends the excerpt", () => {
+        expect(sliceOf("false | tail -1 'x' \\\n  && echo $?", "false", "-1")).toBe("false | tail -1 'x'");
+        expect(sliceOf(`zsh -c 'false | tail -1 "x" \\\n && echo $?'`, "false", "-1")).toBe('false | tail -1 "x"');
+    });
+
+    it("reads a double-quoted -c body with its escapes removed, so an escaped $(...) argument stays whole", () => {
+        expect(
+            matchedBy(`zsh -c "git checkout -- \\"\\$(git ls-files -m)\\"; echo done"`, "git-checkout-overwrites-file")
+        ).toBe(`git checkout -- \\"\\$(git ls-files -m)\\"`);
+        expect(
+            matchedBy(`zsh -c "ls 2>/dev/null | wc -l \\"\\$(cat x)\\"; echo done"`, "stderr-discarded-then-counted")
+        ).toBe(`ls 2>/dev/null | wc -l \\"\\$(cat x)\\"`);
+        // `\` + newline inside double quotes joins the lines; the excerpt still maps back to the raw text.
+        expect(sliceOf(`bash -c "ls a 2>/dev/null | wc -l \\"x\\" \\\n && echo hi"`, "ls a", "-l")).toBe(
+            `ls a 2>/dev/null | wc -l \\"x\\"`
+        );
+    });
+
+    it("gives git the path list of its own statement only", () => {
+        const command = `zsh -c 'git checkout -- f; echo done; cat f'`;
+        const afterDashes = command.indexOf("--") + 2;
+        expect(originalSlice(scanShell(command), afterDashes, afterDashes + 2)).toBe(" f");
+    });
+
+    it("builds corrected commands that keep the rest of the -c body after the excerpt", () => {
+        const suggestionBy = (command: string, ruleId: string): string | undefined =>
+            detectShellViolations(command).find((violation) => violation.ruleId === ruleId)?.suggestion;
+
+        expect(
+            suggestionBy(`zsh -c 'false | tail -1; echo "rc=$?"; cd /tmp; echo done'`, "exit-code-after-pipeline")
+        ).toContain(`false | tail -1); echo "rc=$?"; cd /tmp; echo done'`);
+        // The subshell closes before the comment, so the corrected command parses.
+        expect(suggestionBy(`zsh -c 'false | tail -1 # c\necho $?'`, "exit-code-after-pipeline")).toContain(
+            "false | tail -1) # c\necho $?'"
+        );
+        expect(suggestionBy("false | tail -1 # c\necho $?", "exit-code-after-pipeline")).toContain(
+            "false | tail -1) # c\necho $?"
+        );
+        expect(suggestionBy("false | tail -1 'x' \\\n  && echo $?", "exit-code-after-pipeline")).toContain(
+            "false | tail -1 'x') \\\n  && echo $?"
+        );
+        const git = suggestionBy(`zsh -c 'git checkout -- f; echo done; cat f'`, "git-checkout-overwrites-file");
+        expect(git).toContain("-- f");
+        expect(git?.match(/echo done/g)?.length ?? 0).toBeLessThanOrEqual(1);
+        // An empty path list after `--`: no suggestion, instead of one that stashes the body's closing quote.
+        expect(suggestionBy("zsh -c 'git restore --'", "git-checkout-overwrites-file")).toBeUndefined();
+    });
+
+    it("marks a comment only when asked, and keeps the cleaned length", () => {
+        expect(stripShellNoise("ls # c")).toBe(`ls${" ".repeat(4)}`);
+        expect(stripShellNoise("ls # c", "#")).toBe("ls #  ");
+        expect(stripShellNoise("ls 'a # b' # c", "#")).toBe(`ls${" ".repeat(9)}#  `);
     });
 });
 
