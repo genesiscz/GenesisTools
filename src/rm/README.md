@@ -12,7 +12,7 @@ tools rm preset node_modules js-build [--in <dir>]   # find and delete preset fo
 tools rm presets                    # the folder kinds deleted without asking
 tools rm trash                      # what waits for the drain (--sizes measures it)
 tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a batch id tail such as fc7b; a request id: each of its batches)
-tools rm drain [--now]              # drain due batches now (--now: all of them)
+tools rm drain [--now]              # drain due batches now (--now, a person's: all of them)
 tools rm requests [id]              # what agents asked the user to confirm (an id: that request in full)
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
 tools rm deny <id>                  # close a request and put its aside paths back (an agent may cancel its own)
@@ -142,10 +142,11 @@ operating-system user. `--by agent|session|day|rule|action` prints the totals mo
 
 ## How a person confirms
 
-`approve`, `roots add`, `config set` and `profile set|remove` need a person, in two layers:
+`approve`, `roots add`, `config set`, `profile set|remove` and `drain --now` need a person, in two layers:
 
 - the shell guard rule `rm-user-verbs` blocks them in an agent's shell call (Claude Code, Codex, Grok);
-- the verb itself asks. With GenesisTools.app installed, a window shows the paths and who asked, and "Approve with
+- the verb itself asks (`drain --now` does not ask: an agent's run drains early only its own session's batches).
+  With GenesisTools.app installed, a window shows the paths and who asked, and "Approve with
   Touch ID" goes on only after Touch ID (or the account password). An agent can open the window but cannot touch the
   sensor. Without the app a macOS dialog asks, and only a click on Approve goes on. The default never takes a typed
   code: "outside an agent" is read from environment variables an agent can clear, and a terminal an agent fakes
@@ -207,6 +208,9 @@ GenesisTools.app cannot ask) cannot change once it shows, so it lists only the s
   that kills its shell's process tree cannot stop it halfway. One drainer runs at a time. It deletes due batches in
   parallel, sleeps until the next one is due, and exits when the trash is empty. Every run also sweeps orphans: a
   trash folder with no record, and a claim whose process died.
+- `tools rm drain --now` ends the grace period of every batch, so it is a person's command: the shell guard blocks
+  it for an agent. An agent's run that gets past the guard drains early only the batches its own session made; a
+  batch of another session, or one a person approved ("Move to the trash"), keeps its grace and its restore.
 - The deletion code only deletes inside a trash root, at batch or item depth (`assertInsideTrash`), so a bug that
   builds a wrong path deletes nothing.
 
