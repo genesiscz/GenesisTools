@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
     type ApprovalItemUpdate,
@@ -36,11 +37,13 @@ import {
     type RmConfig,
     type RmRequest,
     readRmLedger,
+    recoverAsideJournals,
     requestBatchIds,
     resolveTarget,
     restoreBatch,
     rmCallerFromRuntime,
     rmRequestLockFile,
+    rmRequestsDir,
     saveRmConfig,
     saveRmRequest,
     stillAside,
@@ -1014,7 +1017,29 @@ describe("a path named like a subcommand", () => {
             printlnErr.mockRestore();
         }
 
-        expect(notes).toEqual([`a file named log exists here: delete it with ${toolCommand("rm")} ./log`]);
+        expect(notes).toEqual([
+            `log here is a file; to delete it instead of running the log subcommand, write ${toolCommand("rm")} ./log`,
+        ]);
+    });
+
+    test("a folder of a subcommand's name gets no note: the requests folder of the store is not a file to delete", async () => {
+        const here = join(base, "store-like");
+        mkdirSync(join(here, "requests"), { recursive: true });
+        const notes: string[] = [];
+        const printlnErr = spyOn(out, "printlnErr").mockImplementation((raw?: unknown) => {
+            notes.push(stripAnsi(String(raw ?? "")));
+        });
+        const cwd = process.cwd();
+
+        try {
+            process.chdir(here);
+            await parsed(["requests", "--json"]);
+        } finally {
+            process.chdir(cwd);
+            printlnErr.mockRestore();
+        }
+
+        expect(notes).toEqual([]);
     });
 
     test("the help says to write ./<name>, because -- still runs the subcommand", () => {
@@ -1135,7 +1160,8 @@ describe("the requests listing", () => {
     test("one summary, one group per session, no repeated reason, no aside location", () => {
         const lines = renderRequestList(views, { now: NOW, caller: PERSON }).map(stripAnsi);
         const text = lines.join("\n");
-        expect(lines[0]).toContain("5 open · 5 paths · 864.0 KB aside · 3 in place · oldest 4d");
+        // From the disk now: gone22's path is gone (not in place), lost33's lost copy is not aside.
+        expect(lines[0]).toContain("5 open · 5 paths · 44.0 KB aside · 2 in place · oldest 4d");
         expect(text).toContain(
             "Needs a look: 1 gone (gone22) · 1 copy lost (lost33) · 1 asked twice (dupaaa = dupbbb)"
         );
@@ -1145,6 +1171,63 @@ describe("the requests listing", () => {
         expect(text.indexOf("aaaaaaaa cleanup run")).toBeLessThan(text.indexOf("bbbbbbbb probe work"));
         expect(text).toContain(`Approve: ${toolCommand("rm")} approve <id>`);
         expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(124);
+    });
+
+    test("with --all a closed request shows its status, and only open ones count or need a look", () => {
+        const closed = [
+            req(
+                "appr11",
+                ASKER,
+                "2026-10-31T10:00:00.000Z",
+                [
+                    {
+                        path: "/tmp/cc-old.json",
+                        kind: "file",
+                        rule: "default",
+                        reason: NO_RULE,
+                        stored: `${scratch}/rm-aside/9/0-x-cc-old.json`,
+                    },
+                ],
+                {
+                    status: "approved",
+                    decidedAt: "2026-10-31T10:05:00.000Z",
+                    decidedVia: "touch-id",
+                    decided: { approved: ["/tmp/cc-old.json"], denied: [] },
+                }
+            ),
+            req(
+                "deny11",
+                OTHER,
+                "2026-11-01T09:00:00.000Z",
+                [{ path: "/work/shop/keep.txt", kind: "file", rule: "default", reason: NO_RULE }],
+                {
+                    status: "denied",
+                    decidedAt: "2026-11-01T09:10:00.000Z",
+                    decidedVia: "dialog",
+                    decided: { approved: [], denied: ["/work/shop/keep.txt"] },
+                }
+            ),
+        ];
+        const all = buildRequestViews([...requests, ...closed], {
+            present: (path) => present(path) || path === "/work/shop/keep.txt",
+            sizeOf: (request) => sizes[request.id],
+        });
+        const lines = renderRequestList(all, { now: NOW, caller: PERSON }).map(stripAnsi);
+        const text = lines.join("\n");
+        const row = (id: string) => lines.find((line) => line.trimStart().startsWith(id)) ?? "";
+
+        expect(lines[0]).toContain("5 open · 2 closed · 5 paths · 44.0 KB aside · 2 in place");
+        // appr11's copy went to the trash by design: it is no copy lost to look at.
+        expect(text).toContain("Needs a look: 1 gone (gone22) · 1 copy lost (lost33) · 1 asked twice");
+        expect(row("appr11")).toContain("approved");
+        expect(row("appr11")).toContain("approved 1, Oct 31");
+        expect(row("appr11")).not.toContain("copy lost");
+        expect(row("deny11")).toContain("denied 1, Nov 1");
+        expect(row("deny11")).not.toContain("approved");
+
+        const paths = renderRequestList(all, { now: NOW, caller: PERSON, paths: true }).map(stripAnsi);
+        expect(paths.find((line) => line.includes("cc-old.json"))).toContain("approved");
+        expect(paths.find((line) => line.includes("keep.txt"))).toContain("denied");
     });
 
     test("an agent reads the agent's footer", () => {
@@ -1527,6 +1610,7 @@ describe("one window for several requests", () => {
         expect(loadRmRequest(second.id)?.decided?.approved).toEqual([b1]);
         expect([a1, a2, b1, b2].map((path) => existsSync(path ?? ""))).toEqual([false, true, false, true]);
     });
+
     test("a ticked path replaced while the window is open stays, and its request stays pending", async () => {
         const first = inPlaceAsk("batch-swap-a", ["swapped.txt"]);
         const second = inPlaceAsk("batch-swap-b", ["kept.txt"]);
@@ -1638,6 +1722,39 @@ describe("an agent's drain --now", () => {
         }
 
         expect([theirs, approved].map((stored) => existsSync(stored))).toEqual([false, false]);
+    });
+});
+
+describe("prune -n", () => {
+    test("a dry run leaves a dead run's aside journal as it is", async () => {
+        const id = "dryjr1";
+        // No pid on macOS or Linux reaches 999999 by default: the run that wrote the journal is dead.
+        const journal = join(rmRequestsDir(), `${id}.json.moving-999999`);
+        const draft: RmRequest = {
+            id,
+            kind: "delete",
+            createdAt: new Date().toISOString(),
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            targets: [{ path: join(base, "dry-journal", "a.txt"), kind: "file", rule: "default", reason: "r" }],
+            status: "pending",
+        };
+        mkdirSync(rmRequestsDir(), { recursive: true });
+        writeFileSync(journal, SafeJSON.stringify(draft));
+        const println = spyOn(out, "println").mockImplementation(() => undefined);
+
+        try {
+            await createRmProgram().parseAsync(["prune", "-n"], { from: "user" });
+        } finally {
+            println.mockRestore();
+        }
+
+        expect(existsSync(journal)).toBe(true);
+        expect(loadRmRequest(id)).toBeNull();
+        // The control: the journal is one a recovery saves, so the dry run above really held back.
+        expect(recoverAsideJournals()).toContain(id);
+        expect(loadRmRequest(id)?.status).toBe("pending");
     });
 });
 

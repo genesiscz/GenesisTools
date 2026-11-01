@@ -837,7 +837,12 @@ export function registerRequestCommands(program: Command): void {
         .option("--json", "print as JSON")
         .action((flags: { dryRun?: boolean; json?: boolean }) => {
             const ctx = runContext();
-            recoverAsideJournals();
+
+            // A dry run never writes: the recovery saves requests and removes aside journals.
+            if (!flags.dryRun) {
+                recoverAsideJournals();
+            }
+
             const result = pruneRmRequests({ dryRun: flags.dryRun, caller: ctx.caller });
 
             if (flags.json) {
