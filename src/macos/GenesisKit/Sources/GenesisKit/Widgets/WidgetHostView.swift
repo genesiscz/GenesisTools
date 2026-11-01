@@ -90,6 +90,9 @@ struct WidgetHostView: View {
         )
         .nativeSettingsAppearance(model.appearance)
         .widgetAccessibility(reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency)
+        // A file link in a card, a prompt or a transcript opens by Inbox behavior → Clicking a file link, never through
+        // the system's openURL, which answered a plain `/Users/…/Note.md` link with Finder's "-50" alert (2026-11-01).
+        .pathLinks(model.pathLinks)
         // The panel's window tracks the pointer (EdgePanelController.pointerChanged); this only logs a disagreement.
         .onHover { model.swiftUIHoverChanged?(surface, $0) }
         .onChange(of: motion.pointerInside) { _, inside in
@@ -918,6 +921,7 @@ struct WidgetPeekSummary: View, Equatable {
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+                .pathLinkMenu(markdown: summary)
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

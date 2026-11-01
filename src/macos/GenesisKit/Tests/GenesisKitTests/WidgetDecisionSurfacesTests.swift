@@ -325,6 +325,19 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
                        "a staged pick, including Shift, is not a send")
     }
 
+    /// A file link in a card follows Inbox behavior → Clicking a file link, read at the click, through one handler the
+    /// model keeps: every panel then hands its texts the same link environment.
+    func testFileLinkClicksFollowTheirSettingThroughOneHandler() throws {
+        let plain = try model()
+        defer { plain.stop() }
+        XCTAssertEqual(plain.pathLinks.click(), .genesisMarkdown, "the default opens notes in Genesis Markdown")
+        XCTAssertTrue(plain.pathLinks === plain.pathLinks, "one handler per model")
+        let ask = try model(preferences: ["fileLinkClick": "ask"])
+        defer { ask.stop() }
+        XCTAssertEqual(ask.snapshot?.state.preferences.fileLinkClick, "ask", "the hub's key reaches the widget")
+        XCTAssertEqual(ask.pathLinks.click(), .ask)
+    }
+
     /// F21: Discard checked waits behind the model's Undo window, and while it waits no view reads those decisions as
     /// staged (the session card, the overview row, the alert's option).
     func testADiscardInItsUndoWindowNoLongerReadsAsStaged() throws {
