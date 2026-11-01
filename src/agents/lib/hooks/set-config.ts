@@ -47,6 +47,7 @@ export const SETTABLE_KEYS = [
     "diff.maxCaptureMB",
     "diff.maxCaptureFileMB",
     "diff.maxNamedPathMB",
+    "diff.clone.maxFileMB",
     "diff.othersSummary",
     "diff.theme",
     "diff.highlight",
@@ -536,6 +537,11 @@ export function applySetting(
 
     if (key === "diff.fillMax") {
         next.diff.fillMax = asCount(key, value, 0);
+        return next;
+    }
+
+    if (key === "diff.clone.maxFileMB") {
+        next.diff.clone = { ...next.diff.clone, maxFileMB: asMegabytes(key, value) };
         return next;
     }
 

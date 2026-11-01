@@ -3,37 +3,43 @@ import { accessSync, chmodSync, constants, copyFileSync, readFileSync, unlinkSyn
 /** The shape of `copyFileSync`, so a caller can hand in a stand-in that sees the flags or makes a clone fail. */
 export type CopyFile = (source: string, destination: string, mode: number) => void;
 
-/** How `cloneOrCopy` put the file in place. `declined`: no clone was possible and the caller allowed no copy. */
+/** How `cloneOrCopy` put the file in place. `declined`: neither a clone nor a copy was allowed and possible. */
 export type Placement = "cloned" | "copied" | "declined";
 
 /**
  * A clone or nothing, and never over an existing destination. `COPYFILE_FICLONE` would fall back to a copy by
  * itself, and the caller could then not tell the free clone from a copy that its byte budget has to pay for.
  * Measured 2026-11-01 on Bun: a 512 MB clone takes 0.1 ms on APFS; HFS+ answers ENOTSUP and another volume EXDEV.
+ * Bun's plain `copyFileSync` clones on APFS too, but only by choice of its own; this asks for one.
  */
 export const CLONE_ONLY = constants.COPYFILE_FICLONE_FORCE | constants.COPYFILE_EXCL;
 
 /**
  * Puts a private copy of `source` at `destination`, which must not exist yet: a clone where the volume can make one
- * (APFS, btrfs, XFS), else a real copy when `mayCopy` allows it. A clone reads and writes no data, and it keeps the
- * old blocks when `source` is later rewritten in place, so it is a true before-state.
+ * (APFS, btrfs, XFS) and `mayClone` allows it, else a real copy when `mayCopy` allows it. A clone reads and writes
+ * no data, and it keeps the old blocks when `source` is later rewritten, so it is a true before-state.
  *
- * Throws when the source is gone, the destination exists, or the copy itself fails.
+ * 🛑 Never call it for a cloud placeholder: `clonefile(2)` materializes a dataless file before it clones it, which
+ * downloads it, and a copy reads it. A clone the I/O policy refused as dataless (EDEADLK) throws rather than copy.
+ *
+ * Throws when the source is gone, the destination exists, the source is dataless, or the copy itself fails.
  */
 export function cloneOrCopy({
     source,
     destination,
     mode,
+    mayClone = true,
     mayCopy,
     copyFile = copyFileSync,
 }: {
     source: string;
     destination: string;
     mode: number;
+    mayClone?: boolean;
     mayCopy: boolean;
     copyFile?: CopyFile;
 }): Placement {
-    if (cloneable(source) && cloned({ source, destination, mode, copyFile })) {
+    if (mayClone && cloneable(source) && cloned({ source, destination, mode, copyFile })) {
         return "cloned";
     }
 
@@ -78,8 +84,9 @@ function cloned({
     } catch (err) {
         const code = (err as NodeJS.ErrnoException)?.code;
 
-        // The source or the destination is the problem, not the volume: a copy would fail the same way.
-        if (code === "ENOENT" || code === "EEXIST") {
+        // The source or the destination is the problem, not the volume: a copy would fail the same way, or read a
+        // dataless file (EDEADLK) and download it.
+        if (code === "ENOENT" || code === "EEXIST" || code === "EDEADLK") {
             throw err;
         }
 
