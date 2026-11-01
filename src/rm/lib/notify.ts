@@ -74,7 +74,7 @@ export function requestNotice(request: RmRequest): RequestNotice {
     const count = request.targets.length;
     const aside = request.targets.every((target) => target.stored) ? ", set aside" : "";
     return {
-        title: `tools rm request ${request.id}`,
+        title: `${toolCommand("rm")} request ${request.id}`,
         text:
             `${agent}${where ? ` ${where}` : ""} asks to delete ${count} item${count === 1 ? "" : "s"}${aside}. ` +
             `Review: ${toolCommand("rm")} approve ${request.id}`,
