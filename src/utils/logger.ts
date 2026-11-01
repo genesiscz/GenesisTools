@@ -135,45 +135,84 @@ let globalConfig: LoggerConfig = {
 let fileLogWarningShown = false;
 
 /**
+ * `O_CLOEXEC`, which `fs.constants` does not carry, by platform. Without it every program a process execs inherits
+ * the open day log: the `tools` wrapper logs and then execs the GenesisTools.app launcher, and on 2026-11-01 the
+ * launchers and the agent sessions under them held 14 to 61 handles on each old day log, so a day the daily pass had
+ * compressed and removed still filled the disk. Elsewhere (Windows) the file opens with plain append.
+ */
+const O_CLOEXEC_BY_PLATFORM: Partial<Record<NodeJS.Platform, number>> = { darwin: 0x1000000, linux: 0o2000000 };
+
+function appendFlags(): string | number {
+    const cloexec = O_CLOEXEC_BY_PLATFORM[process.platform];
+
+    if (cloexec === undefined) {
+        return "a";
+    }
+
+    return fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | cloexec;
+}
+
+/**
  * Sync file destination that follows the local date: each write lands in
  * today's `<YYYY-MM-DD>.log`, re-opening the file when midnight passes.
  * A static `pino.destination` pins the file chosen at process start, so
  * long-running processes (TUIs, daemons) kept writing "today's" events into
  * yesterday's log — which broke time-window forensics across day files.
  *
+ * The day's file is also closed at midnight by an unref'd timer, so an idle
+ * process (a server between requests) does not hold yesterday's file open
+ * until its next write, possibly days later, after the daily pass replaced it
+ * with its `.zst`.
+ *
  * The directory is resolved on every write too, so the sink follows
  * GENESIS_TOOLS_HOME. The root logger is built on first use, and a module that
  * calls `logger.scoped()` at import time (`process/ps.ts`, loaded by the test
  * worker-log preload) builds it before the test sandbox sets that variable.
  * A fixed directory then sent every test record into the real day log.
+ *
+ * Exported for tests; `now` is the clock the day and the rollover come from.
  */
-function createDailyFileStream(resolveLogDir: () => string): Writable {
+export function createDailyFileStream(
+    resolveLogDir: () => string,
+    { now: clock = Date.now }: { now?: () => number } = {}
+): Writable {
     let fd: number | null = null;
     let openDir = "";
     let nextRolloverAt = 0;
+    let rollover: ReturnType<typeof setTimeout> | undefined;
+
+    const closeFd = (): void => {
+        clearTimeout(rollover);
+        rollover = undefined;
+
+        if (fd === null) {
+            return;
+        }
+
+        try {
+            fs.closeSync(fd);
+        } catch (err) {
+            process.stderr.write(`[logger] Failed to close rolled-over log file: ${err}\n`);
+        }
+
+        fd = null;
+    };
 
     const ensureFd = (): number => {
-        const now = Date.now();
+        const now = clock();
         const logDir = resolveLogDir();
 
         if (fd === null || now >= nextRolloverAt || logDir !== openDir) {
-            if (fd !== null) {
-                try {
-                    fs.closeSync(fd);
-                } catch (err) {
-                    process.stderr.write(`[logger] Failed to close rolled-over log file: ${err}\n`);
-                }
-
-                fd = null;
-            }
-
+            closeFd();
             const day = new Date(now);
             fs.mkdirSync(logDir, { recursive: true });
-            fd = fs.openSync(path.join(logDir, `${formatLocalDate(day)}.log`), "a");
+            fd = fs.openSync(path.join(logDir, `${formatLocalDate(day)}.log`), appendFlags());
             openDir = logDir;
             const midnight = new Date(day);
             midnight.setHours(24, 0, 0, 0);
             nextRolloverAt = midnight.getTime();
+            rollover = setTimeout(closeFd, nextRolloverAt - now);
+            rollover.unref();
             startDailyCompressionOnce(logDir, formatLocalDate(day));
         }
 
@@ -200,6 +239,9 @@ function createDailyFileStream(resolveLogDir: () => string): Writable {
             cb();
         },
         destroy(err, cb) {
+            clearTimeout(rollover);
+            rollover = undefined;
+
             if (fd !== null) {
                 try {
                     fs.closeSync(fd);
