@@ -495,6 +495,26 @@ enum VaultWindowLock {
 
         return fd
     }
+
+    /// The lock once the process holding it lets go, checked every quarter second for up to `timeout` seconds; nil
+    /// when it is still held then. Three launches of one program asked at once (T3 Code probes every provider
+    /// instance together, 2026-11-01): the second and third were refused while the first window was open, so an
+    /// answer that the first window remembered never reached them.
+    static func acquire(_ path: String, waiting timeout: TimeInterval) -> (fd: Int32, waited: TimeInterval)? {
+        let start = Date()
+
+        while true {
+            if let fd = acquire(path) {
+                return (fd, Date().timeIntervalSince(start))
+            }
+
+            if Date().timeIntervalSince(start) >= timeout {
+                return nil
+            }
+
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+    }
 }
 
 /// What the window shows, built from the request, the kernel's caller and its session. Pure, so tests read it.
@@ -769,12 +789,23 @@ func unlockVault(_ params: VaultUnlockParams) {
         emitVaultKey(remembered: true, params: params, caller: caller, session: session)
     }
 
-    guard VaultWindowLock.acquire(VaultWindowLock.path(for: "vault|\(VaultGrants.runtime(of: executable))|\(caller.script ?? "")")) != nil else {
-        vaultAudit("denied", params: params, caller: caller, session: session, detail: "an approval window for this program is already open")
-        vaultDeny("an approval window for “\(tool)” is already open; answer that one first")
+    // The caller waits 180 s in all (VAULT_UNLOCK_TIMEOUT_MS); a window of its own needs at least 20 s of that.
+    let windowSeconds = 170.0
+    let shortestWindow = 20.0
+    let lockPath = VaultWindowLock.path(for: "vault|\(VaultGrants.runtime(of: executable))|\(caller.script ?? "")")
+    guard let lock = VaultWindowLock.acquire(lockPath, waiting: windowSeconds - shortestWindow) else {
+        vaultAudit("denied", params: params, caller: caller, session: session, detail: "an approval window for this program stayed open")
+        vaultDeny("an approval window for “\(tool)” is still open; answer that one first")
     }
 
-    let deadlineSeconds = 170.0
+    // The window this request waited for may have remembered its answer: then it serves this request too.
+    if lock.waited > 0, rememberable,
+       VaultGrants.live(executable: executable, script: caller.script, now: Int64(Date().timeIntervalSince1970 * 1_000), in: VaultGrants.load()) != nil {
+        vaultAudit("remembered", params: params, caller: caller, session: session)
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session)
+    }
+
+    let deadlineSeconds = windowSeconds - lock.waited
     let content = VaultWindowContent.build(params, caller: caller, session: session)
     let biometric = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
 

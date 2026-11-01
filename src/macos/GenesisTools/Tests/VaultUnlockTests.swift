@@ -35,6 +35,19 @@ final class VaultUnlockTests: XCTestCase {
                                 imageUUID: UUID(uuidString: "4C4C447C-5555-3144-A138-DBD9C49417A3")!, executable: executable)
     }
 
+    func testAWindowLockWaitsForTheHolderAndGivesUpAtItsTimeout() throws {
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-window-test-\(UUID().uuidString).lock")
+        let held = try XCTUnwrap(VaultWindowLock.acquire(path))
+
+        XCTAssertNil(VaultWindowLock.acquire(path, waiting: 0.3), "a held lock stays refused until its timeout")
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { close(held) }
+        let waited = try XCTUnwrap(VaultWindowLock.acquire(path, waiting: 5), "the lock is taken once the holder lets go")
+        XCTAssertGreaterThan(waited.waited, 0.2)
+        XCTAssertLessThan(waited.waited, 2)
+        close(waited.fd)
+    }
+
     func testVaultRecipientIgnoresTheReportedNameButNotAnExec() {
         let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
         let holder = [VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])]
