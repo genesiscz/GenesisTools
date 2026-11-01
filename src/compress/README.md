@@ -8,6 +8,7 @@ tools compress pack notes.log                 # notes.log.zst; the original stay
 tools compress pack video_files/              # video_files.zst (tar inside zstd); the folder stays
 tools compress pack big.jsonl --remove-original   # removes big.jsonl only after the .zst decodes to the same sha256
 tools compress pack x --dry-run               # preset, trial saving, estimate; writes nothing
+tools compress pack store/ --files-from day.txt -o day/store.zst --remove-original   # only the listed files
 tools compress unpack video_files.zst         # restores video_files/ next to it; refuses to overwrite
 tools compress unpack logs.zst --into /tmp/x  # a compressed file comes back as logs
 tools compress verify run.zst --against run/  # every entry, size and sha256
@@ -22,6 +23,11 @@ tools compress daily --dry-run                # what the once-a-day pass would c
   folder's archive is listed with a sha256 per file, before anything else happens. The original is removed only with
   `--remove-original`, and only when it did not change while it was read. Free space is checked first: the output
   needs room while the original still exists, and the refusal says how much.
+- **A list of files.** `--files-from <list>` packs only the files the list names (one path per line, relative to the
+  one folder given), with their parent folders, under the folder's name, and checks each one like a folder pack.
+  `--remove-original` then removes only those files. A folder, a missing path, a path outside the folder or one
+  reached through a symlinked folder is refused before anything is written. `unpack` restores such an archive when
+  it keeps the folder's name (`store.zst` holds `store/`), as for any folder archive.
 - **Minimum saving.** A level-3 trial on a sample (1 MiB of a file, the first 32 MiB of a folder's tar stream) runs
   first. Below 30% saving (`--min-saving <percent>`) the run is skipped with the measured numbers: photos, video and
   audio save 0.2 to 7%, so they are left alone (`--force` overrides).

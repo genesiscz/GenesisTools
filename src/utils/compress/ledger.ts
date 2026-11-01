@@ -32,6 +32,8 @@ export interface LedgerRecord {
     inputSha256?: string;
     outputSha256?: string;
     removedOriginal: boolean;
+    /** A pack of a file list: how many files of `source` it holds (and removed with `removedOriginal`). */
+    files?: number;
     startedAt: string;
     endedAt: string;
     host: string;

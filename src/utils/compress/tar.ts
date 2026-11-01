@@ -500,6 +500,47 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<string> {
     return new Response(stream).text();
 }
 
+/**
+ * The `tar -c` call that packs a folder, or only `files` of it (paths relative to the folder, `/` separators). A list
+ * is packed under the folder's name with each file's parent folders and nothing else (`--no-recursion`, the names on
+ * stdin), so the archive keeps the one top folder that unpack expects. `COPYFILE_DISABLE=1` keeps macOS bsdtar from
+ * adding AppleDouble entries.
+ */
+export function tarCreateCommand(
+    source: string,
+    files?: readonly string[]
+): { cmd: string[]; stdin?: Uint8Array; env: Record<string, string | undefined> } {
+    const childEnv = { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" };
+
+    if (!files) {
+        return { cmd: ["tar", "--no-xattrs", "-cf", "-", "-C", dirname(source), basename(source)], env: childEnv };
+    }
+
+    const top = basename(source);
+    const names = [top, ...[...parentFolders(files)].sort().map((folder) => `${top}/${folder}`)];
+    names.push(...files.map((file) => `${top}/${file}`));
+    return {
+        cmd: ["tar", "--no-xattrs", "--no-recursion", "--null", "-cf", "-", "-C", dirname(source), "-T", "-"],
+        stdin: Buffer.from(`${names.join("\0")}\0`),
+        env: childEnv,
+    };
+}
+
+/** Every parent folder of the listed files, relative to the packed folder. */
+function parentFolders(files: readonly string[]): Set<string> {
+    const folders = new Set<string>();
+
+    for (const file of files) {
+        const parts = file.split("/");
+
+        for (let depth = 1; depth < parts.length; depth++) {
+            folders.add(parts.slice(0, depth).join("/"));
+        }
+    }
+
+    return folders;
+}
+
 export interface PackResult {
     archive: string;
     /** Bytes of the tar stream (the folder's content plus tar headers). */
@@ -526,7 +567,7 @@ export function assertArchiveOutsideSource(source: string, archive: string): voi
  * Packs a folder into one `.tar.zst` with the system `tar` (bsdtar on macOS and Windows, GNU tar on Linux) streamed
  * into seekable zstd frames, through a temp file and a rename: the folder is never held in memory and a failed or
  * interrupted pack never leaves a truncated archive under the final name. The archive holds one top folder, named
- * after the source folder. Extended attributes are left out (`--no-xattrs`). `COPYFILE_DISABLE=1` stops macOS bsdtar
+ * after the source folder; with `files`, only those files of it (see {@link tarCreateCommand}). Extended attributes are left out (`--no-xattrs`). `COPYFILE_DISABLE=1` stops macOS bsdtar
  * from adding an AppleDouble `._name` entry per file, and without it bsdtar also skipped a real `._name` file. bsdtar
  * stores a file with holes as GNU sparse 1.0, which {@link TarLister} reads. Level, long mode, frame size and threads
  * that a caller leaves out come from the `tree` preset.
@@ -539,11 +580,14 @@ export async function packDirectory({
     checksum,
     frameBytes = PRESETS.tree.frameBytes,
     threads = PRESETS.tree.threads,
+    files,
 }: ZstdParams & {
     source: string;
     archive?: string;
     frameBytes?: number;
     threads?: number;
+    /** Pack only these files of the folder: paths relative to it, `/` separators, no folders. */
+    files?: readonly string[];
 }): Promise<PackResult> {
     const source = resolve(inputSource);
     const archive = inputArchive ?? `${source}${FOLDER_ARCHIVE_SUFFIX}`;
@@ -554,10 +598,12 @@ export async function packDirectory({
         archive,
         async (write) => {
             const writer = new SeekableZstdWriter({ write, frameBytes, threads, level, long, checksum });
-            const proc = Bun.spawn(["tar", "--no-xattrs", "-cf", "-", "-C", dirname(source), basename(source)], {
+            const tar = tarCreateCommand(source, files);
+            const proc = Bun.spawn(tar.cmd, {
+                stdin: tar.stdin ?? "ignore",
                 stdout: "pipe",
                 stderr: "pipe",
-                env: { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" },
+                env: tar.env,
             });
             const stderr = drain(proc.stderr);
 
@@ -659,6 +705,33 @@ interface WalkedEntry {
     absolute: string;
 }
 
+/** The entry at `absolute` as the walk records it, from `lstat` (a symlink is not followed). */
+function entryAt(absolute: string): WalkedEntry {
+    const stat = lstatSync(absolute);
+
+    if (stat.isDirectory()) {
+        return { type: "directory", size: 0, absolute };
+    }
+
+    if (stat.isSymbolicLink()) {
+        return { type: "symlink", size: 0, linkTarget: readlinkSync(absolute), absolute };
+    }
+
+    return stat.isFile() ? { type: "file", size: stat.size, absolute } : { type: "other", size: 0, absolute };
+}
+
+/** The entries a pack of `files` holds, keyed like {@link walkFolder}: the top folder, the parent folders, the files. */
+function walkFiles(root: string, files: readonly string[]): Map<string, WalkedEntry> {
+    const top = basename(root);
+    const entries = new Map<string, WalkedEntry>([[top, { type: "directory", size: 0, absolute: root }]]);
+
+    for (const path of [...parentFolders(files), ...files]) {
+        entries.set(`${top}/${path}`, entryAt(join(root, path)));
+    }
+
+    return entries;
+}
+
 /** Every entry under `root`, keyed by its archive path (`<basename>/<relative>` with `/` separators). */
 function walkFolder(root: string): Map<string, WalkedEntry> {
     const entries = new Map<string, WalkedEntry>();
@@ -676,17 +749,8 @@ function walkFolder(root: string): Map<string, WalkedEntry> {
             if (dirent.isDirectory()) {
                 entries.set(childKey, { type: "directory", size: 0, absolute: childAbsolute });
                 stack.push({ absolute: childAbsolute, key: childKey });
-            } else if (dirent.isSymbolicLink()) {
-                entries.set(childKey, {
-                    type: "symlink",
-                    size: 0,
-                    linkTarget: readlinkSync(childAbsolute),
-                    absolute: childAbsolute,
-                });
-            } else if (dirent.isFile()) {
-                entries.set(childKey, { type: "file", size: lstatSync(childAbsolute).size, absolute: childAbsolute });
             } else {
-                entries.set(childKey, { type: "other", size: 0, absolute: childAbsolute });
+                entries.set(childKey, entryAt(childAbsolute));
             }
         }
     }
@@ -709,19 +773,22 @@ export interface ArchiveCheck {
 /**
  * Checks a `.tar.zst` from {@link packDirectory} against the folder it was made from, before the folder is removed:
  * every entry must be listed with the same type and size, and with `content` (the default) every file's sha256 must
- * match too, which reads the folder and the archive once each.
+ * match too, which reads the folder and the archive once each. With `files` (the list the pack was made from) the
+ * folder's other entries are not compared.
  */
 export function verifyArchiveAgainstFolder({
     archive,
     source,
     content = true,
+    files,
 }: {
     archive: string;
     source: string;
     content?: boolean;
+    files?: readonly string[];
 }): ArchiveCheck {
     const listed = new Map(listArchive(archive, { hash: content }).map((entry) => [entry.path, entry]));
-    const walked = walkFolder(source);
+    const walked = files ? walkFiles(source, files) : walkFolder(source);
     const missing: string[] = [];
     const mismatched: string[] = [];
 

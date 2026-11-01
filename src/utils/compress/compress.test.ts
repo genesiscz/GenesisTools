@@ -1017,6 +1017,65 @@ describe("folder archives", () => {
         }
     });
 
+    it("packs only the listed files of a folder under its name, verifies them, and removes only those", async () => {
+        const dir = scratch("files-from");
+        const tree = makeTree(dir);
+        writeFileSync(join(tree, "a", "other.txt"), logText(50));
+        const files = ["top.txt", "link", "a/empty"];
+        const listed = await packDirectory({ source: tree, archive: join(dir, "listed.zst"), files });
+        // The files, their parent folders and the top folder, nothing else: `tools compress unpack` takes the shape.
+        expect(
+            listArchive(listed.archive)
+                .map((entry) => entry.path)
+                .sort()
+        ).toEqual(["tree", "tree/a", "tree/a/empty", "tree/link", "tree/top.txt"]);
+        expect(verifyArchiveAgainstFolder({ archive: listed.archive, source: tree, files }).ok).toBe(true);
+        expect(verifyPath({ archive: listed.archive, against: tree, files }).ok).toBe(true);
+        expect(verifyPath({ archive: listed.archive, against: tree }).detail).toBe("3 missing, 0 different, 0 extra");
+        writeFileSync(join(tree, "a", "other.txt"), "an unlisted file may change");
+        expect(verifyArchiveAgainstFolder({ archive: listed.archive, source: tree, files }).ok).toBe(true);
+        writeFileSync(join(tree, "top.txt"), "tip\n");
+        expect(verifyArchiveAgainstFolder({ archive: listed.archive, source: tree, files }).mismatched).toEqual([
+            "tree/top.txt",
+        ]);
+        writeFileSync(join(tree, "top.txt"), "top\n");
+
+        const { record } = await compressPath({
+            source: tree,
+            files: [...files, "a/b/../empty", join(tree, "top.txt")],
+            removeOriginal: true,
+            force: true,
+            caller: "test",
+        });
+        expect(record.files).toBe(3);
+        expect(record.removedOriginal).toBe(true);
+        expect(readdirSync(tree).sort()).toEqual(["a"]);
+        expect(readdirSync(join(tree, "a")).sort()).toEqual(["b", "other.txt"]);
+        const into = join(dir, "restored");
+        await expandPath({ archive: `${tree}.zst`, into, caller: "test" });
+        expect(readFileSync(join(into, "tree", "top.txt"), "utf8")).toBe("top\n");
+        expect(readlinkSync(join(into, "tree", "link"))).toBe("top.txt");
+        expect(readdirSync(join(into, "tree", "a"))).toEqual(["empty"]);
+
+        mkdirSync(join(tree, "real"));
+        symlinkSync("real", join(tree, "alias"));
+        writeFileSync(join(tree, "real", "inside.txt"), "inside\n");
+
+        for (const [list, refusal] of [
+            [["../outside.txt"], "not inside"],
+            [["a"], "is a folder"],
+            [["missing.txt"], "does not exist"],
+            [["alias/inside.txt"], "not a folder"],
+            [[], "lists no files"],
+        ] as const) {
+            const target = join(dir, "refused.zst");
+            await expect(
+                compressPath({ source: tree, files: [...list], target, force: true, caller: "test" })
+            ).rejects.toThrow(refusal);
+            expect(existsSync(target)).toBe(false);
+        }
+    });
+
     it("compressPath keeps the original unless asked, records the ledger, and expandPath restores the folder", async () => {
         const dir = scratch("ops");
         const tree = makeTree(dir);
