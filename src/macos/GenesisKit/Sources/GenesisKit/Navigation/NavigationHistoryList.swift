@@ -38,6 +38,7 @@ public struct NavigationHistoryList<Target: Codable & Hashable>: View {
                         ForEach(rows) { entry in
                             NavigationHistoryRow(entry: NavigationHistoryRowValue(entry, offset: history.offset(of: entry.id)),
                                                  onHop: onHop)
+                                .equatable()
                         }
                     }
                     .padding(.horizontal, 6)
@@ -104,6 +105,8 @@ extension NavigationActor {
     }
 }
 
+/// One place of the history. Its row button exists only while the pointer is on it (`liveRow`); at rest it draws the
+/// same labels with no control, and VoiceOver still hops there (`rowButton` presses a resting row).
 struct NavigationHistoryRow: View, Equatable {
     let entry: NavigationHistoryRowValue
     let onHop: (String) -> Void
@@ -158,9 +161,11 @@ struct NavigationHistoryRow: View, Equatable {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .rowButton(cornerRadius: 6) { onHop(entry.id) }
         .disabled(entry.isCurrent)
         .accessibilityLabel(Text(verbatim: entry.accessibilityText))
         .accessibilityHint(entry.isCurrent ? Text("") : Text("Opens this place"))
+        .liveRow()
     }
 }

@@ -318,8 +318,9 @@ struct SunburstCanvas: View, Animatable {
 }
 
 /// The arcs and their labels: one Canvas that redraws only when what it shows changes (`.equatable()`), not on every
-/// update of the view around it. `lit` follows from `hovered` and the data, so it is not compared.
+/// update of the view around it. `layout` follows `revision`, so it is not compared.
 struct SunburstArcsLayer: View, Equatable {
+    // lint-rules-ignore: follows `revision`, which `SunburstStore` bumps on every rebuild of the layout
     let layout: SunburstLayout
     let revision: Int
     let arcs: [SunburstArc]
@@ -330,7 +331,7 @@ struct SunburstArcsLayer: View, Equatable {
 
     nonisolated static func == (lhs: SunburstArcsLayer, rhs: SunburstArcsLayer) -> Bool {
         lhs.revision == rhs.revision && lhs.center == rhs.center && lhs.hovered == rhs.hovered
-            && lhs.animating == rhs.animating && lhs.arcs == rhs.arcs
+            && lhs.animating == rhs.animating && lhs.lit == rhs.lit && lhs.arcs == rhs.arcs
     }
 
     var body: some View {

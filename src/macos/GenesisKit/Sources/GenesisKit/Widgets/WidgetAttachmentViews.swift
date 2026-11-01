@@ -99,6 +99,9 @@ private struct WidgetAssetTile: View {
         // Room for the remove badge that sits over the corner.
         .padding(.top, remove == nil ? 0 : 6)
         .padding(.trailing, remove == nil ? 0 : 6)
+        // The remove and frame-sampling buttons and the tooltips exist only while the pointer is on the tile; at rest
+        // the same glyphs, which VoiceOver still presses.
+        .liveRow()
     }
 
     private var detail: String {

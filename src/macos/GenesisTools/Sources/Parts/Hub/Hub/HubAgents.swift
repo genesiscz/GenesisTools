@@ -1836,7 +1836,7 @@ private struct AgentTranscriptPane: View, Equatable {
     let onShowChange: (String, Int?) -> Void
 
     static func == (left: AgentTranscriptPane, right: AgentTranscriptPane) -> Bool {
-        left.key == right.key && left.row.sessionId == right.row.sessionId
+        left.key == right.key && left.row.sessionId == right.row.sessionId && left.child == right.child
     }
 
     var body: some View {
@@ -1914,6 +1914,8 @@ private struct AgentMailRow: View {
                 .truncationMode(.tail)
                 .instantTooltip(row.message.text)
         }
+        // The whole message's tooltip exists only under the pointer.
+        .liveRow()
     }
 
     private var party: String {

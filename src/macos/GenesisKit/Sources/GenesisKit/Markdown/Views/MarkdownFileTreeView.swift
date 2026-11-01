@@ -431,6 +431,7 @@ struct MarkdownFileTreeView: View {
     @ViewBuilder
     private var results: some View {
         let size = fontSize
+        let theme = model.theme
         if let failure = search.failure, !search.searching {
             NoticePill(text: failure.message, more: failure.detail, tone: .error,
                        fixes: [.button("Try again", symbol: "arrow.clockwise") { search.run() }])
@@ -461,7 +462,10 @@ struct MarkdownFileTreeView: View {
                 .accessibilityIdentifier("markdown-files-text-fallback")
         }
         ForEach(Array(search.hits.enumerated()), id: \.element.id) { index, hit in
-            MarkdownFileTreeResultRow(hit: hit, model: model, fontSize: size, keyed: index == hitCursor) { open(hit) }
+            MarkdownFileTreeResultRow(hit: hit, theme: theme, model: model, fontSize: size, keyed: index == hitCursor) {
+                open(hit)
+            }
+            .equatable()
         }
         if search.truncated || search.namesCut {
             Text(Self.cutNotice(names: search.mode == .names && !search.fellBackToText, indexFull: search.truncated))
@@ -914,8 +918,6 @@ struct MarkdownFileTreeView: View {
     }
 }
 
-/// One search hit: the file name, its folder under the root, and for a text
-/// hit the line number and the matching line. Its type follows the tree's.
 /// The tree's rows, apart from the tree view so a documents-model publish that changes none of them (the
 /// preview's section, a tab switch elsewhere) skips the whole `ForEach`. The tree view observes the model; this
 /// view compares its inputs instead (2026-10-14: every publish walked all ~340 rows of an expanded vault folder).
@@ -986,32 +988,43 @@ private struct MarkdownFileTreeRows: View, Equatable {
     }
 }
 
-private struct MarkdownFileTreeResultRow: View {
+/// One search hit: the file name, its folder under the root, and for a text
+/// hit the line number and the matching line. Its type follows the tree's.
+/// From values (`Equatable`): a documents-model publish re-renders only the hits whose values changed. Its button
+/// exists only while the row is live (`liveRow`: hovered, or the keyboard is on it); at rest it draws the same
+/// labels with no control, and VoiceOver still opens it (`LiveButton`, `pressable`).
+private struct MarkdownFileTreeResultRow: View, Equatable {
     let hit: FileTreeSearch.Hit
-    @ObservedObject var model: MarkdownDocumentsModel
+    let theme: MarkdownTheme
+    /// For the right-click menu only: not observed.
+    let model: MarkdownDocumentsModel
     let fontSize: CGFloat
     /// The keyboard is on this hit (Up and Down in the search field).
     var keyed = false
     let action: () -> Void
 
+    static func == (a: MarkdownFileTreeResultRow, b: MarkdownFileTreeResultRow) -> Bool {
+        a.hit == b.hit && a.theme == b.theme && a.fontSize == b.fontSize && a.keyed == b.keyed
+    }
+
     var body: some View {
         let metrics = FileTreeMetrics.scaled(toText: fontSize)
-        Button(action: action) {
+        LiveButton(tooltip: nil, pressable: true, action: action) {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: metrics.spacing) {
                     Image(systemName: hit.line == nil ? "doc" : "text.alignleft")
                         .font(.system(size: metrics.icon))
-                        .foregroundColor(model.theme.textMuted)
+                        .foregroundColor(theme.textMuted)
                         .frame(width: metrics.iconWidth)
                     Text(hit.name)
                         .font(.system(size: fontSize, weight: .semibold))
-                        .foregroundColor(model.theme.textSecondary)
+                        .foregroundColor(theme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if let line = hit.line {
                         Text(":\(line)")
                             .font(GenTypography.mono(fontSize - 1))
-                            .foregroundColor(model.theme.accent)
+                            .foregroundColor(theme.accent)
                     }
                     Spacer(minLength: 0)
                 }
@@ -1019,7 +1032,7 @@ private struct MarkdownFileTreeResultRow: View {
                 if !folder.isEmpty {
                     Text(folder)
                         .font(.system(size: fontSize - 1.5))
-                        .foregroundColor(model.theme.textMuted)
+                        .foregroundColor(theme.textMuted)
                         .lineLimit(1)
                         .truncationMode(.head)
                         .padding(.leading, metrics.iconWidth + metrics.spacing)
@@ -1027,7 +1040,7 @@ private struct MarkdownFileTreeResultRow: View {
                 if let snippet = hit.snippet {
                     Text(snippet)
                         .font(GenTypography.mono(fontSize - 1.5))
-                        .foregroundColor(model.theme.text)
+                        .foregroundColor(theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .padding(.leading, metrics.iconWidth + metrics.spacing)
@@ -1036,13 +1049,13 @@ private struct MarkdownFileTreeResultRow: View {
             .padding(.horizontal, 8)
             .padding(.vertical, metrics.verticalPadding)
             .background(
-                RoundedRectangle(cornerRadius: 5).fill(keyed ? model.theme.accent.opacity(0.16) : Color.clear)
+                RoundedRectangle(cornerRadius: 5).fill(keyed ? theme.accent.opacity(0.16) : Color.clear)
                     .padding(.horizontal, 3)
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.genHoverPlain())
         .accessibilityAddTraits(keyed ? .isSelected : [])
+        .liveRow(selected: keyed)
         .contextMenu {
             let url = URL(fileURLWithPath: hit.path)
             PathActionsMenu(entries: MarkdownSearchResultMenu.entries(

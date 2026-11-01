@@ -3304,6 +3304,7 @@ private struct PaneToggle: View {
 
     private var button: some View {
         let open = model.panes.contains(tab)
+        // lint-rules-ignore: short list (4 rows, one per HubTab case: the pane bar never grows)
         return Button {
             // The click's own event, not the keyboard's current state: a synthetic option-click
             // (tools control act --modifiers alt) carries the flag only on the event.

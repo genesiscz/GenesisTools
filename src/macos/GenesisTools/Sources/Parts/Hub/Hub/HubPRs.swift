@@ -2101,7 +2101,8 @@ struct PRStateIcon: View {
     }
 }
 
-/// "Merged into develop" as a pill in the state's own color; a label that names no state stays grey.
+/// "Merged into develop" as a pill in the state's own color; a label that names no state stays grey. Its link and
+/// tooltip exist only under the pointer (`liveRow`); at rest it draws the same label.
 struct PRLabelPill: View {
     let pr: HubPR
     let label: String
@@ -2119,6 +2120,7 @@ struct PRLabelPill: View {
         .padding(.horizontal, 6)
         .background(Capsule().fill((tone?.color ?? Color.white).opacity(tone == nil ? 0.08 : 0.16)))
         .overlay(Capsule().stroke(tone?.color.opacity(0.35) ?? Color.clear))
+        .liveRow()
     }
 }
 

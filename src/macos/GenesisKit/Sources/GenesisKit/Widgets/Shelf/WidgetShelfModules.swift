@@ -167,8 +167,10 @@ struct WidgetShelfModuleView: View {
                 }
                 ForEach(displayedItems) { item in
                     WidgetShelfRow(
-                        store: store, item: item, tint: tint, gallery: gallery, arrived: arrived.contains(item.id)
+                        item: item, tint: tint, gallery: gallery, arrived: arrived.contains(item.id), busy: store.isBusy,
+                        store: store
                     )
+                    .equatable()
                     .transition(
                         reduceMotion
                             ? .opacity
@@ -201,14 +203,24 @@ private struct WidgetShelfRecipientSelection: Identifiable {
     var id: String { item.id }
 }
 
-private struct WidgetShelfRow: View {
-    @ObservedObject var store: WidgetShelfStore
+/// One shelf item, from values (`Equatable`): a store publish re-renders only the rows whose values changed. Its
+/// attach and actions buttons and their tooltips exist only while the row is live (`liveRow`: hovered, or while its
+/// recipient popover is open); at rest it draws the same glyphs with no control, and VoiceOver still presses them.
+private struct WidgetShelfRow: View, Equatable {
     let item: WidgetShelfItem
     let tint: Color
     /// Every item of this list, so the preview's ← and → move through them.
     let gallery: [MediaPreviewItem]
     let arrived: Bool
+    /// The store is busy: attach and remove wait.
+    let busy: Bool
+    /// Not observed by the row: its actions and the recipient popover (which observes it itself) use it.
+    let store: WidgetShelfStore
     @State private var recipientSelection: WidgetShelfRecipientSelection?
+
+    static func == (a: WidgetShelfRow, b: WidgetShelfRow) -> Bool {
+        a.item == b.item && a.tint == b.tint && a.gallery == b.gallery && a.arrived == b.arrived && a.busy == b.busy
+    }
 
     static func preview(_ item: WidgetShelfItem) -> MediaPreviewItem {
         MediaPreviewItem(id: item.id, path: item.path, name: item.name,
@@ -237,7 +249,7 @@ private struct WidgetShelfRow: View {
             ) {
                 recipientSelection = WidgetShelfRecipientSelection(item: item, recipients: store.recipients)
             }
-                .disabled(store.isBusy)
+                .disabled(busy)
                 .accessibilityLabel("Choose recipient for \(item.name)")
                 .popover(item: $recipientSelection) { selection in
                     WidgetShelfRecipientPicker(store: store, selection: selection) { recipient in
@@ -251,7 +263,7 @@ private struct WidgetShelfRow: View {
                     .action("Reveal in Finder", run: { PathOpener.reveal(item.path) }),
                     .action("Copy path", run: { PathOpener.copy(item.path, what: "file path") }),
                     .divider,
-                    .action("Remove from shelf", enabled: !store.isBusy, run: { store.remove(item) }),
+                    .action("Remove from shelf", enabled: !busy, run: { store.remove(item) }),
                 ]
             } label: {
                 Image(systemName: "ellipsis").frame(width: 16, height: 16)
@@ -264,6 +276,7 @@ private struct WidgetShelfRow: View {
         .swrFlash(arrived, cornerRadius: 10, color: tint)
         .draggable(URL(fileURLWithPath: item.path))
         .accessibilityElement(children: .contain)
+        .liveRow(selected: recipientSelection != nil)
     }
 }
 

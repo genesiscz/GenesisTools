@@ -416,6 +416,8 @@ public struct FocusSessionEventRow: View {
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .genHoverEffect(cornerRadius: GenRadius.sm)
+        // The detail's tooltip exists only under the pointer: the log has a row per event of the session.
+        .liveRow()
     }
 
     @ViewBuilder

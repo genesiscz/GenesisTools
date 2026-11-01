@@ -90,6 +90,7 @@ struct PRActivitySettingsView: View {
             }
             ForEach(paths, id: \.self) { path in
                 PRActivityProjectRow(path: path, name: name(path), config: config, status: status, store: store)
+                    .equatable()
                 if path != paths.last { Divider() }
             }
             HStack {
@@ -161,13 +162,22 @@ struct PRActivitySettingsView: View {
     }
 }
 
+/// One watched project, from values: the page reads the store once and passes the status, so a publish of the store
+/// (busy, a notice) re-renders only the rows whose values changed. The store is held, not observed: the row's switch
+/// and menus write through it. Its path label and menus are controls only while the pointer is on it (`liveRow`). The
+/// Watch switch stays a platform control at rest: the kit has no resting switch, and a drawn copy would change shape
+/// under the pointer. A settings page, one row per watched project.
 @MainActor
-private struct PRActivityProjectRow: View {
+private struct PRActivityProjectRow: View, Equatable {
     let path: String
     let name: String
     let config: HubNotifyStatus.Config
     let status: HubNotifyStatus
-    @ObservedObject var store: HubNotifyStore
+    let store: HubNotifyStore
+
+    nonisolated static func == (a: PRActivityProjectRow, b: PRActivityProjectRow) -> Bool {
+        a.path == b.path && a.name == b.name && a.config == b.config && a.status == b.status
+    }
 
     private var repo: HubNotifyStatus.Repo? { config.repos[path] }
     private var watched: Bool { repo?.enabled == true }
@@ -197,6 +207,7 @@ private struct PRActivityProjectRow: View {
             }
         }
         .padding(.vertical, 2)
+        .liveRow()
     }
 
     private var cadenceMenu: some View {

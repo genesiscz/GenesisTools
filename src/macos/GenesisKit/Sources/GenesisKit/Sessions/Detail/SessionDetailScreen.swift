@@ -1117,6 +1117,7 @@ private struct FileTouchRow: View {
         }
         .frame(height: 24)
         .instantTooltip(file.path)
+        .liveRow()
         // The row's path can be copied, revealed and opened.
         .contextMenu {
             Button("Copy path") { PathOpener.copy(file.path, what: "path") }
