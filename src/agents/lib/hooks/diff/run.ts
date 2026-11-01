@@ -1068,6 +1068,8 @@ export function silentReason({
     stale,
     suppressed,
     unattributed = 0,
+    scratch = 0,
+    created = 0,
 }: {
     covered: number;
     uncaptured: number;
@@ -1075,6 +1077,10 @@ export function silentReason({
     stale: number;
     suppressed: Map<DiffCategory, number>;
     unattributed?: number;
+    /** Named files in a temp folder outside git that `diff.showTempScratch: false` hid. */
+    scratch?: number;
+    /** Files the command created, known only from its named paths, that `diff.namedPathsShowCreated: false` hid. */
+    created?: number;
 }): string {
     const kinds = [...suppressed].map(([kind, count]) => `${count} ${kind}`).join(", ");
 
@@ -1089,6 +1095,8 @@ export function silentReason({
         [uncaptured > 0, `${uncaptured} with no captured before-state, over the capture cap`],
         [stale > 0, `${stale} deletion(s) already gone before this command began`],
         [unattributed > 0, `${unattributed} changed by another writer, not this session`],
+        [scratch > 0, `${scratch} in a temp folder outside git (diff.showTempScratch)`],
+        [created > 0, `${created} created by the command (diff.namedPathsShowCreated)`],
     ];
     const active = causes.filter(([holds]) => holds);
 
@@ -1119,6 +1127,15 @@ export function silentReason({
 
     if (unattributed > 0) {
         return `${unattributed} changed file(s) were not attributable to this session`;
+    }
+
+    // Both used to fall through to "no change", which sent a reader of `diff log` looking for a capture bug.
+    if (scratch > 0) {
+        return `${scratch} changed file(s) in a temp folder outside git, hidden by diff.showTempScratch`;
+    }
+
+    if (created > 0) {
+        return `${created} file(s) the command created, known only from its named paths, hidden by diff.namedPathsShowCreated`;
     }
 
     return "no change since this command began";
@@ -1395,6 +1412,8 @@ export function runDiffPost({
     let uncaptured = 0;
     let claimed = 0;
     let stale = 0;
+    let scratch = 0;
+    let created = 0;
     const suppressed = new Map<DiffCategory, number>();
     const attribution = attributionContext({ payload, since, dir });
     let operation: string | null | undefined;
@@ -1643,7 +1662,9 @@ export function runDiffPost({
         }
 
         // A named path inside a captured root was already captured, with its git before-state.
-        if (!captures.some((item) => item.path === change.path)) {
+        const seenByRoots = captures.some((item) => item.path === change.path);
+
+        if (!seenByRoots) {
             captures.push({ path: change.path, before: change.before, deleted: change.deleted });
             touch(change.path, "named");
         }
@@ -1659,6 +1680,7 @@ export function runDiffPost({
         }
 
         if (!diff.showTempScratch && inTempScratch(change.path)) {
+            scratch += 1;
             continue;
         }
 
@@ -1670,7 +1692,9 @@ export function runDiffPost({
         ) {
             // A file this command created, known only because the command named it. That is
             // a scratch file far more often than not, and the command's own output already
-            // says what it wrote. An edit to a file that ALREADY existed still renders.
+            // says what it wrote. An edit to a file that ALREADY existed still renders. One the
+            // root pass already counted (claimed, natively rendered) is not counted twice.
+            created += seenByRoots ? 0 : 1;
             continue;
         }
 
@@ -1776,6 +1800,8 @@ export function runDiffPost({
             stale,
             suppressed,
             unattributed: unattributed.length,
+            scratch,
+            created,
         });
 
         if (notes.length === 0) {
