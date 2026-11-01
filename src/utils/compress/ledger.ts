@@ -29,7 +29,16 @@ export interface LedgerRecord {
     threads?: number;
     /** Always null today: no dictionary is used. Kept so a later dictionary run is searchable. */
     dictionary: string | null;
+    /**
+     * sha256 of the bytes the zstd writer took in, so of what decompressing `target` gives back: the file for a
+     * `compress`, the tar stream for a `pack` (packs carry it since 2026-11-01; an older pack has none). A restore
+     * checks it against the newest record that wrote the archive.
+     */
     inputSha256?: string;
+    /**
+     * sha256 of the output: the `.zst` file for a `compress` or `pack`, the restored file for a `decompress`, the
+     * tar stream for an `unpack`.
+     */
     outputSha256?: string;
     removedOriginal: boolean;
     /** A pack of a file list: how many files of `source` it holds (and removed with `removedOriginal`). */

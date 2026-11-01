@@ -38,7 +38,7 @@ import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { planDailyCompression } from "./daily";
 import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
-import { searchLedger } from "./ledger";
+import { recordCompression, searchLedger } from "./ledger";
 import { CompressRefusal, compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
 import { PRESET_NAMES, PRESETS, resolvePreset, sniffSample } from "./presets";
 import {
@@ -1144,6 +1144,31 @@ describe("folder archives", () => {
             ).rejects.toThrow(refusal);
             expect(existsSync(target)).toBe(false);
         }
+    });
+
+    it("records a pack's tar stream sha256, and unpack checks it against the newest record of the archive", async () => {
+        const dir = scratch("pack-sha");
+        const tree = makeTree(dir);
+        const { record } = await compressPath({ source: tree, force: true, caller: "test" });
+        const archive = `${tree}.zst`;
+        // Bun's whole-file decoder, not the frame walker the writer and the readers share.
+        const stream = Bun.zstdDecompressSync(readFileSync(archive));
+        expect(record.inputSha256).toBe(new Bun.CryptoHasher("sha256").update(stream).digest("hex"));
+        expect(record.outputSha256).not.toBe(record.inputSha256);
+
+        const restored = await expandPath({ archive, into: join(dir, "restored"), caller: "test" });
+        expect(restored.outputSha256).toBe(record.inputSha256);
+
+        const { id: _id, inputSha256: _sha, ...oldShape } = record;
+        recordCompression({ ...oldShape, inputSha256: "0".repeat(64) });
+        const into = join(dir, "tampered");
+        await expect(expandPath({ archive, into, caller: "test" })).rejects.toThrow("another sha256");
+        expect(existsSync(join(into, "tree"))).toBe(false);
+
+        // A pack recorded before the stream hash (no inputSha256) is the newest record again and does not block.
+        recordCompression(oldShape);
+        await expandPath({ archive, into: join(dir, "old-shape"), caller: "test" });
+        expect(readFileSync(join(dir, "old-shape", "tree", "top.txt"), "utf8")).toBe("top\n");
     });
 
     it("compressPath keeps the original unless asked, records the ledger, and expandPath restores the folder", async () => {
