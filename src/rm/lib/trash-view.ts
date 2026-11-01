@@ -124,7 +124,9 @@ export function renderTrash(batches: readonly TrashBatch[], options: TrashViewOp
             id: batchSuffix(batch.id, ids),
             drain: batch.incomplete
                 ? formatDotStatus("warn", "moving, or the next sweep finishes it")
-                : `${clock(batch.drainAfter)} (${left(batch.drainAfter, options.now)})`,
+                : batch.failed
+                  ? formatDotStatus("err", "failed: drain --now retries")
+                  : `${clock(batch.drainAfter)} (${left(batch.drainAfter, options.now)})`,
             size: sizeOf(batch, options.measured),
             asker: asker(batch),
             count: `${batch.items.length} item${batch.items.length === 1 ? "" : "s"}`,
