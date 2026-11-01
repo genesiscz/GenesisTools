@@ -128,6 +128,11 @@ export const widgetPreferencesSchema = z.object({
     inboxFilter: z.enum(["all", "inbox", "decisions"]).default("all"),
     /** The filter the inbox of every session opens with: every entry ("all"), the ones that need you, or unread. */
     overviewFilter: z.enum(["all", "needs", "unread"]).default("all"),
+    /**
+     * An open decision in the inbox of every session shows its question's description (the item's `summary`) above its
+     * options, as the alert popup does with `alertSummary`.
+     */
+    overviewSummary: z.boolean().default(true),
     /** The composer's microphone: records a voice note and puts its transcript in the field ("note"), or live dictation. */
     composerVoice: z.enum(["ask", "note", "live"]).default("ask"),
     /** Seconds the alert popup stays while the pointer is not on it; 0 keeps it until it is closed or answered. */

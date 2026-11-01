@@ -4,6 +4,7 @@ import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { decisionOptionLabels, shownDecisionText } from "./option-labels";
 import {
     boundContext,
     cleanBlock,
@@ -180,16 +181,18 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                     ? `superseded${row.supersededBy ? ` by ${row.supersededBy}` : ""}${row.comments?.length ? `: ${row.comments.at(-1)}` : ""}`
                     : null,
             ].filter((part): part is string => part !== null);
+            // The list under the prompt names every option, so "a) …" lines that only repeat it leave the prompt.
+            const shown = shownDecisionText(row);
 
             return [
                 { h3: heading },
-                { p: row.prompt },
+                { p: shown.prompt },
                 ...(meta.length > 0 ? [{ p: meta.join(" · ") }] : []),
                 ...(row.proposal ? [{ p: `Proposal: ${row.proposal}` }] : []),
-                ...(row.options.length > 0
+                ...(shown.options.length > 0
                     ? [
                           {
-                              ul: row.options.map(
+                              ul: shown.options.map(
                                   (option, index) =>
                                       `${letter(index)}) ${optionLabel(option, letter(index))}${row.recommended === letter(index) ? " (recommended)" : ""}`
                               ),
@@ -276,9 +279,11 @@ export function replyTargetLines(target: ReplyTarget): string[] {
 /** Preserves the card title and ledger identity before the user's literal answer or option labels. */
 export function decisionLine(row: DecisionRecord): string {
     const letters = optionLetters(row.option);
+    // An option posted as a bare letter is named by its line in the prompt: "b) keep it", never "b) b".
+    const options = decisionOptionLabels(row.prompt, row.options);
     const labels = letters
         .map((letter) => {
-            const label = row.options[letter.charCodeAt(0) - 97];
+            const label = options[letter.charCodeAt(0) - 97];
             return label ? optionLabel(label, letter) : undefined;
         })
         .filter(Boolean);

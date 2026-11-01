@@ -17,6 +17,7 @@ import { appendFeedEvent, type JsonlLog, jsonlLog } from "@genesiscz/utils/stora
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
 import { retractDecisionBanners } from "./banners";
+import { decisionOptionLabels } from "./option-labels";
 import {
     type ANSWERED_VIA,
     type DECISION_KINDS,
@@ -647,11 +648,14 @@ export async function postDecisions(
 
 type ContentFields = Pick<DecisionRecord, "prompt" | "options" | VersionedKey>;
 
-/** The versioned fields of a posted item, without the keys it leaves empty. */
+/**
+ * The versioned fields of a posted item, without the keys it leaves empty. A bare letter among the options ("a") takes
+ * the words of its "a) …" line in the prompt, so no surface shows a button that reads "a) a".
+ */
 function contentOf(decision: PostedDecision, excerpt: string | undefined): ContentFields {
     return {
         prompt: decision.prompt,
-        options: decision.options,
+        options: decisionOptionLabels(decision.prompt, decision.options),
         ...(excerpt ? { excerpt } : {}),
         ...(decision.title ? { title: decision.title } : {}),
         ...(decision.proposal ? { proposal: decision.proposal } : {}),
