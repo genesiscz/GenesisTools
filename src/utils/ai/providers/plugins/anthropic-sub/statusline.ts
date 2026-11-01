@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { statuslineInputFrom } from "@genesiscz/utils/agents/hooks/statusline-input";
 import { accountEnvVar, accountFromEnv } from "@genesiscz/utils/ai/account-env";
-import { normalizeLimits } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
+import { fiveHourState, normalizeLimits } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
 import type { AccountSegmentData, StatuslineFeature, StatuslinePayload } from "@genesiscz/utils/ai/statusline/types";
@@ -364,6 +364,7 @@ async function usageFor(accountName: string): Promise<AccountSegmentData> {
     return {
         name: accountName,
         fiveHour: buckets.five_hour ?? null,
+        ...(account.usage && fiveHourState(account.usage) === "absent" ? { fiveHourAbsent: true } : {}),
         sevenDay: buckets.seven_day ?? null,
         sevenDayFable: buckets.seven_day_fable ?? null,
         stale: Boolean(account.stale),
