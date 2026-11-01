@@ -56,7 +56,7 @@ function blankSpan(src: string, start: number, quote: string): ScanResult {
 }
 
 // Double quotes: blank the text but keep `$` expansions and scan `$( … )` as code.
-function scanDoubleQuoted(src: string, start: number): ScanResult {
+function scanDoubleQuoted(src: string, start: number, comment: string): ScanResult {
     let out = " ";
     let i = start + 1;
 
@@ -83,7 +83,7 @@ function scanDoubleQuoted(src: string, start: number): ScanResult {
             const next = src[i + 1];
 
             if (next === "(") {
-                const inner = scanCode(src, i + 2, true);
+                const inner = scanCode(src, i + 2, true, comment);
                 out += `$(${inner.text}`;
                 i = inner.end;
 
@@ -141,7 +141,7 @@ function blankKeepingNewlines(text: string): string {
 // newline that ended the opening line). Returns the blanked (or, for a
 // shell-fed body, scanned) text, same length as the body, plus the index of the
 // terminator line's newline so the caller resumes on that newline.
-function consumeHeredocBody(src: string, start: number, heredoc: PendingHeredoc): ScanResult {
+function consumeHeredocBody(src: string, start: number, heredoc: PendingHeredoc, comment: string): ScanResult {
     let i = start;
 
     while (i <= src.length) {
@@ -157,7 +157,7 @@ function consumeHeredocBody(src: string, start: number, heredoc: PendingHeredoc)
         if (test === heredoc.delim) {
             const body = src.slice(start, i);
             const terminator = " ".repeat(line.length);
-            const text = (heredoc.shellFed ? stripShellNoise(body) : blankKeepingNewlines(body)) + terminator;
+            const text = (heredoc.shellFed ? stripShellNoise(body, comment) : blankKeepingNewlines(body)) + terminator;
             return { text, end: lineEnd };
         }
 
@@ -170,7 +170,7 @@ function consumeHeredocBody(src: string, start: number, heredoc: PendingHeredoc)
 
     // Unterminated heredoc: everything to EOF is body.
     const body = src.slice(start);
-    return { text: heredoc.shellFed ? stripShellNoise(body) : blankKeepingNewlines(body), end: src.length };
+    return { text: heredoc.shellFed ? stripShellNoise(body, comment) : blankKeepingNewlines(body), end: src.length };
 }
 
 // Where a `#` starts a comment: at the start, or after whitespace or a
@@ -191,7 +191,7 @@ function lineSoFar(out: string): string {
 
 // Scan code from `start`. With `stopAtCloseParen`, stop at the first `)` that
 // closes no `(` opened inside this scan (the end of a `$( … )` substitution).
-function scanCode(src: string, start: number, stopAtCloseParen: boolean): ScanResult {
+function scanCode(src: string, start: number, stopAtCloseParen: boolean, comment: string): ScanResult {
     let out = "";
     let i = start;
     let depth = 0;
@@ -205,7 +205,7 @@ function scanCode(src: string, start: number, stopAtCloseParen: boolean): ScanRe
             i++;
 
             if (pending) {
-                const body = consumeHeredocBody(src, i, pending);
+                const body = consumeHeredocBody(src, i, pending, comment);
                 out += body.text;
                 i = body.end;
                 pending = null;
@@ -228,7 +228,7 @@ function scanCode(src: string, start: number, stopAtCloseParen: boolean): ScanRe
         }
 
         if (ch === '"') {
-            const span = scanDoubleQuoted(src, i);
+            const span = scanDoubleQuoted(src, i, comment);
             out += span.text;
             i = span.end + 1;
             continue;
@@ -237,7 +237,7 @@ function scanCode(src: string, start: number, stopAtCloseParen: boolean): ScanRe
         if (ch === "#" && isWordStart(out)) {
             let eol = src.indexOf("\n", i);
             eol = eol === -1 ? src.length : eol;
-            out += " ".repeat(eol - i);
+            out += comment + " ".repeat(eol - i - 1);
             i = eol;
             continue;
         }
@@ -294,8 +294,10 @@ function scanCode(src: string, start: number, stopAtCloseParen: boolean): ScanRe
 // Remove heredoc bodies, comments and quoted spans from a shell command. The
 // result has the same length as the input and the same newline positions
 // outside quotes, so guards can split it and point back into the original.
-export function stripShellNoise(command: string): string {
-    return scanCode(command, 0, false).text;
+// `comment` replaces the `#` that opens a comment; originalSlice passes "#" so
+// its walk can tell a comment from a blanked quoted argument.
+export function stripShellNoise(command: string, comment = " "): string {
+    return scanCode(command, 0, false, comment).text;
 }
 
 // A piece of cleaned text that knows where it sits in the original command.
@@ -497,28 +499,151 @@ export function commandTokenIndex(tokens: Span[], command?: string): number {
 // The original text from `start` to the end of a cleaned span. A span is
 // trimmed, so a quoted last argument (blanked to spaces) falls off its end:
 // `log show --predicate 'x'` cleans to `log show --predicate`. Walk the blank
-// tail up to the next separator in the cleaned text, then drop the real
-// trailing whitespace, and the excerpt carries the quoted argument again.
+// tail up to the next separator, then drop the real trailing whitespace, and
+// the excerpt carries the quoted argument again.
+//
+// The walk runs in the unit the span was cut from: the innermost `-c` body or
+// the command, cut at its substitutions. In scan.cleaned a quoted `-c` body is
+// all blanks, so the walk ran to the end of the body, and a `"$(…)"` argument is
+// code, so the walk stopped at its opening quote. In the unit, the body is code
+// and a substitution is blank. A comment is marked there, so the walk stops
+// before it instead of carrying it into a corrected command.
 export function originalSlice(
     scan: { command: string; cleaned: string; executableRanges?: Array<{ start: number; end: number }> },
     start: number,
     cleanedEnd: number
 ): string {
-    let end = cleanedEnd;
     const range = scan.executableRanges
-        ?.filter((candidate) => start >= candidate.start && start < candidate.end)
+        ?.filter((candidate) => start >= candidate.start && cleanedEnd <= candidate.end)
         .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-    const limit = range?.end ?? scan.cleaned.length;
+    const source = sliceSourceOf(scan, range);
+    const local = (offset: number): number =>
+        source.offsets ? lowerBound(source.offsets, offset - source.base) : offset - source.base;
+    const from = local(start);
+    const to = local(cleanedEnd);
+    const unitEnd = (unit: Span): number => unit.start + unit.text.length;
+    // The innermost unit holding the span. The outer unit holds every span inside the source.
+    const unit = source.units
+        .filter((candidate) => candidate.start <= from && to <= unitEnd(candidate))
+        .sort((a, b) => a.text.length - b.text.length)[0];
 
-    while (end < limit && (scan.cleaned[end] === " " || scan.cleaned[end] === "\t")) {
-        end++;
+    if (!unit) {
+        return scan.command.slice(start, cleanedEnd);
     }
+
+    // A substitution nested in the unit is blank there except for its newlines,
+    // which are not separators of this unit.
+    const nested = source.units.filter((other) => other.start > unit.start && unitEnd(other) <= unitEnd(unit));
+    const blankAt = (i: number): boolean =>
+        unit.text[i - unit.start] === " " ||
+        unit.text[i - unit.start] === "\t" ||
+        nested.some((other) => i >= other.start && i < unitEnd(other));
+    let walked = to;
+
+    while (walked < unitEnd(unit) && blankAt(walked)) {
+        walked++;
+    }
+
+    let end = walked === to ? cleanedEnd : source.base + (source.offsets ? source.offsets[walked - 1] + 1 : walked);
 
     while (end > start && /\s/.test(scan.command[end - 1])) {
         end--;
+
+        // A line continuation goes with its newline: a `\` left at the end escapes
+        // whatever a corrected command appends, such as the `)` of a subshell.
+        if (scan.command[end] === "\n" && scan.command[end - 1] === "\\") {
+            end--;
+        }
     }
 
     return scan.command.slice(start, end);
+}
+
+// The text a span sits in, as the shell reads it, cut into units with its
+// comments marked. Offsets in `units` are local to the source.
+interface SliceSource {
+    /** Offset of the source in the command. */
+    base: number;
+    /** Offset in the command, minus `base`, of each source character plus one past the end; null when they match. */
+    offsets: number[] | null;
+    units: Span[];
+}
+
+// One source per scan and body: every match of every rule slices the same command.
+const sliceSources = new WeakMap<object, Map<string, SliceSource>>();
+
+function sliceSourceOf(scan: { command: string }, range: { start: number; end: number } | undefined): SliceSource {
+    let byRange = sliceSources.get(scan);
+
+    if (!byRange) {
+        byRange = new Map();
+        sliceSources.set(scan, byRange);
+    }
+
+    const key = range ? `${range.start}:${range.end}` : "";
+    let source = byRange.get(key);
+
+    if (!source) {
+        source = sliceSource(scan.command, range);
+        byRange.set(key, source);
+    }
+
+    return source;
+}
+
+// The characters a backslash escapes inside double quotes. A `\` before a newline
+// joins the lines, so both characters go.
+const DOUBLE_QUOTE_ESCAPES = new Set(['"', "$", "`", "\\", "\n"]);
+
+function sliceSource(command: string, range: { start: number; end: number } | undefined): SliceSource {
+    if (!range) {
+        return { base: 0, offsets: null, units: splitSubstitutions(stripShellNoise(command, "#")) };
+    }
+
+    const raw = command.slice(range.start, range.end);
+
+    if (command[range.start - 1] !== '"') {
+        return { base: range.start, offsets: null, units: splitSubstitutions(stripShellNoise(raw, "#")) };
+    }
+
+    // A double-quoted body reaches the shell with one level of escapes removed:
+    // `zsh -c "rm \"\$(cat list)\""` runs `rm "$(cat list)"`.
+    let text = "";
+    const offsets: number[] = [];
+
+    for (let i = 0; i < raw.length; i++) {
+        if (raw[i] === "\\" && i + 1 < raw.length && DOUBLE_QUOTE_ESCAPES.has(raw[i + 1])) {
+            i++;
+
+            if (raw[i] === "\n") {
+                continue;
+            }
+        }
+
+        text += raw[i];
+        offsets.push(i);
+    }
+
+    offsets.push(raw.length);
+    return { base: range.start, offsets, units: splitSubstitutions(stripShellNoise(text, "#")) };
+}
+
+// The first index whose value is at least `value`, in an ascending array.
+function lowerBound(values: number[], value: number): number {
+    let low = 0;
+    let high = values.length - 1;
+
+    while (low < high) {
+        const mid = (low + high) >> 1;
+
+        if (values[mid] < value) {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+
+    return low;
 }
 
 // The next argument after `index` as typed in the original command, quotes
@@ -677,7 +802,7 @@ function backtickBodies(source: string, base: number): ExecutableBody[] {
             continue;
         }
         if (ch === "\n" && quote === null && literalHeredoc) {
-            i = consumeHeredocBody(source, i + 1, literalHeredoc).end;
+            i = consumeHeredocBody(source, i + 1, literalHeredoc, " ").end;
             literalHeredoc = null;
             continue;
         }
