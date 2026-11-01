@@ -2,6 +2,7 @@ import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dial
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
+import { shownDecisionText } from "../decisions/option-labels";
 import { parseDecisionBlocks } from "../decisions/read";
 import { findRefs } from "../decisions/reply-text";
 import {
@@ -90,11 +91,17 @@ export interface InboxDecision {
      */
     source: "transcript" | "store" | "dialog";
     at: string;
-    /** The reply text that leads to this decision (markdown): the findings for the first block, the lead-in for the rest. */
+    /**
+     * The reply text that leads to this decision (markdown): the findings for the first block, the lead-in for the rest.
+     * Only that: a posted decision's reasoning is part of `proposal`, never its context.
+     */
     context: string | null;
     /** Text under the options about this decision: a recommendation line, the why. */
     notes: string | null;
-    /** What a posted decision adds: the agent's pick, its reasoning and confidence, the code it points at. */
+    /**
+     * The agent's pick as the lightbulb line shows it: the posted proposal, then the posted reasoning (`decisionPick`).
+     * `reasoning` stays on its own for the readers that name it apart (refs, the CLI).
+     */
     proposal: string | null;
     reasoning: string | null;
     confidence: "high" | "medium" | "low" | null;
@@ -397,18 +404,33 @@ export function decisionItemId(sessionId: string, number: number): string {
 }
 
 /**
- * A stored decision as the Inbox shows it: its context, notes, proposal, confidence, the options with their reasons,
- * the delivery line and the `file:line` refs its text names (not read yet: `fillExcerpts` in excerpts.ts reads them).
- * The widget's decision cards take their details from here too, so both surfaces show the same things.
+ * The agent's pick as a card shows it behind a lightbulb (the hub's card above the options, the widget's under the
+ * recommended one by default): the posted proposal, then the reasoning. The reasoning says why the agent recommends its
+ * option, so it belongs to the pick and never to Context, which is the reply text that leads to the decision. Posted
+ * reasoning read as Context in the hub and the widget until 2026-11-01 ("One day is enough to notice anything missing"
+ * under the Context label of decision 31).
+ */
+export function decisionPick(row: Pick<DecisionRecord, "proposal" | "reasoning">): string | null {
+    const parts = [row.proposal, row.reasoning].map((part) => part?.trim()).filter((part): part is string => !!part);
+    return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+/**
+ * A stored decision as the Inbox shows it: its context, notes, the agent's pick (`decisionPick`), confidence, the
+ * options with their reasons, the delivery line and the `file:line` refs its text names (not read yet: `fillExcerpts`
+ * in excerpts.ts reads them). The prompt and the options are `shownDecisionText`: a bare letter takes the words of its
+ * line in the prompt, and lines that only repeat the buttons leave the prompt. The widget's decision cards take their
+ * details from here too, so both surfaces show the same things.
  */
 export function fromRecord(row: DecisionRecord): InboxDecision {
+    const shown = shownDecisionText(row);
     return {
         kind: "decision",
         id: row.id,
         number: row.number,
         title: row.title ?? null,
-        prompt: row.prompt,
-        choices: choicesOf(row.options, row.rationales, row.recommended ?? null),
+        prompt: shown.prompt,
+        choices: choicesOf(shown.options, row.rationales, row.recommended ?? null),
         recommended: row.recommended ?? null,
         blocking: row.blocking === true,
         status: STATUS[row.state],
@@ -417,9 +439,9 @@ export function fromRecord(row: DecisionRecord): InboxDecision {
         answeredVia: row.answeredVia ?? null,
         source: "store",
         at: row.createdTs ?? row.updatedTs,
-        context: row.context ?? row.reasoning ?? null,
+        context: row.context ?? null,
         notes: row.notes ?? null,
-        proposal: row.proposal ?? null,
+        proposal: decisionPick(row),
         reasoning: row.reasoning ?? null,
         confidence: row.confidence ?? null,
         excerpt: row.excerpt ?? null,
@@ -429,7 +451,7 @@ export function fromRecord(row: DecisionRecord): InboxDecision {
                 { text: row.notes, from: "notes" },
                 { text: row.reasoning, from: "reasoning" },
                 { text: row.proposal, from: "proposal" },
-                ...optionParts(row.options, row.rationales),
+                ...optionParts(shown.options, row.rationales),
             ],
             row.refs
         ),
@@ -464,13 +486,14 @@ export function fromDialog(question: OpenQuestion): InboxDialog {
 }
 
 function fromBlock(sessionId: string, block: HarvestedDecision, at: string): InboxDecision {
+    const shown = shownDecisionText(block);
     return {
         kind: "decision",
         id: decisionItemId(sessionId, block.number),
         number: block.number,
         title: block.title ?? null,
-        prompt: block.prompt,
-        choices: choicesOf(block.options, block.rationales, block.recommended ?? null),
+        prompt: shown.prompt,
+        choices: choicesOf(shown.options, block.rationales, block.recommended ?? null),
         recommended: block.recommended ?? null,
         blocking: false,
         status: "waiting",
@@ -489,7 +512,7 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
             [
                 { text: block.context, from: "context" },
                 { text: block.notes, from: "notes" },
-                ...optionParts(block.options, block.rationales),
+                ...optionParts(shown.options, block.rationales),
             ],
             undefined
         ),

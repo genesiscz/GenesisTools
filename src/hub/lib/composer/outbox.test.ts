@@ -1854,6 +1854,9 @@ test("decision cards fold their context, show their code and put the agent's pic
 
 test("alert content preferences default on and can be changed independently", () => {
     expect(widgetPreferencesSchema.parse({})).toMatchObject({ alertSummary: true, alertCompactAnswer: true });
+    // The inbox of every session shows an open decision's description by default, apart from the alert's switch.
+    expect(widgetPreferencesSchema.parse({ alertSummary: false })).toMatchObject({ overviewSummary: true });
+    expect(widgetPreferencesPatchSchema.parse({ overviewSummary: false })).toEqual({ overviewSummary: false });
     expect(widgetPreferencesSchema.parse({ alertSummary: false, alertCompactAnswer: true })).toMatchObject({
         alertSummary: false,
         alertCompactAnswer: true,
@@ -1974,11 +1977,12 @@ test("decision cards carry recorded answers and supersede links; only open decis
         answer: "drop it, said in chat",
         answeredVia: "agent",
     });
-    // The answer is its own field; the body no longer repeats it. The reasoning is the decision's context, its own
-    // field as in the hub's Inbox card, and an untitled decision's body (the prompt is its title) is empty.
+    // The answer is its own field; the body no longer repeats it. The reasoning is the agent's pick line, its own field
+    // as in the hub's Inbox card (never Context), and an untitled decision's body (the prompt is its title) is empty.
     expect(card(answered.id)?.body).not.toContain("drop it");
     expect(card(answered.id)?.body).toBe("");
-    expect(card(answered.id)?.decision?.context).toBe("It is slow.");
+    expect(card(answered.id)?.decision?.proposal).toBe("It is slow.");
+    expect(card(answered.id)?.decision?.context).toBeUndefined();
     const sessionKey = snapshot.sessions.find((entry) => entry.target.sessionId === "card-session")?.key;
     expect(card(old.id)).toMatchObject({
         status: "superseded",
@@ -2140,11 +2144,13 @@ test("a decision card carries what the hub's Inbox card shows: context, proposal
     const snapshot = await widgetSnapshot({ root: directory, sources });
     const card = snapshot.cards.find((entry) => entry.sourceId === posted.id);
 
-    // The title's details stay the body; everything else is its own field, as the hub's `InboxDecision` has it.
+    // The title's details stay the body; everything else is its own field, as the hub's `InboxDecision` has it. The
+    // reasoning follows the proposal on the pick line: it says why the agent picks, so it is never the Context.
     expect(card?.body).toBe("The rule blocks it today.");
+    expect(card?.decision?.context).toBeUndefined();
     expect(card?.decision).toMatchObject({
-        context: "The block protects nothing the dialog does not protect already.",
-        proposal: "a): it matches both of your instructions.",
+        proposal:
+            "a): it matches both of your instructions.\n\nThe block protects nothing the dialog does not protect already.",
         confidence: "high",
         recommended: "a",
         blocking: true,
@@ -2173,6 +2179,48 @@ test("a decision card carries what the hub's Inbox card shows: context, proposal
     const plain = snapshot.cards.find((entry) => entry.sourceId === bare.id);
     expect(plain?.decision).toBeUndefined();
     expect(plain?.choices.every((choice) => !("rationale" in choice))).toBe(true);
+});
+
+test("a decision stored with bare letters shows each option's words from its prompt line, in the card and the inbox of every session", async () => {
+    const directory = await root();
+    // Decision 31's shape (2026-11-01): the options are "a", "b", "c" and their words live only in the prompt.
+    const row: DecisionRecord = {
+        id: "d_31_letters-session",
+        sessionId: "letters-session",
+        provider: "claude",
+        number: 31,
+        title: "When to empty the removal folder",
+        prompt: "The folder holds 81.8 GB. A move frees nothing.\n\na) empty it now\nb) keep it until tomorrow evening\nc) let macOS clear it",
+        options: ["a", "b", "c"],
+        recommended: "b",
+        reasoning: "One day is enough to notice anything missing.",
+        state: "open",
+        createdTs: new Date().toISOString(),
+        updatedTs: new Date().toISOString(),
+    };
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => ({ rows: [row], complete: true }),
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    const card = snapshot.cards.find((entry) => entry.sourceId === row.id);
+    const words = ["empty it now", "keep it until tomorrow evening", "let macOS clear it"];
+
+    // The buttons say the words, and the body no longer lists them a second time above the buttons.
+    expect(card?.choices.map((choice) => choice.title)).toEqual(words);
+    expect(card?.body).toBe("The folder holds 81.8 GB. A move frees nothing.");
+    // The reasoning is the agent's pick under its option, not the Context: the hub's Inbox card reads the same field.
+    expect(card?.decision?.context).toBeUndefined();
+    expect(card?.decision?.proposal).toBe("One day is enough to notice anything missing.");
+    // The inbox of every session stages a pick from its own entry: the same words, and the summary its open row shows.
+    const entry = snapshot.notifications?.sessions
+        .flatMap((session) => session.items ?? [])
+        .find((item) => item.sourceId === row.id);
+    expect(entry?.options).toEqual(words);
+    expect(entry?.summary).toBe("The folder holds 81.8 GB. A move frees nothing.");
 });
 
 test("a decision card's cited lines are read only for the cards the snapshot publishes", async () => {
@@ -6589,6 +6637,10 @@ test("an open decision's summary is the prompt under its title, cut at a word ne
         summary: "The release waits for the tests.",
     });
     expect(decisionSummary(row(undefined, "The prompt is the title here."))).toEqual({});
+    // Lines that say only what the option buttons under the summary say are left out ("a) yes" over a "yes" button).
+    expect(decisionSummary(row("Ship it?", "The release waits.\n\na) yes\nb) no"))).toEqual({
+        summary: "The release waits.",
+    });
     const long = decisionSummary(row("Long", "word ".repeat(200))).summary ?? "";
     expect(long.length).toBeLessThanOrEqual(601);
     expect(long.endsWith("word…")).toBe(true);

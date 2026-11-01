@@ -148,6 +148,26 @@ describe("decision store", () => {
         expect(first[0]?.sessionId).toBe("abc");
     });
 
+    test("a post with bare letters saves each option's words from its prompt line; the prompt stays as written", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "decisions-letters-"));
+        const file = join(dir, "decisions.jsonl");
+        const prompt = "The folder holds 81.8 GB.\n\na) empty it now\nb) keep it until tomorrow\nc) let macOS clear it";
+        const [row] = await postDecisions(file, join(dir, "events.jsonl"), {
+            sessionId: "letters",
+            decisions: [
+                { prompt, options: ["a", "b", "c"], recommended: "b" },
+                { prompt: "Real words?", options: ["keep", "drop"] },
+            ],
+        });
+
+        expect(row?.options).toEqual(["empty it now", "keep it until tomorrow", "let macOS clear it"]);
+        expect(row?.prompt).toBe(prompt);
+        expect(readDecisions(file).map((stored) => stored.options)).toEqual([
+            ["empty it now", "keep it until tomorrow", "let macOS clear it"],
+            ["keep", "drop"],
+        ]);
+    });
+
     test("a post keeps the number its chat reply gave, and refuses one the session already used", async () => {
         const dir = mkdtempSync(join(tmpdir(), "decisions-"));
         const file = join(dir, "decisions.jsonl");
