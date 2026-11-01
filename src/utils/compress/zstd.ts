@@ -313,7 +313,12 @@ export async function* readZstdFrames(
 
         while (next < ordered.length || window.length > 0) {
             while (next < ordered.length && window.length < Math.max(1, concurrency)) {
-                window.push(decodeFrame(readExactly(fd, ordered[next]!.compressedSize, ordered[next]!.offset)));
+                const frame = decodeFrame(readExactly(fd, ordered[next]!.compressedSize, ordered[next]!.offset));
+                // A frame that fails while the reader still holds an earlier one has no handler yet, and bun counts
+                // it as an unhandled rejection (it failed the corrupt-.zst search test in 3 of 12 runs). The await
+                // below still throws its error in order; a frame left in the window when the reader stops is dropped.
+                frame.catch(() => undefined);
+                window.push(frame);
                 next += 1;
             }
 

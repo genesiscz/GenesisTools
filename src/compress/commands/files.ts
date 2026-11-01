@@ -1,4 +1,4 @@
-import { createWriteStream, readFileSync } from "node:fs";
+import { createWriteStream, readFileSync, statSync } from "node:fs";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
@@ -241,9 +241,10 @@ function runVerify(archive: string, options: { against?: string; filesFrom?: str
 /**
  * Streams a file's content to stdout (or `--output`): a `.zst` frame by frame, a plain file as it is, and the plain name
  * of a file the daily pass compressed as its `.zst` (`tools compress cat ~/.genesis-tools/logs/<day>.log | rg …` works
- * for any day).
+ * for any day). An `--output` that is the file itself (the same path, a hard link or a symlink to it) is refused before
+ * it is opened, since opening it for writing empties the file before a byte is read.
  */
-async function runCat(file: string, options: { output?: string }): Promise<void> {
+export async function runCat(file: string, options: { output?: string }): Promise<void> {
     const stored = storedFilePath(file);
 
     if (!stored) {
@@ -253,6 +254,13 @@ async function runCat(file: string, options: { output?: string }): Promise<void>
     if (!options.output) {
         await writeContent(stored, process.stdout);
         return;
+    }
+
+    const source = statSync(stored);
+    const output = statSync(options.output, { throwIfNoEntry: false });
+
+    if (output && output.dev === source.dev && output.ino === source.ino) {
+        throw new Error(`${options.output} is ${stored} itself; write the content to another file`);
     }
 
     const sink = createWriteStream(options.output);
