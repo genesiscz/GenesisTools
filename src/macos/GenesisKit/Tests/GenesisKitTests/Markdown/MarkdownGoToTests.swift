@@ -88,9 +88,14 @@ final class MarkdownGoToTests: XCTestCase {
             let shot = ProcessInfo.processInfo.environment["GENESIS_GOTO_SHOTS"]
                 .map { $0 + "/markdown-goto-sheet-\(theme.rawValue).png" }
 
+            // The list arrives one layout pass before the window grows to fit it, and that frame shows only the list
+            // (the header and the buttons are outside it): wait for a frame with the header, a row and the buttons.
+            func whole(_ lines: [String]) -> Bool {
+                ["Go to Location", "daily", "Open"].allSatisfy { word in lines.contains { $0.contains(word) } }
+            }
             var lines: [String] = []
             let end = Date().addingTimeInterval(5)
-            while Date() < end, !lines.contains(where: { $0.contains("daily") }) {
+            while Date() < end, !whole(lines) {
                 try await Task.sleep(for: .milliseconds(100))
                 host.layoutSubtreeIfNeeded()
                 lines = TreeDrawnText.lines(of: host, savingTo: shot)
@@ -102,6 +107,66 @@ final class MarkdownGoToTests: XCTestCase {
             XCTAssertTrue(lines.contains { $0.contains("Open") }, "the buttons read in both looks: \(lines)")
             XCTAssertFalse(lines.contains { $0.contains("photo.png") }, "notes only: \(lines)")
         }
+    }
+
+    /// While the list of a newer text loads, the older list stays on screen but takes no key and no click: Up and
+    /// Down wait for the new list and then move on it, and a click on the older list acts only on a row the new list
+    /// also has, at its place there.
+    func testWhileTheNextListLoadsKeysWaitAndAClickActsOnlyOnTheNewList() throws {
+        let older = MarkdownPathCompletion.suggest(root.path + "/notes/", base: root,
+                                                   recents: [root.path + "/notes/plan.md"])
+        let newer = MarkdownPathCompletion.suggest(root.path + "/notes/da", base: root)
+        XCTAssertEqual(older.rows.map(\.name), ["plan.md", "daily", "drafts", "plan.md"])
+        XCTAssertEqual(newer.rows.map(\.name), ["daily", "drafts"])
+
+        var cursor = MarkdownGoToCursor()
+        let none = cursor.arrived(older)
+        XCTAssertNil(none)
+        XCTAssertEqual(cursor.selection, 0, "the newest recent file")
+
+        // The text changed: the older list is on screen, the newer one loads.
+        cursor.reset()
+        XCTAssertFalse(cursor.move(1, in: nil))
+        XCTAssertFalse(cursor.move(1, in: nil))
+        XCTAssertEqual(cursor.selection, 0, "the older list's selection does not move")
+        XCTAssertFalse(cursor.moved, "so no place carries into the newer list")
+        XCTAssertFalse(cursor.click(older.rows[0], in: nil), "a click on the older list does nothing")
+        cursor.wait(for: .go(reveal: false))
+        XCTAssertFalse(cursor.move(1, in: nil))
+
+        let waiting = cursor.arrived(newer)
+        XCTAssertEqual(waiting, MarkdownGoToCursor.Pending(steps: 2, key: .go(reveal: false)),
+                       "two steps, then Return; the step after Return is dropped")
+        XCTAssertEqual(cursor.selection, 0, "the newer list's automatic row")
+        XCTAssertTrue(cursor.move(2, in: newer))
+        XCTAssertEqual(cursor.pick(in: newer), .chosen(newer.rows[1]), "Return takes drafts, on the newer list")
+        XCTAssertNil(cursor.pending)
+
+        // A row view kept from the older list: found by its id on the newer list, or nothing.
+        XCTAssertFalse(cursor.click(older.rows[0], in: newer), "the recent file is not on the newer list")
+        XCTAssertEqual(cursor.selection, 1)
+        XCTAssertTrue(cursor.click(older.rows[1], in: newer))
+        XCTAssertEqual(cursor.selection, 0, "daily is the newer list's first row")
+        XCTAssertEqual(cursor.tabRow(in: newer), newer.rows[0])
+    }
+
+    /// The settings window can turn "Recent files first" off while the sheet is open: the options the sheet reloads on
+    /// change, and the list leaves the recent files out, so Return no longer opens one.
+    func testTurningRecentFilesOffChangesTheOptionsAndTheListLeavesThemOut() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "md-goto-recents-\(UUID().uuidString)"))
+        let configuration = GenesisKitMarkdownConfiguration(defaults: defaults)
+        let on = MarkdownPathOptions(configuration)
+        configuration.goToRecents = false
+        let off = MarkdownPathOptions(configuration)
+        XCTAssertNotEqual(on, off, "the sheet builds its list again when its options change")
+
+        let recents = [root.path + "/notes/plan.md"]
+        let shown = MarkdownPathCompletion.suggest(root.path + "/notes/", base: root, recents: recents, options: on)
+        XCTAssertEqual(shown.recents.map(\.name), ["plan.md"])
+        XCTAssertEqual(shown.automaticIndex, 0)
+        let left = MarkdownPathCompletion.suggest(root.path + "/notes/", base: root, recents: recents, options: off)
+        XCTAssertTrue(left.recents.isEmpty)
+        XCTAssertNil(left.automaticIndex, "Return shows the folder; it opens no recent file")
     }
 
     func testAFileTheViewerCannotShowIsAnInlineProblem() throws {

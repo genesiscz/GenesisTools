@@ -82,9 +82,13 @@ struct MarkdownPathSuggestions: Equatable, Sendable {
     }
 }
 
+/// Every setting the list reads. The sheet builds its list again whenever this value changes, so a setting the list
+/// follows belongs here.
 struct MarkdownPathOptions: Equatable, Sendable {
     var files: MarkdownGoToFiles = .notes
     var showsHidden = false
+    /// The recent files passed in lead the list ("Recent files first"). Off: they are left out.
+    var showsRecents = true
     /// The rows a folder shows at most; the rest wait for a longer name.
     var limit = 200
 }
@@ -256,7 +260,8 @@ enum MarkdownPathCompletion {
     // MARK: The list
 
     /// The rows for `raw`. `recents` are paths, newest first, passed only while the field holds the folder it opened
-    /// with. `isCancelled` is asked while ranking a large folder, so a stale request stops early.
+    /// with; `options.showsRecents` decides whether they show. `isCancelled` is asked before each folder read and
+    /// while ranking a large folder, so a stale request starts no read and stops early (its rows are empty then).
     static func suggest(
         _ raw: String,
         base: URL,
@@ -266,12 +271,14 @@ enum MarkdownPathCompletion {
         read: (String) -> [MarkdownPathEntry]? = MarkdownPathCompletion.read
     ) -> MarkdownPathSuggestions {
         var parsed = Self.query(raw, base: base)
+        guard !isCancelled() else { return MarkdownPathSuggestions(text: raw, query: parsed) }
         var listing = read(parsed.folder)
         // A path that names a folder without its closing slash (a pasted folder path, `..`): that folder's entries.
         // A lone `.` stays a name, since it is how hidden files are asked for.
         let namesFolder = parsed.segment == ".."
             || listing?.contains(where: { $0.isFolder && $0.name == parsed.segment }) == true
         if !parsed.segment.isEmpty, namesFolder {
+            guard !isCancelled() else { return MarkdownPathSuggestions(text: raw, query: parsed) }
             let folder = URL(fileURLWithPath: parsed.folder).appendingPathComponent(parsed.segment).standardizedFileURL.path
             if let inner = read(folder) {
                 parsed = MarkdownPathQuery(folder: folder, segment: "", head: parsed.head + parsed.segment + "/")
@@ -280,7 +287,7 @@ enum MarkdownPathCompletion {
         }
 
         var result = MarkdownPathSuggestions(text: raw, query: parsed)
-        result.recents = recentRows(recents)
+        result.recents = options.showsRecents ? recentRows(recents) : []
         guard let listing else {
             result.problem = problem(at: parsed.folder)
             return result
@@ -394,16 +401,71 @@ enum MarkdownPathCompletion {
     }
 }
 
-/// The folders "Go to Location…" listed while its sheet is open, so typing inside one folder reads it once. A folder
-/// that could not be read is not kept, so one created meanwhile shows on the next keystroke.
+/// The folders "Go to Location…" listed while its sheet is open, so typing inside one folder reads it once. A request
+/// that asks for a folder while another request reads it waits for that read instead of starting its own, so fast
+/// typing over a slow folder still costs one listing. A folder that could not be read is not kept, so one created
+/// meanwhile shows on the next keystroke.
 final class MarkdownPathCache: @unchecked Sendable {
+    /// A read under way. The requests that want the same folder meanwhile wait on `done`, then take `entries`.
+    private final class Reading: @unchecked Sendable {
+        let done = DispatchGroup()
+        var entries: [MarkdownPathEntry]?
+
+        init() { done.enter() }
+    }
+
+    private enum Slot {
+        case listed([MarkdownPathEntry])
+        case reading(Reading)
+    }
+
+    private enum Lookup {
+        case hit([MarkdownPathEntry])
+        case wait(Reading)
+        case read(Reading)
+    }
+
+    /// How long a request waits for another request's read of the same folder before it reads the folder itself.
+    static let waitLimit: DispatchTimeInterval = .seconds(10)
+
     private let lock = NSLock()
-    private var folders: [String: [MarkdownPathEntry]] = [:]
+    private var folders: [String: Slot] = [:]
+    private let reader: @Sendable (String) -> [MarkdownPathEntry]?
+
+    /// `read` lists one folder; a test hands in its own to count or hold the reads.
+    init(read: @escaping @Sendable (String) -> [MarkdownPathEntry]? = MarkdownPathCompletion.read) {
+        reader = read
+    }
 
     func read(_ folder: String) -> [MarkdownPathEntry]? {
-        if let hit = lock.withLock({ folders[folder] }) { return hit }
-        guard let entries = MarkdownPathCompletion.read(folder) else { return nil }
-        lock.withLock { folders[folder] = entries }
-        return entries
+        let lookup: Lookup = lock.withLock {
+            switch folders[folder] {
+            case .listed(let entries)?:
+                return .hit(entries)
+            case .reading(let reading)?:
+                return .wait(reading)
+            case nil:
+                let reading = Reading()
+                folders[folder] = .reading(reading)
+                return .read(reading)
+            }
+        }
+
+        switch lookup {
+        case .hit(let entries):
+            return entries
+        case .wait(let reading):
+            // A read that hangs (a stalled network volume) holds this request for at most the deadline; then it
+            // reads the folder itself, and keeps nothing, since the first read stores its listing when it ends.
+            guard reading.done.wait(timeout: .now() + Self.waitLimit) == .success else { return reader(folder) }
+            return reading.entries
+        case .read(let reading):
+            let entries = reader(folder)
+            // Nil drops the slot: an unreadable folder is asked again by the next request.
+            lock.withLock { folders[folder] = entries.map(Slot.listed) }
+            reading.entries = entries
+            reading.done.leave()
+            return entries
+        }
     }
 }
