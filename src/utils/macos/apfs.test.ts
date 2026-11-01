@@ -75,8 +75,8 @@ describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
     });
 });
 
-import { lstatSync, mkdtempSync as mkd2, readFileSync } from "node:fs";
-import { CloneUnsupportedError, cloneFile, getFsType } from "@genesiscz/utils/macos/apfs";
+import { lstatSync, mkdtempSync as mkd2, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { CloneUnsupportedError, cloneFile, getFsType, swapPaths } from "@genesiscz/utils/macos/apfs";
 
 describe.skipIf(skip.unlessMac)("apfs cloneFile + getFsType", () => {
     it("getFsType returns 'apfs' for the system volume", () => {
@@ -101,6 +101,29 @@ describe.skipIf(skip.unlessMac)("apfs cloneFile + getFsType", () => {
             // mutate a → b must be unchanged
             writeFileSync(a, Buffer.alloc(1024 * 1024, 0x02));
             expect(readFileSync(b)[0]).toBe(0x01);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("swapPaths exchanges two folders in one step and throws when one of them is missing", () => {
+        const dir = mkd2(join(tmpdir(), "gt-swap-"));
+        const a = join(dir, "a");
+        const b = join(dir, "b");
+        try {
+            mkdirSync(a);
+            mkdirSync(b);
+            writeFileSync(join(a, "from-a"), "a");
+            writeFileSync(join(b, "from-b"), "b");
+            const inodeOfA = lstatSync(a).ino;
+
+            swapPaths(a, b);
+
+            expect(readdirSync(a)).toEqual(["from-b"]);
+            expect(readdirSync(b)).toEqual(["from-a"]);
+            expect(lstatSync(b).ino).toBe(inodeOfA);
+            expect(() => swapPaths(join(dir, "missing"), b)).toThrow(/RENAME_SWAP/);
+            expect(readdirSync(b)).toEqual(["from-a"]);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
