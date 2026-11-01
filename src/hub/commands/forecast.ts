@@ -1,9 +1,10 @@
+import { absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { buildForecast, forecastClock, type WindowForecast } from "../lib/forecast";
+import { buildForecast, forecastClock, type WindowForecast, windowKind, windowLabel } from "../lib/forecast";
 
 function clock(iso: string | null): string {
     return iso ? forecastClock(new Date(iso)) : "";
@@ -26,7 +27,7 @@ export function registerForecastCommand(program: Command): void {
     program
         .command("forecast")
         .description(
-            "When each AI account's 5-hour and weekly windows run out at the recent burn rate (reads recorded usage snapshots only, never fetches)"
+            "When each AI account's 5-hour (where the account has one) and weekly windows run out at the recent burn rate (reads recorded usage snapshots only, never fetches)"
         )
         .option("--provider <id>", "only this usage provider (anthropic-sub, openai-sub, grok-sub)")
         .option("--account <name>", "only this account")
@@ -53,6 +54,19 @@ export function registerForecastCommand(program: Command): void {
             const table = createBoxTable(["ACCOUNT", "WINDOW", "USED", "RATE", "RESETS", "OUTLOOK"]);
 
             for (const account of result.accounts) {
+                // A window the account does not have: a dash, never a 0 % row forecast from its old samples.
+                for (const bucket of account.absentWindows ?? []) {
+                    table.push([
+                        `${account.account}
+${pc.dim(account.provider)}`,
+                        windowLabel(bucket, windowKind({ bucket, kind: null })),
+                        pc.dim("—"),
+                        "",
+                        "",
+                        formatDotStatus("dim", absentLimitText({ kind: windowKind({ bucket, kind: null }) })),
+                    ]);
+                }
+
                 for (const window of account.windows) {
                     table.push([
                         `${account.account}\n${pc.dim(account.provider)}`,
