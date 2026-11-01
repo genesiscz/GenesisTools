@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { waitForPath } from "@genesiscz/utils/fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { pendingAsideDirs, type RmRequest, saveRmRequest } from "@genesiscz/utils/rm";
 import {
     allowedCommand,
     chainSegments,
@@ -32,7 +33,7 @@ import { reviewBrief, reviewSpawnCommand } from "./review-brief";
 import { loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
 import { parseSwiftTargets, typecheckPackage } from "./swift-typecheck";
-import { buildOutputKind, judgeOwn, openPaths, ownBuildOutput, ownSessionDirs } from "./tmp-reclaim";
+import { buildOutputKind, judge, judgeOwn, openPaths, ownBuildOutput, ownSessionDirs } from "./tmp-reclaim";
 import {
     conflictedFiles,
     higherVersionSide,
@@ -6247,5 +6248,41 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(fs.existsSync(hub)).toBe(false);
         expect(fs.readFileSync(join(notesTriple, "kept.md"), "utf8")).toBe("a note");
         expect(fs.existsSync(join(dir, "pluggable/b-notes/notes.md"))).toBe(true);
+    });
+});
+
+describe("tmp-reclaim never lists a pending aside copy", () => {
+    test("a folder holding a pending request's aside folder is refused until the request is decided", () => {
+        const scratch = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-aside-")));
+        const asideDir = join(scratch, "rm-aside", "20261101-000000-1-abcd");
+        fs.mkdirSync(asideDir, { recursive: true });
+        fs.writeFileSync(join(asideDir, "0-x-copy.txt"), "x");
+        const request: RmRequest = {
+            id: "asdpnd",
+            kind: "delete",
+            createdAt: new Date().toISOString(),
+            caller: null,
+            cwd: scratch,
+            reason: null,
+            status: "pending",
+            asideDir,
+            targets: [
+                {
+                    path: join(scratch, "orig.txt"),
+                    kind: "file",
+                    rule: "default",
+                    reason: "no rule allows it",
+                    stored: join(asideDir, "0-x-copy.txt"),
+                },
+            ],
+        };
+        const protection = { ids: [], paths: [] };
+        saveRmRequest(request);
+
+        expect(judge(scratch, protection, [], pendingAsideDirs())).toBe("aside-pending");
+        expect(judge(asideDir, protection, [], pendingAsideDirs())).toBe("aside-pending");
+
+        saveRmRequest({ ...request, status: "denied" });
+        expect(judge(scratch, protection, [], pendingAsideDirs())).not.toBe("aside-pending");
     });
 });
