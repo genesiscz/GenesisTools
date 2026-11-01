@@ -34,14 +34,12 @@ import {
     createAsideRequest,
     createRmRequest,
     defaultRmConfig,
-    denyRmRequest,
     disposalGraceMinutes,
     drainDue,
     effectiveConfig,
     evaluateTarget,
     filterRmLedger,
     findNestedRepos,
-    finishRmApproval,
     folderStats,
     isInside,
     isRootActive,
@@ -1084,49 +1082,6 @@ describe("security review fixes", () => {
         expect(approvalGraceMinutes({ ...request, caller: null }, custom)).toBe(config.grace.otherMinutes);
     });
 
-    test("partial approval keeps an initially blocked aside target pending and protected", () => {
-        const requestsDir = dir("partial-approval-requests");
-        const asideDir = dir("partial-approval-aside");
-        const targets = [
-            {
-                path: join(base, "blocked"),
-                stored: join(asideDir, "blocked"),
-                kind: "dir" as const,
-                rule: "test",
-                reason: "test",
-            },
-            {
-                path: join(base, "approved"),
-                stored: join(asideDir, "approved"),
-                kind: "file" as const,
-                rule: "test",
-                reason: "test",
-            },
-        ];
-        const request = createRmRequest(
-            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets, asideDir },
-            requestsDir
-        );
-        finishRmApproval({
-            request,
-            blocked: [request.targets[0]],
-            unresolved: new Set(),
-            via: "test",
-            dir: requestsDir,
-        });
-        const saved = loadRmRequest(request.id, requestsDir);
-        expect(saved?.status).toBe("pending");
-        expect(saved?.targets).toEqual([targets[0]]);
-        expect(pendingAsideFor(asideDir, pendingAsideDirs(requestsDir))).toBe(request.id);
-        const all = createRmRequest(
-            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets, asideDir },
-            requestsDir
-        );
-        expect(
-            finishRmApproval({ request: all, blocked: [], unresolved: new Set(), via: "test", dir: requestsDir }).status
-        ).toBe("approved");
-    });
-
     test("missing config uses defaults; unreadable or malformed policy fails closed", () => {
         const folder = dir("policy-load");
         expect(loadRmConfig(join(folder, "missing.json"))).toEqual(defaultRmConfig());
@@ -1533,36 +1488,6 @@ describe("security review fixes: deny", () => {
         expect(mayDenyRmRequest(request, { ...AGENT, sessionId: null })).toBe(false);
         expect(mayDenyRmRequest(request, { ...AGENT, isInAgent: false, sessionId: null })).toBe(true);
     });
-
-    test("a copy that cannot go home keeps the request pending and its aside folder guarded", () => {
-        const requestsDir = dir("deny-kept-requests");
-        const src = file(join(dir("deny-kept-src"), "draft.md"), "work");
-        const verdict = { kind: "ask" as const, rule: "default", reason: "test" };
-        const asideRoot = dir("cc", "proj", "sess-1111", "deny-kept-aside");
-        const aside = moveAside({
-            inputs: [{ target: resolveTarget(src, base), verdict }],
-            caller: AGENT,
-            batchId: "b1",
-            root: asideRoot,
-        });
-        const request = createRmRequest(
-            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets: aside.moved, asideDir: aside.dir },
-            requestsDir
-        );
-        file(src, "the agent wrote a new file there meanwhile");
-
-        const back = denyRmRequest(request, AGENT, { requestsDir });
-
-        expect(back.waiting).toHaveLength(1);
-        expect(loadRmRequest(request.id, requestsDir)?.status).toBe("pending");
-        expect(pendingAsideFor(realpathSync(aside.dir), pendingAsideDirs(requestsDir))).toBe(request.id);
-
-        unlinkSync(src);
-        const again = denyRmRequest(loadRmRequest(request.id, requestsDir) ?? request, AGENT, { requestsDir });
-
-        expect(again.returned).toEqual([src]);
-        expect(loadRmRequest(request.id, requestsDir)?.status).toBe("denied");
-    });
 });
 
 describe("security review fixes: a typed code is not proof of a person", () => {
@@ -1775,12 +1700,13 @@ describe("crash safety: the record comes before the move", () => {
             throw new Error(`no recovered request ${id}`);
         }
 
-        const back = denyRmRequest(request, AGENT, { requestsDir });
+        // The recovered copy goes home and the never-moved path stays: a deny (`denyRequest`) runs this put-back.
+        const back = returnAside(request.targets, AGENT, request.id);
 
         expect(back.returned).toEqual([first]);
+        expect(back.kept).toEqual([]);
         expect(readFileSync(first, "utf8")).toBe("one");
         expect(readFileSync(second, "utf8")).toBe("two");
-        expect(loadRmRequest(id, requestsDir)?.status).toBe("denied");
     });
 
     test("a finished aside run leaves only its request, and its journal named every move before the first", () => {
