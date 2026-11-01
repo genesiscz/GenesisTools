@@ -586,7 +586,7 @@ describe("retention", () => {
             "2026-10-12-profiling.log",
         ]);
 
-        const report = await applyOldFileCompression(plan, { caller: "test" });
+        const report = await applyOldFileCompression(plan, { caller: "test", releaseGraceMs: 0 });
         expect(report.failed).toEqual([]);
         expect(readdirSync(dir).sort()).toEqual(
             [
@@ -598,6 +598,37 @@ describe("retention", () => {
             ].sort()
         );
         expect([...readLinesSync(join(dir, "2026-10-11.log.zst"))].join("\n")).toBe(logText(300));
+    });
+});
+
+describe("old day files", () => {
+    it("frees a removed file's blocks while another process still holds it open, and never cuts a moved one", async () => {
+        const now = new Date("2026-10-13T12:00:00");
+        const old = new Date("2026-10-10T12:00:00").getTime() / 1000;
+        const dayOf = (relative: string) => /^(\d{4}-\d{2}-\d{2})\.log$/.exec(relative)?.[1];
+        const run = async (retire?: (path: string) => void) => {
+            const dir = scratch("release");
+            const path = join(dir, "2026-10-10.log");
+            writeFileSync(path, logText(300));
+            utimesSync(path, old, old);
+            const holder = openSync(path, "r");
+            const plan = planOldFileCompression({ root: dir, dayOf, firstPlainDay: "2026-10-12", now });
+            const report = await applyOldFileCompression(plan, { caller: "test", retire, releaseGraceMs: 0 });
+            const held = fstatSync(holder);
+            closeSync(holder);
+            return { dir, path, report, held };
+        };
+
+        const removed = await run();
+        expect(removed.report.compressed.map((item) => item.path)).toEqual([removed.path]);
+        expect(existsSync(removed.path)).toBe(false);
+        expect([removed.held.nlink, removed.held.size]).toEqual([0, 0]);
+        expect([...readLinesSync(`${removed.path}.zst`)].join("\n")).toBe(logText(300));
+
+        const trash = join(scratch("trash"), "kept.log");
+        const moved = await run((path) => renameSync(path, trash));
+        expect([moved.held.nlink, moved.held.size]).toEqual([1, Buffer.byteLength(logText(300))]);
+        expect(readFileSync(trash, "utf8")).toBe(logText(300));
     });
 });
 
