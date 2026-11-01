@@ -41,6 +41,11 @@ export interface FolderRetentionOptions {
     maxArchiveAgeDays?: number;
     /** At most this many archives stay, newest first. Unset: no count cap. */
     maxArchives?: number;
+    /**
+     * With both archive limits set, an archive goes only when it is past BOTH (beyond `maxArchives` and older than
+     * `maxArchiveAgeDays`), so the limit that keeps more wins. Unset: it goes past either limit.
+     */
+    keepYoungArchives?: boolean;
     /** Which folders take part; default: every folder whose name does not start with a dot. */
     include?: (name: string) => boolean;
     /** Folders that stay as they are whatever their age or rank (a running process uses them). */
@@ -132,14 +137,16 @@ export function planFolderRetention(options: FolderRetentionOptions): FolderRete
     candidates.forEach((candidate, index) => {
         const expired = maxArchiveAgeDays !== undefined && now - candidate.timeMs > maxArchiveAgeDays * DAY_MS;
         const overCount = maxArchives !== undefined && index >= maxArchives;
+        const unionKeep = options.keepYoungArchives && maxArchiveAgeDays !== undefined && maxArchives !== undefined;
+        const past = unionKeep ? expired && overCount : expired || overCount;
 
         if (candidate.folder) {
-            if (expired || overCount) {
+            if (past) {
                 plan.drop.push(candidate.folder);
             } else {
                 plan.pack.push({ folder: candidate.folder, archive: candidate.path, timeMs: candidate.timeMs });
             }
-        } else if (expired || overCount) {
+        } else if (past) {
             plan.deleteArchives.push(candidate.path);
         }
     });
