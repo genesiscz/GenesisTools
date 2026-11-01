@@ -13,7 +13,7 @@ import { type EditableColumn, type EditableRow, EditableTable, editableCellError
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
-import { Md, MdViewer } from "./md";
+import { MD_BODY_CLASS, MD_DOCUMENT_CLASS, Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
 import {
     Badge,
@@ -30,7 +30,7 @@ import {
 } from "./primitives";
 import { matchRoute } from "./router";
 import { moveItem, type SortableItem, SortableList, type SortableMove } from "./sortable";
-import { asciiTreeRows, JsonView, MappingList, Steps, TreeView, treeFromPaths } from "./structure";
+import { asciiTreeRows, Compare, JsonView, MappingList, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
 import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
 import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
@@ -2429,6 +2429,32 @@ describe("design pages", () => {
         expect(rows[7].blank).toBe(true);
     });
 
+    test("asciiTreeRows: a note prints under its node's lines, and a continued comment line moves the shared column", () => {
+        const rows = asciiTreeRows([
+            {
+                label: "root",
+                children: [
+                    { label: "a\nmuch longer label", meta: "x\ny", note: "kept `note`" },
+                    { label: "bb", meta: "z", children: [{ label: "leaf" }] },
+                ],
+            },
+        ]);
+
+        expect(rows.map((r) => `${r.guide}${r.label}`)).toEqual([
+            "root",
+            "├─ a",
+            "│  much longer label",
+            "│  ",
+            "└─ bb",
+            "   └─ leaf",
+        ]);
+        expect(rows.map((r) => r.note)).toEqual([undefined, undefined, undefined, "kept `note`", undefined, undefined]);
+        expect(rows.map((r) => r.first)).toEqual([true, true, false, false, true, true]);
+        expect(rows.map((r) => r.depth)).toEqual([0, 1, 1, 1, 1, 2]);
+        const column = "│  much longer label".length + 2;
+        expect([rows[1].metaAt, rows[2].metaAt, rows[4].metaAt]).toEqual([column, column, column]);
+    });
+
     test("TreeView ascii renders rows with the guides hidden from screen readers", async () => {
         const dom = await mountDom(
             <TreeView variant="ascii" nodes={[{ label: "root", children: [{ label: "leaf" }] }]} />
@@ -2438,6 +2464,45 @@ describe("design pages", () => {
             "",
             "└─ ",
         ]);
+        await dom.unmount();
+    });
+
+    test("TreeView ascii nests its rows in lists by depth, colours a top-level label and prints notes", async () => {
+        const dom = await mountDom(
+            <TreeView
+                variant="ascii"
+                nodes={[
+                    {
+                        label: "tools usage",
+                        color: "#0af",
+                        note: "the **root**",
+                        children: [{ label: "limits", children: [{ label: "series" }] }, { label: "daemon" }],
+                    },
+                    { label: "tools sessions" },
+                ]}
+            />
+        );
+        /** Each list item as "depth:label", read from the first row of the item. */
+        const outline = (list: Element, depth: number): string[] =>
+            [...list.children].flatMap((li) => {
+                const label = li.querySelector(':scope > div:not([aria-hidden]) > span:not([aria-hidden="true"])');
+                const nested = li.querySelector(":scope > ul");
+
+                return [`${depth}:${label?.textContent}`, ...(nested ? outline(nested, depth + 1) : [])];
+            });
+        const top = dom.container.querySelector('ul[role="list"]');
+
+        expect(top ? outline(top, 0) : []).toEqual([
+            "0:tools usage",
+            "1:limits",
+            "2:series",
+            "1:daemon",
+            "0:tools sessions",
+        ]);
+        const rootLabel = top?.querySelector<HTMLElement>(':scope > li > div > span:not([aria-hidden="true"])');
+        expect(rootLabel?.style.color).toBe("rgb(0, 170, 255)");
+        expect(dom.container.querySelector("strong")?.textContent).toBe("root");
+        expect(dom.container.textContent).toContain("the root");
         await dom.unmount();
     });
 
@@ -2491,6 +2556,11 @@ describe("design pages", () => {
         expect(at("d1")).toMatchObject({ x: 625, y: 209 });
         expect(layout.buses).toEqual([{ y: 113, x1: 200, x2: 1170 }]);
         expect(layout.edges).toHaveLength(3);
+        expect(layout.edges.map((e) => [e.source?.node.id, e.target.node.id])).toEqual([
+            ["a", "big"],
+            ["b", "c3"],
+            [undefined, "d1"],
+        ]);
         expect(layout.edges[0].d).toBe("M260 88 V 135");
         expect(layout.edges[1].d).toBe("M762.5 88 C 762.5 111.5, 1092.5 111.5, 1092.5 135");
         expect(layout.edges[2].d).toBe("M700 98 V 206");
@@ -2511,10 +2581,53 @@ describe("design pages", () => {
         const svg = dom.container.querySelector("svg");
         expect(svg?.getAttribute("role")).toBe("img");
         expect(svg?.querySelector("title")?.textContent).toBe("Two bands");
-        expect(svg?.querySelector("desc")?.textContent).toBe("Up: X. Down: Y. Arrows: X to Y.");
+        expect(svg?.querySelector("desc")?.textContent).toBe("Up: X (one). Down: Y. Arrows: X to Y.");
         expect(svg?.querySelectorAll("rect[stroke-dasharray]").length).toBe(1);
         expect(dom.html()).not.toContain("http");
         await dom.unmount();
+    });
+
+    test("LayerDiagram says what it draws: box lines, labelled and bus arrows, no arrow to a missing box, no key clash", async () => {
+        const errors: string[] = [];
+        const consoleError = console.error;
+        console.error = (...args: unknown[]) => {
+            errors.push(args.map(String).join(" "));
+        };
+
+        try {
+            const dom = await mountDom(
+                <LayerDiagram
+                    title="Bus"
+                    layers={[
+                        {
+                            id: "u",
+                            label: "Up",
+                            sub: ["same", "same"],
+                            nodes: [{ id: "x", title: "X", lines: ["-", "-"] }],
+                        },
+                        {
+                            id: "d",
+                            label: "Down",
+                            bus: true,
+                            nodes: [
+                                { id: "y", title: "Y" },
+                                { id: "z", title: "Z" },
+                            ],
+                        },
+                    ]}
+                    edges={[{ from: "x", to: "y", label: "--json" }, { to: "z" }, { from: "x", to: "gone" }]}
+                />
+            );
+            expect(dom.container.querySelector("desc")?.textContent).toBe(
+                "Up: X (-, -). Down: Y, Z. Arrows: X to Y (--json); the bus above Down to Z."
+            );
+            expect([...dom.container.querySelectorAll("text")].filter((t) => t.textContent === "-")).toHaveLength(2);
+            await dom.unmount();
+        } finally {
+            console.error = consoleError;
+        }
+
+        expect(errors.filter((e) => e.includes("same key"))).toEqual([]);
     });
 
     test("FilterChips single presses exactly one chip and names it in the live region", async () => {
@@ -2532,6 +2645,53 @@ describe("design pages", () => {
         await dom.click(chips[2]);
         expect(seen).toEqual([["b"], ["b"]]);
         expect(dom.container.querySelector('[aria-live="polite"]')?.textContent).toBe("Filter: Beta");
+        await dom.unmount();
+    });
+
+    test("FilterChips single drops the All and None buttons, which would press every chip", async () => {
+        const items = [
+            { id: "a", label: "Alpha" },
+            { id: "b", label: "Beta" },
+        ];
+        const dom = await mountDom(
+            <>
+                <FilterChips single bulk items={items} label="One" />
+                <FilterChips bulk items={items} label="Many" />
+            </>
+        );
+        const buttons = (label: string) =>
+            [
+                ...(dom.container.querySelector(`[aria-label="${label}"]`)?.parentElement?.querySelectorAll("button") ??
+                    []),
+            ].map((b) => b.textContent);
+        expect(buttons("One")).toEqual(["Alpha", "Beta"]);
+        expect(buttons("Many")).toEqual(["Alpha", "Beta", "All", "None"]);
+        await dom.unmount();
+    });
+
+    test("hover moves run only without reduced motion: tilt, lift, StatGrid, Timeline, MappingList, SegmentBar, chips, theme", async () => {
+        const dom = await mountDom(
+            <>
+                <Card tilt={-1.5} title="Tilted" />
+                <Card lift title="Lifted" />
+                <SegmentBar segments={[{ label: "U1" }]} />
+                <MappingList layout="stacked" items={[{ label: "Window", from: "a", to: "b" }]} />
+                <FilterChips single label="Pick" items={[{ id: "a", label: "A" }]} />
+                <ThemeToggle variant="cycle" />
+                <Page look="document">
+                    <StatGrid stats={[{ value: "1", label: "one" }]} />
+                    <Timeline entries={[{ time: "U1", title: "One" }]} />
+                </Page>
+            </>
+        );
+        const tokens = [...dom.container.querySelectorAll("[class]")].flatMap((el) =>
+            (el.getAttribute("class") ?? "").split(/\s+/)
+        );
+        const moves = tokens.filter((t) => t.includes("hover:") && /(^|:)-?(translate|rotate|scale)-/.test(t));
+
+        expect(moves.length).toBeGreaterThanOrEqual(10);
+        expect(moves.filter((t) => !t.startsWith("motion-safe:"))).toEqual([]);
+        expect(tokens).toContain("rotate-[var(--tilt)]");
         await dom.unmount();
     });
 
@@ -2599,6 +2759,8 @@ describe("design pages", () => {
         expect(cells[1].hasAttribute("tabindex")).toBe(false);
         expect(cells[0].textContent).toBe("U1M, U1: first");
         expect(dom.container.textContent).toContain("leftright");
+        // jsdom lays nothing out, so the narrow-screen case is pinned by the class: the bar wraps, never clips a segment.
+        expect(dom.container.querySelector("ol")?.className.split(" ")).toContain("flex-wrap");
         await dom.unmount();
     });
 
@@ -2612,6 +2774,51 @@ describe("design pages", () => {
         const [arrow, stacked] = [...dom.container.querySelectorAll("li")];
         expect(arrow.textContent).toBe("old→becomes newkept forever");
         expect(stacked.textContent).toBe("Windowwas --rangenow --since");
+        // A long unbroken path may break anywhere and its column may shrink, so it wraps instead of spilling.
+        const values = [...dom.container.querySelectorAll("li > span")].filter((s) =>
+            ["old", "becomes new", "was --range", "now --since"].includes(s.textContent ?? "")
+        );
+        expect(values).toHaveLength(4);
+        for (const value of values) {
+            expect(value.className.split(" ")).toEqual(expect.arrayContaining(["min-w-0", "wrap-anywhere"]));
+        }
+        expect(stacked.className).toContain("grid-cols-[120px_minmax(0,1fr)]");
+        await dom.unmount();
+    });
+
+    test("Compare plain and Card tilt set their CSS custom properties", async () => {
+        const dom = await mountDom(
+            <>
+                <Compare plain weights={[2, 1]} items={[{ body: "a" }, { body: "b" }]} />
+                <Compare items={[{ title: "A", body: "a" }]} />
+                <Card tilt={-1.5} title="Tilted" />
+            </>
+        );
+        const [plain, boxed, card] = [...dom.container.querySelectorAll<HTMLElement>(":scope > *")];
+        expect(plain?.style.getPropertyValue("--tracks")).toBe("2fr 1fr");
+        expect(boxed?.style.getPropertyValue("--cols")).toBe("1");
+        expect(card?.style.getPropertyValue("--tilt")).toBe("-1.5deg");
+        await dom.unmount();
+    });
+
+    test("the document markdown styles every block element the dense markdown styles", async () => {
+        const styled = (cls: string) => new Set([...cls.matchAll(/\[&_([a-z0-9]+)/g)].map((m) => m[1]));
+        const documentTags = styled(MD_DOCUMENT_CLASS);
+        expect([...styled(MD_BODY_CLASS)].filter((tag) => !documentTags.has(tag))).toEqual([]);
+
+        const dom = await mountDom(
+            <Page look="document">
+                <Md>{"## Head\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n> quote\n\n---"}</Md>
+            </Page>
+        );
+        const body = dom.container.querySelector(".akit-md");
+        expect(body?.className.startsWith(MD_DOCUMENT_CLASS)).toBe(true);
+        expect(["h2", "table", "blockquote", "hr"].map((tag) => body?.querySelector(tag) !== null)).toEqual([
+            true,
+            true,
+            true,
+            true,
+        ]);
         await dom.unmount();
     });
 

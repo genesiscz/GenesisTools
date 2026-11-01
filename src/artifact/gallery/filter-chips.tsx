@@ -19,7 +19,7 @@ export default function FilterChipsPage() {
         <GalleryPage
             title={meta.title}
             summary={meta.summary}
-            keyboard="Tab walks the chips; Space or Enter toggles one. A polite live region says how many are shown."
+            keyboard="Tab walks the chips. Space or Enter toggles one; with single it presses only that chip, and pressing the pressed chip keeps it. A polite live region says how many are shown, or with single which one is picked."
         >
             <Demo title="Controlled, with bulk buttons" note={`${value.length} shown`}>
                 <FilterChips

@@ -132,7 +132,7 @@ export function ThemeToggle({ label = "Theme", variant = "segmented" }: ThemeTog
                 type="button"
                 title={`Switch to ${next}`}
                 onClick={() => setMode(next)}
-                className="whitespace-nowrap rounded-full border border-line-2 bg-panel px-3.5 py-1.5 font-mono text-sm font-medium leading-[normal] text-ink-2 transition-[translate,border-color,color] duration-150 hover:-translate-y-px hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
+                className="whitespace-nowrap rounded-full border border-line-2 bg-panel px-3.5 py-1.5 font-mono text-sm font-medium leading-[normal] text-ink-2 transition-[translate,border-color,color] duration-150 motion-safe:hover:-translate-y-px hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
             >
                 {`${label}: ${mode}`}
             </button>

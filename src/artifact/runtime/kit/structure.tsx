@@ -1,7 +1,16 @@
-import { type CSSProperties, type ReactNode, useRef } from "react";
+import { type ReactNode, useRef } from "react";
 import { usePageLook } from "./look";
 import { MdInline } from "./md";
-import { Badge, type BodyContent, renderBody, TONE_BORDER, TONE_DOT, TONE_TEXT, type Tone } from "./primitives";
+import {
+    Badge,
+    type BodyContent,
+    type CssVarStyle,
+    renderBody,
+    TONE_BORDER,
+    TONE_DOT,
+    TONE_TEXT,
+    type Tone,
+} from "./primitives";
 
 /**
  * Structure views, no dependencies: a collapsible tree (file trees,
@@ -96,14 +105,20 @@ export interface AsciiTreeRow {
     /** Inherited label colour. */
     color?: string;
     tone?: Tone;
-    /** A top-level node's row: bold ink. */
+    /** A top-level node's row: bold, in ink unless the node has a colour. */
     root: boolean;
     badge?: string;
     meta?: string;
+    /** One line of the node's note (inline markdown), printed under its label and comment lines. */
+    note?: string;
     /** Column where the badge starts (siblings share it). */
     badgeAt: number;
     /** Column where the comment starts. */
     metaAt: number;
+    /** Depth of the row's node: 0 for a top-level node. */
+    depth: number;
+    /** The first row of its node. The rows after it, up to the next first row, continue the same node. */
+    first: boolean;
     /** An empty spacer row between top-level nodes. */
     blank?: boolean;
 }
@@ -116,56 +131,74 @@ interface DraftRow {
     root: boolean;
     badge?: string;
     meta?: string;
+    note?: string;
     group: number;
+    depth: number;
     /** Index of the row that starts this node, for a continued comment. */
     lead: number;
     blank?: boolean;
 }
 
+/** Where a node prints: its guides, its sibling group, its depth and the colour it inherits. */
+interface NodePlacement {
+    /** Guide before the node's first row. */
+    first: string;
+    /** Guide before its continued rows (label, comment and note lines). */
+    rest: string;
+    root: boolean;
+    group: number;
+    depth: number;
+    color?: string;
+}
+
 /**
  * Lay out the ascii tree. Badges line up per sibling group, two columns after
  * the longest label in the group that carries a badge or a comment. Comments
- * line up in one column across the nested rows; a top-level row's comment
- * starts at that column or after its own badge, whichever is later, and a
- * continued comment stays under its first line.
+ * line up in one column across the nested rows, cleared by every line that
+ * carries a comment, continued lines included; a top-level node's comment
+ * starts at that column or after its own badge and lines, whichever is later.
+ * A note prints under the node's lines, on the guides of its continued rows.
  */
 export function asciiTreeRows(nodes: TreeNode[]): AsciiTreeRow[] {
     const drafts: DraftRow[] = [];
     let groups = 0;
 
-    const pushNode = (node: TreeNode, first: string, rest: string, root: boolean, group: number, color?: string) => {
+    const pushNode = (node: TreeNode, at: NodePlacement) => {
         const labels = node.label.split("\n");
         const metas = node.meta ? node.meta.split("\n") : [];
+        const own = node.color ?? at.color;
+        const shared = { color: own, tone: node.tone, root: at.root, group: at.group, depth: at.depth };
         const lead = drafts.length;
-        const own = node.color ?? color;
 
         for (let k = 0; k < Math.max(labels.length, metas.length); k += 1) {
             drafts.push({
-                guide: k === 0 ? first : rest,
+                ...shared,
+                guide: k === 0 ? at.first : at.rest,
                 label: labels[k] ?? "",
-                color: own,
-                tone: node.tone,
-                root,
                 badge: k === 0 ? node.badge : undefined,
                 meta: metas[k],
-                group,
                 lead,
             });
+        }
+
+        for (const note of node.note ? node.note.split("\n") : []) {
+            drafts.push({ ...shared, guide: at.rest, label: "", note, lead });
         }
 
         return own;
     };
 
-    const walk = (children: TreeNode[], prefix: string, color: string | undefined) => {
+    const walk = (children: TreeNode[], prefix: string, depth: number, color: string | undefined) => {
         const group = groups++;
 
         children.forEach((child, i) => {
             const last = i === children.length - 1;
-            const cont = prefix + (last ? "   " : "│  ");
-            const own = pushNode(child, `${prefix}${last ? "└─ " : "├─ "}`, cont, false, group, color);
+            const rest = prefix + (last ? "   " : "│  ");
+            const first = `${prefix}${last ? "└─ " : "├─ "}`;
+            const own = pushNode(child, { first, rest, root: false, group, depth, color });
 
             if (child.children?.length) {
-                walk(child.children, cont, own);
+                walk(child.children, rest, depth + 1, own);
             }
         });
     };
@@ -174,13 +207,21 @@ export function asciiTreeRows(nodes: TreeNode[]): AsciiTreeRow[] {
 
     nodes.forEach((node, i) => {
         if (i > 0) {
-            drafts.push({ guide: "", label: "", root: true, group: rootGroup, lead: drafts.length, blank: true });
+            drafts.push({
+                guide: "",
+                label: "",
+                root: true,
+                group: rootGroup,
+                depth: 0,
+                lead: drafts.length,
+                blank: true,
+            });
         }
 
-        const own = pushNode(node, "", "", true, rootGroup, undefined);
+        const own = pushNode(node, { first: "", rest: "", root: true, group: rootGroup, depth: 0 });
 
         if (node.children?.length) {
-            walk(node.children, "", own);
+            walk(node.children, "", 1, own);
         }
     });
 
@@ -196,86 +237,153 @@ export function asciiTreeRows(nodes: TreeNode[]): AsciiTreeRow[] {
     /** Where a row's comment would start on its own: after its badge, or two columns after its label. */
     const natural = (row: DraftRow): number =>
         row.badge ? (badgeAt.get(row.group) ?? width(row) + 2) + row.badge.length + 2 : width(row) + 2;
-    const metaColumn = drafts.reduce(
-        (max, row, i) => (row.meta && !row.root && i === row.lead ? Math.max(max, natural(row)) : max),
-        0
-    );
-    const metaStart = new Map<number, number>();
+    /** Per node (by its first row): the column that clears each of its lines that carries a comment. */
+    const nodeColumn = new Map<number, number>();
+    let metaColumn = 0;
 
-    return drafts.map((row, i) => {
-        let metaAt = 0;
-
-        if (row.meta) {
-            if (i === row.lead) {
-                metaAt = Math.max(metaColumn, natural(row));
-                metaStart.set(row.lead, metaAt);
-            } else {
-                metaAt = metaStart.get(row.lead) ?? Math.max(metaColumn, width(row) + 2);
-            }
+    for (const row of drafts) {
+        if (!row.meta) {
+            continue;
         }
 
-        return {
-            guide: row.guide,
-            label: row.label,
-            color: row.color,
-            tone: row.tone,
-            root: row.root,
-            badge: row.badge,
-            meta: row.meta,
-            badgeAt: badgeAt.get(row.group) ?? width(row) + 2,
-            metaAt,
-            blank: row.blank,
-        };
-    });
+        nodeColumn.set(row.lead, Math.max(nodeColumn.get(row.lead) ?? 0, natural(row)));
+
+        if (!row.root) {
+            metaColumn = Math.max(metaColumn, natural(row));
+        }
+    }
+
+    return drafts.map((row, i) => ({
+        guide: row.guide,
+        label: row.label,
+        color: row.color,
+        tone: row.tone,
+        root: row.root,
+        badge: row.badge,
+        meta: row.meta,
+        note: row.note,
+        badgeAt: badgeAt.get(row.group) ?? width(row) + 2,
+        metaAt: row.meta ? Math.max(metaColumn, nodeColumn.get(row.lead) ?? 0) : 0,
+        depth: row.depth,
+        first: i === row.lead,
+        blank: row.blank,
+    }));
+}
+
+/** One node of the ascii tree for the nested list: its printed rows and its children. */
+interface AsciiItem {
+    rows: AsciiTreeRow[];
+    children: AsciiItem[];
+    /** A blank line above it: the gap between top-level nodes. */
+    gap: boolean;
+}
+
+/** Group the printed rows by node, nested by depth. The rows stay in print order. */
+function nestAsciiRows(rows: AsciiTreeRow[]): AsciiItem[] {
+    const top: AsciiItem[] = [];
+    const open: AsciiItem[] = [];
+    let gap = false;
+
+    for (const row of rows) {
+        if (row.blank) {
+            gap = true;
+            continue;
+        }
+
+        if (!row.first) {
+            open[open.length - 1]?.rows.push(row);
+            continue;
+        }
+
+        const item: AsciiItem = { rows: [row], children: [], gap };
+        const parent = open[row.depth - 1];
+        gap = false;
+        (parent ? parent.children : top).push(item);
+        open.length = row.depth;
+        open.push(item);
+    }
+
+    return top;
+}
+
+function AsciiLine({ row, badgeColor }: { row: AsciiTreeRow; badgeColor: string }) {
+    const guide = <span aria-hidden="true">{row.guide}</span>;
+
+    if (row.note !== undefined) {
+        return (
+            <div>
+                {guide}
+                <span className="text-dim">
+                    <MdInline>{row.note}</MdInline>
+                </span>
+            </div>
+        );
+    }
+
+    const labelEnd = row.guide.length + row.label.length;
+    const badgeGap = row.badge ? Math.max(1, row.badgeAt - labelEnd) : 0;
+    const textEnd = row.badge ? row.badgeAt + row.badge.length : labelEnd;
+    const metaGap = row.meta ? Math.max(1, row.metaAt - textEnd) : 0;
+    const ink = row.color ? "" : "text-ink";
+
+    return (
+        <div>
+            {guide}
+            <span
+                className={
+                    row.root
+                        ? `font-bold ${ink}`
+                        : `font-semibold ${row.color ? "" : row.tone ? TONE_TEXT[row.tone] : "text-ink"}`
+                }
+                style={row.color ? { color: row.color } : undefined}
+            >
+                {row.label}
+            </span>
+            {row.badge ? (
+                <>
+                    {" ".repeat(badgeGap)}
+                    <span style={{ color: badgeColor }}>{row.badge}</span>
+                </>
+            ) : null}
+            {row.meta ? (
+                <>
+                    {" ".repeat(metaGap)}
+                    <span className="text-dim">{row.meta}</span>
+                </>
+            ) : null}
+        </div>
+    );
+}
+
+/**
+ * The rows as nested lists, one item per node, so a screen reader hears the depth of each command while the
+ * guides stay hidden. The lists draw nothing of their own: the rows print exactly as the flat listing.
+ */
+function AsciiList({ items, badgeColor }: { items: AsciiItem[]; badgeColor: string }) {
+    return (
+        // role="list": Safari drops the list role of a list drawn without bullets, and Tailwind's reset removes them.
+        <ul role="list">
+            {items.map((item, i) => (
+                <li key={`${item.rows[0]?.label}-${i}`}>
+                    {item.gap ? <div aria-hidden="true"> </div> : null}
+                    {item.rows.map((row, k) => (
+                        <AsciiLine key={k} row={row} badgeColor={badgeColor} />
+                    ))}
+                    {item.children.length ? <AsciiList items={item.children} badgeColor={badgeColor} /> : null}
+                </li>
+            ))}
+        </ul>
+    );
 }
 
 function AsciiTree({ nodes, badgeColor, className }: { nodes: TreeNode[]; badgeColor: string; className?: string }) {
     const isDocument = usePageLook() === "document";
-    const rows = asciiTreeRows(nodes);
 
     return (
         <div
             className={`overflow-x-auto whitespace-pre font-mono text-ink-2 ${isDocument ? "py-1 text-[15px] leading-[1.75]" : "my-2 text-[13px] leading-[1.6]"} ${className ?? ""}`}
         >
-            {rows.map((row, i) => {
-                if (row.blank) {
-                    return <div key={i}> </div>;
-                }
-
-                const labelEnd = row.guide.length + row.label.length;
-                const badgeGap = row.badge ? Math.max(1, row.badgeAt - labelEnd) : 0;
-                const textEnd = row.badge ? row.badgeAt + row.badge.length : labelEnd;
-                const metaGap = row.meta ? Math.max(1, row.metaAt - textEnd) : 0;
-                const labelColor = row.color ? { color: row.color } : undefined;
-
-                return (
-                    <div key={i}>
-                        <span aria-hidden="true">{row.guide}</span>
-                        <span
-                            className={
-                                row.root
-                                    ? "font-bold text-ink"
-                                    : `font-semibold ${row.color ? "" : row.tone ? TONE_TEXT[row.tone] : "text-ink"}`
-                            }
-                            style={row.root ? undefined : labelColor}
-                        >
-                            {row.label}
-                        </span>
-                        {row.badge ? (
-                            <>
-                                {" ".repeat(badgeGap)}
-                                <span style={{ color: badgeColor }}>{row.badge}</span>
-                            </>
-                        ) : null}
-                        {row.meta ? (
-                            <>
-                                {" ".repeat(metaGap)}
-                                <span className="text-dim">{row.meta}</span>
-                            </>
-                        ) : null}
-                    </div>
-                );
-            })}
+            <AsciiList items={nestAsciiRows(asciiTreeRows(nodes))} badgeColor={badgeColor} />
         </div>
     );
 }
@@ -483,13 +591,12 @@ export function Compare({ items, columns, plain = false, weights }: CompareProps
     const cols = columns ?? Math.min(items.length, 3);
 
     if (plain) {
-        const tracks = weights?.length ? weights.map((w) => `${w}fr`).join(" ") : `repeat(${cols}, 1fr)`;
+        const tracks: CssVarStyle = {
+            "--tracks": weights?.length ? weights.map((w) => `${w}fr`).join(" ") : `repeat(${cols}, 1fr)`,
+        };
 
         return (
-            <div
-                className="grid items-start gap-[22px] min-[1020px]:grid-cols-[var(--tracks)]"
-                style={{ "--tracks": tracks } as CSSProperties}
-            >
+            <div className="grid items-start gap-[22px] min-[1020px]:grid-cols-[var(--tracks)]" style={tracks}>
                 {items.map((item, i) => (
                     <section key={`${item.title ?? "column"}-${i}`}>
                         {item.title ? (
@@ -514,11 +621,10 @@ export function Compare({ items, columns, plain = false, weights }: CompareProps
         );
     }
 
+    const colsStyle: CssVarStyle = { "--cols": cols };
+
     return (
-        <div
-            className="my-3 grid gap-3 md:grid-cols-[repeat(var(--cols),minmax(0,1fr))]"
-            style={{ "--cols": cols } as CSSProperties}
-        >
+        <div className="my-3 grid gap-3 md:grid-cols-[repeat(var(--cols),minmax(0,1fr))]" style={colsStyle}>
             {items.map((item, i) => {
                 const tone = item.tone ?? "neutral";
 
@@ -560,25 +666,32 @@ export interface MappingListProps {
     color?: string;
 }
 
+/** A path or flag value: it may break anywhere, so one long unbroken path wraps instead of widening its column. */
+const MAPPING_VALUE = "min-w-0 wrap-anywhere";
+
 /** Old name to new name, one boxed row each: aliases after a move, a flag grammar that replaces several. */
 export function MappingList({ items, layout = "arrow", color = "var(--accent)" }: MappingListProps) {
     if (layout === "stacked") {
+        const rowStyle: CssVarStyle = { "--map-color": color };
+
         return (
             <ul>
                 {items.map((item, i) => (
                     <li
                         key={`${item.label ?? item.from}-${i}`}
-                        className="mb-2.5 grid grid-cols-[120px_1fr] gap-x-3.5 gap-y-1.5 rounded-card border border-line bg-panel px-3.5 py-3 transition-[translate,border-color] duration-200 hover:translate-x-0.5 hover:border-[var(--map-color)]"
-                        style={{ "--map-color": color } as CSSProperties}
+                        className="mb-2.5 grid grid-cols-[120px_minmax(0,1fr)] gap-x-3.5 gap-y-1.5 rounded-card border border-line bg-panel px-3.5 py-3 transition-[translate,border-color] duration-200 motion-safe:hover:translate-x-0.5 hover:border-[var(--map-color)]"
+                        style={rowStyle}
                     >
                         <span className="font-display text-[15px] font-bold leading-[normal]" style={{ color }}>
                             {item.label}
                         </span>
-                        <span className="font-mono text-sm leading-[1.6] text-dim line-through decoration-[color-mix(in_srgb,var(--err)_60%,transparent)]">
+                        <span
+                            className={`font-mono text-sm leading-[1.6] text-dim line-through decoration-[color-mix(in_srgb,var(--err)_60%,transparent)] ${MAPPING_VALUE}`}
+                        >
                             <span className="sr-only">was </span>
                             {item.from}
                         </span>
-                        <span className="col-start-2 font-mono text-[14.5px] leading-[1.6] text-ink">
+                        <span className={`col-start-2 font-mono text-[14.5px] leading-[1.6] text-ink ${MAPPING_VALUE}`}>
                             <span className="sr-only">now </span>
                             {item.to}
                         </span>
@@ -600,11 +713,11 @@ export function MappingList({ items, layout = "arrow", color = "var(--accent)" }
                     key={`${item.from}-${i}`}
                     className="grid grid-cols-1 items-center gap-2.5 rounded-[10px] border border-line bg-panel-2 px-3 py-[9px] font-mono text-[14.5px] leading-[normal] sm:grid-cols-[minmax(200px,1fr)_auto_minmax(220px,1.3fr)]"
                 >
-                    <span className="text-ink-2">{item.from}</span>
+                    <span className={`text-ink-2 ${MAPPING_VALUE}`}>{item.from}</span>
                     <span className="hidden sm:inline" style={{ color }} aria-hidden="true">
                         →
                     </span>
-                    <span className="text-ink">
+                    <span className={`text-ink ${MAPPING_VALUE}`}>
                         <span className="sr-only">becomes </span>
                         {item.to}
                     </span>

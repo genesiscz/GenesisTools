@@ -572,7 +572,7 @@ function SegmentCell({ segment }: { segment: SegmentBarItem }) {
         <li
             {...tooltip}
             tabIndex={segment.title ? 0 : undefined}
-            className="min-w-[52px] cursor-default px-1.5 py-2.5 text-center font-mono text-sm font-bold leading-[normal] text-canvas transition-[translate,filter] duration-200 hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
+            className="min-w-[52px] cursor-default px-1.5 py-2.5 text-center font-mono text-sm font-bold leading-[normal] text-canvas transition-[translate,filter] duration-200 motion-safe:hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
             style={{
                 flexGrow: segment.weight ?? 1,
                 flexShrink: 1,
@@ -590,12 +590,14 @@ function SegmentCell({ segment }: { segment: SegmentBarItem }) {
 /**
  * One bar cut into proportional segments: a build order by size, a budget by
  * line item, phases by length. Each segment carries a short label on its own
- * fill; `labels` caption the two ends of the bar.
+ * fill; `labels` caption the two ends of the bar. When the segments cannot all
+ * keep their minimum width on one line (a phone), the bar wraps onto more lines
+ * instead of clipping the last ones.
  */
 export function SegmentBar({ segments, labels, ariaLabel = "Segments" }: SegmentBarProps) {
     return (
         <div>
-            <ol aria-label={ariaLabel} className="mt-1.5 mb-2 flex gap-1 overflow-hidden rounded-[10px]">
+            <ol aria-label={ariaLabel} className="mt-1.5 mb-2 flex flex-wrap gap-1 overflow-hidden rounded-[10px]">
                 {segments.map((segment, i) => (
                     <SegmentCell key={`${segment.label}-${i}`} segment={segment} />
                 ))}

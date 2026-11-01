@@ -5,6 +5,12 @@ import { Md, MdInline } from "./md";
 
 export type Tone = "ok" | "warn" | "err" | "info" | "neutral";
 
+/**
+ * A `style` object that also sets CSS custom properties (`--tilt`, `--tracks`). Declare the object with this type
+ * and pass it to `style` as is: it is a CSSProperties, so no cast is needed.
+ */
+export type CssVarStyle = CSSProperties & { [name: `--${string}`]: string | number | undefined };
+
 export const TONE_TEXT: Record<Tone, string> = {
     ok: "text-ok",
     warn: "text-warn",
@@ -230,7 +236,7 @@ export interface FilterChipsProps {
     /** Pressed ids when uncontrolled. Default: all. */
     initial?: string[];
     onChange?: (value: string[]) => void;
-    /** Show All and None buttons. */
+    /** Show All and None buttons. Ignored with `single`: one pick at a time has no "all". */
     bulk?: boolean;
     /** Pick one: pressing a chip presses only it (a filter by category). The pressed chip is drawn inverted. */
     single?: boolean;
@@ -303,7 +309,7 @@ export function FilterChips({
                             onClick={() => toggle(item.id)}
                             className={
                                 single
-                                    ? `${SINGLE_CHIP} ${on ? "border-ink bg-ink text-canvas" : "border-line-2 bg-panel text-ink-2 hover:text-ink"} ${item.disabled ? "opacity-60" : "hover:-translate-y-px"}`
+                                    ? `${SINGLE_CHIP} ${on ? "border-ink bg-ink text-canvas" : "border-line-2 bg-panel text-ink-2 hover:text-ink"} ${item.disabled ? "opacity-60" : "motion-safe:hover:-translate-y-px"}`
                                     : `${CHIP_BASE} ${on ? "border-dim text-ink" : "border-dashed border-line text-dim"} ${item.disabled ? "opacity-60" : "hover:border-ink/60"}`
                             }
                         >
@@ -325,7 +331,7 @@ export function FilterChips({
                     );
                 })}
             </div>
-            {bulk ? (
+            {bulk && !single ? (
                 <span className="inline-flex gap-1 text-xs">
                     <button
                         type="button"
@@ -711,7 +717,7 @@ export function StatGrid({ stats, min }: StatGridProps) {
                 {stats.map((s) => (
                     <div
                         key={s.label}
-                        className="min-w-0 rounded-[14px] border border-line bg-panel px-[18px] py-4 transition-[translate,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-[var(--glow)]"
+                        className="min-w-0 rounded-[14px] border border-line bg-panel px-[18px] py-4 transition-[translate,box-shadow] duration-200 motion-safe:hover:-translate-y-0.5 hover:shadow-[var(--glow)]"
                         style={{
                             borderBottom: `3px solid ${s.color ?? (s.edge ? TONE_VAR[s.edge] : "var(--accent)")}`,
                         }}
@@ -990,14 +996,15 @@ export function Card(props: CardProps) {
 
     const accent = color ?? (tone ? TONE_VAR[tone] : dashed ? "var(--dim)" : "var(--border-2)");
     const edge = props.edge ?? (color ? "top" : "none");
-    const style: CSSProperties = {
+    const style: CssVarStyle = {
         ...(edge === "none" ? {} : cardEdgeStyle(edge, accent)),
-        ...(tilt ? ({ "--tilt": `${tilt}deg` } as CSSProperties) : {}),
+        ...(tilt ? { "--tilt": `${tilt}deg` } : {}),
     };
+    // Reduced motion: the tilt stays as drawn and the card never moves; the glow and border still answer the pointer.
     const motion = tilt
-        ? "rotate-[var(--tilt)] hover:rotate-0 hover:-translate-y-[3px] hover:scale-[1.01] hover:border-line-2 hover:shadow-[var(--glow)]"
+        ? "rotate-[var(--tilt)] motion-safe:hover:rotate-0 motion-safe:hover:-translate-y-[3px] motion-safe:hover:scale-[1.01] hover:border-line-2 hover:shadow-[var(--glow)]"
         : lift
-          ? "hover:-translate-y-[3px] hover:shadow-[var(--glow)]"
+          ? "motion-safe:hover:-translate-y-[3px] hover:shadow-[var(--glow)]"
           : "";
     const surface = dashed || muted ? "bg-panel-2" : look === "document" ? "bg-panel" : "bg-panel/60";
     const border = dashed ? "border-dashed border-line" : tone && !color ? TONE_BORDER[tone] : "border-line";

@@ -1,4 +1,4 @@
-import { type CSSProperties, type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { plainSegment, withPlainSegment } from "./hash";
 import { usePageLook } from "./look";
 import { MdInline } from "./md";
@@ -7,6 +7,7 @@ import {
     type BodyContent,
     type ChipItem,
     Chips,
+    type CssVarStyle,
     renderBody,
     TONE_BG,
     TONE_DOT,
@@ -232,6 +233,10 @@ function DocumentTimeline({ entries, asideColor }: { entries: TimelineEntry[]; a
                 {entries.map((e, i) => {
                     const color = entryColor(e);
                     const heading = e.group !== undefined && e.group !== entries[i - 1]?.group ? e.group : null;
+                    const boxStyle: CssVarStyle = {
+                        "--entry-color": color,
+                        ...(e.highlight ? { borderColor: color, boxShadow: "var(--glow)" } : {}),
+                    };
 
                     return (
                         <li key={`${e.time}-${i}`}>
@@ -243,13 +248,8 @@ function DocumentTimeline({ entries, asideColor }: { entries: TimelineEntry[]; a
                                 </h3>
                             ) : null}
                             <div
-                                className="relative mb-2.5 rounded-card border border-line bg-panel px-4 py-3 transition-[translate,border-color] duration-200 hover:translate-x-[3px] hover:border-[var(--entry-color)]"
-                                style={
-                                    {
-                                        "--entry-color": color,
-                                        ...(e.highlight ? { borderColor: color, boxShadow: "var(--glow)" } : {}),
-                                    } as CSSProperties
-                                }
+                                className="relative mb-2.5 rounded-card border border-line bg-panel px-4 py-3 transition-[translate,border-color] duration-200 motion-safe:hover:translate-x-[3px] hover:border-[var(--entry-color)]"
+                                style={boxStyle}
                             >
                                 <span
                                     aria-hidden="true"
