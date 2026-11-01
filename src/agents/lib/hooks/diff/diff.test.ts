@@ -1,9 +1,12 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+    closeSync,
     existsSync,
+    ftruncateSync,
     mkdirSync,
     mkdtempSync,
+    openSync,
     readdirSync,
     readFileSync,
     realpathSync,
@@ -1161,6 +1164,58 @@ describe("files the command NAMES rather than works in", () => {
         expect(result.skipped.join(" ")).toContain("named-path cap");
     });
 
+    it("never copies a named cloud placeholder or a file under a cloud storage folder, so an ls downloads nothing", () => {
+        // A sparse file is the stand-in for a dataless placeholder: bytes, no blocks. A copy would read it, and on a
+        // real placeholder that read downloads the file (Dropbox, 2026-11-01).
+        const placeholder = join(outside, "placeholder.bin");
+        const fd = openSync(placeholder, "w");
+
+        ftruncateSync(fd, 8192);
+        closeSync(fd);
+
+        const cloudDir = join(outside, "Library", "CloudStorage", "Provider-work");
+        const cloudNote = join(cloudDir, "note.md");
+        const local = join(outside, "local.md");
+
+        mkdirSync(cloudDir, { recursive: true });
+        writeFileSync(cloudNote, "alpha\n");
+        writeFileSync(local, "alpha\n");
+        expect(statSync(placeholder).blocks).toBe(0);
+
+        const current = payload({ command: `ls -l ${placeholder} ${cloudNote} ${local}` });
+
+        calls += 1;
+        current.toolUseId = `call-cloud-${calls}`;
+
+        const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
+        const copies = readdirSync(join(callDir(current.harness, current.sessionId ?? "", current.toolUseId), "named"));
+        const skipped = result.skipped.join("\n");
+
+        // The local file is the positive control: the pass ran and copies an ordinary file.
+        expect(result.named).toBe(1);
+        expect(copies).toEqual(["1"]);
+        expect(skipped).toContain(`${placeholder}: 8192 bytes in 0 blocks, a cloud placeholder`);
+        expect(skipped).toContain(`${cloudNote}: under a cloud storage folder`);
+    });
+
+    it("never makes a capture root of a repository inside a cloud storage folder", () => {
+        const cloudRepo = join(outside, "Library", "Mobile Documents", "com~apple~CloudDocs", "repo");
+
+        mkdirSync(cloudRepo, { recursive: true });
+        spawnSync("git", ["-C", cloudRepo, "init", "-q"], { encoding: "utf8", env: process.env });
+        writeFileSync(join(cloudRepo, "dirty.md"), "alpha\n");
+
+        const current = payload({ cwd: cloudRepo, command: "true" });
+
+        calls += 1;
+        current.toolUseId = `call-cloud-root-${calls}`;
+
+        const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
+
+        expect(result.roots).toEqual([]);
+        expect(result.skipped.join("\n")).toContain(`${cloudRepo}: under a cloud storage folder, not captured`);
+    });
+
     it("does not read a path out of a heredoc BODY", () => {
         const note = join(vault, "wrapup.md");
 
@@ -1618,6 +1673,35 @@ describe("the capture budget sees what an entry really weighs", () => {
 
         expect(result.skipped.join(" ")).toContain("per-entry");
         expect(result.skipped.join(" ")).toContain("1 of 2 dirty entries left out");
+    });
+
+    it("leaves a dirty cloud placeholder out of the tar, since tar would read it and a read downloads it", () => {
+        const placeholder = join(tree, "placeholder.bin");
+        const fd = openSync(placeholder, "w");
+
+        ftruncateSync(fd, 8192);
+        closeSync(fd);
+
+        const current = payload({ cwd: tree, toolUseId: "budget-placeholder" });
+
+        calls += 1;
+
+        try {
+            const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
+            const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+            const members = spawnSync("tar", ["-tf", join(dir, "1.tar")], {
+                encoding: "utf8",
+                env: process.env,
+            }).stdout;
+
+            expect(result.skipped.join(" ")).toContain("1 hold cloud placeholders a read would download");
+            expect(readFileSync(join(dir, "1.left"), "utf8")).toContain("placeholder.bin");
+            expect(members).not.toContain("placeholder.bin");
+            // The control: the ordinary dirty file in the same root still goes into the tar.
+            expect(members.trim().length).toBeGreaterThan(0);
+        } finally {
+            rmSync(placeholder, { force: true });
+        }
     });
 
     it("does not blame the command for earlier edits to a large tracked file it left out", () => {
