@@ -1,4 +1,5 @@
-import { statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -45,6 +46,78 @@ function isIdentity(value: Record<string, unknown>): boolean {
         typeof value.mtimeMs === "number" &&
         typeof value.ctimeMs === "number"
     );
+}
+
+function identityOf(value: unknown): FileIdentity | null {
+    if (!isObject(value) || !isIdentity(value)) {
+        return null;
+    }
+
+    return {
+        ino: Number(value.ino),
+        size: Number(value.size),
+        mtimeMs: Number(value.mtimeMs),
+        ctimeMs: Number(value.ctimeMs),
+    };
+}
+
+/**
+ * In every saved cache file in `dir` (`*.json`), moves the entry kept for `from` to `to`, when it was computed for
+ * `fromIdentity` (taken before `from` changed). For a file replaced by another that holds the same content, such as a
+ * day log the daily pass verified against its `.zst`: the next reader of `to` then needs no read. The entry takes
+ * `to`'s identity as it is now. A file of another shape is left alone, and a process that saves its own copy of a
+ * cache afterwards may drop the moved entry, which costs one read later. Returns how many entries moved.
+ */
+export function carrySavedEntries({
+    dir,
+    from,
+    fromIdentity,
+    to,
+}: {
+    dir: string;
+    from: string;
+    fromIdentity: FileIdentity;
+    to: string;
+}): number {
+    let names: string[];
+
+    try {
+        names = readdirSync(dir).filter((name) => name.endsWith(".json"));
+    } catch (err) {
+        logger.debug({ err, dir }, "[identity-cache] no saved caches to carry an entry in");
+        return 0;
+    }
+
+    const toIdentity = names.length > 0 ? fileIdentity(to) : null;
+    let moved = 0;
+
+    for (const name of names) {
+        const path = join(dir, name);
+
+        try {
+            const saved: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+
+            if (!isObject(saved) || !isObject(saved.entries)) {
+                continue;
+            }
+
+            const entry = saved.entries[from];
+            const identity = isObject(entry) ? identityOf(entry.identity) : null;
+
+            if (!toIdentity || !isObject(entry) || !identity || !sameIdentity(identity, fromIdentity)) {
+                continue;
+            }
+
+            delete saved.entries[from];
+            saved.entries[to] = { identity: toIdentity, value: entry.value };
+            atomicWriteFileSync(path, SafeJSON.stringify(saved, { strict: true }));
+            moved++;
+        } catch (err) {
+            logger.debug({ err, path }, "[identity-cache] an entry was not carried over");
+        }
+    }
+
+    return moved;
 }
 
 export interface FileIdentityCacheOptions<T> {

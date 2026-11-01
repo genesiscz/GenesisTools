@@ -1,11 +1,18 @@
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { formatLocalDate } from "@genesiscz/utils/date";
+import { carrySavedEntries } from "@genesiscz/utils/fs/identity-cache";
 import { logger } from "@genesiscz/utils/logger";
-import { dayOfPlainDayLog } from "@genesiscz/utils/logger/day-logs";
+import { dayLogDigestsDir, dayOfPlainDayLog } from "@genesiscz/utils/logger/day-logs";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { PRESETS } from "./presets";
-import { applyOldFileCompression, type OldFilePlan, type OldFileReport, planOldFileCompression } from "./retention";
+import {
+    applyOldFileCompression,
+    type OldFilePlan,
+    type OldFileReport,
+    planOldFileCompression,
+    type ReplacedFile,
+} from "./retention";
 
 /**
  * How many recent days stay plain. Day logs: the last 7, because `tools daemon stats --since 7d` scans up to 7 days
@@ -28,6 +35,8 @@ export interface DailyTarget {
     recursive: boolean;
     dayOf: (relativePath: string) => string | undefined;
     firstPlainDay: string;
+    /** What follows a file's replacement by its `.zst`: the day logs move the lines searches kept for it. */
+    onReplaced?: (replaced: ReplacedFile) => void;
 }
 
 function utcDay(time: number): string {
@@ -48,6 +57,14 @@ export function dailyTargets({
             root: logsDir,
             recursive: false,
             dayOf: dayOfPlainDayLog,
+            // The `.zst` holds the same bytes (verified), so what `ripgrepFilesCached` kept for the plain day serves it.
+            onReplaced: ({ plain, identity, compressed }) =>
+                carrySavedEntries({
+                    dir: dayLogDigestsDir(logsDir),
+                    from: plain,
+                    fromIdentity: identity,
+                    to: compressed,
+                }),
             firstPlainDay: formatLocalDate(new Date(now.getTime() - (DAY_LOGS_PLAIN_DAYS - 1) * DAY_MS)),
         },
         {
@@ -101,7 +118,7 @@ function sweepClaims(logsDir: string, today: string): void {
 
 /** The daily pass: compresses every old file of every target, recording each one in the ledger. */
 export async function runDailyCompression(
-    options: { now?: Date; logsDir?: string; retire?: (path: string) => void } = {}
+    options: { now?: Date; logsDir?: string; retire?: (path: string) => void; releaseGraceMs?: number } = {}
 ): Promise<Array<{ target: DailyTarget; report: OldFileReport }>> {
     const now = options.now ?? new Date();
     const logsDir = options.logsDir ?? genesisToolsDir("logs");
@@ -112,6 +129,8 @@ export async function runDailyCompression(
             caller: target.name,
             preset: PRESETS.text,
             retire: options.retire,
+            releaseGraceMs: options.releaseGraceMs,
+            onReplaced: target.onReplaced,
         });
         reports.push({ target, report });
     }
