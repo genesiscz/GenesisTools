@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { LimitWindow } from "@app/dev-dashboard/contract/ai-accounts";
+import type { AccountUsageSnapshot, LimitWindow } from "@app/dev-dashboard/contract/ai-accounts";
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
+import { AccountCard } from "./AccountCard";
 import { absentLimitRowText, formatMoney, limitColor, percentOf } from "./LimitBar";
 import { mergeLimitSeries } from "./LimitsChart";
 
@@ -72,6 +75,40 @@ describe("absentLimitRowText", () => {
             label: "Session (5h)",
             value: "— no 5h limit",
         });
+    });
+});
+
+describe("AccountCard with an absent window", () => {
+    const snapshot = (overrides: Partial<AccountUsageSnapshot> = {}): AccountUsageSnapshot => ({
+        provider: "anthropic-sub",
+        accountId: "acc_work",
+        accountName: "work",
+        fetchedAt: "2026-11-01T10:00:00.000Z",
+        limits: [],
+        ...overrides,
+    });
+    const render = (value: AccountUsageSnapshot) =>
+        renderToString(
+            createElement(AccountCard, {
+                snapshot: value,
+                color: "#888888",
+                nowMs: Date.parse("2026-11-01T10:05:00.000Z"),
+                prominentKeys: ["five_hour", "seven_day"],
+            })
+        );
+
+    test("a poll that reported only 'no 5h limit' shows that row, not the empty state", () => {
+        const html = render(snapshot({ absentLimits: [{ key: "five_hour", kind: "session" }] }));
+
+        expect(html).toContain("— no 5h limit");
+        expect(html).not.toContain("No usage data.");
+    });
+
+    test("negative control: a snapshot with no window at all keeps the empty state", () => {
+        const html = render(snapshot());
+
+        expect(html).toContain("No usage data.");
+        expect(html).not.toContain("no 5h limit");
     });
 });
 

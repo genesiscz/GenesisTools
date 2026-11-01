@@ -121,7 +121,9 @@ export function AccountCard({ snapshot, color, nowMs, prominentKeys, index = 0 }
                 </div>
             </div>
 
-            {limits.length > 0 ? (
+            {/* An absent window is a reading too: a poll that reported only "no 5-hour limit" must not
+                fall through to "No usage data". */}
+            {limits.length > 0 || absent.length > 0 ? (
                 <div className="flex flex-col gap-3">
                     {absent.map((limit) => (
                         <AbsentLimitRow key={`absent:${limit.key}`} limit={limit} />

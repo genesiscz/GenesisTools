@@ -128,14 +128,20 @@ export interface LimitHistoryAccount {
  * applied again here: asking for `claude` while codex holds an account of the same
  * name used to return the codex rows too, under the claude account's id.
  */
-export function limitSeriesFrom(
-    entries: readonly LimitHistoryEntry[],
-    accounts: readonly LimitHistoryAccount[],
-    labels: ReadonlyMap<string, string>,
-    filter: SnapshotFilter,
+export function limitSeriesFrom({
+    entries,
+    accounts,
+    labels,
+    filter,
+    absent = new Set(),
+}: {
+    entries: readonly LimitHistoryEntry[];
+    accounts: readonly LimitHistoryAccount[];
+    labels: ReadonlyMap<string, string>;
+    filter: SnapshotFilter;
     /** `<provider::name>|<key>` of the windows the current snapshots list as absent: their series end. */
-    absent: ReadonlySet<string> = new Set()
-): LimitSeries[] {
+    absent?: ReadonlySet<string>;
+}): LimitSeries[] {
     const byProviderName = new Map(
         accounts.map((account) => [providerAccountKey(account.provider, account.name), account] as const)
     );

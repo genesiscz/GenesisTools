@@ -72,7 +72,18 @@ export function budgetsFromSnapshots(
 
 const NO_SESSION_LIMIT = absentLimitText({ kind: "session" });
 
-function windowLeft(percentLeft: number | null, resetsAt: string | null, now: number, absent = false): string {
+function windowLeft({
+    percentLeft,
+    resetsAt,
+    now,
+    absent = false,
+}: {
+    percentLeft: number | null;
+    resetsAt: string | null;
+    now: number;
+    /** The account has no such window at all: a dash, never "?" (unknown) or a percentage. */
+    absent?: boolean;
+}): string {
     if (absent) {
         return "—";
     }
@@ -97,8 +108,13 @@ export function accountChoiceMessage(input: {
     const table = formatTable(
         input.budgets.map((budget) => [
             budget.name,
-            windowLeft(budget.fiveHourLeft, budget.fiveHourResetsAt, now, budget.fiveHourAbsent),
-            windowLeft(budget.weeklyLeft, budget.weeklyResetsAt, now),
+            windowLeft({
+                percentLeft: budget.fiveHourLeft,
+                resetsAt: budget.fiveHourResetsAt,
+                now,
+                absent: budget.fiveHourAbsent,
+            }),
+            windowLeft({ percentLeft: budget.weeklyLeft, resetsAt: budget.weeklyResetsAt, now }),
             budget.note ?? "",
         ]),
         ["Account", "5h", "Weekly", "Note"],

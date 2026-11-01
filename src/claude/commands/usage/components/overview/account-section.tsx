@@ -205,12 +205,14 @@ function BucketRow({ limit, layout, frozen = false }: BucketRowProps) {
  */
 function AbsentRow({ limit, layout }: { limit: AbsentLimit; layout: RowLayout }) {
     const label = BUCKET_LABELS[limit.key] ?? limit.key.replace(/_/g, " ");
+    const tail = `${"—".padStart(5)} ${absentLimitText(limit)}`;
+    // The layout reserves 13 cells after the bar (26 with an inline countdown); "— no 5h limit" takes 17.
+    // When it does not fit, the blank bar gives up the overflow, so the row stays inside the column and
+    // keeps the single line estimateAccountHeight counts for it.
+    const reserved = PCT_PROJ_WIDTH + (layout.inlineCountdown ? COUNTDOWN_WIDTH : 0);
+    const gap = Math.max(0, layout.barWidth - Math.max(0, tail.length - reserved));
 
-    return (
-        <Text dimColor>
-            {`${fitLabel(label, layout.nameWidth)}${" ".repeat(layout.barWidth)}${"—".padStart(5)} ${absentLimitText(limit)}`}
-        </Text>
-    );
+    return <Text dimColor>{`${fitLabel(label, layout.nameWidth)}${" ".repeat(gap)}${tail}`}</Text>;
 }
 
 /** The absent windows the Overview shows: the prominent ones, one line each. */

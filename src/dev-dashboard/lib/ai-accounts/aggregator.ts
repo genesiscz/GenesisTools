@@ -623,7 +623,7 @@ export function createAiAggregator(): AiAggregator {
                 }
             }
 
-            const series: LimitSeries[] = limitSeriesFrom(entries, accounts, labels, query, absent);
+            const series: LimitSeries[] = limitSeriesFrom({ entries, accounts, labels, filter: query, absent });
 
             logger.debug({ series: series.length, from: query.from, to: query.to }, "[ai-dashboard] limit series");
             return { series };
