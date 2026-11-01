@@ -200,8 +200,78 @@ final class MarkdownPathCompletionTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 2, "three requests over 3,001 entries")
         XCTAssertEqual(reads, 3)
 
-        let stale = MarkdownPathCompletion.suggest(big.path + "/", base: root, isCancelled: { true }, read: cache.read)
-        XCTAssertTrue(stale.entries.isEmpty, "a cancelled request stops ranking")
+        var staleReads = 0
+        let stale = MarkdownPathCompletion.suggest(big.path + "/", base: root, isCancelled: { true }, read: { folder in
+            staleReads += 1
+            return cache.read(folder)
+        })
+        XCTAssertTrue(stale.entries.isEmpty, "a cancelled request stops")
+        XCTAssertEqual(staleReads, 0, "a cancelled request starts no folder read")
+
+        // Cancelled after the first read: the folder the text names is not read as well.
+        var asked = 0
+        var laterReads = 0
+        _ = MarkdownPathCompletion.suggest(root.path + "/notes", base: root, isCancelled: {
+            asked += 1
+            return asked > 1
+        }, read: { folder in
+            laterReads += 1
+            return MarkdownPathCompletion.read(folder)
+        })
+        XCTAssertEqual(laterReads, 1, "the parent was read, the named folder was not")
+    }
+
+    /// Fast typing over a slow folder: a request that asks for a folder while another request reads it waits for that
+    /// read, so the folder is listed once.
+    func testARequestForAFolderThatIsBeingReadWaitsForThatRead() {
+        let calls = LockedValue(0)
+        let started = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let cache = MarkdownPathCache(read: { _ in
+            let call = calls.update { count -> Int in
+                count += 1
+                return count
+            }
+            if call == 1 {
+                started.signal()
+                _ = release.wait(timeout: .now() + 5)
+            }
+            return [MarkdownPathEntry(name: "plan.md", isFolder: false)]
+        })
+
+        let results = LockedValue<[[String]?]>([])
+        let finished = DispatchGroup()
+        func request() {
+            finished.enter()
+            DispatchQueue.global().async {
+                let names = cache.read("/slow")?.map(\.name)
+                results.update { $0.append(names) }
+                finished.leave()
+            }
+        }
+        request()
+        XCTAssertEqual(started.wait(timeout: .now() + 5), .success, "the first read started")
+        request()
+        // The second request reaches the cache while the first read is held.
+        Thread.sleep(forTimeInterval: 0.2)
+        release.signal()
+        XCTAssertEqual(finished.wait(timeout: .now() + 5), .success)
+
+        XCTAssertEqual(calls.value, 1, "the second request waited for the first read instead of reading again")
+        XCTAssertEqual(results.value.compactMap { $0 }, [["plan.md"], ["plan.md"]])
+        XCTAssertEqual(cache.read("/slow")?.map(\.name), ["plan.md"])
+        XCTAssertEqual(calls.value, 1, "the listing is kept")
+
+        // A folder that could not be read is asked again by the next request.
+        let tries = LockedValue(0)
+        let later = MarkdownPathCache(read: { _ in
+            tries.update { count -> Int in
+                count += 1
+                return count
+            } == 1 ? nil : []
+        })
+        XCTAssertNil(later.read("/later"))
+        XCTAssertEqual(later.read("/later"), [])
     }
 
     @MainActor
@@ -215,5 +285,55 @@ final class MarkdownPathCompletionTests: XCTestCase {
         }
         XCTAssertEqual(loader.suggestions?.text, root.path + "/notes/pl")
         XCTAssertEqual(loader.suggestions?.entries.map(\.name), ["plan.md"])
+    }
+
+    /// While a newer request loads, the older list stays on screen and is not the current one, so nothing acts on it.
+    /// A list equal to the one before it still counts as delivered, so a key that waited for it runs.
+    @MainActor
+    func testWhileANewerRequestLoadsTheOlderListIsNotCurrent() async throws {
+        let loader = MarkdownGoToLoader()
+        let notes = root.path + "/notes/"
+        loader.load(notes, base: root, recents: [], options: MarkdownPathOptions())
+        XCTAssertNil(loader.current)
+        try await waitForDelivery(loader, after: 0)
+        XCTAssertEqual(loader.current?.text, notes)
+
+        loader.load(notes + "pl", base: root, recents: [], options: MarkdownPathOptions())
+        XCTAssertNil(loader.current, "the older list shows, but nothing acts on it")
+        XCTAssertEqual(loader.suggestions?.text, notes, "it stays on screen")
+        try await waitForDelivery(loader, after: 1)
+        XCTAssertEqual(loader.current?.text, notes + "pl")
+
+        // New options with the same text: the list on screen stops being current until the new one arrives.
+        let shown = loader.suggestions
+        loader.load(notes + "pl", base: root, recents: [], options: MarkdownPathOptions(showsHidden: true))
+        XCTAssertNil(loader.current)
+        try await waitForDelivery(loader, after: 2)
+        XCTAssertEqual(loader.suggestions, shown, "an equal list")
+        XCTAssertEqual(loader.current, shown, "still delivered")
+    }
+
+    @MainActor
+    private func waitForDelivery(_ loader: MarkdownGoToLoader, after count: Int) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while loader.deliveries <= count, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertGreaterThan(loader.deliveries, count, "no list arrived within 5 s")
+    }
+}
+
+/// A value several threads change, behind a lock.
+private final class LockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) { stored = value }
+
+    var value: Value { lock.withLock { stored } }
+
+    @discardableResult
+    func update<Result>(_ change: (inout Value) -> Result) -> Result {
+        lock.withLock { change(&stored) }
     }
 }

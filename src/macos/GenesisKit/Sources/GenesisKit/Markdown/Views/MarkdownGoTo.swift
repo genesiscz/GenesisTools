@@ -24,19 +24,33 @@ enum MarkdownGoTo {
     }
 }
 
-/// Builds the list off the main thread, one request at a time: a new text cancels the request before it, and a
-/// result that arrives for an older text is dropped. Each sheet has its own, so the folders it read are read again
-/// the next time it opens.
+/// Builds the list off the main thread, one request at a time: a new text or new options cancel the request before
+/// them, and a result that arrives for an older request is dropped. A cancelled request starts no folder read and
+/// stops ranking. A folder listing already under way finishes, because a directory read cannot be interrupted, and
+/// stays in the cache: the next keystroke, almost always in the same folder, takes it instead of reading again. Each
+/// sheet has its own loader, so the folders it read are read again the next time it opens.
 @MainActor
 final class MarkdownGoToLoader: ObservableObject {
+    /// The last list built. It stays on screen while the next one loads, so the list never blanks between two
+    /// keystrokes.
     @Published private(set) var suggestions: MarkdownPathSuggestions?
+    /// Counts the lists delivered, also one equal to the list before it (the same text again, a setting that changed
+    /// nothing), so a key that waited for the list still runs when it arrives.
+    @Published private(set) var deliveries = 0
+    /// `suggestions` answers the newest request: its text and its options.
+    private var answersNewest = false
     private var task: Task<Void, Never>?
     private var generation = 0
     private let cache = MarkdownPathCache()
 
+    /// The list for the newest request once it is built; nil while that request loads. Only this list acts on a key
+    /// or a click.
+    var current: MarkdownPathSuggestions? { answersNewest ? suggestions : nil }
+
     func load(_ text: String, base: URL, recents: [String], options: MarkdownPathOptions) {
         task?.cancel()
         generation += 1
+        answersNewest = false
         let generation = generation
         let cache = cache
         task = Task.detached(priority: .userInitiated) { [weak self] in
@@ -55,7 +69,103 @@ final class MarkdownGoToLoader: ObservableObject {
 
     private func deliver(_ result: MarkdownPathSuggestions, generation: Int) {
         guard generation == self.generation else { return }
+        answersNewest = true
         suggestions = result
+        deliveries += 1
+    }
+}
+
+extension MarkdownPathOptions {
+    /// The list's options as the settings card "Go to Location" sets them.
+    @MainActor
+    init(_ configuration: GenesisKitMarkdownConfiguration) {
+        self.init(files: configuration.goToFiles, showsHidden: configuration.goToShowsHidden,
+                  showsRecents: configuration.goToRecents)
+    }
+}
+
+/// Where the keyboard is in the list, and the keys that wait for the list of the field's text. While that list loads,
+/// the list of an older text stays on screen, but neither a click nor Up and Down act on it: a click would open a row
+/// the field no longer names, and a moved selection would carry its place into the list that replaces it.
+struct MarkdownGoToCursor: Equatable {
+    enum Key: Equatable {
+        case tab
+        case go(reveal: Bool)
+    }
+
+    /// Keys that came while the list for the field's text was still being built, done once it arrives: the Up and
+    /// Down steps first, then a Tab or Return. A later Tab or Return replaces an earlier one; a step after one is
+    /// dropped, since that key changes the field or closes the sheet.
+    struct Pending: Equatable {
+        var steps = 0
+        var key: Key?
+    }
+
+    /// The row the keyboard is on; nil is the field itself, above the first row.
+    var selection: Int?
+    /// The reader moved the selection (a key or a click) since the list was last asked for.
+    var moved = false
+    var pending: Pending?
+
+    /// A new list was asked for (the text or the options changed): its automatic row is taken once it arrives.
+    mutating func reset() {
+        moved = false
+        pending = nil
+    }
+
+    /// Up or Down by `step` rows. On the list for the field's text the selection moves (true). While that list loads
+    /// the step waits for it and nothing moves (false).
+    mutating func move(_ step: Int, in current: MarkdownPathSuggestions?) -> Bool {
+        guard let current else {
+            var waiting = pending ?? Pending()
+            if waiting.key == nil { waiting.steps += step }
+            pending = waiting
+            return false
+        }
+        let count = current.rows.count
+        guard count > 0 else { return false }
+        let next = (selection ?? -1) + step
+        selection = next < 0 ? nil : min(next, count - 1)
+        moved = true
+        return true
+    }
+
+    /// A Tab or Return that came while the list for the field's text loads.
+    mutating func wait(for key: Key) {
+        var waiting = pending ?? Pending()
+        waiting.key = key
+        pending = waiting
+    }
+
+    /// A click on a row. It acts (true) only when the row is on the list for the field's text. The row is found by
+    /// its id there, so a row view kept from an earlier list (the rows are equatable) still picks its right place.
+    mutating func click(_ row: MarkdownPathSuggestion, in current: MarkdownPathSuggestions?) -> Bool {
+        guard let index = current?.rows.firstIndex(where: { $0.id == row.id }) else { return false }
+        selection = index
+        moved = true
+        return true
+    }
+
+    /// The list for the field's text arrived: the keyboard goes to its automatic row, and the keys that waited for it
+    /// come back for the sheet to do now.
+    mutating func arrived(_ suggestions: MarkdownPathSuggestions) -> Pending? {
+        selection = suggestions.automaticIndex
+        defer { pending = nil }
+        return pending
+    }
+
+    /// The row Tab puts in the field: the one the keyboard is on, else the automatic one, else the first.
+    func tabRow(in suggestions: MarkdownPathSuggestions) -> MarkdownPathSuggestion? {
+        let index = (moved ? selection : suggestions.automaticIndex) ?? 0
+        return suggestions.rows.indices.contains(index) ? suggestions.rows[index] : nil
+    }
+
+    /// What Return takes from the list.
+    func pick(in suggestions: MarkdownPathSuggestions) -> MarkdownGoToPick {
+        let rows = suggestions.rows
+        guard moved else { return .automatic(suggestions.automaticIndex.map { rows[$0] }) }
+        guard let selection, rows.indices.contains(selection) else { return .text }
+        return .chosen(rows[selection])
     }
 }
 
@@ -68,34 +178,24 @@ struct MarkdownGoToSheet: View {
     @State private var prefill = ""
     /// The folder a relative path starts from: the one the field opened with.
     @State private var base = FileManager.default.homeDirectoryForCurrentUser
-    /// The row the keyboard is on; nil is the field itself, above the first row.
-    @State private var selection: Int?
-    /// The reader moved the selection (a key or a click) since the text last changed.
-    @State private var moved = false
+    /// The row the keyboard is on, and the keys that wait for the list of the field's text.
+    @State private var cursor = MarkdownGoToCursor()
     @State private var problem: String?
-    /// A key that came while the list for the text was still being built: done once it arrives.
-    @State private var pending: PendingKey?
     /// Return reaches both the field and the default button: the first one that acts in a turn of the run loop wins.
     @State private var acting = false
     @FocusState private var focused: Bool
-
-    private enum PendingKey: Equatable {
-        case tab
-        case go(reveal: Bool)
-    }
 
     private static let hints = "↑↓ choose    ⇥ complete    ↩ open    ⌘↩ show in sidebar"
 
     private var theme: MarkdownTheme { model.theme }
 
-    private var options: MarkdownPathOptions {
-        MarkdownPathOptions(files: model.configuration.goToFiles, showsHidden: model.configuration.goToShowsHidden)
-    }
+    private var options: MarkdownPathOptions { MarkdownPathOptions(model.configuration) }
 
-    /// The list for the text in the field, once it is built. The list on screen (`loader.suggestions`) stays the last
-    /// one built until then, so it never blanks between two keystrokes, but only this one acts.
+    /// The list for the text in the field and the options, once it is built. The list on screen
+    /// (`loader.suggestions`) stays the last one built until then, so it never blanks between two keystrokes, but
+    /// only this one acts.
     private var current: MarkdownPathSuggestions? {
-        guard let suggestions = loader.suggestions, suggestions.text == text else { return nil }
+        guard let suggestions = loader.current, suggestions.text == text else { return nil }
         return suggestions
     }
 
@@ -122,8 +222,9 @@ struct MarkdownGoToSheet: View {
         .onAppear(perform: start)
         .onDisappear { loader.cancel() }
         .onChange(of: text) { _, _ in textChanged() }
+        // A setting changed in the settings window while the sheet is open: the list follows it at once.
         .onChange(of: options) { _, _ in load() }
-        .onChange(of: loader.suggestions) { _, now in arrived(now) }
+        .onChange(of: loader.deliveries) { _, _ in arrived() }
         .onChange(of: problem) { _, now in if let now { GenAnnounce.post(now) } }
     }
 
@@ -190,14 +291,14 @@ struct MarkdownGoToSheet: View {
                         if !shown.recents.isEmpty {
                             sectionTitle("Recent")
                             ForEach(Array(shown.recents.enumerated()), id: \.element.id) { index, row in
-                                rowView(row, index: index, in: shown, open: open)
+                                rowView(row, index: index, open: open)
                             }
                             if !shown.entries.isEmpty {
                                 sectionTitle("In " + MarkdownPathCompletion.display(folder: URL(fileURLWithPath: shown.query.folder)))
                             }
                         }
                         ForEach(Array(shown.entries.enumerated()), id: \.element.id) { offset, row in
-                            rowView(row, index: shown.recents.count + offset, in: shown, open: open)
+                            rowView(row, index: shown.recents.count + offset, open: open)
                         }
                         if shown.truncated {
                             Text(verbatim: "Showing \(shown.entries.count) of \(shown.total). Type more of the name to narrow the list.")
@@ -211,7 +312,7 @@ struct MarkdownGoToSheet: View {
                     .padding(6)
                 }
                 // At once, without a glide: the keyboard's row is simply there (nothing to reduce under Reduce Motion).
-                .onChange(of: selection) { _, now in
+                .onChange(of: cursor.selection) { _, now in
                     guard let now, shown.rows.indices.contains(now) else { return }
                     proxy.scrollTo(shown.rows[now].id)
                 }
@@ -242,18 +343,15 @@ struct MarkdownGoToSheet: View {
             .accessibilityAddTraits(.isHeader)
     }
 
-    private func rowView(_ row: MarkdownPathSuggestion, index: Int, in shown: MarkdownPathSuggestions,
-                         open: Set<String>) -> some View {
+    private func rowView(_ row: MarkdownPathSuggestion, index: Int, open: Set<String>) -> some View {
         let isOpen = open.contains(row.path)
         let folder = ((row.path as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath
         let detail: String? = row.source == .recent
             ? folder + (isOpen ? " · open" : "")
             : (isOpen ? "open" : nil)
         return MarkdownGoToRow(row: row, detail: detail, label: Self.spoken(row, folder: folder, isOpen: isOpen),
-                               selected: selection == index, theme: theme) {
-            selection = index
-            moved = true
-            go(reveal: false, clicked: (row, shown.query))
+                               selected: cursor.selection == index, theme: theme) {
+            click(row)
         }
         .equatable()
         .id(row.id)
@@ -327,40 +425,34 @@ struct MarkdownGoToSheet: View {
 
     private func textChanged() {
         problem = nil
-        moved = false
-        pending = nil
         load()
     }
 
+    /// Asks for the list of the field's text and the options. Until it arrives, keys wait and clicks do nothing.
     private func load() {
-        let recents = text == prefill && model.configuration.goToRecents
+        cursor.reset()
+        // Passed only while the field holds the folder it opened with; the "Recent files first" setting is in
+        // `options`, so turning it off reloads the list.
+        let recents = text == prefill
             ? model.recents.entries.map(\.path).filter { $0 != model.selected?.id }
             : []
         loader.load(text, base: base, recents: recents, options: options)
     }
 
-    private func arrived(_ suggestions: MarkdownPathSuggestions?) {
-        guard let suggestions, suggestions.text == text else { return }
-        if !moved {
-            selection = suggestions.automaticIndex
-        } else if let selection, selection >= suggestions.rows.count {
-            self.selection = suggestions.rows.isEmpty ? nil : suggestions.rows.count - 1
-        }
-        guard let key = pending else { return }
-        pending = nil
-        switch key {
-        case .tab: complete()
-        case .go(let reveal): go(reveal: reveal)
+    private func arrived() {
+        guard let current, let waiting = cursor.arrived(current) else { return }
+        if waiting.steps != 0 { _ = move(waiting.steps) }
+        switch waiting.key {
+        case .tab?: complete()
+        case .go(let reveal)?: go(reveal: reveal)
+        case nil: break
         }
     }
 
     private func move(_ step: Int) -> KeyPress.Result {
-        guard let rows = loader.suggestions?.rows, !rows.isEmpty else { return .handled }
-        let next = (selection ?? -1) + step
-        selection = next < 0 ? nil : min(next, rows.count - 1)
-        moved = true
+        guard cursor.move(step, in: current), let rows = current?.rows else { return .handled }
         if NSWorkspace.shared.isVoiceOverEnabled {
-            if let selection {
+            if let selection = cursor.selection {
                 GenAnnounce.post("\(spokenRow(rows[selection])), \(selection + 1) of \(rows.count)", priority: .low)
             } else {
                 GenAnnounce.post("The typed path", priority: .low)
@@ -374,44 +466,33 @@ struct MarkdownGoToSheet: View {
         return Self.spoken(row, folder: folder, isOpen: model.docs.contains { $0.id == row.path })
     }
 
+    /// A click opens the row, or goes into a folder, only while the row is on the list for the field's text.
+    private func click(_ row: MarkdownPathSuggestion) {
+        guard cursor.click(row, in: current) else { return }
+        go(reveal: false)
+    }
+
     /// Tab: the row the keyboard is on (or the first) goes into the field; a folder keeps the list open inside it.
     private func complete() {
         guard let current else {
-            pending = .tab
+            cursor.wait(for: .tab)
             return
         }
-        let rows = current.rows
-        let index = (moved ? selection : current.automaticIndex) ?? 0
-        guard rows.indices.contains(index) else { return }
-        text = MarkdownPathCompletion.completion(of: rows[index], in: current.query)
+        guard let row = cursor.tabRow(in: current) else { return }
+        text = MarkdownPathCompletion.completion(of: row, in: current.query)
     }
 
-    private func go(reveal: Bool, clicked: (row: MarkdownPathSuggestion, query: MarkdownPathQuery)? = nil) {
+    private func go(reveal: Bool) {
         guard !acting else { return }
         acting = true
         DispatchQueue.main.async { acting = false }
 
-        let pick: MarkdownGoToPick
-        let query: MarkdownPathQuery
-        if let clicked {
-            pick = .chosen(clicked.row)
-            query = clicked.query
-        } else {
-            guard let current else {
-                pending = .go(reveal: reveal)
-                return
-            }
-            pick = self.pick(in: current)
-            query = current.query
+        guard let current else {
+            cursor.wait(for: .go(reveal: reveal))
+            return
         }
-        apply(MarkdownPathCompletion.action(text: text, base: base, pick: pick, query: query, reveal: reveal))
-    }
-
-    private func pick(in suggestions: MarkdownPathSuggestions) -> MarkdownGoToPick {
-        let rows = suggestions.rows
-        guard moved else { return .automatic(suggestions.automaticIndex.map { rows[$0] }) }
-        guard let selection, rows.indices.contains(selection) else { return .text }
-        return .chosen(rows[selection])
+        let pick = cursor.pick(in: current)
+        apply(MarkdownPathCompletion.action(text: text, base: base, pick: pick, query: current.query, reveal: reveal))
     }
 
     private func apply(_ action: MarkdownGoToAction) {
