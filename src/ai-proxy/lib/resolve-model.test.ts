@@ -8,7 +8,11 @@ import {
     resolveModel,
     splitReasoningEffortSuffix,
 } from "@app/ai-proxy/lib/resolve-model";
-import { type PickerModelGroup, sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
+import {
+    type PickerModelGroup,
+    sessionLaunchLimit,
+    sessionPickerModels,
+} from "@app/ai-proxy/lib/sessions/picker-models";
 import { type AiProxySessionRecord, sessionProxyAccounts } from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
 import type { AiProxyAccountConfig, ReasoningEffort } from "@app/ai-proxy/lib/types";
@@ -253,6 +257,13 @@ describe("resolveSessionRoute", () => {
         expect(route.upstreamId).toBe("gpt-6.1-sol");
         expect(route.reasoningEffort).toBeUndefined();
         expect(route.effortSource).toBeUndefined();
+    });
+
+    it("the picker's limit is the launch window, for a record written by any launcher version", () => {
+        // A launcher before and after 2026-11-01 writes the usable share; Claude Code holds the window.
+        expect(sessionLaunchLimit({ pickerContextTokens: 475_000, window: 500_000 })).toBe(500_000);
+        // Custom --settings: the limit is unknown, so the picker admits no smaller model.
+        expect(sessionLaunchLimit({ window: 500_000 })).toBeUndefined();
     });
 
     it("routes the /model picker's codex-claude/<id> like codex/<id>, and lists the picker ids Claude Code keeps", () => {

@@ -75,8 +75,10 @@ export interface AiProxySessionRecord {
     effort?: string;
     window?: number;
     /**
-     * Effective launch context limit for picker filtering: the model's window, which the launcher passes as
-     * `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. Absent when custom settings make it unknown.
+     * Present when the launch context limit is known, absent when custom settings make it unknown. The value is the
+     * model's usable share, which a proxy started before 2026-11-01 compares against; the limit itself is `window`,
+     * which the launcher passes as `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (`sessionLaunchLimit`). Keeping the old value means
+     * neither an old proxy with a new record nor a new proxy with an old record reads a wrong limit.
      */
     pickerContextTokens?: number;
     compactPercent?: number;

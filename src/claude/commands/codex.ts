@@ -344,7 +344,8 @@ export async function runCodexSession(
             effort: effort.effort,
             window: model.info.window,
             // A user-provided --settings may override the launch limit, so its effective value is unknown here.
-            ...(!passthroughSets(passthrough, "--settings") ? { pickerContextTokens: model.info.window } : {}),
+            // The usable share, for a proxy that still runs older code; the picker's limit is `window` (sessionLaunchLimit).
+            ...(!passthroughSets(passthrough, "--settings") ? { pickerContextTokens: model.info.usableTokens } : {}),
             compactPercent: compact.percent,
             cacheKeyPolicy: "claude-session",
             ...(ownAgents ? { agents: ownAgents } : {}),

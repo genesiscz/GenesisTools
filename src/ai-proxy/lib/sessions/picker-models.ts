@@ -51,6 +51,13 @@ export function sessionPickerGroups(record: AiProxySessionRecord): PickerModelGr
     });
 }
 
+/** The context limit the session's Claude Code was launched with, or undefined when it is unknown. */
+export function sessionLaunchLimit(
+    record: Pick<AiProxySessionRecord, "pickerContextTokens" | "window">
+): number | undefined {
+    return record.pickerContextTokens === undefined ? undefined : record.window;
+}
+
 /**
  * What a session's Claude Code reads from `/v1/models` for its `/model` picker (the launcher sets
  * `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`): Anthropic's list shape with each model under the id the picker keeps

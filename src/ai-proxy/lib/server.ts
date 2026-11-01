@@ -24,7 +24,7 @@ import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search
 import { sweepBackgroundCompactions } from "@app/ai-proxy/lib/sessions/background-compaction";
 import { sweepCompactions } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
-import { sessionPickerGroups, sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
+import { sessionLaunchLimit, sessionPickerGroups, sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
 import {
     DEFAULT_SESSION_RETENTION_DAYS,
     noteSessionRequest,
@@ -454,7 +454,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         SafeJSON.stringify(
                             sessionPickerModels({
                                 groups: sessionPickerGroups(client.session),
-                                contextLimit: client.session.pickerContextTokens,
+                                contextLimit: sessionLaunchLimit(client.session),
                             })
                         ),
                         {
