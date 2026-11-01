@@ -3,8 +3,11 @@ import { basename } from "node:path";
 import { compressFrameSync, type ZstdParams } from "./zstd";
 
 /**
- * Presets per kind of data. The numbers behind each default are in README.md ("Presets") and come from
- * `scripts/benchmarks/compress/presets.ts`; change a default only with a new run of that benchmark.
+ * Presets per kind of data. The numbers behind each level are in README.md ("Presets") and come from
+ * `scripts/benchmarks/compress/levels.ts` (2026-11-01); change a level only with a new run of that benchmark.
+ * Reading costs the same at every level (the frame header carries its size, so the decoder's window is at most one
+ * frame), so a level is chosen by who waits for the write: the background daily pass takes the most zstd does, a
+ * step every app build waits on stays cheap.
  */
 export const PRESET_NAMES = ["text", "tree", "binary", "database", "media", "fast", "max"] as const;
 export type PresetName = (typeof PRESET_NAMES)[number];
@@ -28,7 +31,9 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     text: {
         name: "text",
         description: "logs, JSON, JSONL, CSV, source files: line-aligned 4 MiB frames for cheap tail reads",
-        level: 3,
+        // The daily pass (detached, priority 15, nothing waits on it). A real 696 MB day log: 8.3 MB at level 3
+        // (0.8 s of CPU), 6.1 MB at 19 (41 s), 5.8 MB at 22 (69 s, 475 MB peak); every read the same.
+        level: 22,
         long: false,
         frameBytes: 4 * MiB,
         lineAligned: true,
@@ -38,8 +43,10 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     tree: {
         name: "tree",
         description: "folders of source, node_modules, backups of transcripts: 32 MiB frames with long mode",
-        // Long mode at level 6 saved 88.9% against 84.4% without it on node_modules/typescript, at 160 MB/s.
-        level: 6,
+        // Written rarely (migrate-home backups, `tools compress pack`), read only on a restore. Level 19 long is 6%
+        // (a migrate-home run) to 17% (src/utils) smaller than level 6, at 3.4-4.7 MB per CPU second; 22 saves under
+        // 0.5% more.
+        level: 19,
         long: true,
         frameBytes: 32 * MiB,
         lineAligned: false,
@@ -49,8 +56,9 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     binary: {
         name: "binary",
         description: "app bundles, executables, libraries, other binary formats",
-        // Level 6 saved 68.9% against 66.5% at level 3 on a 60 MB executable, at a third of the speed.
-        level: 3,
+        // Every `bun run app` waits while one retired bundle (about 145 MB) is packed. Level 9 long is 11% smaller
+        // than 3 at 63 MB per CPU second (about 2 s); 12 saves 3% more for twice that, 19 saves 6% more for 40 s.
+        level: 9,
         long: true,
         frameBytes: 32 * MiB,
         lineAligned: false,
@@ -60,8 +68,9 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     database: {
         name: "database",
         description: "SQLite and other page-structured stores (copy the database closed or with .backup first)",
-        // Level 6 saved 86.2% against 83.5% at level 3 on a 22 MB SQLite file, at 2.6 times the CPU.
-        level: 3,
+        // Only `tools compress pack` of a database copy, read only on a restore. Level 19 is 27% smaller than 9 on a
+        // 22 MB SQLite file, at 2 MB per CPU second; 22 is larger.
+        level: 19,
         long: false,
         frameBytes: 16 * MiB,
         lineAligned: false,
@@ -90,8 +99,9 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     },
     max: {
         name: "max",
-        description: "level 19 with long mode: archives written once and kept for long (about 25 MB/s per thread)",
-        level: 19,
+        description:
+            "level 22 with long mode, the most zstd does: archives written once and kept for long (about 3 MB/s per thread)",
+        level: 22,
         long: true,
         frameBytes: 32 * MiB,
         lineAligned: false,

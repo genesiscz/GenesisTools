@@ -37,6 +37,10 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
   of the plain time: `bun scripts/benchmarks/compress/read-paths.ts` (fresh processes, interleaved arms, medians, the
   load average in the notes, a check that the outputs agree). Day logs keep the last 7 days plain for that reason
   (`DAY_LOGS_PLAIN_DAYS`): `tools daemon stats --since 7d` cost +87% CPU with five compressed days.
+- **A level is chosen by who waits for the write, not by the read.** The frame header carries the frame's size, so the
+  decoder's window is one frame at most at every level, and reads cost the same at levels 3 to 22 (2026-11-01,
+  `bun scripts/benchmarks/compress/levels.ts`). The background daily pass takes level 22, rare folder archives 19
+  long, the bundle pack that every `bun run app` waits on 9 long. Change a level only with a new run of that bench.
 - **Media is left alone.** `tools compress pack` runs a level-3 trial on a sample and skips under 30% saving
   (`DEFAULT_MIN_SAVING`); photos, video and audio measured 0.2-7%.
 - **APFS clones.** `cp -c` backups share blocks, so `du` over-counts and removing one clone frees almost nothing.
