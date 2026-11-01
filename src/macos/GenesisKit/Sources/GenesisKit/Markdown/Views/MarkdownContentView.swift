@@ -108,6 +108,39 @@ public struct MarkdownStyle: Equatable, Sendable {
 
     public static let vault = MarkdownStyle()
 
+    /// The hub's panels (the PR description, the review threads, the Inbox context): light text on the dark panels,
+    /// compact semibold headings, code that wraps with no language line, every block selectable, the HTML review bots
+    /// write cleaned, `[[x]]` left as text. The panel find marks its matches inside it through `.findField`.
+    public static let hub = MarkdownStyle().with {
+        $0.textColor = .white.opacity(0.92)
+        $0.secondaryColor = .white.opacity(0.55)
+        $0.mutedColor = .white.opacity(0.35)
+        $0.accentColor = .orange
+        $0.codeColor = .white.opacity(0.88)
+        $0.codeBackground = Color.black.opacity(0.35)
+        $0.taskDoneColor = .green
+        $0.headingSizes = [18.5, 17, 15.5, 14, 12.5, 11]
+        $0.headingWeights = Array(repeating: .semibold, count: 6)
+        $0.dimsMinorHeadings = false
+        $0.codeFontSize = nil
+        $0.codeWraps = true
+        $0.codeShowsLanguage = false
+        $0.codePadding = 8
+        $0.codeCornerRadius = 6
+        $0.quoteBarColor = .white.opacity(0.35)
+        $0.quoteItalic = false
+        $0.selection = .all
+        $0.wikilinks = false
+    }
+
+    /// A decision's Context section (`DecisionContextSection`), in the hub's Inbox card and the widget's decision card:
+    /// the hub's panels at a 12 pt body, a little dimmer, blocks closer together.
+    public static let decisionContext = hub.with {
+        $0.bodySize = 12
+        $0.textColor = .white.opacity(0.82)
+        $0.blockSpacing = 6
+    }
+
     public static let chat = MarkdownStyle().with {
         $0.bodySize = 13.5
         $0.blockSpacing = 9
