@@ -26,6 +26,7 @@ interface PackOptions {
     force?: boolean;
     output?: string;
     filesFrom?: string;
+    includePlaceholders?: boolean;
     dryRun?: boolean;
     json?: boolean;
 }
@@ -92,6 +93,7 @@ async function runPack(paths: string[], options: PackOptions): Promise<void> {
             minSaving,
             force: options.force,
             files,
+            includePlaceholders: options.includePlaceholders,
         };
 
         try {
@@ -281,6 +283,10 @@ export function registerFileCommands(program: Command): void {
         .option(
             "--files-from <list>",
             "pack only the files a list names (one path per line, relative to the one folder given); --remove-original removes only them"
+        )
+        .option(
+            "--include-placeholders",
+            "pack cloud placeholders as they are (a Dropbox stub's zeros; a dataless file downloads) instead of refusing"
         )
         .option("--force", "compress even when the trial saves too little")
         .option("-o, --output <path>", "output path (one input only)")

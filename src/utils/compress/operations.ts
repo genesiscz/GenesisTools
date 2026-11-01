@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readdirSync, statfsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { type CloudPlaceholderKind, cloudPlaceholderKind } from "@genesiscz/utils/fs/cloud-placeholder";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import {
     compressFile,
@@ -43,24 +44,64 @@ function freeBytes(path: string): number {
     return Number(stats.bavail) * Number(stats.bsize);
 }
 
-function folderBytes(path: string): number {
-    let total = 0;
-    const stack = [path];
+interface SourceScan {
+    bytes: number;
+    /** Cloud placeholders, relative to the source folder (the file's name for a single file). */
+    placeholders: Array<{ path: string; kind: CloudPlaceholderKind }>;
+}
 
-    while (stack.length > 0) {
-        const current = stack.pop()!;
-        const stat = lstatSync(current);
+/**
+ * The bytes a compression reads and the cloud placeholders among them, from `lstat` and one xattr lookup per file:
+ * the whole folder, only `files` of it, or the one file. Nothing is opened, so no placeholder downloads.
+ */
+function scanSource(source: string, files?: readonly string[]): SourceScan {
+    const scan: SourceScan = { bytes: 0, placeholders: [] };
+    const visit = (absolute: string, path: string) => {
+        // The source itself is followed, as the compression reads it; entries inside are not, as tar packs them.
+        const stat = path === "" ? statSync(absolute) : lstatSync(absolute);
 
         if (stat.isDirectory()) {
-            for (const name of readdirSync(current)) {
-                stack.push(join(current, name));
+            for (const name of readdirSync(absolute)) {
+                visit(join(absolute, name), path === "" ? name : `${path}/${name}`);
             }
-        } else {
-            total += stat.size;
+
+            return;
         }
+
+        scan.bytes += stat.size;
+        const kind = cloudPlaceholderKind(absolute, stat);
+
+        if (kind) {
+            scan.placeholders.push({ path: path === "" ? basename(absolute) : path, kind });
+        }
+    };
+
+    if (files) {
+        for (const file of files) {
+            visit(join(source, file), file);
+        }
+    } else {
+        visit(source, "");
     }
 
-    return total;
+    return scan;
+}
+
+/** The refusal for a source with cloud placeholders: up to 20 names, then a count, and what each kind means. */
+function placeholderRefusal(source: string, placeholders: SourceScan["placeholders"]): string {
+    const names = placeholders
+        .map((placeholder) => placeholder.path)
+        .sort()
+        .slice(0, 20);
+    const more = placeholders.length - names.length;
+    const stubs = placeholders.filter((placeholder) => placeholder.kind === "dropbox-stub").length;
+    const kinds = [
+        stubs > 0 ? `${stubs} with the com.dropbox.placeholder xattr, whose bytes here are zeros` : "",
+        placeholders.length - stubs > 0
+            ? `${placeholders.length - stubs} with bytes in 0 blocks, which a read would download (an all-hole sparse file looks the same)`
+            : "",
+    ].filter(Boolean);
+    return `${source} holds ${placeholders.length} cloud placeholder${placeholders.length === 1 ? "" : "s"} (${kinds.join("; ")}): ${names.join(", ")}${more > 0 ? ` and ${more} more` : ""}. Their real content lives in the cloud copy, so nothing was written. Pass --include-placeholders to pack them as they are`;
 }
 
 /**
@@ -105,6 +146,11 @@ export interface CompressPathOptions {
      * `removeOriginal` then removes only them. Folders are refused: list the files.
      */
     files?: readonly string[];
+    /**
+     * Pack cloud placeholders as they are (a Dropbox stub's zeros, or a dataless file, which the read downloads)
+     * instead of refusing: for a legacy folder where the stub is all that is left.
+     */
+    includePlaceholders?: boolean;
     caller: string;
 }
 
@@ -221,6 +267,13 @@ export async function planCompressPath(
     }
 
     const files = options.files ? checkFileList(source, options.files) : undefined;
+    // Before the preset sniff and the trial, which both read: reading a dataless file downloads it.
+    const scan = scanSource(source, files);
+
+    if (!options.includePlaceholders && scan.placeholders.length > 0) {
+        throw new CompressRefusal(placeholderRefusal(source, scan.placeholders));
+    }
+
     const choice = resolvePreset(source);
     const preset = options.preset ?? choice.preset;
     const level = options.level ?? preset.level;
@@ -230,11 +283,7 @@ export async function planCompressPath(
         assertArchiveOutsideSource(source, target);
     }
 
-    const inputBytes = files
-        ? files.reduce((sum, file) => sum + lstatSync(join(source, file)).size, 0)
-        : isFolder
-          ? folderBytes(source)
-          : statSync(source).size;
+    const inputBytes = scan.bytes;
     const saving = isFolder ? trialSaving(await sampleFolder(source, { files }), { level: 3 }) : choice.trialSaving;
     const minSaving = options.minSaving ?? DEFAULT_MIN_SAVING;
     const plan: CompressPathPlan = {
