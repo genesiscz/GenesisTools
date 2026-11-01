@@ -34,9 +34,22 @@ export function storedFilePath(path: string): string | undefined {
     return !isZstdPath(path) && existsSync(compressed) ? compressed : undefined;
 }
 
+/**
+ * The `.zst` that replaced a plain file a read could not open (ENOENT), or undefined. So a reader handed a plain name,
+ * listed just before the daily pass retired the file or built by hand, reads the compressed day as if it were plain;
+ * the plain path pays nothing extra, since the twin is looked up only after the open failed.
+ */
+function compressedTwin(path: string, err: unknown): string | undefined {
+    if (isZstdPath(path) || !(err instanceof Error) || !("code" in err) || err.code !== "ENOENT") {
+        return undefined;
+    }
+
+    const twin = `${path}${ZSTD_SUFFIX}`;
+    return existsSync(twin) ? twin : undefined;
+}
+
 /** A plain file in chunks of `chunkBytes`; the yielded view is reused by the next read. */
-function* plainChunksSync(path: string, chunkBytes: number): Generator<Buffer> {
-    const fd = openSync(path, "r");
+function* plainChunksSync(fd: number, chunkBytes: number): Generator<Buffer> {
     try {
         let position = 0;
         const chunk = Buffer.allocUnsafe(chunkBytes);
@@ -60,9 +73,13 @@ function asBuffer(bytes: Uint8Array): Buffer {
 
 /**
  * The content of a text file in chunks: the file itself, or for a `.zst` path its decompressed frames, one at a
- * time (`@genesiscz/utils/compress`). A yielded chunk may be reused by the next one.
+ * time (`@genesiscz/utils/compress`). A plain path whose file is now `<path>.zst` reads the `.zst`. A yielded chunk
+ * may be reused by the next one.
  */
-export function* readTextChunksSync(path: string, { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}) {
+export function* readTextChunksSync(
+    path: string,
+    { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}
+): Generator<Buffer> {
     if (isZstdPath(path)) {
         for (const frame of readZstdFramesSync(path)) {
             yield asBuffer(frame);
@@ -71,17 +88,42 @@ export function* readTextChunksSync(path: string, { chunkBytes = CHUNK_BYTES }: 
         return;
     }
 
-    yield* plainChunksSync(path, chunkBytes);
+    let fd: number;
+
+    try {
+        fd = openSync(path, "r");
+    } catch (err) {
+        const twin = compressedTwin(path, err);
+
+        if (!twin) {
+            throw err;
+        }
+
+        yield* readTextChunksSync(twin);
+        return;
+    }
+
+    yield* plainChunksSync(fd, chunkBytes);
 }
 
 /**
  * The whole text of a file, plain or `.zst` (its frames joined): for callers that parse the full text anyway, such as
- * a Codex rollout that Codex 0.164 compressed. Prefer {@link readLinesSync} when lines are enough. Throws like
- * `readFileSync` when the file cannot be opened.
+ * a Codex rollout that Codex 0.164 compressed. Prefer {@link readLinesSync} when lines are enough. A plain path whose
+ * file is now `<path>.zst` reads the `.zst`. Throws like `readFileSync` when the file cannot be opened.
  */
 export function readWholeTextSync(path: string): string {
     if (!isZstdPath(path)) {
-        return readFileSync(path, "utf8");
+        try {
+            return readFileSync(path, "utf8");
+        } catch (err) {
+            const twin = compressedTwin(path, err);
+
+            if (!twin) {
+                throw err;
+            }
+
+            return readWholeTextSync(twin);
+        }
     }
 
     return Buffer.concat([...readZstdFramesSync(path)].map(asBuffer)).toString("utf8");
@@ -89,15 +131,18 @@ export function readWholeTextSync(path: string): string {
 
 /**
  * {@link readTextChunksSync} for async readers: a plain file as `Bun.file().stream()` chunks, a `.zst` file as its
- * frames, the next ones decompressing on the thread pool while the caller works on the current one.
+ * frames, the next ones decompressing on the thread pool while the caller works on the current one. A plain path
+ * whose file is now `<path>.zst` reads the `.zst`.
  */
 export async function* readTextChunks(path: string): AsyncGenerator<Uint8Array> {
-    if (isZstdPath(path)) {
-        yield* readZstdFrames(path);
+    const stored = isZstdPath(path) ? path : (storedFilePath(path) ?? path);
+
+    if (isZstdPath(stored)) {
+        yield* readZstdFrames(stored);
         return;
     }
 
-    yield* Bun.file(path).stream();
+    yield* Bun.file(stored).stream();
 }
 
 /**
@@ -295,7 +340,19 @@ export function readFirstLines(path: string, { maxBytes = END_BYTES, method }: E
     }
 
     const reader = readerFor(method);
-    const fd = reader.open(path);
+    let fd: number;
+
+    try {
+        fd = reader.open(path);
+    } catch (err) {
+        const twin = compressedTwin(path, err);
+
+        if (!twin) {
+            throw err;
+        }
+
+        return zstdEdgeLines(twin, maxBytes, "first");
+    }
 
     try {
         // One byte more than asked tells whether the file ends inside the read.
@@ -321,7 +378,19 @@ export function readLastLines(path: string, { maxBytes = END_BYTES, method }: Ed
     }
 
     const reader = readerFor(method);
-    const fd = reader.open(path);
+    let fd: number;
+
+    try {
+        fd = reader.open(path);
+    } catch (err) {
+        const twin = compressedTwin(path, err);
+
+        if (!twin) {
+            throw err;
+        }
+
+        return zstdEdgeLines(twin, maxBytes, "last");
+    }
 
     try {
         const size = reader.size(fd);
@@ -410,6 +479,21 @@ function plainBackwardSource(path: string, chunkBytes: number): BackwardSource {
     }
 }
 
+/** {@link plainBackwardSource}, or the `.zst` that replaced the plain file. */
+function openBackwardSource(path: string, chunkBytes: number): BackwardSource {
+    try {
+        return plainBackwardSource(path, chunkBytes);
+    } catch (err) {
+        const twin = compressedTwin(path, err);
+
+        if (!twin) {
+            throw err;
+        }
+
+        return zstdBackwardSource(twin);
+    }
+}
+
 /**
  * A `.zst` file read frame by frame from its last frame, its offsets counting decompressed bytes (a single-frame file,
  * as Codex writes its old rollouts, decompresses whole). When no frame header names its size, every frame is
@@ -460,7 +544,7 @@ export function* readLinesBackwardSync(
         throw new Error("Backward read requires a positive chunk size and a nonnegative byte limit and offset");
     }
 
-    const source = isZstdPath(path) ? zstdBackwardSource(path) : plainBackwardSource(path, chunkBytes);
+    const source = isZstdPath(path) ? zstdBackwardSource(path) : openBackwardSource(path, chunkBytes);
     onSource?.(source.end);
     const floor = Math.min(fromOffset, source.end);
     const start = Math.max(floor, source.end - maxBytes);
