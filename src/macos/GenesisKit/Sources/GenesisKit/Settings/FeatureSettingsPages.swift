@@ -3,7 +3,10 @@ import SwiftUI
 /// The two pages every feature settings window has: General first, About last.
 @MainActor
 public enum FeatureSettingsPages {
-    public static var general: NativeSettingsSection {
+    public static var general: NativeSettingsSection { general(extra: nil) }
+
+    /// General with the cards an app adds under the shared ones (GenesisTools: what ⌘Q does).
+    public static func general(extra: AnyView?) -> NativeSettingsSection {
         NativeSettingsSection(
             id: "general", title: "",
             pages: [
@@ -11,7 +14,7 @@ public enum FeatureSettingsPages {
                     id: "general", title: "General", symbol: "gearshape.fill", tint: .gray,
                     subtitle: "GenesisTools appearance and accessibility."
                 ) {
-                    NativeSettingsGeneralPage()
+                    NativeSettingsGeneralPage(extra: extra)
                 }
             ], order: 0)
     }
