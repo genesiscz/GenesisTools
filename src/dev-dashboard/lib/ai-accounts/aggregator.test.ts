@@ -1,12 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
 import {
+    createAiAggregator,
     createScanCache,
     defaultSeriesStep,
     effectiveSpendGrain,
     foldSpendPoints,
     transcriptScanKey,
 } from "@app/dev-dashboard/lib/ai-accounts/aggregator";
+import {
+    FIXTURE_WINDOW,
+    releaseLimitsHome,
+    seedLimitsStore,
+    useLimitsHome,
+} from "@genesiscz/utils/ai/usage-poll/__fixtures__/limits-store";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const WINDOW = { from: "2026-08-05T19:00:00.000Z", to: "2026-09-04T19:00:00.000Z", source: "transcripts" } as const;
 
@@ -367,5 +379,38 @@ describe("createScanCache", () => {
 
         expect(runs).toBe(2);
         expect(cache.size()).toBe(2);
+    });
+});
+
+/**
+ * Golden bytes for `/api/ai/usage/series`: the route hands this body to the page unchanged, so
+ * the series door rewrite in the core must give back the same JSON, one line per query.
+ */
+describe("getUsageSeries (golden)", () => {
+    let home: string;
+
+    beforeEach(async () => {
+        home = mkdtempSync(join(tmpdir(), "gt-ai-series-golden-"));
+        useLimitsHome(home);
+        await seedLimitsStore(home);
+    });
+
+    afterEach(() => {
+        releaseLimitsHome();
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    test("every filter shape keeps its response bytes", async () => {
+        const agg = createAiAggregator();
+        const responses = [
+            await agg.getUsageSeries({ ...FIXTURE_WINDOW }),
+            await agg.getUsageSeries({ ...FIXTURE_WINDOW, providers: ["claude"] }),
+            await agg.getUsageSeries({ ...FIXTURE_WINDOW, accounts: ["work"], keys: ["five_hour"], step: 600_000 }),
+            await agg.getUsageSeries({ ...FIXTURE_WINDOW, accounts: ["acc_codex_work"] }),
+            await agg.getUsageSeries({ ...FIXTURE_WINDOW, providers: ["grok"] }),
+        ];
+        const golden = readFileSync(join(moduleDir(import.meta), "__fixtures__", "usage-series.golden"), "utf8");
+
+        expect(responses.map((body) => SafeJSON.stringify(body)).join("\n")).toBe(golden.trimEnd());
     });
 });
