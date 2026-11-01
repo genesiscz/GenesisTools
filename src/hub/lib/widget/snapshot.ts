@@ -17,7 +17,7 @@ import {
     fromRecord as inboxDecisionOf,
     inboxSessionFresh,
 } from "@app/question/lib/inbox/build";
-import { shownExcerpts } from "@app/question/lib/inbox/excerpts";
+import { cachingReadDeps, shownExcerpts } from "@app/question/lib/inbox/excerpts";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
@@ -228,6 +228,8 @@ export interface WidgetSources {
     events?(ids: string[]): WidgetActivityEvent[];
     inboxData?(window: WidgetInboxWindow): WidgetInboxData;
     rosterStatus?(): { loading: boolean; error?: string };
+    /** The lines a decision card's refs cite, for a card the snapshot publishes; else `widgetExcerpts` reads them. */
+    excerpts?(refs: readonly InboxRef[], cwd: string | undefined): InboxRef[];
 }
 /** The cut-offs the badges count against, applied to every item before it is grouped. */
 export interface WidgetInboxWindow {
@@ -624,6 +626,13 @@ export function widgetForms({ dbPath, sessionHint }: { dbPath: string; sessionHi
         opts: sessionHint ? { sessionHint, includeUnhintedFormId: true, limit: 80 } : { status: "pending", limit: 250 },
     });
 }
+/** The widget's excerpt reads: a cited file is read again only when it changed (`cachingReadDeps`). */
+const widgetExcerptReads = cachingReadDeps();
+
+/** The refs a published decision card draws, with their lines; every snapshot cites the same files again. */
+function widgetExcerpts(refs: readonly InboxRef[], cwd: string | undefined): InboxRef[] {
+    return shownExcerpts(refs, cwd, widgetExcerptReads);
+}
 export const realWidgetSources: WidgetSources = {
     sessions: (refresh) =>
         listAgentSessionRows({
@@ -647,6 +656,7 @@ export const realWidgetSources: WidgetSources = {
     agents: (refresh) => widgetAgents({ refresh }),
     inboxData: readInboxData,
     events: (ids) => readWidgetDecisionEvents({ ids }),
+    excerpts: widgetExcerpts,
 };
 
 /** Refreshes both catalogs the Widget reads: indexed sessions and the agent roster, which the sessions scope excludes. */
@@ -1548,6 +1558,8 @@ export async function widgetSnapshot({
         });
     }
     const decisionsById = new Map(decisions.map((row) => [row.id, row]));
+    /** The refs each decision card cites; their lines are read only for a card in the window (`visibleCards`). */
+    const citedRefs = new Map<string, { refs: InboxRef[]; cwd: string | undefined }>();
     /** The decision that replaced `row`, with the widget key of its session when the roster knows it. */
     const supersededBy = (row: DecisionRecord): { supersededBy?: WidgetSupersededBy } => {
         if (!row.supersededBy) {
@@ -1591,7 +1603,6 @@ export async function widgetSnapshot({
         );
         const [titleText = "", context, proposal, notes, decisionBody = ""] = decisionImages.texts;
         const decisionTitle = liftedTitle(titleText, decisionImages.attachments);
-        const excerptRefs = shownExcerpts(inbox.refs, row.cwd ?? (session.target.cwd || undefined));
         const details: WidgetDecisionDetails = {
             ...(context?.trim() ? { context } : {}),
             ...(notes?.trim() ? { notes } : {}),
@@ -1599,9 +1610,15 @@ export async function widgetSnapshot({
             ...(inbox.confidence ? { confidence: inbox.confidence } : {}),
             ...(inbox.recommended ? { recommended: inbox.recommended } : {}),
             ...(inbox.blocking ? { blocking: true } : {}),
-            ...(excerptRefs.length > 0 ? { refs: excerptRefs } : {}),
             ...(inbox.delivery ? { delivery: inbox.delivery } : {}),
         };
+        if (inbox.refs.length > 0) {
+            citedRefs.set(`decision:${row.id}`, {
+                refs: inbox.refs,
+                cwd: row.cwd ?? (session.target.cwd || undefined),
+            });
+        }
+
         cards.push({
             id: `decision:${row.id}`,
             kind: kindOf(row),
@@ -1776,7 +1793,10 @@ export async function widgetSnapshot({
                 (card.id === `decision:${decisionLookup?.id}` && card.sessionKey === selectedKey)
             );
         })
-        .reverse();
+        .reverse()
+        .map((card) =>
+            withExcerpts({ card, cited: citedRefs.get(card.id), excerpts: sources.excerpts ?? widgetExcerpts })
+        );
     const activity =
         selectedId && sources.events
             ? await read(
@@ -1813,6 +1833,27 @@ export async function widgetSnapshot({
             : {}),
         ...(warmKeys.length > 0 ? { warmKeys } : {}),
     };
+}
+
+/**
+ * A published decision card with the lines its refs cite. A card the window drops is never read for: a long decision
+ * history cites files on every card, and a snapshot runs on each state change.
+ */
+function withExcerpts({
+    card,
+    cited,
+    excerpts,
+}: {
+    card: WidgetCard;
+    cited: { refs: InboxRef[]; cwd: string | undefined } | undefined;
+    excerpts: (refs: readonly InboxRef[], cwd: string | undefined) => InboxRef[];
+}): WidgetCard {
+    if (!cited) {
+        return card;
+    }
+
+    const refs = excerpts(cited.refs, cited.cwd);
+    return refs.length > 0 ? { ...card, decision: { ...card.decision, refs } } : card;
 }
 
 /** The newest cards a warm session brings; those that wait for an answer come on top of these. */
