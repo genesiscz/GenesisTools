@@ -3,6 +3,7 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { WarmupFailure } from "@genesiscz/utils/ai/providers/account-features";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { APICallError, RetryError } from "ai";
+import type { UsageResponse } from "./api";
 import { anthropicWarmup, type LongLivedTokens } from "./warmup";
 
 const LONG = "x".repeat(LONG_TOKEN_MIN_LENGTH);
@@ -30,6 +31,7 @@ function run(input: {
     tokens?: LongLivedTokens;
     generic?: () => Promise<void>;
     verdict?: "ok" | "limited" | "invalid";
+    lastUsage?: UsageResponse;
 }) {
     const calls = { generic: 0, longLived: [] as string[] };
     const outcome = anthropicWarmup(
@@ -46,12 +48,42 @@ function run(input: {
                 calls.longLived.push(token);
                 return input.verdict ?? "ok";
             },
+            lastUsage: async () => input.lastUsage,
         }
     );
     return { outcome, calls };
 }
 
 describe("anthropicWarmup", () => {
+    const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+
+    test("an account without a 5-hour limit and a running weekly window is skipped before any request", async () => {
+        const { outcome, calls } = run({
+            tokens: { longLivedToken: LONG },
+            generic: async () => {
+                throw new Error("a warmup request was sent although there is nothing to start");
+            },
+            lastUsage: { five_hour: null, seven_day: { utilization: 20, resets_at: inDays(3) } },
+        });
+
+        expect(await outcome).toMatchObject({ via: "none", skipped: expect.stringContaining("no 5-hour limit") });
+        expect(calls).toEqual({ generic: 0, longLived: [] });
+    });
+
+    test("negative control: such an account with an idle weekly window is still warmed up, as is a 5h account", async () => {
+        const idleWeekly = run({ lastUsage: { five_hour: null, seven_day: { utilization: 0, resets_at: null } } });
+        expect(await idleWeekly.outcome).toEqual({ via: "oauth" });
+
+        const withFiveHour = run({
+            lastUsage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 20, resets_at: inDays(3) },
+            },
+        });
+        expect(await withFiveHour.outcome).toEqual({ via: "oauth" });
+        expect(withFiveHour.calls.generic).toBe(1);
+    });
+
     test("OAuth success does not touch the login-long token", async () => {
         const { outcome, calls } = run({ tokens: { longLivedToken: LONG } });
         expect(await outcome).toEqual({ via: "oauth" });
