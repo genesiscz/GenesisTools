@@ -22,7 +22,9 @@ export function mtimeOf(path: string): number {
     try {
         return statSync(path).mtimeMs;
     } catch (err) {
-        logger.debug({ err, path }, "[transcripts] could not stat a transcript");
+        if (!isMissing(err)) {
+            logger.debug({ err, path }, "[transcripts] could not stat a transcript");
+        }
         return 0;
     }
 }
@@ -31,9 +33,19 @@ export function listDir(path: string): string[] {
     try {
         return readdirSync(path);
     } catch (err) {
-        logger.debug({ err, path }, "[transcripts] could not list a directory");
+        if (!isMissing(err)) {
+            logger.debug({ err, path }, "[transcripts] could not list a directory");
+        }
         return [];
     }
+}
+
+/**
+ * Most project folders have no `subagents/` and most homes no `~/.config/claude`, so a missing path is the normal
+ * answer. Logged with its stack it was 80% of the day log (159,223 of 200,000 lines on 2026-11-01, about 1 GB a day).
+ */
+function isMissing(err: unknown): boolean {
+    return err instanceof Error && "code" in err && err.code === "ENOENT";
 }
 
 export function isDir(path: string): boolean {
