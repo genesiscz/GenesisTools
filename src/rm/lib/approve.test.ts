@@ -35,12 +35,15 @@ import {
     type RmRequest,
     resolveTarget,
     restoreBatch,
+    rmRequestLockFile,
     saveRmConfig,
+    saveRmRequest,
     stillAside,
+    updateRmRequest,
 } from "@genesiscz/utils/rm";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
-import { saveApproved } from "../commands/requests";
+import { saveApproved, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { createRmProgram } from "../program";
 import {
@@ -955,5 +958,55 @@ describe("the requests listing", () => {
         expect(shortRmPath("/Users/alice/Projects/a-long-client-folder-name/shop/.smoke.tmp.ts", ctx)).toBe(
             "~/Projects/a-long-client-folder-n…/.smoke.tmp.ts"
         );
+    });
+});
+
+describe("the decision lock", () => {
+    test("a request open in another process is never decided twice", async () => {
+        const request = createRmRequest({ kind: "delete", caller: AGENT, cwd: base, reason: null, targets: [] });
+        // A live pid that is not ours holds it, as the second approve window did on 2026-10-31.
+        writeFileSync(rmRequestLockFile(request.id), String(process.ppid));
+        let ran = false;
+        const done = await underDecisionLock(
+            request.id,
+            () => "busy",
+            () => {
+                ran = true;
+            }
+        );
+        expect(done).toBe(false);
+        expect(ran).toBe(false);
+    });
+
+    test("the same process may nest, and the lock file goes when the outer decision ends", async () => {
+        const request = createRmRequest({ kind: "delete", caller: AGENT, cwd: base, reason: null, targets: [] });
+        let inner = false;
+        await underDecisionLock(
+            request.id,
+            () => "busy",
+            async () => {
+                inner = await underDecisionLock(
+                    request.id,
+                    () => "busy",
+                    () => {}
+                );
+                expect(existsSync(rmRequestLockFile(request.id))).toBe(true);
+            }
+        );
+        expect(inner).toBe(true);
+        expect(existsSync(rmRequestLockFile(request.id))).toBe(false);
+    });
+
+    test("an update writes from the copy on disk, not from one read earlier", () => {
+        const targets = [
+            { path: join(base, "lock-s1"), kind: "file" as const, rule: "default", reason: "r" },
+            { path: join(base, "lock-s2"), kind: "file" as const, rule: "default", reason: "r" },
+        ];
+        const request = createRmRequest({ kind: "delete", caller: AGENT, cwd: base, reason: null, targets });
+        saveRmRequest({ ...request, deniedNote: "written by another window" });
+        const update = updateRmRequest(request.id, (fresh) => ({ ...fresh, targets: fresh.targets.slice(1) }));
+        expect(update.kind).toBe("saved");
+        expect(loadRmRequest(request.id)?.deniedNote).toBe("written by another window");
+        expect(loadRmRequest(request.id)?.targets.map((target) => target.path)).toEqual([join(base, "lock-s2")]);
     });
 });
