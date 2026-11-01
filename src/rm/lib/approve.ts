@@ -2,6 +2,7 @@ import { existsSync, readdirSync, rmdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli";
+import { formatCount } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
     type ApprovalChoices,
@@ -517,8 +518,11 @@ export function denyRequest(
 export function printDenyOutcome(id: string, outcome: DenyOutcome, closedLine: string): void {
     if (outcome.lost.length > 0) {
         const paths = outcome.lost.map((target) => target.path).join(", ");
+        const lost = outcome.lost.length;
         out.println(
-            pc.yellow(`${outcome.lost.length} set-aside copy(ies) were already gone (${LOST_COPY_CAUSE}): ${paths}`)
+            pc.yellow(
+                `${formatCount(lost, "set-aside copy", "set-aside copies")} ${lost === 1 ? "was" : "were"} already gone (${LOST_COPY_CAUSE}): ${paths}`
+            )
         );
     }
 
@@ -588,7 +592,9 @@ function exitPendingFor(id: string, pending: readonly RmRequestTarget[]): void {
     }
 
     out.println(
-        pc.yellow(`Request ${id} stays pending for ${pending.length} blocked, changed or not put back path(s).`)
+        pc.yellow(
+            `Request ${id} stays pending for ${formatCount(pending.length, "blocked, changed or not put back path")}.`
+        )
     );
     process.exitCode = 1;
 }
@@ -757,7 +763,7 @@ function settleShared(shared: readonly SharedRequest[], decidedBy: RmRequest, ba
 
         if (update.kind === "busy") {
             out.println(
-                pc.dim(`  request ${candidate.request.id} is open in another window; it keeps its shared path(s)`)
+                pc.dim(`  request ${candidate.request.id} is open in another window; it keeps the paths it shares`)
             );
             continue;
         }
@@ -779,7 +785,9 @@ function settleShared(shared: readonly SharedRequest[], decidedBy: RmRequest, ba
             out.println(pc.dim(`  request ${candidate.request.id} is approved with it`));
         } else {
             out.println(
-                pc.dim(`  request ${candidate.request.id}: ${paths.size} shared path(s) decided, the rest still waits`)
+                pc.dim(
+                    `  request ${candidate.request.id}: ${formatCount(paths.size, "shared path")} decided, the rest still waits`
+                )
             );
         }
     }
@@ -926,11 +934,15 @@ function printDisposal(requestId: string, batch: TrashBatch | null, graceMinutes
     const count = batch?.items.length ?? 0;
 
     if (graceMinutes === 0) {
-        out.println(pc.green(`Deleting ${count} item(s) for good.`));
+        // The double-forked drainer deletes it; a failure lands in the ledger and the person's inbox.
+        const named = batch ? ` (batch ${batch.id})` : "";
+        out.println(pc.green(`Deleting ${formatCount(count, "item")} for good in the background${named}.`));
         return;
     }
 
-    out.println(pc.green(`Moved ${count} item(s) to the trash; the drain deletes them in ${graceMinutes} min.`));
+    out.println(
+        pc.green(`Moved ${formatCount(count, "item")} to the trash; the drain deletes them in ${graceMinutes} min.`)
+    );
 
     if (batch) {
         out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${requestId}`));

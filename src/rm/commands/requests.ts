@@ -1,5 +1,5 @@
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
-import { formatBytes } from "@genesiscz/utils/format";
+import { formatBytes, formatCount } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import {
@@ -335,11 +335,15 @@ export async function approveMany(
             const who = caller?.sessionTitle ?? caller?.project ?? caller?.agent ?? "a person";
             const sizes = (perPart[index]?.items ?? []).map((item) => item.bytes);
             return [
-                `${part.request.id} · ${who} · ${part.rows.length} item(s)`,
+                `${part.request.id} · ${who} · ${formatCount(part.rows.length, "item")}`,
                 ...approvalLines(part.request, part.rows, ctx, sizes).map((line) => `  ${line}`),
             ];
         });
-        out.println(pc.dim(`Opening the approval window for ${items.length} item(s) from ${shown.length} requests…`));
+        out.println(
+            pc.dim(
+                `Opening the approval window for ${formatCount(items.length, "item")} from ${shown.length} requests…`
+            )
+        );
         const answer = await ask(ctx, {
             title: `Delete ${items.length} items from ${shown.length} requests?`,
             lines,
@@ -468,7 +472,7 @@ export async function denyPicked(
         }
 
         const answer = await ask(ctx, {
-            title: `Deny ${others.length} request(s) from other sessions?`,
+            title: `Deny ${formatCount(others.length, "request")} from other sessions?`,
             lines: others.flatMap((request) => [
                 `${request.id} · ${request.caller?.sessionTitle ?? request.caller?.agent ?? "a person"}`,
                 ...request.targets.map((target) => `  ${target.path}`),
@@ -568,7 +572,7 @@ async function pickAndDecide(ctx: RunContext): Promise<void> {
         }
 
         action = await p.select({
-            message: `What happens to the ${ticked.length} ticked request(s)?`,
+            message: `What happens to the ${formatCount(ticked.length, "ticked request")}?`,
             options: Object.entries(PICKER_ACTIONS).map(([value, { label }]) => ({ value, label })),
         });
     } catch (error) {
@@ -635,7 +639,7 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
         request.kind === "delete"
             ? `Delete ${openEntries.length === 1 ? "1 item" : `${openEntries.length} items`}`
             : `Trust ${shown(openEntries[0]?.target.path ?? "", ctx.cwd)}`;
-    out.println(pc.dim(`Opening the approval window for ${id} (${openEntries.length} item(s))…`));
+    out.println(pc.dim(`Opening the approval window for ${id} (${formatCount(openEntries.length, "item")})…`));
     const answer = await requirePerson(ctx, {
         title: `${verb} for ${who}?`,
         lines: approvalLines(
@@ -846,7 +850,7 @@ export function registerRequestCommands(program: Command): void {
             out.println(
                 result.busy
                     ? `Request ${id} is measured by another run.`
-                    : `Measured ${result.measured} path(s) of request ${id}; ${result.fresh} were still fresh.`
+                    : `Measured ${formatCount(result.measured, "path")} of request ${id}; ${result.fresh} ${result.fresh === 1 ? "was" : "were"} still fresh.`
             );
         });
 

@@ -2,6 +2,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync } from "n
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { formatCount } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
@@ -361,7 +362,7 @@ export const RM_RULES: readonly RmRule[] = [
                 ? {
                       kind: "ask",
                       rule: "git-tracked",
-                      reason: `${facts.tracked} file(s) tracked by git in ${facts.workTree}: use git rm, or ask the user`,
+                      reason: `${formatCount(facts.tracked, "file")} tracked by git in ${facts.workTree}: use git rm, or ask the user`,
                   }
                 : null;
         },
@@ -397,7 +398,7 @@ export const RM_RULES: readonly RmRule[] = [
                 ? {
                       kind: "ask",
                       rule: "git-untracked",
-                      reason: `${facts.untracked} untracked file(s) git does not ignore in ${facts.workTree}: may be new work`,
+                      reason: `${formatCount(facts.untracked, "untracked file")} git does not ignore in ${facts.workTree}: may be new work`,
                   }
                 : null;
         },
@@ -410,7 +411,7 @@ export const RM_RULES: readonly RmRule[] = [
                 ? {
                       kind: "ask",
                       rule: "nested-repos",
-                      reason: `holds ${repos.length} git repositor${repos.length === 1 ? "y" : "ies"}, e.g. ${repos[0]}`,
+                      reason: `holds ${formatCount(repos.length, "git repository", "git repositories")}, e.g. ${repos[0]}`,
                   }
                 : null;
         },
@@ -748,7 +749,7 @@ function unsavedCloneWork(repo: string): string | null {
     }
 
     if (status.trim()) {
-        return `a clone with uncommitted changes (${status.trim().split("\n").length} path(s))`;
+        return `a clone with uncommitted changes (${formatCount(status.trim().split("\n").length, "path")})`;
     }
 
     // HEAD too: a commit made on a detached HEAD is on no branch, and no remote has it either.
