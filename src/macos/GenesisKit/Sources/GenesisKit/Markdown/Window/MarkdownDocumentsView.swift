@@ -1260,7 +1260,8 @@ private struct MarkdownDocumentPane: View {
                 onProperties: { doc.edit(MarkdownFrontmatter.replacing(properties: $0, in: doc.displayText)) },
                 onDropFiles: { model.acceptDrop($0) },
                 documentURL: doc.url,
-                vaultRoot: GenesisKit.host?.markdownVaultRoot
+                vaultRoot: GenesisKit.host?.markdownVaultRoot,
+                tasks: native ? taskBoxes : .preview
             )
         } else {
             MarkdownPreviewView(
@@ -1273,6 +1274,19 @@ private struct MarkdownDocumentPane: View {
                 zoom: model.zoom,
                 theme: model.theme
             )
+        }
+    }
+
+    /// What a task box on this note's page does: the setting, the file's state, and the write that answers the page.
+    private var taskBoxes: MarkdownTaskBoxes {
+        let clicks = configuration.taskClicks
+        if let lock = doc.taskLock(clicks) { return .locked(lock) }
+        return MarkdownTaskBoxes(lock: nil) { [weak doc, weak model] target, answer in
+            guard let doc else { return answer(false) }
+            doc.setTask(target, saveAtOnce: clicks == .saveAtOnce) { outcome in
+                model?.taskSettled(outcome, in: doc, askedToSave: clicks == .saveAtOnce)
+                answer(outcome.applied)
+            }
         }
     }
 
@@ -1336,7 +1350,8 @@ private struct MarkdownDocumentPane: View {
                 cssVariables: model.theme.cssVariables,
                 articleWidth: model.articleWidth <= 0 ? nil : model.articleWidth,
                 documentURL: doc.url,
-                vaultRoot: GenesisKit.host?.markdownVaultRoot
+                vaultRoot: GenesisKit.host?.markdownVaultRoot,
+                tasks: .locked("This is a past version of the note, so its tasks cannot be changed.")
             )
         } else {
             ScrollView {

@@ -577,6 +577,33 @@ final class MarkdownDocumentsModel: ObservableObject {
     @Published private(set) var notice: MarkdownNotice?
     private var noticeClear: Task<Void, Never>?
 
+    /// What the reader is told after a task box click. A change that landed says nothing (the box is the answer),
+    /// except a change that went into unsaved edits when a save was asked for. A refusal says why; the page already
+    /// shows the note as it is now.
+    func taskSettled(_ outcome: MarkdownDocument.TaskOutcome, in doc: MarkdownDocument, askedToSave: Bool) {
+        switch outcome {
+        case .saved, .unchanged:
+            break
+        case .drafted:
+            if askedToSave {
+                post(MarkdownNotice("The task changed in your unsaved edits. Save the note to keep it.", tone: .info))
+            }
+        case .notFound:
+            post(MarkdownNotice(
+                "That task is no longer in \u{201C}\(doc.title)\u{201D}, so nothing was changed. The page shows the note as it is now.",
+                tone: .warning))
+        case .ambiguous(let count):
+            post(MarkdownNotice(
+                "\u{201C}\(doc.title)\u{201D} changed and now has \(count) tasks with that text, so nothing was changed.",
+                tone: .warning))
+        case .failed(let message):
+            GenesisKit.log("markdown: task save in \(doc.url.path) failed: \(message)")
+            post(MarkdownNotice(
+                "The task could not be saved. Check that the file can be written and the disk has room, then try again.",
+                tone: .error, more: message))
+        }
+    }
+
     /// Shows `notice` in place of the one before, announces it to VoiceOver, and clears it after its lifetime
     /// (an error stays until it is closed).
     func post(_ notice: MarkdownNotice) {

@@ -68,6 +68,51 @@ public enum MarkdownGoToOpen: String, CaseIterable, Sendable {
     case previewTab
 }
 
+/// What a click on a task box (`- [ ]`) on the page does.
+public enum MarkdownTaskClicks: String, CaseIterable, Sendable {
+    /// The box changes and the note is written at once. A note with unsaved edits takes it into the draft. The default.
+    case saveAtOnce
+    /// The box changes the note's draft; ⌘S saves it with the other edits.
+    case editDraft
+    /// The boxes show the state and do not change.
+    case readOnly
+
+    public var title: String {
+        switch self {
+        case .saveAtOnce: return "Save the note at once"
+        case .editDraft: return "Change the draft"
+        case .readOnly: return "Nothing (read-only)"
+        }
+    }
+
+    /// The settings row's one line under its picker.
+    public var detail: String {
+        switch self {
+        case .saveAtOnce: return "The note is saved as soon as a box changes. With unsaved edits, the change goes into the draft."
+        case .editDraft: return "The box changes the note's draft. Save the note to keep the change."
+        case .readOnly: return "The boxes show which tasks are done and cannot be clicked."
+        }
+    }
+}
+
+/// How a checked task's text looks on the page.
+public enum MarkdownTaskDoneStyle: String, CaseIterable, Sendable {
+    /// In the secondary text colour. The default.
+    case dim
+    /// In the secondary text colour and struck through.
+    case dimStrike
+    /// Like any other item.
+    case plain
+
+    public var title: String {
+        switch self {
+        case .dim: return "Dimmed"
+        case .dimStrike: return "Dimmed and struck through"
+        case .plain: return "Unchanged"
+        }
+    }
+}
+
 @MainActor
 public final class GenesisKitMarkdownConfiguration: ObservableObject {
     public static let shared = GenesisKitMarkdownConfiguration()
@@ -135,6 +180,10 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     @Published public var stickySection: Bool { didSet { store(stickySection, "stickySection") } }
     /// Ticks on the page's scrollbar where the find matches are.
     @Published public var scrollbarMatchMarks: Bool { didSet { store(scrollbarMatchMarks, "scrollbarMatchMarks") } }
+    /// What a click on a task box does (Martin, 2026-11-01: "check and it will immediately save the file").
+    @Published public var taskClicks: MarkdownTaskClicks { didSet { store(taskClicks.rawValue, "taskClicks") } }
+    /// How a checked task's text looks.
+    @Published public var taskDoneStyle: MarkdownTaskDoneStyle { didSet { store(taskDoneStyle.rawValue, "taskDoneStyle") } }
 
     // MARK: Editor
 
@@ -218,6 +267,8 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         codeBlockBar = bool("codeBlockBar", true)
         stickySection = bool("stickySection", true)
         scrollbarMatchMarks = bool("scrollbarMatchMarks", true)
+        taskClicks = string("taskClicks").flatMap(MarkdownTaskClicks.init(rawValue:)) ?? .saveAtOnce
+        taskDoneStyle = string("taskDoneStyle").flatMap(MarkdownTaskDoneStyle.init(rawValue:)) ?? .dim
         completeWhileTyping = bool("completeWhileTyping", true)
         goToFiles = string("goToFiles").flatMap(MarkdownGoToFiles.init(rawValue:)) ?? .notes
         goToShowsHidden = bool("goToShowsHidden", false)

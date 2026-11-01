@@ -54,6 +54,7 @@ struct MarkdownSettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 MarkdownTabSettingsCard(configuration: configuration)
                 MarkdownPreviewSettingsCard(configuration: configuration)
+                MarkdownTaskSettingsCard(configuration: configuration)
                 MarkdownShareSettingsCard(configuration: configuration)
                 NativeSettingsCard("Editor", subtitle: "The source view, in Edit and Split.") {
                     NativeSettingsToggle("Suggest links and tags while typing",
@@ -224,6 +225,34 @@ struct MarkdownTabSettingsCard: View {
         .accessibilityLabel(title)
         .accessibilityValue("\(value.wrappedValue)")
         .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Task lists: what a click on a `- [ ]` box does (save at once is what Martin asked for, 2026-11-01), and how a done
+/// item's text looks.
+struct MarkdownTaskSettingsCard: View {
+    @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+
+    var body: some View {
+        NativeSettingsCard("Task lists", subtitle: "The boxes in front of - [ ] and - [x] items on the page.") {
+            NativeSettingsRow("A click on a box", detail: configuration.taskClicks.detail) {
+                Picker("A click on a box", selection: $configuration.taskClicks) {
+                    ForEach(MarkdownTaskClicks.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                .accessibilityIdentifier("markdown.settings.taskClicks")
+            }
+            Divider()
+            NativeSettingsRow("Done items", detail: "How the text of a checked item looks on the page.") {
+                Picker("Done items", selection: $configuration.taskDoneStyle) {
+                    ForEach(MarkdownTaskDoneStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                .accessibilityIdentifier("markdown.settings.taskDoneStyle")
+            }
+        }
+        .id("markdown-task-lists")
+        .nativeSettingsAnchor("markdown-task-lists")
     }
 }
 
