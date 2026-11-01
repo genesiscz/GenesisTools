@@ -24,7 +24,10 @@ Bun 1.3.13 is still supported. Its `node:zlib` zstd, both `zstdDecompressSync` a
 the FIRST frame of a multi-frame file and returns a short result with no error (probe on 2026-10-13: 7,000 of 14,000
 bytes; Bun 1.4.2 reads all). `Bun.zstdDecompressSync` reads every frame on both versions. So the readers find the
 frames themselves (seek table, else a walk over frame and block headers, 3 bytes per block, nothing decompressed) and
-decompress one frame at a time with `Bun.zstdDecompress*`. Memory holds one frame (or `concurrency` frames). Writing
+decompress one frame at a time with `Bun.zstdDecompress*`. A frame whose header asks for a window over 128 MiB
+(`zstd -19 --long=31` from a pipe writes 2 GiB) goes through `node:zlib` with `ZSTD_d_windowLogMax` 31 instead,
+because Bun's decoder takes no window option and refuses it; one frame at a time is exactly what `node:zlib` decodes
+right on 1.3.13. Memory holds one frame (or `concurrency` frames): a one-frame CLI archive is held whole. Writing
 uses `node:zlib`'s one-frame compressor, the only API that takes parameters (checksum, long mode) on 1.3.13. No FFI:
 `Bun.zstd*` decompresses at about 1.5-2 GB/s per core on these logs, and the frame walk covers seeking.
 
