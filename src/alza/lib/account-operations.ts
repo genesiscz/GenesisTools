@@ -18,6 +18,28 @@ import {
     showOrder,
     type Watchdog,
 } from "./account";
+import {
+    addressSearch,
+    afterOrderPayments,
+    chatNavigation,
+    checkoutPreview,
+    claimDetail,
+    complaintClaims,
+    contacts,
+    type DeliveryOptions,
+    deliveryOptions,
+    gdprInfo,
+    mobileRead,
+    mutateList,
+    orderDocument,
+    orderSearch,
+    profile,
+    RAW_READ_NAMES,
+    RAW_READS,
+    rawMarkdown,
+    selectPickupPoint,
+    subscriptionOverview,
+} from "./account-extras";
 import { AlzaApiError } from "./api";
 import { NotSignedInError, SIGN_IN_HINT } from "./auth";
 import { money } from "./format";
@@ -36,6 +58,8 @@ export interface AccountOperation {
     description: string;
     input: z.ZodObject;
     kind: AccountOperationKind;
+    /** Left out of the MCP tool list unless the server is started with the raw tools (`mobile_read`). */
+    hidden?: boolean;
     run(ctx: AccountContext, args: unknown): Promise<OperationResult>;
 }
 
@@ -53,6 +77,7 @@ function accountOperation<S extends z.ZodObject>(def: {
     description: string;
     input: S;
     kind: AccountOperationKind;
+    hidden?: boolean;
     run(ctx: AccountContext, input: z.infer<S>): Promise<OperationResult>;
 }): AccountOperation {
     return { ...def, run: (ctx, args) => def.run(ctx, def.input.parse(args)).catch(signInErrors) };
@@ -109,7 +134,7 @@ export function cartMarkdown(cart: CartView): string {
 
 export function favoritesMarkdown(f: FavoritesView): string {
     if (f.lists.every((list) => list.items.length === 0)) {
-        return `No favourites${f.signedIn ? "" : " for the anonymous visitor (not signed in)"}.`;
+        return `The list is empty${f.signedIn ? "" : " (anonymous visitor, not signed in)"}.`;
     }
 
     return f.lists
@@ -182,6 +207,39 @@ export function watchdogsMarkdown(
         })
         .join("\n");
 }
+
+export function deliveryMarkdown(o: DeliveryOptions, payments = true): string {
+    const lines: string[] = [];
+    for (const group of o.groups) {
+        lines.push(`**Delivery group ${group.id}** (${group.deliveries.length} options)`);
+        for (const d of group.deliveries) {
+            lines.push(`- ${d.name} \`${d.id}\` ${d.price ?? ""}${d.type ? ` · ${d.type}` : ""}`);
+        }
+    }
+
+    if (payments) {
+        lines.push(
+            "",
+            "**Payments**",
+            ...o.payments.map((p) => `- ${p.name} \`${p.id}\`${p.group ? ` · ${p.group}` : ""}`)
+        );
+    }
+
+    if (o.warnings.length > 0) {
+        lines.push("", ...o.warnings.map((w) => `Note: ${w.length > 200 ? `${w.slice(0, 200)}…` : w}`));
+    }
+
+    return lines.join("\n");
+}
+
+const LIST_NAMES = ["favorites", "later"] as const;
+const CLAIM_SCOPES = ["active", "archive"] as const;
+const deliveryOptionId = z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("A delivery option id from delivery_options, to anchor the listing on that delivery");
 
 // ── the table ────────────────────────────────────────────────────────────────
 
@@ -307,6 +365,264 @@ export const ACCOUNT_OPERATIONS: AccountOperation[] = [
         run: async (ctx, i) => {
             const data = await removeWatchdog(ctx, { ref: i.watchdog });
             return { data, markdown: `Watchdog ${data.removed} removed.` };
+        },
+    }),
+    accountOperation({
+        name: "profile",
+        description:
+            "The signed-in account's profile (getUserData): user id, name, email, phone, address book and sections. --json has the full answer.",
+        input: z.object({}),
+        kind: "read",
+        run: async (ctx) => {
+            const data = await profile(ctx);
+            const lines = Object.entries(data.summary).map(([key, value]) => `- ${key}: ${value}`);
+            return {
+                data,
+                markdown: ["**Profile**", ...lines, "", "The full answer is in `--json` (`raw`)."].join("\n"),
+            };
+        },
+    }),
+    accountOperation({
+        name: "contacts",
+        description: "Alza's contact channels (contact form, phone line, billing address). Works without a sign-in.",
+        input: z.object({}),
+        kind: "read",
+        run: async (ctx) => {
+            const data = await contacts(ctx);
+            return {
+                data,
+                markdown: data
+                    .map((c) => `- **${c.title}**${c.text ? `: ${c.text}` : ""}${c.url ? ` (${c.url})` : ""}`)
+                    .join("\n"),
+            };
+        },
+    }),
+    accountOperation({
+        name: "gdpr_info",
+        description:
+            "The account's GDPR section and data-export dialog (where an export would be sent). Reads only; it does not request the export.",
+        input: z.object({}),
+        kind: "read",
+        run: async (ctx) => {
+            const data = await gdprInfo(ctx);
+            return {
+                data,
+                markdown: `${rawMarkdown("GDPR section", data.personalDetails)}\n\n${rawMarkdown("Export dialog", data.gdprDialog)}`,
+            };
+        },
+    }),
+    accountOperation({
+        name: "subscription_overview",
+        description:
+            "The account's AlzaPlus+ / subscription section. The answer shape is not verified live; --json has it whole.",
+        input: z.object({}),
+        kind: "read",
+        run: async (ctx) => {
+            const data = await subscriptionOverview(ctx);
+            return { data, markdown: rawMarkdown("Subscription", data) };
+        },
+    }),
+    accountOperation({
+        name: "delivery_options",
+        description:
+            "Delivery options (AlzaBox, shops, courier) and payment methods for the current basket, signed in or as the visitor. Needs a basket with products.",
+        input: z.object({ selected_delivery_option_id: deliveryOptionId }),
+        kind: "read",
+        run: async (ctx, i) => {
+            const data = await deliveryOptions(ctx, { deliveryOptionId: i.selected_delivery_option_id });
+            return { data, markdown: deliveryMarkdown(data) };
+        },
+    }),
+    accountOperation({
+        name: "payment_methods",
+        description:
+            "The payment methods for the current basket (the payment half of delivery_options). Needs a basket with products.",
+        input: z.object({ selected_delivery_option_id: deliveryOptionId }),
+        kind: "read",
+        run: async (ctx, i) => {
+            const data = (await deliveryOptions(ctx, { deliveryOptionId: i.selected_delivery_option_id })).payments;
+            return {
+                data,
+                markdown: [
+                    "**Payments**",
+                    ...data.map((p) => `- ${p.name} \`${p.id}\`${p.group ? ` · ${p.group}` : ""}`),
+                ].join("\n"),
+            };
+        },
+    }),
+    accountOperation({
+        name: "select_pickup_point",
+        description:
+            "Despite the name (kept from the reference), this does not pick an AlzaBox: for one delivery option it lists the payments that fit and the resulting prices (getDeliveryAssociations). Changes nothing seen in the basket and orders nothing.",
+        input: z.object({
+            delivery_id: z.number().int().positive().describe("Delivery option id from delivery_options"),
+            delivery_group_id: z
+                .number()
+                .int()
+                .positive()
+                .optional()
+                .describe("Its group id; found from delivery_options when omitted"),
+            parcel_shop_id: z.number().int().min(0).optional().describe("A pickup place id, when the delivery has one"),
+        }),
+        kind: "write",
+        run: async (ctx, i) => {
+            const data = await selectPickupPoint(ctx, {
+                deliveryId: i.delivery_id,
+                deliveryGroupId: i.delivery_group_id,
+                parcelShopId: i.parcel_shop_id,
+            });
+            const lines = data.payments.map(
+                (p) => `- ${p.name ?? p.id} \`${p.id}\`: delivery ${p.price ?? "?"}, payment ${p.paymentPrice ?? "?"}`
+            );
+            return { data, markdown: [`**Payments for delivery ${data.deliveryId}**`, ...lines].join("\n") };
+        },
+    }),
+    accountOperation({
+        name: "checkout_preview",
+        description:
+            "Preview the checkout of the current basket: lines, total, delivery and payment options. Runs Alza's first checkout step (sendOrder1), so it is not read-only, but it never places an order: this tool has no order step.",
+        input: z.object({ selected_delivery_option_id: deliveryOptionId }),
+        kind: "write",
+        run: async (ctx, i) => {
+            const data = await checkoutPreview(ctx, { deliveryOptionId: i.selected_delivery_option_id });
+            return {
+                data,
+                markdown: `${cartMarkdown(data.cart)}\n\n${deliveryMarkdown(data.options)}\n\nNothing was ordered.`,
+            };
+        },
+    }),
+    accountOperation({
+        name: "address_search",
+        description:
+            "Look up postal codes and places in Alza's address database (e.g. '110 00' or 'Brno'). No sign-in needed.",
+        input: z.object({ query: z.string().min(1).max(50).describe("A postal code or a place") }),
+        kind: "read",
+        run: async (ctx, i) => {
+            const data = await addressSearch(ctx, i.query);
+            return { data, markdown: data.length ? data.map((a) => `- ${a.zip} ${a.city}`).join("\n") : "No match." };
+        },
+    }),
+    accountOperation({
+        name: "chat_navigation",
+        description:
+            "The live chatbot's navigation for this visitor: its initialize, restart, metadata and rating actions. Reads only; sends no message.",
+        input: z.object({}),
+        kind: "read",
+        run: async (ctx) => {
+            const data = await chatNavigation(ctx);
+            return { data, markdown: data.map((a) => `- ${a.name}${a.href ? `: ${a.href}` : ""}`).join("\n") };
+        },
+    }),
+    accountOperation({
+        name: "order_search",
+        description:
+            "Search the signed-in account's orders by order number or product name; results carry invoice links for order_document.",
+        input: z.object({
+            query: z.string().min(1).max(64).describe("Order number (e.g. '1058 423 434') or product words"),
+        }),
+        kind: "read",
+        run: async (ctx, i) => {
+            const data = await orderSearch(ctx, i.query);
+            const docs = data.orders.flatMap((o) =>
+                (o.documents ?? []).map((d) => `  - ${d.name ?? "document"}: ${d.href}`)
+            );
+            return {
+                data,
+                markdown: [
+                    ordersMarkdown({ orders: data.orders, hasMoreArchive: false }),
+                    ...(docs.length ? ["", "Documents:", ...docs] : []),
+                ].join("\n"),
+            };
+        },
+    }),
+    accountOperation({
+        name: "order_document",
+        description:
+            "Download an order invoice or document to a file. The link must be an https Alza document URL (invoices: pdf.alza.cz), as order_search returns it; redirects are not followed.",
+        input: z.object({
+            url: z.string().min(10).max(800).describe("The document link from order_search or order_show"),
+            output: z.string().min(1).describe("File path to write"),
+            overwrite: z.boolean().optional().describe("Replace an existing file"),
+        }),
+        // Writes a local file, so MCP clients must not treat it as read-only.
+        kind: "write",
+        run: async (ctx, i) => {
+            const data = await orderDocument(ctx, { href: i.url, output: i.output, overwrite: i.overwrite });
+            return {
+                data,
+                markdown: `Saved ${data.bytes} bytes${data.contentType ? ` (${data.contentType})` : ""} to ${data.path}.`,
+            };
+        },
+    }),
+    accountOperation({
+        name: "after_order_payments",
+        description: "The payment options still open for an unpaid order part (read only; this tool cannot pay).",
+        input: z.object({
+            order_id: z.string().min(1).max(16).describe("Order number"),
+            part_id: z.string().min(1).max(16).describe("Order part number (see order_show)"),
+        }),
+        kind: "read",
+        run: async (ctx, i) => {
+            const data = await afterOrderPayments(ctx, { orderId: i.order_id, partId: i.part_id });
+            return { data, markdown: rawMarkdown(`After-order payments for ${i.order_id}/${i.part_id}`, data) };
+        },
+    }),
+    accountOperation({
+        name: "complaint_claims",
+        description:
+            "The account's warranty claims, active (default) or archived; each carries a detailAction link for claim_detail.",
+        input: z.object({ scope: z.enum(CLAIM_SCOPES).optional().describe("active (default) or archive") }),
+        kind: "read",
+        run: async (ctx, i) => {
+            const data = await complaintClaims(ctx, i.scope ?? "active");
+            return { data, markdown: rawMarkdown(`Warranty claims (${i.scope ?? "active"})`, data) };
+        },
+    }),
+    accountOperation({
+        name: "claim_detail",
+        description:
+            "One warranty claim, by the detailAction href from complaint_claims. Only https links on the account's warranty-claims routes are followed.",
+        input: z.object({ href: z.string().min(10).max(800).describe("The claim's detailAction href") }),
+        kind: "read",
+        run: async (ctx, i) => {
+            const data = await claimDetail(ctx, i.href);
+            return { data, markdown: rawMarkdown("Warranty claim", data) };
+        },
+    }),
+    accountOperation({
+        name: "mutate_list",
+        description:
+            "Add a product to, or remove it from, the favourites (Oblíbené) or the buy-later list. Works signed in and for the visitor.",
+        input: z.object({
+            action: z.enum(["add", "remove"]).describe("add or remove"),
+            product,
+            list: z.enum(LIST_NAMES).optional().describe("favorites (default) or later"),
+        }),
+        kind: "write",
+        run: async (ctx, i) => {
+            const data = await mutateList(ctx, { action: i.action, product: i.product, list: i.list ?? "favorites" });
+            return {
+                data,
+                markdown: `${i.action === "add" ? "Added" : "Removed"} product ${data.productId}.\n\n${favoritesMarkdown(data.list)}`,
+            };
+        },
+    }),
+    accountOperation({
+        name: "mobile_read",
+        description: `Raw read-only escape hatch: one fixed GET route of the Alza app, answer returned whole. Operations: ${Object.entries(
+            RAW_READS
+        )
+            .map(([name, op]) => `${name} (${op.description})`)
+            .join("; ")}. Never takes a URL, never writes.`,
+        input: z.object({
+            operation: z.enum(RAW_READ_NAMES).describe("Which fixed read to run"),
+            args: z.record(z.string(), z.string()).optional().describe("Its arguments, e.g. {product_id: '9383715'}"),
+        }),
+        kind: "read",
+        hidden: true,
+        run: async (ctx, i) => {
+            const data = await mobileRead(ctx, { operation: i.operation, args: i.args });
+            return { data, markdown: rawMarkdown(i.operation, data) };
         },
     }),
 ];

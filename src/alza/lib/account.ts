@@ -72,14 +72,14 @@ export function openAccountContext(opts: {
     };
 }
 
-function requireSignedIn(ctx: AccountContext): void {
+export function requireSignedIn(ctx: AccountContext): void {
     if (!ctx.auth.readTokens()) {
         throw new NotSignedInError();
     }
 }
 
 /** The legacy restservice answers a stale token with HTTP 200 and the anonymous visitor (user_id -1) instead of 401. */
-function assertNotAnonymous(ctx: AccountContext, answer: { user_id?: number | null }, what: string): void {
+export function assertNotAnonymous(ctx: AccountContext, answer: { user_id?: number | null }, what: string): void {
     if (ctx.auth.readTokens() && answer.user_id === -1) {
         throw new NotSignedInError(
             `Alza answered ${what} as an anonymous visitor although a sign-in is stored; the token was not accepted. ${SIGN_IN_HINT}`
@@ -87,7 +87,7 @@ function assertNotAnonymous(ctx: AccountContext, answer: { user_id?: number | nu
     }
 }
 
-function assertNoError(answer: { err?: number | null; msg?: string | null }, what: string): void {
+export function assertNoError(answer: { err?: number | null; msg?: string | null }, what: string): void {
     if (answer.err && answer.err !== 0) {
         throw new AlzaApiError(`Alza refused ${what}: ${answer.msg ?? `error ${answer.err}`}`, 200);
     }
@@ -96,7 +96,7 @@ function assertNoError(answer: { err?: number | null; msg?: string | null }, wha
 const userIds = new WeakMap<AccountContext, number>();
 
 /** The numeric Alza user id the /api/users/{id} routes need: from the token file, else one getUserData read. */
-async function userId(ctx: AccountContext): Promise<number> {
+export async function userId(ctx: AccountContext): Promise<number> {
     requireSignedIn(ctx);
     const stored = ctx.auth.readTokens()?.user_id ?? userIds.get(ctx);
     if (stored) {
@@ -341,16 +341,27 @@ export interface FavoritesView {
     currency: string;
 }
 
+/** Shopping list types the app uses: 1 = Oblíbené (favourites), 14 = Uložit na později (buy later). */
+export const LIST_TYPES = { favorites: 1, later: 14 } as const;
+export type ListName = keyof typeof LIST_TYPES;
+
 /** The "Oblíbené" list (type 1). Live 2026-11-01: answered for an anonymous visitor too, with its items. */
 export async function listFavorites(ctx: AccountContext): Promise<FavoritesView> {
-    const answer = await ctx.api.json(commodityListsSchema, "/services/restservice.svc/v1/getCommodityLists?type=1", {
-        withToken: true,
-    });
-    assertNotAnonymous(ctx, answer, "the favourites read");
+    return listCommodityList(ctx, "favorites");
+}
+
+/** One shopping list by type, with its items. Keyed like the basket: the account, or the visitor cookie. */
+export async function listCommodityList(ctx: AccountContext, list: ListName): Promise<FavoritesView> {
+    const answer = await ctx.api.json(
+        commodityListsSchema,
+        `/services/restservice.svc/v1/getCommodityLists?type=${LIST_TYPES[list]}`,
+        { withToken: true }
+    );
+    assertNotAnonymous(ctx, answer, "the list read");
     // A visitor who never saved a favourite has no list yet: Alza answers err 1 "Seznam nenalezen" with no data.
     const noList = answer.err === 1 && (answer.data ?? []).length === 0;
     if (!noList) {
-        assertNoError(answer, "the favourites read");
+        assertNoError(answer, "the list read");
     }
 
     return {
@@ -383,8 +394,12 @@ export interface OrderSummary {
     status?: string;
     total?: string;
     parts: Array<{ number?: string; name?: string; status?: string }>;
-    list?: "active" | "archive";
+    /** Invoices and other documents (order search results carry them); `orders document <href>` downloads one. */
+    documents?: Array<{ name?: string; href: string }>;
+    list?: OrderListName;
 }
+
+export type OrderListName = "active" | "archive" | "search";
 
 function textOf(value: string | number | null | undefined): string | undefined {
     if (value === null || value === undefined || value === "") {
@@ -414,6 +429,12 @@ export function toOrderSummary(raw: OrderRaw): OrderSummary | undefined {
         status: raw.status ?? parts.find((part) => part.status)?.status,
         total: textOf(raw.totalPrice) ?? textOf(raw.price),
         parts,
+        documents: raw.documents?.length
+            ? raw.documents.flatMap((doc) => {
+                  const href = hrefOf(doc.self);
+                  return href ? [{ name: doc.name ?? undefined, href }] : [];
+              })
+            : undefined,
     };
 }
 
@@ -421,7 +442,7 @@ function orderIdFromHref(href: string | undefined): string | undefined {
     return href ? /\/orders\/(\d{6,})/.exec(href)?.[1] : undefined;
 }
 
-function parseOrders(raw: unknown, list: "active" | "archive"): { orders: OrderSummary[]; hasMore: boolean } {
+export function parseOrders(raw: unknown, list: OrderListName): { orders: OrderSummary[]; hasMore: boolean } {
     const page = ordersPageSchema.parse(raw);
     const orders = [...(page.value ?? []), ...(page.orders ?? [])].flatMap((item) => {
         const parsed = orderSchema.safeParse(item);
