@@ -381,40 +381,191 @@ describe("swiftpm-stale-plan", () => {
 describe("biome-unsafe-deletes-comments", () => {
     const fired = (command: string) =>
         detectShellViolations(command, biomeRules).map((violation) => violation.suggestion ?? violation.ruleId);
+    const SKIP = "--skip=correctness/noUnusedImports";
 
-    it("blocks the unsafe fix through every runner and drops only the flag", () => {
+    it("blocks the unsafe fix through every runner and keeps --unsafe with noUnusedImports skipped", () => {
+        expect(fired("bunx biome check --write --unsafe src/alza/lib/pc-build.ts")).toEqual([
+            `bunx biome check --write --unsafe ${SKIP} src/alza/lib/pc-build.ts`,
+        ]);
+        expect(fired("cd app && npx @biomejs/biome check --fix --unsafe .")).toEqual([
+            `cd app && npx @biomejs/biome check --fix --unsafe ${SKIP} .`,
+        ]);
+        expect(fired("bun x biome check --write --unsafe a.ts | tail -3")).toEqual([
+            `bun x biome check --write --unsafe ${SKIP} a.ts | tail -3`,
+        ]);
+    });
+
+    it("drops --unsafe when --only names noUnusedImports itself, since the run is that rule", () => {
         expect(fired("bunx biome lint --only=correctness/noUnusedImports --write --unsafe src")).toEqual([
             "bunx biome lint --only=correctness/noUnusedImports --write src",
         ]);
-        expect(fired("cd app && npx @biomejs/biome check --fix --unsafe .")).toEqual([
-            "cd app && npx @biomejs/biome check --fix .",
+        expect(fired("bunx biome lint --only lint/correctness/noUnusedImports --write --unsafe src")).toEqual([
+            "bunx biome lint --only lint/correctness/noUnusedImports --write src",
         ]);
-        expect(fired("bun x biome check --write --unsafe a.ts | tail -3")).toEqual([
-            "bun x biome check --write a.ts | tail -3",
+        expect(fired("bunx biome lint --only=noUnusedImports --write --unsafe src")).toEqual([
+            "bunx biome lint --only=noUnusedImports --write src",
         ]);
-        expect(fired("./node_modules/.bin/biome check --apply-unsafe src")).toEqual([
-            "./node_modules/.bin/biome check --apply src",
+        expect(
+            fired(
+                "bunx biome check --write --unsafe --only=style/useBlockStatements --only=correctness/noUnusedImports a.ts"
+            )
+        ).toEqual(["bunx biome check --write --only=style/useBlockStatements --only=correctness/noUnusedImports a.ts"]);
+    });
+
+    it.each(["correctness", "lint/correctness", "lint"])(
+        "blocks --only=%s, a group that holds noUnusedImports",
+        (group) => {
+            expect(fired(`bunx biome lint --only=${group} --write --unsafe src`)).toEqual([
+                `bunx biome lint --only=${group} --write --unsafe ${SKIP} src`,
+            ]);
+        }
+    );
+
+    it.each([
+        "bunx biome lint --write --unsafe --only lint/style/useBlockStatements src/rm/lib/approve.ts && bunx biome format --write src",
+        "./node_modules/.bin/biome check --write --unsafe --only=lint/style/useBlockStatements src/utils/rm/config.ts",
+        "bunx biome lint --only=style/useBlockStatements --write --unsafe src/alza/lib/pc-build.ts 2>&1 | tail -3",
+        "bunx biome lint --only=style/useBlockStatements --only=complexity/useOptionalChain --write --unsafe src",
+    ])("allows %j: --only limits the run to rules that never touch imports", (command) => {
+        expect(fired(command)).toEqual([]);
+    });
+
+    it("reads a quoted --only or --skip value as typed", () => {
+        expect(fired('bunx biome lint --only "style/useBlockStatements" --write --unsafe src')).toEqual([]);
+        expect(fired("bunx biome check --write --unsafe --skip 'correctness/noUnusedImports' src")).toEqual([]);
+        expect(fired("bunx biome lint --only='correctness/noUnusedImports' --write --unsafe src")).toEqual([
+            "bunx biome lint --only='correctness/noUnusedImports' --write src",
         ]);
     });
 
     it.each([
-        ["bunx biome check --write --unsafe --unsafe src", "bunx biome check --write src"],
+        `bunx biome check --write --unsafe ${SKIP} src`,
+        "bunx biome check --write --unsafe --skip=lint/correctness/noUnusedImports src",
+        "bunx biome lint --write --unsafe --skip correctness/noUnusedImports src",
+        "bunx biome check --write --unsafe --skip=correctness src",
+        "bunx biome check --write --unsafe --skip=lint/correctness src",
+        "bunx biome check --write --unsafe --skip=noUnusedImports src",
+        `bunx biome lint --only=correctness --write --unsafe ${SKIP} src`,
+        `bunx biome lint --only=correctness/noUnusedImports --write --unsafe ${SKIP} src`,
+    ])("allows %j: a --skip covers noUnusedImports", (command) => {
+        expect(fired(command)).toEqual([]);
+    });
+
+    it.each([
+        [
+            "(bunx biome lint --write --unsafe src --only correctness/noUnusedImports)",
+            "(bunx biome lint --write src --only correctness/noUnusedImports)",
+        ],
+        [
+            "(bunx biome lint --write --unsafe src --only=correctness/noUnusedImports)",
+            "(bunx biome lint --write src --only=correctness/noUnusedImports)",
+        ],
+        [
+            "bunx biome lint --write --unsafe src --only correctness/noUnusedImports|tail -3",
+            "bunx biome lint --write src --only correctness/noUnusedImports|tail -3",
+        ],
+        [
+            "bunx biome lint --write --unsafe src --only correctness/noUnusedImports;echo done",
+            "bunx biome lint --write src --only correctness/noUnusedImports;echo done",
+        ],
+        [
+            "bunx biome lint --write --unsafe src --only correctness/noUnusedImports&&git diff",
+            "bunx biome lint --write src --only correctness/noUnusedImports&&git diff",
+        ],
+        [
+            "bash -c 'bunx biome lint --write --unsafe src --only correctness/noUnusedImports'",
+            "bash -c 'bunx biome lint --write src --only correctness/noUnusedImports'",
+        ],
+        [
+            "bunx biome lint --write --unsafe src --only=correctness>/tmp/x.log",
+            `bunx biome lint --write --unsafe ${SKIP} src --only=correctness>/tmp/x.log`,
+        ],
+        ["bunx biome check --write src --unsafe; echo", `bunx biome check --write src --unsafe ${SKIP}; echo`],
+        [
+            "bunx biome check --write src --unsafe>/tmp/x.log",
+            `bunx biome check --write src --unsafe ${SKIP}>/tmp/x.log`,
+        ],
+    ])("reads %j as the shell does: a glued operator ends the value", (command, expected) => {
+        expect(fired(command)).toEqual([expected]);
+        expect(fired(expected)).toEqual([]);
+    });
+
+    it.each([
+        "bunx biome lint --write --unsafe src --only style/useBlockStatements|tail -3",
+        "(bunx biome lint --write --unsafe src --only=style/useBlockStatements)",
+        "bunx biome lint --write --unsafe src --only=style/useBlockStatements>/tmp/x.log",
+    ])("allows %j: the value without the operator is another rule", (command) => {
+        expect(fired(command)).toEqual([]);
+    });
+
+    it.each([
+        [
+            "R=correctness/noUnusedImports; bunx biome lint --only=$R --write --unsafe src",
+            "R=correctness/noUnusedImports; bunx biome lint --only=$R --write src",
+        ],
+        ['bunx biome lint --only "$RULE" --write --unsafe src', 'bunx biome lint --only "$RULE" --write src'],
+        ["bunx biome lint --only=$(cat rule) --write --unsafe src", "bunx biome lint --only=$(cat rule) --write src"],
+        [
+            "bunx biome lint --only=style/useBlockStatements --only=`cat rule` --write --unsafe src",
+            "bunx biome lint --only=style/useBlockStatements --only=`cat rule` --write src",
+        ],
+    ])("blocks %j: an --only value only the shell knows can name noUnusedImports", (command, expected) => {
+        expect(fired(command)).toEqual([expected]);
+    });
+
+    it.each([
+        [
+            "bunx biome check --write --unsafe a.ts && bunx biome check --write --unsafe b.ts",
+            `bunx biome check --write --unsafe ${SKIP} a.ts && bunx biome check --write --unsafe ${SKIP} b.ts`,
+        ],
+        [
+            "bunx biome lint --only=noUnusedImports --write --unsafe a.ts; bunx biome check --write --unsafe b.ts",
+            `bunx biome lint --only=noUnusedImports --write a.ts; bunx biome check --write --unsafe ${SKIP} b.ts`,
+        ],
+        [
+            "bunx biome check --write a.ts && bunx biome check --write --unsafe b.ts",
+            `bunx biome check --write a.ts && bunx biome check --write --unsafe ${SKIP} b.ts`,
+        ],
+    ])("corrects every unsafe biome call in %j, so the suggestion passes", (command, expected) => {
+        expect(fired(command)).toEqual([expected]);
+        expect(fired(expected)).toEqual([]);
+    });
+
+    it("a --skip of another rule does not cover noUnusedImports", () => {
+        expect(fired("bunx biome check --write --unsafe --skip=style/useBlockStatements src")).toEqual([
+            `bunx biome check --write --unsafe ${SKIP} --skip=style/useBlockStatements src`,
+        ]);
+    });
+
+    it.each([
+        ["bunx biome check --write --unsafe --unsafe src", `bunx biome check --write --unsafe --unsafe ${SKIP} src`],
+        ["bunx biome check --write --unsafe src --unsafe", `bunx biome check --write --unsafe src --unsafe ${SKIP}`],
+        [
+            "bunx biome check --write --unsafe=true src --unsafe=false",
+            `bunx biome check --write --unsafe=true src --unsafe=false ${SKIP}`,
+        ],
+        [
+            "cd app && bunx biome check --write --unsafe 'src/with space' --verbose --unsafe 2>&1 | tail -3",
+            `cd app && bunx biome check --write --unsafe 'src/with space' --verbose --unsafe ${SKIP} 2>&1 | tail -3`,
+        ],
+    ])("adds the --skip once and preserves every other argument in %s", (command, expected) => {
+        const suggestions = fired(command);
+        expect(suggestions).toEqual([expected]);
+        expect(fired(expected)).toEqual([]);
+    });
+
+    it.each([
+        ["./node_modules/.bin/biome check --apply-unsafe src", "./node_modules/.bin/biome check --apply src"],
         ["bunx biome check --apply-unsafe --unsafe src", "bunx biome check --apply src"],
-        ["bunx biome check --write --unsafe src --unsafe", "bunx biome check --write src"],
         [
             "bunx biome check src --apply-unsafe --unsafe --apply-unsafe --verbose",
             "bunx biome check src --apply --apply --verbose",
         ],
-        ["bunx biome check --write --unsafe=true src --unsafe=false", "bunx biome check --write src"],
         [
             "bunx biome check --apply-unsafe=true src --unsafe --apply-unsafe=false",
             "bunx biome check --apply=true src --apply=false",
         ],
-        [
-            "cd app && bunx biome check --write --unsafe 'src/with space' --verbose --unsafe 2>&1 | tail -3",
-            "cd app && bunx biome check --write 'src/with space' --verbose 2>&1 | tail -3",
-        ],
-    ])("removes every unsafe option while preserving the other arguments in %s", (command, expected) => {
+    ])("turns Biome 1.x's --apply-unsafe into its safe form in %s", (command, expected) => {
         const suggestions = fired(command);
         expect(suggestions).toEqual([expected]);
         expect(suggestions[0]).not.toMatch(/--(?:unsafe|apply-unsafe)(?:[=\s]|$)/);
@@ -422,7 +573,9 @@ describe("biome-unsafe-deletes-comments", () => {
     });
 
     it.each(["yarn exec", "pnpm exec", "npm exec", "npm exec --"])("blocks unsafe Biome fixes through %s", (runner) => {
-        expect(fired(`${runner} biome lint --write --unsafe src`)).toEqual([`${runner} biome lint --write src`]);
+        expect(fired(`${runner} biome lint --write --unsafe src`)).toEqual([
+            `${runner} biome lint --write --unsafe ${SKIP} src`,
+        ]);
         expect(fired(`${runner} @biomejs/biome check src --apply-unsafe --unsafe`)).toEqual([
             `${runner} @biomejs/biome check src --apply`,
         ]);
