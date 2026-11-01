@@ -49,4 +49,4 @@ Global profiler settings live at `~/.genesis-tools/GenesisTools/config.json`:
 }
 ```
 
-Empty `scopes` with `enabled: true` means every scope. Env overrides for one process: `PROFILE`, `PROFILE_TO_STDERR`, `PROFILE_TO_FILE`. Duration lines go to `~/.genesis-tools/logs/<date>-profiling.log`, not the pino day log. `tools config profiling --enable` is the durable switch.
+Empty `scopes` with `enabled: true` means every scope. Env overrides for one process: `PROFILE`, `PROFILE_TO_STDERR`, `PROFILE_TO_FILE`. Duration lines go to `~/.genesis-tools/logs/<date>-profiling.log`, not the pino day log. Only today and yesterday stay plain; `tools genesis-tools logs profile` also reads an older day, which the daily pass stores as `<date>-profiling.log.zst`. `tools config profiling --enable` is the durable switch.

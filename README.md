@@ -898,8 +898,9 @@ used when they exist, with AI transcription as the fallback.
 
 | Path | Contents |
 |------|----------|
-| `~/.genesis-tools/logs/<YYYY-MM-DD>.log` | Day-stamped pino JSON logs from every tool. First stop when anything misbehaves. |
-| `~/.genesis-tools/logs/<YYYY-MM-DD>-profiling.log` | Profiler duration lines when profiling is on. Not mixed into the pino day log. |
+| `~/.genesis-tools/logs/<YYYY-MM-DD>.log` | Day-stamped pino JSON logs from every tool. First stop when anything misbehaves. Only today and yesterday stay plain; an older day is `<YYYY-MM-DD>.log.zst`: read it with `tools genesis-tools logs day --since <YYYY-MM-DD>`, `tools compress cat <plain name>` or `rg -z`. |
+| `~/.genesis-tools/logs/<YYYY-MM-DD>-profiling.log` | Profiler duration lines when profiling is on. Not mixed into the pino day log. `.zst` after yesterday, like the day log: `tools genesis-tools logs profile`. |
+| `~/.genesis-tools/logs/<YYYY-MM-DD>-failures.jsonl` | One line per failed tool run. `.zst` after yesterday, like the day log: `tools genesis-tools logs failures`. |
 | `~/.genesis-tools/GenesisTools/config.json` | Global toolkit config (profiler, preferred browser). `tools config profiling`. |
 | `~/.genesis-tools/<tool>/` | Per-tool config and cache, for example `say/config.json`, `mcp-manager/config.json`, `scripts/`. |
 | `~/.genesis-tools/ai/config.json` | AI accounts, defaults, and aliases (version 4 schema). |

@@ -28,15 +28,27 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
   rename). A file is decompressed and compared by size and sha256; a folder archive is listed and every file's sha256
   compared with the folder. The original goes only after that, and a file only when its size and mtime did not change
   while it was read.
-- **A reader of compressed data opens either form.** Day logs: `dayLogPath` / `listDayLogs`
-  (`@genesiscz/utils/logger/day-logs`) and `readLinesSync` / `readTextChunks` / `readLastLines`
-  (`@genesiscz/utils/fs/read-lines`), which route a `.zst` path to the frame reader. rg over day logs:
-  `ripgrepFiles` (`@genesiscz/utils/compress/search`), which feeds a `.zst` into rg's stdin through a pull stream.
-  A new reader of a compressed store must do the same, in the same commit as the compression.
+- **A removed file can still hold its blocks.** A process that has the file open keeps every block after the unlink:
+  on 2026-11-01 31 handles of launchers and idle loggers kept 1.2 GB of removed day logs. So the logger opens its
+  day file close-on-exec and closes it at midnight (an unref'd timer), and the daily pass cuts a removed plain file
+  to zero through its own handle after a 10 s grace (`releaseGraceMs`), when no folder names it any more.
+- **A reader of compressed data opens either form.** Day files (`<date>.log`, `<date>-profiling.log`,
+  `<date>-failures.jsonl`): `dayLogPath` / `listDayLogs` (`@genesiscz/utils/logger/day-logs`, kind `log`,
+  `profiling` or `failures`) and `readLinesSync` / `readTextChunks` / `readLastLines` (`@genesiscz/utils/fs/read-lines`),
+  which route a `.zst` path to the frame reader. rg over day files: `ripgrepFiles` (`@genesiscz/utils/compress/search`),
+  which feeds a `.zst` into rg's stdin through a pull stream. Both also open a plain name whose file the daily pass
+  replaced by its `.zst` (a path listed before the pass, or built by hand), and so do the `{{lines}}`, `{{file}}`,
+  `{{json}}`, `{{symbol}}` and `{{tail}}` tokens and `tools compress cat`. The app launcher reads only today's and
+  yesterday's failures (`LauncherFailures.swift` `recorded`), which stay plain. A new reader of a compressed store must
+  do the same, in the same commit as the compression.
 - **The 30% read budget.** A place may be stored compressed only when its real reading command stays within +30%
   of the plain time: `bun scripts/benchmarks/compress/read-paths.ts` (fresh processes, interleaved arms, medians, the
-  load average in the notes, a check that the outputs agree). Day logs keep the last 7 days plain for that reason
-  (`DAY_LOGS_PLAIN_DAYS`): `tools daemon stats --since 7d` cost +87% CPU with five compressed days.
+  load average in the notes, a check that the outputs agree). Day files keep only today and yesterday plain
+  (`DAY_LOGS_PLAIN_DAYS = 2`). The one reader over many days, `tools daemon stats --since 7d`, cost +113% wall and
+  +129% CPU with five compressed days while it searched every day on every run; it now keeps the health lines of
+  finished days (`ripgrepFilesCached`, a digest per search in `logs/.digests/`, keyed by file identity, which the daily
+  pass carries to the `.zst`), so a warm run searches only today. A new reader that scans many finished days must keep
+  its per-day results the same way, or the window it scans stays plain.
 - **A level is chosen by who waits for the write, not by the read.** The frame header carries the frame's size, so the
   decoder's window is one frame at most at every level, and reads cost the same at levels 3 to 22 (2026-11-01,
   `bun scripts/benchmarks/compress/levels.ts`). The rule: the lowest level after which the next measured level
