@@ -1,4 +1,5 @@
 import { relative } from "node:path";
+import { bashWriteLookup } from "@app/agents/lib/changes/log";
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes, formatCount } from "@genesiscz/utils/format";
 import { rmEnablePresetCommand, rmRequestHintLine } from "@genesiscz/utils/genesis-tools/tools/hints";
@@ -59,8 +60,19 @@ export function runContext(): RunContext {
     const caller = rmCallerFromRuntime();
     const cwd = process.cwd();
     const { config, applied } = effectiveConfig(base, caller, cwd);
-    const rules = defaultRuleContext(config, caller, cwd, { enablePreset: rmEnablePresetCommand });
+    const rules = ruleContextFor(config, caller, cwd);
     return { config, base, profiles: applied, caller, cwd, rules };
+}
+
+/**
+ * The rule context for `caller` in `cwd` with what only GenesisTools knows: the command that turns a preset on, and
+ * the Bash writes of the caller's session from the agents change log. The sweep builds one per asking session.
+ */
+export function ruleContextFor(config: RmConfig, caller: RmCaller, cwd: string): RmRuleContext {
+    return defaultRuleContext(config, caller, cwd, {
+        hints: { enablePreset: rmEnablePresetCommand },
+        ownBashWrite: caller.sessionId ? bashWriteLookup(caller.sessionId) : undefined,
+    });
 }
 
 export function shown(path: string, cwd: string): string {
