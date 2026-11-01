@@ -125,8 +125,8 @@ to 88 on 16 cores, so the numbers are CPU time, not wall time.
    between 9 and 19 is about 20 MB.
 5. **`database` 19: by hand only.** Level 19 is 27% smaller than level 9 on the SQLite sample at 2 MB per CPU second
    (about 8 CPU minutes per GB); level 22 is larger than 19 there.
-6. **`max` 22 long: the most zstd does**, for archives the owner chooses to keep. `fast` stays at level 1, `media`
-   stores.
+6. **`max` 22 long: the most zstd does**, for an archive packed by hand to keep for long. `fast` stays at level 1,
+   `media` stores.
 
 Compression per level (cells: ratio, then MB compressed per CPU second, all threads counted):
 
