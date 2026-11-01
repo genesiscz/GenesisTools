@@ -75,14 +75,20 @@ describe("limitSeriesFrom", () => {
 
     test("a window the current snapshot lists as absent ends at its last point; the others carry on", () => {
         const absent = new Set([`${providerAccountKey("anthropic-sub", "work")}|five_hour`]);
-        const [claude, codex] = limitSeriesFrom(ENTRIES, ACCOUNTS, LABELS, {}, absent);
+        const [claude, codex] = limitSeriesFrom({
+            entries: ENTRIES,
+            accounts: ACCOUNTS,
+            labels: LABELS,
+            filter: {},
+            absent,
+        });
 
         expect(claude).toMatchObject({ provider: "anthropic-sub", endedAt: "1" });
         expect(codex.endedAt).toBeUndefined();
     });
 
     test("each provider's history keeps its own account id, label and provider", () => {
-        const series = limitSeriesFrom(ENTRIES, ACCOUNTS, LABELS, {});
+        const series = limitSeriesFrom({ entries: ENTRIES, accounts: ACCOUNTS, labels: LABELS, filter: {} });
 
         expect(series.map((s) => s.accountId)).toEqual(["acc_claude_work", "acc_codex_work"]);
         expect(series.map((s) => s.provider)).toEqual(["anthropic-sub", "openai-sub"]);
@@ -91,7 +97,12 @@ describe("limitSeriesFrom", () => {
     });
 
     test("a provider filter drops the same-named account the DB query could not exclude", () => {
-        const series = limitSeriesFrom(ENTRIES, ACCOUNTS, LABELS, { providers: ["claude"] });
+        const series = limitSeriesFrom({
+            entries: ENTRIES,
+            accounts: ACCOUNTS,
+            labels: LABELS,
+            filter: { providers: ["claude"] },
+        });
 
         expect(series).toHaveLength(1);
         expect(series[0].accountId).toBe("acc_claude_work");
@@ -99,7 +110,12 @@ describe("limitSeriesFrom", () => {
     });
 
     test("an account filter selects by id, so one of two same-named accounts survives", () => {
-        const series = limitSeriesFrom(ENTRIES, ACCOUNTS, LABELS, { accounts: ["acc_codex_work"] });
+        const series = limitSeriesFrom({
+            entries: ENTRIES,
+            accounts: ACCOUNTS,
+            labels: LABELS,
+            filter: { accounts: ["acc_codex_work"] },
+        });
 
         expect(series).toHaveLength(1);
         expect(series[0].provider).toBe("openai-sub");
@@ -107,12 +123,12 @@ describe("limitSeriesFrom", () => {
 
     test("an entry with no configured account keeps its own provider and falls back to the name", () => {
         const orphan = [{ provider: "grok-sub", account: "side", key: "primary", points: [] }];
-        const series = limitSeriesFrom(orphan, ACCOUNTS, LABELS, {});
+        const series = limitSeriesFrom({ entries: orphan, accounts: ACCOUNTS, labels: LABELS, filter: {} });
 
         expect(series[0]).toMatchObject({ accountId: "side", accountName: "side", provider: "grok-sub" });
     });
 
     test("negative control: no filter returns every provider's history", () => {
-        expect(limitSeriesFrom(ENTRIES, ACCOUNTS, LABELS, {})).toHaveLength(2);
+        expect(limitSeriesFrom({ entries: ENTRIES, accounts: ACCOUNTS, labels: LABELS, filter: {} })).toHaveLength(2);
     });
 });

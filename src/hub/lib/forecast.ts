@@ -279,8 +279,7 @@ export async function readAbsentWindows(): Promise<AbsentWindows> {
  */
 export function forecastFromSamples(
     samples: readonly UsageSample[],
-    now: Date = new Date(),
-    absent: AbsentWindows = new Map()
+    { now = new Date(), absent = new Map() }: { now?: Date; absent?: AbsentWindows } = {}
 ): AccountForecast[] {
     const groups = new Map<string, UsageSample[]>();
 
@@ -397,7 +396,7 @@ export async function buildForecast({
             account,
         });
         const absent = await readAbsent();
-        const accounts = forecastFromSamples(samples, now, absent);
+        const accounts = forecastFromSamples(samples, { now, absent });
         const elapsedMs = Math.round(performance.now() - started);
         log.debug({ samples: samples.length, accounts: accounts.length, elapsedMs }, "forecast built");
         return { generatedAt: now.toISOString(), source: db.filename, accounts, elapsedMs };
