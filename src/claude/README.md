@@ -243,9 +243,12 @@ finally the working directory. A weak match with more than one candidate is refu
 than guessed at, because typing into the wrong agent session is worse than not typing;
 `--first` overrides that for the non-weak cases. `--no-enter` leaves the text in the prompt
 without submitting it, and `--dry-run` prints the pane it would type into and stops.
-Multi-line text always goes as one `cmux paste --submit` (typed keystrokes turned every newline
-into its own prompt), and so does any text with a backslash (`cmux send` reads `\n`, `\r` and `\t`
-in its text as Enter and Tab); `--paste` asks for the paste for a single line too.
+Text goes as one `cmux paste --submit`, which refuses while a person is typing in that prompt
+(typed keystrokes landed in the middle of a person's unsent draft on 2026-11-01) and keeps the
+text literal (`cmux send` reads `\n`, `\r` and `\t` in its text as Enter and Tab). Only a slash
+command, or `--type`, is typed as keystrokes, and text with a newline or a backslash is pasted
+even then. From an agent, prefer `SendMessage` to the session's name or `uds:` socket: it never
+touches the person's prompt.
 
 `send` refuses to type while the session shows a question, plan or permission dialog, because
 the text plus Enter would pick an option the user never chose (a live paste into an open
