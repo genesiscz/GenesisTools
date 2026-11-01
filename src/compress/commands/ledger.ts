@@ -1,13 +1,14 @@
 import { statSync } from "node:fs";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { planDailyCompression, runDailyCompression } from "@genesiscz/utils/compress/daily";
+import { dailyPassLockPath, planDailyCompression, runDailyCompression } from "@genesiscz/utils/compress/daily";
 import { type LedgerOp, ledgerPath, searchLedger } from "@genesiscz/utils/compress/ledger";
 import { sampleFolder } from "@genesiscz/utils/compress/operations";
 import { PRESET_NAMES, PRESETS, sampleFile, type TrialGoal, tryPresets } from "@genesiscz/utils/compress/presets";
 import { formatLocalDateTimeStamp, parseSince } from "@genesiscz/utils/date";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -177,6 +178,19 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
     }
 
     const reports = await runDailyCompression();
+
+    if (!reports) {
+        const busy = `another daily pass is running and holds ${dailyPassLockPath(genesisToolsDir("logs"))}; it compresses the old days`;
+
+        if (options.json) {
+            out.result({ skipped: busy });
+            return;
+        }
+
+        out.println(pc.yellow(busy));
+        return;
+    }
+
     const summary = reports.map(({ target, report }) => ({
         target: target.name,
         compressed: report.compressed.length,
