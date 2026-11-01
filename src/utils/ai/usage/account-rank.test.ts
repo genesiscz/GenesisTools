@@ -25,6 +25,19 @@ function grok(name: string, monthly: number): AccountUsageSnapshot {
 }
 
 describe("rankAccounts (Codex)", () => {
+    it("an account the provider says has no short window ranks by its long window and says why", () => {
+        const absent: AccountUsageSnapshot = {
+            ...codex("work", 0, 20),
+            limits: [{ key: "secondary", label: "Weekly", kind: "weekly", percentUsed: 20 }],
+            absentLimits: [{ key: "primary", kind: "session" }],
+        };
+        const [first, second] = rankAccounts([codex("personal", 95, 50), absent], { now: NOW });
+
+        expect(first).toMatchObject({ accountName: "work", tier: "ready", longHeadroomPct: 80 });
+        expect(first.why).toBe("Weekly 80% left, no 5h limit");
+        expect(second.why).toContain("5h 5% left");
+    });
+
     it("puts ready first by weekly headroom, then session-starved, and never picks blocked or unknown accounts", () => {
         const ranked = rankAccounts(
             [

@@ -550,6 +550,7 @@ test("agents new prints the result JSON, records the session, and rejects a bad 
             name: "side",
             fiveHourLeft: 80,
             fiveHourResetsAt: null,
+            fiveHourAbsent: false,
             weeklyLeft: 40,
             weeklyResetsAt: null,
             note: null,
@@ -999,6 +1000,34 @@ test("without --account the error lists every account's 5h and weekly budget and
     expect(lines[0].indexOf("0% left", 30)).toBe(lines[1].lastIndexOf("?"));
     expect(message).toContain("AGENT INSTRUCTION: do not choose silently");
     expect(message).toContain("tell the user in your reply which one you picked and why");
+});
+
+test("an account without a 5-hour limit shows a dash with a legend in the 5h column, never ? or 100% left", () => {
+    const budgets = budgetsFromSnapshots(
+        [
+            { id: "acc_work", name: "work", provider: "anthropic-sub", enabled: true },
+            { id: "acc_shop", name: "shop", provider: "anthropic-sub", enabled: true },
+        ],
+        [
+            {
+                provider: "anthropic-sub",
+                accountId: "acc_work",
+                accountName: "work",
+                fetchedAt: "2026-10-08T19:59:00Z",
+                limits: [{ key: "seven_day", label: "Weekly", kind: "weekly", percentUsed: 30 }],
+                absentLimits: [{ key: "five_hour", kind: "session" }],
+            },
+        ]
+    );
+
+    expect(budgets[0]).toMatchObject({ name: "work", fiveHourLeft: null, fiveHourAbsent: true, weeklyLeft: 70 });
+    expect(budgets[1]).toMatchObject({ name: "shop", fiveHourAbsent: false });
+
+    const message = accountChoiceMessage({ agent: "claude", budgets, retry: "retry", now: 0 });
+
+    expect(message).toMatch(/^ {2}work\s+—\s+70% left$/m);
+    expect(message).toMatch(/^ {2}shop\s+\?\s+\?\s+no usage reading$/m);
+    expect(message).toContain("— in 5h: no 5h limit on this account");
 });
 
 test("budgets come from the poller's cache slice of the agent's provider, and an old reading says how old", () => {

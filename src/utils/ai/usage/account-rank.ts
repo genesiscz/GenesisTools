@@ -1,4 +1,9 @@
-import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import {
+    type AccountUsageSnapshot,
+    absentLimitText,
+    hasAbsentLimit,
+    type LimitWindow,
+} from "@genesiscz/utils/ai/providers/account-features";
 
 /**
  * The shared `auto` account pick (P7) for Codex and Grok, over the provider-neutral usage snapshot. Claude keeps its
@@ -75,7 +80,10 @@ function rankOne(snapshot: AccountUsageSnapshot, sessions: number, now: number):
     const score = (longHeadroomPct + resetBonus) / (1 + sessions);
     const parts = [
         `${long?.label ?? "long"} ${Math.round(longHeadroomPct)}% left`,
-        `${short?.label ?? "short"} ${Math.round(sessionHeadroomPct)}% left`,
+        // No short window at all is no constraint (headroom 100); say so instead of "short 100% left".
+        hasAbsentLimit(snapshot, { kind: "session" }) && !short
+            ? absentLimitText({ kind: "session" })
+            : `${short?.label ?? "short"} ${Math.round(sessionHeadroomPct)}% left`,
         ...(resetBonus > 0 ? [`resets within a day (+${Math.round(resetBonus)})`] : []),
         ...(sessions > 0 ? [`${sessions} session${sessions === 1 ? "" : "s"} on it`] : []),
     ];
