@@ -162,6 +162,18 @@ export const widgetPreferencesSchema = z.object({
      * any other file in its default app ("genesis-markdown"), every file in its default app, or a menu at the click.
      */
     fileLinkClick: z.enum(["genesis-markdown", "default-app", "ask"]).default("genesis-markdown"),
+    /**
+     * A decision card's Context section (the findings that lead to it): folded at the hub card's height with Show all
+     * ("folded"), or open in full.
+     */
+    decisionContext: z.enum(["folded", "open"]).default("folded"),
+    /** A decision card's Code section (the lines of each file it cites, read from disk): shown, or left out. */
+    decisionCode: z.enum(["show", "hide"]).default("show"),
+    /**
+     * Where a decision card puts the agent's reason for its pick (the proposal, a lightbulb line): under the
+     * recommended option ("option"), or above the options as the hub's Inbox card does ("above").
+     */
+    decisionProposal: z.enum(["option", "above"]).default("option"),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.
