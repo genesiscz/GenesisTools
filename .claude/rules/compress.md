@@ -41,11 +41,12 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
   `<date>-failures.jsonl`): `dayLogPath` / `listDayLogs` (`@genesiscz/utils/logger/day-logs`, kind `log`,
   `profiling` or `failures`) and `readLinesSync` / `readTextChunks` / `readLastLines` (`@genesiscz/utils/fs/read-lines`),
   which route a `.zst` path to the frame reader. rg over day files: `ripgrepFiles` (`@genesiscz/utils/compress/search`),
-  which feeds a `.zst` into rg's stdin through a pull stream. Both also open a plain name whose file the daily pass
-  replaced by its `.zst` (a path listed before the pass, or built by hand), and so do the `{{lines}}`, `{{file}}`,
-  `{{json}}`, `{{symbol}}` and `{{tail}}` tokens and `tools compress cat`. The app launcher reads only today's and
-  yesterday's failures (`LauncherFailures.swift` `recorded`), which stay plain. A new reader of a compressed store must
-  do the same, in the same commit as the compression.
+  which feeds a `.zst` into rg's stdin through a pull stream and reports exit 2 with the error when a `.zst` does not
+  open or decode (rg alone would see the end of its input and answer "no match"). Both also open a plain name whose
+  file the daily pass replaced by its `.zst` (a path listed before the pass, or built by hand), and so do the
+  `{{lines}}`, `{{file}}`, `{{json}}`, `{{symbol}}` and `{{tail}}` tokens and `tools compress cat`. The app launcher
+  reads only today's and yesterday's failures (`LauncherFailures.swift` `recorded`), which stay plain. A new reader of
+  a compressed store must do the same, in the same commit as the compression.
 - **The 30% read budget.** A place may be stored compressed only when its real reading command stays within +30%
   of the plain time: `bun scripts/benchmarks/compress/read-paths.ts` (fresh processes, interleaved arms, medians, the
   load average in the notes, a check that the outputs agree). Day files keep only today and yesterday plain
