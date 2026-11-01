@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { sessionScratchPath } from "../../../plugins/genesis-tools/hooks/session-scratch";
 import {
@@ -83,6 +84,7 @@ import {
     probeItemGit,
     pruneRmRequests,
     RM_REQUEST_TTL_MS,
+    type RmBashWrite,
     type RmCaller,
     type RmConfig,
     type RmLedgerEntry,
@@ -164,7 +166,7 @@ function ctx(overrides: Partial<RmRuleContext> = {}): RmRuleContext {
         asidePending: () => null,
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
-        ownBashWrite: () => null,
+        ownBashWrites: () => [],
         // No temp root unless a test names one: every fixture lives in the per-user temp folder.
         tempRoots: [],
         tempTree: measureTempTree,
@@ -2941,12 +2943,10 @@ describe("rule tmp-small: a small temp path goes without a request", () => {
         expect(scratchSessionLive(id, scratch, { claudeLive: registry([]) })).toBe(true);
     });
 
-    test("the temp roots are /tmp and getconf's per-user folder, never $TMPDIR", () => {
-        const saved = process.env.TMPDIR;
+    test("the temp roots are /tmp and getconf's per-user folder, never $TMPDIR", async () => {
         const fake = dir("fake-tmpdir-env");
-        process.env.TMPDIR = fake;
 
-        try {
+        await env.testing.withOverrides({ TMPDIR: fake }, () => {
             const roots = defaultTempRoots();
 
             expect(roots).toContain(realpathSync("/tmp"));
@@ -2955,9 +2955,7 @@ describe("rule tmp-small: a small temp path goes without a request", () => {
             if (process.platform === "darwin") {
                 expect(roots).toContain(realpathSync(userTempDir() ?? "/nonexistent"));
             }
-        } finally {
-            process.env.TMPDIR = saved;
-        }
+        });
     });
 
     test("tmp-reclaim's own leftovers count as temp", () => {
@@ -2969,32 +2967,61 @@ describe("rule tmp-small: a small temp path goes without a request", () => {
 });
 
 describe("own files a Bash command of the session made", () => {
+    /** A lookup that names `path` with the commands `writes` (ms offsets from the file's birth). */
+    function bashWrites(path: string, ...writes: Array<{ began?: number; ended: number }>) {
+        const born = lstatSync(path).birthtimeMs;
+        const iso = (offset: number) => new Date(born + offset).toISOString();
+        const rows: RmBashWrite[] = writes.map((write) => ({
+            ...(write.began === undefined ? {} : { began: iso(write.began) }),
+            ended: iso(write.ended),
+        }));
+        return (asked: string) => (asked === path ? rows : []);
+    }
+
     test("a file the session's Bash command made counts as its own; one that existed before the command does not", () => {
         const made = file(join(dir("bash-own"), "announce-2026-10-06.jsonl.zst"));
-        const now = new Date().toISOString();
-        // The row is written after the command, so a file born before the command (a `mv ~/x ./y` keeps its
-        // birthtime) is not one the command made: a row an hour after the file's birth stands for that.
-        const later = new Date(Date.now() + 60 * 60_000).toISOString();
-        const bash = (when: string) => (path: string) => (path === made ? when : null);
+        // The command began a second before the file was born and its row came a second after.
+        const during = bashWrites(made, { began: -1000, ended: 1000 });
 
-        expect(verdictOf(made, ctx({ ownBashWrite: bash(now) }))).toEqual({ kind: "allow", rule: "own-files" });
-        const context = ctx({ ownBashWrite: bash(now) });
+        expect(verdictOf(made, ctx({ ownBashWrites: during }))).toEqual({ kind: "allow", rule: "own-files" });
+        const context = ctx({ ownBashWrites: during });
         expect(evaluateTarget(resolveTarget(made, context.cwd), context).reason).toBe(
             "a file a Bash command of this session made, not tracked by git"
         );
-        expect(verdictOf(made, ctx({ ownBashWrite: bash(later) }))).toEqual({ kind: "ask", rule: "default" });
-        expect(verdictOf(made, ctx({ ownBashWrite: () => null }))).toEqual({ kind: "ask", rule: "default" });
+        // A file that existed when the command began (a person's file the command changed, or `mv ~/x ./y`, which
+        // keeps its birthtime) was not made by it, even a minute before a command that ran briefly.
+        expect(verdictOf(made, ctx({ ownBashWrites: bashWrites(made, { began: 60_000, ended: 61_000 }) }))).toEqual({
+            kind: "ask",
+            rule: "default",
+        });
+        // A file born after the command's row is a replacement swapped in later.
+        expect(verdictOf(made, ctx({ ownBashWrites: bashWrites(made, { began: -60_000, ended: -5000 }) }))).toEqual({
+            kind: "ask",
+            rule: "default",
+        });
+        // A row with no start (before 2026-11-02) proves nothing, however close its end.
+        expect(verdictOf(made, ctx({ ownBashWrites: bashWrites(made, { ended: 1000 }) }))).toEqual({
+            kind: "ask",
+            rule: "default",
+        });
+        expect(verdictOf(made, ctx({ ownBashWrites: () => [] }))).toEqual({ kind: "ask", rule: "default" });
+    });
+
+    test("any of the commands that wrote the path counts: the one that made it, though a later one changed it", () => {
+        const made = file(join(dir("bash-own-twice"), "made.txt"));
+        const madeThenChanged = bashWrites(made, { began: -1000, ended: 1000 }, { began: 60_000, ended: 61_000 });
+
+        expect(verdictOf(made, ctx({ ownBashWrites: madeThenChanged }))).toEqual({ kind: "allow", rule: "own-files" });
     });
 
     test("the settings turn it off: own-bash-files, or own files as a whole", () => {
         const made = file(join(dir("bash-own-off"), "made.txt"));
-        const now = new Date().toISOString();
-        const bash = (path: string) => (path === made ? now : null);
+        const bash = bashWrites(made, { began: -1000, ended: 1000 });
 
-        expect(verdictOf(made, ctx({ ownBashWrite: bash, config: { ...config, ownFilesFromBash: false } })).kind).toBe(
+        expect(verdictOf(made, ctx({ ownBashWrites: bash, config: { ...config, ownFilesFromBash: false } })).kind).toBe(
             "ask"
         );
-        expect(verdictOf(made, ctx({ ownBashWrite: bash, config: { ...config, allowOwnFiles: false } })).kind).toBe(
+        expect(verdictOf(made, ctx({ ownBashWrites: bash, config: { ...config, allowOwnFiles: false } })).kind).toBe(
             "ask"
         );
     });
@@ -3191,5 +3218,31 @@ describe("tmp-small never deletes inside a staging root", () => {
             kind: "allow",
             rule: "tmp-small",
         });
+    });
+
+    test("the staging root itself and a folder that holds one keep their request, and the reason says which", () => {
+        const temp = dir("staged-root-tmp");
+        const holder = dir("staged-root-tmp", "work");
+        const removable = dir("staged-root-tmp", "work", "removable");
+        file(join(removable, "disk-reclaim-20261101-1915", "tiny.txt"));
+        const c = ctx({ tempRoots: [temp], config: { ...config, tmpSmallExcluded: [removable] } });
+        const reason = (path: string) => evaluateTarget(resolveTarget(path, c.cwd), c).reason;
+
+        // Deleting the staging folder, or a folder around it, deletes everything staged in it.
+        expect(verdictOf(removable, c)).toEqual({ kind: "ask", rule: "default" });
+        expect(reason(removable)).toBe(
+            `is ${removable}, a staging area for the user's review: tmp-small never deletes there (tmp-small-exclude)`
+        );
+        expect(verdictOf(holder, c)).toEqual({ kind: "ask", rule: "default" });
+        expect(reason(holder)).toStartWith(`holds ${removable}, a staging area for the user's review`);
+
+        // Without the exclusion both are small temp paths that tmp-small deletes.
+        const open = ctx({ tempRoots: [temp], config: { ...config, tmpSmallExcluded: [] } });
+        expect(verdictOf(removable, open)).toEqual({ kind: "allow", rule: "tmp-small" });
+        expect(verdictOf(holder, open)).toEqual({ kind: "allow", rule: "tmp-small" });
+        // A sibling of the staging folder is not covered by it.
+        const sibling = dir("staged-root-tmp", "work-other");
+        file(join(sibling, "tiny.txt"));
+        expect(verdictOf(sibling, c)).toEqual({ kind: "allow", rule: "tmp-small" });
     });
 });

@@ -116,10 +116,10 @@ export interface RmRuleContext {
     /** Files the calling session wrote, by absolute path. */
     ownFiles: ReadonlySet<string>;
     /**
-     * When a Bash command of the calling session last recorded writing `path` (an ISO time), or null: the agents
-     * change log, read by the GenesisTools caller (`bashWriteLookup`), so this package parses no tool's format.
+     * Every Bash command of the calling session that recorded writing `path`, from the agents change log, read by the
+     * GenesisTools caller (`bashWriteLookup`), so this package parses no tool's format. Empty when none did.
      */
-    ownBashWrite: (path: string) => string | null;
+    ownBashWrites: (path: string) => readonly RmBashWrite[];
     /** The per-session scratch root (`/tmp/cc`). */
     scratchRoots: readonly string[];
     /** The pending request whose aside folder the target is, holds, or sits in; null when none. */
@@ -134,6 +134,14 @@ export interface RmRuleContext {
     scratchLive: (session: string, dir: string) => boolean;
     /** Commands a reason may name, passed in by the GenesisTools caller (`src/utils/genesis-tools/tools/hints.ts`). */
     hints?: RmRuleHints;
+}
+
+/** One Bash command of the session that the change log says wrote a path. */
+export interface RmBashWrite {
+    /** When the command began (ISO). A row recorded before 2026-11-02 carries none, and then it proves nothing. */
+    began?: string;
+    /** When its row was written, after the command ended (ISO). */
+    ended: string;
 }
 
 export interface RmRuleHints {
@@ -492,18 +500,22 @@ export const RM_RULES: readonly RmRule[] = [
     },
 ];
 
-/** A Bash command runs at most 10 minutes in the harnesses; the row is written once it ended. */
-const BASH_COMMAND_WINDOW_MS = 15 * 60_000;
+/** A file system timestamp against the clock that wrote the row: a coarse file system rounds by up to 2 seconds. */
+const BIRTH_SLACK_MS = 2_000;
 
 /**
- * Whether a Bash command of the session made `target`: the change log names the path, and the file was born inside
- * that command (up to 15 minutes before its row, a minute of clock slack after). A file a command only moved keeps
- * its old birthtime (`mv ~/notes.txt ./scratch.txt`), so it never counts, and neither does one swapped in later.
+ * Whether a Bash command of the session made `target`: the change log names the path, and the file was born while
+ * one of those commands ran, between its start and its row. A file that existed before the command and was only
+ * changed or moved by it keeps its older birthtime (`mv ~/notes.txt ./scratch.txt`), so it never counts, and neither
+ * does one swapped in after the command, nor a row without the command's start.
  */
 function madeByBash(target: RmTarget, ctx: RmRuleContext): boolean {
-    const at = ctx.ownBashWrite(target.path) ?? ctx.ownBashWrite(target.canonical);
+    const writes = [
+        ...ctx.ownBashWrites(target.path),
+        ...(target.canonical === target.path ? [] : ctx.ownBashWrites(target.canonical)),
+    ];
 
-    if (!at) {
+    if (writes.length === 0) {
         return false;
     }
 
@@ -516,13 +528,27 @@ function madeByBash(target: RmTarget, ctx: RmRuleContext): boolean {
         return false;
     }
 
-    const wrote = Date.parse(at);
-    return born > 0 && born >= wrote - BASH_COMMAND_WINDOW_MS && born <= wrote + 60_000;
+    return born > 0 && writes.some((write) => bornDuring(born, write));
 }
 
-/** The folder of `tmpSmallExcluded` that holds `target` (as configured, e.g. `/tmp/removable`), or null. */
+/** Whether `born` falls inside the command of `write`: at or after its start, and before its row (with slack). */
+function bornDuring(born: number, write: RmBashWrite): boolean {
+    const began = write.began ? Date.parse(write.began) : Number.NaN;
+    const ended = Date.parse(write.ended);
+    return Number.isFinite(began) && Number.isFinite(ended) && born >= began && born <= ended + BIRTH_SLACK_MS;
+}
+
+/**
+ * The folder of `tmpSmallExcluded` (as configured, e.g. `/tmp/removable`) that `target` is, sits in, or holds, or
+ * null: deleting the staging folder itself, or a folder around it, deletes everything staged in it too.
+ */
 function stagingRootOf(target: RmTarget, ctx: RmRuleContext): string | null {
-    return ctx.config.tmpSmallExcluded.find((root) => isInside(target.canonical, realOrSelf(root))) ?? null;
+    return (
+        ctx.config.tmpSmallExcluded.find((root) => {
+            const staging = realOrSelf(root);
+            return isSameOrInside(target.canonical, staging) || isInside(staging, target.canonical);
+        }) ?? null
+    );
 }
 
 /**
@@ -620,7 +646,12 @@ function defaultAskReason(target: RmTarget, ctx: RmRuleContext): string {
     const staging = stagingRootOf(target, ctx);
 
     if (staging) {
-        return `inside ${staging}, a staging area for the user's review: tmp-small never deletes there (tmp-small-exclude)`;
+        const where = isInside(target.canonical, realOrSelf(staging))
+            ? `inside ${staging}`
+            : isInside(realOrSelf(staging), target.canonical)
+              ? `holds ${staging}`
+              : `is ${staging}`;
+        return `${where}, a staging area for the user's review: tmp-small never deletes there (tmp-small-exclude)`;
     }
 
     if (sessionId) {
@@ -970,7 +1001,7 @@ export function defaultRuleContext(
     config: RmConfig,
     caller: RmCaller,
     cwd: string,
-    extra: { hints?: RmRuleHints; ownBashWrite?: (path: string) => string | null } = {}
+    extra: { hints?: RmRuleHints; ownBashWrites?: (path: string) => readonly RmBashWrite[] } = {}
 ): RmRuleContext {
     const pending = pendingAsideDirs();
     const live = new Map<string, boolean>();
@@ -981,7 +1012,7 @@ export function defaultRuleContext(
         home: homedir(),
         presets: presetsFor(config),
         ownFiles: sessionOwnFiles(caller),
-        ownBashWrite: extra.ownBashWrite ?? (() => null),
+        ownBashWrites: extra.ownBashWrites ?? (() => []),
         scratchRoots: sessionScratchRoots(caller),
         asidePending: (target) => pendingAsideFor(target.canonical, pending),
         git: probeGit,

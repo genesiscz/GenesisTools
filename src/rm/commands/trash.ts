@@ -69,6 +69,27 @@ export function agentMayDrainEarly(batch: Pick<TrashBatch, "caller" | "items">, 
     );
 }
 
+/**
+ * Each drain failure told once (`notify.onFailure`), and whether any happened: `settle` waits for every post, so the
+ * process may end, and answers true when an item could not be deleted (a foreground drain then exits 1).
+ */
+export function drainFailures(tell: (failure: DrainFailure) => Promise<void>): {
+    onFailure: (failure: DrainFailure) => void;
+    settle: () => Promise<boolean>;
+} {
+    const told: Array<Promise<void>> = [];
+
+    return {
+        onFailure: (failure) => {
+            told.push(tell(failure));
+        },
+        settle: async () => {
+            await Promise.all(told);
+            return told.length > 0;
+        },
+    };
+}
+
 export function registerTrashCommands(program: Command): void {
     program
         .command("trash")
@@ -161,8 +182,8 @@ export function registerTrashCommands(program: Command): void {
             recoverAsideJournals();
 
             // A failure is told once; the inbox post is awaited before the process may end.
-            const told: Array<Promise<void>> = [];
-            const onFailure = (failure: DrainFailure) => told.push(notifyDrainFailure(failure, config));
+            const failures = drainFailures((failure) => notifyDrainFailure(failure, config));
+            const { onFailure } = failures;
 
             if (flags.background) {
                 await runDrainer({
@@ -173,7 +194,7 @@ export function registerTrashCommands(program: Command): void {
                     },
                     requestsWaiting: () => listRmRequests().some((request) => request.kind === "delete"),
                 });
-                await Promise.all(told);
+                await failures.settle();
                 return;
             }
 
@@ -187,7 +208,12 @@ export function registerTrashCommands(program: Command): void {
             const forceOnly = agentOnly ? (batch: TrashBatch) => agentMayDrainEarly(batch, caller) : undefined;
             const swept = await sweepOrphans({ config, onItem });
             const drained = await drainDue({ config, force: flags.now, forceOnly, onItem, onFailure });
-            await Promise.all(told);
+
+            // The failed path and its error went to stderr (logger.warn); the exit code says it to a script too.
+            if (await failures.settle()) {
+                process.exitCode = 1;
+            }
+
             const left = listBatches().filter((batch) => !batch.incomplete).length;
 
             for (const entry of swept.held) {

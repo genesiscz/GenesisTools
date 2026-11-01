@@ -1,6 +1,8 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import type { RmBashWrite } from "@genesiscz/utils/rm";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { namedArguments } from "../hooks/diff/command-paths";
 import { safeSegment } from "../hooks/paths";
@@ -22,6 +24,11 @@ export interface ChangeEvent {
     beforeOid: string | null;
     afterOid: string | null;
     source: "edit" | "write" | "bash";
+    /**
+     * A Bash row: when its command began (ISO), so a reader can tell a file the command made (born after this) from
+     * one it only changed. Rows before 2026-11-02 carry none.
+     */
+    began?: string;
     /** Set when either side was not stored (the after side's reason wins). Rows before 2026-09-25 carry only this. */
     skipped?: "binary" | "large";
     /** Why the before-state has no `beforeOid`. */
@@ -59,64 +66,154 @@ export function sessionChangesPath(session: string): string {
     return genesisToolsDir("agents", safe, "changes.jsonl");
 }
 
+/** The tail of a change log the Bash-write lookup reads; older rows are not read, and the cap is logged. */
+export const BASH_LOOKUP_MAX_BYTES = 8 * 1024 * 1024;
+
+/** The Bash-write indexes loaded in this process, kept for this many sessions (least recently used goes first). */
+const BASH_INDEX_SESSIONS = 8;
+
+interface BashWriteIndex {
+    size: number;
+    mtimeMs: number;
+    maxBytes: number;
+    byPath: Map<string, RmBashWrite[]>;
+}
+
+/** One index per session, reused while its log keeps the same size and mtime: a sweep of many requests reads once. */
+const bashWriteIndexes = new Map<string, BashWriteIndex>();
+
 /**
- * When a Bash command of `session` last recorded writing each path (`tools rm`'s own-files rule asks): the change log
- * is read once, on the first lookup, and each path is found by its exact `"path":` text, newest row first. A row
- * of another source, a torn line, a missing log or an unsafe id answer null.
+ * Every Bash command of `session` that recorded writing each path (`tools rm`'s own-files rule asks), in log order:
+ * when it began (rows before 2026-11-02 carry no start) and when its row was written. The log's last
+ * `maxBytes` are read once, on the first lookup, into an index by path that later lookups of the same session in
+ * this process share while the log is unchanged. A row of another source, a torn line, a missing log or an unsafe
+ * id give no entry.
  */
-export function bashWriteLookup(session: string): (path: string) => string | null {
-    let text: string | null | undefined;
-
-    const load = (): string | null => {
-        if (text !== undefined) {
-            return text;
-        }
-
-        try {
-            text = readFileSync(sessionChangesPath(session), "utf8");
-        } catch {
-            text = null;
-        }
-
-        return text;
-    };
+export function bashWriteLookup(
+    session: string,
+    { maxBytes = BASH_LOOKUP_MAX_BYTES }: { maxBytes?: number } = {}
+): (path: string) => RmBashWrite[] {
+    let index: Map<string, RmBashWrite[]> | null | undefined;
 
     return (path) => {
-        const log = load();
-
-        if (!log) {
-            return null;
+        if (index === undefined) {
+            index = bashWriteIndex(session, maxBytes);
         }
 
-        const needle = `"path":${SafeJSON.stringify(path)}`;
-
-        for (let at = log.lastIndexOf(needle); at >= 0; at = at === 0 ? -1 : log.lastIndexOf(needle, at - 1)) {
-            const start = log.lastIndexOf("\n", at) + 1;
-            const end = log.indexOf("\n", at);
-            let row: unknown;
-
-            try {
-                row = SafeJSON.parse(log.slice(start, end < 0 ? undefined : end), { strict: true });
-            } catch {
-                continue;
-            }
-
-            if (
-                typeof row === "object" &&
-                row !== null &&
-                "source" in row &&
-                row.source === "bash" &&
-                "path" in row &&
-                row.path === path &&
-                "ts" in row &&
-                typeof row.ts === "string"
-            ) {
-                return row.ts;
-            }
-        }
-
-        return null;
+        return index?.get(path) ?? [];
     };
+}
+
+function bashWriteIndex(session: string, maxBytes: number): Map<string, RmBashWrite[]> | null {
+    let file: string;
+    let size: number;
+    let mtimeMs: number;
+
+    try {
+        file = sessionChangesPath(session);
+        ({ size, mtimeMs } = statSync(file));
+    } catch (error) {
+        logger.debug({ session, error }, "agents: no change log to read Bash writes from");
+        return null;
+    }
+
+    const cached = bashWriteIndexes.get(session);
+    bashWriteIndexes.delete(session);
+
+    if (cached && cached.size === size && cached.mtimeMs === mtimeMs && cached.maxBytes === maxBytes) {
+        bashWriteIndexes.set(session, cached);
+        return cached.byPath;
+    }
+
+    let text: string;
+
+    try {
+        text = readTail(file, size, maxBytes);
+    } catch (error) {
+        logger.debug({ session, error }, "agents: cannot read the change log for Bash writes");
+        return null;
+    }
+
+    if (size > maxBytes) {
+        logger.debug(
+            { session, size, maxBytes },
+            "agents: change log over the cap: Bash writes before its last bytes are not read"
+        );
+    }
+
+    const byPath = new Map<string, RmBashWrite[]>();
+
+    for (const line of text.split("\n")) {
+        if (!line.includes('"source":"bash"')) {
+            continue;
+        }
+
+        let row: unknown;
+
+        try {
+            row = SafeJSON.parse(line, { strict: true });
+        } catch (error) {
+            logger.debug({ session, error }, "agents: skipping a torn change-log row");
+            continue;
+        }
+
+        const write = bashWriteOf(row);
+
+        if (write) {
+            byPath.set(write.path, [...(byPath.get(write.path) ?? []), write.write]);
+        }
+    }
+
+    bashWriteIndexes.set(session, { size, mtimeMs, maxBytes, byPath });
+
+    while (bashWriteIndexes.size > BASH_INDEX_SESSIONS) {
+        const oldest = bashWriteIndexes.keys().next().value;
+
+        if (oldest === undefined) {
+            break;
+        }
+
+        bashWriteIndexes.delete(oldest);
+    }
+
+    return byPath;
+}
+
+/** The last `maxBytes` of a file of `size` bytes, from the first whole line on. */
+function readTail(file: string, size: number, maxBytes: number): string {
+    if (size <= maxBytes) {
+        return readFileSync(file, "utf8");
+    }
+
+    const fd = openSync(file, "r");
+
+    try {
+        const buffer = Buffer.alloc(maxBytes);
+        const read = readSync(fd, buffer, 0, maxBytes, size - maxBytes);
+        const text = buffer.subarray(0, read).toString("utf8");
+        return text.slice(text.indexOf("\n") + 1);
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/** A Bash row's path, start and end; null for any other row. */
+function bashWriteOf(row: unknown): { path: string; write: RmBashWrite } | null {
+    if (
+        typeof row !== "object" ||
+        row === null ||
+        !("source" in row) ||
+        row.source !== "bash" ||
+        !("path" in row) ||
+        typeof row.path !== "string" ||
+        !("ts" in row) ||
+        typeof row.ts !== "string"
+    ) {
+        return null;
+    }
+
+    const began = "began" in row && typeof row.began === "string" ? row.began : undefined;
+    return { path: row.path, write: { ...(began ? { began } : {}), ended: row.ts } };
 }
 
 /** The harness file tools this log records: Edit and MultiEdit as `edit`, Write as `write`. */

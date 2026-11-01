@@ -12,6 +12,7 @@ import {
     createRmRequest,
     DEFAULT_APPROVAL_DEPS,
     hardDenyReason,
+    kickDrainer,
     listRmRequests,
     loadRmMeasurementOf,
     loadRmRequest,
@@ -23,6 +24,7 @@ import {
     RM_APPROVED_TRASH_MINUTES,
     type RmRequest,
     type RmRequestTarget,
+    type RmSweepResult,
     recoverAsideJournals,
     rememberOptions,
     requestLive,
@@ -277,6 +279,21 @@ export interface BatchDeps {
     kickDrainer: (config: RunContext["config"]) => void;
 }
 
+/**
+ * The approval's sweep of one request before any window opens: a path a rule covers now goes to the trash, and the
+ * drainer starts for that batch here, because a request the sweep closes never reaches `applyApprovalAnswer` (the
+ * other start), and a person may still deny the rest.
+ */
+function sweepBeforeApproval(id: string, ctx: RunContext, kick: (config: RunContext["config"]) => void): RmSweepResult {
+    const swept = sweepRequests(ctx, { ids: [id] });
+
+    if (swept.ruled.some((close) => close.ruled.some((entry) => entry.batchId !== undefined))) {
+        kick(ctx.config);
+    }
+
+    return swept;
+}
+
 /** The same path as a row key: an aside copy and an in-place path of one name are different objects. */
 function rowKey(target: RmRequestTarget): string {
     return `${target.path}\u0000${target.stored ?? ""}`;
@@ -294,6 +311,7 @@ export async function approveMany(
     deps: Partial<BatchDeps> = {}
 ): Promise<void> {
     const ask = deps.ask ?? requirePerson;
+    const kick = deps.kickDrainer ?? kickDrainer;
     const releases: Array<() => void> = [];
 
     try {
@@ -314,7 +332,7 @@ export async function approveMany(
 
             releases.push(lock.release);
             // A path a rule covers now is decided by it, never shown to the person (the lock is this process's).
-            const swept = sweepRequests(ctx, { ids: [id] });
+            const swept = sweepBeforeApproval(id, ctx, kick);
             const request = loadRmRequest(id);
 
             if (swept.ruled.some((close) => close.closed) || swept.gone.includes(id)) {
@@ -446,7 +464,7 @@ export async function approveMany(
                 answer,
                 selected,
                 denyOf: again.denyOf,
-                kickDrainer: deps.kickDrainer,
+                kickDrainer: kick,
             });
         }
     } finally {
@@ -676,13 +694,13 @@ function requestBytes(request: RmRequest, entries: readonly ApproveEntry[]): { b
 export async function askForApproval(
     id: string,
     ctx: RunContext,
-    deps: { confirm?: ApprovalDeps } = {}
+    deps: { confirm?: ApprovalDeps; kickDrainer?: (config: RunContext["config"]) => void } = {}
 ): Promise<void> {
     await underDecisionLock(
         id,
         (holder) =>
             `Request ${id} is open in an approval window${holder ? ` (pid ${holder})` : ""}. The user answers that window.`,
-        () => decideOne(id, ctx, { through: "ask", confirm: deps.confirm })
+        () => decideOne(id, ctx, { through: "ask", confirm: deps.confirm, kickDrainer: deps.kickDrainer })
     );
 }
 
@@ -695,11 +713,16 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
 async function decideOne(
     id: string,
     ctx: RunContext,
-    options: { through: "approve" | "ask"; confirm?: ApprovalDeps }
+    options: {
+        through: "approve" | "ask";
+        confirm?: ApprovalDeps;
+        kickDrainer?: (config: RunContext["config"]) => void;
+    }
 ): Promise<void> {
     const ask = options.through === "ask";
+    const kick = options.kickDrainer ?? kickDrainer;
     // A path a rule covers now is decided by it before any window opens; a request it closes needs no person.
-    const swept = sweepRequests(ctx, { ids: [id] });
+    const swept = sweepBeforeApproval(id, ctx, kick);
 
     if (swept.ruled.some((close) => close.closed) || swept.gone.includes(id)) {
         return;
@@ -812,6 +835,7 @@ async function decideOne(
         answer,
         selected: answer.choices.selected,
         denyOf: prepared.denyOf,
+        kickDrainer: kick,
     });
 }
 

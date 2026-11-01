@@ -64,10 +64,11 @@ The first rule that answers decides.
    folder, such as `/tmp/codex/...`). A profile can turn it off (`allowSessionScratch`).
 9. **own-files** (allow): a file the calling session wrote that git does not track: with the Write, Edit or
    NotebookEdit tool (Claude's modified-file journal), or with a Bash command (the agents change log,
-   `~/.genesis-tools/agents/<session>/changes.jsonl`, any harness). A Bash file counts only when it was born inside
-   that command (up to 15 minutes before its log row), so a file a command only moved in (`mv ~/x ./y` keeps its
-   birthtime) never does. A profile can turn it off (`allowOwnFiles`), or only the Bash part (`ownFilesFromBash`,
-   `own-bash-files`).
+   `~/.genesis-tools/agents/<session>/changes.jsonl`, any harness). A Bash file counts only when it was born while
+   that command ran (between the start the row records and the row itself), so a file the command only changed, or
+   moved in (`mv ~/x ./y` keeps its birthtime), never does; a row written before 2026-11-02 records no start and
+   counts for nothing. Only the last 8 MB of the log are read. A profile can turn it off (`allowOwnFiles`), or only
+   the Bash part (`ownFilesFromBash`, `own-bash-files`).
 10. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
 11. **tmp-small** (allow): a path in `/tmp` or the per-user temp folder (`getconf DARWIN_USER_TEMP_DIR`, never
    `$TMPDIR`) of at most `tmpSmallMB` (default 10, `tmp-small-mb`; 0 turns it off), with no socket and no repository
@@ -77,8 +78,9 @@ The first rule that answers decides.
    session ended: the Claude session registry does not list it (an unreadable registry counts as live) and nothing
    inside changed for 12 hours. The reason names the conditions: `/tmp path, 284 KB under 10 MB, not git-tracked,
    no unsaved repo inside`. A folder of `tmpSmallExcluded` (default `["/tmp/removable"]`; `tmp-small-exclude <dir>`
-   adds one, `tmp-small-include <dir>` takes it out) never matches, whatever its size: it is a staging area the
-   person reviews, such as the `/tmp/removable/disk-reclaim-<ts>/` folders a disk reclaim leaves. `tools rm` of one
+   adds one, `tmp-small-include <dir>` takes it out) never matches, whatever its size, and neither does anything in
+   it or a folder that holds it: it is a staging area the person reviews, such as the
+   `/tmp/removable/disk-reclaim-<ts>/` folders a disk reclaim leaves. `tools rm` of one
    from an agent opens a request, the default rule's reason says `inside /tmp/removable, a staging area for the
    user's review: tmp-small never deletes there (tmp-small-exclude)`, and `tools rm ask <id>` opens it for the person.
 12. **nested-repos** (ask): a folder that holds git repositories.
