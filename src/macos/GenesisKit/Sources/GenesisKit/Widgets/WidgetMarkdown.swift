@@ -34,6 +34,7 @@ struct WidgetMarkdown: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .hoverTextSelection()
+        .pathLinkMenu(markdown: text)
     }
 }
 

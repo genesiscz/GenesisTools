@@ -878,6 +878,7 @@ public struct LiveWidgetView: View {
         VStack(alignment: .leading, spacing: 7) {
             if showsPrompt {
                 Text(.init(item.promptMarkdown)).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+                    .pathLinkMenu(markdown: item.promptMarkdown)
             }
             ForEach(item.choices ?? []) { choice in
                 let selected =
@@ -947,6 +948,7 @@ public struct LiveWidgetView: View {
                             Text(turn.role.capitalized).font(.system(size: 9, weight: .semibold)).foregroundStyle(
                                 .secondary)
                             Text(.init(visibleText(turn.text))).font(.system(size: 12)).textSelection(.enabled)
+                                .pathLinkMenu(markdown: visibleText(turn.text))
                         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 turn.role == "user" ? Color.blue.opacity(0.16) : Color.white.opacity(0.04),

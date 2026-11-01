@@ -52,7 +52,7 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data) |
 | `Keymap/` | keyboard shortcuts as data: `KeyChord` (a key by position or by character, plus modifiers; labels in the user's layout), `KeymapLibrary` (an app's commands and default keys), `KeymapConfiguration` + `KeymapStore` (the user's keys, JSON), `Keymap` (both together: keys in force, hints, conflicts, menu items), `KeymapDispatcher` + `.keymapAction` (runs a command from its key), `KeyChordRecorder`, `KeymapHelpView` / `KeymapListView` / `KeymapHelpWindow` (the list, with an editor) |
 | `Media/` | `MediaThumbnailView` (the picture of any image, video or document: off-main decode, file-identity cache, Retina pixel buckets, poster frame and length for a video, a named placeholder with Retry on failure, a click previews it) on `MediaThumbnailCache`; `.mediaPreviewHost()` + `MediaPreviewState` (an in-place Quick Look style preview over a surface, ← / → through the set) and `MediaPreviewKeyboard` (Esc / Space / arrows, for a window's key handler); `ImageViewer.present` (a window that grows from the picture's place: pinch / ⌘± / ⌘0 zoom anchored at the pointer, pan, ← / → through the source's pictures, "Compare with…" as a slider or side by side, same table row first; `ImageViewer.prefetch` on the first click; `ImageViewerSnapshot` renders any state off screen) and `MediaDataURL` (an embedded `data:image/` picture as a private temporary file) |
-| `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast`, `DefaultApp` (a file's default app by name, opened at a line through `cursor://` / `vscode://`) |
+| `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast`, `DefaultApp` (a file's default app by name, opened at a line through `cursor://` / `vscode://`), `PathLinkHandler` + `.pathLinks` / `.pathLinkMenu` (a file link in rendered markdown opens by a setting, with a right-click menu) |
 | `Diff/` | git and diffs for any host: `GenesisKitGTProvider` (the data source, swappable), `GitWorkingTreeSource` + `DiffScope`, `GitDiffView` + `GitScopePicker` + `GitCommitPicker` (popover choosers built when opened, `GitPickerChip`), `GitFileDiffModel`, `GitRepos` (one status per repository, refreshed by git's own folder events), the file state badge and marks, the gutter (`GitGutterModel`, `GitHunks`, `GitHunkPopover`), history and commits (`GitHistoryModel`, `GitCommitList`, `GitRepoPanel`, `GitCommitView`), tree marks, agent blame |
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Navigation/` | `NavigationHistory` (a log of every place a window showed, who took it there: user, agent or link, and why; Back / Forward / hop to any entry; visits never replace), `NavigationHistoryStore` (the host persists it: the hub through `tools hub nav`), `NavigationHistoryList` (the list, newest first, a click hops) |
@@ -99,7 +99,7 @@ count of the section.
 - [Markdown](#markdown) (28)
 - [Media](#media) (25)
 - [Overlay](#overlay) (6)
-- [Paths](#paths) (16)
+- [Paths](#paths) (17)
 - [Perf](#perf) (11)
 - [Permissions](#permissions) (16)
 - [Pose](#pose) (8)
@@ -5810,6 +5810,23 @@ if let app = DefaultApp.forFile(file) {
     print(app.name, app.opensAtLine)
     app.open(file, line: 12)
 }
+```
+
+#### `PathLink` and `PathLinkHandler`
+
+A link to a file in rendered markdown. Agents write a note link as a plain absolute path, and SwiftUI's default `openURL` gives that schemeless URL to Launch Services, which shows Finder's "The application can't be opened. -50" alert. Put `.pathLinks(handler)` once at a window's root: every link a `Text` inside draws comes to the handler first. A file link opens by the handler's `click` setting; a web link or an app's own scheme (`https:`, `cursor:`, `genesis-md:`) goes to the system as before. The widget installs it in `WidgetHostView` and reads the setting from Inbox behavior → Clicking a file link (`fileLinkClick`).
+
+- `PathLink.target(for: URL) -> PathLinkTarget`: `.path(String, line: Int?)` for a schemeless path (`/Users/…`, `~/…`, relative) or a `file:` URL, percent-decoded, with a `:12`, `:12:5` or `#L10-L20` suffix taken off into the line; `.other(URL)` for anything else.
+- `PathLink.step(url:path:kind:line:click:menu:genesisMarkdownInstalled:) -> PathLinkStep`: what one click does. A missing file or a relative path is `.missing` (a toast at the pointer, never a system alert). A menu click or "Ask each time" is `.menu`. A folder opens in Finder and a package is revealed. A note (`.md`, `.markdown`) opens in Genesis Markdown when it is installed and chosen; any other file opens in its default app, at the line for an editor with a line scheme.
+- `FileLinkClick`: `.genesisMarkdown` (`"genesis-markdown"`, the default), `.defaultApp` (`"default-app"`) or `.ask` (`"ask"`). `init(preference:)` reads a stored value, with the default for nil or an unknown value.
+- `PathLinkHandler(click:system:menuClick:)`: `click` is read at each click. `system: any PathLinkSystem` asks Launch Services and does the work (`SystemPathLinks`); a test passes a spy, so nothing opens. `menuClick` is true for a right-click or a Control-click (`PathLink.isMenuClick`).
+- `open(_ url: URL) -> OpenURLAction.Result`, `perform(path:line:menu:)`: run the step.
+- `menuEntries(url:kind:line:) -> [PathMenuEntry]`: Open in Genesis Markdown (a note, when installed), Open in the default app by name, Open in Cursor at the line (when installed), then Reveal in Finder and Copy Path.
+- `.pathLinkMenu(markdown:)` on a text: a right-click (or Control-click) lists the file links that text holds, one link's verbs directly or a submenu per link. SwiftUI tells no view which link of a `Text` is under the pointer, so the menu belongs to the whole text. A text without file links keeps its own menu.
+
+```swift
+WidgetMarkdown(text: card.body)          // calls .pathLinkMenu(markdown:) itself
+    .pathLinks(PathLinkHandler(click: { FileLinkClick(preference: prefs?.fileLinkClick) }))
 ```
 
 ### Perf

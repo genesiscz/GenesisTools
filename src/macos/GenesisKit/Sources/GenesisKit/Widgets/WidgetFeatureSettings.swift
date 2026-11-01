@@ -339,6 +339,15 @@ private struct WidgetGeneralSettings: View {
                         Text("Dictate").tag("live")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 300, alignment: .trailing)
                 }
+                Divider()
+                NativeSettingsRow("Clicking a file link", detail: "A link to a note or file in a card, a question or a conversation. Without Genesis Markdown, notes open in their default app. A folder opens in Finder. Right-click a link for every way to open it.") {
+                    Picker("Clicking a file link", selection: string("fileLinkClick", prefs?.fileLinkClick ?? FileLinkClick.genesisMarkdown.rawValue)) {
+                        Text("Open notes in Genesis Markdown").tag(FileLinkClick.genesisMarkdown.rawValue)
+                        Text("Open in the default app").tag(FileLinkClick.defaultApp.rawValue)
+                        Text("Ask each time").tag(FileLinkClick.ask.rawValue)
+                    }.labelsHidden().frame(width: 250, alignment: .trailing)
+                        .accessibilityIdentifier("widget.fileLinkClick")
+                }
             }
             NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {
                 NativeSettingsToggle(
