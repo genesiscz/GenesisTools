@@ -1,5 +1,11 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { classifyPid, processStartMs, readProcessCommand, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
+import {
+    classifyPid,
+    isProcessAliveSince,
+    processStartMs,
+    readProcessCommand,
+    START_MS_TOLERANCE,
+} from "@genesiscz/utils/process-identity";
 
 /** Above macOS/Linux pid ceilings, so `kill(pid, 0)` is guaranteed ESRCH. */
 const NEVER_ALLOCATED_PID = 4_194_304;
@@ -95,6 +101,26 @@ describe.skipIf(process.platform !== "darwin")("readProcessCommand reads what ps
             child.kill();
             await child.exited;
         }
+    });
+});
+
+describe("isProcessAliveSince", () => {
+    it("is true for a live pid whose process started before the mark, false for a dead pid", () => {
+        expect(isProcessAliveSince(process.pid, Date.now())).toBe(true);
+        expect(isProcessAliveSince(NEVER_ALLOCATED_PID, Date.now())).toBe(false);
+        expect(isProcessAliveSince(0, Date.now())).toBe(false);
+    });
+
+    it("is false when the process with that pid started after the mark: another program on a recycled pid", () => {
+        const started = processStartMs(process.pid);
+
+        if (started === null) {
+            expect(isProcessAliveSince(process.pid, 0)).toBe(true);
+            return;
+        }
+
+        expect(isProcessAliveSince(process.pid, started - START_MS_TOLERANCE - 60_000)).toBe(false);
+        expect(isProcessAliveSince(process.pid, started)).toBe(true);
     });
 });
 

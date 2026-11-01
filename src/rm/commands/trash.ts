@@ -173,6 +173,14 @@ export function registerTrashCommands(program: Command): void {
                 out.println(pc.yellow(`kept ${entry.id}: ${entry.reason}`));
             }
 
+            for (const entry of swept.finished) {
+                out.println(
+                    pc.yellow(
+                        `finished ${entry.id}, a batch whose run stopped: ${formatCount(entry.moved.length, "moved item")} ${entry.moved.length === 1 ? "drains" : "drain"} after the grace, ${formatCount(entry.notMoved.length, "path")} never moved and ${entry.notMoved.length === 1 ? "stays" : "stay"} in place`
+                    )
+                );
+            }
+
             const leftNote = agentOnly
                 ? ` ${formatCount(left, "batch", "batches")} of other sessions or approved by the user keep their grace period (only the user drains them early).`
                 : ` ${formatCount(left, "batch", "batches")} still in their grace period (--now drains them).`;

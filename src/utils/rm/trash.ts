@@ -19,7 +19,7 @@ import { keepFromTmpCleaner } from "@genesiscz/utils/fs/tmp-cleaner";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { isTrashRootName, loadRmConfig, type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
@@ -60,6 +60,19 @@ export interface TrashBatch {
      * record without the field (every record written before it existed) is complete.
      */
     incomplete?: true;
+}
+
+/** Whether a pid still runs the process that made a claim or lock at `markedAtMs`; tests replace it. */
+export type ClaimAlive = (pid: number, markedAtMs: number) => boolean;
+
+/** When a claim, lock or marker file was made or renamed (its ctime); +Infinity when it cannot be read. */
+function markedAtMs(file: string): number {
+    try {
+        return lstatSync(file).ctimeMs;
+    } catch (error) {
+        logger.debug({ file, error }, "rm: cannot read when a claim was made");
+        return Number.POSITIVE_INFINITY;
+    }
 }
 
 /**
@@ -699,6 +712,8 @@ export interface DrainOptions {
     /** With `force`, the batches still in their grace period that may go early; unset: every one. */
     forceOnly?: (batch: TrashBatch) => boolean;
     onItem?: (progress: DrainProgress) => void;
+    /** Whether a claim's pid still runs the process that made it (`isProcessAliveSince` unless a test says). */
+    claimAlive?: ClaimAlive;
 }
 
 /** Drains every complete batch whose grace has passed (or all of them with `force`), batches in parallel. */
@@ -730,8 +745,15 @@ export async function drainDue(options: DrainOptions): Promise<DrainResult> {
 
 const CLAIM_NAME = /^(.+)\.json\.(?:draining|restoring)-(\d+)$/;
 
-/** Gives each claim among `names` whose process died back as a plain `<id>.json` record; returns the live claims. */
-function releaseDeadClaims(paths: TrashPaths, names: readonly string[]): Array<{ id: string; pid: number }> {
+/**
+ * Gives each claim among `names` whose process died back as a plain `<id>.json` record; returns the live claims. A
+ * pid that now runs a process started after the claim was made is a recycled pid, so its claim is dead too.
+ */
+function releaseDeadClaims(
+    paths: TrashPaths,
+    names: readonly string[],
+    alive: ClaimAlive = isProcessAliveSince
+): Array<{ id: string; pid: number }> {
     const live: Array<{ id: string; pid: number }> = [];
 
     for (const name of names) {
@@ -743,7 +765,7 @@ function releaseDeadClaims(paths: TrashPaths, names: readonly string[]): Array<{
 
         const pid = Number(claim[2]);
 
-        if (isProcessAlive(pid)) {
+        if (alive(pid, markedAtMs(join(paths.batchesDir, name)))) {
             live.push({ id: claim[1], pid });
             continue;
         }
@@ -760,8 +782,61 @@ export interface HeldBatch {
     reason: string;
 }
 
+/** An interrupted run's batch the sweep finished: what had moved drains after the grace, the rest stayed in place. */
+export interface FinishedBatch {
+    id: string;
+    moved: string[];
+    notMoved: string[];
+}
+
 export interface SweepResult extends DrainResult {
     held: HeldBatch[];
+    finished: FinishedBatch[];
+}
+
+/**
+ * Finishes an incomplete record whose run is dead (its claim was given back as a plain `<id>.json`): the planned
+ * items whose copy is in the trash become a complete batch with the run's own grace, the rest never moved and stay
+ * where they are. Every item of a batch was allowed or approved before its move, so draining what moved is what the
+ * run would have done; holding it for good hid a 2.9 GB batch until a person restored it (2026-11-01).
+ */
+function finishIncomplete(batch: TrashBatch, paths: TrashPaths, config: RmConfig): FinishedBatch | null {
+    const claimed = claimBatch(paths, batch.id, "restoring");
+
+    if (!claimed) {
+        return null;
+    }
+
+    const fresh = readBatch(claimed);
+
+    if (!fresh?.incomplete) {
+        renameSync(claimed, batchFile(paths, batch.id));
+        return null;
+    }
+
+    const moved = fresh.items.filter((item) => existsSync(item.stored) || isBrokenLink(item.stored));
+    const notMoved = fresh.items.filter((item) => !moved.includes(item)).map((item) => item.original);
+
+    if (moved.length === 0) {
+        removeEmptyBatchDirs(fresh, config);
+        unlinkSync(claimed);
+    } else {
+        for (const item of moved) {
+            item.bytes ??= measureBytes(item.stored);
+        }
+
+        const { incomplete: _incomplete, ...complete } = fresh;
+        writeBatch({ ...complete, items: moved }, paths, claimed);
+        renameSync(claimed, batchFile(paths, batch.id));
+    }
+
+    const result = { id: batch.id, moved: moved.map((item) => item.original), notMoved };
+    const reason =
+        `an interrupted run's batch, finished: ${formatCount(moved.length, "moved item")} ` +
+        `${moved.length === 1 ? "drains" : "drain"} after the grace, ${formatCount(notMoved.length, "path")} never moved`;
+    appendRmLedger({ action: "finish", batchId: batch.id, reason, caller: batch.caller });
+    logger.warn(result, "rm: finished the batch of a run that died while it moved");
+    return result;
 }
 
 /**
@@ -776,19 +851,23 @@ export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }
     const known = new Set(
         records.map((name) => CLAIM_NAME.exec(name)?.[1] ?? (name.endsWith(".json") ? name.slice(0, -5) : name))
     );
-    const held: HeldBatch[] = releaseDeadClaims(paths, records).map(({ id, pid }) => ({
+    const held: HeldBatch[] = releaseDeadClaims(paths, records, options.claimAlive).map(({ id, pid }) => ({
         id,
         reason: `process ${pid} holds its record`,
     }));
+    const finished: FinishedBatch[] = [];
 
+    // A plain incomplete record has no live producer: a live one holds its claim, and a dead one's was just given back.
     for (const batch of listBatches(paths).filter((b) => b.incomplete)) {
-        const entry = { id: batch.id, reason: "its run stopped before it finished; restore brings back what moved" };
-        logger.warn(entry, "rm: trash folder kept, its batch is incomplete");
-        held.push(entry);
+        const done = finishIncomplete(batch, paths, options.config);
+
+        if (done) {
+            finished.push(done);
+        }
     }
 
     if (!existsSync(root)) {
-        return { batches: 0, items: 0, bytes: 0, held };
+        return { batches: 0, items: 0, bytes: 0, held, finished };
     }
 
     const now = (options.now ?? new Date()).getTime();
@@ -823,6 +902,7 @@ export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }
         items: orphans.length,
         bytes: sizes.reduce((sum, size) => sum + size, 0),
         held,
+        finished,
     };
 }
 
@@ -884,10 +964,10 @@ function trashRootChangedSince(
     paths: TrashPaths,
     currentTrashRoot: () => string = () => loadRmConfig().trashRoot
 ): string | null {
-    // A marker whose process died is a change that never finished; it blocks nothing.
+    // A marker whose process died (or whose pid another process got since) is a change that never finished.
     const changing = readdirSync(paths.batchesDir).some((name) => {
         const marker = ROOT_CHANGE_NAME.exec(name);
-        return marker !== null && isProcessAlive(Number(marker[1]));
+        return marker !== null && isProcessAliveSince(Number(marker[1]), markedAtMs(join(paths.batchesDir, name)));
     });
 
     if (changing) {
@@ -1001,12 +1081,12 @@ const EMPTY_LOCK_MS = 5_000;
 
 /**
  * A single-holder lock file (the drainer's, a request's decision lock, a measurement pass); null when a live process
- * holds it. The file appears with this pid already in it (written to a private file, then linked into place), so no
+ * holds it (a recycled pid holds nothing). The file appears with this pid already in it (written to a private file, then linked into place), so no
  * reader ever finds it empty and takes it for a dead holder's. A dead holder's lock is removed only under the path's
  * claim arbiter, after a second read finds the same content: two processes that both saw the dead holder can no
  * longer remove each other's new lock.
  */
-export function acquireDrainerLock(lockPath: string): (() => void) | null {
+export function acquireDrainerLock(lockPath: string, alive: ClaimAlive = isProcessAliveSince): (() => void) | null {
     mkdirSync(dirname(lockPath), { recursive: true });
 
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1024,12 +1104,12 @@ export function acquireDrainerLock(lockPath: string): (() => void) | null {
 
         const seen = readLock(lockPath);
 
-        if (seen !== null && lockHeld(lockPath, seen)) {
+        if (seen !== null && lockHeld(lockPath, seen, alive)) {
             logger.debug({ lockPath, holder: seen }, "rm: a live process holds the lock");
             return null;
         }
 
-        if (seen !== null && !removeStaleLock(lockPath, seen)) {
+        if (seen !== null && !removeStaleLock(lockPath, seen, alive)) {
             return null;
         }
     }
@@ -1060,10 +1140,13 @@ function createLockFile(lockPath: string): boolean {
     }
 }
 
-/** A live pid holds the lock, or an empty file young enough to be a writer between its create and its pid write. */
-function lockHeld(lockPath: string, content: string): boolean {
+/**
+ * The pid still runs the process that wrote the lock (a recycled pid holds nothing), or an empty file is young enough
+ * to be a writer between its create and its pid write.
+ */
+function lockHeld(lockPath: string, content: string, alive: ClaimAlive): boolean {
     if (content !== "") {
-        return isProcessAlive(Number(content));
+        return alive(Number(content), markedAtMs(lockPath));
     }
 
     try {
@@ -1079,7 +1162,7 @@ function lockHeld(lockPath: string, content: string): boolean {
  * when the name is free to take again; false when another process takes the lock over right now, or the lock
  * changed since it was read (a new holder took it). Exported for the race test in rm.test.ts.
  */
-export function removeStaleLock(lockPath: string, seen: string): boolean {
+export function removeStaleLock(lockPath: string, seen: string, alive: ClaimAlive = isProcessAliveSince): boolean {
     try {
         return withPathArbitrationSync(lockPath, () => {
             const now = readLock(lockPath);
@@ -1088,7 +1171,7 @@ export function removeStaleLock(lockPath: string, seen: string): boolean {
                 return true;
             }
 
-            if (now !== seen || lockHeld(lockPath, now)) {
+            if (now !== seen || lockHeld(lockPath, now, alive)) {
                 logger.debug({ lockPath, seen, now }, "rm: the lock changed hands while it was checked");
                 return false;
             }
