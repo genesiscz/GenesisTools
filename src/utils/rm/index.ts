@@ -99,7 +99,9 @@ export function planRemoval(inputs: readonly string[], ctx: RmRuleContext): RmPl
 
 /**
  * Minutes a moved item waits before the drain. A folder a preset matches (a build or an install recreates it) gets
- * the preset grace whichever rule allowed it, e.g. a node_modules in the session's scratch; the rest waits longer.
+ * the preset grace whichever rule allowed it, e.g. a node_modules in the session's scratch. The session's own
+ * scratch gets the scratch grace: throwaway output that hid 11 GB for the hour of the other grace on a full disk
+ * (2026-11-01). The rest waits longer.
  */
 export function graceMinutesFor(item: RmPlanItem, ctx: RmRuleContext, override?: number): number {
     if (override !== undefined) {
@@ -109,7 +111,12 @@ export function graceMinutesFor(item: RmPlanItem, ctx: RmRuleContext, override?:
     const isPreset =
         item.verdict.rule === "preset" ||
         (item.target.kind === "dir" && matchPreset(item.target.path, ctx.presets) !== null);
-    return isPreset ? ctx.config.grace.presetMinutes : ctx.config.grace.otherMinutes;
+
+    if (isPreset) {
+        return ctx.config.grace.presetMinutes;
+    }
+
+    return item.verdict.rule === "session-scratch" ? ctx.config.grace.scratchMinutes : ctx.config.grace.otherMinutes;
 }
 
 /**

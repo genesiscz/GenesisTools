@@ -24,18 +24,25 @@ import {
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { minutesOption, requirePerson, runContext } from "../lib/run";
+import { megabytesOption, minutesOption, requirePerson, runContext } from "../lib/run";
 import { renderConfig, renderPresets } from "../lib/settings-view";
 
 const SETTINGS = [
     "approval",
     "notify-on-request",
+    "notify-on-failure",
+    "ask-min-mb",
     "ask-action",
     "aside-unsaved",
     "session-scratch",
     "own-files",
+    "own-bash-files",
+    "tmp-small-mb",
     "grace-preset",
     "grace-other",
+    "grace-scratch",
+    "sweep-every",
+    "sweep-linger",
     "trash-root",
     "disable-preset",
     "enable-preset",
@@ -75,6 +82,14 @@ export function applyRmSetting(config: RmConfig, key: Setting, value: string): R
             }
 
             return { ...config, notify: { ...config.notify, onRequest: value } };
+        case "notify-on-failure":
+            if (!isRmNotifyOnRequest(value)) {
+                throw new Error(`notify-on-failure takes ${RM_NOTIFY_ON_REQUEST.join(", ")}.`);
+            }
+
+            return { ...config, notify: { ...config.notify, onFailure: value } };
+        case "ask-min-mb":
+            return { ...config, notify: { ...config.notify, askMinMB: megabytesOption(value) } };
         case "ask-action":
             if (!isAskAction(value)) {
                 throw new Error("ask-action takes aside or request.");
@@ -87,10 +102,27 @@ export function applyRmSetting(config: RmConfig, key: Setting, value: string): R
             return { ...config, allowSessionScratch: yesNo(value) };
         case "own-files":
             return { ...config, allowOwnFiles: yesNo(value) };
+        case "own-bash-files":
+            return { ...config, ownFilesFromBash: yesNo(value) };
+        case "tmp-small-mb":
+            return { ...config, tmpSmallMB: megabytesOption(value) };
         case "grace-preset":
             return { ...config, grace: { ...config.grace, presetMinutes: minutesOption(value) } };
         case "grace-other":
             return { ...config, grace: { ...config.grace, otherMinutes: minutesOption(value) } };
+        case "grace-scratch":
+            return { ...config, grace: { ...config.grace, scratchMinutes: minutesOption(value) } };
+        case "sweep-every": {
+            const every = minutesOption(value);
+
+            if (every <= 0) {
+                throw new Error("sweep-every takes a duration above 0 (5m, 1h).");
+            }
+
+            return { ...config, sweep: { ...config.sweep, everyMinutes: every } };
+        }
+        case "sweep-linger":
+            return { ...config, sweep: { ...config.sweep, lingerMinutes: minutesOption(value) } };
         case "trash-root":
             if (!isTrashRootName(value)) {
                 throw new Error("The trash root must be an absolute path with a GenesisTools folder in it.");
