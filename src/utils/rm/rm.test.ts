@@ -2114,6 +2114,13 @@ describe("the ledger names a person's check apart from the shell that ran it", (
         ).toEqual(["claude-code", "person"]);
         expect(filterRmLedger(entries, { agent: "person" }).map((entry) => entry.action)).toEqual(["approve"]);
     });
+
+    test("a person at a plain shell counts as person, never under the operating-system account", () => {
+        const shell = { agent: "unknown", sessionId: null, isInAgent: false, user: "alice" };
+        const entries: RmLedgerEntry[] = [{ at: "2026-11-01T12:00:00.000Z", action: "restore", caller: shell }];
+
+        expect(totalRmLedger(entries, "agent").map((total) => total.key)).toEqual(["person"]);
+    });
 });
 
 describe("the default rule says what nearly matched", () => {

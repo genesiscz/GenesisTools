@@ -86,7 +86,16 @@ const CLI_HEADER_TEXT_MAX_WIDTH = 31;
  * out.println(table.toString());
  * ```
  */
-export function createBoxTable(headers: string[]): Table.Table {
+export interface BoxTableOptions {
+    /** A rule between data rows (cli-table3's default). False draws none: a long totals table stays half as tall. */
+    rowRules?: boolean;
+}
+
+/** The characters cli-table3 draws the rule between rows with; empty strings make it skip that line. */
+const ROW_RULE_CHARS: ReadonlySet<string> = new Set(["left-mid", "mid", "mid-mid", "right-mid"]);
+
+export function createBoxTable(headers: string[], options: BoxTableOptions = {}): Table.Table {
+    const rowRules = options.rowRules ?? true;
     return new Table({
         // Borders are greyed by colouring the characters, NOT by cli-table3's `style.border`.
         // That option paints through its own colour library, which consults neither the TTY
@@ -94,8 +103,11 @@ export function createBoxTable(headers: string[]): Table.Table {
         // sequences into the file while every other command in the same tool piped clean.
         // Headers already went through picocolors, which is why `style.head` is empty.
         chars: Object.fromEntries(
-            Object.entries(BOX_TABLE_CHARS).map(([name, char]) => [name, pc.gray(char)])
-        ) as typeof BOX_TABLE_CHARS,
+            Object.entries(BOX_TABLE_CHARS).map(([name, char]) => [
+                name,
+                !rowRules && ROW_RULE_CHARS.has(name) ? "" : pc.gray(char),
+            ])
+        ) as Record<keyof typeof BOX_TABLE_CHARS, string>,
         head: headers.map((header) => pc.cyan(pc.bold(header))),
         style: {
             head: [],

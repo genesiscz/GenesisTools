@@ -1,10 +1,8 @@
-import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
     filterRmLedger,
     isRmLedgerGroup,
-    ledgerAgent,
     RM_LEDGER_GROUPS,
     type RmLedgerFilter,
     readRmLedger,
@@ -14,7 +12,8 @@ import {
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { minutesOption, shown } from "../lib/run";
+import { renderLedger } from "../lib/log-view";
+import { minutesOption } from "../lib/run";
 
 interface LogFlags {
     since?: number;
@@ -24,6 +23,7 @@ interface LogFlags {
     path?: string;
     by?: string;
     limit: number;
+    each?: boolean;
     json?: boolean;
 }
 
@@ -41,6 +41,7 @@ export function registerAuditCommands(program: Command): void {
         .option("--path <text>", "entries whose path contains this text")
         .option("--by <group>", `totals instead of entries: ${RM_LEDGER_GROUPS.join(", ")}`)
         .option("--limit <n>", "how many entries to print (newest)", (v) => Number.parseInt(v, 10), 50)
+        .option("--each", "one row per entry, instead of one per run that shares action, batch and caller")
         .option("--json", "print as JSON")
         .action((flags: LogFlags) => {
             const filter: RmLedgerFilter = {
@@ -66,15 +67,10 @@ export function registerAuditCommands(program: Command): void {
                     return;
                 }
 
-                const table = createBoxTable([
-                    flags.by.toUpperCase(),
-                    "MOVED",
-                    "ASIDE",
-                    "RECLAIMED",
-                    "ITEMS",
-                    "REFUSED",
-                    "ASKED",
-                ]);
+                const table = createBoxTable(
+                    [flags.by.toUpperCase(), "MOVED", "ASIDE", "RECLAIMED", "ITEMS", "REFUSED", "ASKED"],
+                    { rowRules: false }
+                );
 
                 for (const t of totals) {
                     table.push([
@@ -106,34 +102,8 @@ export function registerAuditCommands(program: Command): void {
                 return;
             }
 
-            const cwd = process.cwd();
-
-            for (const entry of newest) {
-                const caller = entry.caller;
-                const who = [
-                    ledgerAgent(entry),
-                    caller?.sessionId?.slice(0, 8),
-                    caller?.sessionTitle ? `"${truncateDisplay(caller.sessionTitle, 30)}"` : undefined,
-                    caller?.model ?? undefined,
-                    caller && !caller.isInAgent ? caller.user : undefined,
-                    caller?.branch ? `on ${caller.branch}` : undefined,
-                ]
-                    .filter(Boolean)
-                    .join(" ");
-                // A person checked it from a shell an agent's session started (`! tools rm approve`): name both.
-                const startedFrom = caller?.isInAgent
-                    ? [caller.agent, caller.sessionId?.slice(0, 8)].filter(Boolean).join(" ")
-                    : null;
-                const by = entry.person
-                    ? `person via ${entry.person.via}${startedFrom ? ` (started from ${startedFrom})` : ""}`
-                    : `${who}${entry.via ? ` via ${entry.via}` : ""}`;
-                const size = entry.bytes === undefined ? "" : ` ${formatBytes(entry.bytes)}`;
-                const subject = entry.path ? shown(entry.path, cwd) : (entry.requestId ?? "");
-                const extra = entry.rule ? pc.dim(` ${entry.rule}`) : "";
-                out.println(
-                    `${pc.dim(formatLocalDateTimeStamp(entry.at, { seconds: false }))} ${pc.bold(entry.action.padEnd(8))}${size} ${subject}${extra}`
-                );
-                out.println(pc.dim(`                 ${by}`));
+            for (const line of renderLedger(newest, { cwd: process.cwd(), each: flags.each })) {
+                out.println(line);
             }
 
             if (read.length > newest.length) {

@@ -61,6 +61,7 @@ import {
     splitBySelection,
 } from "./approve";
 import { shortRmPath } from "./display";
+import { renderLedger } from "./log-view";
 import { notifyNewRequest, type RequestNotice } from "./notify";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
 import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
@@ -1636,5 +1637,62 @@ describe("the trash view", () => {
         expect(resolveBatchSuffix("fc7b", ids)).toEqual({ ambiguous: [ids[0], ids[1]] });
         expect(resolveBatchSuffix("c3", ids)).toBeNull();
         expect(resolveBatchSuffix("zzzz", ids)).toBeNull();
+    });
+});
+
+describe("the log view", () => {
+    const agent = {
+        agent: "claude-code",
+        sessionId: "aaaaaaaa-1111-4111-8111-111111111111",
+        isInAgent: true,
+        sessionTitle: "shop cleanup",
+        user: "alice",
+    };
+    const shell = { agent: "unknown", sessionId: null, isInAgent: false, user: "alice" };
+    const at = (minute: number) => new Date(2026, 10, 1, 15, minute).toISOString();
+    const drain = (minute: number, path: string) => ({
+        at: at(minute),
+        action: "drain" as const,
+        path,
+        batchId: "20261101-150000-111-fc7b",
+        bytes: 1024 * 1024,
+        caller: agent,
+    });
+    const entries = [
+        drain(27, "/work/shop/a"),
+        drain(27, "/work/shop/b"),
+        drain(28, "/work/shop/c"),
+        { at: at(30), action: "approve" as const, requestId: "k7m2qd", caller: agent, person: { via: "touch-id" } },
+        {
+            at: at(31),
+            action: "restore" as const,
+            path: "/work/shop/a",
+            batchId: "20261101-150000-111-fc7b",
+            caller: shell,
+        },
+    ];
+
+    test("collapses a run that shares action, batch and caller, and prints each caller once", () => {
+        const lines = renderLedger(entries, { cwd: "/elsewhere" }).map(stripAnsi);
+
+        expect(lines).toEqual([
+            "── 2026-11-01",
+            'claude-code aaaaaaaa "shop cleanup"',
+            "  15:27 drain    3 items 3.0 MB batch …fc7b",
+            "person via touch-id (started from claude-code aaaaaaaa)",
+            "  15:30 approve  request k7m2qd",
+            "person",
+            "  15:31 restore  /work/shop/a",
+        ]);
+        expect(lines.join("\n")).not.toContain("alice");
+    });
+
+    test("--each prints one row per entry", () => {
+        const rows = renderLedger(entries, { cwd: "/work/shop", each: true })
+            .map(stripAnsi)
+            .filter((line) => line.startsWith("  "));
+
+        expect(rows).toHaveLength(5);
+        expect(rows[0]).toBe("  15:27 drain    1.0 MB a");
     });
 });
