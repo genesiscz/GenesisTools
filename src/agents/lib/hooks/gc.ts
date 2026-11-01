@@ -1,6 +1,18 @@
-import { existsSync, lstatSync, readdirSync, rmdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { assertPrivateFile } from "./diff/private-dir";
+import {
+    closeSync,
+    type Dirent,
+    existsSync,
+    lstatSync,
+    openSync,
+    readdirSync,
+    rmdirSync,
+    rmSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { assertPrivateFile, makePrivateDir } from "./diff/private-dir";
 import { hookDiag } from "./log";
 import { claimsRoot, hookDataRoot, mentionsRoot, sweepStampPath, unpushedRoot } from "./paths";
 
@@ -13,6 +25,9 @@ export const ABANDONED_CAPTURE_MS = 60 * 60 * 1000;
 
 /** How often a post phase may sweep: one `stat` of the stamp per call in between, no walk. */
 const SWEEP_EVERY_MS = 10 * 60 * 1000;
+
+/** Half the sweep interval: a claim this old belongs to a post phase that died mid-sweep, and the next may clear it. */
+const SWEEP_CLAIM_STALE_MS = 5 * 60 * 1000;
 
 export interface StaleCapture {
     path: string;
@@ -28,9 +43,22 @@ export interface GcResult {
 }
 
 function dirBytes(path: string): number {
+    let listing: Dirent[];
+
+    try {
+        listing = readdirSync(path, { withFileTypes: true });
+    } catch (err) {
+        // A parallel sweep (another post phase, a session end) can remove a capture between its `stat` and this walk.
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            hookDiag("Could not size a capture", { err, path });
+        }
+
+        return 0;
+    }
+
     let total = 0;
 
-    for (const entry of readdirSync(path, { withFileTypes: true })) {
+    for (const entry of listing) {
         const child = join(path, entry.name);
 
         // `lstat`: a capture stores a repository's symlinks as links, and its target is not the capture's size.
@@ -42,6 +70,16 @@ function dirBytes(path: string): number {
     }
 
     return total;
+}
+
+/**
+ * Whether a capture belongs to a background call: its task is still running (`background.json`), or a post phase is
+ * taking its diff right now (`flushDeferred` renames the marker to `background.taken` first). The rename is atomic, so
+ * one of the two is always there, and a sweep that read the directory's age before the rename keeps the horizon.
+ * Testing `background.json` alone gave a capture being diffed the one-hour limit, and the sweep removed it mid-diff.
+ */
+function deferredCapture(path: string): boolean {
+    return existsSync(join(path, "background.json")) || existsSync(join(path, "background.taken"));
 }
 
 function safeList(path: string): string[] {
@@ -106,7 +144,7 @@ export function collectStaleCaptures(options: {
                 }
 
                 // A session sweep is explicit: that session is over, so age does not gate it.
-                const limit = existsSync(join(path, "background.json")) ? horizonMs : abandonedMs;
+                const limit = deferredCapture(path) ? horizonMs : abandonedMs;
 
                 if (!options.sessionId && ageMs < limit) {
                     kept += 1;
@@ -244,7 +282,13 @@ export function collectStaleCaptures(options: {
  * The sweep a post phase runs: captures whose post phase never ran, an hour on (`ABANDONED_CAPTURE_MS`), and
  * everything else past the horizon, at most once per `everyMs`. Before it only a session end swept, and only past
  * six hours, so a session that ran for days kept every interrupted call's capture. The stamp's mtime is the last
- * sweep; it lives beside the data root, which `collectStaleCaptures` walks as harnesses. `null`: not due yet.
+ * sweep; it lives beside the data root, which `collectStaleCaptures` walks as harnesses. `null`: not due yet, or
+ * another post phase holds the sweep.
+ *
+ * The post phases of a parallel batch all read the stamp at once, and writing it first did not stop them: every one
+ * that read it before the first write swept too. So the sweep is claimed by creating `<stamp>.claim` exclusively,
+ * and the stamp is read again under the claim, because a phase that read it just before another finished must not
+ * walk a second time.
  */
 export function sweepAbandonedCaptures({
     now,
@@ -257,29 +301,86 @@ export function sweepAbandonedCaptures({
     stamp?: string;
     everyMs?: number;
 }): GcResult | null {
-    try {
-        if (now - statSync(stamp).mtimeMs < everyMs) {
-            return null;
-        }
-    } catch (err) {
-        // No stamp yet is the first sweep on this machine.
-        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
-            hookDiag("Could not read the capture sweep stamp", { err, stamp });
-            return null;
-        }
-    }
-
-    // Stamped BEFORE the walk, so the post phases of a parallel batch do not all sweep at once.
-    try {
-        assertPrivateFile(stamp);
-        writeFileSync(stamp, "", { mode: 0o600 });
-        utimesSync(stamp, new Date(now), new Date(now));
-    } catch (err) {
-        hookDiag("Could not write the capture sweep stamp", { err, stamp });
+    if (!sweepDue({ stamp, now, everyMs })) {
         return null;
     }
 
-    return collectStaleCaptures({ now, abandonedMs: ABANDONED_CAPTURE_MS, root, write: true });
+    const claim = `${stamp}.claim`;
+
+    if (!claimSweep(claim, now)) {
+        return null;
+    }
+
+    try {
+        if (!sweepDue({ stamp, now, everyMs })) {
+            return null;
+        }
+
+        try {
+            assertPrivateFile(stamp);
+            writeFileSync(stamp, "", { mode: 0o600 });
+            utimesSync(stamp, new Date(now), new Date(now));
+        } catch (err) {
+            hookDiag("Could not write the capture sweep stamp", { err, stamp });
+            return null;
+        }
+
+        return collectStaleCaptures({ now, abandonedMs: ABANDONED_CAPTURE_MS, root, write: true });
+    } finally {
+        try {
+            rmSync(claim, { force: true });
+        } catch (err) {
+            hookDiag("Could not release the capture sweep claim", { err, claim });
+        }
+    }
+}
+
+/** Whether the last sweep (the stamp's mtime) is `everyMs` old. No stamp yet is the first sweep on this machine. */
+function sweepDue({ stamp, now, everyMs }: { stamp: string; now: number; everyMs: number }): boolean {
+    try {
+        return now - statSync(stamp).mtimeMs >= everyMs;
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            hookDiag("Could not read the capture sweep stamp", { err, stamp });
+            return false;
+        }
+
+        return true;
+    }
+}
+
+/**
+ * Takes the sweep for this process: `wx` creates the claim only when it is absent, and never through a link. A claim
+ * older than `SWEEP_CLAIM_STALE_MS` belongs to a post phase that died mid-sweep; it is removed, and the next post
+ * phase claims the sweep.
+ */
+function claimSweep(claim: string, now: number): boolean {
+    const refused = makePrivateDir(dirname(claim));
+
+    if (refused) {
+        hookDiag("Refusing to claim the capture sweep in a directory this user does not control", { claim, refused });
+        return false;
+    }
+
+    try {
+        closeSync(openSync(claim, "wx", 0o600));
+        return true;
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") {
+            hookDiag("Could not claim the capture sweep", { err, claim });
+            return false;
+        }
+    }
+
+    try {
+        if (now - lstatSync(claim).mtimeMs >= SWEEP_CLAIM_STALE_MS) {
+            rmSync(claim, { force: true });
+        }
+    } catch (err) {
+        hookDiag("Could not check a held capture sweep claim", { err, claim });
+    }
+
+    return false;
 }
 
 function removeIfEmpty(dir: string): void {

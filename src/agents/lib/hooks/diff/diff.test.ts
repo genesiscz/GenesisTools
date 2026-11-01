@@ -42,7 +42,7 @@ import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
 import { readOnlyCommand, recordTouches } from "./attribution";
-import { beforeCopier, beforeCopy } from "./before";
+import { beforeCopier, beforeCopy, leftOutOfCapture } from "./before";
 import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./capture";
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
@@ -2311,6 +2311,88 @@ describe("the before-state: clones of the dirty files, and none for a command th
         expect(message).toContain("Updated link.txt (+1 -1)");
         expect(message).toContain(`-${secret}`);
         expect(message).toContain(`+${join(outside, "elsewhere.txt")}`);
+    });
+
+    it("gives the change log a captured symlink's text as its before-state, never the file it points to", () => {
+        // `capturedBefores` read a captured link through `readCapped`, which follows it: an absolute link put a
+        // private file from outside the repository into the change log, and a relative one read the capture's own
+        // copy of its target. git stores a link as its text, so that is the before-state.
+        const secret = join(outside, "private.txt");
+
+        writeFileSync(secret, "a private file outside the repository\n");
+        symlinkSync(secret, join(tree, "absolute.txt"));
+        symlinkSync("tracked.ts", join(tree, "relative.txt"));
+
+        const { dir } = pre("bun /x/edit.ts");
+        const edits = ["absolute.txt", "relative.txt"].map((name) => ({
+            path: join(tree, name),
+            before: beforeCopy({ dir, root: tree, absolute: join(tree, name) }),
+            deleted: false,
+        }));
+
+        expect(edits.map((edit) => edit.before === null)).toEqual([false, false]);
+        expect(capturedBefores(edits).map((bytes) => bytes.after?.toString("utf8"))).toEqual([secret, "tracked.ts"]);
+    });
+
+    it("a deleted symlink's capture does not cost the deleted files after it their renames", () => {
+        // `hash-object` follows a link, and a captured relative link dangles in the capture folder: the run ended
+        // at it, so every deleted file listed after it printed as a whole deletion instead of a move.
+        writeFileSync(join(tree, "moved-src.ts"), "a body that moves\n");
+        symlinkSync("../nowhere.txt", join(tree, "gone-link.txt"));
+
+        const { dir } = pre("bun /x/edit.ts");
+
+        renameSync(join(tree, "moved-src.ts"), join(tree, "moved-dst.ts"));
+        rmSync(join(tree, "gone-link.txt"));
+
+        const pairs = renamesIn({
+            root: tree,
+            base: "HEAD",
+            files: [
+                { path: join(tree, "gone-link.txt"), root: tree, deleted: true, untracked: true },
+                { path: join(tree, "moved-src.ts"), root: tree, deleted: true, untracked: true },
+                { path: join(tree, "moved-dst.ts"), root: tree, deleted: false, untracked: true },
+            ],
+            entries: statusEntries(tree),
+            beforeOf: beforeCopier({ dir, root: tree }),
+        });
+
+        expect(pairs).toEqual([{ from: join(tree, "moved-src.ts"), to: join(tree, "moved-dst.ts") }]);
+    });
+
+    it("leaves out only the files of a nested repository that do not fit, so a file created there reads as created", () => {
+        // A nested repository is one `nested/` entry. When one of its files could be neither cloned nor copied, the
+        // whole entry was refused while its clones stayed, and `nested/` went into `.left`: a file the command
+        // then created there matched it and was never shown.
+        const nested = join(tree, "nested");
+
+        spawnSync("git", ["init", "-q", nested], { encoding: "utf8", env: process.env });
+        writeFileSync(join(nested, "kept.ts"), "kept\n");
+        writeFileSync(join(nested, "refused.bin"), "refused\n");
+
+        try {
+            // No copy budget, and this one file will not clone, so it is declined; every other file clones.
+            const { dir } = pre("bun /x/edit.ts", {
+                diff: { ...plain.diff, maxCaptureFileMB: 0 },
+                copyFile: (source, destination, mode) => {
+                    if (source.endsWith("refused.bin")) {
+                        cannotClone(source, destination, mode);
+                    }
+
+                    copyFileSync(source, destination);
+                },
+            });
+            const left = readFileSync(join(dir, "1.left"), "utf8").split("\n").filter(Boolean);
+            const kept = beforeCopy({ dir, root: tree, absolute: join(nested, "kept.ts") });
+
+            expect(left).toContain("nested/refused.bin");
+            expect(left).not.toContain("nested/");
+            expect(leftOutOfCapture({ dir, root: tree, absolute: join(nested, "refused.bin") })).toBe(true);
+            expect(leftOutOfCapture({ dir, root: tree, absolute: join(nested, "fresh.ts") })).toBe(false);
+            expect(kept === null ? null : readFileSync(kept, "utf8")).toBe("kept\n");
+        } finally {
+            rmSync(nested, { recursive: true, force: true });
+        }
     });
 
     it("copies when the volume cannot clone, inside the byte caps a copy still needs", () => {
