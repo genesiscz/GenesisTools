@@ -246,7 +246,8 @@ export async function retainBackups(
             root,
             kept: plan.kept.length,
             packed: report.packed.length,
-            deleted: plan.deleteArchives.length + plan.drop.length,
+            deleted: report.removed.length,
+            spared: report.spared.length,
             failed: report.failed.length,
         },
         "backup retention"
@@ -276,14 +277,17 @@ export interface BackupPolicy {
  */
 export const DEFAULT_BACKUP_POLICY: BackupPolicy = { keepArchives: 2, keepArchiveDays: 14 };
 
-/** The saved policy, with a missing or invalid field replaced by its default. The newest snapshot always stays. */
+/**
+ * The saved policy, with a missing or invalid field (not a number, not finite, or negative) replaced by its default.
+ * Zero is valid for both; the newest snapshot always stays, so a count of 0 keeps 1.
+ */
 export async function readBackupPolicy(): Promise<BackupPolicy> {
     const saved = await new Storage("codex").getConfigValue<Partial<BackupPolicy>>("migrateHome.backups");
-    const finite = (value: unknown, fallback: number) =>
-        typeof value === "number" && Number.isFinite(value) ? value : fallback;
+    const valid = (value: unknown, fallback: number) =>
+        typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
     return {
-        keepArchives: Math.max(1, Math.floor(finite(saved?.keepArchives, DEFAULT_BACKUP_POLICY.keepArchives))),
-        keepArchiveDays: Math.max(0, finite(saved?.keepArchiveDays, DEFAULT_BACKUP_POLICY.keepArchiveDays)),
+        keepArchives: Math.max(1, Math.floor(valid(saved?.keepArchives, DEFAULT_BACKUP_POLICY.keepArchives))),
+        keepArchiveDays: valid(saved?.keepArchiveDays, DEFAULT_BACKUP_POLICY.keepArchiveDays),
     };
 }
 
