@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { createInterface } from "node:readline";
+import { splitLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatStoredEventLine, type StoredCodexEvent } from "./adapter";
@@ -73,26 +73,17 @@ export function countStartedTurns(text: string): number {
 
 /** Read only the snapshotted prefix, in 64 KiB blocks, retaining at most one JSONL record. */
 async function countHistoricalTurns(path: string, bytes: number): Promise<number> {
-    const input = createReadStream(path, { encoding: "utf8", highWaterMark: 64 * 1024, start: 0, end: bytes - 1 });
-    const lines = createInterface({ input, crlfDelay: Infinity });
-    let failure: Error | undefined;
-    input.once("error", (error) => {
-        failure = error;
-        lines.close();
-    });
+    const input = createReadStream(path, { highWaterMark: 64 * 1024, start: 0, end: bytes - 1 });
     let count = 0;
     try {
-        for await (const line of lines) {
+        // A read error throws out of the loop. Cut at "\n" only: readline also ends lines at U+2028 and U+2029.
+        for await (const line of splitLines(input)) {
             if (isTurnStartLine(line)) {
                 count++;
             }
         }
-        if (failure) {
-            throw failure;
-        }
         return count;
     } finally {
-        lines.close();
         input.destroy();
     }
 }
