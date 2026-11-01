@@ -1527,6 +1527,79 @@ describe("one window for several requests", () => {
         expect(loadRmRequest(second.id)?.decided?.approved).toEqual([b1]);
         expect([a1, a2, b1, b2].map((path) => existsSync(path ?? ""))).toEqual([false, true, false, true]);
     });
+    test("a ticked path replaced while the window is open stays, and its request stays pending", async () => {
+        const first = inPlaceAsk("batch-swap-a", ["swapped.txt"]);
+        const second = inPlaceAsk("batch-swap-b", ["kept.txt"]);
+        const swapped = first.targets[0]?.path ?? "";
+        const prompts: ApprovalPrompt[] = [];
+        await batch(
+            [first.id, second.id],
+            person(prompts, null, () => {
+                // A build replaces the file the person was shown with a new one (another inode).
+                renameSync(swapped, `${swapped}.shown`);
+                writeFileSync(swapped, "new");
+            })
+        );
+
+        expect(existsSync(swapped)).toBe(true);
+        expect(existsSync(`${swapped}.shown`)).toBe(true);
+        expect(loadRmRequest(first.id)?.status).toBe("pending");
+        expect(loadRmRequest(second.id)?.status).toBe("approved");
+    });
+
+    test("an aside copy and an in-place path of one name are never two rows of one window", async () => {
+        const folder = join(base, "batch-mixed");
+        const path = file(join(folder, "same.txt"));
+        const verdict = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
+        const aside = moveAside({
+            inputs: [{ target: resolveTarget(path, base), verdict }],
+            caller: AGENT,
+            batchId: newBatchId(),
+            root: join(base, "aside", "batch-mixed"),
+        });
+        const cameBackRequest = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: folder,
+            reason: null,
+            targets: aside.moved,
+            asideDir: aside.dir,
+        });
+        const copy = cameBackRequest.targets[0]?.stored ?? "";
+        // The path came back beside the copy, and another session asks for the new one in place. Its id sorts last,
+        // so the came-back row is the one the window shows.
+        file(path);
+        const inPlace: RmRequest = {
+            id: "zzzzzzzz",
+            kind: "delete",
+            createdAt: new Date().toISOString(),
+            caller: { ...AGENT, sessionId: "sess-3333" },
+            cwd: base,
+            reason: null,
+            targets: [{ path, kind: "file", rule: "default", reason: "no rule allows it" }],
+            status: "pending",
+        };
+        saveRmRequest(inPlace);
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            lines.push(stripAnsi(String(raw ?? "")));
+        });
+        const prompts: ApprovalPrompt[] = [];
+
+        try {
+            await batch([cameBackRequest.id, inPlace.id], person(prompts, [path]));
+        } finally {
+            println.mockRestore();
+        }
+
+        expect(prompts[0]?.request?.items.map((item) => item.reason)).toEqual([
+            "Delete the set-aside copy (the path is back in place)",
+        ]);
+        expect(lines).toContain("left out zzzzzzzz: another request here names the same path");
+        expect(existsSync(path)).toBe(true);
+        expect(existsSync(copy)).toBe(false);
+        expect(loadRmRequest(inPlace.id)?.status).toBe("pending");
+    });
 });
 
 describe("an agent's drain --now", () => {

@@ -258,9 +258,17 @@ export async function approveMany(
 
             const { openEntries } = prepareApproval(request, ctx);
 
-            // The window answers with paths, so two aside copies of one path cannot be told apart in it.
-            if (openEntries.some((entry) => entry.wanted.stored && asidePaths.has(entry.wanted.path))) {
-                out.println(pc.yellow(`left out ${id}: another request here has an aside copy of the same path`));
+            // The window answers with paths, so two rows of one path cannot be told apart in it. Only two in-place
+            // rows of one path name the same object (one shared row); an aside or came-back copy beside any other
+            // row of its path is a different object, so its request is left out.
+            const samePath = openEntries.some(({ wanted }) =>
+                wanted.stored
+                    ? asidePaths.has(wanted.path) || inPlaceOwner.has(wanted.path)
+                    : asidePaths.has(wanted.path)
+            );
+
+            if (samePath) {
+                out.println(pc.yellow(`left out ${id}: another request here names the same path`));
                 continue;
             }
 
@@ -327,9 +335,14 @@ export async function approveMany(
             }
 
             const again = prepareApproval(fresh, ctx, true);
-            const keys = new Set(part.rows.map((entry) => rowKey(entry.wanted)));
-            const openEntries = again.openEntries.filter((entry) => keys.has(rowKey(entry.wanted)));
-            const notShown = again.openEntries.filter((entry) => !keys.has(rowKey(entry.wanted)));
+            // Each row keeps the identity pinned BEFORE the window opened: the checks after the wait (and the
+            // verified rename) compare against what the person was shown, so a path swapped meanwhile is refused.
+            const pinned = new Map(part.rows.map((entry) => [rowKey(entry.wanted), entry.target]));
+            const openEntries = again.openEntries.flatMap((entry) => {
+                const target = pinned.get(rowKey(entry.wanted));
+                return target ? [{ wanted: entry.wanted, target }] : [];
+            });
+            const notShown = again.openEntries.filter((entry) => !pinned.has(rowKey(entry.wanted)));
             const paths = new Set(openEntries.map((entry) => entry.wanted.path));
             const selected = answer.choices.selected?.filter((path) => paths.has(path)) ?? null;
 
