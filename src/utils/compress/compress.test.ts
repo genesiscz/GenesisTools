@@ -1131,7 +1131,7 @@ describe("day logs", () => {
         stream.destroy();
     });
 
-    it("the daily pass keeps two days of day files, failures included, and of transcripts plain, and never starts from a test process", () => {
+    it("the daily pass keeps two days of day files, failures included, and today's transcripts plain, and never starts from a test process", () => {
         const dir = scratch("daily");
         const now = new Date("2026-10-13T12:00:00");
         const targets = planDailyCompression({ now, logsDir: dir }).map(({ target }) => [
@@ -1141,7 +1141,7 @@ describe("day logs", () => {
 
         expect(targets).toEqual([
             ["logs", "2026-10-12"],
-            ["ai-proxy-transcripts", new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10)],
+            ["ai-proxy-transcripts", now.toISOString().slice(0, 10)],
             ["app-hangs", "2026-10-12"],
         ]);
         const hangs = planDailyCompression({ now, logsDir: dir }).find(
@@ -1168,6 +1168,16 @@ describe("day logs", () => {
                     ({ target }) => target.name === "logs"
                 )!.target.firstPlainDay
             ).toBe("2026-03-29");
+        });
+        // The pass runs just after LOCAL midnight. In Prague that is still the evening before in UTC, so a two-day UTC
+        // window kept a transcript plain for over two days after its last write (2026-11-01: a 5.6 GB day, cold 26 h).
+        withTimeZone("Europe/Prague", () => {
+            const pass = new Date(2026, 10, 2, 0, 30);
+            const transcripts = planDailyCompression({ now: pass, logsDir: dir }).find(
+                ({ target }) => target.name === "ai-proxy-transcripts"
+            )!.target;
+            expect(transcripts.firstPlainDay).toBe("2026-11-01");
+            expect(["2026-10-31", "2026-11-01"].map((day) => day < transcripts.firstPlainDay)).toEqual([true, false]);
         });
         expect(startDailyCompressionOnce(dir, "2026-10-13")).toBe(false);
         expect(readdirSync(dir)).toEqual([]);
