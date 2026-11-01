@@ -23,7 +23,7 @@ import {
     type VideoEncoder,
 } from "@genesiscz/utils/video/reencode";
 
-export type EncodeStatus = "planned" | "kept" | "discarded" | "skipped" | "failed";
+export type EncodeStatus = "planned" | "kept" | "kept-beside" | "discarded" | "skipped" | "failed";
 
 export interface EncodeRow {
     input: string;
@@ -123,14 +123,59 @@ function removeOwnTemp(path: string): void {
     rmSync(path, { force: true });
 }
 
-function replaceOriginal({ input, finished }: { input: string; finished: string }): string {
+export type ReplaceDecision =
+    | { kind: "replace" }
+    | { kind: "beside"; reason: string }
+    | { kind: "refuse"; reason: string };
+
+/**
+ * What `--replace` may do with one original. The trash rules decide: "deny" stops everyone, and "ask" needs a person,
+ * so an agent keeps the verified result beside the original instead.
+ */
+export function replaceDecision({
+    verdict,
+    reason,
+    isInAgent,
+}: {
+    verdict: "allow" | "ask" | "deny";
+    reason: string;
+    isInAgent: boolean;
+}): ReplaceDecision {
+    if (verdict === "deny") {
+        return { kind: "refuse", reason: `the trash rules refuse the original: ${reason}` };
+    }
+
+    if (verdict === "ask" && isInAgent) {
+        return { kind: "beside", reason: `an agent may not replace this file without a person's approval (${reason})` };
+    }
+
+    return { kind: "replace" };
+}
+
+type ReplaceOutcome = { batch: string } | { beside: string };
+
+function replaceOriginal({ input, finished }: { input: string; finished: string }): ReplaceOutcome {
     const config = loadRmConfig();
     const caller = rmCallerFromRuntime();
     const ctx = defaultRuleContext(config, caller, process.cwd());
     const [item] = planRemoval([input], ctx);
 
-    if (!item || item.verdict.kind === "deny") {
-        throw new Error(`the trash refuses the original: ${item?.verdict.reason ?? "no verdict"}`);
+    if (!item) {
+        throw new Error("the trash rules gave no verdict for the original");
+    }
+
+    const decision = replaceDecision({
+        verdict: item.verdict.kind,
+        reason: item.verdict.reason,
+        isInAgent: caller.isInAgent,
+    });
+
+    if (decision.kind === "refuse") {
+        throw new Error(decision.reason);
+    }
+
+    if (decision.kind === "beside") {
+        return { beside: decision.reason };
     }
 
     const before = statSync(input);
@@ -147,7 +192,7 @@ function replaceOriginal({ input, finished }: { input: string; finished: string 
     kickDrainer(config);
     renameSync(finished, input);
     utimesSync(input, before.atime, before.mtime);
-    return batch.id;
+    return { batch: batch.id };
 }
 
 async function encodeOne({ input, options }: { input: string; options: EncodeOptions }): Promise<EncodeRow> {
@@ -234,20 +279,41 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         }
 
         let trashBatch: string | null = null;
+        let status: EncodeStatus = "kept";
+        let reason = verdict.reason;
+        let outputPath = finalPath;
 
         if (options.replace) {
-            trashBatch = replaceOriginal({ input, finished: temp });
+            const sibling = siblingOutput({ input, encoder });
+            const outcome = replaceOriginal({ input, finished: temp });
+
+            if ("batch" in outcome) {
+                trashBatch = outcome.batch;
+            } else if (await Bun.file(sibling).exists()) {
+                removeOwnTemp(temp);
+                return finish({
+                    status: "discarded",
+                    outputBytes: output.bytes,
+                    saving,
+                    reason: `${outcome.beside}; ${sibling} already exists`,
+                });
+            } else {
+                renameSync(temp, sibling);
+                status = "kept-beside";
+                reason = `${verdict.reason}; kept beside the original: ${outcome.beside}`;
+                outputPath = sibling;
+            }
         } else {
             renameSync(temp, finalPath);
         }
 
         return finish({
-            status: "kept",
+            status,
             kept: true,
-            output: finalPath,
+            output: outputPath,
             outputBytes: output.bytes,
             saving,
-            reason: verdict.reason,
+            reason,
             trashBatch,
         });
     } catch (error) {
@@ -285,7 +351,21 @@ export function summarize({ rows, seconds }: { rows: EncodeRow[]; seconds: numbe
     };
 }
 
-export function renderRows({ rows, summary, dryRun }: { rows: EncodeRow[]; summary: EncodeSummary; dryRun: boolean }) {
+function shellQuote(path: string): string {
+    return `'${path.replaceAll("'", "'\\''")}'`;
+}
+
+export function renderRows({
+    rows,
+    summary,
+    dryRun,
+    encoder,
+}: {
+    rows: EncodeRow[];
+    summary: EncodeSummary;
+    dryRun: boolean;
+    encoder: VideoEncoder;
+}) {
     const table = createBoxTable(["FILE", "SIZE", "NEW", "SAVED", "RESULT"]);
 
     for (const row of rows) {
@@ -302,8 +382,20 @@ export function renderRows({ rows, summary, dryRun }: { rows: EncodeRow[]; summa
 
     for (const row of rows) {
         if (row.trashBatch) {
-            out.println(`undo ${basename(row.input)}: tools rm restore ${row.trashBatch}`);
+            out.println(
+                `undo ${basename(row.input)}: mv ${shellQuote(row.input)} ${shellQuote(siblingOutput({ input: row.input, encoder }))}` +
+                    ` && tools rm restore ${row.trashBatch}`
+            );
         }
+    }
+
+    const beside = rows.filter((row) => row.status === "kept-beside");
+
+    if (beside.length > 0) {
+        out.println(
+            `${beside.length} original(s) stay because an agent may not remove them. A person finishes at a terminal: ` +
+                `tools rm ${beside.map((row) => shellQuote(row.input)).join(" ")}`
+        );
     }
 
     const wording = dryRun ? "dry run, nothing written. " : "";

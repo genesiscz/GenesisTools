@@ -11,7 +11,7 @@ export async function runVideoCommand({
     signal?: AbortSignal;
     timeoutMs?: number;
 }): Promise<string> {
-    logger.info({ command, timeoutMs }, "Video process started");
+    logger.debug({ command, timeoutMs }, "Video process started");
     const result = await profiler
         .scope("video")
         .measureAsync(command[0], () =>
