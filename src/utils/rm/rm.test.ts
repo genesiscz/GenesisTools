@@ -23,6 +23,7 @@ import {
     type AppApproval,
     type ApprovalDeps,
     ApprovalUpdates,
+    acquireDrainerLock,
     appApprovalFromReply,
     appApproveParams,
     appendRmLedger,
@@ -53,6 +54,7 @@ import {
     loadRmConfig,
     loadRmMeasurements,
     loadRmRequest,
+    lockRmRequest,
     mayDenyRmRequest,
     measureBytes,
     measureBytesAsync,
@@ -61,6 +63,7 @@ import {
     moveAside,
     moveToTrash,
     parseRmConfig,
+    pathPresent,
     pendingAsideDirs,
     pendingAsideFor,
     planRemoval,
@@ -83,9 +86,11 @@ import {
     recordRmMeasurement,
     recoverAsideJournals,
     rememberOptions,
+    removeStaleLock,
     renameNoReplace,
     replyChoices,
     requestBatchId,
+    requestLive,
     requestsAlsoNaming,
     resolveTarget,
     restoreBatch,
@@ -1856,6 +1861,99 @@ describe("the ledger claim of an aside copy's size", () => {
         utimesSync(marker, old, old);
         recordRmMeasurement({ request, target, item, requestsDir });
         expect(lines()).toBe(2);
+    });
+});
+
+describe("a single-holder lock (the drainer, a request's decision, a measurement pass)", () => {
+    test("an empty lock is a holder between its create and its pid write; only an old empty lock is taken over", () => {
+        const requestsDir = dir("empty-lock-requests");
+        const lockPath = rmRequestLockFile("emplk1", requestsDir);
+        writeFileSync(lockPath, "");
+
+        expect(acquireDrainerLock(lockPath)).toBeNull();
+        expect(lockRmRequest("emplk1", requestsDir)).toEqual({ ok: false, holder: null });
+        expect(readFileSync(lockPath, "utf8")).toBe("");
+
+        // An empty lock that old belongs to a process that died between the create and the write.
+        const old = new Date(Date.now() - 60_000);
+        utimesSync(lockPath, old, old);
+        const release = acquireDrainerLock(lockPath);
+
+        expect(release).not.toBeNull();
+        expect(readFileSync(lockPath, "utf8")).toBe(String(process.pid));
+        release?.();
+        expect(existsSync(lockPath)).toBe(false);
+    });
+
+    test("a takeover never removes a lock that changed hands after it was read", () => {
+        const lockPath = join(dir("changed-lock"), "drainer.lock");
+        // Read as the dead holder 999999; a live process (this test's parent) took the lock over since.
+        writeFileSync(lockPath, String(process.ppid));
+
+        expect(removeStaleLock(lockPath, "999999")).toBe(false);
+        expect(readFileSync(lockPath, "utf8")).toBe(String(process.ppid));
+
+        // Still the dead holder's: the name is freed.
+        writeFileSync(lockPath, "999999");
+        expect(removeStaleLock(lockPath, "999999")).toBe(true);
+        expect(existsSync(lockPath)).toBe(false);
+    });
+
+    test("processes that start on a dead holder's lock at once end with one holder", async () => {
+        const lockPath = join(dir("raced-lock"), "decision.lock");
+        writeFileSync(lockPath, "999999");
+        const script = file(
+            join(dir("raced-lock-scripts"), "racer.ts"),
+            [
+                `import * as rm from ${SafeJSON.stringify(join(import.meta.dir, "index.ts"))};`,
+                "const [lockPath, startAt] = process.argv.slice(2);",
+                "await Bun.sleep(Math.max(0, Number(startAt) - Date.now()));",
+                "process.stdout.write(rm.acquireDrainerLock(lockPath) ? 'won' : 'lost');",
+            ].join("\n")
+        );
+        const startAt = String(Date.now() + 700);
+        const racers = [1, 2, 3, 4].map(() =>
+            Bun.spawn([process.execPath, script, lockPath, startAt], {
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+            })
+        );
+        const said = await Promise.all(racers.map((racer) => new Response(racer.stdout).text()));
+
+        expect(await Promise.all(racers.map((racer) => racer.exited))).toEqual([0, 0, 0, 0]);
+        expect(said.filter((word) => word === "won")).toHaveLength(1);
+    });
+});
+
+describe("a request path under a parent that became a file", () => {
+    test("reads as gone, and a folder that may not be read still throws", () => {
+        const parent = file(join(dir("enotdir"), "example"));
+        const child = join(parent, "child");
+        const request: RmRequest = {
+            id: "ntdr01",
+            kind: "delete",
+            createdAt: new Date().toISOString(),
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            status: "pending",
+            targets: [{ path: child, kind: "file", rule: "default", reason: "no rule allows it" }],
+        };
+
+        expect(pathPresent(child)).toBe(false);
+        expect(requestLive(request).state).toBe("gone");
+        expect(pathPresent(parent)).toBe(true);
+
+        const locked = dir("enotdir-locked");
+        file(join(locked, "inner", "x.txt"));
+        chmodSync(locked, 0o000);
+
+        try {
+            expect(() => pathPresent(join(locked, "inner"))).toThrow();
+        } finally {
+            chmodSync(locked, 0o755);
+        }
     });
 });
 

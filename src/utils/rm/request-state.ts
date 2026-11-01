@@ -16,9 +16,20 @@ export interface RmRequestLive {
     gone: number;
 }
 
-/** A path lstat sees; a dangling symlink counts, because it still holds the name. */
+/**
+ * A path lstat sees; a dangling symlink counts, because it still holds the name. A parent that became a file (ENOTDIR)
+ * means the path is gone too; any other error (a folder it may not read) still throws, so nothing reads as gone.
+ */
 export function pathPresent(path: string): boolean {
-    return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+    try {
+        return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOTDIR") {
+            return false;
+        }
+
+        throw error;
+    }
 }
 
 export function targetLiveState(
