@@ -26,6 +26,7 @@ import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { dialogsPath, openQuestions, readSessionQuestions } from "@genesiscz/utils/agents/dialogs/store";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { type ChatAnswerRun, userMessageOutcome } from "./chat-answer-log";
@@ -841,8 +842,12 @@ describe("applySetting", () => {
         const user = join(dir, "settings.json");
         const named = (on: boolean) => SafeJSON.stringify({ enabledPlugins: { [MODS_PLUGIN]: on } });
 
+        const debug = spyOn(logger, "debug");
+
         // A project, local or --plugin-dir load leaves the user settings silent: the session's mark decides.
         expect(modsPluginDisabled([local, user])).toBe(false);
+        // Missing settings files are the normal case in every hook process and log nothing.
+        expect(debug).not.toHaveBeenCalled();
         writeFileSync(user, named(true));
         writeFileSync(local, named(false));
         expect(modsPluginDisabled([local, user])).toBe(true);
@@ -851,6 +856,9 @@ describe("applySetting", () => {
         expect(modsPluginDisabled([local, user])).toBe(false);
         writeFileSync(local, "not json");
         expect(modsPluginDisabled([local, user])).toBe(true);
+        // The control: a file that exists but does not parse is still logged.
+        expect(debug).toHaveBeenCalledTimes(1);
+        debug.mockRestore();
     });
 
     it("mods watch adds the mods folder to CLAUDE_CODE_PLUGIN_DIRS and takes it out again, keeping the rest", () => {
