@@ -303,7 +303,122 @@ final class HubInboxUXTests: XCTestCase {
         }
     }
 
+    /// The card's Context and Code sections, which the widget's decision card draws with the same views (GenesisKit
+    /// DecisionDetailViews.swift): the fold with Show all, the cited path and its lines, the confidence chip and the
+    /// Recommended badge. Rendered in a window that is never ordered front, after the code's highlight has landed.
+    /// `HUB_INBOX_SHOTS=<folder>` writes the PNGs, the same before and after a change, so a pair can be compared.
+    @MainActor
+    func testTheCardDrawsItsContextAndCode() throws {
+        let open = try Self.decision(Self.contextFixture(status: "waiting"))
+        let text = try Self.drawnText(Self.render(card: open, name: "inbox-card-context-open"))
+        for expected in ["Context", "Show all", "Code", "src/agents/lib/hooks/tool-rules.ts:9", "High confidence",
+                         "Recommended", "RM_USER_VERB", "allow at 1 GB or more"] {
+            XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
+        }
+        let sent = try Self.decision(Self.contextFixture(status: "sent"))
+        let closed = try Self.drawnText(Self.render(card: sent, name: "inbox-card-context-sent"))
+        XCTAssertTrue(closed.contains("Sent 18:31") || closed.contains("Sent "), closed)
+        XCTAssertTrue(closed.contains("Your answer"), closed)
+    }
+
     // MARK: - Fixtures
+
+    /// The decision of the 2026-11-01 screenshot with invented paths and answer: a long context, one cited file with
+    /// its lines, a proposal, three options with a recommended one. `status` "sent" adds the pick, an answer of its own
+    /// and a delivery.
+    static func contextFixture(status: String) -> String {
+        let excerpt = [
+            #"import { commandTokenIndex, commandWord, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";"#,
+            "",
+            "/** The `tools rm` verbs that let a request through, trust a folder, or change settings: a person's to run. */",
+            #"const RM_USER_VERB ="#,
+            #"    /(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b|[\\/]rm[\\/]index\.ts\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b/;"#,
+            "",
+            "export const rmUserVerbs: ShellRule = {",
+            #"    id: "rm-user-verbs","#,
+            #"    kind: "destructive","#,
+            #"    severity: "block","#,
+            "};",
+        ].joined(separator: "\n")
+        let context = "The block protects nothing that the dialog does not already protect, but AGENTS.md is your "
+            + "shared policy, so I do not change it without your word. The `--help` false positive of the same rule is "
+            + "fixed separately and does not depend on this.\n\n"
+            + "Today an agent that runs `tools rm approve <id>` is stopped before the dialog opens, so a large delete "
+            + "waits until you type the command yourself.\n\n"
+            + "- The dialog asks for Touch ID, so an agent cannot approve its own request.\n"
+            + "- A size floor keeps small scratch deletes quiet.\n"
+            + "- The rule's message names the command you can run instead.\n"
+            + "- A refused approval says which rule refused it and where its setting lives.\n"
+            + "- Nothing changes for a person who types the command in a terminal."
+        var fields: [String: Any] = [
+            "number": 1, "status": status, "title": "May an agent start `tools rm approve <id>` to open the approval dialog?",
+            "prompt": "May an agent start `tools rm approve <id>` to open the approval dialog?",
+            "context": context, "confidence": "high", "recommended": "a",
+            "proposal": "a): it matches both of your instructions. The dialog stays the only approval path.",
+            "choices": [
+                ["id": "a", "label": "allow at 1 GB or more", "recommended": true],
+                ["id": "b", "label": "allow any size"],
+                ["id": "c", "label": "keep the block, fix the message"],
+            ],
+            "refs": [[
+                "path": "src/agents/lib/hooks/tool-rules.ts", "line": 9,
+                "absolute": "/Users/alice/Projects/Fixture/src/agents/lib/hooks/tool-rules.ts",
+                "excerpt": excerpt, "startLine": 6, "language": "typescript", "missing": false, "matches": 1,
+            ]],
+        ]
+        if status == "sent" {
+            fields["option"] = "a"
+            fields["answer"] = "a) allow it at the size I set, and have the agent ask before anything under 10 MB."
+            fields["delivery"] = ["route": "claude-peer", "target": "original Claude session", "at": "2026-11-01T17:31:00.000Z"]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: fields)) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The card at the Inbox's width, at rest under `.liveRow()` as the list draws it, hosted in a window that is never
+    /// ordered front; written to `HUB_INBOX_SHOTS/<name>.png` when that is set.
+    @MainActor
+    static func render(card item: InboxItem, name: String) throws -> NSBitmapImageRep {
+        _ = NSApplication.shared
+        let view = InboxDecisionCard(model: HubModel(wantedSession: nil, tab: .transcript), inbox: HubInboxModel(),
+                                     session: session("s1", items: [item]), item: item)
+            .liveRow()
+            .frame(width: 760)
+            .padding(10)
+            .background(Color.black)
+            .environment(\.colorScheme, .dark)
+        let host = NSHostingView(rootView: AnyView(view))
+        let size = host.fittingSize
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: size.width, height: size.height),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.contentView = host
+        window.order(.below, relativeTo: 0)
+        defer { window.close() }
+        // The code's highlight is built off the main thread and lands a moment later.
+        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        host.layoutSubtreeIfNeeded()
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let folder = ProcessInfo.processInfo.environment["HUB_INBOX_SHOTS"] {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+            let url = URL(fileURLWithPath: folder).appendingPathComponent(name + ".png")
+            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)
+            print("shot \(url.path)")
+        }
+        return rep
+    }
+
+    static func drawnText(_ rep: NSBitmapImageRep) throws -> String {
+        let image = try XCTUnwrap(rep.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    }
 
     /// Decision 4 of session s1 (stored draft "old") with `note` typed and staged, its write answering `result`;
     /// returns once the reload after the write ran.

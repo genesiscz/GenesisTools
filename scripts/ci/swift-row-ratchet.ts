@@ -51,7 +51,6 @@ export const SWIFT_ROW_CONTROL_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/macos/GenesisTools/Sources/Host/LocalNetworkWatch.swift#LocalNetworkPromptRow",
     "src/macos/GenesisTools/Sources/Parts/Features/Settings/DaemonSettings.swift#DaemonTaskCard",
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubAgents.swift#AgentMailRow",
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift#InboxExcerptCard",
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRs.swift#PRLabelPill",
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubTranscriptSearch.swift#HubSearchHitRow",
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubWindow.swift#PaneToggle",

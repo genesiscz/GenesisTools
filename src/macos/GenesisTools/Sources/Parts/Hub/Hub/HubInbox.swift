@@ -22,94 +22,13 @@ struct InboxChoice: Decodable, Hashable {
     var shownLabel: String { WidgetOptionText.text(label, letter: id) }
 }
 
-/// Where the last send took a decision's answer (`delivery` on the stored row).
-struct InboxDeliveryRecord: Decodable, Hashable {
-    let route: String
-    let target: String?
-    /// A one-sentence reason a queued send delivered nothing. New rows store it here; older rows put
-    /// the raw dump in `target`, which the TS side reads through the same rules (`inboxDelivery`).
-    let error: String?
-    /// The raw dump behind an old row's sentence, shown behind Details only.
-    let raw: String?
-    let at: String
+/// Where the last send took a decision's answer (`delivery` on the stored row): GenesisKit's `DecisionDelivery`, which
+/// the widget's answered card says in the same line.
+typealias InboxDeliveryRecord = DecisionDelivery
 
-    private static let clock: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
-
-    /// A short human place, never a multi-line dump: the first line of whatever the row stored.
-    private var place: String? {
-        target?.split(separator: "\n").first.map(String.init)?.trimmed
-    }
-
-    /// "Sent 22:31 to cmux pane work · agent", "Sent 22:31 to Codex worker w1", "Waiting to send since 22:31: why".
-    /// New rows store `cmux · …` and `codex worker …`; older rows stored the bare pane or worker name. Every delivered
-    /// route reads "Sent": a Claude session's own channel (`claude-peer`) read "queued … when the decisions hook is on"
-    /// under a header that said "Sent" (UX audit 2026-10-27, F7).
-    var line: String {
-        let time = HubFormat.date(at).map { Self.clock.string(from: $0) } ?? ""
-        // The decision log's delivery channels (`DeliveryChannel`, src/question/lib/decisions/deliver.ts), not the
-        // harness set: `codex` is the Codex worker route.
-        switch route {
-        case "cmux":
-            let where_ = place.map { $0.hasPrefix("cmux") ? $0 : "cmux pane \($0)" } ?? "the cmux pane"
-            return "Sent \(time) to \(where_)"
-        case "codex":
-            let who = place.map { $0.hasPrefix("codex") ? "C" + $0.dropFirst() : "Codex worker \($0)" } ?? "the Codex worker"
-            return "Sent \(time) to \(who)"
-        case "resume": return "Resumed \(time) in " + (place ?? "a new pane") + "; the answer goes with its first prompt"
-        case "prompt": return "Sent \(time) with the session's next prompt"
-        case "queued":
-            let why = error ?? place
-            return "Waiting to send since \(time)" + (why.map { ": \($0)" } ?? "") + "."
-        default:
-            return "Sent \(time) to " + (place ?? "the session")
-        }
-    }
-
-    var isQueued: Bool { route == "queued" }
-}
-
-struct InboxRef: Decodable, Hashable {
-    let path: String
-    let line: Int?
-    let endLine: Int?
-    /// The file the path names (the loader tries the session's folder, its checkout and the main checkout,
-    /// then a unique suffix match); null when it could not be located.
-    let absolute: String?
-    /// The real lines read from disk by the loader; null when the file could not be read.
-    let excerpt: String?
-    /// The 1-based line the excerpt starts at.
-    let startLine: Int?
-    /// For syntax highlighting.
-    let language: String?
-    let missing: Bool?
-    /// The folders a relative path was looked up in.
-    let searched: [String]?
-    /// Files the path matched by suffix: more than one means it is ambiguous.
-    let matches: Int?
-
-    var hasContent: Bool { (excerpt?.isEmpty == false) || missing == true }
-
-    /// Why a missing ref has no lines, in the words the card shows: what was searched and where. Never
-    /// "file not found" for a file that exists elsewhere (H5).
-    var unresolvedNote: (label: String, detail: String) {
-        let folders = (searched ?? []).map { ($0 as NSString).lastPathComponent }
-        let unique = folders.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        if let matches, matches > 1 {
-            return ("\(matches) matches", "\(matches) files end with \(path) under \(unique.first ?? "the session's folder"); the reply does not say which one.")
-        }
-        if path.hasPrefix("/") {
-            return ("not on disk", "\(path) is not on this Mac any more.")
-        }
-        if unique.isEmpty {
-            return ("can't locate", "The session's folder is not known, so \(path) cannot be looked up.")
-        }
-        return ("can't locate", "Not under \(unique.joined(separator: ", ")): the reply may name a file of another repository.")
-    }
-}
+/// A `file:line` a decision cites, with its lines read from disk: GenesisKit's `DecisionRef`, which the widget's
+/// decision card decodes too.
+typealias InboxRef = DecisionRef
 
 struct InboxQuestion: Decodable, Hashable {
     let itemId: String
@@ -2220,10 +2139,6 @@ struct InboxDecisionCard: View, Equatable {
     @State private var noteDirty = false
     /// What Return in an empty note says ("Write a note first."): a quiet hint, gone on the next key (P12).
     @State private var noteHint: String?
-    @State private var showContext = false
-    /// The context is taller than its folded height: only then does it fade at the cut and offer "Show all".
-    @State private var contextOverflows = false
-    private static let contextFold: CGFloat = 150
     @State private var showAsk = false
     @State private var showReply = false
     @State private var showsDeliveryDetails = false
@@ -2261,16 +2176,9 @@ struct InboxDecisionCard: View, Equatable {
         default: return ReviewPalette.dim
         }
     }
-    private var contextRevealed: Bool {
-        showContext || (highlight?.current?.row == item.id && highlight?.current?.field == "context")
-    }
-
-    static func confidenceColor(_ level: String) -> Color {
-        switch level.lowercased() {
-        case "high": return ReviewPalette.added
-        case "low": return ReviewPalette.removed
-        default: return ReviewPalette.modified
-        }
+    /// ⌘F's current match is in this card's context: the section shows it whole.
+    private var findInContext: Bool {
+        highlight?.current?.row == item.id && highlight?.current?.field == "context"
     }
 
     private var heading: String {
@@ -2290,11 +2198,13 @@ struct InboxDecisionCard: View, Equatable {
             if let ask = session.reply?.ask, !ask.isEmpty, item.source == "transcript" {
                 askRow(ask)
             }
+            // The widget's decision card draws these two sections too (GenesisKit DecisionDetailViews.swift).
             if let context = item.context, !context.isEmpty {
-                contextSection(context)
+                DecisionContextSection(markdown: context, forcedOpen: findInContext)
+                    .findField("context")
             }
             if !item.excerptRefs.isEmpty {
-                excerptSection
+                DecisionCodeSection(refs: item.excerptRefs, root: session.cwd.map { projectRoot(of: $0) })
             }
             if let notes = item.notes, !notes.isEmpty {
                 FindText(inlineMarkdown(notes), field: "notes")
@@ -2388,8 +2298,7 @@ struct InboxDecisionCard: View, Equatable {
             }
             if let confidence = item.confidence {
                 // Was a raw "[medium]" beside the title.
-                Badge("\(confidence.capitalized) confidence", color: Self.confidenceColor(confidence), look: .filled)
-                    .instantTooltip("How sure the agent is of its recommended option")
+                DecisionConfidenceBadge(confidence)
             }
             if staged {
                 Badge("Staged", color: SessionPalette.blue, look: .filled)
@@ -2451,60 +2360,6 @@ struct InboxDecisionCard: View, Equatable {
             }
         }
         .clipped()
-    }
-
-    private func contextSection(_ context: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("Context").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
-                Spacer()
-                if contextOverflows || showContext {
-                    LiveButton(tooltip: nil, pressable: true) {
-                        let revealing = !contextRevealed
-                        GenMotion.perform(expanding: revealing, reduceMotion: reduceMotion) { showContext = revealing }
-                    } label: {
-                        Text(contextRevealed ? "Show less" : "Show all")
-                    }
-                        .font(.system(size: 10.5))
-                        .foregroundColor(ReviewPalette.renamed)
-                }
-            }
-            // Folded, a long context fades out at the cut instead of ending mid-line (H16).
-            let faded = contextOverflows && !contextRevealed
-            MarkdownContentView(markdown: context, style: contextStyle)
-                .findField("context")
-                .fixedSize(horizontal: false, vertical: true)
-                .onGeometryChange(for: Bool.self, of: { $0.size.height > Self.contextFold + 1 }) { contextOverflows = $0 }
-                .frame(maxHeight: contextRevealed ? nil : Self.contextFold, alignment: .top)
-                .clipped()
-                .mask {
-                    VStack(spacing: 0) {
-                        Rectangle()
-                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            .frame(height: faded ? 36 : 0)
-                    }
-                }
-        }
-        // A plain block with a rule on its left, not a filled box inside the card (P8: a card in a card).
-        .leadingRule(Color.white.opacity(0.12))
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var contextStyle: MarkdownStyle {
-        var style = MarkdownStyle.hub
-        style.bodySize = 12
-        style.textColor = .white.opacity(0.82)
-        style.blockSpacing = 6
-        return style
-    }
-
-    private var excerptSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Code").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
-            ForEach(Array(item.excerptRefs.enumerated()), id: \.offset) { index, ref in
-                InboxExcerptCard(ref: ref, cwd: session.cwd, field: "ref:\(index)")
-            }
-        }
     }
 
     private var noteField: some View {
@@ -2756,7 +2611,7 @@ struct InboxDecisionCard: View, Equatable {
                         .foregroundColor(Color.white.opacity(item.isOpen || picked ? 0.92 : 0.55))
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if recommended {
-                        Badge("Recommended", color: ReviewPalette.added, look: .filled)
+                        DecisionRecommendedBadge()
                     }
                     if stagedPick {
                         Text("Staged")
@@ -2806,64 +2661,6 @@ struct InboxDecisionCard: View, Equatable {
             set = set == [id] ? [] : [id]
         }
         return set.sorted().joined()
-    }
-}
-
-/// One `file:line` excerpt: the real lines the loader read, syntax highlighted, with Open in Cursor.
-private struct InboxExcerptCard: View {
-    let ref: InboxRef
-    let cwd: String?
-    /// The ⌘F field key of this excerpt's path (`ref:<index>`).
-    let field: String
-
-    private var displayPath: String {
-        ref.line.map { "\(ref.path):\($0)" } ?? ref.path
-    }
-
-    private var absolute: String {
-        if let absolute = ref.absolute { return absolute }
-        if ref.path.hasPrefix("/") { return ref.path }
-        return cwd.map { projectRoot(of: $0) + "/" + ref.path } ?? ref.path
-    }
-
-    var body: some View {
-        let _ = RenderProbe.hit("inbox.excerptCard.body")
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                if ref.missing == true {
-                    // Nothing to open: a link here opened a guessed path that does not exist.
-                    let note = ref.unresolvedNote
-                    FindText(displayPath, field: field)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(ReviewPalette.dim)
-                    Spacer()
-                    Label(note.label, systemImage: "questionmark.folder")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(ReviewPalette.dim)
-                        .instantTooltip(note.detail)
-                } else {
-                    LiveButton(tooltip: "Open \(absolute)\(ref.line.map { ":\($0)" } ?? "") in Cursor",
-                               pressable: true) {
-                        PathOpener.cursor(absolute, line: ref.line ?? 1)
-                    } label: {
-                        FindText(displayPath, field: field)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(Color(red: 0.55, green: 0.7, blue: 1))
-                    }
-                    Spacer()
-                }
-            }
-            if let excerpt = ref.excerpt, !excerpt.isEmpty {
-                CodeBlockText(
-                    block: CodeBlockBuilder.numbered(excerpt, start: ref.startLine ?? ref.line ?? 1, language: SyntaxLanguage.forPath(ref.path), focus: ref.line),
-                    limit: nil,
-                    cacheKey: "inbox-\(ref.path):\(ref.line ?? 0)"
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // The code reads as a block by its rule and its monospaced lines, not by a filled box (P8).
-                .leadingRule(Color.white.opacity(0.12))
-            }
-        }
     }
 }
 
@@ -3500,12 +3297,4 @@ private struct InboxFormCard: View {
 func inlineMarkdown(_ text: String) -> AttributedString {
     (try? AttributedString(markdown: text, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
         ?? AttributedString(text)
-}
-
-private extension View {
-    /// A block marked by a 2 pt rule on its left, not a filled box inside the card (P8: a card in a card).
-    func leadingRule(_ color: Color) -> some View {
-        padding(.leading, 10)
-            .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 2) }
-    }
 }
