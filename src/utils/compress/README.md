@@ -87,8 +87,9 @@ try {
 - A writer writes `<target>.<pid>.<n>.partial` next to the target through `SeekableZstdWriter` (the preset's frames,
   default `text`), hashing what it is given. `commit()` finishes the frames, fsyncs, reads the file back with
   `verifyCompressedFile` (decompressed size and sha256 must equal the input) and only then renames it over the target.
-  A failed push, write or read-back removes the partial and leaves an existing target byte for byte as it was
-  (`ZstdVerificationError` names the targets).
+  A failed push, write, fsync or read-back removes the partial and leaves an existing target byte for byte as it was
+  (`ZstdVerificationError` names the targets). The output gets the options' `mode`, else the mode of the target it
+  replaces (a 0600 file stays 0600), else 0666 minus the umask; the partial has that mode from its first byte.
 - A batch verifies every output before it renames the first. Call `finish()` on a member once its input is complete:
   until then it keeps its file open and up to `threads` frames in memory (16 MiB for `text`). The renames are not one
   atomic step: a rename that fails after all verified (the folder removed meanwhile) leaves the earlier outputs

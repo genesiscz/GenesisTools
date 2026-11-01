@@ -364,6 +364,172 @@ describe("verified zstd writer", () => {
             second,
         ]);
     });
+
+    it("replacing a target without a mode keeps the target's mode from the partial's first write", async () => {
+        const dir = scratch("verified-mode");
+        const target = join(dir, "private.jsonl.zst");
+        const shared = join(dir, "shared.jsonl.zst");
+        writeFileSync(target, "old private");
+        chmodSync(target, 0o600);
+        writeFileSync(shared, "old shared");
+        chmodSync(shared, 0o640);
+        const modes: number[] = [];
+        const write = atomicWriteIo.writeSync;
+        const probe = spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            modes.push(fstatSync(fd).mode & 0o777);
+            return write(fd, bytes, offset, length);
+        });
+
+        try {
+            await compressStream([logText(200)], { target, caller: "test-verified-mode" });
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(modes.length).toBeGreaterThan(0);
+        expect(modes.every((mode) => mode === 0o600)).toBe(true);
+        expect(statSync(target).mode & 0o777).toBe(0o600);
+        await compressStream([logText(20)], { target: shared, caller: "test-verified-mode" });
+        expect(statSync(shared).mode & 0o777).toBe(0o640);
+        const umaskDefault = join(dir, "umask-default");
+        writeFileSync(umaskDefault, "");
+        const fresh = join(dir, "fresh.jsonl.zst");
+        await compressStream([logText(20)], { target: fresh, caller: "test-verified-mode" });
+        expect(statSync(fresh).mode & 0o777).toBe(statSync(umaskDefault).mode & 0o777);
+    });
+
+    const enospc = (call: string) =>
+        Object.assign(new Error(`ENOSPC: no space left on device, ${call}`), { code: "ENOSPC" });
+
+    /** A full disk on the file at `path` only: every write to it throws ENOSPC, every other file is written. */
+    function failWritesTo(path: string) {
+        const inode = statSync(path).ino;
+        const write = atomicWriteIo.writeSync;
+
+        return spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            if (fstatSync(fd).ino === inode) {
+                throw enospc("write");
+            }
+
+            return write(fd, bytes, offset, length);
+        });
+    }
+
+    /** The fsync of the file at `path` throws ENOSPC; every other fsync runs. */
+    function failFsyncOf(path: string) {
+        const inode = statSync(path).ino;
+        const fsync = atomicWriteIo.fsyncSync;
+
+        return spyOn(atomicWriteIo, "fsyncSync").mockImplementation((fd) => {
+            if (fstatSync(fd).ino === inode) {
+                throw enospc("fsync");
+            }
+
+            fsync(fd);
+        });
+    }
+
+    it("a write or an fsync that fails removes the partial, keeps the existing target and records nothing", async () => {
+        const dir = scratch("verified-io-fail");
+        const target = join(dir, "kept.jsonl.zst");
+        writeFileSync(target, "the existing target");
+        const failWrite = createVerifiedZstdWriter(target, {
+            caller: "test-verified-io",
+            frameBytes: 4096,
+            threads: 1,
+        });
+        const writeProbe = failWritesTo(failWrite.partialPath);
+
+        try {
+            await expect(failWrite.push(logText(2000))).rejects.toThrow("ENOSPC");
+        } finally {
+            writeProbe.mockRestore();
+        }
+
+        const failSync = createVerifiedZstdWriter(target, { caller: "test-verified-io", frameBytes: 4096 });
+        await failSync.push(logText(2000));
+        const syncProbe = failFsyncOf(failSync.partialPath);
+
+        try {
+            await expect(failSync.commit()).rejects.toThrow("ENOSPC");
+        } finally {
+            syncProbe.mockRestore();
+        }
+
+        expect([failWrite.state, failSync.state]).toEqual(["aborted", "aborted"]);
+        expect(readdirSync(dir)).toEqual(["kept.jsonl.zst"]);
+        expect(readFileSync(target, "utf8")).toBe("the existing target");
+        expect(searchLedger({ caller: "test-verified-io", path: dir })).toEqual([]);
+    });
+
+    it("a batch member whose fsync fails renames no output of the batch and removes every partial", async () => {
+        const dir = scratch("verified-batch-fsync");
+        const first = join(dir, "a.jsonl.zst");
+        const second = join(dir, "b.jsonl.zst");
+        writeFileSync(first, "old first");
+        writeFileSync(second, "old second");
+        const batch = createVerifiedZstdBatch({ caller: "test-verified-batch-fsync", frameBytes: 4096 });
+        const writers = [first, second].map((target) => batch.add(target));
+        const probe = failFsyncOf(writers[1]!.partialPath);
+        let failure: unknown;
+
+        try {
+            for (const writer of writers) {
+                await writer.push(logText(300));
+            }
+
+            failure = await batch.commit().then(
+                () => undefined,
+                (err: unknown) => err
+            );
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(failure).toBeInstanceOf(ZstdVerificationError);
+        expect(failure instanceof ZstdVerificationError ? failure.targets : []).toEqual([second]);
+        expect(readFileSync(first, "utf8")).toBe("old first");
+        expect(readFileSync(second, "utf8")).toBe("old second");
+        expect(readdirSync(dir).sort()).toEqual(["a.jsonl.zst", "b.jsonl.zst"]);
+        expect(searchLedger({ caller: "test-verified-batch-fsync", path: dir })).toEqual([]);
+    });
+
+    it("a rename that fails after the batch verified keeps the earlier outputs renamed and removes the rest", async () => {
+        const dir = scratch("verified-batch-rename");
+        const gone = join(dir, "gone");
+        mkdirSync(gone);
+        const first = join(dir, "2026-10-30.jsonl.zst");
+        const second = join(gone, "2026-10-31.jsonl.zst");
+        const third = join(dir, "2026-11-01.jsonl.zst");
+        writeFileSync(first, "old first");
+        writeFileSync(third, "old third");
+        const batch = createVerifiedZstdBatch({ caller: "test-verified-rename", frameBytes: 4096 });
+        const writers = [first, second, third].map((target) => batch.add(target));
+
+        for (const [index, writer] of writers.entries()) {
+            await writer.push(logText(300 + index));
+            await writer.finish();
+        }
+
+        // Every output verified, none renamed yet; then the second one's folder goes before the batch renames.
+        expect(readFileSync(first, "utf8")).toBe("old first");
+        rmSync(gone, { recursive: true });
+        const failure = await batch.commit().then(
+            () => undefined,
+            (err: unknown) => err
+        );
+
+        expect(failure instanceof Error ? failure.message : String(failure)).toBe(
+            `${second} could not be renamed after the batch verified; renamed: ${first}`
+        );
+        expect([...readLinesSync(first)]).toEqual(logText(300).split("\n"));
+        expect(readFileSync(third, "utf8")).toBe("old third");
+        expect(writers.map((writer) => writer.state)).toEqual(["committed", "aborted", "aborted"]);
+        expect(readdirSync(dir).sort()).toEqual(["2026-10-30.jsonl.zst", "2026-11-01.jsonl.zst"]);
+        expect(searchLedger({ caller: "test-verified-rename", path: dir }).map((record) => record.target)).toEqual([
+            first,
+        ]);
+    });
 });
 
 describe("folder archives", () => {
