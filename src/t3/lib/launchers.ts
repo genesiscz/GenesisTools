@@ -11,6 +11,7 @@ import {
 import { dirname, join } from "node:path";
 import { embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -54,7 +55,7 @@ export function renderLauncher(input: { spec: LauncherSpec; checkout: string }):
     const { spec, checkout } = input;
     const lines = [
         "#!/bin/zsh",
-        `# ${spec.alias} for apps that embed it (T3 Code). Written by tools t3 launchers install; rewrite it with that command.`,
+        `# ${spec.alias} for apps that embed it (T3 Code). Written by ${toolCommand("t3 launchers install")}; rewrite it with that command.`,
         'export PATH="$HOME/.bun/bin:$PATH"',
     ];
 

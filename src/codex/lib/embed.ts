@@ -194,7 +194,7 @@ async function serveAsAccount(input: { binding: CodexAccountBinding; argv: strin
 
         loginFailed = true;
         logger.error({ error, account: input.binding.name }, "[codex-embed] account login failed");
-        out.printlnErr(`tools codex embed: ${input.binding.name} could not log in: ${error.message}`);
+        out.printlnErr(`${toolCommand("codex embed")}: ${input.binding.name} could not log in: ${error.message}`);
         child.kill("SIGTERM");
     };
     // The vault read takes seconds (the keychain unlocks the master key), so it runs while codex boots and answers the

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
@@ -34,7 +35,9 @@ export interface SettingsSnapshot {
 
 export class SettingsChangedError extends Error {
     constructor(path: string) {
-        super(`${path} changed twice while tools t3 was writing it. Nothing was written; run the command again.`);
+        super(
+            `${path} changed twice while ${toolCommand("t3")} was writing it. Nothing was written; run the command again.`
+        );
         this.name = "SettingsChangedError";
     }
 }
@@ -50,7 +53,7 @@ export function parseSettingsText(text: string, path: string): Record<string, un
     try {
         data = SafeJSON.parse(text, { strict: true });
     } catch (error) {
-        throw new Error(`${path} is not strict JSON, so tools t3 will not edit it: ${String(error)}`);
+        throw new Error(`${path} is not strict JSON, so ${toolCommand("t3")} will not edit it: ${String(error)}`);
     }
 
     if (!isJsonObject(data)) {
@@ -115,7 +118,9 @@ export function planUpserts(text: string, upserts: readonly InstanceUpsert[]): U
 
     for (const upsert of upserts) {
         if (!isOwnedInstanceId(upsert.id)) {
-            throw new Error(`Refusing to write instance "${upsert.id}": tools t3 owns only ids starting with "gt-".`);
+            throw new Error(
+                `Refusing to write instance "${upsert.id}": ${toolCommand("t3")} owns only ids starting with "gt-".`
+            );
         }
 
         const data = parseSettingsText(next, "settings");
