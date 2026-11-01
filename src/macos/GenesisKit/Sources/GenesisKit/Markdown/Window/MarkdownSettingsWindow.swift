@@ -39,6 +39,11 @@ struct MarkdownSettingsView: View {
     @AppStorage("markdown.config.treeNotesOnly") private var notesOnly = true
     @AppStorage("markdownWindow.splitScrollSync") private var splitScrollSync = true
 
+    /// The card "Go to Location…"'s settings button opens the window at.
+    static let goToAnchor = "markdown-goto"
+    /// The cards a request can scroll to.
+    private static let anchors: Set<String> = ["markdown-file-sidebar", goToAnchor]
+
     init(configuration: GenesisKitMarkdownConfiguration) {
         self.configuration = configuration
     }
@@ -64,6 +69,9 @@ struct MarkdownSettingsView: View {
                 }
                 .id("markdown-file-sidebar")
                 .nativeSettingsAnchor("markdown-file-sidebar")
+                MarkdownGoToSettingsCard(configuration: configuration)
+                    .id(Self.goToAnchor)
+                    .nativeSettingsAnchor(Self.goToAnchor)
                 NativeSettingsCard("Git", subtitle: "Shown for notes inside a git repository.") {
                     NativeSettingsToggle("Git integration",
                                          detail: "The file's state, the gutter, the Changes mode, the history and the tree marks.",
@@ -89,14 +97,51 @@ struct MarkdownSettingsView: View {
         }
         .frame(minWidth: 480, minHeight: 380)
         .onAppear {
-            if highlight.anchor == "markdown-file-sidebar" { proxy.scrollTo("markdown-file-sidebar") }
+            if let anchor = highlight.anchor, Self.anchors.contains(anchor) { proxy.scrollTo(anchor) }
         }
         .onChange(of: highlight.token) { _, _ in
-            if highlight.anchor == "markdown-file-sidebar" { proxy.scrollTo("markdown-file-sidebar") }
+            if let anchor = highlight.anchor, Self.anchors.contains(anchor) { proxy.scrollTo(anchor) }
         }
         .onChange(of: splitScrollSync) { _, enabled in
             NotificationCenter.default.post(name: .markdownSplitSyncChanged, object: enabled)
         }
+        }
+    }
+}
+
+/// File › Go to Location… (⇧⌘G): what its list shows, where it starts, and how a picked file opens.
+struct MarkdownGoToSettingsCard: View {
+    @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+
+    var body: some View {
+        NativeSettingsCard("Go to Location", subtitle: "⇧⌘G: type or paste a path, with the folders and files that match it listed under it.") {
+            NativeSettingsSegmented("Lists", identifier: "markdown.settings.goToFiles", options: [
+                NativeSettingsOption(.notes, "Notes", detail: "Folders, and Markdown, canvas and base files."),
+                NativeSettingsOption(.readable, "Every file",
+                                     detail: "Folders, and every file the viewer opens: text, JSON, YAML, code."),
+            ], selection: $configuration.goToFiles, minSegmentWidth: 84)
+            Divider()
+            NativeSettingsToggle("Hidden files",
+                                 detail: "Names that start with a dot are listed from the first letter. Off: once the typed name starts with a dot.",
+                                 identifier: "markdown.settings.goToShowsHidden", isOn: $configuration.goToShowsHidden)
+            Divider()
+            NativeSettingsToggle("Recent files first",
+                                 detail: "The files opened lately head the list until you type.",
+                                 identifier: "markdown.settings.goToRecents", isOn: $configuration.goToRecents)
+            Divider()
+            NativeSettingsSegmented("Starts in", identifier: "markdown.settings.goToStartsIn", options: [
+                NativeSettingsOption(.noteFolder, "Note's folder",
+                                     detail: "The open note's folder, or the file sidebar's when no note is open."),
+                NativeSettingsOption(.sidebarFolder, "Sidebar folder", detail: "The folder the file sidebar shows."),
+            ], selection: $configuration.goToStartsIn, minSegmentWidth: 104)
+            Divider()
+            NativeSettingsSegmented("Opens a file as", identifier: "markdown.settings.goToOpensAs", options: [
+                NativeSettingsOption(.tab, "Tab", detail: "A tab of its own; a file that is open already shows its tab."),
+                NativeSettingsOption(.previewTab, "Preview tab",
+                                     detail: configuration.previewTabs
+                                         ? "The italic preview tab, which the next preview replaces."
+                                         : "The italic preview tab, which the next preview replaces. Needs Preview tabs; until then, a tab."),
+            ], selection: $configuration.goToOpensAs, minSegmentWidth: 84)
         }
     }
 }
