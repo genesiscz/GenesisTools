@@ -89,7 +89,11 @@ export function registerCmuxCommand(program: Command): void {
         .option("--first", "Take the best match instead of failing when several panes match")
         .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
         .option("--no-enter", "Send the text only, leave it unsubmitted at the prompt")
-        .option("--paste", "Paste one literal multiline message; submit through the agent's paste path")
+        .option("--paste", "Paste the text (the default for everything but a slash command)")
+        .option(
+            "--type",
+            "Type the text as keystrokes instead of pasting it; a typed send does not see a person's unsent draft"
+        )
         .option("--exact-session", "Refuse working-directory or screen-text fallback for automated replies")
         .option(
             "--force",

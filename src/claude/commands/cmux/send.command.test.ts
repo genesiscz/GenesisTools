@@ -116,7 +116,7 @@ afterEach(() => {
     process.exitCode = 0;
 });
 
-test("sends text then Enter to the pane whose tab carries the session marker", async () => {
+test("pastes a message and submits it in the pane whose tab carries the session marker, never typing it", async () => {
     setSnapshot([
         pane({
             id: "pane:7",
@@ -126,11 +126,10 @@ test("sends text then Enter to the pane whose tab carries the session marker", a
 
     await sendCommand(SESSION_A.slice(0, 8), "Just poking", { first: true, enter: true, enterDelay: "0" }, deps);
 
-    expect(events).toContain("send --surface surface:41 -- Just poking");
-    expect(events).toContain("send-key --surface surface:41 enter");
-    expect(events.indexOf("send --surface surface:41 -- Just poking")).toBeLessThan(
-        events.indexOf("send-key --surface surface:41 enter")
-    );
+    // A paste refuses while a person is typing in that prompt; typed keys would land inside their draft.
+    expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual([
+        "paste --surface surface:41 --submit -- Just poking",
+    ]);
 });
 
 test("paste submits one literal multiline message without chunking paths or issuing extra Enter keys", async () => {
@@ -153,13 +152,18 @@ test("a single line with a backslash goes as one literal paste, so cmux never re
     ]);
 });
 
-test("paste can leave the complete message unsubmitted and never retries an uncertain paste", async () => {
+test("paste can leave the message unsubmitted, and a paste cmux refused before sending falls back to the matcher", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
     expect(await sendCommand(SESSION_A, "a\nb\\n", { paste: true, enter: false }, deps)).toBe(true);
     expect(events).toContain("paste --surface surface:41 -- a\nb\\n");
     const dead = { ...deps, lookupRefs: () => recordedRefs({ surfaceId: DEAD_SURFACE_UUID }) };
-    await expect(sendCommand(SESSION_A, "a\nb", { paste: true }, dead)).rejects.toThrow("Surface is not a terminal");
-    expect(events.filter((event) => event.includes(DEAD_SURFACE_UUID))).toHaveLength(1);
+    events = [];
+    // `invalid_params` comes before cmux touches the pane, so the recorded stale ref is retried through the matcher.
+    expect(await sendCommand(SESSION_A, "a\nb", { paste: true }, dead)).toBe(true);
+    expect(events.filter((event) => event.startsWith("paste"))).toEqual([
+        `paste --surface ${DEAD_SURFACE_UUID} --submit -- a\nb`,
+        "paste --surface surface:41 --submit -- a\nb",
+    ]);
 });
 
 test("an open dialog in the session refuses the send before any keystroke; --force types anyway", async () => {
@@ -234,7 +238,7 @@ test("the dialog guard checks a continued session before sending and after stale
     allowFirst = true;
     expect(await sendCommand(SESSION_A, "hello", { enter: false }, continued)).toBe(false);
     expect(asked).toEqual([successor, successor]);
-    expect(events).toContain(`send --surface ${DEAD_SURFACE_UUID} -- hello`);
+    expect(events).toContain(`paste --surface ${DEAD_SURFACE_UUID} -- hello`);
     expect(events.some((event) => event.includes("--surface surface:41"))).toBe(false);
 });
 
@@ -399,7 +403,7 @@ test("a pane-scope match falls back to the pane's selected surface", async () =>
 
     await sendCommand(SESSION_A, "hello", { first: true, enter: false, enterDelay: "0" }, deps);
 
-    expect(events).toContain("send --surface surface:90 -- hello");
+    expect(events).toContain("paste --surface surface:90 -- hello");
 });
 
 test("no match exits 1 with sent:false JSON", async () => {
@@ -429,7 +433,7 @@ test("the calling pane is excluded unless --include-self", async () => {
         { first: true, includeSelf: true, enter: false, enterDelay: "0" },
         deps
     );
-    expect(events).toContain(`send --surface surface:5 -- hi`);
+    expect(events).toContain(`paste --surface surface:5 -- hi`);
 });
 
 test("dry run resolves but sends nothing", async () => {
@@ -461,7 +465,7 @@ test("recorded refs from the session hook win without any snapshot fetch", async
 
     await sendCommand(SESSION_A, "hi", { enter: false, enterDelay: "0" }, recordedDeps);
 
-    expect(events).toContain(`send --surface ${LIVE_SURFACE_UUID} -- hi`);
+    expect(events).toContain(`paste --surface ${LIVE_SURFACE_UUID} -- hi`);
     expect(snapshotFetches).toBe(0);
 });
 
@@ -483,8 +487,8 @@ test("stale recorded refs fall back to the matcher", async () => {
 
     await sendCommand(SESSION_A.slice(0, 8), "hi", { first: true, enter: false, enterDelay: "0" }, staleDeps);
 
-    expect(events).toContain(`send --surface ${DEAD_SURFACE_UUID} -- hi`);
-    expect(events).toContain("send --surface surface:41 -- hi");
+    expect(events).toContain(`paste --surface ${DEAD_SURFACE_UUID} -- hi`);
+    expect(events).toContain("paste --surface surface:41 -- hi");
 });
 
 test("a stale recorded ref falling back to two panes is still refused", async () => {
@@ -640,7 +644,7 @@ test("a single working-directory match still delivers", async () => {
 
     await sendCommand(SESSION_A, "hi", { first: true, enter: false, enterDelay: "0" }, cwdDeps);
 
-    expect(events).toContain("send --surface surface:1 -- hi");
+    expect(events).toContain("paste --surface surface:1 -- hi");
 });
 
 test("deliverySurfaceId prefers the matched surface over the selected one", () => {
@@ -686,7 +690,7 @@ test("a session in tmux is typed into the tab running its tmux client, and refus
             { ...deps, tmuxHosts: async () => [host] }
         )
     ).toBe(true);
-    expect(events).toContain("send --surface surface:51 -- hello");
+    expect(events).toContain("paste --surface surface:51 -- hello");
 
     events = [];
     expect(
@@ -769,7 +773,7 @@ test("Claude waiting status reads the registry that owns the transcript", async 
     expect(dialog?.signal).toBe("registry");
 });
 
-test("multi-line text goes as one paste even without --paste; a single line keeps the typed path", async () => {
+test("multi-line text and a single line both go as one paste without --paste", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
 
     expect(await sendCommand(SESSION_A, "first line\nsecond line", { enterDelay: "0" }, deps)).toBe(true);
@@ -780,7 +784,21 @@ test("multi-line text goes as one paste even without --paste; a single line keep
     events = [];
     expect(await sendCommand(SESSION_A, "one line", { enterDelay: "0" }, deps)).toBe(true);
     expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual([
-        "send --surface surface:41 -- one line",
+        "paste --surface surface:41 --submit -- one line",
+    ]);
+});
+
+test("types a slash command, or any text with --type, as keystrokes and then presses Enter", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    events = [];
+
+    await sendCommand(SESSION_A, "/compact", { enter: true, enterDelay: "0" }, deps);
+    await sendCommand(SESSION_A, "plain words", { type: true, enter: true, enterDelay: "0" }, deps);
+
+    expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual([
+        "send --surface surface:41 -- /compact",
+        "send-key --surface surface:41 enter",
+        "send --surface surface:41 -- plain words",
         "send-key --surface surface:41 enter",
     ]);
 });

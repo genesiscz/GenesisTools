@@ -25,6 +25,8 @@ export interface SendOptions {
     includeSelf?: boolean;
     enter?: boolean;
     paste?: boolean;
+    /** Type the text as keystrokes instead of pasting it. Unlike a paste, a typed send does not see a person's draft. */
+    type?: boolean;
     exactSession?: boolean;
     /** Type even while a dialog is open in the session; see `openDialogFor` in `@genesiscz/utils/agents/dialogs`. */
     force?: boolean;
@@ -529,7 +531,11 @@ export async function sendCommand(
         });
     }
 
-    const paste = opts.paste === true || /[\n\r\\]/.test(text);
+    // A message goes as one paste: `cmux paste` refuses while a person is typing in that prompt, where typed keys
+    // landed inside an unsent draft (2026-11-01), and keeps `\n`, `\r` and `\t` literal. Only a slash command, or
+    // --type, is typed, and text with a newline or a backslash is pasted even then.
+    const typed = opts.type === true || (opts.paste !== true && text.trimStart().startsWith("/"));
+    const paste = !typed || /[\n\r\\]/.test(text);
     const force = opts.force === true;
 
     if (surfaceId) {
@@ -542,7 +548,11 @@ export async function sendCommand(
             report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
             return true;
         } catch (err) {
-            if (result.source !== "recorded" || paste) {
+            // cmux answers `invalid_params` before it touches the pane, so such a paste sent nothing and is safe to
+            // retry. Any other failed paste may have landed and is never sent twice.
+            const refused = err instanceof Error && err.message.includes("invalid_params");
+
+            if (result.source !== "recorded" || (paste && !refused)) {
                 throw err;
             }
             // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
