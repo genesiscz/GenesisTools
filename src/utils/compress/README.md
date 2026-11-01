@@ -12,7 +12,10 @@ command-line front is `tools compress` (`src/compress/README.md`). Rules for cha
   read costs one frame.
 - **A folder is `<folder>.zst`**: a tar stream (system `tar`, `--no-xattrs`, `COPYFILE_DISABLE=1`) inside seekable
   zstd. `<folder>.tar.zst` is accepted as well. `isTarArchive` tells a packed folder from a compressed file by the
-  `ustar` magic in the first frame.
+  `ustar` magic in the first frame. Extended attributes (Finder tags, quarantine) are not kept. macOS bsdtar stores a
+  file with holes as GNU sparse 1.0 (`<dir>/GNUSparseFile.0/<name>` plus a map); the lister reads it under its real
+  name and size and hashes it with zeros in the holes. A real `._name` file is a file in the archive
+  (`COPYFILE_DISABLE=1` on pack) and after an unpack (`--options tar:!mac-ext` on macOS bsdtar).
 - **Checksums.** Every frame carries zstd's content checksum (xxh64), so a decoder rejects a damaged frame.
 
 ## Why the reader walks frames (Bun 1.3.13)
