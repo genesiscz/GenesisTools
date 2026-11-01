@@ -319,8 +319,44 @@ export function openPaths(): string[] {
         .map((line) => line.slice(1));
 }
 
-/** Newest change time and size of a tree, symlinks not followed; null when the tree must not be touched. */
-function scan(path: string, rootDev: number): { newest: number; bytes: number } | { refuse: string } {
+/**
+ * True for `<scratch>/checkouts/<package>/.git` when `<scratch>` is a SwiftPM scratch path (`.build`, or a folder with
+ * one of SwiftPM's own state files). SwiftPM clones its dependencies there; the user never works in them.
+ */
+function isSwiftpmCheckoutGit(gitPath: string): boolean {
+    const checkouts = dirname(dirname(gitPath));
+
+    if (basename(checkouts) !== "checkouts") {
+        return false;
+    }
+
+    const scratch = dirname(checkouts);
+    return (
+        basename(scratch) === ".build" || (childNames(scratch) ?? []).some((n) => SWIFTPM_SCRATCH_MARKERS.includes(n))
+    );
+}
+
+/** True for `<tmp root>/cc/<project>/<session>`, the folder of one agent session's scratch. */
+function isSessionScratch(path: string): boolean {
+    const root = roots[0];
+
+    if (root === undefined || !path.startsWith(`${root}/`)) {
+        return false;
+    }
+
+    const parts = relative(root, path).split("/");
+    return parts.length === 3 && parts[0] === "cc";
+}
+
+/**
+ * Newest change time and size of a tree, symlinks not followed; null when the tree must not be touched.
+ * `swiftpmCaches` lets SwiftPM's own dependency clones through: a dead session's build folder keeps them.
+ */
+function scan(
+    path: string,
+    rootDev: number,
+    swiftpmCaches = false
+): { newest: number; bytes: number } | { refuse: string } {
     const deadline = Date.now() + SCAN_BUDGET_MS;
     let newest = 0;
     let bytes = 0;
@@ -348,7 +384,7 @@ function scan(path: string, rootDev: number): { newest: number; bytes: number } 
             return { refuse: "socket" };
         }
 
-        if (basename(p) === ".git") {
+        if (basename(p) === ".git" && !(swiftpmCaches && isSwiftpmCheckoutGit(p))) {
             return { refuse: "git-checkout" };
         }
 
@@ -413,7 +449,7 @@ function judge(path: string, protection: Protection, open: string[]): Candidate 
     }
 
     const root = roots.find((r) => path.startsWith(`${r}/`)) ?? path;
-    const tree = scan(path, lstatSync(root).dev);
+    const tree = scan(path, lstatSync(root).dev, isSessionScratch(path));
 
     if ("refuse" in tree) {
         return tree.refuse;
