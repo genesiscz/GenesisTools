@@ -103,6 +103,7 @@ import {
     type WidgetOutgoing,
     type WidgetTarget,
     widgetOutgoingSchema,
+    widgetPreferencesPatchSchema,
     widgetPreferencesSchema,
     widgetSessionKey,
 } from "../widget/types";
@@ -1833,6 +1834,24 @@ test("send-and-close timing defaults to 2.5 seconds and can keep the panel open"
     expect(widgetPreferencesSchema.safeParse({ sendCloseSeconds: 61 }).success).toBe(false);
 });
 
+test("decision cards fold their context, show their code and put the agent's pick under its option by default", () => {
+    const defaults = widgetPreferencesSchema.parse({});
+    expect([defaults.decisionContext, defaults.decisionCode, defaults.decisionProposal]).toEqual([
+        "folded",
+        "show",
+        "option",
+    ]);
+    const chosen = widgetPreferencesSchema.parse({
+        decisionContext: "open",
+        decisionCode: "hide",
+        decisionProposal: "above",
+    });
+    expect([chosen.decisionContext, chosen.decisionCode, chosen.decisionProposal]).toEqual(["open", "hide", "above"]);
+    expect(widgetPreferencesSchema.safeParse({ decisionContext: "half" }).success).toBe(false);
+    // A patch keeps only the key it names, so a settings picker never resets the other two.
+    expect(widgetPreferencesPatchSchema.parse({ decisionCode: "hide" })).toEqual({ decisionCode: "hide" });
+});
+
 test("alert content preferences default on and can be changed independently", () => {
     expect(widgetPreferencesSchema.parse({})).toMatchObject({ alertSummary: true, alertCompactAnswer: true });
     expect(widgetPreferencesSchema.parse({ alertSummary: false, alertCompactAnswer: true })).toMatchObject({
@@ -1955,9 +1974,11 @@ test("decision cards carry recorded answers and supersede links; only open decis
         answer: "drop it, said in chat",
         answeredVia: "agent",
     });
-    // The answer is its own field; the body no longer repeats it.
+    // The answer is its own field; the body no longer repeats it. The reasoning is the decision's context, its own
+    // field as in the hub's Inbox card, and an untitled decision's body (the prompt is its title) is empty.
     expect(card(answered.id)?.body).not.toContain("drop it");
-    expect(card(answered.id)?.body).toContain("It is slow.");
+    expect(card(answered.id)?.body).toBe("");
+    expect(card(answered.id)?.decision?.context).toBe("It is slow.");
     const sessionKey = snapshot.sessions.find((entry) => entry.target.sessionId === "card-session")?.key;
     expect(card(old.id)).toMatchObject({
         status: "superseded",
@@ -2056,6 +2077,102 @@ test("decision cards carry recorded answers and supersede links; only open decis
         sources: { ...sources, decisions: () => readDecisions(file) },
     });
     expect(oldSource.notifications?.pendingDecisionIDs).toBeUndefined();
+});
+
+test("a decision card carries what the hub's Inbox card shows: context, proposal, confidence, reasons, code and delivery", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    const events = join(directory, "events.jsonl");
+    const repo = join(directory, "repo");
+    await mkdir(join(repo, "src"), { recursive: true });
+    const lines = Array.from({ length: 20 }, (_, index) => `const line${index + 1} = ${index + 1};`);
+    await writeFile(join(repo, "src", "rules.ts"), `${lines.join("\n")}\n`);
+    const [posted, bare] = await postDecisions(
+        file,
+        events,
+        {
+            sessionId: "context-session",
+            provider: "claude",
+            cwd: repo,
+            decisions: [
+                {
+                    title: "May an agent open the approval dialog?",
+                    prompt: "The rule blocks it today.",
+                    options: ["allow at 1 GB or more", "allow any size", "keep the block"],
+                    reasoning: "The block protects nothing the dialog does not protect already.",
+                    proposal: "a): it matches both of your instructions.",
+                    recommended: "a",
+                    confidence: "high",
+                    blocking: true,
+                    refs: [
+                        { path: "src/rules.ts", line: 9 },
+                        { path: "src/gone.ts", line: 3 },
+                    ],
+                },
+                { prompt: "Plain question?", options: ["yes", "no"] },
+            ],
+        },
+        { env: {} }
+    );
+    const delivery = {
+        route: "claude-peer" as const,
+        target: "original Claude session",
+        at: "2026-11-01T17:31:00.000Z",
+    };
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => {
+            const read = readDecisionsWithIntegrity(file);
+            // A reason per option and a delivery, as a harvested and a sent decision store them.
+            return {
+                ...read,
+                rows: read.rows.map((row) =>
+                    row.id === posted.id
+                        ? { ...row, rationales: [null, "costs a prompt per delete", null], delivery }
+                        : row
+                ),
+            };
+        },
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    const card = snapshot.cards.find((entry) => entry.sourceId === posted.id);
+
+    // The title's details stay the body; everything else is its own field, as the hub's `InboxDecision` has it.
+    expect(card?.body).toBe("The rule blocks it today.");
+    expect(card?.decision).toMatchObject({
+        context: "The block protects nothing the dialog does not protect already.",
+        proposal: "a): it matches both of your instructions.",
+        confidence: "high",
+        recommended: "a",
+        blocking: true,
+        delivery,
+    });
+    expect(card?.choices).toEqual([
+        { id: "a", title: "allow at 1 GB or more", recommended: true },
+        { id: "b", title: "allow any size", recommended: false, rationale: "costs a prompt per delete" },
+        { id: "c", title: "keep the block", recommended: false },
+    ]);
+    // The cited lines, read from disk around line 9 with the language; a file that is not there says so.
+    const [found, missing] = card?.decision?.refs ?? [];
+    expect(found).toMatchObject({
+        path: "src/rules.ts",
+        line: 9,
+        absolute: join(repo, "src", "rules.ts"),
+        startLine: 6,
+        language: "typescript",
+        missing: false,
+    });
+    expect(found?.excerpt?.split("\n")).toEqual(lines.slice(5, 15));
+    expect(missing).toMatchObject({ path: "src/gone.ts", line: 3, excerpt: null, missing: true });
+    expect(card?.decision?.refs).toHaveLength(2);
+
+    // A decision with nothing but its question carries no details at all.
+    const plain = snapshot.cards.find((entry) => entry.sourceId === bare.id);
+    expect(plain?.decision).toBeUndefined();
+    expect(plain?.choices.every((choice) => !("rationale" in choice))).toBe(true);
 });
 
 test("a session lists its waiting entries first, then the newest, at most eight", () => {
