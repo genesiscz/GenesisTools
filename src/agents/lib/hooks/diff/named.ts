@@ -93,8 +93,9 @@ export function captureNamed({
             continue;
         }
 
-        // The copy reads the bytes, and reading a cloud placeholder downloads it, so a plain `ls` of a
-        // Dropbox folder pulled its files down (2026-11-01). Such a file gets no before-state.
+        // A copy reads the bytes, and reading a cloud placeholder downloads it, so a plain `ls` of a
+        // Dropbox folder pulled its files down (2026-11-01). A clone is no way round it: `clonefile(2)`
+        // materializes a dataless file first. Such a file gets no before-state.
         const risk = cloudReadRisk(path, stat);
 
         if (risk) {
@@ -102,10 +103,15 @@ export function captureNamed({
             continue;
         }
 
-        if (stat.size > megabytes(config.maxNamedPathMB)) {
+        const mayClone = stat.size <= megabytes(config.clone.maxFileMB);
+        const mayCopy = stat.size <= megabytes(config.maxNamedPathMB);
+
+        if (!mayClone && !mayCopy) {
             // Recorded rather than silent: without the copy there is no before-state, so the
             // post phase cannot diff it and the absence must be explainable from the log.
-            skipped.push(`${path}: ${stat.size} bytes, over the ${config.maxNamedPathMB} MB named-path cap`);
+            skipped.push(
+                `${path}: ${stat.size} bytes, over the ${config.clone.maxFileMB} MB clone and ${config.maxNamedPathMB} MB named-path cap`
+            );
             continue;
         }
 
@@ -120,7 +126,22 @@ export function captureNamed({
 
         try {
             mkdirSync(join(dir, COPY_DIR), { recursive: true, mode: DIR_MODE });
-            cloneOrCopy({ source: path, destination: join(dir, copy), mode: FILE_MODE, mayCopy: true, copyFile });
+
+            const placed = cloneOrCopy({
+                source: path,
+                destination: join(dir, copy),
+                mode: FILE_MODE,
+                mayClone,
+                mayCopy,
+                copyFile,
+            });
+
+            if (placed === "declined") {
+                skipped.push(
+                    `${path}: ${stat.size} bytes, this volume cannot clone it and a copy is over the ${config.maxNamedPathMB} MB named-path cap`
+                );
+                continue;
+            }
         } catch (err) {
             hookDiag("Could not copy a named path, so it has no before-state", { err, path });
             continue;

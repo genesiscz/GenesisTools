@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { scanWithBun } from "./bun-scan";
-import { type CloneFixture, makeCloneFixture } from "./clone-fixture";
+import { BLK, type CloneFixture, makeCloneFixture } from "./clone-fixture";
 import { scanWithCFfi } from "./engine";
 import type { ClonesizeResult } from "./types";
 
@@ -82,5 +83,68 @@ describeOnDarwin("clonesize controls: shared is sharing, not slack", () => {
             expect(b.unique_allocated_bytes).toBe(c.unique_allocated_bytes);
             expect(b.shared_bytes).toBe(c.shared_bytes);
         }
+    });
+});
+
+// The Bash diff hook keeps a dirty file's before-state as a clone (`cloneOrCopy`, used by
+// src/agents/lib/hooks/diff/capture.ts and named.ts). This pins, by the blocks, that the clone shares its
+// source's data, so a Bun change cannot quietly turn it into a byte copy, and what a later edit then costs.
+describeOnDarwin("cloneOrCopy: a clone holds no blocks of its own until its source changes", () => {
+    const BYTES = 256 * BLK;
+    const dirs: string[] = [];
+
+    /** A 1 MiB source and its clone in a fresh folder; `mayCopy: false`, so a clone that failed cannot hide. */
+    function sourceAndClone(): { dir: string; source: string } {
+        const dir = mkdtempSync(join(tmpdir(), "gt-clone-or-copy-"));
+        const source = join(dir, "source.bin");
+
+        dirs.push(dir);
+        writeFileSync(source, Buffer.alloc(BYTES, 7));
+        expect(cloneOrCopy({ source, destination: join(dir, "clone.bin"), mode: 0o600, mayCopy: false })).toBe(
+            "cloned"
+        );
+
+        return { dir, source };
+    }
+
+    afterAll(() => {
+        for (const dir of dirs) {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("shares every block with its source", () => {
+        const { dir } = sourceAndClone();
+        const r = scanWithCFfi({ path: dir, threads: 2 });
+
+        expect(r.naive_bytes).toBe(2 * BYTES);
+        expect(r.unique_allocated_bytes).toBe(BYTES);
+        expect(r.shared_bytes).toBe(BYTES);
+    });
+
+    it("pays a few blocks, not the file, when one byte of the source is rewritten in place", () => {
+        const { dir, source } = sourceAndClone();
+        const fd = openSync(source, "r+");
+
+        writeSync(fd, "!", 0);
+        closeSync(fd);
+
+        // Measured 2026-11-01 on APFS: the write un-shares 16 KiB (four 4 KiB blocks) of the 1 MiB.
+        const unique = scanWithCFfi({ path: dir, threads: 2 }).unique_allocated_bytes ?? 0;
+
+        expect(unique).toBeGreaterThan(BYTES);
+        expect(unique).toBeLessThanOrEqual(BYTES + 16 * BLK);
+    });
+
+    it("keeps the old blocks when the source is replaced through a rename, as a copy would have held them", () => {
+        const { dir, source } = sourceAndClone();
+
+        writeFileSync(join(dir, "next.bin"), Buffer.alloc(BYTES, 9));
+        renameSync(join(dir, "next.bin"), source);
+
+        const r = scanWithCFfi({ path: dir, threads: 2 });
+
+        expect(r.unique_allocated_bytes).toBe(2 * BYTES);
+        expect(r.shared_bytes).toBe(0);
     });
 });

@@ -59,15 +59,41 @@ export interface DiffConfig {
     contextLines: number;
     maxRoots: number;
     untrackedExpansionCap: number;
+    /**
+     * Dirty entries per root that get a before-state, clone or copy (400). A clone moves no bytes,
+     * but each is a `mkdir`, a `clonefile` and a `chmod`: 400 cost 49 ms (median of 5, 2026-11-01),
+     * which is the most the pre phase should spend before the command starts.
+     */
     maxCaptureFiles: number;
+    /**
+     * Bytes the pre phase may COPY per call (8), on a volume that cannot clone (another disk, ext4,
+     * Windows). A clone writes no data and does not spend it.
+     */
     maxCaptureMB: number;
     /**
-     * Per-ENTRY ceiling, checked before the total. A file bigger than this is left out on its
-     * own merits: the render shows at most `maxLinesPerFile` lines of it, so copying megabytes
-     * to produce thirty lines buys nothing. Measured on a 65-entry tree of 43.7 MB, a 0.256 MB
-     * ceiling keeps 58 entries in 1.8 MB.
+     * Per-ENTRY ceiling for a real COPY (0.256), checked before the total. The render shows at most
+     * `maxLinesPerFile` lines of a file, so copying megabytes to produce thirty lines buys nothing.
+     * Measured on a 65-entry tree of 43.7 MB, a 0.256 MB ceiling keeps 58 entries in 1.8 MB. A clone
+     * is held to `clone.maxFileMB` instead.
      */
     maxCaptureFileMB: number;
+    /**
+     * The before-state as an APFS (or btrfs, XFS) clone, where the volume makes one. A clone shares
+     * every block with its source and pays only for what the command then rewrites: a 1-byte edit
+     * in place un-shares 16 KiB, a rewrite through a rename leaves the clone the old blocks, the
+     * same space a copy takes up front (measured 2026-11-01, `src/du/lib/clone-controls.test.ts`).
+     * The post phase removes the capture after the call, or `sweepAbandonedCaptures` an hour later.
+     */
+    clone: {
+        /**
+         * Per-file ceiling for a clone (2), dirty entries and named paths alike. It no longer
+         * guards a copy's cost; it guards what the post phase can use: the change log keeps at
+         * most 2 MB of a file (`MAX_BYTES` in changes/log.ts), and a whole-file rewrite of 2 MB
+         * makes a 4 MB patch, inside the 8 MB `git` output buffer. Its diff took 23 ms, a one-line
+         * change 14 ms (2026-11-01). Past it the old blocks of a rewritten file are worth nothing.
+         */
+        maxFileMB: number;
+    };
     /**
      * Syntax colour, through `bat`. `256` (default): 256-colour codes, about half the characters of
      * truecolor after compaction; the colours are the nearest of the 256-colour palette, which a
@@ -128,10 +154,19 @@ export interface DiffConfig {
      * Also watch files the command NAMES as a path, not only those inside a git root it
      * works in. It is what makes an edit to a vault note, a `~/.claude` memory file or any
      * other path outside the cwd repository visible at all. Costs one `stat` per path-shaped
-     * token and one copy per existing file; no extra git process in either phase.
+     * token and one clone per existing file; no extra git process in either phase.
      */
     watchNamedPaths: boolean;
+    /**
+     * Named paths watched per call (8). Each costs a `stat`, a clone and, if it changed, a diff;
+     * a command line rarely names more real files, and past it the tokens are mostly prose.
+     */
     maxNamedPaths: number;
+    /**
+     * Per-file ceiling for a real COPY of a named path (2), on a volume that cannot clone. Higher
+     * than `maxCaptureFileMB` because a named file is the likely target of the command and there
+     * are at most `maxNamedPaths` of them. A clone is held to `clone.maxFileMB`.
+     */
     maxNamedPathMB: number;
     /**
      * Whether a file the command CREATED, and that is known only because the command named
@@ -197,8 +232,11 @@ export interface DiffConfig {
     harnesses: SomeHarnesses<DiffOverrides>;
 }
 
-/** What one harness may override. Anything absent falls through to the shared `diff` block. */
-export type DiffOverrides = Partial<Omit<DiffConfig, "categories" | "harnesses">> & {
+/**
+ * What one harness may override. Anything absent falls through to the shared `diff` block. The
+ * clone cap is a property of the volume and the post phase, not of a harness, so it is not here.
+ */
+export type DiffOverrides = Partial<Omit<DiffConfig, "categories" | "harnesses" | "clone">> & {
     categories?: Partial<Record<DiffCategory, boolean>>;
 };
 
