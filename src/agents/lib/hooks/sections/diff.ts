@@ -29,9 +29,12 @@ const DEFAULT_DIFF: DiffConfig = {
     contextLines: 3,
     maxRoots: 4,
     untrackedExpansionCap: 200,
+    // The reason for each cap is on its field in config.ts. The three byte caps bind a real copy; a clone
+    // writes no data and is held to `clone.maxFileMB`, set by what the post phase can still diff and log.
     maxCaptureFiles: 400,
     maxCaptureMB: 8,
     maxCaptureFileMB: 0.256,
+    clone: { maxFileMB: 2 },
     highlight: "256",
     highlighter: "hljs",
     fill: "block",
@@ -105,6 +108,13 @@ function mergeDiff(value: unknown, problems: string[]): DiffConfig {
             value: stored?.maxCaptureFileMB,
             fallback: base.maxCaptureFileMB,
         }),
+        clone: {
+            maxFileMB: megabytesOr(problems, {
+                field: "diff.clone.maxFileMB",
+                value: stored?.clone?.maxFileMB,
+                fallback: base.clone.maxFileMB,
+            }),
+        },
         highlight: highlightOr(stored?.highlight, base.highlight),
         highlighter: HIGHLIGHTERS.find((name) => name === stored?.highlighter) ?? base.highlighter,
         fill: FILL_MODES.find((mode) => mode === stored?.fill) ?? base.fill,
@@ -447,6 +457,7 @@ const DIFF_KEYS: ReadonlySet<string> = new Set([
     "diff.columns",
     "diff.fillMax",
     "diff.commandLines",
+    "diff.clone.maxFileMB",
     ...NUMERIC_DIFF.map((field) => `diff.${field}`),
 ]);
 const HARNESS_DIFF_KEY = /^diff\.harnesses\.([^.]+)\.(.+)$/;
@@ -508,6 +519,9 @@ function set(current: DiffConfig, key: string, value: string): DiffConfig {
         case "diff.commandLines":
             next.commandLines = asCount(key, value, 0);
             return next;
+        case "diff.clone.maxFileMB":
+            next.clone = { ...next.clone, maxFileMB: asMegabytes(key, value) };
+            return next;
         default: {
             const field = NUMERIC_DIFF.find((candidate) => `diff.${candidate}` === key);
 
@@ -529,6 +543,7 @@ export const DIFF_HOOK_SECTION: HookConfigSection<DiffConfig, HookDoctorFacts> =
     settable: [
         "diff.enabled",
         ...NUMERIC_DIFF.map((field) => `diff.${field}`),
+        "diff.clone.maxFileMB",
         "diff.othersSummary",
         "diff.theme",
         "diff.highlight",
