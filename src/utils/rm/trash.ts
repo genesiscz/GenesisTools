@@ -691,6 +691,8 @@ export interface DrainOptions {
     now?: Date;
     /** Drain every batch, due or not. */
     force?: boolean;
+    /** With `force`, the batches still in their grace period that may go early; unset: every one. */
+    forceOnly?: (batch: TrashBatch) => boolean;
     onItem?: (progress: DrainProgress) => void;
 }
 
@@ -699,7 +701,12 @@ export async function drainDue(options: DrainOptions): Promise<DrainResult> {
     const paths = options.paths ?? defaultTrashPaths();
     const now = (options.now ?? new Date()).getTime();
     const claimed = listBatches(paths)
-        .filter((batch) => !batch.incomplete && (options.force || Date.parse(batch.drainAfter) <= now))
+        .filter(
+            (batch) =>
+                !batch.incomplete &&
+                (Date.parse(batch.drainAfter) <= now ||
+                    (options.force === true && (options.forceOnly?.(batch) ?? true)))
+        )
         .map((batch) => ({ batch, file: claimBatch(paths, batch.id, "draining") }))
         .filter((entry): entry is { batch: TrashBatch; file: string } => entry.file !== null);
     const results = await Promise.all(

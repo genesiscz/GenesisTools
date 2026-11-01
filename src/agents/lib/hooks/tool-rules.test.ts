@@ -40,6 +40,11 @@ describe("rm-user-verbs", () => {
         'tools rm --reason "two words" approve k7m2qd',
         "tools rm -v -n roots add /tmp/x",
         "bun src/rm/index.ts -v approve k7m2qd",
+        // A forced drain ends the grace period of every batch, approved ones and other sessions' too.
+        "tools rm drain --now",
+        "tools rm -v drain --now",
+        "tools rm drain --background --now",
+        "bun src/rm/index.ts drain --now",
     ];
 
     it.each(caught)("blocks %j", (command) => {
@@ -55,6 +60,10 @@ describe("rm-user-verbs", () => {
         "tools rm -v requests --json",
         "tools rm -n node_modules",
         'git commit -m "document tools rm -v approve <id> for the user"',
+        "tools rm drain",
+        "tools rm trash",
+        "tools rm --now dist",
+        "tools rm drain && echo --nowhere",
     ];
 
     it.each(allowed)("leaves %j alone", (command) => {

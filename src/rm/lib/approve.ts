@@ -60,6 +60,14 @@ export interface ApproveEntry {
     target: RmTarget;
 }
 
+/** The rule of every item an approval moves to the trash is this prefix and the request id. */
+const APPROVED_RULE_PREFIX = "approved ";
+
+/** A trash batch a person's approval made: its grace is what the person picked, so only a person ends it early. */
+export function isApprovedBatch(batch: Pick<TrashBatch, "items">): boolean {
+    return batch.items.some((item) => item.rule.startsWith(APPROVED_RULE_PREFIX));
+}
+
 /** The row of a path that is back in place beside its aside copy: approving it deletes the copy, never the path. */
 export const CAME_BACK_REASON = "Delete the set-aside copy (the path is back in place)";
 
@@ -841,7 +849,7 @@ export function approveDelete(input: {
         [
             ...approved.map(({ wanted, target }) => ({
                 target,
-                rule: `approved ${request.id}`,
+                rule: `${APPROVED_RULE_PREFIX}${request.id}`,
                 original: wanted.path,
                 bytes: wanted.bytes ?? input.sizes?.get(wanted.path),
             })),

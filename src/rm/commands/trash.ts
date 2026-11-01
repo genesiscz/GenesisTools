@@ -7,14 +7,17 @@ import {
     listBatches,
     loadRmRequest,
     measureBytes,
+    type RmCaller,
     recoverAsideJournals,
     requestBatchIds,
     restoreBatch,
     runDrainer,
     sweepOrphans,
+    type TrashBatch,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { isApprovedBatch } from "../lib/approve";
 import { runContext } from "../lib/run";
 import { renderTrash, resolveBatchSuffix } from "../lib/trash-view";
 
@@ -47,6 +50,20 @@ function restoreTargets(id: string): string[] | { ambiguous: string[] } {
     const made = requestBatchIds(request);
     const left = made.filter((batchId) => inTrash.has(batchId));
     return left.length > 0 ? left : [made.at(-1) ?? id];
+}
+
+/**
+ * Whether an agent's `drain --now` may delete `batch` before its grace ends: only a batch this very session made, and
+ * not one a person approved (that batch carries the asking session as its caller, and the grace the person picked).
+ * Another session's batch and an approved one keep their restore window; a person drains them early.
+ */
+export function agentMayDrainEarly(batch: Pick<TrashBatch, "caller" | "items">, caller: RmCaller): boolean {
+    return (
+        caller.sessionId !== null &&
+        batch.caller?.agent === caller.agent &&
+        batch.caller?.sessionId === caller.sessionId &&
+        !isApprovedBatch(batch)
+    );
 }
 
 export function registerTrashCommands(program: Command): void {
@@ -127,13 +144,13 @@ export function registerTrashCommands(program: Command): void {
     program
         .command("drain")
         .description("delete what waits in the trash: the due batches, or all with --now")
-        .option("--now", "every batch, also those still in their grace period")
+        .option("--now", "every batch, also those still in their grace period (a person's; an agent: only its own)")
         .option(
             "--background",
             `run as the background drainer until the trash is empty (${toolCommand("rm")} starts it)`
         )
         .action(async (flags: { now?: boolean; background?: boolean }) => {
-            const { config } = runContext();
+            const { config, caller } = runContext();
             // Every rm run starts this drainer: an aside run that died before it opened its request gets it here.
             recoverAsideJournals();
 
@@ -145,17 +162,23 @@ export function registerTrashCommands(program: Command): void {
             const elapsed = createStopwatch();
             const onItem = (progress: DrainProgress) =>
                 out.println(`  ${progress.path}  ${formatBytes(progress.bytes)}  ${pc.dim(progress.elapsed)}`);
+            // An agent's --now ends the grace of its own batches only: the rest stay restorable for their owner.
+            const agentOnly = flags.now === true && caller.isInAgent;
+            const forceOnly = agentOnly ? (batch: TrashBatch) => agentMayDrainEarly(batch, caller) : undefined;
             const swept = await sweepOrphans({ config, onItem });
-            const drained = await drainDue({ config, force: flags.now, onItem });
+            const drained = await drainDue({ config, force: flags.now, forceOnly, onItem });
             const left = listBatches().filter((batch) => !batch.incomplete).length;
 
             for (const entry of swept.held) {
                 out.println(pc.yellow(`kept ${entry.id}: ${entry.reason}`));
             }
 
+            const leftNote = agentOnly
+                ? ` ${left} batch(es) of other sessions or approved by the user keep their grace period (only the user drains them early).`
+                : ` ${left} batch(es) still in their grace period (--now drains them).`;
             out.println(
                 `Drained ${drained.batches + swept.batches} batch(es), ${formatBytes(drained.bytes + swept.bytes)} freed in ${elapsed()}.` +
-                    (left > 0 ? pc.dim(` ${left} batch(es) still in their grace period (--now drains them).`) : "")
+                    (left > 0 ? pc.dim(leftNote) : "")
             );
         });
 }
