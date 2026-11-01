@@ -36,8 +36,10 @@ export interface StatuslinePayload {
 
 export interface AccountSegmentData {
     name: string;
-    /** Rounded percentages, null when the bucket is absent. */
+    /** Rounded percentages, null when the bucket is missing from the reading (unknown). */
     fiveHour: number | null;
+    /** The account has no 5-hour limit (not unknown): the segment drops the 5h slot instead of printing `?`. */
+    fiveHourAbsent?: boolean;
     sevenDay: number | null;
     sevenDayFable: number | null;
     /** The account's own poll is a replay (expired grant, org block). */

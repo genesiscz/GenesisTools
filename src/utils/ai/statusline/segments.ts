@@ -179,20 +179,27 @@ function pctColor(pct: number): string {
     return pct >= 80 ? ANSI.red : pct >= 50 ? ANSI.yellow : ANSI.green;
 }
 
-/** `⚿ oli…son (U:39%;54%;F:12%) ⌁` with the same staleness marks as the script. */
+/**
+ * `⚿ oli…son (U:39%;54%;F:12%) ⌁` with the same staleness marks as the script. An account without a 5-hour
+ * limit drops that slot and names the weekly one: `(W:54%;F:12%)`, never a 0 % or `?` 5h value.
+ */
 export function accountSegment(account: AccountSegmentData, now = Date.now()): string {
     const name = account.name;
     const chars = Array.from(name);
     const shortName = chars.length > 7 ? `${chars.slice(0, 3).join("")}…${chars.slice(-3).join("")}` : name;
     let usage = "";
 
-    if (account.fiveHour !== null || account.sevenDay !== null) {
+    if (account.fiveHourAbsent && account.sevenDay !== null) {
+        usage = ` ${ANSI.dim}(W:${ANSI.reset}${pctColor(account.sevenDay)}${account.sevenDay}%${ANSI.reset}`;
+    } else if (account.fiveHour !== null || account.sevenDay !== null) {
         const c5 = pctColor(account.fiveHour ?? 0);
         const cw = pctColor(account.sevenDay ?? 0);
         const u5 = account.fiveHour === null ? "?" : String(account.fiveHour);
         const uw = account.sevenDay === null ? "?" : String(account.sevenDay);
         usage = ` ${ANSI.dim}(U:${ANSI.reset}${c5}${u5}%${ANSI.reset}${ANSI.dim};${ANSI.reset}${cw}${uw}%${ANSI.reset}`;
+    }
 
+    if (usage) {
         if (account.sevenDayFable !== null) {
             usage += `${ANSI.dim};F:${ANSI.reset}${pctColor(account.sevenDayFable)}${account.sevenDayFable}%${ANSI.reset}`;
         }
