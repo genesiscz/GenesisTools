@@ -16,7 +16,6 @@ import {
     graceMinutesFor,
     isInside,
     kickDrainer,
-    listBatches,
     listRmRequests,
     loadRmConfig,
     measureBytes,
@@ -32,6 +31,7 @@ import {
     type RmVerdictKind,
     recheckAfterWait,
     recoverAsideJournals,
+    requestsAlsoNaming,
     rmCallerFromRuntime,
     rmRequestHintLine,
     startRmMeasurement,
@@ -39,6 +39,7 @@ import {
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
 import { liveSizes } from "./approve";
+import { displayContext, middleCut, shortRmPath } from "./display";
 import { notifyNewRequest } from "./notify";
 
 export interface RunContext {
@@ -126,33 +127,16 @@ export async function executePlan(
         }
     }
 
-    if (!options.json) {
-        for (const item of plan) {
-            const size = sizes.has(item.target.path) ? pc.dim(` ${formatBytes(sizes.get(item.target.path) ?? 0)}`) : "";
-            out.println(`${VERDICT_LABEL[item.verdict.kind]} ${shown(item.target.path, ctx.cwd)}${size}`);
-            out.println(pc.dim(`         ${item.verdict.rule}: ${item.verdict.reason}`));
-        }
+    if (options.dryRun) {
+        printDryRun(plan, ctx, options, sizes);
+        return result;
     }
 
-    if (options.dryRun) {
-        if (options.json) {
-            out.result(plan.map((item) => ({ ...summary(item), bytes: sizes.get(item.target.path) ?? null })));
-            return result;
+    if (!options.json) {
+        for (const item of plan) {
+            out.println(`${VERDICT_LABEL[item.verdict.kind]} ${shown(item.target.path, ctx.cwd)}`);
+            out.println(pc.dim(`         ${item.verdict.rule}: ${item.verdict.reason}`));
         }
-
-        const waiting = listBatches().filter((batch) => !batch.incomplete);
-        const total = [...sizes.values()].reduce((sum, size) => sum + size, 0);
-        out.println(pc.dim(`Dry run: nothing moved. ${formatBytes(total)} would leave the disk.`));
-
-        if (waiting.length > 0) {
-            out.println(
-                pc.dim(
-                    `The trash holds ${waiting.length} batch(es) the drain will delete (${toolCommand("rm")} trash).`
-                )
-            );
-        }
-
-        return result;
     }
 
     // An aside run that died before it opened its request: its request opens now, so the user can decide it.
@@ -390,10 +374,7 @@ function requestForAsked(
     }
 
     const asideOn = options.aside ?? ctx.config.askAction === "aside";
-    // A live cache (`stayInPlace`) never moves: another install may read it while it waits.
-    const asideable = asideOn
-        ? asked.filter((item) => (ctx.config.asideUnsaved || !item.verdict.unsaved) && !item.verdict.stayInPlace)
-        : [];
+    const asideable = asked.filter((item) => inPlaceReason(item, ctx, options) === null);
     const inPlace = asked.filter((item) => !asideable.includes(item));
     // An in-place path this session already asked about waits in that request; a second one would ask twice. An
     // aside path is never matched: its moved copy is a new object.
@@ -456,6 +437,118 @@ function requestForAsked(
     }
 
     return { id: request.id, denials, created: request };
+}
+
+/**
+ * Why an asked path waits where it is instead of moving into the aside folder, or null when it moves aside. A move
+ * to another volume is found only when it is tried, so a dry run cannot name that case.
+ */
+function inPlaceReason(item: RmPlanItem, ctx: RunContext, options: ExecuteOptions): string | null {
+    if (!(options.aside ?? ctx.config.askAction === "aside")) {
+        return "aside is off";
+    }
+
+    // A live cache (`stayInPlace`) never moves: another install may read it while it waits.
+    if (item.verdict.stayInPlace) {
+        return item.verdict.stayInPlace;
+    }
+
+    if (item.verdict.unsaved && !ctx.config.asideUnsaved) {
+        return "unsaved work, /tmp loses it on reboot";
+    }
+
+    return null;
+}
+
+const DRY_LABEL: Record<RmVerdictKind, { text: string; color: (text: string) => string }> = {
+    allow: { text: "delete", color: pc.green },
+    ask: { text: "ask", color: pc.yellow },
+    deny: { text: "refuse", color: pc.red },
+};
+const DRY_PATH_MAX = 48;
+
+/**
+ * A dry run: one row per path (`VERDICT SIZE PATH RULE`, where an ask row says whether it moves aside and which open
+ * requests already name it), each rule's reason once under the table, and a summary split by what would happen.
+ */
+function printDryRun(plan: RmPlanItem[], ctx: RunContext, options: ExecuteOptions, sizes: Map<string, number>): void {
+    const alsoIn = requestsAlsoNaming(
+        plan.map((item) => item.target.path),
+        "",
+        listRmRequests()
+    );
+
+    if (options.json) {
+        out.result(
+            plan.map((item) => ({
+                ...summary(item),
+                bytes: sizes.get(item.target.path) ?? null,
+                willAside: item.verdict.kind === "ask" && inPlaceReason(item, ctx, options) === null,
+                alsoIn: alsoIn.get(item.target.path) ?? [],
+            }))
+        );
+        return;
+    }
+
+    const display = displayContext(ctx.caller);
+    const rows = plan.map((item) => {
+        const path = item.target.path;
+        const notes = [item.verdict.rule];
+
+        if (item.verdict.kind === "ask") {
+            const why = inPlaceReason(item, ctx, options);
+            notes.push(why ? `stays in place (${why})` : "moves aside");
+            const ids = alsoIn.get(path) ?? [];
+
+            if (ids.length > 0) {
+                notes.push(`already asked in ${ids.join(" ")}`);
+            }
+        }
+
+        return {
+            item,
+            size: sizes.has(path) ? formatBytes(sizes.get(path) ?? 0) : "-",
+            path: isInside(path, ctx.cwd)
+                ? middleCut(relative(ctx.cwd, path), DRY_PATH_MAX)
+                : shortRmPath(path, display, DRY_PATH_MAX),
+            notes: notes.join(" · "),
+        };
+    });
+    const sizeWidth = Math.max(4, ...rows.map((row) => row.size.length));
+    const pathWidth = Math.max(4, ...rows.map((row) => row.path.length));
+
+    out.println(pc.dim(`${"VERDICT".padEnd(7)}  ${"SIZE".padStart(sizeWidth)}  ${"PATH".padEnd(pathWidth)}  RULE`));
+
+    for (const row of rows) {
+        const label = DRY_LABEL[row.item.verdict.kind];
+        out.println(
+            `${label.color(label.text.padEnd(7))}  ${row.size.padStart(sizeWidth)}  ${row.path.padEnd(pathWidth)}  ${pc.dim(row.notes)}`
+        );
+    }
+
+    out.println("");
+
+    for (const reason of new Set(plan.map((item) => `${item.verdict.rule}: ${item.verdict.reason}`))) {
+        out.println(pc.dim(`  ${reason}`));
+    }
+
+    const bytesOf = (kind: RmVerdictKind) =>
+        plan
+            .filter((item) => item.verdict.kind === kind)
+            .reduce((sum, item) => sum + (sizes.get(item.target.path) ?? 0), 0);
+    const asks = plan.filter((item) => item.verdict.kind === "ask").length;
+    const refused = plan.filter((item) => item.verdict.kind === "deny").length;
+    const parts = [`${formatBytes(bytesOf("allow"))} would go now`];
+
+    if (asks > 0) {
+        parts.push(`${formatBytes(bytesOf("ask"))} needs the user (1 request)`);
+    }
+
+    if (refused > 0) {
+        parts.push(`${refused} refused`);
+    }
+
+    out.println(`Dry run: ${parts.join(" · ")}. Nothing moved.`);
 }
 
 function summary(item: RmPlanItem): Record<string, string | undefined> {

@@ -77,6 +77,13 @@ function file(path: string): string {
     return path;
 }
 
+/** A run's background work, made inert: a dry run starts none of it. */
+const DRY_DEPS = {
+    startMeasurement: () => undefined,
+    kickDrainer: () => undefined,
+    notifyRequest: async () => undefined,
+};
+
 function context(): RunContext {
     return {
         config,
@@ -829,6 +836,60 @@ describe("a run that asks", () => {
 
         expect(second).not.toBe(first);
         expect(started).toHaveLength(2);
+    });
+
+    test("a dry run prints one row per path, the reasons once, and a summary split by what happens", async () => {
+        const dir = join(base, "dry-run");
+        file(join(dir, "keep.txt"));
+        file(join(dir, "cache", "index.json"));
+        const ask = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
+        const plan = [
+            { target: resolveTarget(join(dir, "keep.txt"), dir), verdict: ask },
+            {
+                target: resolveTarget(join(dir, "cache"), dir),
+                verdict: { ...ask, stayInPlace: "a live cache: another install may read it" },
+            },
+            {
+                target: resolveTarget(join(dir, "gone.txt"), dir),
+                verdict: { kind: "deny" as const, rule: "hard-deny", reason: "it does not exist" },
+            },
+        ];
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            lines.push(stripAnsi(String(raw ?? "")));
+        });
+        let printed: unknown[] = [];
+        const result = spyOn(out, "result").mockImplementation((value: unknown) => {
+            printed = Array.isArray(value) ? value : [];
+        });
+
+        try {
+            const ctx = { ...context(), caller: AGENT, cwd: dir };
+            await executePlan(plan, ctx, { dryRun: true, aside: true }, DRY_DEPS);
+            await executePlan(plan, ctx, { dryRun: true, aside: true, json: true }, DRY_DEPS);
+        } finally {
+            println.mockRestore();
+            result.mockRestore();
+        }
+
+        expect(lines[0]).toMatch(/^VERDICT\s+SIZE\s+PATH\s+RULE$/);
+        expect(lines[1]).toMatch(/^ask\s+[\d.]+ KB\s+keep\.txt\s+default · moves aside$/);
+        expect(lines[2]).toMatch(
+            /^ask\s+[\d.]+ KB\s+cache\s+default · stays in place \(a live cache: another install may read it\)$/
+        );
+        expect(lines[3]).toMatch(/^refuse\s+-\s+gone\.txt\s+hard-deny$/);
+        expect(lines.filter((line) => line.includes("default: no rule allows it"))).toHaveLength(1);
+        expect(lines.at(-1)).toMatch(
+            /^Dry run: 0 B would go now · [\d.]+ KB needs the user \(1 request\) · 1 refused\. Nothing moved\.$/
+        );
+        expect(lines.some((line) => line.includes("would leave the disk") || line.includes("The trash holds"))).toBe(
+            false
+        );
+        expect(printed).toMatchObject([
+            { path: join(dir, "keep.txt"), willAside: true, alsoIn: [] },
+            { path: join(dir, "cache"), willAside: false, alsoIn: [] },
+            { verdict: "deny", willAside: false },
+        ]);
     });
 
     test("a path whose verdict says it stays in place is not moved aside, even with aside on", async () => {
