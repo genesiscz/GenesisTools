@@ -129,7 +129,15 @@ export function targetChangeReason(pinned: RmTarget): string | null {
         return `its folder now resolves to ${dirname(canonicalPath(pinned.path))}`;
     }
 
-    if (identityOf(pinned.path) !== pinned.identity) {
+    const now = identityOf(pinned.path);
+
+    // Two approve windows of one request (dvzu7k, 2026-10-31) logged "another file" for paths the other one had
+    // already moved to the trash; the person read it as "something replaced my folder".
+    if (now === null) {
+        return "it is gone now (moved or deleted since the check)";
+    }
+
+    if (now !== pinned.identity) {
         return "another file or folder is there now";
     }
 
