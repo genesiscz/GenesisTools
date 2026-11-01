@@ -2,6 +2,7 @@ import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileStreamed, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
+import { PRESETS } from "./presets";
 import { readZstdFramesSync, SeekableZstdWriter, ZSTD_SUFFIX, type ZstdParams } from "./zstd";
 
 /** Retry a filesystem read at the nearest existing ancestor, propagating every error except ENOENT. */
@@ -42,14 +43,15 @@ export interface CompressFileResult extends ContentDigest {
     sourceStat: { size: number; mtimeMs: number };
 }
 
+/** Level, long mode, frame size, threads and line alignment that a caller leaves out come from the `text` preset. */
 export interface CompressFileOptions extends ZstdParams {
     source: string;
     /** Defaults to `<source>.zst`. */
     target?: string;
     frameBytes?: number;
-    /** Frames compressed at once (default 1). */
+    /** Frames compressed at once. */
     threads?: number;
-    /** Frames start on a line (default true: every file compressed here so far is text). */
+    /** Frames start on a line (every file compressed here so far is text). */
     lineAligned?: boolean;
     /** File mode of the result; defaults to the source's, so a 0600 transcript stays 0600. */
     mode?: number;
@@ -61,7 +63,15 @@ export interface CompressFileOptions extends ZstdParams {
  * place: removing it is the caller's decision, after {@link verifyCompressedFile} and a re-stat.
  */
 export async function compressFile(options: CompressFileOptions): Promise<CompressFileResult> {
-    const { source, level, long, checksum, frameBytes, threads, lineAligned = true } = options;
+    const {
+        source,
+        level = PRESETS.text.level,
+        long = PRESETS.text.long,
+        checksum,
+        frameBytes = PRESETS.text.frameBytes,
+        threads = PRESETS.text.threads,
+        lineAligned = PRESETS.text.lineAligned,
+    } = options;
     const target = options.target ?? `${source}${ZSTD_SUFFIX}`;
     const fd = openSync(source, "r");
     const sourceStat = fstatSync(fd);
