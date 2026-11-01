@@ -52,7 +52,7 @@ export interface RmLedgerEntry {
      * Set when a person check decided it (Touch ID, the dialog, a typed code). `caller` stays the environment the
      * command ran in, which is the agent's session when a person types `! tools rm approve` inside it.
      */
-    person?: { via: string };
+    person?: { via: string; opened?: "ask" };
 }
 
 export function rmLedgerPath(): string {
