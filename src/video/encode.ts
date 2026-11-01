@@ -1,16 +1,19 @@
-import { readdirSync, renameSync, rmSync, statSync, utimesSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync, utimesSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import {
+    DESTINATION_TAKEN,
     defaultRuleContext,
     graceMinutesFor,
     kickDrainer,
     loadRmConfig,
     moveToTrash,
     planRemoval,
+    renameNoReplace,
+    restoreBatch,
     rmCallerFromRuntime,
 } from "@genesiscz/utils/rm";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -36,7 +39,10 @@ export interface EncodeRow {
     kept: boolean;
     status: EncodeStatus;
     reason: string;
-    /** The trash batch holding the original after `--replace`; the rm tool's restore verb undoes it. */
+    /**
+     * The trash batch holding the original after `--replace`; the rm tool's restore verb undoes it. A `failed` row
+     * carries it when the result could not take the original path and the original could not be put back.
+     */
     trashBatch: string | null;
     seconds: number;
 }
@@ -50,6 +56,8 @@ export interface EncodeOptions {
     replace: boolean;
     dryRun: boolean;
     signal?: AbortSignal;
+    /** How `--replace` asks the trash about an original; the GenesisTools trash unless a test passes another. */
+    planReplace?: (input: string) => PlannedReplace;
 }
 
 /** Files named on the command line, plus every file with a container extension inside a named folder. */
@@ -120,8 +128,17 @@ async function pool<T>(items: T[], size: number, work: (item: T) => Promise<void
     await Promise.all(workers);
 }
 
-function removeOwnTemp(path: string): void {
-    rmSync(path, { force: true });
+export interface Staging {
+    /** A new hidden folder beside the input, owned by this run alone; the folder walk skips it. */
+    dir: string;
+    /** Where ffmpeg writes the encode. */
+    file: string;
+}
+
+/** The encode is written beside the input (same volume, so the install is a rename) in a folder no other run shares. */
+export function makeStaging({ input, encoder }: { input: string; encoder: VideoEncoder }): Staging {
+    const dir = mkdtempSync(join(dirname(input), `.${basename(input)}.${encoder.codec}-`));
+    return { dir, file: join(dir, basename(siblingOutput({ input, encoder }))) };
 }
 
 export type ReplaceDecision =
@@ -153,9 +170,21 @@ export function replaceDecision({
     return { kind: "replace" };
 }
 
-type ReplaceOutcome = { batch: string } | { beside: string };
+/** The trash rules' answer for one original under `--replace`, and the steps that act on it. */
+export interface PlannedReplace {
+    verdict: "allow" | "ask" | "deny";
+    reason: string;
+    isInAgent: boolean;
+    /** Moves the original into the trash; the batch id, or null when it did not move. */
+    moveOriginal: () => string | null;
+    /** Puts the batch back; true when the original is at its path again. */
+    restore: (batch: string) => boolean;
+    /** Starts the background drainer, once the result holds the original path. */
+    startDrainer: () => void;
+}
 
-function replaceOriginal({ input, finished }: { input: string; finished: string }): ReplaceOutcome {
+/** `--replace` through the GenesisTools trash and the `tools rm` rules. */
+export function planReplaceWithRm(input: string): PlannedReplace {
     const config = loadRmConfig();
     const caller = rmCallerFromRuntime();
     const ctx = defaultRuleContext(config, caller, process.cwd());
@@ -165,35 +194,166 @@ function replaceOriginal({ input, finished }: { input: string; finished: string 
         throw new Error("the trash rules gave no verdict for the original");
     }
 
-    const decision = replaceDecision({
+    return {
         verdict: item.verdict.kind,
         reason: item.verdict.reason,
         isInAgent: caller.isInAgent,
-    });
+        moveOriginal: () =>
+            moveToTrash([{ target: item.target, rule: "video-encode-replace" }], {
+                config,
+                caller,
+                graceMinutes: graceMinutesFor(item, ctx),
+            })?.id ?? null,
+        restore: (batch) => restoreBatch(batch, { config, caller }).restored.length > 0,
+        startDrainer: () => kickDrainer(config),
+    };
+}
+
+/** The result could not take the original path after the move; `trashBatch` is set while the original waits there. */
+export class ReplaceInstallError extends Error {
+    constructor(
+        message: string,
+        readonly trashBatch: string | null
+    ) {
+        super(message);
+        this.name = "ReplaceInstallError";
+    }
+}
+
+export interface InstallResult {
+    status: Extract<EncodeStatus, "kept" | "kept-beside" | "discarded">;
+    output: string | null;
+    reason: string;
+    trashBatch: string | null;
+}
+
+/** Moves the staged file to `target` only when nothing is there; a taken name discards the result. */
+function claimName({
+    staged,
+    target,
+    status,
+    reason,
+    takenReason,
+}: {
+    staged: string;
+    target: string;
+    status: "kept" | "kept-beside";
+    reason: string;
+    takenReason: string;
+}): InstallResult {
+    try {
+        renameNoReplace(staged, target);
+    } catch (error) {
+        if (!DESTINATION_TAKEN.has((error as NodeJS.ErrnoException).code ?? "")) {
+            throw error;
+        }
+
+        return {
+            status: "discarded",
+            output: null,
+            reason: `${takenReason}${target} already exists`,
+            trashBatch: null,
+        };
+    }
+
+    return { status, output: target, reason, trashBatch: null };
+}
+
+function rollBack({
+    plan,
+    batch,
+    cause,
+}: {
+    plan: PlannedReplace;
+    batch: string;
+    cause: unknown;
+}): ReplaceInstallError {
+    const why = cause instanceof Error ? cause.message : String(cause);
+    let restored = false;
+
+    try {
+        restored = plan.restore(batch);
+    } catch (error) {
+        logger.warn({ batch, error }, "the original could not be put back after a failed replace");
+    }
+
+    return restored
+        ? new ReplaceInstallError(`the result could not take the original path (${why}); the original is back`, null)
+        : new ReplaceInstallError(
+              `the result could not take the original path (${why}); the original waits in trash batch ${batch}`,
+              batch
+          );
+}
+
+/**
+ * Puts a verified encode in place. Without `--replace` it takes the sibling name. With it the trash rules decide (see
+ * `replaceDecision`); a replace moves the original to the trash, installs the result, puts the original back when the
+ * install fails, and starts the drainer only after the install holds.
+ */
+export function installVerified({
+    input,
+    staged,
+    encoder,
+    replace,
+    keptReason,
+    planReplace,
+}: {
+    input: string;
+    staged: string;
+    encoder: VideoEncoder;
+    replace: boolean;
+    keptReason: string;
+    planReplace: (input: string) => PlannedReplace;
+}): InstallResult {
+    const sibling = siblingOutput({ input, encoder });
+
+    if (!replace) {
+        return claimName({ staged, target: sibling, status: "kept", reason: keptReason, takenReason: "" });
+    }
+
+    const plan = planReplace(input);
+    const decision = replaceDecision(plan);
 
     if (decision.kind === "refuse") {
         throw new Error(decision.reason);
     }
 
     if (decision.kind === "beside") {
-        return { beside: decision.reason };
+        return claimName({
+            staged,
+            target: sibling,
+            status: "kept-beside",
+            reason: `${keptReason}; kept beside the original: ${decision.reason}`,
+            takenReason: `${decision.reason}; `,
+        });
     }
 
     const before = statSync(input);
-    const batch = moveToTrash([{ target: item.target, rule: "video-encode-replace" }], {
-        config,
-        caller,
-        graceMinutes: graceMinutesFor(item, ctx),
-    });
+    const batch = plan.moveOriginal();
 
     if (!batch) {
         throw new Error("the original did not move to the trash");
     }
 
-    kickDrainer(config);
-    renameSync(finished, input);
-    utimesSync(input, before.atime, before.mtime);
-    return { batch: batch.id };
+    try {
+        renameNoReplace(staged, input);
+    } catch (error) {
+        throw rollBack({ plan, batch, cause: error });
+    }
+
+    try {
+        utimesSync(input, before.atime, before.mtime);
+    } catch (error) {
+        logger.warn({ input, error }, "the replacement keeps its own timestamps");
+    }
+
+    try {
+        plan.startDrainer();
+    } catch (error) {
+        logger.warn({ error }, "the trash drainer did not start; the next tools rm run starts it");
+    }
+
+    return { status: "kept", output: input, reason: keptReason, trashBatch: batch };
 }
 
 async function encodeOne({ input, options }: { input: string; options: EncodeOptions }): Promise<EncodeRow> {
@@ -240,18 +400,18 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         return finish({ output: finalPath, status: "planned", reason: "would encode" });
     }
 
-    const ext = extname(input);
-    const temp = join(dirname(input), `${basename(input, ext)}.${encoder.codec}-tmp${ext}`);
+    let staging: Staging | null = null;
 
     try {
+        staging = makeStaging({ input, encoder });
+        const temp = staging.file;
         const run = await boundedCommand({
-            command: ["nice", "-n", "10", ...encodeArgs({ encoder, input, output: temp, quality: options.quality })],
+            command: encodeArgs({ encoder, input, output: temp, quality: options.quality }),
             timeoutMs: 4 * 60 * 60_000,
             signal: options.signal,
         });
 
         if (run.error || run.status !== 0) {
-            removeOwnTemp(temp);
             return finish({
                 status: "failed",
                 reason: `ffmpeg failed: ${run.error?.message ?? run.stderr.slice(-300)}`,
@@ -270,7 +430,6 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         const saving = savingPercent({ inputBytes: facts.bytes, outputBytes: output.bytes });
 
         if (!verdict.keep) {
-            removeOwnTemp(temp);
             return finish({
                 status: "discarded",
                 outputBytes: output.bytes,
@@ -279,48 +438,32 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
             });
         }
 
-        let trashBatch: string | null = null;
-        let status: EncodeStatus = "kept";
-        let reason = verdict.reason;
-        let outputPath = finalPath;
-
-        if (options.replace) {
-            const sibling = siblingOutput({ input, encoder });
-            const outcome = replaceOriginal({ input, finished: temp });
-
-            if ("batch" in outcome) {
-                trashBatch = outcome.batch;
-            } else if (await Bun.file(sibling).exists()) {
-                removeOwnTemp(temp);
-                return finish({
-                    status: "discarded",
-                    outputBytes: output.bytes,
-                    saving,
-                    reason: `${outcome.beside}; ${sibling} already exists`,
-                });
-            } else {
-                renameSync(temp, sibling);
-                status = "kept-beside";
-                reason = `${verdict.reason}; kept beside the original: ${outcome.beside}`;
-                outputPath = sibling;
-            }
-        } else {
-            renameSync(temp, finalPath);
-        }
+        const placed = installVerified({
+            input,
+            staged: temp,
+            encoder,
+            replace: options.replace,
+            keptReason: verdict.reason,
+            planReplace: options.planReplace ?? planReplaceWithRm,
+        });
 
         return finish({
-            status,
-            kept: true,
-            output: outputPath,
+            ...placed,
+            kept: placed.status !== "discarded",
             outputBytes: output.bytes,
             saving,
-            reason,
-            trashBatch,
         });
     } catch (error) {
-        removeOwnTemp(temp);
         logger.warn({ input, error }, "Video encode failed");
-        return finish({ status: "failed", reason: error instanceof Error ? error.message : String(error) });
+        return finish({
+            status: "failed",
+            reason: error instanceof Error ? error.message : String(error),
+            trashBatch: error instanceof ReplaceInstallError ? error.trashBatch : null,
+        });
+    } finally {
+        if (staging) {
+            rmSync(staging.dir, { recursive: true, force: true });
+        }
     }
 }
 
@@ -331,6 +474,11 @@ export async function encodeVideos(options: EncodeOptions): Promise<EncodeRow[]>
         rows.set(input, await encodeOne({ input, options }));
     });
     return inputs.map((input) => rows.get(input) as EncodeRow);
+}
+
+/** 1 when any file failed; skips and discards are results, not failures. */
+export function exitCodeFor(rows: readonly EncodeRow[]): number {
+    return rows.some((row) => row.status === "failed") ? 1 : 0;
 }
 
 export interface EncodeSummary {
@@ -382,7 +530,13 @@ export function renderRows({
     out.println(table.toString());
 
     for (const row of rows) {
-        if (row.trashBatch) {
+        if (!row.trashBatch) {
+            continue;
+        }
+
+        if (row.status === "failed") {
+            out.println(`restore ${basename(row.input)}: ${toolCommand("rm", "restore", row.trashBatch)}`);
+        } else {
             out.println(
                 `undo ${basename(row.input)}: mv ${shellQuote(row.input)} ${shellQuote(siblingOutput({ input: row.input, encoder }))}` +
                     ` && ${toolCommand("rm", "restore", row.trashBatch)}`

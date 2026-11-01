@@ -1,15 +1,21 @@
 import { resolve } from "node:path";
 import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
-import { encoderUnavailableReason, findEncoder, VIDEO_ENCODERS } from "@genesiscz/utils/video/reencode";
+import {
+    encoderUnavailableReason,
+    findEncoder,
+    isVideoEncoderCodec,
+    VIDEO_ENCODER_CODECS,
+} from "@genesiscz/utils/video/reencode";
 import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { Command } from "commander";
-import { encodeVideos, renderRows, summarize } from "./encode";
+import { encodeVideos, exitCodeFor, renderRows, summarize } from "./encode";
 
 export function registerVideoCommands(program: Command): void {
     program
@@ -27,7 +33,7 @@ export function registerVideoCommands(program: Command): void {
             "Re-encode videos with the hardware encoder (HEVC on macOS), keeping a result only when it is verified"
         )
         .option("--quality <n>", "Encoder quality, higher is better (hevc: 58 matches libx265 crf 26)", "58")
-        .option("--codec <name>", `Target codec: ${Object.keys(VIDEO_ENCODERS).join(", ")}`, "hevc")
+        .option("--codec [name]", `Target codec: ${VIDEO_ENCODER_CODECS.join(", ")}`, "hevc")
         .option("--jobs <n>", "Files encoded at once (the hardware encoder has few sessions)", "2")
         .option("--min-saving <percent>", "Discard an output that is less than this much smaller", "25")
         .option(
@@ -41,7 +47,7 @@ export function registerVideoCommands(program: Command): void {
                 paths: string[],
                 options: {
                     quality: string;
-                    codec: string;
+                    codec: string | boolean;
                     jobs: string;
                     minSaving: string;
                     replace?: boolean;
@@ -49,10 +55,18 @@ export function registerVideoCommands(program: Command): void {
                     json?: boolean;
                 }
             ) => {
-                const encoder = findEncoder(options.codec);
+                const codec = await pickEnumFlag({
+                    tool: "tools video encode",
+                    subcommand: ["encode"],
+                    flag: "--codec",
+                    given: options.codec,
+                    values: VIDEO_ENCODER_CODECS,
+                    fallback: "hevc",
+                    accepts: isVideoEncoderCodec,
+                });
+                const encoder = codec === null ? undefined : findEncoder(codec);
 
                 if (!encoder) {
-                    out.log.error(suggestEnumFlag("tools video encode", "--codec", Object.keys(VIDEO_ENCODERS)));
                     process.exitCode = 1;
                     return;
                 }
@@ -95,6 +109,12 @@ export function registerVideoCommands(program: Command): void {
                             dryRun: options.dryRun === true,
                             signal,
                         });
+
+                        const exitCode = exitCodeFor(rows);
+
+                        if (exitCode !== 0) {
+                            process.exitCode = exitCode;
+                        }
 
                         if (options.json) {
                             out.result(rows);
