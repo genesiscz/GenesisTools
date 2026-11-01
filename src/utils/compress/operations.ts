@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, statfsSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, statfsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { type CloudPlaceholderKind, cloudPlaceholderKind } from "@genesiscz/utils/fs/cloud-placeholder";
 import { sha256File } from "@genesiscz/utils/fs/hash";
@@ -69,7 +69,8 @@ function scanSource(source: string, files?: readonly string[]): SourceScan {
         }
 
         scan.bytes += stat.size;
-        const kind = cloudPlaceholderKind(absolute, stat);
+        // The xattr and flag lookups do not follow a symlink, so a followed source is asked about its target.
+        const kind = cloudPlaceholderKind(path === "" ? realpathSync(absolute) : absolute, stat);
 
         if (kind) {
             scan.placeholders.push({ path: path === "" ? basename(absolute) : path, kind });
@@ -217,7 +218,8 @@ function checkFileList(source: string, files: readonly string[]): string[] {
             throw new CompressRefusal(`${listed} is not inside ${source}`);
         }
 
-        const parts = inside.split(/[/\\]/);
+        // `relative` writes the host separator only: on macOS and Linux a backslash is part of a name.
+        const parts = inside.split(sep);
 
         for (let depth = 1; depth < parts.length; depth++) {
             const folder = join(source, ...parts.slice(0, depth));
@@ -277,7 +279,8 @@ export async function planCompressPath(
     const choice = resolvePreset(source);
     const preset = options.preset ?? choice.preset;
     const level = options.level ?? preset.level;
-    const target = options.target ?? `${source}${isFolder ? FOLDER_ARCHIVE_SUFFIX : ZSTD_SUFFIX}`;
+    // Absolute, as the ledger records it: a restore finds the record by the archive's path.
+    const target = resolve(options.target ?? `${source}${isFolder ? FOLDER_ARCHIVE_SUFFIX : ZSTD_SUFFIX}`);
 
     if (isFolder) {
         assertArchiveOutsideSource(source, target);
@@ -418,11 +421,17 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
 /**
  * The sha256 of what `archive` decompresses to, from the newest ledger record that wrote it: a path written again
  * holds the newer content. Undefined when that record carries none (a pack recorded before 2026-11-01, or one written
- * by an older checkout), so such an archive is not checked.
+ * by an older checkout), so such an archive is not checked. A record matches by the file its target names, with
+ * symlinks resolved, so `cd /tmp; unpack tree.zst` finds the record of `pack /tmp/tree` (the working folder is
+ * `/private/tmp` on macOS). A relative target (an older checkout recorded `-o` as typed) names no known folder and
+ * matches nothing.
  */
 function recordedInputSha256(archive: string): string | undefined {
-    return searchLedger({ path: archive })
-        .filter((record) => record.target === archive)
+    const wanted = realpathSync(archive);
+    return searchLedger({ path: basename(archive) })
+        .filter(
+            (record) => isAbsolute(record.target) && existsSync(record.target) && realpathSync(record.target) === wanted
+        )
         .at(-1)?.inputSha256;
 }
 
@@ -439,8 +448,10 @@ export interface ExpandOptions {
  * back to `x`. Refuses to overwrite. The archive is removed only with `removeArchive`, after the restore finished.
  */
 export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> {
-    const { archive, caller } = options;
-    const into = options.into ?? dirname(archive);
+    const { caller } = options;
+    // Absolute, like the paths a pack records, so the ledger names the same file both ways.
+    const archive = resolve(options.archive);
+    const into = resolve(options.into ?? dirname(archive));
     const name = archiveBaseName(basename(archive));
     const target = join(into, name);
 
