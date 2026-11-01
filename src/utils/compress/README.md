@@ -61,7 +61,8 @@ and a file only when its size and mtime did not change while it was read.
 The daily pass starts at most once per day per log folder: the logger calls `startDailyCompressionOnce` when it opens
 a day's file, which costs one `existsSync` of `.daily-compress-<day>` and, for the first process of the day, one
 exclusive create and a detached low-priority `bun src/utils/compress/daily-pass.ts`. Off in tests and with
-`GENESIS_TOOLS_NO_DAILY_COMPRESS=1`. `tools compress daily --dry-run` shows what it would do.
+`GENESIS_TOOLS_NO_DAILY_COMPRESS=1`. `tools compress daily --dry-run` shows what it would do. Before it compresses,
+the process runs the `tools rm` keepalive against macOS tmp_cleaner (`refreshWaitingRmData`, `src/rm/README.md`).
 
 ## Presets
 

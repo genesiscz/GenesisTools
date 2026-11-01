@@ -85,6 +85,14 @@ them back. An aside request never expires, and `tools rm requests <id>` shows wh
 - A path on another volume stays in place: a rename across volumes would be a copy.
 - `--no-aside` leaves a run's paths in place; `--aside` moves them even for a person at a terminal.
 
+**macOS tmp_cleaner.** Every day (at midnight, or on a wake after a missed run) macOS deletes each regular file in /tmp
+whose access, modification and change times are all older than 3 days, and each empty folder older than 3 days. A
+rename keeps the times inside a moved folder, so an aside copy or a trash item of old files could go at the next run,
+before a person decides. So every move into the aside folder, or into a trash batch with a grace period, sets each
+moved file's access time to now (the modification time stays) and each empty folder's times to now, and the daily pass
+(started by the first GenesisTools process of each day) repeats that for every pending request's aside copies and
+every trash batch still in its grace period.
+
 ## Reading the requests
 
 `tools rm requests` prints one summary line (open requests, paths, the size set aside, the paths in place, the oldest
@@ -97,7 +105,9 @@ The live state comes from the disk at the time of the listing, which reads only:
 - `aside`: the path waits in this session's rm-aside folder; `in place`: it waits where it was; `mixed`: both.
 - `gone`: no path and no aside copy is left, so nothing is left to decide.
 - `came back`: the original path exists again beside its aside copy.
-- `copy lost`: the aside copy is gone (something outside `tools rm` deleted it).
+- `copy lost`: the aside copy is gone: deleted outside `tools rm`, by macOS tmp_cleaner or a person. The listing
+  explains it under the rows, and the detail view prints it in place of where the copy waited. `approve` prints each
+  such path, logs it as `lost`, and decides the rest; a request with nothing else left closes as `gone`.
 
 Filters: `--session <id prefix>`, `--agent <name>`, `--project <name>`, `--older 1d`. `--sort age|size` prints a flat
 list instead of groups, `--paths` one row per path, `--all` also the closed requests: a closed one shows its status

@@ -37,8 +37,11 @@ import {
     approvalRows,
     CAME_BACK_REASON,
     cameBack,
+    closeAllLost,
+    copyLost,
     denyRequest,
     printDenyOutcome,
+    reportLostCopies,
 } from "../lib/approve";
 import { buildRequestViews, renderRequestDetail, renderRequestList, renderRequestRow } from "../lib/requests-view";
 import { minutesOption, printRequestHint, type RunContext, requirePerson, runContext, shown } from "../lib/run";
@@ -133,16 +136,29 @@ interface PreparedApproval {
     /** Paths the rules refuse now: they keep the request pending and the window does not show them. */
     blocked: ApproveEntry[];
     openEntries: ApproveEntry[];
+    /** Paths whose aside copy is gone (deleted outside tools rm): neither shown nor blocking, and decided no further. */
+    lost: RmRequestTarget[];
     denyOf: ApprovalDenyCheck;
 }
 
-/** The rows `request` offers a person and the paths refused before the prompt (printed unless `quiet`). */
+/**
+ * The rows `request` offers a person, the paths refused before the prompt, and the lost aside copies (each printed
+ * and logged unless `quiet`).
+ */
 function prepareApproval(request: RmRequest, ctx: RunContext, quiet = false): PreparedApproval {
+    const lost = request.targets.filter(copyLost);
+
+    if (!quiet) {
+        reportLostCopies(request, lost, ctx.caller);
+    }
+
     // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
-    const entries: ApproveEntry[] = request.targets.map((t) => ({
-        wanted: t,
-        target: resolveTarget(t.stored ?? t.path, request.cwd),
-    }));
+    const entries: ApproveEntry[] = request.targets
+        .filter((t) => !lost.includes(t))
+        .map((t) => ({
+            wanted: t,
+            target: resolveTarget(t.stored ?? t.path, request.cwd),
+        }));
     // A root is trusted, not deleted: only the hard-deny rules apply to it, not the worktree ones.
     const denyOf: ApprovalDenyCheck = request.kind === "root" ? hardDenyReason : approvalDenyReason;
     const refused = entries
@@ -156,7 +172,7 @@ function prepareApproval(request: RmRequest, ctx: RunContext, quiet = false): Pr
     }
 
     const blocked = refused.map((refusal) => refusal.entry);
-    return { blocked, openEntries: entries.filter((entry) => !blocked.includes(entry)), denyOf };
+    return { blocked, openEntries: entries.filter((entry) => !blocked.includes(entry)), lost, denyOf };
 }
 
 /** Why a batch approval leaves `request` out, or null: it takes only open delete requests a window can decide. */
@@ -240,6 +256,8 @@ export async function approveMany(
         const parts: BatchPart[] = [];
         const inPlaceOwner = new Map<string, string>();
         const asidePaths = new Set<string>();
+        // Requests with nothing left but lost aside copies: closed as gone here, never a failure.
+        let closedLost = 0;
 
         for (const id of [...new Set(ids)].sort()) {
             const lock = lockRmRequest(id);
@@ -259,7 +277,13 @@ export async function approveMany(
                 continue;
             }
 
-            const { openEntries } = prepareApproval(request, ctx);
+            const { openEntries, blocked } = prepareApproval(request, ctx);
+
+            if (openEntries.length === 0 && blocked.length === 0) {
+                closeAllLost(request, ctx.caller);
+                closedLost++;
+                continue;
+            }
 
             // The window answers with paths, so two rows of one path cannot be told apart in it. Only two in-place
             // rows of one path name the same object (one shared row); an aside or came-back copy beside any other
@@ -290,6 +314,10 @@ export async function approveMany(
         }
 
         const shown = parts.filter((part) => part.rows.length > 0);
+
+        if (shown.length === 0 && closedLost > 0) {
+            return;
+        }
 
         if (shown.length === 0) {
             out.println(pc.red("Nothing to approve."));
@@ -586,6 +614,11 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
 
     const prepared = prepareApproval(request, ctx);
     const { openEntries } = prepared;
+
+    if (openEntries.length === 0 && prepared.blocked.length === 0) {
+        closeAllLost(request, ctx.caller);
+        return;
+    }
 
     if (openEntries.length === 0) {
         out.println(pc.red(`Nothing to approve in ${id}: every path was refused above.`));
