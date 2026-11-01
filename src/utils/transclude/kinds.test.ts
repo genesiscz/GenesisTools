@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressFile } from "@genesiscz/utils/compress/file";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { transclude } from "./engine";
 import { checkAllowed, cmdTransclusion, createCmdTransclusion, splitCommandLine } from "./kinds/cmd";
@@ -113,6 +114,19 @@ describe("file kinds", () => {
         const { text } = await one('{{tail path="app.log" n=2}}');
         expect(text).toContain("line 29\nline 30");
         expect(text).not.toContain("line 28");
+    });
+
+    test("lines, file and tail read a day file the daily pass compressed, by its plain name", async () => {
+        const plain = join(mkdtempSync(join(tmpdir(), "transclude-zst-")), "2026-10-11-failures.jsonl");
+        writeFileSync(plain, `${Array.from({ length: 5 }, (_, i) => `{"n":${i + 1}}`).join("\n")}\n`);
+        await compressFile({ source: plain });
+        unlinkSync(plain);
+
+        const lines = await one(`{{lines path="${plain}" range="2-3"}}`);
+        expect(lines.token.error).toBeUndefined();
+        expect(lines.text).toContain('{"n":2}\n{"n":3}');
+        expect((await one(`{{file path="${plain}" max=1}}`)).text).toContain('{"n":1}\n```');
+        expect((await one(`{{tail path="${plain}" n=1}}`)).text).toContain('{"n":5}');
     });
 
     test("json follows a JSON pointer or a $ path in a commented file", async () => {

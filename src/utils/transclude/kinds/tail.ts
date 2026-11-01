@@ -1,5 +1,5 @@
-import { existsSync, statSync } from "node:fs";
-import { readLastLines } from "@genesiscz/utils/fs/read-lines";
+import { statSync } from "node:fs";
+import { readLastLines, storedFilePath } from "@genesiscz/utils/fs/read-lines";
 import { defineTransclusion, TransclusionError } from "../registry";
 import { caption, codeBlock, languageFor, sourceIdentity, worktreeProvenance } from "./shared";
 
@@ -51,9 +51,9 @@ export const tailTransclusion = defineTransclusion({
         }
 
         // An older day log is stored as `<name>.zst` by the daily compression pass.
-        const path = !existsSync(asked) && existsSync(`${asked}.zst`) ? `${asked}.zst` : asked;
+        const path = storedFilePath(asked);
 
-        if (!existsSync(path) || statSync(path).isDirectory()) {
+        if (!path || statSync(path).isDirectory()) {
             throw new TransclusionError(`file not found: ${asked}`);
         }
 

@@ -1,5 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
+import { isZstdPath, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
+import { readWholeTextSync, storedFilePath } from "@genesiscz/utils/fs/read-lines";
 import { parseStatusPorcelainV2Z } from "@genesiscz/utils/git/porcelain";
 import { TransclusionError } from "../registry";
 import type { TransclusionContext } from "../types";
@@ -121,7 +123,9 @@ export async function repoRootOf(path: string, ctx: TransclusionContext): Promis
 
 /**
  * The text of a file, from a commit (`git show <sha>:<path>`, which pins what the reader sees) or
- * from the working tree with its provenance (HEAD sha and whether the file is dirty).
+ * from the working tree with its provenance (HEAD sha and whether the file is dirty). A file the
+ * daily pass compressed (an old `<day>-failures.jsonl`, now `<name>.zst`) reads as its plain text,
+ * and so does a `.zst` path given directly.
  */
 export async function readSource({
     path,
@@ -136,21 +140,32 @@ export async function readSource({
         return readAtCommit({ path, commit, ctx });
     }
 
-    if (!existsSync(path)) {
+    const stored = storedFilePath(path);
+
+    if (!stored) {
         throw new TransclusionError(`file not found: ${path}`);
     }
 
-    const stat = statSync(path);
+    const stat = statSync(stored);
 
     if (stat.isDirectory()) {
         throw new TransclusionError(`${path} is a folder, not a file`);
     }
 
-    if (stat.size > MAX_SOURCE_BYTES) {
-        throw new TransclusionError(`${path} is ${formatMb(stat.size)}; the limit is ${formatMb(MAX_SOURCE_BYTES)}`);
+    const compressed = isZstdPath(stored);
+    const bytes = compressed ? zstdContentBytes(stored) : stat.size;
+
+    if (bytes === undefined) {
+        throw new TransclusionError(
+            `${stored} does not say how large its content is; the limit is ${formatMb(MAX_SOURCE_BYTES)}`
+        );
     }
 
-    const text = await Bun.file(path).text();
+    if (bytes > MAX_SOURCE_BYTES) {
+        throw new TransclusionError(`${path} is ${formatMb(bytes)}; the limit is ${formatMb(MAX_SOURCE_BYTES)}`);
+    }
+
+    const text = compressed ? readWholeTextSync(stored) : await Bun.file(stored).text();
     return { text, provenance: await worktreeProvenance(path, ctx) };
 }
 
