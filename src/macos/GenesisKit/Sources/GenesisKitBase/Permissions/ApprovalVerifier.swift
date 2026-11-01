@@ -44,6 +44,9 @@ public final class ApprovalVerifier: ObservableObject {
     @Published public private(set) var state: State = .idle
     /// Changes with every new evaluation, so the glyph view is rebuilt for its new context.
     @Published public private(set) var attempt = 0
+    /// An agent opened the window: the sensor stays off (`.paused`) until the person clicks "Approve with Touch ID…"
+    /// (`arm`), so a touch meant for another prompt (sudo, a login) cannot approve. `begin` and `resume` keep it off.
+    @Published public private(set) var waitsForClick = false
 
     public var onVerified: @MainActor (_ method: String) -> Void = { _ in }
     public var onEvent: @MainActor (_ event: String) -> Void = { _ in }
@@ -69,10 +72,27 @@ public final class ApprovalVerifier: ObservableObject {
         evaluator.unavailableReason(LAContext()) == nil
     }
 
-    /// Called by the glyph's host view once it is in a window on screen: starts listening.
+    /// Called by the glyph's host view once it is in a window on screen: starts listening. A window that waits for a
+    /// click is `.paused` from the start, so nothing starts here.
     func begin(windowIsKey: Bool) {
         guard !answered, state == .idle else { return }
         start(windowIsKey: windowIsKey)
+    }
+
+    /// The sensor stays off until `arm`: call before the window shows.
+    public func waitForClick() {
+        guard !answered, state == .idle else { return }
+        waitsForClick = true
+        pause(reason: "asked-by-agent")
+    }
+
+    /// "Approve with Touch ID…": from now on the sensor behaves as in any other window. It listens at once when
+    /// `listen`, else with the next `resume` (a row ticked again).
+    public func arm(listen: Bool = true) {
+        guard !answered, waitsForClick else { return }
+        waitsForClick = false
+        onEvent("biometric.arm reason=clicked")
+        if listen { resume() }
     }
 
     /// "Try again": a new evaluation with a new context.
@@ -111,9 +131,16 @@ public final class ApprovalVerifier: ObservableObject {
 
                 let code = (error as? LAError)?.code
                 self.onEvent("password.end ok=false code=\(code.map { String($0.rawValue) } ?? "none") error=\(error?.localizedDescription ?? "none")")
-                // A cancelled password dialog is not a deny: back to the window, which still waits for a decision.
+                // A cancelled password dialog is not a deny: back to the window, which still waits for a decision. A
+                // window that waits for a click goes back to waiting: its sensor never listened.
                 let available = self.evaluator.unavailableReason(LAContext())
-                self.state = available.map { State.unavailable($0) } ?? .failed("The password was not confirmed. Touch the sensor or try the password again.")
+                if let available {
+                    self.state = .unavailable(available)
+                } else if self.waitsForClick {
+                    self.state = .paused
+                } else {
+                    self.state = .failed("The password was not confirmed. Touch the sensor or try the password again.")
+                }
                 GenAnnounce.post("The password was not confirmed")
             }
         }
@@ -134,8 +161,9 @@ public final class ApprovalVerifier: ObservableObject {
         onEvent("biometric.pause reason=\(reason)")
     }
 
+    /// Listens again after a pause; nothing while the window still waits for the person's click.
     public func resume() {
-        guard !answered, state == .paused else { return }
+        guard !answered, state == .paused, !waitsForClick else { return }
         onEvent("biometric.resume")
         start(windowIsKey: NSApp?.keyWindow != nil)
     }

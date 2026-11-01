@@ -29,6 +29,10 @@ struct RmApproveParams: Decodable {
     /// The CLI sends `rm.item` lines on stdin after the window opened (sizes still measured, git facts), until EOF.
     /// Without it stdin is never read.
     var live: Bool?
+    /// When the sensor may listen: nil or "open" as soon as the window shows; "click" only after the person clicks
+    /// "Approve with Touch ID…" (an agent opened the window with `tools rm ask`, so a touch meant for another prompt
+    /// must not approve).
+    var arm: String?
 }
 
 struct RmApproveRequest: Decodable {
@@ -64,6 +68,8 @@ struct RmApproveItem: Decodable {
     var empty: Bool?
     var storedAt: String?
     var reason: String
+    /// The rule that asked ("default", "git-history", "nested-repos", …); an older CLI sends none.
+    var rule: String?
     var git: RmApproveGit?
     var folderStats: RmApproveFolderStats?
     /// Other pending requests naming the same path.
@@ -169,8 +175,15 @@ struct RmWindowContent {
     var disposals: [ApprovalChoice]
     /// Rows carry a checkbox (a delete request with rows).
     var selectable: Bool
+    /// The sensor listens only after the person clicks "Approve with Touch ID…" (`arm: "click"`).
+    var touchIDWaitsForClick = false
 
     static let trashDisposal = "trash"
+
+    /// The purpose's last sentence when an agent opened the window itself.
+    static func clickSentence(agent: String?) -> String {
+        "\(agent ?? "An agent") opened this window; Touch ID listens only after you click Approve with Touch ID."
+    }
     static let permanentDisposal = "permanent"
 
     static func build(_ params: RmApproveParams, home: String = NSHomeDirectory(), icons: Bool = true,
@@ -184,7 +197,7 @@ struct RmWindowContent {
         } else if request.asker != nil {
             facts.append(ApprovalFact("Reason", "No reason given", dimmed: true))
         }
-        facts.append(ApprovalFact("Folder", VaultWindowContent.shortPath(request.cwd, home: home), help: request.cwd))
+        facts.append(ApprovalFact(askedFromLabel, VaultWindowContent.shortPath(request.cwd, home: home), help: request.cwd))
         if let asked = request.askedAt.flatMap(parseDate) {
             facts.append(ApprovalFact("Asked", "\(ago(asked, now: now)) (\(stamp(asked)))", help: request.askedAt))
         }
@@ -193,29 +206,44 @@ struct RmWindowContent {
         let ordered = request.items.enumerated().sorted { a, b in
             (a.element.kind == "missing" ? 1 : 0, a.offset) < (b.element.kind == "missing" ? 1 : 0, b.offset)
         }.map(\.element)
-        let items = ordered.map { item($0, home: home, icons: icons, markdownApp: markdownApp, now: now, iconCache: iconCache) }
+        let items = ordered.map {
+            item($0, cwd: request.cwd, project: request.asker?.project, home: home, icons: icons, markdownApp: markdownApp,
+                 now: now, iconCache: iconCache)
+        }
         let ledger = "Every decision is written to the tools rm ledger."
         let isDelete = request.kind == "delete"
+        let waits = params.arm == "click"
         return RmWindowContent(
             title: params.title,
-            purpose: purpose(request),
+            purpose: waits ? "\(purpose(request)) \(clickSentence(agent: request.asker?.agent))" : purpose(request),
             facts: facts,
             details: [],
             items: items,
             footnote: request.id.map { "Request \($0). \(ledger)" } ?? ledger,
             summary: isDelete ? summary(request.items) : nil,
             disposals: isDelete ? disposals(graceMinutes: request.graceMinutes) : [],
-            selectable: isDelete && items.count > 1)
+            selectable: isDelete && items.count > 1,
+            touchIDWaitsForClick: waits)
     }
 
-    /// "Delete 3 of 5 items for shop-admin?" as rows are unticked; the CLI's title at the start. Without an asker
-    /// (a person's own run) the title names no one: "Delete 3 of 5 items?".
+    /// The fact that names the folder the request was made in (the asking session's folder, or the terminal's).
+    static let askedFromLabel = "Asked from"
+
+    /// "Delete 3 of 5 items asked by session shop-admin?" as rows are unticked; the CLI's title at the start. `who` is
+    /// `askedBy(_:)`. Without an asker (a person's own run) the title names no one: "Delete 3 of 5 items?".
     static func title(selected: Int, total: Int, who: String?) -> String {
-        let forWho = who.map { " for \($0)" } ?? ""
+        let byWho = who.map { " asked by \($0)" } ?? ""
         if selected == total {
-            return "Delete \(Plural.count(total, "item"))\(forWho)?"
+            return "Delete \(Plural.count(total, "item"))\(byWho)?"
         }
-        return "Delete \(selected) of \(Plural.count(total, "item"))\(forWho)?"
+        return "Delete \(selected) of \(Plural.count(total, "item"))\(byWho)?"
+    }
+
+    /// Who asked, as the title names them: "session shop-admin", else "Codex in shop-web", else "Codex".
+    static func askedBy(_ asker: RmApproveAsker) -> String {
+        if let session = asker.session, !session.isEmpty { return "session \(session)" }
+        if let project = asker.project, !project.isEmpty { return "\(asker.agent) in \(project)" }
+        return asker.agent
     }
 
     /// "Claude Code in shop (develop) wants to delete these. They go to the trash, and tools rm restore brings them
@@ -294,17 +322,18 @@ struct RmWindowContent {
         return ByteFormat.file(bytes)
     }
 
-    /// "12 files, newest 2 hours ago." for a folder with stats.
+    /// "12 files, newest 2 hours ago." for a folder with stats; nothing for an empty one (its chip says so).
     static func folderDetail(_ stats: RmApproveFolderStats?, now: Date) -> String? {
-        guard let stats else { return nil }
-        if stats.files == 0 { return "Empty folder." }
+        guard let stats, stats.files > 0 else { return nil }
         let newest = stats.newestAt.flatMap(parseDate).map { ", newest \(ago($0, now: now))" } ?? ""
         let count = stats.capped == true ? "\(stats.files.formatted(.number.locale(Locale(identifier: "en_US"))))+ files" : Plural.count(stats.files, "file")
         return "\(count)\(newest)."
     }
 
-    static func item(_ item: RmApproveItem, home: String, icons: Bool, markdownApp: Bool, now: Date = Date(),
-                     iconCache: RmIconCache? = nil) -> ApprovalItem {
+    /// One row. `cwd` is the asking session's folder (the row's folder reads relative to it); `project` is the
+    /// asker's project, which a stray copy is often named after.
+    static func item(_ item: RmApproveItem, cwd: String? = nil, project: String? = nil, home: String, icons: Bool,
+                     markdownApp: Bool, now: Date = Date(), iconCache: RmIconCache? = nil) -> ApprovalItem {
         let gone = item.kind == "missing"
         let location = item.storedAt ?? item.path
         let isFolder = item.kind == "dir"
@@ -313,7 +342,7 @@ struct RmWindowContent {
             path: item.path,
             location: location,
             name: (item.path as NSString).lastPathComponent,
-            folder: VaultWindowContent.shortPath((item.path as NSString).deletingLastPathComponent, home: home),
+            folder: folderLabel((item.path as NSString).deletingLastPathComponent, cwd: cwd, home: home),
             size: size(item),
             reason: item.reason,
             gone: gone,
@@ -323,7 +352,83 @@ struct RmWindowContent {
             icon: icons ? (iconCache?.icon(for: location, isFolder: isFolder, gone: gone) ?? icon(for: location, isFolder: isFolder, gone: gone)) : nil,
             git: item.git.map { ApprovalGitState(state: $0.state, lastCommit: $0.lastCommit) },
             detail: isFolder && !gone ? folderDetail(item.folderStats, now: now) : nil,
-            alsoIn: item.alsoIn ?? [])
+            alsoIn: item.alsoIn ?? [],
+            notes: notes(item, cwd: cwd, project: project),
+            risk: risk(item))
+    }
+
+    /// The row's folder as the asking session sees it: "./" for an item right in `cwd`, "./Design/Admin" deeper, else
+    /// the `~` path.
+    static func folderLabel(_ parent: String, cwd: String?, home: String) -> String {
+        if let cwd, cwd.count > 1 {
+            let base = cwd.hasSuffix("/") ? String(cwd.dropLast()) : cwd
+            if parent == base { return "./" }
+            if parent.hasPrefix(base + "/") { return "./" + parent.dropFirst(base.count + 1) }
+        }
+        return VaultWindowContent.shortPath(parent, home: home)
+    }
+
+    /// The chips on the folder line: a name that repeats its folder's or the repository's, and an empty folder.
+    static func notes(_ item: RmApproveItem, cwd: String?, project: String?) -> [ApprovalChip] {
+        guard item.kind != "missing" else { return [] }
+        var notes: [ApprovalChip] = []
+        if let name = nameNote(item, cwd: cwd, project: project) { notes.append(name) }
+        if item.kind == "dir", item.empty == true || item.folderStats?.files == 0 {
+            notes.append(ApprovalChip("empty folder", help: "Nothing inside: deleting it loses no files.", tone: .quiet))
+        }
+        return notes
+    }
+
+    /// "same name as its folder" (`ReservineBack/ReservineBack`) or "same name as the repository" (a `shop-web` folder
+    /// somewhere inside the shop-web project): both are often a stray copy left by a wrong `cd` or a doubled path.
+    static func nameNote(_ item: RmApproveItem, cwd: String?, project: String?) -> ApprovalChip? {
+        let name = (item.path as NSString).lastPathComponent
+        guard !name.isEmpty else { return nil }
+        func same(_ other: String?) -> Bool {
+            guard let other, !other.isEmpty else { return false }
+            return name.caseInsensitiveCompare(other) == .orderedSame
+        }
+        let why = "Often a stray copy left by a wrong cd or a doubled path. Check that it is not the one in use before you approve."
+        let parent = ((item.path as NSString).deletingLastPathComponent as NSString).lastPathComponent
+        if same(parent) {
+            return ApprovalChip("same name as its folder", help: "It is named like the folder it sits in. \(why)", tone: .warning)
+        }
+
+        // The repository's own folder, or one the session works inside, carries the name by right.
+        let repo = item.git?.repo
+        let holdsTheSession = cwd.map { $0 == item.path || $0.hasPrefix(item.path + "/") } ?? false
+        guard item.path != repo, !holdsTheSession else { return nil }
+        if same(project) || same(repo.map { ($0 as NSString).lastPathComponent }) {
+            return ApprovalChip("same name as the repository", help: "It is named like the repository. \(why)", tone: .warning)
+        }
+        return nil
+    }
+
+    /// The rules whose ask always means work nothing else holds (the CLI's `UNSAVED_RULES` in src/utils/rm/rules.ts).
+    private static let unsavedRules: [String: String] = [
+        "git-history": "A repository's git folder: its history and every commit not pushed go with it.",
+        "unsaved-clone": "A clone with work not pushed: it exists only here.",
+        "git-untracked": "Holds files git does not track: they may be new work nothing else holds.",
+        "nested-repos": "Holds a git repository of its own: its work may exist only here.",
+    ]
+
+    /// Grey when nothing can be lost (gone, empty, or git or a build brings it back), red when the work may exist only
+    /// here (not in git, changes not committed, or a rule that means unsaved work), amber for the rest: no rule allowed
+    /// it, so a person looks first.
+    static func risk(_ item: RmApproveItem) -> ApprovalRisk {
+        if item.kind == "missing" { return ApprovalRisk(.low, why: "Already gone: there is nothing left to lose.") }
+        if item.kind == "dir", item.empty == true || item.folderStats?.files == 0 {
+            return ApprovalRisk(.low, why: "An empty folder: there is nothing inside to lose.")
+        }
+        if item.kind == "file", item.bytes == 0 { return ApprovalRisk(.low, why: "An empty file: there is nothing inside to lose.") }
+        if let rule = item.rule, let why = unsavedRules[rule] { return ApprovalRisk(.unsaved, why: why) }
+        switch item.git?.state {
+        case "untracked": return ApprovalRisk(.unsaved, why: "Not in git: it may be new work nothing else holds.")
+        case "modified": return ApprovalRisk(.unsaved, why: "Changes not committed: git cannot bring them back.")
+        case "clean": return ApprovalRisk(.low, why: "Tracked and committed: git can bring it back.")
+        case "ignored": return ApprovalRisk(.low, why: "Ignored by git: build output or a cache, which a build makes again.")
+        default: return ApprovalRisk(.review, why: "No rule allows deleting it: look at it before you approve.")
+        }
     }
 
     /// The Finder icon of what is there; for a gone item, the icon of its kind.
@@ -344,7 +449,7 @@ struct RmWindowContent {
         }
 
         if let folder = params.folder, !folder.isEmpty {
-            facts.append(ApprovalFact("Folder", VaultWindowContent.shortPath(folder, home: home), help: folder))
+            facts.append(ApprovalFact(askedFromLabel, VaultWindowContent.shortPath(folder, home: home), help: folder))
         }
 
         // A fact's label is its SwiftUI id and a value shows at most 3 lines, so each item is its own fact, numbered.
@@ -355,12 +460,14 @@ struct RmWindowContent {
             facts.append(ApprovalFact("More", "\(Plural.count(details.count, "more item")) in Details"))
         }
 
+        let waits = params.arm == "click"
+        let purpose = "Nothing changes until you approve. Deleted items go to the trash and can be restored with tools rm restore during the grace period."
         return RmWindowContent(
             title: params.title,
-            purpose: "Nothing changes until you approve. Deleted items go to the trash and can be restored with tools rm restore during the grace period.",
+            purpose: waits ? "\(purpose) \(clickSentence(agent: nil))" : purpose,
             facts: facts, details: details, items: [],
             footnote: "Every decision is written to the tools rm ledger.",
-            summary: nil, disposals: [], selectable: false)
+            summary: nil, disposals: [], selectable: false, touchIDWaitsForClick: waits)
     }
 
     private static let isoWithFraction: ISO8601DateFormatter = {
@@ -398,7 +505,8 @@ struct RmWindowContent {
 }
 
 extension RmWindowContent {
-    /// The approval window for this content; `who` names the asker in the title once items are deselected.
+    /// The approval window for this content; `who` (`askedBy(_:)`) names the asker in the title once items are
+    /// deselected.
     @MainActor
     func dialogModel(items: [ApprovalItem], rememberChoices: [ApprovalRemember], verifier: ApprovalVerifier,
                      links: [ApprovalLink], deadline: Date, who: String?) -> ApprovalDialogModel {
@@ -408,7 +516,8 @@ extension RmWindowContent {
             footnote: footnote, rememberChoices: rememberChoices, rememberNote: nil,
             allowTitle: "Use password…", deadline: deadline, identifier: "rm-approve",
             items: items, verifier: verifier, links: links, summary: summary,
-            disposals: disposals, hint: "Esc denies · Space previews", selectable: selectable)
+            disposals: disposals, hint: "Esc denies · Space previews", selectable: selectable,
+            touchIDWaitsForClick: touchIDWaitsForClick)
         // The title follows the ticked count with or without an asker; with every row on it is the CLI's own title.
         let full = title
         model.titleForSelection = { selected, total in
@@ -503,7 +612,7 @@ func approveRm(_ params: RmApproveParams) {
         let model = content.dialogModel(
             items: content.items, rememberChoices: rememberChoices, verifier: verifier, links: rmLinks(params.request),
             deadline: Date().addingTimeInterval(rmDeadlineSeconds),
-            who: params.request?.asker.map { $0.session ?? $0.project ?? $0.agent })
+            who: params.request?.asker.map(RmWindowContent.askedBy))
 
         let deadline = DispatchWorkItem {
             verifier.cancel()

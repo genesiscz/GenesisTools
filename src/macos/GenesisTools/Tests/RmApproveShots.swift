@@ -26,15 +26,17 @@ final class RmApproveShots: XCTestCase {
     private let home = "/Users/someone"
     private let base = "/Users/someone/Notes/Shop/shop-admin-2.0/Design/Administration"
 
-    private func params(_ items: [RmApproveItem]) -> RmApproveParams {
-        RmApproveParams(
-            title: items.count == 1 ? "Delete 1 item for shop-admin-2.0?" : "Delete \(items.count) items for shop-admin-2.0?",
-            lines: [], caller: "Claude Code · shop-admin-2.0", folder: "/Users/someone/Projects/shop-web",
+    private let asker = RmApproveAsker(agent: "Claude Code", session: "shop-admin-2.0", project: "shop-web", branch: "develop")
+
+    private func params(_ items: [RmApproveItem], cwd: String = "/Users/someone/Projects/shop-web", asker: RmApproveAsker? = nil) -> RmApproveParams {
+        let asker = asker ?? self.asker
+        // The title as the CLI sends it.
+        let title = "Delete \(Plural.count(items.count, "item")) asked by \(RmWindowContent.askedBy(asker))?"
+        return RmApproveParams(
+            title: title, lines: [], caller: "Claude Code · shop-admin-2.0", folder: cwd,
             request: RmApproveRequest(
                 id: "k7m2xq", kind: "delete", why: "The old exports are replaced by the new admin designs",
-                cwd: "/Users/someone/Projects/shop-web", graceMinutes: 60,
-                asker: RmApproveAsker(agent: "Claude Code", session: "shop-admin-2.0", project: "shop-web", branch: "develop"),
-                items: items))
+                cwd: cwd, graceMinutes: 60, asker: asker, items: items))
     }
 
     private var twoItems: [RmApproveItem] {
@@ -67,17 +69,40 @@ final class RmApproveShots: XCTestCase {
         let noTouchID = StillEvaluator()
         noTouchID.unavailable = "Touch ID is not available on this Mac. Use your password."
         try shot(Array(twoItems.prefix(1)), noTouchID, to: "\(prefix)-after-password.png")
+
+        // Every chip and folders relative to the session's folder, in four rows so none is cut (the aside header is in
+        // the many-retry shot).
+        let cwd = "/Users/someone/Projects/ReservineBack"
+        let rules = [
+            RmApproveItem(path: "\(cwd)/ReservineBack", kind: "dir", bytes: 0, empty: true, storedAt: nil,
+                          reason: "Outside this session's scratch, its own files and the trusted folders", rule: "default"),
+            RmApproveItem(path: "\(cwd)/Design/Admin/Export notes.md", kind: "file", bytes: 12_400, empty: nil, storedAt: nil,
+                          reason: "Changes git has not committed", rule: "git-tracked", git: RmApproveGit(state: "modified", repo: cwd)),
+            RmApproveItem(path: "\(cwd)/apps/ReservineBack", kind: "dir", bytes: 2_400_000, empty: false, storedAt: nil,
+                          reason: "Holds 1 git repository, e.g. apps/ReservineBack", rule: "nested-repos",
+                          folderStats: RmApproveFolderStats(files: 318, newestAt: nil)),
+            RmApproveItem(path: "/Users/someone/Notes/todo.md", kind: "file", bytes: 2_000, empty: nil, storedAt: nil,
+                          reason: "Outside this session's scratch, its own files and the trusted folders", rule: "default"),
+        ]
+        let reservine = RmApproveAsker(agent: "Claude Code", session: "reservine-api", project: "ReservineBack")
+        try shot(rules, StillEvaluator(), to: "\(prefix)-rules.png", params: params(rules, cwd: cwd, asker: reservine))
+
+        // An agent opened the window itself: the sensor waits for the click.
+        var click = params(twoItems)
+        click.arm = "click"
+        try shot(twoItems, StillEvaluator(), to: "\(prefix)-click.png", params: click)
     }
 
-    private func shot(_ items: [RmApproveItem], _ evaluator: StillEvaluator, to path: String) throws {
-        let content = RmWindowContent.build(params(items), home: home, icons: false, markdownApp: true)
+    private func shot(_ items: [RmApproveItem], _ evaluator: StillEvaluator, to path: String, params given: RmApproveParams? = nil) throws {
+        let request = given ?? self.params(items)
+        let content = RmWindowContent.build(request, home: home, icons: false, markdownApp: true)
         let shown = content.items.map { item in
             let raw = items.first { $0.path == item.path }
             return ApprovalItem(path: item.path, location: item.location, name: item.name, folder: item.folder, size: item.size,
                                 reason: item.reason, gone: item.gone, aside: item.aside, isFolder: item.isFolder,
                                 opensInMarkdown: item.opensInMarkdown,
                                 icon: NSWorkspace.shared.icon(for: raw?.kind == "dir" ? .folder : (UTType(filenameExtension: (item.path as NSString).pathExtension) ?? .data)),
-                                git: item.git, detail: item.detail, alsoIn: item.alsoIn)
+                                git: item.git, detail: item.detail, alsoIn: item.alsoIn, notes: item.notes, risk: item.risk)
         }
         let verifier = ApprovalVerifier(reason: "approve: fixture", evaluator: evaluator)
         let model = content.dialogModel(
@@ -85,7 +110,7 @@ final class RmApproveShots: XCTestCase {
             rememberChoices: [ApprovalRemember(seconds: nil, title: "Just this once"), ApprovalRemember(seconds: nil, title: "Always for this folder")],
             verifier: verifier,
             links: [ApprovalLink(title: "Open its inbox", symbol: "tray") {}, ApprovalLink(title: "Its terminal", symbol: "terminal") {}],
-            deadline: Date().addingTimeInterval(169), who: "shop-admin-2.0")
+            deadline: Date().addingTimeInterval(169), who: request.request?.asker.map(RmWindowContent.askedBy))
         try render(ApprovalDialogView(model: model), to: path)
         verifier.cancel()
     }

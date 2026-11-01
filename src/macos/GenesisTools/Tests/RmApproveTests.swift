@@ -10,7 +10,7 @@ final class RmApproveTests: XCTestCase {
     private func request(_ items: [RmApproveItem], asker: RmApproveAsker? = RmApproveAsker(agent: "Claude Code", session: "shop-admin", project: "shop-web", branch: "develop"),
                          kind: String = "delete", grace: Int? = 60) -> RmApproveParams {
         RmApproveParams(
-            title: "Delete 2 items for shop-admin?", lines: ["/x"], caller: "Claude Code · shop-admin", folder: "/elsewhere",
+            title: "Delete 2 items asked by session shop-admin?", lines: ["/x"], caller: "Claude Code · shop-admin", folder: "/elsewhere",
             request: RmApproveRequest(id: "abc234", kind: kind, why: "the old exports are replaced", cwd: "/Users/someone/Projects/shop-web",
                                       graceMinutes: grace, asker: asker, items: items))
     }
@@ -25,9 +25,9 @@ final class RmApproveTests: XCTestCase {
         ]
         let content = RmWindowContent.build(request(items), home: "/Users/someone", icons: false, markdownApp: true)
 
-        XCTAssertEqual(content.title, "Delete 2 items for shop-admin?")
+        XCTAssertEqual(content.title, "Delete 2 items asked by session shop-admin?")
         XCTAssertEqual(content.purpose, "Claude Code in shop-web (develop) wants to delete these. They go to the trash, and tools rm restore brings them back for 1 hour.")
-        XCTAssertEqual(content.facts.map(\.label), ["Reason", "Folder"])
+        XCTAssertEqual(content.facts.map(\.label), ["Reason", "Asked from"])
         XCTAssertEqual(content.facts.last?.value, "~/Projects/shop-web")
         XCTAssertEqual(content.footnote, "Request abc234. Every decision is written to the tools rm ledger.")
         XCTAssertTrue(content.details.isEmpty)
@@ -126,7 +126,7 @@ final class RmApproveTests: XCTestCase {
         XCTAssertEqual(content.items[0].detail, "12 files, newest 2 hours ago.")
         XCTAssertNil(content.items[1].detail, "a file has no folder detail")
         XCTAssertEqual(content.items[0].alsoIn, ["6xwa9r"])
-        XCTAssertEqual(content.facts.map(\.label), ["Reason", "Folder", "Asked"])
+        XCTAssertEqual(content.facts.map(\.label), ["Reason", "Asked from", "Asked"])
         XCTAssertEqual(content.facts.last?.value.hasPrefix("3 minutes ago (2026-10-30 "), true, content.facts.last?.value ?? "")
         XCTAssertEqual(content.summary, "3 items, 34 kB, 1 already gone")
         XCTAssertTrue(content.selectable)
@@ -134,8 +134,8 @@ final class RmApproveTests: XCTestCase {
         XCTAssertEqual(content.disposals.first?.detail, "deleted after 1 hour; tools rm restore brings it back until then")
         XCTAssertEqual(RmWindowContent.disposals(graceMinutes: 10).first?.detail, "deleted after 10 minutes; tools rm restore brings it back until then")
 
-        XCTAssertEqual(RmWindowContent.title(selected: 3, total: 3, who: "shop-admin"), "Delete 3 items for shop-admin?")
-        XCTAssertEqual(RmWindowContent.title(selected: 1, total: 3, who: "shop-admin"), "Delete 1 of 3 items for shop-admin?")
+        XCTAssertEqual(RmWindowContent.title(selected: 3, total: 3, who: "session shop-admin"), "Delete 3 items asked by session shop-admin?")
+        XCTAssertEqual(RmWindowContent.title(selected: 1, total: 3, who: "session shop-admin"), "Delete 1 of 3 items asked by session shop-admin?")
         XCTAssertEqual(RmWindowContent.title(selected: 1, total: 3, who: nil), "Delete 1 of 3 items?")
         XCTAssertEqual(RmWindowContent.ago(now.addingTimeInterval(-2), now: now), "just now")
 
@@ -156,15 +156,15 @@ final class RmApproveTests: XCTestCase {
         let items = ["a", "b"].map {
             ApprovalItem(path: "/w/\($0)", name: $0, folder: "/w", size: nil, reason: "r", gone: false, isFolder: false)
         }
-        let model = ApprovalDialogModel(title: "Delete 2 items for shop?", purpose: "p", symbol: "trash.fill", facts: [], details: [],
+        let model = ApprovalDialogModel(title: "Delete 2 items asked by session shop?", purpose: "p", symbol: "trash.fill", facts: [], details: [],
                                         warning: nil, footnote: "f", rememberChoices: [], rememberNote: nil, allowTitle: "a",
                                         deadline: nil, identifier: "rm-approve", items: items,
                                         disposals: RmWindowContent.disposals(graceMinutes: 10), selectable: true)
-        model.titleForSelection = { selected, total in RmWindowContent.title(selected: selected, total: total, who: "shop") }
-        XCTAssertEqual(model.displayTitle, "Delete 2 items for shop?")
+        model.titleForSelection = { selected, total in RmWindowContent.title(selected: selected, total: total, who: "session shop") }
+        XCTAssertEqual(model.displayTitle, "Delete 2 items asked by session shop?")
         XCTAssertEqual(model.disposal, "trash")
         model.setSelected(items[0], false)
-        XCTAssertEqual(model.displayTitle, "Delete 1 of 2 items for shop?")
+        XCTAssertEqual(model.displayTitle, "Delete 1 of 2 items asked by session shop?")
         XCTAssertEqual(model.selectedItems.map(\.name), ["b"])
     }
 
@@ -257,6 +257,216 @@ final class RmApproveTests: XCTestCase {
         XCTAssertEqual(params.request?.items.first?.alsoIn, ["6xwa9r"])
         XCTAssertEqual(params.request?.asker?.sessionId, "2f32")
         XCTAssertEqual(params.remember?.map(\.id), ["once", "folder"])
+    }
+
+    /// A row's folder reads from the asking session's folder ("./", "./Design/Admin"); outside it the `~` path stays,
+    /// and a sibling whose name starts like the folder is outside too.
+    func testARowsFolderReadsFromTheAskingSessionsFolder() {
+        let cwd = "/Users/someone/Projects/shop-web"
+        let items = [
+            RmApproveItem(path: "\(cwd)/notes.txt", kind: "file", bytes: 10, empty: nil, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "\(cwd)/Design/Admin/Dark 2", kind: "dir", bytes: 10, empty: false, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "/Users/someone/Notes/old.txt", kind: "file", bytes: 10, empty: nil, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "/Users/someone/Projects/shop-web-2/a.txt", kind: "file", bytes: 10, empty: nil, storedAt: nil, reason: "r"),
+        ]
+        let content = RmWindowContent.build(request(items), home: "/Users/someone", icons: false, markdownApp: false)
+
+        XCTAssertEqual(content.items.map(\.folder), ["./", "./Design/Admin", "~/Notes", "~/Projects/shop-web-2"])
+        XCTAssertEqual(content.items[1].path, "\(cwd)/Design/Admin/Dark 2", "the tooltip keeps the full path")
+        XCTAssertEqual(RmWindowContent.folderLabel("\(cwd)/Design", cwd: "\(cwd)/", home: "/Users/someone"), "./Design")
+        XCTAssertEqual(RmWindowContent.folderLabel("/Users/someone/Design", cwd: nil, home: "/Users/someone"), "~/Design")
+    }
+
+    /// A name that repeats its folder's (`ReservineBack/ReservineBack`) or the repository's gets an orange chip; the
+    /// repository's own folder and the folder the session works in do not.
+    func testANameLikeItsFolderOrTheRepositoryGetsAWarningChip() {
+        let cwd = "/Users/someone/Projects/shop-web"
+        let items = [
+            RmApproveItem(path: "\(cwd)/Design/design", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "\(cwd)/apps/shop-web", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "/Users/someone/Notes/archive/Notes", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r",
+                          git: RmApproveGit(state: "untracked", repo: "/Users/someone/Notes")),
+            RmApproveItem(path: "/Users/someone/Notes", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r",
+                          git: RmApproveGit(state: "clean", repo: "/Users/someone/Notes")),
+            RmApproveItem(path: cwd, kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "\(cwd)/Design/old", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "\(cwd)/old/old", kind: "missing", bytes: nil, empty: nil, storedAt: nil, reason: "r"),
+        ]
+        let content = RmWindowContent.build(request(items), home: "/Users/someone", icons: false, markdownApp: false)
+
+        XCTAssertEqual(content.items.map { $0.notes.map(\.word) }, [
+            ["same name as its folder"], ["same name as the repository"], ["same name as the repository"], [], [], [], [],
+        ])
+        let chip = content.items.first?.notes.first
+        XCTAssertEqual(chip?.tone, .warning)
+        XCTAssertEqual(chip?.help.contains("stray copy left by a wrong cd or a doubled path"), true)
+    }
+
+    /// A folder with nothing inside gets a grey "empty folder" chip, whether the CLI says `empty` or counts 0 files; the
+    /// reason line then does not say it again.
+    func testAnEmptyFolderGetsAChip() {
+        let items = [
+            RmApproveItem(path: "/w/a", kind: "dir", bytes: 0, empty: true, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "/w/b", kind: "dir", bytes: 4096, empty: nil, storedAt: nil, reason: "r", folderStats: RmApproveFolderStats(files: 0)),
+            RmApproveItem(path: "/w/c", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r", folderStats: RmApproveFolderStats(files: 12)),
+            RmApproveItem(path: "/w/d.txt", kind: "file", bytes: 0, empty: nil, storedAt: nil, reason: "r"),
+        ]
+        let content = RmWindowContent.build(request(items), home: "/Users/someone", icons: false, markdownApp: false)
+
+        XCTAssertEqual(content.items.map { $0.notes.map(\.word) }, [["empty folder"], ["empty folder"], [], []])
+        XCTAssertEqual(content.items[0].notes.first?.tone, .quiet)
+        XCTAssertEqual(content.items[1].reasonLine, "r.")
+    }
+
+    /// The folder the request came from is labelled "Asked from", with rows and without.
+    func testTheRequestsFolderIsLabelledAskedFrom() {
+        let rows = RmWindowContent.build(request([]), home: "/Users/someone", icons: false, markdownApp: false)
+        XCTAssertEqual(rows.facts.map(\.label), ["Reason", "Asked from"])
+        XCTAssertEqual(rows.facts.last?.value, "~/Projects/shop-web")
+
+        let lines = RmWindowContent.build(RmApproveParams(title: "t", lines: ["/w/a"], caller: "codex · fix-build", folder: "/Users/someone/w"),
+                                          home: "/Users/someone")
+        XCTAssertEqual(lines.facts.map(\.label), ["Asked by", "Asked from", "1"])
+        XCTAssertEqual(lines.facts[1].value, "~/w")
+    }
+
+    /// The title says who asked: "asked by session <name>", else "<agent> in <project>", else the agent.
+    func testTheTitleSaysWhichSessionAsked() {
+        XCTAssertEqual(RmWindowContent.askedBy(RmApproveAsker(agent: "Claude Code", session: "shop-admin", project: "shop-web")), "session shop-admin")
+        XCTAssertEqual(RmWindowContent.askedBy(RmApproveAsker(agent: "Codex", session: "", project: "shop-web")), "Codex in shop-web")
+        XCTAssertEqual(RmWindowContent.askedBy(RmApproveAsker(agent: "Codex")), "Codex")
+
+        let who = RmWindowContent.askedBy(RmApproveAsker(agent: "Claude Code", session: "shop-admin"))
+        XCTAssertEqual(RmWindowContent.title(selected: 3, total: 5, who: who), "Delete 3 of 5 items asked by session shop-admin?")
+        XCTAssertEqual(RmWindowContent.title(selected: 5, total: 5, who: who), "Delete 5 items asked by session shop-admin?")
+        XCTAssertEqual(RmWindowContent.title(selected: 1, total: 2, who: "Codex in shop-web"), "Delete 1 of 2 items asked by Codex in shop-web?")
+    }
+
+    /// Grey when nothing can be lost, red when the work may exist only here, amber when no rule allowed it. The CLI's
+    /// `rule` decodes when sent and is absent from an older CLI.
+    func testTheRiskChipFollowsGitAndTheRule() throws {
+        func level(_ kind: String, bytes: Int64? = 100, empty: Bool? = nil, git: String? = nil, rule: String? = nil,
+                   files: Int? = nil) -> ApprovalRisk.Level {
+            RmWindowContent.risk(RmApproveItem(path: "/w/x", kind: kind, bytes: bytes, empty: empty, storedAt: nil, reason: "r", rule: rule,
+                                               git: git.map { RmApproveGit(state: $0) }, folderStats: files.map { RmApproveFolderStats(files: $0) })).level
+        }
+        XCTAssertEqual(level("missing", git: "untracked"), .low)
+        XCTAssertEqual(level("dir", empty: true), .low)
+        XCTAssertEqual(level("dir", files: 0), .low)
+        XCTAssertEqual(level("file", bytes: 0), .low)
+        XCTAssertEqual(level("file", git: "ignored"), .low)
+        XCTAssertEqual(level("file", git: "clean"), .low)
+        XCTAssertEqual(level("file", git: "untracked"), .unsaved)
+        XCTAssertEqual(level("file", git: "modified"), .unsaved)
+        for rule in ["git-history", "unsaved-clone", "git-untracked", "nested-repos"] {
+            XCTAssertEqual(level("dir", git: "clean", rule: rule), .unsaved, rule)
+        }
+        XCTAssertEqual(level("dir", rule: "default"), .review)
+        XCTAssertEqual(level("file"), .review)
+        XCTAssertEqual(level("file", git: "none"), .review)
+
+        XCTAssertEqual(ApprovalRisk(.low, why: "w").chip, ApprovalChip("low risk", help: "w", tone: .quiet))
+        XCTAssertEqual(ApprovalRisk(.review, why: "w").chip, ApprovalChip("review", help: "w", tone: .caution))
+        XCTAssertEqual(ApprovalRisk(.unsaved, why: "w").chip, ApprovalChip("unsaved work", help: "w", tone: .danger))
+
+        let decoded = try JSONDecoder().decode(RmApproveItem.self, from: Data(#"{"path":"/w/a","kind":"dir","reason":"r","rule":"nested-repos"}"#.utf8))
+        XCTAssertEqual(decoded.rule, "nested-repos")
+        XCTAssertNil(try JSONDecoder().decode(RmApproveItem.self, from: Data(#"{"path":"/w/a","kind":"dir","reason":"r"}"#.utf8)).rule)
+        let content = RmWindowContent.build(request([decoded]), home: "/Users/someone", icons: false, markdownApp: false)
+        XCTAssertEqual(content.items.first?.risk?.level, .unsaved)
+        XCTAssertEqual(content.items.first?.risk?.why, "Holds a git repository of its own: its work may exist only here.")
+    }
+
+    /// Rows moved aside sit under "Moved aside, waiting for you · N" and the others under "In place · N" (one header
+    /// without a count when all are aside, none when all are in place); gone rows stay last in each group, and the row
+    /// no longer repeats that it waits.
+    func testAsideRowsSitUnderTheirOwnHeader() throws {
+        let items = [
+            RmApproveItem(path: "/w/a.txt", kind: "file", bytes: 10, empty: nil, storedAt: nil, reason: "Outside"),
+            RmApproveItem(path: "/w/old.txt", kind: "missing", bytes: nil, empty: nil, storedAt: nil, reason: "Gone"),
+            RmApproveItem(path: "/w/b.png", kind: "file", bytes: 10, empty: nil, storedAt: "/tmp/cc/aside/b.png", reason: "Outside"),
+            RmApproveItem(path: "/w/c.png", kind: "missing", bytes: nil, empty: nil, storedAt: "/tmp/cc/aside/c.png", reason: "Gone"),
+            RmApproveItem(path: "/w/d.png", kind: "file", bytes: 10, empty: nil, storedAt: "/tmp/cc/aside/d.png", reason: "Outside"),
+        ]
+        let content = RmWindowContent.build(request(items), home: "/Users/someone", icons: false, markdownApp: false)
+
+        let groups = ApprovalItemGroup.groups(content.items)
+        XCTAssertEqual(groups.map(\.title), ["Moved aside, waiting for you · 3", "In place · 2"])
+        XCTAssertEqual(groups.map { $0.items.map(\.name) }, [["b.png", "d.png", "c.png"], ["a.txt", "old.txt"]])
+        let aside = try XCTUnwrap(content.items.first { $0.name == "b.png" })
+        XCTAssertEqual(aside.reasonLine, "Outside.")
+
+        XCTAssertEqual(ApprovalItemGroup.groups(content.items.filter(\.aside)).map(\.title), ["Moved aside, waiting for you"])
+        XCTAssertEqual(ApprovalItemGroup.groups(content.items.filter { !$0.aside }).map(\.title), [nil])
+    }
+
+    /// A sensor that is ready and never answers a touch; a password dialog that is cancelled at once.
+    @MainActor private final class ReadyEvaluator: ApprovalBiometricEvaluator {
+        func unavailableReason(_ context: LAContext) -> String? { nil }
+        func evaluateBiometrics(_ context: LAContext, reason: String, reply: @escaping @Sendable (Bool, Error?) -> Void) {}
+        func evaluatePassword(reason: String, reply: @escaping @Sendable (Bool, Error?) -> Void) { reply(false, LAError(.userCancel)) }
+    }
+
+    /// A window an agent opened (`arm: "click"`) starts with the sensor off. Unticking every row and ticking one again
+    /// does not arm it, nor does a cancelled password; the click does, and after it the window behaves as before. nil
+    /// and "open" keep the sensor listening from the first frame.
+    @MainActor func testAWindowAnAgentOpenedListensOnlyAfterTheClick() throws {
+        let json = #"""
+        {"title":"Delete 2 items asked by session fix-build?","lines":[],"arm":"click","request":{"id":"abc234","kind":"delete",
+        "cwd":"/w","graceMinutes":10,"asker":{"agent":"Codex","session":"fix-build"},
+        "items":[{"path":"/w/a","kind":"file","bytes":10,"reason":"Outside"},{"path":"/w/b","kind":"file","bytes":10,"reason":"Outside"}]}}
+        """#
+        let params = try JSONDecoder().decode(RmApproveParams.self, from: Data(json.utf8))
+        XCTAssertEqual(params.arm, "click")
+        func window(_ params: RmApproveParams) -> (RmWindowContent, ApprovalVerifier, ApprovalDialogModel) {
+            let content = RmWindowContent.build(params, home: "/Users/someone", icons: false, markdownApp: false)
+            let verifier = ApprovalVerifier(reason: "approve: test", evaluator: ReadyEvaluator())
+            let model = content.dialogModel(items: content.items, rememberChoices: [], verifier: verifier, links: [],
+                                            deadline: Date().addingTimeInterval(60), who: "session fix-build")
+            return (content, verifier, model)
+        }
+
+        let (content, verifier, model) = window(params)
+        XCTAssertTrue(content.touchIDWaitsForClick)
+        XCTAssertTrue(content.purpose.hasSuffix(" Codex opened this window; Touch ID listens only after you click Approve with Touch ID."), content.purpose)
+        XCTAssertEqual(verifier.state, .paused)
+        XCTAssertTrue(verifier.waitsForClick)
+
+        model.setSelected(model.items[0], false)
+        model.setSelected(model.items[1], false)
+        model.setSelected(model.items[0], true)
+        verifier.resume()
+        XCTAssertEqual(verifier.state, .paused, "a tick or a resume must not arm a sensor nobody clicked")
+        verifier.usePassword()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(verifier.state, .paused, "a cancelled password goes back to waiting for the click, never to Try again")
+
+        model.armTouchID()
+        XCTAssertEqual(verifier.state, .listening)
+        XCTAssertFalse(verifier.waitsForClick)
+        model.setSelected(model.items[0], false)
+        XCTAssertEqual(verifier.state, .paused)
+        model.setSelected(model.items[1], true)
+        XCTAssertEqual(verifier.state, .listening, "after the click a tick listens again, as in any window")
+
+        // A click with nothing ticked arms the sensor for the first tick.
+        let (_, idle, empty) = window(params)
+        empty.setSelected(empty.items[0], false)
+        empty.setSelected(empty.items[1], false)
+        empty.armTouchID()
+        XCTAssertEqual(idle.state, .paused)
+        empty.setSelected(empty.items[0], true)
+        XCTAssertEqual(idle.state, .listening)
+
+        for arm in [nil, "open"] {
+            var plain = params
+            plain.arm = arm
+            let (content, verifier, _) = window(plain)
+            XCTAssertFalse(content.touchIDWaitsForClick)
+            XCTAssertFalse(content.purpose.contains("opened this window"))
+            XCTAssertEqual(verifier.state, .idle, "the sensor starts with the first frame, as before")
+            XCTAssertFalse(verifier.waitsForClick)
+        }
     }
 
     /// A failed or cancelled touch lets the person try again; only Touch ID being out sends them to the password.
