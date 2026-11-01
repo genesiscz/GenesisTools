@@ -8,7 +8,14 @@ import {
     kindOf,
     readDecisionsWithIntegrity,
 } from "@app/question/lib/decisions/store";
-import { INBOX_STALE_MS, inboxSessionFresh } from "@app/question/lib/inbox/build";
+import {
+    INBOX_STALE_MS,
+    type InboxDeliveryView,
+    type InboxRef,
+    fromRecord as inboxDecisionOf,
+    inboxSessionFresh,
+} from "@app/question/lib/inbox/build";
+import { shownExcerpts } from "@app/question/lib/inbox/excerpts";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
@@ -130,7 +137,10 @@ export interface WidgetCard {
     status: string;
     revision?: number;
     number?: number;
-    choices: { id: string; title: string; recommended: boolean }[];
+    /** `rationale`: a decision option's reason, when the agent gave one (the hub's `InboxChoice.rationale`). */
+    choices: { id: string; title: string; recommended: boolean; rationale?: string }[];
+    /** Decision cards: what the hub's Inbox card shows besides the question, from the same source (`fromRecord`). */
+    decision?: WidgetDecisionDetails;
     formItems?: AskItem[];
     formAnswers?: AskForm["answers"];
     attachments: ImageAttachment[];
@@ -159,6 +169,33 @@ export interface WidgetSupersededBy {
     sessionKey?: string;
     /** The replacing decision's title, else its prompt, at most 160 characters. */
     title?: string;
+}
+/**
+ * A decision card's details, in the shape of the hub's Inbox decision (`InboxDecision`): every field is absent when
+ * the decision has none, and the card's `body` keeps only the question's own text.
+ */
+export interface WidgetDecisionDetails {
+    /** The findings that lead to the decision, markdown: the posted context, else the posted reasoning. */
+    context?: string;
+    /** Text under the options about this decision. */
+    notes?: string;
+    /** The agent's pick with its reason ("a): it matches both of your instructions"). */
+    proposal?: string;
+    confidence?: "high" | "medium" | "low";
+    /** The recommended option's letter. */
+    recommended?: string;
+    blocking?: boolean;
+    /** The `file:line` refs the card shows: the lines read from disk, or a file that could not be found. */
+    refs?: InboxRef[];
+    /** Where the last send took the answer ("Sent 18:31 to …"). */
+    delivery?: InboxDeliveryView;
+}
+
+/** A card as one text, for a reader that takes it whole (a handoff): the body, then a decision's context, proposal and notes. */
+export function widgetCardText(card: Pick<WidgetCard, "body" | "decision">): string {
+    return [card.body, card.decision?.context, card.decision?.proposal, card.decision?.notes]
+        .filter((text): text is string => Boolean(text?.trim()))
+        .join("\n\n");
 }
 /** The longest inbox or link title the snapshot carries. */
 export const WIDGET_TITLE_MAX = 160;
@@ -1523,23 +1560,35 @@ export async function widgetSnapshot({
         if (!session || (cardKeys && !cardKeys.has(session.key))) {
             continue;
         }
+        // What the hub's Inbox card shows, read the same way: context, notes, proposal, the options' reasons, the
+        // delivery and the code the text cites. The answer is not here: the card carries it as `answer`.
+        const inbox = inboxDecisionOf(row);
         // The prompt is lifted too: an item's attachments are embedded there. With a title (a task's short name) the
-        // prompt holds the details, and it leads the body.
+        // prompt holds the details and is the body; the context, proposal and notes are their own fields, in the
+        // order the body held them before, so the attachments keep their order.
         const decisionImages = await liftCardImages(
             [
                 row.title ?? row.prompt,
-                cleanVisibleContext(
-                    // The answer is not in the body: the card carries it as `answer` and the widget draws it itself.
-                    [row.context, row.reasoning, row.proposal, row.notes].filter(Boolean).join("\n\n")
-                ),
-                ...(row.title ? [cleanVisibleContext(row.prompt)] : []),
+                cleanVisibleContext(inbox.context ?? ""),
+                cleanVisibleContext(inbox.proposal ?? ""),
+                cleanVisibleContext(inbox.notes ?? ""),
+                row.title ? cleanVisibleContext(row.prompt) : "",
             ],
             { budget: budgetFor(session.key) }
         );
-        const decisionTitle = liftedTitle(decisionImages.texts[0], decisionImages.attachments);
-        const decisionBody = [decisionImages.texts[2], decisionImages.texts[1]]
-            .filter((text) => text?.trim())
-            .join("\n\n");
+        const [titleText = "", context, proposal, notes, decisionBody = ""] = decisionImages.texts;
+        const decisionTitle = liftedTitle(titleText, decisionImages.attachments);
+        const excerptRefs = shownExcerpts(inbox.refs, row.cwd ?? (session.target.cwd || undefined));
+        const details: WidgetDecisionDetails = {
+            ...(context?.trim() ? { context } : {}),
+            ...(notes?.trim() ? { notes } : {}),
+            ...(proposal?.trim() ? { proposal } : {}),
+            ...(inbox.confidence ? { confidence: inbox.confidence } : {}),
+            ...(inbox.recommended ? { recommended: inbox.recommended } : {}),
+            ...(inbox.blocking ? { blocking: true } : {}),
+            ...(excerptRefs.length > 0 ? { refs: excerptRefs } : {}),
+            ...(inbox.delivery ? { delivery: inbox.delivery } : {}),
+        };
         cards.push({
             id: `decision:${row.id}`,
             kind: kindOf(row),
@@ -1560,15 +1609,17 @@ export async function widgetSnapshot({
             sourceId: row.id,
             at: askedTimeOf(row),
             title: decisionTitle,
-            body: decisionBody,
+            body: decisionBody.trim() ? decisionBody : "",
             status: row.delivery?.uncertain ? "delivery unknown" : row.state,
             number: row.number,
             revision: row.revision ?? 1,
-            choices: row.options.map((title, index) => ({
-                id: String.fromCharCode(97 + index),
-                title,
-                recommended: row.recommended === String.fromCharCode(97 + index),
+            choices: inbox.choices.map((choice) => ({
+                id: choice.id,
+                title: choice.label,
+                recommended: choice.recommended,
+                ...(choice.rationale?.trim() ? { rationale: choice.rationale } : {}),
             })),
+            ...(Object.keys(details).length > 0 ? { decision: details } : {}),
             attachments: decisionImages.attachments,
             refs: (row.refs ?? []).map((ref) => ({ type: "file", value: ref.path })),
             read: true,
