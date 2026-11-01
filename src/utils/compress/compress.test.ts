@@ -700,6 +700,57 @@ describe("presets", () => {
             max: "22 long",
         });
     });
+
+    it("a file or folder written without settings gets its preset's level, and every reader returns the same bytes", async () => {
+        const dir = scratch("levels");
+        const plain = join(dir, "day.log");
+        const text = logText(4000);
+        writeFileSync(plain, text);
+        const frameBytes = 64 * 1024;
+        const unset = await compressFile({ source: plain, target: join(dir, "unset.zst"), frameBytes });
+        const preset = await compressFile({
+            source: plain,
+            target: join(dir, "preset.zst"),
+            ...PRESETS.text,
+            frameBytes,
+        });
+        const level3 = await compressFile({ source: plain, target: join(dir, "level3.zst"), level: 3, frameBytes });
+
+        expect(preset.frames).toBeGreaterThan(2);
+        expect(readFileSync(unset.target).equals(readFileSync(preset.target))).toBe(true);
+        // Level 3 writes other bytes, so the equality above cannot hold by accident.
+        expect(readFileSync(unset.target).equals(readFileSync(level3.target))).toBe(false);
+        expect(Buffer.concat([...readZstdFramesSync(preset.target)]).toString()).toBe(text);
+        expect(digestZstdContent(preset.target).sha256).toBe(preset.sha256);
+        expect([...readLinesSync(preset.target)]).toEqual([...readLinesSync(plain)]);
+        expect(readLastLines(preset.target)).toEqual(readLastLines(plain));
+        expect(readFirstLines(preset.target)).toEqual(readFirstLines(plain));
+
+        const rg = ripgrepBinary();
+
+        if (rg) {
+            const args = ["--no-config", "--no-filename", "-F", "-e", '"n":3242,'];
+            const fromZst = await ripgrepFiles({ rg, args, files: [preset.target] });
+            expect(fromZst.stdout).toBe((await ripgrepFiles({ rg, args, files: [plain] })).stdout);
+            expect(fromZst.stdout).toContain('"n":3242,');
+        }
+
+        const tree = join(dir, "tree");
+        mkdirSync(tree);
+        writeFileSync(join(tree, "a.json"), text);
+        const packedUnset = await packDirectory({ source: tree, archive: join(dir, "unset-tree.zst") });
+        const packedPreset = await packDirectory({
+            source: tree,
+            archive: join(dir, "preset-tree.zst"),
+            ...PRESETS.tree,
+        });
+        const packed3 = await packDirectory({ source: tree, archive: join(dir, "level3-tree.zst"), level: 3 });
+
+        expect(readFileSync(packedUnset.archive).equals(readFileSync(packedPreset.archive))).toBe(true);
+        expect(readFileSync(packedUnset.archive).equals(readFileSync(packed3.archive))).toBe(false);
+        expect(verifyArchiveAgainstFolder({ archive: packedPreset.archive, source: tree }).ok).toBe(true);
+        // Six writes at levels 19 and 22: CPU-bound by design, so a loaded machine gets room.
+    }, 30_000);
 });
 
 describe("retention", () => {
