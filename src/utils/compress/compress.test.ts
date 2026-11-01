@@ -36,7 +36,7 @@ import { planDailyCompression } from "./daily";
 import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { searchLedger } from "./ledger";
 import { compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
-import { PRESETS, resolvePreset, sniffSample } from "./presets";
+import { PRESET_NAMES, PRESETS, resolvePreset, sniffSample } from "./presets";
 import {
     applyFolderRetention,
     applyOldFileCompression,
@@ -849,6 +849,22 @@ describe("presets", () => {
             (await planCompressPath({ source: noisy, preset: PRESETS.binary, force: true })).refusal
         ).toBeUndefined();
         expect(readdirSync(dir).sort()).toEqual(["half.bin", "noisy.bin"]);
+    });
+
+    it("pins each preset's measured level (scripts/benchmarks/compress/levels.ts, README.md Presets)", () => {
+        const levels = Object.fromEntries(
+            PRESET_NAMES.map((name) => [name, `${PRESETS[name].level}${PRESETS[name].long ? " long" : ""}`])
+        );
+
+        expect(levels).toEqual({
+            text: "22",
+            tree: "19 long",
+            binary: "9 long",
+            database: "19",
+            media: "1",
+            fast: "1",
+            max: "22 long",
+        });
     });
 });
 
