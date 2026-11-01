@@ -13,14 +13,28 @@ const FRAMES_AHEAD = 2;
 
 /**
  * A `.zst` file's content as a pull stream: the next frame decompresses only when the consumer asks for more, so a
- * slow reader never makes frames queue up (a `FileSink.write` loop held 519 MB for a 3.5 GB week of logs).
+ * slow reader never makes frames queue up (a `FileSink.write` loop held 519 MB for a 3.5 GB week of logs). A file that
+ * does not open or decode errors the stream and goes to `onError`: a consumer such as rg sees only the end of its
+ * input, so the error must reach the caller another way.
  */
-export function zstdContentStream(path: string, concurrency = FRAMES_AHEAD): ReadableStream<Uint8Array> {
+export function zstdContentStream(
+    path: string,
+    { concurrency = FRAMES_AHEAD, onError }: { concurrency?: number; onError?: (err: Error) => void } = {}
+): ReadableStream<Uint8Array> {
     const frames = readZstdFrames(path, { concurrency });
 
     return new ReadableStream<Uint8Array>({
         async pull(controller) {
-            const next = await frames.next();
+            let next: IteratorResult<Uint8Array>;
+
+            try {
+                next = await frames.next();
+            } catch (err) {
+                const error = err instanceof Error ? err : new Error(String(err));
+                onError?.(error);
+                controller.error(error);
+                return;
+            }
 
             if (next.done) {
                 controller.close();
@@ -38,7 +52,7 @@ export interface RipgrepRun {
     /** Empty when the caller took each line through `onLine`. */
     stdout: string;
     stderr: string;
-    /** The worst exit code of the runs (rg exits 1 when nothing matched). */
+    /** The worst exit code of the runs (rg exits 1 when nothing matched; 2 also when a `.zst` did not read). */
     code: number;
     signal: string | null;
 }
@@ -75,18 +89,37 @@ async function runOne({
     zst?: string;
     onLine?: (line: string) => void;
 }): Promise<RipgrepRun> {
+    // A `.zst` that stops reading ends rg's stdin like a finished file, so rg would answer "no match" (or a partial
+    // count) with exit 0 or 1 and nothing on stderr. The failure is kept, rg is stopped, and the run reports exit 2
+    // with the error, as rg itself does for a plain file it cannot read.
+    let failure: Error | undefined;
+    let stop = () => {};
+    const stdin = zst
+        ? zstdContentStream(zst, {
+              onError: (err) => {
+                  failure = err;
+                  stop();
+              },
+          })
+        : "ignore";
     const proc = Bun.spawn(zst ? [rg, ...args, "-"] : [rg, ...args], {
-        stdin: zst ? zstdContentStream(zst) : "ignore",
+        stdin,
         stdout: "pipe",
         stderr: "pipe",
         timeout: timeoutMs,
     });
+    stop = () => proc.kill();
     const output = Promise.all([
         onLine ? eachLine(proc.stdout, onLine).then(() => "") : new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
     ]);
 
     const [[stdout, stderr], code] = await Promise.all([output, proc.exited]);
+
+    if (failure) {
+        return { stdout, stderr: `${stderr}rg: ${zst}: ${failure.message}\n`, code: 2, signal: null };
+    }
+
     return { stdout, stderr, code, signal: proc.signalCode ?? null };
 }
 
