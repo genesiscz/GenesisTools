@@ -83,6 +83,10 @@ struct MarkdownPageNotice: Equatable {
 
     static let noFileLinks = MarkdownPageNotice(text: "Links to files do not open in this pane.", kind: .link)
 
+    /// The page drew a task box that the note's text does not have where the page says. Nothing was changed.
+    static let taskNotFound = MarkdownPageNotice(text: "This task was not found in the note, so nothing was changed.",
+                                                 detail: "The Source mode shows the line as it is.", kind: .link)
+
     static func remotePicture(_ src: String) -> MarkdownPageNotice {
         MarkdownPageNotice(text: "This picture is on the web, so the viewer cannot open it.", kind: .link,
                            action: MarkdownWebView.externalURL(src).map(Action.open))

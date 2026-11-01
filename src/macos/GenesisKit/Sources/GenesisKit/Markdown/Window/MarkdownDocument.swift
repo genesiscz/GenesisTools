@@ -43,6 +43,8 @@ final class MarkdownDocument: ObservableObject, Identifiable {
     /// File attributes as of the last read, for the status bar.
     @Published private(set) var modifiedAt: Date?
     @Published private(set) var byteSize = 0
+    /// The file and its folder can be written, so a task box may save in place. Read with the other attributes.
+    @Published private(set) var writable = true
     private var source: DispatchSourceFileSystemObject?
     /// Editors save by writing a temp file and renaming it over the old
     /// inode, and some delete first and create later. The file watcher dies
@@ -230,6 +232,83 @@ final class MarkdownDocument: ObservableObject, Identifiable {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         modifiedAt = attrs?[.modificationDate] as? Date
         byteSize = (attrs?[.size] as? NSNumber)?.intValue ?? text.utf8.count
+        // The rename of an atomic write needs the folder, the file itself needs write access too.
+        let real = url.resolvingSymlinksInPath()
+        let canWrite = FileManager.default.isWritableFile(atPath: real.path)
+            && FileManager.default.isWritableFile(atPath: real.deletingLastPathComponent().path)
+        if writable != canWrite { writable = canWrite }
+    }
+
+    // MARK: Task boxes
+
+    enum TaskOutcome: Equatable {
+        /// The file on disk has the new state.
+        case saved
+        /// The unsaved draft has it; the file does not yet.
+        case drafted
+        /// The item already had that state.
+        case unchanged
+        /// The item is no longer in the file (its text changed or it was removed).
+        case notFound
+        /// This many items have its text, so none was changed.
+        case ambiguous(Int)
+        /// The write failed: the system's words.
+        case failed(String)
+
+        /// The document now shows the state the reader asked for.
+        var applied: Bool {
+            switch self {
+            case .saved, .drafted, .unchanged: true
+            case .notFound, .ambiguous, .failed: false
+            }
+        }
+    }
+
+    /// Why a task box on this note's page cannot change it, as the box's tooltip; nil = it can.
+    func taskLock(_ clicks: MarkdownTaskClicks) -> String? {
+        if clicks == .readOnly { return "Task boxes are read-only. Settings, Task lists turns them on." }
+        if missing || binary { return "This file cannot be changed here." }
+        if !writable { return "This file is read-only, so its tasks cannot be checked off here." }
+        return nil
+    }
+
+    /// Sets one task's box. With `saveAtOnce` and nothing unsaved, the file is written at once off the main thread
+    /// (`MarkdownTaskFile`), then read again the way the watcher reads it, so the page and the editor follow. With
+    /// unsaved edits, a disk change waiting in the banner, or `saveAtOnce` off, the draft gets the change and the
+    /// file waits for ⌘S. `done` runs on the main thread.
+    func setTask(_ target: MarkdownTaskTarget, saveAtOnce: Bool, done: @escaping (TaskOutcome) -> Void) {
+        guard saveAtOnce, !isDirty, diskChange == nil else {
+            done(setTaskInDraft(target))
+            return
+        }
+        let url = url
+        MarkdownTaskFile.queue.async {
+            let result = MarkdownTaskFile.apply(target, to: url)
+            DispatchQueue.main.async { [weak self] in
+                // The same read as the watcher's: a clean note takes the new text, a note typed into meanwhile parks
+                // it in the banner. Either way the page never shows a state the file does not have.
+                self?.reload()
+                switch result {
+                case .saved: done(.saved)
+                case .unchanged: done(.unchanged)
+                case .notFound: done(.notFound)
+                case .ambiguous(let count): done(.ambiguous(count))
+                case .failed(let message): done(.failed(message))
+                }
+            }
+        }
+    }
+
+    private func setTaskInDraft(_ target: MarkdownTaskTarget) -> TaskOutcome {
+        let bytes = Array(displayText.utf8)
+        switch MarkdownTaskList.locate(target, in: bytes) {
+        case .notFound: return .notFound
+        case .ambiguous(let count): return .ambiguous(count)
+        case .atLine(let item), .moved(let item):
+            guard let changed = MarkdownTaskList.setting(item, checked: target.checked, in: bytes) else { return .unchanged }
+            edit(String(decoding: changed, as: UTF8.self))
+            return .drafted
+        }
     }
 
     private func watch() {
