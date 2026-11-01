@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { type WalkError, walkFiles } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { processHoldsMark } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { type FolderStats, folderStats } from "./item-facts";
 import { appendRmLedger } from "./ledger";
@@ -155,7 +155,7 @@ function claimLedgerLine(marker: string): boolean {
         } catch (error) {
             const holder = readMarker(marker);
 
-            if (holder === LEDGER_DONE || isProcessAlive(Number(holder)) || claimInProgress(marker, holder)) {
+            if (holder === LEDGER_DONE || processHoldsMark(Number(holder), marker) || claimInProgress(marker, holder)) {
                 return false;
             }
 
@@ -413,7 +413,7 @@ export function isRmMeasurementRunning(id: string, requestsDir = rmRequestsDir()
     }
 
     try {
-        return isProcessAlive(Number(readFileSync(file, "utf8").trim()));
+        return processHoldsMark(Number(readFileSync(file, "utf8").trim()), file);
     } catch (error) {
         logger.debug({ file, error }, "rm: unreadable measurement lock");
         return false;

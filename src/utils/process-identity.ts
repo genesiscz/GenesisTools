@@ -1,3 +1,4 @@
+import { lstatSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { processTableAvailable, readProcessRow, readPsCommand } from "@genesiscz/utils/process/libproc-table";
 import { readProcess } from "@genesiscz/utils/process/processes";
@@ -130,6 +131,37 @@ export function processStartMs(pid: number): number | null {
 
 /** `ps -o etime=` resolves to whole seconds, so allow two of them either way. */
 export const START_MS_TOLERANCE = 2000;
+
+/**
+ * Whether `pid` still runs the process that left a mark at `markedAtMs` (a lock or a claim file it wrote or renamed,
+ * by that file's ctime, which a rename updates). A process that started after the mark is another program on a
+ * recycled pid: a trash claim of pid 43659 made at 15:01 kept its batch for hours once an app started at 18:20 got
+ * that pid (2026-11-01). A start time the OS will not tell counts as the same process, as a live pid did before.
+ */
+export function isProcessAliveSince(pid: number, markedAtMs: number): boolean {
+    if (!isProcessAlive(pid)) {
+        return false;
+    }
+
+    const started = processStartMs(pid);
+    return started === null || started <= markedAtMs + START_MS_TOLERANCE;
+}
+
+/**
+ * Whether `pid` still runs the process that made `file` (a lock, a claim or a journal named after or holding its
+ * pid): {@link isProcessAliveSince} at the file's ctime. A file that cannot be read leaves the pid alone to answer.
+ */
+export function processHoldsMark(pid: number, file: string): boolean {
+    let markedAt = Number.POSITIVE_INFINITY;
+
+    try {
+        markedAt = lstatSync(file).ctimeMs;
+    } catch (error) {
+        logger.debug({ file, error }, "process-identity: cannot read when a mark was made");
+    }
+
+    return isProcessAliveSince(pid, markedAt);
+}
 
 export type PidIdentityStatus =
     /** Alive and the command line matches the expectation. */

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { keepFromTmpCleaner } from "@genesiscz/utils/fs/tmp-cleaner";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { processHoldsMark } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { appendRmLedger } from "./ledger";
 import { DESTINATION_TAKEN, ensurePrivateDir, renameNoReplace, sharedTempRoot } from "./paths";
@@ -212,7 +212,7 @@ export function recoverAsideJournals(requestsDir = rmRequestsDir()): string[] {
     const recovered: string[] = [];
 
     for (const journal of asideJournals(requestsDir)) {
-        if (isProcessAlive(journal.pid)) {
+        if (processHoldsMark(journal.pid, journal.file)) {
             continue;
         }
 
