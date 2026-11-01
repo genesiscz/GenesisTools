@@ -59,8 +59,9 @@ export interface CompressFileOptions extends ZstdParams {
 
 /**
  * Compresses a file into the zstd seekable format next to it (or at `target`), through a temp file and a rename, and
- * returns the digest of what it read. The source is read in 1 MiB chunks and never held whole. The source is left in
- * place: removing it is the caller's decision, after {@link verifyCompressedFile} and a re-stat.
+ * returns the digest of what it read. The source is read in 1 MiB chunks and never held whole. A source whose size or
+ * mtime changed during the read throws and writes nothing. The source is left in place: removing it is the caller's
+ * decision, after {@link verifyCompressedFile} and a re-stat.
  */
 export async function compressFile(options: CompressFileOptions): Promise<CompressFileResult> {
     const {
@@ -106,6 +107,16 @@ export async function compressFile(options: CompressFileOptions): Promise<Compre
                     hasher.update(view);
                     await writer.push(view);
                     bytes += read;
+                }
+
+                // A source cut or extended during the read gives a digest of bytes the file never held at one
+                // moment; throwing here keeps that copy from replacing the target (a verified `.zst` included).
+                const end = fstatSync(fd);
+
+                if (bytes !== sourceStat.size || end.size !== sourceStat.size || end.mtimeMs !== sourceStat.mtimeMs) {
+                    throw new Error(
+                        `${source} changed while it was compressed (read ${bytes} of ${sourceStat.size} bytes, now ${end.size}); nothing written`
+                    );
                 }
 
                 const stats = await writer.finish();
