@@ -1,5 +1,7 @@
 // git shapes that destroy work or someone else's commits.
 
+import { existsSync, lstatSync } from "node:fs";
+import { resolve } from "node:path";
 import {
     commandTokenIndex,
     commandWord,
@@ -163,12 +165,15 @@ function corrected(scan: ShellScan, match: ShellMatch, replacement: string): str
 
 // Shell words as typed, quotes kept.
 const RAW_WORD = /(?:[^\s'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")+/g;
-const REDIRECTION = /^(\d*|&)(>>?|>\||>&|<<?<?|<&)(.*)$/;
+// `>|` and `>&` before `>`, which would leave the `|` or `&` as the target.
+const REDIRECTION = /^(\d*|&)(>\||>&|>>?|<<?<?|<&)(.*)$/;
 
 interface Words {
     args: string[];
-    /** The file a `>`, `>>` or `&>` sends stdout to. */
+    /** The file a `>`, `>|`, `>>`, `>&` or `&>` sends stdout to. */
     stdout?: string;
+    /** `>>`: stdout is added to the file, not written over it. */
+    appends?: boolean;
 }
 
 // The words of a raw text up to a comment, with each redirection and its target set apart from the arguments.
@@ -176,6 +181,7 @@ function wordsOf(text: string): Words {
     const words = text.match(RAW_WORD) ?? [];
     const args: string[] = [];
     let stdout: string | undefined;
+    let appends = false;
 
     for (let k = 0; k < words.length; k++) {
         // A word that starts with `#` opens a comment to the end of the line.
@@ -191,13 +197,16 @@ function wordsOf(text: string): Words {
         }
 
         const target = m[3] !== "" ? m[3] : words[++k];
+        // `>& <file>` writes stdout and stderr to the file; `>&2`, `>& 2` and `>&-` name a descriptor.
+        const file = m[2] !== ">&" || !/^(\d+|-)$/.test(target ?? "");
 
-        if (["", "1", "&"].includes(m[1]) && [">", ">>", ">|"].includes(m[2])) {
+        if (["", "1", "&"].includes(m[1]) && [">", ">>", ">|", ">&"].includes(m[2]) && file) {
             stdout = target;
+            appends = m[2] === ">>";
         }
     }
 
-    return { args, ...(stdout !== undefined ? { stdout } : {}) };
+    return { args, ...(stdout !== undefined ? { stdout, appends } : {}) };
 }
 
 // The words after a token up to the end of its element, in the original text.
@@ -265,7 +274,7 @@ interface Revert {
     files: string;
     /** The paths alone, to compare with saves and to gate on; empty when they cannot be placed. */
     paths: string[];
-    /** A checkout's source: "" for the index, "HEAD", or another ref. A restore has none. */
+    /** The source: "" for the index, "HEAD", or another ref. A restore without --source has none. */
     ref?: string;
     /** The index is overwritten too, so the staged part of the work is lost along with the unstaged part. */
     resetsIndex: boolean;
@@ -303,6 +312,23 @@ function shortLetters(flag: string): string {
     return /^-[^-]/.test(flag) ? flag.slice(1).split("s")[0] : "";
 }
 
+// A restore's `--source` tree and the index of the word that holds it: `-sX` and `-WsX` carry it in the same word.
+function restoreSource(args: string[]): [ref: string, at: number] | undefined {
+    for (let k = 0; k < args.length && args[k] !== "--"; k++) {
+        const s = /^-[^-]/.test(args[k]) ? args[k].indexOf("s") : -1;
+
+        if (args[k] === "--source" || (s !== -1 && s === args[k].length - 1)) {
+            return [args[k + 1] ?? "", k + 1];
+        }
+
+        if (args[k].startsWith("--source=") || s !== -1) {
+            return [args[k].slice(s !== -1 ? s + 1 : "--source=".length), k];
+        }
+    }
+
+    return undefined;
+}
+
 function restoreRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
     const args = inv.tokens.slice(inv.sub + 1).map((t) => t.text);
     const flags = args.filter((a) => a.startsWith("-"));
@@ -319,16 +345,58 @@ function restoreRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
     // a quoted `"my file.ts"`, so a token list dropped it and the suggestion stashed
     // only part of what the user meant to revert. Without `--` a quoted path cannot be
     // placed at all, so there is no suggestion rather than a partial one.
+    const [ref, refAt] = restoreSource(args) ?? [undefined, -1];
     const dashAt = args.indexOf("--");
     const dashToken = dashAt === -1 ? undefined : inv.tokens[inv.sub + 1 + dashAt];
     const subToken = inv.tokens[inv.sub];
     const unquotedPaths = () =>
         /["']/.test(rawTail(scan, inv, subToken.start + subToken.text.length))
             ? ""
-            : args.filter((a, k) => !a.startsWith("-") && args[k - 1] !== "--source" && args[k - 1] !== "-s").join(" ");
+            : args.filter((a, k) => !a.startsWith("-") && k !== refAt).join(" ");
     const files = dashToken ? rawTail(scan, inv, dashToken.start + dashToken.text.length) : unquotedPaths();
-    return { inv, files, paths: wordsOf(files).args, resetsIndex: staged };
+    return { inv, files, paths: wordsOf(files).args, ...(ref !== undefined ? { ref } : {}), resetsIndex: staged };
 }
+
+// `git show <ref>:<path> > <path>` writes over the file it names, like `git checkout <ref> -- <path>` but not the
+// index. The stages `:1:` to `:3:` of a conflict are --ours and --theirs spelled another way. Under `git -C` the
+// redirect writes the shell's folder and a status would read git's, so the path cannot be placed for a gate.
+function showRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
+    const next = splitPipeline(inv.unit[inv.statement])[inv.pipe + 1];
+    // The scanner takes the `|` of `>|` for a pipe, which leaves the target in the next element.
+    const element =
+        next && />\s*$/.test(inv.element.text)
+            ? { start: inv.element.start, text: scan.cleaned.slice(inv.element.start, elementEnd(next)) }
+            : inv.element;
+    const { args, stdout, appends } = wordsAfter(scan, inv.tokens[inv.sub], element);
+
+    if (stdout === undefined || appends) {
+        return null;
+    }
+
+    for (const object of args.map(samePath)) {
+        const colon = object.startsWith("-") ? -1 : object.indexOf(":");
+        const stage = /^:([0-3]):/.exec(object);
+
+        if (colon === -1 || samePath(object.slice(stage ? 3 : colon + 1)) !== samePath(stdout)) {
+            continue;
+        }
+
+        if (stage && stage[1] !== "0") {
+            return null;
+        }
+
+        const paths = gitPlace(scan, inv) === "" ? [stdout] : [];
+        return { inv: { ...inv, element }, files: stdout, paths, ref: object.slice(0, colon), resetsIndex: false };
+    }
+
+    return null;
+}
+
+const REVERTS = new Map<string, (scan: ShellScan, inv: GitInvocation) => Revert | null>([
+    ["checkout", checkoutRevert],
+    ["restore", restoreRevert],
+    ["show", showRevert],
+]);
 
 // `git worktree add … <dir>` as a whole statement: the folder it makes, as the shell's `cd` would name it.
 function worktreeAddDir(scan: ShellScan, statement: Span): string | null {
@@ -377,14 +445,21 @@ function cdTarget(scan: ShellScan, statement: Span): string | null {
     return null;
 }
 
-// `git worktree add … <dir> && … && cd <dir> && … && <revert>`: a new worktree holds no uncommitted work. A `;` in
-// the chain lets the revert run in the old folder when the add failed.
-function inFreshWorktree(scan: ShellScan, inv: GitInvocation): boolean {
+// `git worktree add … <dir>; … cd <dir> … <revert>`: the statement of the add, or -1. A new worktree holds no
+// uncommitted work. A `;` in the chain lets the revert run in an old folder when the add failed. A `||` skips the cd
+// on success or runs the revert only after a failure, and a subshell or group ends its own cd: no fresh worktree.
+function freshWorktreeAdd(scan: ShellScan, inv: GitInvocation): number {
     for (let w = inv.statement - 1; w >= 0; w--) {
         const dir = worktreeAddDir(scan, inv.unit[w]);
 
         if (dir === null) {
             continue;
+        }
+
+        for (let k = w; k < inv.statement; k++) {
+            if (!["&&", ";", "", "&"].includes(joiner(scan, inv.unit, k))) {
+                return -1;
+            }
         }
 
         let inside = false;
@@ -397,10 +472,94 @@ function inFreshWorktree(scan: ShellScan, inv: GitInvocation): boolean {
             }
         }
 
-        return inside && andChain(scan, inv.unit, w, inv.statement);
+        return inside ? w : -1;
     }
 
-    return false;
+    return -1;
+}
+
+// A word the shell passes as typed and git takes as one file: no expansion, glob, pathspec magic or escape. zsh
+// expands `(…)`, `|` and `<1-3>` without EXTENDED_GLOB too, and `=cmd` with EQUALS.
+function literalPath(word: string): string | null {
+    const path = samePath(word);
+    return path === "" || /^[-:=]|[*?[\]{}()|<>^#!$`~\\'"]/.test(path) ? null : path;
+}
+
+// Before the revert, a subshell, a group, a background job, a compound command, `eval` or a sourced script can leave
+// the shell in another folder than its `cd` statements name.
+const UNSURE_FOLDER =
+    /[(){}]|(?<![&<>|])&(?![&>])|(?:^|[;&|\n])\s*(?:(?:for|while|until|if|case|select|function|eval|source)\b|\.\s)/;
+
+// The folder the revert's statement runs in: the payload's folder, moved by each earlier `cd <dir>` of the outer
+// command that surely ran. Null when that is not certain, when the payload's folder is gone, and for a `cd` to a
+// folder that does not exist, which fails and leaves the shell where it was (`<dir>/.` exists only for a folder).
+function knownFolder(scan: ShellScan, inv: GitInvocation): string | null {
+    if (
+        !scan.cwd ||
+        inv.unit !== scan.units[0] ||
+        UNSURE_FOLDER.test(scan.cleaned.slice(0, inv.element.start)) ||
+        !existsSync(`${scan.cwd}/.`)
+    ) {
+        return null;
+    }
+
+    let folder = scan.cwd;
+
+    for (let s = 0; s < inv.statement; s++) {
+        const target = cdTarget(scan, inv.unit[s]);
+
+        if (target === null) {
+            continue;
+        }
+
+        const dir = literalPath(target);
+        const surely =
+            s === 0 || ["", ";"].includes(joiner(scan, inv.unit, s - 1)) || andChain(scan, inv.unit, s, inv.statement);
+
+        if (dir === null || !surely || splitPipeline(inv.unit[s]).length > 1) {
+            return null;
+        }
+
+        folder = resolve(folder, dir);
+
+        if (!existsSync(`${folder}/.`)) {
+            return null;
+        }
+    }
+
+    return folder;
+}
+
+// A revert from a named source whose every path is a literal file absent where it is written only creates files.
+// A statement before it may have made the file first: one that names the file or a folder on its path, a stash, a
+// move or a patch. A `(` right after the last path is a zsh glob the scanner cut off.
+function onlyCreates(scan: ShellScan, revert: Revert): boolean {
+    const { inv } = revert;
+    const paths = revert.paths.map(literalPath).filter((path) => path !== null);
+    const before = scan.command.slice(0, inv.element.start);
+    const named = new Set(before.split(/[\s/'"`$;&|<>(){}=:\\]+/));
+
+    if (
+        !revert.ref ||
+        paths.length === 0 ||
+        paths.length < revert.paths.length ||
+        scan.cleaned[elementEnd(inv.element)] === "(" ||
+        /\b(?:stash|mv|apply)\b/.test(before) ||
+        paths.some((path) => path.split("/").some((part) => !/^\.{0,2}$/.test(part) && named.has(part)))
+    ) {
+        return false;
+    }
+
+    // A single `git -C <dir>` moves the folder the paths are read from. A show under -C has no paths here.
+    const place = gitPlace(scan, inv);
+    const moved = place === "" ? "" : literalPath(/^-C (\S+)$/.exec(place)?.[1] ?? "");
+    const shell = moved === null ? null : knownFolder(scan, inv);
+    const folder = shell === null || moved === null ? null : resolve(shell, moved);
+    // lstat: a dangling symlink is a file the checkout replaces.
+    return (
+        folder !== null &&
+        paths.every((path) => lstatSync(resolve(folder, path), { throwIfNoEntry: false }) === undefined)
+    );
 }
 
 // `test -z "$(git status --porcelain --untracked-files=all -- <paths>)" && `: the status is empty only when no path is
@@ -430,7 +589,7 @@ function behindCleanGate(scan: ShellScan, inv: GitInvocation, gitPart: string, p
     return squash(text) === squash(cleanGate(gitPart, paths));
 }
 
-// `git checkout HEAD -- <paths>` after a checkout of the same paths from another ref only takes back that swap,
+// A revert from HEAD after a checkout, restore or show of the same paths from another ref only takes back that swap,
 // provided it runs only when the swap ran (behind a `;`, a failed gate skips the swap and the revert still runs) and
 // in the same tree.
 function undoesOwnSwap(scan: ShellScan, inv: GitInvocation, paths: string[]): boolean {
@@ -441,7 +600,7 @@ function undoesOwnSwap(scan: ShellScan, inv: GitInvocation, paths: string[]): bo
             return false;
         }
 
-        if (!inv.unit[s].text.includes("checkout")) {
+        if (!inv.unit[s].text.includes("git")) {
             continue;
         }
 
@@ -449,14 +608,10 @@ function undoesOwnSwap(scan: ShellScan, inv: GitInvocation, paths: string[]): bo
 
         for (let pipe = 0; pipe < elements.length; pipe++) {
             const call = gitCall(elements[pipe], scan.command);
+            const read = call ? REVERTS.get(call.tokens[call.sub].text) : undefined;
+            const swap = call && read?.(scan, { ...call, element: elements[pipe], unit: inv.unit, statement: s, pipe });
 
-            if (call?.tokens[call.sub].text !== "checkout") {
-                continue;
-            }
-
-            const swap = checkoutRevert(scan, { ...call, element: elements[pipe], unit: inv.unit, statement: s, pipe });
-
-            if (!swap?.ref || swap.ref === "HEAD" || gitPlace(scan, call) !== place) {
+            if (!call || !swap?.ref || swap.ref === "HEAD" || gitPlace(scan, call) !== place) {
                 continue;
             }
 
@@ -648,9 +803,14 @@ function revertReplacement(scan: ShellScan, revert: Revert, match: ShellMatch, g
     }
 
     if (revert.ref && revert.ref !== "HEAD") {
-        // The gate's own double quotes would end a `bash -c "…"` body, and `! test -z … && git checkout` runs the
-        // checkout only when the paths are dirty.
-        if (quote !== '"' || !gateable(scan, inv) || inv.tokens.slice(0, inv.git).some((t) => t.text === "!")) {
+        // The gate's own double quotes would end a `bash -c "…"` body, `! test -z … && git checkout` runs the
+        // checkout only when the paths are dirty, and `a || test -z … && git checkout` skips the gate when `a` succeeds.
+        if (
+            quote !== '"' ||
+            !gateable(scan, inv) ||
+            inv.tokens.slice(0, inv.git).some((t) => t.text === "!") ||
+            (inv.statement > 0 && joiner(scan, inv.unit, inv.statement - 1) === "||")
+        ) {
             return undefined;
         }
 
@@ -678,24 +838,37 @@ function blockedRevert(scan: ShellScan, revert: Revert, gitPart: string): ShellM
 }
 
 interface RevertVerdict {
-    /** Saved earlier in the same unit: a context note, not a block. */
-    saved: boolean;
+    /** `saved` earlier in the same unit, or in a `fresh` worktree a `;` joins: a context note, not a block. */
+    kind: "blocked" | "saved" | "fresh";
     match: ShellMatch;
 }
 
-// Every checkout or restore that overwrites the working copy, in command order: blocked, or saved first.
+// The three rules read the same verdicts of one scan, and the file checks behind them run once.
+const VERDICTS = new WeakMap<ShellScan, RevertVerdict[]>();
+
+// Every checkout, restore or show that overwrites the working copy, in command order.
 function revertVerdicts(scan: ShellScan): RevertVerdict[] {
+    const cached = VERDICTS.get(scan);
+
+    if (cached) {
+        return cached;
+    }
+
     const out: RevertVerdict[] = [];
+    // From statement `from` to the end of the revert: the matched text names the save or the worktree add.
+    const from = (inv: GitInvocation, s: number): ShellMatch => {
+        const index = inv.unit[s].start;
+        return { matched: originalSlice(scan, index, elementEnd(inv.element)), index };
+    };
 
-    for (const inv of gitInvocations(scan)) {
-        const sub = inv.tokens[inv.sub].text;
-        const revert =
-            sub === "checkout" ? checkoutRevert(scan, inv) : sub === "restore" ? restoreRevert(scan, inv) : null;
+    for (const call of gitInvocations(scan)) {
+        const revert = REVERTS.get(call.tokens[call.sub].text)?.(scan, call);
 
-        if (!revert || inFreshWorktree(scan, inv)) {
+        if (!revert) {
             continue;
         }
 
+        const { inv } = revert;
         const gitPart = scan.command.slice(inv.tokens[inv.git].start, inv.tokens[inv.sub].start);
         const fromRef = revert.ref !== undefined && revert.ref !== "" && revert.ref !== "HEAD";
 
@@ -707,18 +880,36 @@ function revertVerdicts(scan: ShellScan): RevertVerdict[] {
             continue;
         }
 
-        const from = savedFrom(scan, inv, revert);
-
-        if (from === null) {
-            out.push({ saved: false, match: blockedRevert(scan, revert, gitPart) });
+        if (onlyCreates(scan, revert)) {
             continue;
         }
 
-        const index = inv.unit[from].start;
-        out.push({ saved: true, match: { matched: originalSlice(scan, index, elementEnd(inv.element)), index } });
+        const added = freshWorktreeAdd(scan, inv);
+
+        if (added !== -1) {
+            if (!andChain(scan, inv.unit, added, inv.statement)) {
+                out.push({ kind: "fresh", match: from(inv, added) });
+            }
+
+            continue;
+        }
+
+        const saved = savedFrom(scan, inv, revert);
+        out.push(
+            saved === null
+                ? { kind: "blocked", match: blockedRevert(scan, revert, gitPart) }
+                : { kind: "saved", match: from(inv, saved) }
+        );
     }
 
+    VERDICTS.set(scan, out);
     return out;
+}
+
+// The first note of `kind`, unless a revert in the same command is blocked: then the block speaks for the command.
+function noteOf(scan: ShellScan, kind: RevertVerdict["kind"]): ShellMatch | null {
+    const verdicts = revertVerdicts(scan);
+    return verdicts.some((v) => v.kind === "blocked") ? null : (verdicts.find((v) => v.kind === kind)?.match ?? null);
 }
 
 export const gitCheckoutOverwritesFile: ShellRule = {
@@ -727,12 +918,14 @@ export const gitCheckoutOverwritesFile: ShellRule = {
     title: "git checkout -- / git restore overwrites uncommitted work with no way back",
     severity: "block",
     why:
-        "`git checkout -- <file>`, `git checkout HEAD -- <file>`, `git checkout <branch> -- <file>` and " +
-        "`git restore <file>` replace the working-tree copy and discard whatever was there. Nothing records " +
-        "the old content, so a fix you just wrote is gone. `git stash push -- <files>` gets the same clean " +
-        "tree and keeps the change recoverable. Only `git restore --staged` (index only) is safe. A checkout " +
-        'from another ref passes behind `test -z "$(git status --porcelain --untracked-files=all -- <files>)" &&`, which fails on any ' +
-        "untracked, modified or staged file; --ours, --theirs, -m, --merge and --conflict re-create a conflict.",
+        "`git checkout -- <file>`, `git checkout HEAD -- <file>`, `git checkout <branch> -- <file>`, " +
+        "`git restore <file>` and `git show <ref>:<file> > <file>` replace the working-tree copy and discard " +
+        "whatever was there. Nothing records the old content, so a fix you just wrote is gone. " +
+        "`git stash push -- <files>` gets the same clean tree and keeps the change recoverable. Only " +
+        "`git restore --staged` (index only) is safe. A checkout, restore --source or show from another ref passes " +
+        'behind `test -z "$(git status --porcelain --untracked-files=all -- <files>)" &&`, which fails on any ' +
+        "untracked, modified or staged file; --ours, --theirs, -m, --merge and --conflict re-create a conflict. " +
+        "When the folder is known and no path exists yet, the command only creates files and passes.",
     wrong: "git checkout -- src/utils/ai/grok/models.ts",
     right: 'git stash push -m "models.ts before revert" -- src/utils/ai/grok/models.ts',
     evidence:
@@ -740,7 +933,29 @@ export const gitCheckoutOverwritesFile: ShellRule = {
         "destroyed an uncommitted fix, plus a scrubbed README regressed by `git checkout <branch> -- file`. " +
         "64 pattern hits in 30 days (Claude 60, Grok 1, Codex 3), the Codex ones all `--staged`.",
     detect(scan): ShellMatch | null {
-        return revertVerdicts(scan).find((verdict) => !verdict.saved)?.match ?? null;
+        return revertVerdicts(scan).find((verdict) => verdict.kind === "blocked")?.match ?? null;
+    },
+};
+
+export const gitCheckoutInFreshWorktree: ShellRule = {
+    id: "git-checkout-in-fresh-worktree",
+    kind: "destructive",
+    title: "git checkout -- / git restore in a worktree this command adds, where a ; lets it run in an old folder",
+    severity: "context",
+    why:
+        "The matched text runs from the `git worktree add` to the checkout or restore. A worktree the same command " +
+        "just added holds no uncommitted work, so the revert loses nothing there, and with `&&` from the add to the " +
+        "revert the guard says nothing. The only risk is the `;` or new line on the way: when the add fails (most " +
+        "often because the folder already exists), the steps after it still run, and the revert overwrites an old " +
+        "folder that can hold work. Join the add, the `cd` and the revert with `&&`.",
+    wrong: "git worktree add /tmp/w/x main; cd /tmp/w/x && git checkout abc -- a.ts",
+    right: "git worktree add /tmp/w/x main && cd /tmp/w/x && git checkout abc -- a.ts",
+    evidence:
+        "Audit of the logged firings, 2026-11-01: a checkout from another commit was blocked in a worktree the same " +
+        "command had just added (`git worktree add …; echo …; cd $W && git checkout …`). The rerun printed a zero " +
+        "exit and an empty status, so nothing could be lost; only the `;` after the add carried a risk.",
+    detect(scan): ShellMatch | null {
+        return noteOf(scan, "fresh");
     },
 };
 
@@ -761,8 +976,7 @@ export const gitCheckoutOverwritesSavedFile: ShellRule = {
         "patch, and a git diff to a patch) had saved the path in the same command, so the block's claim that " +
         "nothing records the old content was false; the stash correction then broke a later git stash pop.",
     detect(scan): ShellMatch | null {
-        const verdicts = revertVerdicts(scan);
-        return verdicts.some((verdict) => !verdict.saved) ? null : (verdicts.find((v) => v.saved)?.match ?? null);
+        return noteOf(scan, "saved");
     },
 };
 
@@ -813,6 +1027,7 @@ export const gitPushForceWithoutLease: ShellRule = {
 
 export const gitRules: readonly ShellRule[] = [
     gitCheckoutOverwritesFile,
+    gitCheckoutInFreshWorktree,
     gitCheckoutOverwritesSavedFile,
     gitPushForceWithoutLease,
 ];
