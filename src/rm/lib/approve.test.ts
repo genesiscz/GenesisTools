@@ -33,8 +33,10 @@ import {
     type RmCaller,
     type RmConfig,
     type RmRequest,
+    readRmLedger,
     resolveTarget,
     restoreBatch,
+    rmCallerFromRuntime,
     rmRequestLockFile,
     saveRmConfig,
     saveRmRequest,
@@ -306,7 +308,7 @@ describe("approve in the window", () => {
         if (!saved) {
             throw new Error("expected pending request");
         }
-        expect(denyRequest(saved, { caller: PERSON, via: "cli" }).kept).toEqual([]);
+        expect(denyRequest(saved, { caller: PERSON, via: "cli" }).back.kept).toEqual([]);
         expect(loadRmRequest(request.id)).toMatchObject({ status: "approved", batchId: batch?.id });
         expect(existsSync(b)).toBe(true);
         expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(false);
@@ -316,7 +318,7 @@ describe("approve in the window", () => {
         const request = asideRequest("deny-retry");
         const path = request.targets[0]?.path ?? "";
         file(path);
-        expect(denyRequest(request, { caller: PERSON, via: "cli" }).kept.map((item) => item.path)).toEqual([path]);
+        expect(denyRequest(request, { caller: PERSON, via: "cli" }).back.kept.map((item) => item.path)).toEqual([path]);
         expect(loadRmRequest(request.id)?.status).toBe("pending");
         expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
     });
@@ -383,7 +385,7 @@ describe("approve in the window", () => {
         if (!saved) {
             throw new Error("expected a pending request");
         }
-        expect(denyRequest(saved, { caller: PERSON, via: "cli" }).kept).toEqual([]);
+        expect(denyRequest(saved, { caller: PERSON, via: "cli" }).back.kept).toEqual([]);
         expect(existsSync(b)).toBe(true);
         expect(loadRmRequest(request.id)?.status).toBe("approved");
     });
@@ -396,9 +398,11 @@ describe("approve in the window", () => {
         }
         renameSync(stored, join(base, "copy-gone-elsewhere.txt"));
 
-        expect(denyRequest(request, { caller: PERSON, via: "cli" }).kept.map((item) => item.reason)).toEqual([
-            `the aside copy is gone (${stored})`,
-        ]);
+        // The gone copy is reported as lost, not as one that still needs recovery.
+        const outcome = denyRequest(request, { caller: PERSON, via: "cli" });
+        expect(outcome.lost.map((item) => item.stored)).toEqual([stored]);
+        expect(outcome.waiting).toEqual([]);
+        expect(outcome.back.kept).toEqual([]);
         expect(loadRmRequest(request.id)?.status).toBe("denied");
     });
 
@@ -1008,5 +1012,48 @@ describe("the decision lock", () => {
         expect(update.kind).toBe("saved");
         expect(loadRmRequest(request.id)?.deniedNote).toBe("written by another window");
         expect(loadRmRequest(request.id)?.targets.map((target) => target.path)).toEqual([join(base, "lock-s2")]);
+    });
+});
+
+describe("nothing left to decide", () => {
+    test("deny of a request whose paths are all gone closes it as gone", async () => {
+        // The caller this process runs as, so the deny is the asker's own wherever the test runs.
+        const caller = rmCallerFromRuntime();
+        const request = createRmRequest({
+            kind: "delete",
+            caller,
+            cwd: base,
+            reason: null,
+            targets: [{ path: join(base, "never-there.txt"), kind: "file", rule: "default", reason: "r" }],
+        });
+        const exitCode = process.exitCode;
+
+        try {
+            await createRmProgram().parseAsync(["deny", request.id], { from: "user" });
+            expect(loadRmRequest(request.id)?.status).toBe("gone");
+            expect(process.exitCode ?? 0).toBe(0);
+        } finally {
+            process.exitCode = exitCode;
+        }
+    });
+
+    test("a deny whose aside copy is gone reports it lost, waits for nothing, and logs it", () => {
+        const request = asideRequest("copy-lost");
+        const [lost, kept] = request.targets;
+
+        if (!lost?.stored || !kept) {
+            throw new Error("expected two aside copies");
+        }
+
+        renameSync(lost.stored, join(base, "copy-lost-elsewhere.txt"));
+        const result = denyRequest(request, { caller: PERSON, via: "cli" });
+
+        expect(result.lost.map((target) => target.path)).toEqual([lost.path]);
+        expect(result.waiting).toEqual([]);
+        expect(result.back.returned).toEqual([kept.path]);
+        expect(loadRmRequest(request.id)?.status).toBe("denied");
+        expect(
+            readRmLedger().filter((entry) => entry.action === "lost" && entry.requestId === request.id)
+        ).toMatchObject([{ path: lost.path }]);
     });
 });
