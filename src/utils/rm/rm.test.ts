@@ -85,6 +85,7 @@ import {
     recheckAfterWait,
     recordRmMeasurement,
     recoverAsideJournals,
+    refreshWaitingRmData,
     rememberOptions,
     removeStaleLock,
     renameNoReplace,
@@ -947,6 +948,130 @@ describe("aside", () => {
         expect(existsSync(src)).toBe(true);
         saveRmRequest({ ...request, status: "denied" }, requestsDir);
         expect(pendingAsideDirs(requestsDir)).toEqual([]);
+    });
+});
+
+describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
+    const OLD = new Date("2026-01-01T00:00:00.000Z");
+    const VERDICT = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
+    /** The files of a tree `oldTree` made, relative to its root. */
+    const FILES = ["a.txt", join("deep", "b.txt")];
+
+    /** Two files (one nested) and an empty folder, all with 2026-01-01 access and modification times. */
+    function oldTree(name: string): string {
+        const root = dir("tmp-cleaner", name);
+
+        for (const relative of FILES) {
+            utimesSync(file(join(root, relative)), OLD, OLD);
+        }
+
+        utimesSync(dir("tmp-cleaner", name, "empty"), OLD, OLD);
+        return root;
+    }
+
+    function age(stored: string): void {
+        for (const relative of FILES) {
+            utimesSync(join(stored, relative), OLD, OLD);
+        }
+    }
+
+    /** Every file read within the last minute (so changed then too), its modification time still 2026-01-01. */
+    function expectFresh(stored: string): void {
+        for (const relative of FILES) {
+            const stat = statSync(join(stored, relative));
+            expect(Date.now() - stat.atimeMs).toBeLessThan(60_000);
+            expect(Date.now() - stat.ctimeMs).toBeLessThan(60_000);
+            expect(stat.mtimeMs).toBe(OLD.getTime());
+        }
+    }
+
+    function expectOld(stored: string): void {
+        for (const relative of FILES) {
+            expect(statSync(join(stored, relative)).atimeMs).toBe(OLD.getTime());
+        }
+    }
+
+    test("a move aside and a move into a trash batch with a grace refresh every file, and no grace leaves them", () => {
+        const asideTree = oldTree("aside");
+        expectOld(asideTree);
+        const aside = moveAside({
+            inputs: [{ target: resolveTarget(asideTree, base), verdict: VERDICT }],
+            caller: AGENT,
+            batchId: "tmp-cleaner",
+            root: dir("tmp-cleaner-aside"),
+        });
+        const asideCopy = aside.moved[0]?.stored ?? "";
+
+        expectFresh(asideCopy);
+        // The cleaner removes an empty folder by its modification time alone.
+        expect(Date.now() - statSync(join(asideCopy, "empty")).mtimeMs).toBeLessThan(60_000);
+
+        const graced = moveToTrash([{ target: resolveTarget(oldTree("trash"), base), rule: "test" }], {
+            config,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths: trashPaths,
+        });
+        expectFresh(graced?.items[0]?.stored ?? "");
+
+        // No grace: drained at once and promising no restore, so the move does not walk it.
+        const drained = moveToTrash([{ target: resolveTarget(oldTree("trash-now"), base), rule: "test" }], {
+            config,
+            caller: AGENT,
+            graceMinutes: 0,
+            paths: trashPaths,
+        });
+        expectOld(drained?.items[0]?.stored ?? "");
+    });
+
+    test("the daily keepalive refreshes a pending aside and a batch in its grace, never a decided request", () => {
+        const requestsDir = dir("keepalive", "requests");
+        const paths: TrashPaths = {
+            batchesDir: dir("keepalive", "batches"),
+            lockPath: join(base, "keepalive", "drainer.lock"),
+        };
+        const asideRequest = (name: string) =>
+            createAsideRequest({
+                aside: [{ target: resolveTarget(oldTree(name), base), verdict: VERDICT }],
+                inPlace: [],
+                caller: AGENT,
+                cwd: base,
+                reason: null,
+                requestsDir,
+                root: dir("keepalive", "aside"),
+            }).request;
+        const pending = asideRequest("keepalive-pending");
+        const decided = asideRequest("keepalive-decided");
+        saveRmRequest({ ...decided, status: "approved", decidedAt: new Date().toISOString() }, requestsDir);
+        const toTrash = (name: string, now?: Date) =>
+            moveToTrash([{ target: resolveTarget(oldTree(name), base), rule: "test" }], {
+                config,
+                caller: AGENT,
+                graceMinutes: 30,
+                paths,
+                now,
+            });
+        const inGrace = toTrash("keepalive-grace");
+        const pastGrace = toTrash("keepalive-due", new Date(Date.now() - 3_600_000));
+        const stored = {
+            pending: pending.targets[0]?.stored ?? "",
+            decided: decided.targets[0]?.stored ?? "",
+            inGrace: inGrace?.items[0]?.stored ?? "",
+            pastGrace: pastGrace?.items[0]?.stored ?? "",
+        };
+
+        // The moves refreshed them; three days in /tmp would age them again.
+        for (const copy of Object.values(stored)) {
+            age(copy);
+        }
+
+        const result = refreshWaitingRmData({ requestsDir, trashPaths: paths });
+
+        expect(result).toMatchObject({ requests: 1, batches: 1, files: 4, failed: 0 });
+        expectFresh(stored.pending);
+        expectFresh(stored.inGrace);
+        expectOld(stored.decided);
+        expectOld(stored.pastGrace);
     });
 });
 

@@ -15,6 +15,7 @@ import { rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { createStopwatch } from "@genesiscz/utils/format";
 import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import { keepFromTmpCleaner } from "@genesiscz/utils/fs/tmp-cleaner";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
@@ -332,6 +333,12 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
 
                 refuseChanged({ request, reason: error.message, options });
                 continue;
+            }
+
+            // Restorable until drainAfter, but the rename kept the times inside the tree, so macOS tmp_cleaner could
+            // delete it first. A batch with no grace is drained at once and promises no restore.
+            if (options.graceMinutes > 0) {
+                keepFromTmpCleaner(item.stored);
             }
 
             item.bytes = request.bytes ?? measureBytes(item.stored);

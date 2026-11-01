@@ -52,6 +52,7 @@ import {
     updateRmRequest,
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
+import { LOST_COPY_CAUSE } from "./display";
 import type { PersonAnswer, RunContext } from "./run";
 
 /** One target of a request with what is at its location now (the aside copy when it was moved). */
@@ -74,6 +75,37 @@ export const CAME_BACK_REASON = "Delete the set-aside copy (the path is back in 
 /** The original path exists again and its aside copy too (k38jcw, m8sn2z): a deny cannot put the copy back. */
 export function cameBack(target: RmRequestTarget): boolean {
     return targetLiveState(target) === "came-back";
+}
+
+/** A path whose aside copy is gone: nothing is left to approve, put back or guard for it. */
+export function copyLost(target: RmRequestTarget): boolean {
+    return targetLiveState(target) === "copy-lost";
+}
+
+/** Prints and logs the paths of `request` whose aside copies an approval found gone; it decides them no further. */
+export function reportLostCopies(request: RmRequest, lost: readonly RmRequestTarget[], caller: RmCaller | null): void {
+    for (const target of lost) {
+        out.println(pc.yellow(`gone ${target.path}: its set-aside copy was ${LOST_COPY_CAUSE} (${target.stored})`));
+        appendRmLedger({
+            action: "lost",
+            requestId: request.id,
+            caller,
+            path: target.path,
+            stored: target.stored,
+            reason: "the aside copy was already gone at the approval",
+        });
+    }
+}
+
+/**
+ * Closes `request` as `gone` when every path it still names is a lost aside copy, as prune would if it closed those:
+ * an approval has nothing left to move. The caller holds the request's lock.
+ */
+export function closeAllLost(request: RmRequest, caller: RmCaller | null): void {
+    saveRmRequest({ ...request, status: "gone", decidedAt: new Date().toISOString(), decidedVia: "approve" });
+    appendRmLedger({ action: "close", requestId: request.id, reason: "gone", caller });
+    removeEmptyAsideDir(request.asideDir);
+    out.println(`Request ${request.id} closed as gone: nothing is left to approve.`);
 }
 
 /** An aside batch folder that the decision emptied; a non-empty one (something kept) stays. */
@@ -485,7 +517,9 @@ export function denyRequest(
 export function printDenyOutcome(id: string, outcome: DenyOutcome, closedLine: string): void {
     if (outcome.lost.length > 0) {
         const paths = outcome.lost.map((target) => target.path).join(", ");
-        out.println(pc.yellow(`${outcome.lost.length} set-aside copy(ies) were already gone: ${paths}`));
+        out.println(
+            pc.yellow(`${outcome.lost.length} set-aside copy(ies) were already gone (${LOST_COPY_CAUSE}): ${paths}`)
+        );
     }
 
     if (outcome.waiting.length > 0) {

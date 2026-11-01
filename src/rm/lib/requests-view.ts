@@ -13,7 +13,7 @@ import {
 } from "@genesiscz/utils/rm";
 import { type DotStatusKind, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
-import { displayContext, formatAgeCell, middleCut, shortRmPath } from "./display";
+import { displayContext, formatAgeCell, LOST_COPY_CAUSE, middleCut, shortRmPath } from "./display";
 
 /** One request as the listing shows it: its live state on disk, its sizes, and the other requests naming its paths. */
 export interface RequestView {
@@ -59,6 +59,8 @@ const PATH_MAX = 40;
 const WHY_MAX = 36;
 
 const NO_RULE_LEGEND = "no rule = not a preset, not the asker's scratch or own files, not in a trusted root";
+
+const LOST_LEGEND = `copy lost = the set-aside copy is gone: ${LOST_COPY_CAUSE}`;
 
 function sum(values: readonly (number | undefined)[]): number | undefined {
     const known = values.filter((value): value is number => value !== undefined);
@@ -260,7 +262,8 @@ function footerLines(views: readonly RequestView[], caller: RmCaller): string[] 
         ? `The user approves: ! ${rm} approve <id>   Cancel your own: ${rm} deny <id>   Detail: ${rm} requests <id>`
         : `Approve: ${rm} approve <id>   Detail: ${rm} requests <id>   Close gone and expired: ${rm} prune`;
     const anyDefault = views.some((view) => view.request.targets.some((target) => target.rule === "default"));
-    return anyDefault ? [footer, pc.dim(NO_RULE_LEGEND)] : [footer];
+    const anyLost = views.some((view) => isOpen(view) && view.live.targets.includes("copy-lost"));
+    return [footer, ...(anyDefault ? [pc.dim(NO_RULE_LEGEND)] : []), ...(anyLost ? [pc.red(LOST_LEGEND)] : [])];
 }
 
 /** The listing: a summary, then one group per asking session (newest first), then the next commands. */
@@ -343,7 +346,9 @@ export function renderRequestDetail(view: RequestView, now: Date): string[] {
         lines.push(`    ${targetStateCell(view, index)} ${sizeCell(view.sizes[index])}  ${target.path}`);
         lines.push(pc.dim(`        ${target.rule}: ${target.reason}`));
 
-        if (target.stored) {
+        if (target.stored && request.status === "pending" && view.live.targets[index] === "copy-lost") {
+            lines.push(pc.red(`        gone: ${LOST_COPY_CAUSE} (it waited at ${target.stored})`));
+        } else if (target.stored) {
             lines.push(pc.dim(`        stored at ${target.stored}`));
         }
     });
