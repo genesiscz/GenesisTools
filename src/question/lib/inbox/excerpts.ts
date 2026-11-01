@@ -110,6 +110,84 @@ const realDeps: ReadDeps = {
     files: listFiles,
 };
 
+/** Files whose text a caching reader keeps, and session folders whose roots it keeps; past it the oldest goes. */
+const CACHED_FILES = 64;
+const CACHED_ROOTS = 64;
+/** A file longer than this is read every time rather than kept in memory. */
+const MAX_CACHED_CHARS = 256_000;
+
+/** What a file's text depends on: its size and modification time; null when no regular file is there. */
+function fileStamp(path: string): string | null {
+    const stat = statSync(path, { throwIfNoEntry: false });
+    return stat?.isFile() ? `${stat.size}:${stat.mtimeMs}` : null;
+}
+
+/** Puts `key` last (the newest) in `map`, and drops the oldest entry once the map holds more than `limit`. */
+function remember<V>(map: Map<string, V>, key: string, value: V, limit: number): void {
+    map.delete(key);
+    map.set(key, value);
+
+    if (map.size > limit) {
+        const oldest = map.keys().next();
+
+        if (!oldest.done) {
+            map.delete(oldest.value);
+        }
+    }
+}
+
+/**
+ * `base` with a memory, for a caller that fills the same refs again every few seconds (the widget snapshot): a file
+ * is read again only when its size or modification time changed, and a folder's roots are looked up again after
+ * FILES_TTL_MS, as a checkout's file list is. The stamp is taken before the read, so a file changed during the read
+ * gets a new stamp and is read again next time.
+ */
+export function cachingReadDeps({
+    base = realDeps,
+    stamp = fileStamp,
+    now = Date.now,
+}: {
+    base?: ReadDeps;
+    stamp?: (path: string) => string | null;
+    now?: () => number;
+} = {}): ReadDeps {
+    const texts = new Map<string, { stamp: string; text: string }>();
+    const roots = new Map<string, { at: number; roots: string[] }>();
+
+    return {
+        ...base,
+        read: (path) => {
+            const current = stamp(path);
+            const cached = texts.get(path);
+
+            if (current !== null && cached?.stamp === current) {
+                remember(texts, path, cached, CACHED_FILES);
+                return cached.text;
+            }
+
+            texts.delete(path);
+            const text = base.read(path);
+
+            if (current !== null && text.length <= MAX_CACHED_CHARS) {
+                remember(texts, path, { stamp: current, text }, CACHED_FILES);
+            }
+
+            return text;
+        },
+        roots: (cwd) => {
+            const cached = roots.get(cwd);
+
+            if (cached && now() - cached.at < FILES_TTL_MS) {
+                return cached.roots;
+            }
+
+            const found = base.roots(cwd);
+            remember(roots, cwd, { at: now(), roots: found }, CACHED_ROOTS);
+            return found;
+        },
+    };
+}
+
 /** What a traced read reports: each path before it is read, and a lookup it cannot re-check cheaply. */
 export interface ExcerptTrace {
     probe: (path: string) => void;

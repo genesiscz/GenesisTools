@@ -31,7 +31,7 @@ import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./an
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
 import { answerDialogItem, parseDialogKey } from "./dialog-answer";
 import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
-import { locateRef } from "./excerpts";
+import { cachingReadDeps, fillExcerpts, locateRef } from "./excerpts";
 import {
     type InboxDeps,
     loadInbox,
@@ -303,6 +303,71 @@ describe("locateRef", () => {
             searched: ["/w/app-wt/web", "/w/app-wt", "/w/app"],
             matches: 0,
         });
+    });
+});
+
+describe("cachingReadDeps", () => {
+    const ref = (path: string, line: number) => ({
+        path,
+        line,
+        endLine: null,
+        absolute: null,
+        excerpt: null,
+        startLine: null,
+        language: null,
+        missing: false,
+        from: "refs",
+    });
+
+    test("a cited file is read again only when its stamp changed, and a folder's roots after a minute", () => {
+        const text: Record<string, string> = {
+            "/w/app/a.ts": "a1\na2\na3\na4\na5",
+            "/w/app/b.ts": "b1\nb2",
+        };
+        const stamps: Record<string, string | null> = { "/w/app/a.ts": "1", "/w/app/b.ts": "1" };
+        const reads: string[] = [];
+        let rootLookups = 0;
+        let clock = 0;
+        const deps = cachingReadDeps({
+            base: {
+                read: (path) => {
+                    reads.push(path);
+                    return text[path] ?? "";
+                },
+                isFile: (path) => path in text,
+                roots: (cwd) => {
+                    rootLookups++;
+                    return [cwd];
+                },
+                files: () => null,
+            },
+            stamp: (path) => stamps[path] ?? null,
+            now: () => clock,
+        });
+        const refs = [ref("a.ts", 2), ref("a.ts", 5), ref("b.ts", 1)];
+
+        fillExcerpts(refs, "/w/app", deps);
+        const again = fillExcerpts(refs, "/w/app", deps);
+        // Three refs filled twice read each file once and look up the session folder's roots once.
+        expect(reads).toEqual(["/w/app/a.ts", "/w/app/b.ts"]);
+        expect(rootLookups).toBe(1);
+        expect(again[0]?.excerpt).toBe("a1\na2\na3\na4\na5");
+
+        text["/w/app/a.ts"] = "changed1\nchanged2";
+        stamps["/w/app/a.ts"] = "2";
+        const changed = fillExcerpts(refs, "/w/app", deps);
+        expect(reads).toEqual(["/w/app/a.ts", "/w/app/b.ts", "/w/app/a.ts"]);
+        expect(changed[0]?.excerpt).toBe("changed1\nchanged2");
+
+        // A file with no stamp (gone, or not a regular file) is never kept: each fill asks the disk.
+        stamps["/w/app/b.ts"] = null;
+        fillExcerpts([ref("b.ts", 1)], "/w/app", deps);
+        fillExcerpts([ref("b.ts", 1)], "/w/app", deps);
+        expect(reads.filter((path) => path === "/w/app/b.ts")).toHaveLength(3);
+
+        clock = 60_000;
+        fillExcerpts([ref("a.ts", 1)], "/w/app", deps);
+        expect(rootLookups).toBe(2);
     });
 });
 

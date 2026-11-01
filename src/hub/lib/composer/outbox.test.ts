@@ -2175,6 +2175,47 @@ test("a decision card carries what the hub's Inbox card shows: context, proposal
     expect(plain?.choices.every((choice) => !("rationale" in choice))).toBe(true);
 });
 
+test("a decision card's cited lines are read only for the cards the snapshot publishes", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    await postDecisions(
+        file,
+        join(directory, "events.jsonl"),
+        {
+            sessionId: "excerpt-window-session",
+            provider: "claude",
+            cwd: "/fixture",
+            decisions: Array.from({ length: 103 }, (_, index) => ({
+                prompt: `Answered ${index}?`,
+                options: ["yes", "no"],
+                refs: [{ path: `src/cited${index}.ts`, line: 1 }],
+            })),
+        },
+        { env: {} }
+    );
+    const read: string[] = [];
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        // Answered decisions do not wait for the user, so only the newest 100 cards stay in the window.
+        decisions: () => readDecisions(file).map((row) => ({ ...row, state: "answered", option: "a" })),
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+        excerpts: (refs) =>
+            refs.map((ref) => {
+                read.push(ref.path);
+                return { ...ref, excerpt: "const cited = 1;", startLine: 1, missing: false };
+            }),
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    const published = snapshot.cards.filter((card) => card.kind === "decision");
+
+    expect(published).toHaveLength(100);
+    expect(read).toHaveLength(100);
+    expect(new Set(read)).toEqual(new Set(published.map((card) => card.refs[0]?.value)));
+    expect(published.every((card) => card.decision?.refs?.[0]?.excerpt === "const cited = 1;")).toBe(true);
+});
+
 test("a session lists its waiting entries first, then the newest, at most eight", () => {
     const item = (id: string, at: number, needsAnswer = false) => ({
         id,
