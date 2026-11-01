@@ -19,7 +19,10 @@ export interface WarmupResult {
     error?: string;
     /** What a person can do about `error`, when they can do anything. */
     hint?: string;
-    /** Nothing was sent because the account has no quota left. Not a failure: `ok` is false, `error` holds the reason. */
+    /**
+     * Nothing was sent because there was nothing to start (no quota left, or no 5-hour limit and a running
+     * weekly window). Not a failure: `ok` is false, `error` holds the reason.
+     */
     skipped?: boolean;
 }
 

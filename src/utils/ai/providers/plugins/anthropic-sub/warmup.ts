@@ -1,6 +1,9 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { type WarmupContext, WarmupFailure, type WarmupOutcome } from "@genesiscz/utils/ai/providers/account-features";
+import type { Cached } from "@genesiscz/utils/ai/usage-poll/shared-cache";
+import { snapshotsCacheKey, USAGE_CACHE_TTL, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
+import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
 import {
     longLivedTokenUsable,
     sendLongLivedInferencePing,
@@ -8,7 +11,10 @@ import {
 } from "@genesiscz/utils/claude/token-verify";
 import { claudeLoginCommand, claudeLoginLongCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
+import { ANTHROPIC_SUB, type UsageResponse } from "./api";
 import { describeAnthropicFailure } from "./failure";
+import { fiveHourState } from "./limits";
+import { previousUsageOf } from "./usage";
 
 export interface LongLivedTokens {
     longLivedToken?: string;
@@ -19,6 +25,34 @@ export interface AnthropicWarmupDeps {
     /** Plaintext long-lived token for the account (the vault read), or nothing. */
     loadLongLived?: (accountName: string) => Promise<LongLivedTokens | undefined>;
     sendLongLived?: (token: string) => Promise<TokenVerdict>;
+    /** The account's last cached reading (read-only), to skip a warmup that has nothing to start. */
+    lastUsage?: (accountName: string) => Promise<UsageResponse | undefined>;
+}
+
+async function defaultLastUsage(accountName: string): Promise<UsageResponse | undefined> {
+    const cached = await usagePollStorage().getCacheFile<Cached<AccountUsageSnapshot>>(
+        snapshotsCacheKey(ANTHROPIC_SUB),
+        USAGE_CACHE_TTL
+    );
+    return previousUsageOf(cached?.accounts.find((snapshot) => snapshot.accountName === accountName));
+}
+
+/**
+ * Why a warmup would start nothing: the account has no 5-hour limit, so there is no session timer, and its
+ * weekly window already runs. An idle weekly window still gets the request, which starts it.
+ */
+export function nothingToWarm(usage: UsageResponse | undefined, now: number = Date.now()): string | undefined {
+    if (fiveHourState(usage) !== "absent") {
+        return undefined;
+    }
+
+    const weeklyReset = usage?.seven_day?.resets_at ? Date.parse(usage.seven_day.resets_at) : Number.NaN;
+
+    if (!Number.isFinite(weeklyReset) || weeklyReset <= now) {
+        return undefined;
+    }
+
+    return `no 5-hour limit on this account, and its weekly window already runs (resets ${new Date(weeklyReset).toISOString()})`;
 }
 
 function isOAuthAuthFailure(err: unknown): boolean {
@@ -86,6 +120,17 @@ export async function anthropicWarmup(
 ): Promise<WarmupOutcome> {
     const loadLongLived = deps.loadLongLived ?? defaultLoadLongLived;
     const sendLongLived = deps.sendLongLived ?? sendLongLivedInferencePing;
+    const last = await (deps.lastUsage ?? defaultLastUsage)(account.name).catch((error: unknown) => {
+        logger.debug({ account: account.name, error }, "[warmup] usage cache unreadable; warming up anyway");
+        return undefined;
+    });
+    const idle = nothingToWarm(last);
+
+    if (idle) {
+        logger.info({ account: account.name, reason: idle }, "[warmup] nothing to start; no request sent");
+        return { via: "none", skipped: idle };
+    }
+
     const tokens = await loadLongLived(account.name);
     const longLived = tokens?.longLivedToken && longLivedTokenUsable(tokens) ? tokens.longLivedToken : undefined;
 
