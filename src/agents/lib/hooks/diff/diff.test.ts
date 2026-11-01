@@ -24,7 +24,7 @@ import {
     writeSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib/spawn-counter";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -607,6 +607,72 @@ describe("a command that edits a sibling repository", () => {
         expect(decision.decision).toBe("emitted");
         expect(decision.files).toContain(join(other, "sibling.ts"));
         expect(decision.message).toContain("TWO-IN-SIBLING");
+    });
+});
+
+describe("the diffs that went missing on 2026-11-01", () => {
+    // `tools agents hooks diff log` and the transcripts of 2026-11-01 named three shapes whose real edit printed
+    // nothing: a `cd` whose separator touches its target (`cd <repo>; sed -i …`), a `cd` into a variable built from
+    // another one (`W=$S/worktrees/x; cd $W && sed -i …`), and a rewrite of a file in a session's temp scratch folder
+    // (`cd /tmp/cc/<project>/<session>/gc-rules && python3 - <<'EOF'`, which `showTempScratch` hid since 2026-10-15).
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
+    let other: string;
+    const inOther = (args: string[]) =>
+        spawnSync("git", ["-C", other, ...args], { encoding: "utf8", env: process.env });
+
+    beforeAll(() => {
+        other = realpathSync(mkdtempSync(join(tmpdir(), "gt-missed-")));
+        inOther(["init", "-q"]);
+        inOther(["config", "user.email", "probe@local"]);
+        inOther(["config", "user.name", "probe"]);
+        writeFileSync(join(other, "edited.ts"), "one\ntwo\nthree\n");
+        inOther(["add", "-A"]);
+        inOther(["commit", "-qm", "init"]);
+    });
+
+    afterAll(() => {
+        rmSync(other, { recursive: true, force: true });
+    });
+
+    it("follows a cd whose separator touches its target", () => {
+        for (const command of [
+            `cd ${other}; bun x`,
+            `cd ${other}&& bun x`,
+            `(cd ${other}; bun x)`,
+            `cd ${other}|| exit 1`,
+        ]) {
+            expect(commandDirs(command, repo)).toEqual([repo, other]);
+        }
+    });
+
+    it("follows a cd into a variable whose value starts with another variable", () => {
+        const parent = dirname(other);
+        const leaf = basename(other);
+
+        expect(commandDirs(`B=${parent}; W=$B/${leaf}; cd $W && bun x`, repo)).toEqual([repo, other]);
+        expect(commandDirs(`B=${parent}\nW="$B/${leaf}"\ncd "$W" && bun x`, repo)).toEqual([repo, other]);
+        // Left to right inside one assignment statement, as the shell assigns them.
+        expect(commandDirs(`B=${parent} W=$B/${leaf}; cd $W && bun x`, repo)).toEqual([repo, other]);
+    });
+
+    it("follows cd ~ to the home folder, as the shell expands it", () => {
+        expect(commandDirs("cd ~ && bun x", repo)).toEqual([repo, homedir()]);
+        expect(commandDirs("cd ~/; bun x", repo)).toEqual([repo, homedir()]);
+    });
+
+    it("diffs a relative edit after `cd <repo>;` in the repository the command moved to", () => {
+        const current = begin({ command: `cd ${other}; sed -i '' 's/two/TWO/' edited.ts` });
+
+        writeFileSync(join(other, "edited.ts"), "one\nGLUED-CD-EDIT\nthree\n");
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.files).toContain(join(other, "edited.ts"));
+        expect(stripAnsi(decision.message ?? "")).toContain("GLUED-CD-EDIT");
+        inOther(["checkout", "-q", "--", "edited.ts"]);
     });
 });
 
