@@ -162,8 +162,6 @@ function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] {
         // A row with no owner (the platform names none, as a Windows CIM row) is kept: nothing says it is another user's.
         if (
             row.pid <= 0 ||
-            // The scan itself runs as `tools <agent> who`, a launcher of this agent, and is no session.
-            row.pid === process.pid ||
             row.zombie ||
             (row.uid !== null && row.uid !== euid && euid !== 0) ||
             row.startMs === null
