@@ -48,6 +48,7 @@ import {
     assertArchiveOutsideSource,
     listArchive,
     packDirectory,
+    TarLister,
     unpackArchive,
     verifyArchiveAgainstFolder,
 } from "./tar";
@@ -65,6 +66,13 @@ const scratch = (label: string) => {
 afterAll(() => {
     rmSync(root, { recursive: true, force: true });
 });
+
+interface TarEntryFixture {
+    name: string;
+    flag: string;
+    data?: string | Uint8Array;
+    linkName?: string;
+}
 
 /** Text with varied lines, so frames neither repeat nor compress to nothing. */
 function logText(lines: number): string {
@@ -714,6 +722,96 @@ describe("folder archives", () => {
         expect(
             verifyArchiveAgainstFolder({ archive: packed.archive, source: tree, content: false }).mismatched
         ).toEqual([linked.path]);
+    });
+
+    /** One tar entry: a ustar header with its checksum, then the data padded to a block. */
+    function tarEntry({ name, flag, data = "", linkName = "" }: TarEntryFixture): Buffer {
+        const body = Buffer.from(data);
+        const header = Buffer.alloc(512);
+        header.write(name);
+        header.write(`${body.length.toString(8).padStart(11, "0")}\0`, 124);
+        header.write(flag, 156);
+        header.write(linkName, 157);
+        header.write("ustar\0", 257);
+        header.fill(32, 148, 156);
+        const sum = header.reduce((total, byte) => total + byte, 0);
+        header.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+        return Buffer.concat([header, body, Buffer.alloc((512 - (body.length % 512)) % 512)]);
+    }
+
+    /** A pax `x` header for the next entry, each record `<length> <key>=<value>\n`. */
+    function paxEntry(records: Record<string, string>): Buffer {
+        const text = Object.entries(records)
+            .map(([key, value]) => {
+                const line = ` ${key}=${value}\n`;
+                let length = line.length + 1;
+
+                while (`${length}${line}`.length !== length) {
+                    length++;
+                }
+
+                return `${length}${line}`;
+            })
+            .join("");
+        return tarEntry({ name: "PaxHeader/entry", flag: "x", data: text });
+    }
+
+    it("lists a GNU sparse 1.0 file under its real name and size, hashes it with zeros in the holes, and refuses a bad map", () => {
+        // The form bsdtar writes for a file with holes (measured on macOS 26, bsdtar 3.5.3): the real name and size in
+        // pax keys, a stand-in ustar name, and a map of data segments ahead of the data.
+        const first = Buffer.from(Array.from({ length: 600 }, (_, index) => (index * 7) % 251));
+        const second = Buffer.from("x".repeat(300));
+        const content = Buffer.concat([Buffer.alloc(1000), first, Buffer.alloc(3400), second, Buffer.alloc(4700)]);
+        const sparseArchive = (map: string, records: Record<string, string> = {}) => {
+            const mapBlock = Buffer.concat([Buffer.from(map), Buffer.alloc(512 - map.length)]);
+            return Buffer.concat([
+                tarEntry({ name: "tree", flag: "5" }),
+                paxEntry({
+                    "GNU.sparse.major": "1",
+                    "GNU.sparse.minor": "0",
+                    "GNU.sparse.name": "tree/holes.bin",
+                    "GNU.sparse.realsize": String(content.length),
+                    ...records,
+                }),
+                tarEntry({
+                    name: "tree/GNUSparseFile.0/holes.bin",
+                    flag: "0",
+                    data: Buffer.concat([mapBlock, first, second]),
+                }),
+                tarEntry({ name: "tree/holes-link.bin", flag: "1", linkName: "tree/holes.bin" }),
+                Buffer.alloc(1024),
+            ]);
+        };
+        const list = (tar: Buffer, chunk: number) => {
+            const lister = new TarLister({ hash: true });
+
+            for (let at = 0; at < tar.length; at += chunk) {
+                lister.push(tar.subarray(at, at + chunk));
+            }
+
+            expect(lister.finished).toBe(true);
+            return lister.entries;
+        };
+        const valid = sparseArchive("3\n1000\n600\n5000\n300\n10000\n0\n");
+
+        for (const chunk of [7, 512, valid.length]) {
+            expect(list(valid, chunk)).toEqual([
+                { path: "tree", type: "directory", size: 0 },
+                {
+                    path: "tree/holes.bin",
+                    type: "file",
+                    size: 10000,
+                    sha256: new Bun.CryptoHasher("sha256").update(content).digest("hex"),
+                },
+                { path: "tree/holes-link.bin", type: "hardlink", size: 0, linkTarget: "tree/holes.bin" },
+            ]);
+        }
+
+        expect(() => list(sparseArchive("3\n1000\n600\n5000\n301\n10000\n0\n"), 512)).toThrow("does not match");
+        expect(() => list(sparseArchive("3\n1000\n600\n900\n300\n10000\n0\n"), 512)).toThrow("overlap");
+        expect(() =>
+            list(sparseArchive("3\n1000\n600\n5000\n300\n10000\n0\n", { "GNU.sparse.minor": "1" }), 512)
+        ).toThrow("unsupported GNU sparse format 1.1");
     });
 
     it("rejects incomplete tar headers, bodies, padding, end markers and invalid headers", async () => {
