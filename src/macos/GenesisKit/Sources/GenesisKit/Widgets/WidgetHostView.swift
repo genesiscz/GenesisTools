@@ -909,9 +909,11 @@ struct WidgetPeekView: View {
 /// limit laid out (2026-10-30: six lines laid out, nine drawn, the last three under the option rows). Many short lines
 /// still fit in 600 characters, so the block hugs its text up to `WidgetPeekView.summaryMaxHeight` and scrolls past it,
 /// clipped there. Its own equatable view, so the markdown is parsed when the summary changes, not on every publish of
-/// the model the popup observes.
+/// the model the popup observes. The inbox of every session draws it too, in an open decision's entry.
 struct WidgetPeekSummary: View, Equatable {
     let summary: String
+    /// Its accessibility identifier and frame probe: the popup's, or the overview entry's.
+    var identifier = "widget.peek.summary"
 
     var body: some View {
         let markdown = (try? AttributedString(
@@ -929,8 +931,8 @@ struct WidgetPeekSummary: View, Equatable {
         // Ideal height first (the text's own), then at most the cap: a short summary takes only its lines.
         .frame(maxHeight: WidgetPeekView.summaryMaxHeight)
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityIdentifier("widget.peek.summary")
-        .frameProbe("widget.peek.summary")
+        .accessibilityIdentifier(identifier)
+        .frameProbe(identifier)
     }
 }
 
@@ -944,7 +946,8 @@ struct WidgetAnsweredOptionRow: View {
         let shape = RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius)
         HStack(alignment: .top, spacing: 8) {
             WidgetOptionBadge(text: letter)
-            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
+            Text(WidgetOptionText.markdown(text)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
             Spacer(minLength: 0)
             Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.green)
                 .padding(.top, 3).accessibilityHidden(true)
