@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes } from "@genesiscz/utils/format";
+import { rmEnablePresetCommand, rmRequestHintLine } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
     type ApprovalChoices,
@@ -33,7 +34,6 @@ import {
     recoverAsideJournals,
     requestsAlsoNaming,
     rmCallerFromRuntime,
-    rmRequestHintLine,
     startRmMeasurement,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
@@ -59,7 +59,8 @@ export function runContext(): RunContext {
     const caller = rmCallerFromRuntime();
     const cwd = process.cwd();
     const { config, applied } = effectiveConfig(base, caller, cwd);
-    return { config, base, profiles: applied, caller, cwd, rules: defaultRuleContext(config, caller, cwd) };
+    const rules = defaultRuleContext(config, caller, cwd, { enablePreset: rmEnablePresetCommand });
+    return { config, base, profiles: applied, caller, cwd, rules };
 }
 
 export function shown(path: string, cwd: string): string {

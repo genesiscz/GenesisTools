@@ -27,7 +27,8 @@ export async function rmRequestNotice(
     }
 
     // lazy: saves 28 ms cold import on every other Bash call (rm/requests, measured 2026-11-01); only tools rm calls read it
-    const { listRmRequests, rmRequestHintLine } = await import("@genesiscz/utils/rm/requests");
+    const { listRmRequests } = await import("@genesiscz/utils/rm/requests");
+    const { rmRequestHintLine } = await import("@genesiscz/utils/genesis-tools/tools/hints");
     const output = toolOutputText(payload);
     const now = deps.now().getTime();
     const unseen = (deps.requests ?? (() => listRmRequests()))()

@@ -2167,10 +2167,18 @@ describe("the default rule says what nearly matched", () => {
             ...config,
             customPresets: [{ id: "shop-cache", description: "a shop cache", names: [], within, optIn: true }],
         };
-        const context = ctx({ config: withPreset, presets: presetsFor(withPreset) });
+        const context = ctx({
+            config: withPreset,
+            presets: presetsFor(withPreset),
+            hints: { enablePreset: (id) => `tools rm config set enable-preset ${id}` },
+        });
         const verdict = reasonOf(dir("shop-cache", "v1"), context);
         expect(verdict.reason).toBe(
             "matches the opt-in preset shop-cache, which is off; the user can turn it on: tools rm config set enable-preset shop-cache"
+        );
+        // A copy of the util in another repo gets no hint, so its reason names no command.
+        expect(reasonOf(dir("shop-cache", "v1"), { ...context, hints: undefined }).reason).toBe(
+            "matches the opt-in preset shop-cache, which is off; the user can turn it on"
         );
         // A live cache another install may read stays where it is while it waits.
         expect(verdict.stayInPlace).toBe("a live cache: another install may read it");
