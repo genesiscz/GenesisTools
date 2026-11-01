@@ -81,35 +81,103 @@ export async function* readTextChunks(path: string): AsyncGenerator<Uint8Array> 
 }
 
 /**
- * The lines of a text file, read in chunks, so a large file is never held whole: a 218 MB transcript read
- * with `readFileSync(path, "utf8")` became a 640 MB string (UTF-16 once one character is not ASCII) before
- * a single line was looked at (2026-10-08). Lines are cut at newline bytes and decoded one by one, so a
- * multi-byte character is never split. The last line is yielded also without a trailing newline, as
- * `text.split("\n")` would give it; a file that ends with a newline yields a final empty line, the same way.
- * A `.zst` path is read frame by frame, with the same lines as its plain form. Throws when the file cannot be
- * opened, like `readFileSync`.
+ * The one line splitter every whole-content line reader here shares. It cuts at the newline byte ("\n", 10) and
+ * nowhere else. `node:readline` also ends a line at a lone "\r", U+2028 and U+2029, and `JSON.stringify` leaves
+ * U+2028 and U+2029 raw inside strings, so readline cut 144 JSONL records of a hook log in two (2026-11-01). A "\r"
+ * before the "\n" stays on the line, as `text.split("\n")` keeps it (JSON parsers read it as whitespace). Each line is
+ * decoded on its own, so a multi-byte character is never split; the bytes of a line that spans chunks are kept as
+ * parts and joined once, so a 30 MB line read in 64 KB chunks is copied once, not once per chunk.
  */
-export function* readLinesSync(
-    path: string,
-    { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}
-): Generator<string> {
-    let carried = Buffer.alloc(0);
+class LineSplitter {
+    private parts: Buffer[] = [];
 
-    for (const chunk of readTextChunksSync(path, { chunkBytes })) {
-        const bytes = carried.length > 0 ? Buffer.concat([carried, chunk]) : chunk;
+    /** The lines that end in this chunk. Iterate the result fully before the next `push`. */
+    *push(chunk: Uint8Array | string): Generator<string> {
+        const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : asBuffer(chunk);
         let start = 0;
         let newline = bytes.indexOf(10, start);
+
         while (newline !== -1) {
-            yield bytes.toString("utf8", start, newline);
+            if (this.parts.length > 0) {
+                this.parts.push(bytes.subarray(start, newline));
+                const line = Buffer.concat(this.parts).toString("utf8");
+                this.parts = [];
+                yield line;
+            } else {
+                yield bytes.toString("utf8", start, newline);
+            }
+
             start = newline + 1;
             newline = bytes.indexOf(10, start);
         }
 
-        // Copied: the chunk may be reused by the next read.
-        carried = Buffer.from(bytes.subarray(start));
+        if (start < bytes.length) {
+            // Copied: the chunk may be reused by the next read.
+            this.parts.push(Buffer.from(bytes.subarray(start)));
+        }
     }
 
-    yield carried.toString("utf8");
+    /** The text after the last newline: an empty string when the content ended with one (or was empty). */
+    end(): string {
+        const line = Buffer.concat(this.parts).toString("utf8");
+        this.parts = [];
+        return line;
+    }
+}
+
+/**
+ * Lines of a sequence of byte chunks (a file's chunks, a `.zst` file's frames, a process's stdin), cut at "\n" only:
+ * see {@link LineSplitter}. The last line is yielded also without a trailing newline, as `text.split("\n")` gives it;
+ * content that ends with a newline yields a final empty line, the same way. A string chunk is read as UTF-8.
+ */
+export function* splitLinesSync(chunks: Iterable<Uint8Array | string>): Generator<string> {
+    const splitter = new LineSplitter();
+
+    for (const chunk of chunks) {
+        yield* splitter.push(chunk);
+    }
+
+    yield splitter.end();
+}
+
+/**
+ * {@link splitLinesSync} for an async source: a `createReadStream` (without an `encoding`, or with `utf8`),
+ * `process.stdin`, `Bun.file().stream()`, {@link readTextChunks}. Use it instead of `node:readline` for JSONL: readline
+ * also ends lines at U+2028 and U+2029, which JSON strings carry raw. Stopping the iteration early stops the source.
+ */
+export async function* splitLines(chunks: AsyncIterable<Uint8Array | string>): AsyncGenerator<string> {
+    const splitter = new LineSplitter();
+
+    for await (const chunk of chunks) {
+        yield* splitter.push(chunk);
+    }
+
+    yield splitter.end();
+}
+
+/**
+ * The lines of a text file, read in chunks, so a large file is never held whole: a 218 MB transcript read
+ * with `readFileSync(path, "utf8")` became a 640 MB string (UTF-16 once one character is not ASCII) before
+ * a single line was looked at (2026-10-08). Lines are cut at "\n" only, never at U+2028, U+2029 or a lone "\r"
+ * ({@link splitLinesSync}); a CRLF file's lines keep their trailing "\r". The last line is yielded also without a
+ * trailing newline, as `text.split("\n")` would give it; a file that ends with a newline yields a final empty line,
+ * the same way. A `.zst` path is read frame by frame, with the same lines as its plain form. Throws when the file
+ * cannot be opened, like `readFileSync`.
+ */
+export function readLinesSync(
+    path: string,
+    { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}
+): Generator<string> {
+    return splitLinesSync(readTextChunksSync(path, { chunkBytes }));
+}
+
+/**
+ * {@link readLinesSync} for async readers, with the same lines: a plain file through {@link readTextChunks}, a `.zst`
+ * file frame by frame with the next frames decompressing on the thread pool. The replacement for `readline` over a
+ * file. Throws from the first iteration when the file cannot be opened.
+ */
+export function readLines(path: string): AsyncGenerator<string> {
+    return splitLines(readTextChunks(path));
 }
 
 /** How far `readFirstLines` and `readLastLines` read by default. */
