@@ -246,9 +246,6 @@ vercel-skills
 README.json-to-ts.md
 .claude/plans/
 .claude/old/
-.vitrinka/screenshots/
-.vitrinka/artifacts/
-.vitrinka/scratch/
 
 # Benchmark result rows carry real scan paths; keep them out of git
 scripts/benchmarks/**/*results*.jsonl
