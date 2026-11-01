@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendFailure, type FailureCaller, type ToolFailure } from "@genesiscz/utils/cli/failures/record";
+import { compressFile } from "@genesiscz/utils/compress/file";
 import { matchesDayLog, newestEntries, parseDayLogLine, prefilterFor } from "./day-log";
 import { groupFailures, loadFailures, matchesFailure, usageGaps } from "./failures";
 import { parseProfileLine, queryProfileLog } from "./profile-log";
@@ -208,5 +209,23 @@ describe("profile log", () => {
         );
         expect(queryProfileLog({ ...query, top: 3 }).map((entry) => entry.label)).toEqual(["step1", "step3", "step4"]);
         expect(queryProfileLog(query)).toHaveLength(6);
+    });
+});
+
+describe("days the daily pass compressed", () => {
+    it("logs failures and logs profile read a day stored as .zst beside a plain one", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-logs-zst-"));
+        appendFailure(failure({ id: "old", at: new Date(2026, 9, 20, 12).toISOString() }), dir);
+        appendFailure(failure({ id: "new", at: new Date(2026, 9, 22, 12).toISOString() }), dir);
+        writeFileSync(join(dir, "2026-10-20-profiling.log"), "[profile:cli] step 900ms pid=1\n");
+
+        for (const name of ["2026-10-20-failures.jsonl", "2026-10-20-profiling.log"]) {
+            await compressFile({ source: join(dir, name) });
+            unlinkSync(join(dir, name));
+        }
+
+        const window = resolveWindow({ since: "3d", now: NOW });
+        expect(loadFailures({ window, dir }).map((row) => row.id)).toEqual(["old", "new"]);
+        expect(queryProfileLog({ days: ["2026-10-20"], dir }).map((entry) => entry.ms)).toEqual([900]);
     });
 });
