@@ -578,6 +578,11 @@ private struct WidgetGeneralSettings: View {
             }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
         }
         Divider()
+        NativeSettingsToggle(
+            "Show the question in the inbox of every session",
+            detail: "An open decision there shows the question's description above its options, as the alert preview does.",
+            identifier: "widget.overviewSummary", isOn: boolean("overviewSummary", prefs?.overviewSummary ?? true))
+        Divider()
         NativeSettingsRow("Session inbox opens with", detail: "The filter a session's inbox shows first.") {
             Picker("Session inbox opens with", selection: string("inboxFilter", prefs?.inboxFilter ?? "all")) {
                 Text("All").tag("all")

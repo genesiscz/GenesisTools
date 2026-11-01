@@ -29,6 +29,13 @@ public enum WidgetOptionText {
         LiveWidgetView.choiceText(WidgetChoice(id: letter, title: option, recommended: false))
     }
 
+    /// An option's text as drawn: inline markdown (code, emphasis, links), whitespace kept, as the hub's
+    /// `inlineMarkdown`; the plain text when it does not parse.
+    public static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+
     /// What VoiceOver reads for an option button: the verb its click does, the letter, the text, and the mark.
     public static func accessibilityLabel(letter: String, text: String, stages: Bool, recommended: Bool) -> String {
         (stages ? "Stage " : "Answer ") + letter + ": " + text + (recommended ? ", recommended" : "")
@@ -100,7 +107,9 @@ struct WidgetOptionLabel: View {
                     if let letter {
                         Text(verbatim: letter + ")").foregroundStyle(SessionPalette.secondary)
                     }
-                    Text(text).fixedSize(horizontal: false, vertical: true)
+                    // Inline markdown, as the hub's option rows draw it: an option's words often come from the
+                    // prompt's "a) …" line, where `tools rm ask` is code, not text with backticks.
+                    Text(WidgetOptionText.markdown(text)).fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.system(size: 12))
                 if let rationale, !rationale.isEmpty {

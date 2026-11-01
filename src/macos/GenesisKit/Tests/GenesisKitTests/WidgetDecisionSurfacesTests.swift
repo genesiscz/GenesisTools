@@ -12,8 +12,11 @@ import XCTest
 final class WidgetDecisionSurfacesTests: XCTestCase {
     private let key = "local:claude:fixture-decisions:"
 
+    /// `inbox`: the first session's waiting entries, and the only session in the inbox of every session; nil lists the
+    /// three decisions of the 2026-10-27 audit under two sessions.
     private func model(preferences extra: [String: Any] = [:], cards: [[String: Any]] = [],
-                       staged: [[String: Any]] = [], stateDirectory: URL? = nil) throws -> WidgetModel {
+                       staged: [[String: Any]] = [], inbox: [[String: Any]]? = nil,
+                       stateDirectory: URL? = nil) throws -> WidgetModel {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.decisions." + UUID().uuidString))
         let state = stateDirectory ?? FileManager.default.temporaryDirectory.appendingPathComponent("widget-decisions-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: state.appendingPathComponent("native-submissions"),
@@ -42,14 +45,19 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         let first = [Self.item(key + "0", number: 10, options: Self.sixOptions)]
         let second = [Self.item(key + "1", number: 4, options: Self.threeOptions),
                       Self.item(key + "1", number: 5, options: Self.threeOptions)]
+        var inboxSessions: [[String: Any]] = [
+            ["key": key + "0", "unread": 0, "needsAnswer": 1, "pendingItem": first[0], "items": first],
+            ["key": key + "1", "unread": 0, "needsAnswer": 2, "pendingItem": second[0], "items": second],
+        ]
+        if let inbox, let pending = inbox.first {
+            inboxSessions = [["key": key + "0", "unread": 0, "needsAnswer": inbox.count, "pendingItem": pending,
+                              "items": inbox]]
+        }
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
             "selectedKey": key + "0", "preferences": preferences, "assets": [:], "drafts": [:], "outgoing": []],
             "sessions": sessions, "cards": cards, "manifests": [:], "errors": [], "selectedKey": key + "0",
-            "notifications": ["unread": 0, "needsAnswer": 3, "complete": true, "truncated": false, "staged": staged,
-                "sessions": [
-                    ["key": key + "0", "unread": 0, "needsAnswer": 1, "pendingItem": first[0], "items": first],
-                    ["key": key + "1", "unread": 0, "needsAnswer": 2, "pendingItem": second[0], "items": second],
-                ]]])
+            "notifications": ["unread": 0, "needsAnswer": inbox?.count ?? 3, "complete": true, "truncated": false,
+                "staged": staged, "sessions": inboxSessions]])
         model.receive([String(decoding: data, as: UTF8.self)])
         return model
     }
@@ -626,6 +634,8 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertNil(preferences.decisionContext)
         XCTAssertNil(preferences.decisionCode)
         XCTAssertNil(preferences.decisionProposal)
+        // An older hub sends no `overviewSummary`: the inbox of every session shows the description (default on).
+        XCTAssertNil(preferences.overviewSummary)
     }
 
     /// A card with the hub's details decodes every field in the hub's shape (`DecisionRef`, `DecisionDelivery`), and
@@ -744,6 +754,163 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
                 try XCTUnwrap(rep.representation(using: .png, properties: [:]))
                     .write(to: URL(fileURLWithPath: folder).appendingPathComponent("decision-context-\(status)-\(name).png"))
             }
+        }
+    }
+
+    // MARK: - Decision 31: options posted as bare letters (2026-11-01)
+
+    static let letterTitle = "When to empty the removal folder (81.8 GB moved, not freed yet)"
+    static let letterSummary = "Everything removed today is in /tmp/removable/disk-reclaim (1,546 paths, 81.8 GB by du, "
+        + "with MANIFEST.tsv and restore.sh). A move frees nothing: free space is 8.3 GB. The space comes back only when "
+        + "that folder is deleted. macOS also clears /tmp at a reboot, and its daily cleanup removes /tmp files not used "
+        + "for 3 days, so the folder disappears by itself within days."
+    static let letterWords = ["empty it now: I open one `tools rm ask` approval for the whole folder",
+                              "keep it until tomorrow evening so you can check, then I ask again",
+                              "let macOS clear it (reboot or the 3-day cleanup)"]
+    static let letterReasoning = "One day is enough to notice anything missing, and restore.sh puts it back."
+
+    /// Decision 31's entry in the inbox of every session as the hub sends it now: the options carry the words the agent
+    /// wrote only in the prompt (`decisionOptionLabels`). `bare` is what it sent before: the letters.
+    static func letterItem(_ key: String, bare: Bool = false) -> [String: Any] {
+        let options: [String] = bare ? ["a", "b", "c"] : letterWords
+        var item: [String: Any] = ["id": "decision:d31", "sourceId": "d31", "kind": "decision", "key": key]
+        item["at"] = Date().timeIntervalSince1970 * 1000 - 27 * 60_000
+        item["needsAnswer"] = true
+        item["number"] = 31
+        item["title"] = letterTitle
+        item["summary"] = letterSummary
+        item["options"] = options
+        item["recommended"] = "b"
+        item["revision"] = 1
+        return item
+    }
+
+    /// Decision 31's card in its session's inbox as the hub sends it now: the words on the options, the body without the
+    /// "a) …" lines that would repeat them, the reasoning as the agent's pick. `bare` is what it sent before: the letters
+    /// as options, the lines in the body and the reasoning as the Context.
+    static func letterCard(_ key: String, bare: Bool = false) -> [String: Any] {
+        let letters = ["a", "b", "c"]
+        let lines: [String] = zip(letters, letterWords).map { letter, words in letter + ") " + words }
+        let body: String = bare ? letterSummary + "\n\n" + lines.joined(separator: "\n") : letterSummary
+        var choices: [[String: Any]] = []
+        for (index, letter) in letters.enumerated() {
+            let title: String = bare ? letter : letterWords[index]
+            choices.append(["id": letter, "title": title, "recommended": index == 1])
+        }
+        var details: [String: Any] = ["confidence": "medium", "recommended": "b"]
+        details[bare ? "context" : "proposal"] = letterReasoning
+        let source: [String: Any] = ["sessionId": "fixture-0", "agent": "claude", "project": "Fixture", "cwd": "/fixture"]
+        var card: [String: Any] = ["id": "decision:d31", "kind": "decision", "sessionKey": key, "sourceId": "d31"]
+        card["at"] = Date().timeIntervalSince1970 * 1000 - 27 * 60_000
+        card["title"] = letterTitle
+        card["body"] = body
+        card["status"] = "open"
+        card["revision"] = 1
+        card["number"] = 31
+        card["choices"] = choices
+        card["decision"] = details
+        card["attachments"] = [Any]()
+        card["refs"] = [Any]()
+        card["read"] = true
+        card["sourceContext"] = source
+        return card
+    }
+
+    /// The inbox of every session with decision 31's entry opened from the keyboard (Down, then Return), as the widget
+    /// draws it at its narrowest real width on the graphite panel.
+    private func openOverviewEntry(_ model: WidgetModel, name: String) throws -> NSBitmapImageRep {
+        model.error = nil
+        model.expanded = .right
+        model.inboxOverview = true
+        let size = CGSize(width: Self.widgetWidth, height: 760)
+        let view = LiveWidgetView(model: model, edge: .right, embedded: true)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, .graphite)
+            .environment(\.colorScheme, .dark)
+        let (window, host) = HostedShot.host(view, size: size)
+        defer { window.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        XCTAssertTrue(model.moveInList(.down), "the overview takes Down")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertTrue(model.moveInList(.open), "the overview opens the entry Down chose")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        let rep = try XCTUnwrap(HostedShot.bitmap(host))
+        if let folder = KitShots.folder {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                .write(to: folder.appendingPathComponent(name + ".png"))
+        }
+        return rep
+    }
+
+    /// Decision 31's open card in its session's inbox, at the widget's narrowest real width on the graphite panel.
+    private func openLetterCard(_ model: WidgetModel, name: String) throws -> NSBitmapImageRep {
+        model.error = nil
+        model.openCard(try XCTUnwrap(model.cards.first { $0.number == 31 }))
+        let size = CGSize(width: Self.widgetWidth, height: 900)
+        let view = LiveWidgetView(model: model, edge: .right, embedded: true)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, .graphite)
+            .environment(\.colorScheme, .dark)
+        return try KitShots.render(view, size: size, name: name, settle: 1.2)
+    }
+
+    /// An open entry in the inbox of every session shows the question's description above its options, as the alert
+    /// popup does, and the options say their words (Martin, 2026-11-01: the entry showed "a", "b", "c" and nothing
+    /// else). The setting turns the description off.
+    func testAnOpenOverviewEntryShowsItsQuestionAboveItsOptions() throws {
+        let model = try model(inbox: [Self.letterItem(key + "0")])
+        defer { model.stop() }
+        // Lines wrap where the width says, so the words are matched across a line break.
+        let text = try recognizedText(try XCTUnwrap(openOverviewEntry(model, name: "overview-letters-open").cgImage))
+            .replacingOccurrences(of: "\n", with: " ")
+        for expected in ["81.8 GB by du", "free space is 8.3 GB", "empty it now", "keep it until tomorrow evening",
+                         "let macOS clear it", "Recommended"] {
+            XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
+        }
+        let quiet = try self.model(preferences: ["overviewSummary": false], inbox: [Self.letterItem(key + "0")])
+        defer { quiet.stop() }
+        let hidden = try recognizedText(try XCTUnwrap(openOverviewEntry(quiet, name: "overview-letters-quiet").cgImage))
+            .replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(hidden.contains("empty it now"), hidden)
+        XCTAssertFalse(hidden.contains("free space is 8.3 GB"), "the setting hides the description: \(hidden)")
+    }
+
+    /// Decision 31's card in its session's inbox: the options say their words, and the agent's reasoning sits under
+    /// the recommended option behind the lightbulb, never under the Context label (the hub's Inbox card agrees:
+    /// `HubInboxUXTests`).
+    func testALetterDecisionCardShowsItsWordsAndTheReasoningAsThePick() throws {
+        let model = try model(cards: [Self.letterCard(key + "0")])
+        defer { model.stop() }
+        let text = try recognizedText(try XCTUnwrap(openLetterCard(model, name: "card-letters-open").cgImage))
+            .replacingOccurrences(of: "\n", with: " ")
+        for expected in ["free space is 8.3 GB", "empty it now", "keep it until tomorrow evening", "let macOS clear it",
+                         "One day is enough"] {
+            XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
+        }
+        XCTAssertFalse(text.contains("Context"), text)
+    }
+
+    /// The render check of 2026-11-01: decision 31's card and its open overview entry, as the hub sent them before
+    /// (bare letters, the reasoning as Context; the overview without the description, as before the setting) and now.
+    /// `WIDGET_DECISION_SHOTS=<folder>` writes `letters-<surface>-<before|after>-graphite.png`.
+    func testRendersTheLetterDecisionBeforeAndAfter() throws {
+        guard let folder = ProcessInfo.processInfo.environment["WIDGET_DECISION_SHOTS"] else { return }
+        let out = URL(fileURLWithPath: folder)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        for (state, bare) in [("before", true), ("after", false)] {
+            let cardModel = try model(cards: [Self.letterCard(key + "0", bare: bare)])
+            defer { cardModel.stop() }
+            try XCTUnwrap(try openLetterCard(cardModel, name: "letters-card-\(state)").representation(using: .png, properties: [:]))
+                .write(to: out.appendingPathComponent("letters-card-\(state)-graphite.png"))
+            let overviewModel = try model(preferences: bare ? ["overviewSummary": false] : [:],
+                                          inbox: [Self.letterItem(key + "0", bare: bare)])
+            defer { overviewModel.stop() }
+            try XCTUnwrap(try openOverviewEntry(overviewModel, name: "letters-overview-\(state)")
+                .representation(using: .png, properties: [:]))
+                .write(to: out.appendingPathComponent("letters-overview-\(state)-graphite.png"))
         }
     }
 
