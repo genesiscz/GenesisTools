@@ -16,6 +16,7 @@ tools rm drain [--now]              # drain due batches now (--now: all of them)
 tools rm requests [id]              # what agents asked the user to confirm (an id: that request in full)
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
 tools rm deny <id>                  # close a request and put its aside paths back (an agent may cancel its own)
+tools rm prune [-n]                 # close the requests nobody can decide (every path gone, or in place past 24 h)
 tools rm measure <id>               # measure a request's paths and save the sizes (tools rm starts it in the background)
 tools rm log [--since 1d] [--agent codex] [--session <id>] [--by agent|session|day|rule|action]   # audit log
 tools rm profiles                   # settings per agent, session or project, and what applies to you
@@ -100,6 +101,12 @@ Filters: `--session <id prefix>`, `--agent <name>`, `--project <name>`, `--older
 list instead of groups, `--paths` one row per path, `--all` also the closed requests. `--json` prints the saved
 requests as before. A flag goes after the subcommand name (`tools rm requests --json`); a delete flag typed before a
 subcommand (`tools rm -n preset all`) is refused with exit 2.
+
+A request ends as `approved`, `denied`, `expired` or `gone`. An in-place request reads as `expired` 24 hours after it
+was made; an aside request never expires. `tools rm prune` writes the two end states nobody can decide: `gone` (no
+path and no aside copy is left) and `expired` (in place, past the 24 hours). It moves, restores and deletes no file,
+writes one `close` line per request to the audit log, and leaves a request alone while an approval window holds it.
+Any caller may run it; `-n` lists what would close. A `copy lost` or `came back` request stays open for a person.
 
 ## Profiles: settings per agent, session or project
 
