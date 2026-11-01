@@ -112,6 +112,18 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertFalse(item.searchText.contains("a) a)"), item.searchText)
     }
 
+    /// Decision 31: the agent's reasoning left Context for the pick line (`proposal`), and the session filter still finds
+    /// a session by words that are only in that reasoning.
+    func testTheSessionFilterFindsWordsOnlyInTheAgentsReasoning() throws {
+        let reasoning = "One day is enough to notice anything missing."
+        let item = try Self.decision(
+            #"{"prompt":"When to empty the folder?","proposal":"\#(reasoning)","reasoning":"\#(reasoning)","choices":[{"id":"a","label":"Empty it now"},{"id":"b","label":"Keep it"}]}"#)
+        XCTAssertNil(item.context)
+        XCTAssertTrue(item.searchText.contains(reasoning), item.searchText)
+        let sessions = [Self.session("s1", items: [item]), Self.session("s2", items: [])]
+        XCTAssertEqual(InboxSort.recent.apply(sessions, filter: "Enough To Notice").map(\.id), ["s1"])
+    }
+
     func testDialogFindFieldsMatchTheTitlePromptAndChoice() throws {
         let item = try Self.decision(#"{"kind":"dialog","title":"Question","prompt":"Which branch?","choices":[{"id":"a","label":"a) Main"}]}"#)
         XCTAssertTrue(item.findFields.contains { $0.key == "title" && $0.text == "Question" })

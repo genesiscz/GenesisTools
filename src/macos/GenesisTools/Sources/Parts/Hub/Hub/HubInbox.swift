@@ -126,9 +126,10 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     }
     /// The excerpt cards to draw: refs the loader could read, or that name a missing file.
     var excerptRefs: [InboxRef] { (refs ?? []).filter(\.hasContent) }
-    /// The text ⌘F searches for this item: question, context, notes, options with reasons, ref paths.
+    /// The text ⌘F searches for this item: question, context, notes, the agent's pick (its proposal and reasoning, as
+    /// the lightbulb line draws them), options with reasons, ref paths.
     var searchText: String {
-        var parts = [title ?? "", prompt ?? "", context ?? "", notes ?? "", answer ?? "", draft ?? ""]
+        var parts = [title ?? "", prompt ?? "", context ?? "", notes ?? "", proposal ?? "", answer ?? "", draft ?? ""]
         for choice in choices ?? [] {
             parts.append("\(choice.id)) \(choice.shownLabel) \(choice.rationale ?? "")")
         }
@@ -354,7 +355,8 @@ enum InboxSort: String, CaseIterable {
         }
     }
 
-    /// The rows the filter text matches (title, project, branch, account, question, context, options), in this order.
+    /// The rows the filter text matches (title, project, branch, account, question, context, the agent's pick, options),
+    /// in this order.
     func apply(_ sessions: [InboxSession], filter: String) -> [InboxSession] {
         let needle = filter.trimmed.lowercased()
         let rows = needle.isEmpty ? sessions : sessions.filter { $0.searchText.lowercased().contains(needle) }
