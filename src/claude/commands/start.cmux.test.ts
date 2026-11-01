@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { buildLaunchArgs, cmuxPermissionArgs, passthroughHandlesSession, splitStartOperands } from "./start";
+import type { ScoredAccount } from "@app/claude/lib/usage/account-picker";
+import {
+    buildLaunchArgs,
+    cmuxPermissionArgs,
+    passthroughHandlesSession,
+    resumedSessionIdOf,
+    splitStartOperands,
+    stickyResumePick,
+} from "./start";
 
 describe("splitStartOperands", () => {
     const argv = (...rest: string[]) => ["bun", "claude", "run", ...rest];
@@ -171,5 +179,58 @@ describe("direct SDK launch signals", () => {
         expect(await result).toBe(0);
         expect(killed).toEqual(["SIGINT"]);
         expect(names.map((name) => signals.listenerCount(name))).toEqual([0, 0, 0]);
+    });
+});
+
+describe("resumedSessionIdOf", () => {
+    test("reads --resume=<id>, --resume <id> and -r <id>", () => {
+        expect(resumedSessionIdOf(["--output-format", "stream-json", "--resume=abc-123"])).toBe("abc-123");
+        expect(resumedSessionIdOf(["--resume", "abc-456", "--model", "m"])).toBe("abc-456");
+        expect(resumedSessionIdOf(["-r", "abc-789"])).toBe("abc-789");
+    });
+
+    test("a new session or a bare --resume names nothing", () => {
+        expect(resumedSessionIdOf(["--session-id=abc-123"])).toBeNull();
+        expect(resumedSessionIdOf(["--resume"])).toBeNull();
+        expect(resumedSessionIdOf(["--resume", "--model"])).toBeNull();
+    });
+});
+
+describe("stickyResumePick", () => {
+    const account = (accountName: string, over: Partial<ScoredAccount> = {}): ScoredAccount => ({
+        accountName,
+        tier: "ready",
+        group: "opus",
+        score: 1,
+        cooling: false,
+        surplus: false,
+        bindingResetHours: 24,
+        weeklyRatePctPerHour: 1,
+        sessionHeadroomPct: 80,
+        weeklyHeadroomPct: 80,
+        sessionUsableFraction: 1,
+        why: "",
+        ...over,
+    });
+
+    test("keeps the resumed session's account while it can serve", () => {
+        const scored = [account("work"), account("personal")];
+
+        expect(stickyResumePick(scored, "personal")?.accountName).toBe("personal");
+    });
+
+    test("picks again when that account is spent, gone or unknown", () => {
+        expect(
+            stickyResumePick([account("work"), account("personal", { tier: "session-starved" })], "personal")
+        ).toBeNull();
+        expect(
+            stickyResumePick([account("work"), account("personal", { tier: "weekly-blocked" })], "personal")
+        ).toBeNull();
+        expect(stickyResumePick([account("work"), account("personal", { group: "dead" })], "personal")).toBeNull();
+        expect(
+            stickyResumePick([account("work"), account("personal", { subscriptionExpired: true })], "personal")
+        ).toBeNull();
+        expect(stickyResumePick([account("work")], "personal")).toBeNull();
+        expect(stickyResumePick([account("work")], null)).toBeNull();
     });
 });
