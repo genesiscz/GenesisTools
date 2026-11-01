@@ -44,6 +44,7 @@ import {
     filterRmLedger,
     findNestedRepos,
     folderStats,
+    graceMinutesFor,
     isInside,
     isRootActive,
     isTrashRootName,
@@ -346,6 +347,22 @@ describe("session scratch and roots", () => {
 
         expect(verdictOf(mine, c)).toEqual({ kind: "allow", rule: "session-scratch" });
         expect(verdictOf(theirs, c)).toEqual({ kind: "ask", rule: "default" });
+    });
+
+    test("the session's own scratch waits the scratch grace, a preset folder the preset grace, the rest the other", () => {
+        const c = ctx();
+        const allow = (rule: string) => ({ kind: "allow" as const, rule, reason: "" });
+        const scratch = resolveTarget(dir("cc", "proj", "sess-1111", "out"), c.cwd);
+        file(join(base, "cc", "proj", "sess-1111", "app", "package.json"), "{}");
+        const modules = resolveTarget(dir("cc", "proj", "sess-1111", "app", "node_modules"), c.cwd);
+        const rooted = resolveTarget(dir("trusted-grace", "x"), c.cwd);
+
+        expect(graceMinutesFor({ target: scratch, verdict: allow("session-scratch") }, c)).toBe(5);
+        expect(graceMinutesFor({ target: modules, verdict: allow("session-scratch") }, c)).toBe(0);
+        expect(graceMinutesFor({ target: rooted, verdict: allow("root") }, c)).toBe(60);
+        expect(graceMinutesFor({ target: scratch, verdict: allow("session-scratch") }, c, 2)).toBe(2);
+        const slow = ctx({ config: { ...config, grace: { ...config.grace, scratchMinutes: 20 } } });
+        expect(graceMinutesFor({ target: scratch, verdict: allow("session-scratch") }, slow)).toBe(20);
     });
 
     test("a trusted root allows what is inside it, never the root itself", () => {
@@ -886,6 +903,74 @@ describe("request lookups", () => {
 });
 
 describe("config", () => {
+    test("the settings added on 2026-11-01 have their defaults, and a config saved before them reads those", () => {
+        const fresh = defaultRmConfig();
+
+        expect(fresh.tmpSmallMB).toBe(10);
+        expect(fresh.ownFilesFromBash).toBe(true);
+        expect(fresh.grace.scratchMinutes).toBe(5);
+        expect(fresh.notify).toEqual({ onRequest: "inbox", onFailure: "inbox", askMinMB: 10 });
+        expect(fresh.sweep).toEqual({ everyMinutes: 5, lingerMinutes: 60 });
+
+        const old = parseRmConfig({ grace: { presetMinutes: 0, otherMinutes: 30 }, notify: { onRequest: "none" } });
+        expect(old.tmpSmallMB).toBe(10);
+        expect(old.grace).toEqual({ presetMinutes: 0, otherMinutes: 30, scratchMinutes: 5 });
+        expect(old.notify).toEqual({ onRequest: "none", onFailure: "inbox", askMinMB: 10 });
+        expect(old.sweep).toEqual({ everyMinutes: 5, lingerMinutes: 60 });
+
+        const set = parseRmConfig({
+            tmpSmallMB: 0,
+            ownFilesFromBash: false,
+            grace: { scratchMinutes: 1 },
+            notify: { onFailure: "notification", askMinMB: 0 },
+            sweep: { everyMinutes: 2, lingerMinutes: 0 },
+        });
+        expect([set.tmpSmallMB, set.ownFilesFromBash, set.grace.scratchMinutes]).toEqual([0, false, 1]);
+        expect(set.notify).toEqual({ onRequest: "inbox", onFailure: "notification", askMinMB: 0 });
+        expect(set.sweep).toEqual({ everyMinutes: 2, lingerMinutes: 0 });
+    });
+
+    test("a wrong value of a new setting fails the config closed", () => {
+        const path = join(dir("bad-config"), "config.json");
+
+        for (const bad of [
+            { tmpSmallMB: -1 },
+            { ownFilesFromBash: "yes" },
+            { grace: { scratchMinutes: "5" } },
+            { notify: { onFailure: "mail" } },
+            { notify: { askMinMB: -3 } },
+            { sweep: { everyMinutes: 0 } },
+            { sweep: "often" },
+        ]) {
+            writeFileSync(path, SafeJSON.stringify(bad));
+            expect(() => loadRmConfig(path)).toThrow("invalid safety config");
+        }
+    });
+
+    test("a profile may change the tmp-small cap, the Bash own files and the scratch grace", () => {
+        const custom = {
+            ...config,
+            profiles: [
+                {
+                    name: "careful",
+                    match: { agent: "codex" },
+                    tmpSmallMB: 0,
+                    ownFilesFromBash: false,
+                    grace: { scratchMinutes: 30 },
+                },
+            ],
+        };
+        const codex: RmCaller = { agent: "codex", sessionId: "cdx-1", isInAgent: true };
+        const effective = effectiveConfig(parseRmConfig(custom), codex, base).config;
+
+        expect([effective.tmpSmallMB, effective.ownFilesFromBash, effective.grace.scratchMinutes]).toEqual([
+            0,
+            false,
+            30,
+        ]);
+        expect(effectiveConfig(parseRmConfig(custom), AGENT, base).config.grace.scratchMinutes).toBe(5);
+    });
+
     test("approval defaults to auto and keeps only a known value", () => {
         expect(defaultRmConfig().approval).toBe("auto");
         expect(parseRmConfig({ approval: "touch-id" }).approval).toBe("touch-id");

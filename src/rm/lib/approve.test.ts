@@ -502,6 +502,26 @@ describe("config set", () => {
         expect(applyRmSetting(config, "enable-preset", "no-such-preset").enabledPresets).toEqual(config.enabledPresets);
     });
 
+    test("the settings added on 2026-11-01 take their values, and refuse a wrong one", () => {
+        const base = defaultRmConfig();
+
+        expect(applyRmSetting(base, "grace-scratch", "15m").grace.scratchMinutes).toBe(15);
+        expect(applyRmSetting(base, "tmp-small-mb", "50").tmpSmallMB).toBe(50);
+        expect(applyRmSetting(base, "tmp-small-mb", "0").tmpSmallMB).toBe(0);
+        expect(applyRmSetting(base, "own-bash-files", "no").ownFilesFromBash).toBe(false);
+        expect(applyRmSetting(base, "notify-on-failure", "none").notify).toEqual({ ...base.notify, onFailure: "none" });
+        expect(applyRmSetting(base, "ask-min-mb", "25").notify.askMinMB).toBe(25);
+        expect(applyRmSetting(base, "sweep-every", "2m").sweep.everyMinutes).toBe(2);
+        expect(applyRmSetting(base, "sweep-linger", "2h").sweep.lingerMinutes).toBe(120);
+        expect(() => applyRmSetting(base, "tmp-small-mb", "-1")).toThrow();
+        expect(() => applyRmSetting(base, "tmp-small-mb", "lots")).toThrow();
+        expect(() => applyRmSetting(base, "sweep-every", "0")).toThrow();
+        expect(() => applyRmSetting(base, "notify-on-failure", "mail")).toThrow();
+        expect(renderConfig({ base, effective: base, profiles: [], defaults: base, path: "/x" }).join("\n")).toContain(
+            "tmp-small-mb"
+        );
+    });
+
     test("a trash-root move is checked again at the save, against the config and the trash as they are then", () => {
         const configPath = join(base, "settings-recheck", "config.json");
         const paths = {
@@ -986,7 +1006,7 @@ describe("a run that asks", () => {
             `Claude Code in shop (probe work) asks to delete 1 item. Review: ${toolCommand("rm")} approve ${first}`,
         ]);
 
-        const quiet = { ...context(), base: { ...config, notify: { onRequest: "none" as const } } };
+        const quiet = { ...context(), base: { ...config, notify: { ...config.notify, onRequest: "none" as const } } };
         await askInPlace(file(join(base, "notify", "c.txt")), { ...caller, sessionId: "sess-6666" }, started, {
             notifyRequest,
             ctx: quiet,
@@ -2265,7 +2285,7 @@ describe("the settings views", () => {
 
     test("a profile's unset grace reads as configured, never as a dash", () => {
         expect(describePolicy({ grace: { otherMinutes: 240 } })).toContain(
-            "grace: presets as configured, others 240 min"
+            "grace: presets as configured, own scratch as configured, others 240 min"
         );
     });
 });

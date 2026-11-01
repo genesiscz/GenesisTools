@@ -621,3 +621,14 @@ export function minutesOption(value: string): number {
     const unit = match[2] ?? "m";
     return unit === "h" ? amount * 60 : unit === "d" ? amount * 1440 : amount;
 }
+
+/** A size in megabytes for a setting: a number of 0 or more (`10`, `2.5`). */
+export function megabytesOption(value: string): number {
+    const match = /^(\d+(?:\.\d+)?)\s*(?:MB)?$/i.exec(value.trim());
+
+    if (!match) {
+        throw new Error(`Not a size in megabytes: ${value} (use a number such as 10, or 0 for off)`);
+    }
+
+    return Number(match[1]);
+}

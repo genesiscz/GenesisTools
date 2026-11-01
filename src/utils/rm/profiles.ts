@@ -95,9 +95,12 @@ export function effectiveConfig(base: RmConfig, caller: RmCaller, cwd: string): 
             asideUnsaved: profile.asideUnsaved ?? config.asideUnsaved,
             allowSessionScratch: profile.allowSessionScratch ?? config.allowSessionScratch,
             allowOwnFiles: profile.allowOwnFiles ?? config.allowOwnFiles,
+            ownFilesFromBash: profile.ownFilesFromBash ?? config.ownFilesFromBash,
+            tmpSmallMB: profile.tmpSmallMB ?? config.tmpSmallMB,
             grace: {
                 presetMinutes: profile.grace?.presetMinutes ?? config.grace.presetMinutes,
                 otherMinutes: profile.grace?.otherMinutes ?? config.grace.otherMinutes,
+                scratchMinutes: profile.grace?.scratchMinutes ?? config.grace.scratchMinutes,
             },
             disabledPresets: [...config.disabledPresets, ...(profile.disabledPresets ?? [])],
             protect: [...config.protect, ...(profile.protect ?? [])],
