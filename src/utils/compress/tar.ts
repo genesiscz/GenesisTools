@@ -110,6 +110,178 @@ function parsePax(bytes: Uint8Array): Record<string, string> {
     return records;
 }
 
+function decimalField(value: string, field: string): number {
+    const number = Number(value);
+
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(number)) {
+        throw new Error(`invalid tar ${field}`);
+    }
+
+    return number;
+}
+
+/**
+ * The real name and size of a GNU sparse 1.0 entry, from its pax header, or null for an entry without GNU sparse keys.
+ * bsdtar writes this form for a file with holes; any other sparse form (0.0, 0.1) throws rather than being listed
+ * under its stand-in name.
+ */
+function gnuSparse(pax: Record<string, string>): { name: string; realSize: number } | null {
+    if (!Object.keys(pax).some((key) => key.startsWith("GNU.sparse."))) {
+        return null;
+    }
+
+    const major = pax["GNU.sparse.major"];
+    const minor = pax["GNU.sparse.minor"];
+    const name = pax["GNU.sparse.name"];
+    const realSize = pax["GNU.sparse.realsize"];
+
+    if (major !== "1" || minor !== "0") {
+        throw new Error(`unsupported GNU sparse format ${major ?? "?"}.${minor ?? "?"}`);
+    }
+
+    if (name === undefined || realSize === undefined) {
+        throw new Error("GNU sparse 1.0 entry without its name or real size");
+    }
+
+    return { name, realSize: decimalField(realSize, "GNU sparse real size") };
+}
+
+const ZEROS = new Uint8Array(1024 * 1024);
+
+/**
+ * The body of a GNU sparse 1.0 entry: a map (the segment count, then each segment's offset and size, one decimal
+ * number per line, padded to a block), then the stored segments back to back. Rebuilds the file's content for the
+ * hash, with zeros in the holes, and throws on a map that does not account for every stored byte.
+ */
+class GnuSparseBody {
+    private readonly segments: Array<{ offset: number; size: number }> = [];
+    private numbers = 0;
+    private expected = 1;
+    private value = 0;
+    private digits = 0;
+    private pendingOffset = 0;
+    private mapBytes = 0;
+    private mapPadding = -1;
+    private segment = 0;
+    private segmentDone = 0;
+    private position = 0;
+    private end = 0;
+
+    constructor(
+        private readonly realSize: number,
+        private readonly storedSize: number,
+        private readonly hasher: Bun.CryptoHasher | null
+    ) {}
+
+    push(bytes: Uint8Array): void {
+        let at = 0;
+
+        while (at < bytes.length) {
+            if (this.mapPadding < 0) {
+                this.readMapByte(bytes[at]!);
+                at++;
+                continue;
+            }
+
+            if (this.mapPadding > 0) {
+                const take = Math.min(this.mapPadding, bytes.length - at);
+                this.mapPadding -= take;
+                at += take;
+                continue;
+            }
+
+            const segment = this.segments[this.segment];
+
+            if (!segment) {
+                throw new Error("GNU sparse data runs past its map");
+            }
+
+            this.zeroFill(segment.offset);
+            const take = Math.min(segment.size - this.segmentDone, bytes.length - at);
+            this.hasher?.update(bytes.subarray(at, at + take));
+            this.segmentDone += take;
+            this.position += take;
+            at += take;
+
+            if (this.segmentDone === segment.size) {
+                this.segment++;
+                this.segmentDone = 0;
+            }
+        }
+    }
+
+    /** Called when the entry's stored bytes end: the map and every segment must be complete. */
+    finish(): void {
+        if (this.mapPadding !== 0 || this.segment !== this.segments.length) {
+            throw new Error("GNU sparse entry ends before its map or data");
+        }
+
+        this.zeroFill(this.realSize);
+    }
+
+    private readMapByte(byte: number): void {
+        this.mapBytes++;
+
+        if (byte >= 0x30 && byte <= 0x39 && this.digits < 16) {
+            this.value = this.value * 10 + (byte - 0x30);
+            this.digits++;
+            return;
+        }
+
+        if (byte !== 0x0a || this.digits === 0 || !Number.isSafeInteger(this.value)) {
+            throw new Error("invalid GNU sparse map");
+        }
+
+        const value = this.value;
+        this.value = 0;
+        this.digits = 0;
+        this.numbers++;
+
+        if (this.numbers === 1) {
+            this.expected = 1 + 2 * value;
+        } else if (this.numbers % 2 === 0) {
+            this.pendingOffset = value;
+        } else {
+            this.addSegment(this.pendingOffset, value);
+        }
+
+        if (this.numbers === this.expected) {
+            this.mapPadding = (BLOCK - (this.mapBytes % BLOCK)) % BLOCK;
+            const data = this.segments.reduce((sum, segment) => sum + segment.size, 0);
+
+            if (this.mapBytes + this.mapPadding + data !== this.storedSize) {
+                throw new Error("GNU sparse map does not match the stored data");
+            }
+        }
+    }
+
+    private addSegment(offset: number, size: number): void {
+        if (offset < this.end || offset + size > this.realSize) {
+            throw new Error("GNU sparse map segments overlap or run past the real size");
+        }
+
+        this.end = offset + size;
+
+        // A segment without data (bsdtar ends every map with `<real size> 0`) only marks where a hole ends.
+        if (size > 0) {
+            this.segments.push({ offset, size });
+        }
+    }
+
+    private zeroFill(to: number): void {
+        if (!this.hasher) {
+            this.position = Math.max(this.position, to);
+            return;
+        }
+
+        while (this.position < to) {
+            const take = Math.min(to - this.position, ZEROS.length);
+            this.hasher.update(ZEROS.subarray(0, take));
+            this.position += take;
+        }
+    }
+}
+
 function entryType(flag: number): TarEntryType {
     switch (String.fromCharCode(flag)) {
         case "0":
@@ -128,9 +300,9 @@ function entryType(flag: number): TarEntryType {
 }
 
 /**
- * A streaming tar reader that lists entries (ustar, pax `x` headers, GNU `L`/`K` long names) from chunks of any size,
- * so a multi-GB archive is listed with one chunk in memory. Written here, not taken from `tar -tv`, because the
- * verbose listing differs between bsdtar and GNU tar.
+ * A streaming tar reader that lists entries (ustar, pax `x` headers, GNU `L`/`K` long names, GNU sparse 1.0 files
+ * under their real name and size) from chunks of any size, so a multi-GB archive is listed with one chunk in memory.
+ * Written here, not taken from `tar -tv`, because the verbose listing differs between bsdtar and GNU tar.
  */
 export class TarLister {
     readonly entries: TarEntry[] = [];
@@ -143,6 +315,7 @@ export class TarLister {
     private done = false;
     private current: TarEntry | null = null;
     private hasher: Bun.CryptoHasher | null = null;
+    private sparse: GnuSparseBody | null = null;
     private meta: { kind: "pax" | "long-name" | "long-link" | "skip"; chunks: Uint8Array[] } | null = null;
     private pax: Record<string, string> = {};
     private longName: string | undefined;
@@ -241,19 +414,17 @@ export class TarLister {
 
         const name = cString(block, 0, 100);
         const prefix = cString(block, 345, 155);
-        const rawPath = this.pax.path ?? this.longName ?? (prefix ? `${prefix}/${name}` : name);
-        const realSize = this.pax.size !== undefined ? Number(this.pax.size) : size;
+        const type = entryType(flag);
+        // A sparse file's ustar name is a stand-in (`<dir>/GNUSparseFile.0/<name>`); its pax header holds the real one.
+        const sparse = gnuSparse(this.pax);
 
-        if (
-            !Number.isSafeInteger(realSize) ||
-            realSize < 0 ||
-            (this.pax.size !== undefined && !/^\d+$/.test(this.pax.size))
-        ) {
-            throw new Error("invalid tar entry size");
+        if (sparse && type !== "file") {
+            throw new Error("GNU sparse header on an entry that is not a file");
         }
 
+        const rawPath = sparse?.name ?? this.pax.path ?? this.longName ?? (prefix ? `${prefix}/${name}` : name);
+        const storedSize = this.pax.size !== undefined ? decimalField(this.pax.size, "entry size") : size;
         const linkTarget = this.pax.linkpath ?? this.longLink ?? cString(block, 157, 100);
-        const type = entryType(flag);
         this.pax = {};
         this.longName = undefined;
         this.longLink = undefined;
@@ -261,7 +432,7 @@ export class TarLister {
         const entry: TarEntry = {
             path: rawPath.replace(/^\.\//, "").replace(/\/+$/, ""),
             type,
-            size: type === "file" ? realSize : 0,
+            size: type === "file" ? (sparse?.realSize ?? storedSize) : 0,
         };
 
         if (type === "symlink" || type === "hardlink") {
@@ -269,12 +440,13 @@ export class TarLister {
         }
 
         this.entries.push(entry);
-        this.padding = (BLOCK - (realSize % BLOCK)) % BLOCK;
-        this.remaining = realSize;
+        this.padding = (BLOCK - (storedSize % BLOCK)) % BLOCK;
+        this.remaining = storedSize;
         this.current = entry;
         this.hasher = this.hash && type === "file" ? new Bun.CryptoHasher("sha256") : null;
+        this.sparse = sparse ? new GnuSparseBody(sparse.realSize, storedSize, this.hasher) : null;
 
-        if (realSize === 0) {
+        if (storedSize === 0) {
             this.endData();
         }
     }
@@ -285,6 +457,11 @@ export class TarLister {
                 this.meta.chunks.push(new Uint8Array(bytes));
             }
 
+            return;
+        }
+
+        if (this.sparse) {
+            this.sparse.push(bytes);
             return;
         }
 
@@ -307,12 +484,15 @@ export class TarLister {
             return;
         }
 
+        this.sparse?.finish();
+
         if (this.current && this.hasher) {
             this.current.sha256 = this.hasher.digest("hex");
         }
 
         this.current = null;
         this.hasher = null;
+        this.sparse = null;
     }
 }
 
@@ -346,8 +526,10 @@ export function assertArchiveOutsideSource(source: string, archive: string): voi
  * Packs a folder into one `.tar.zst` with the system `tar` (bsdtar on macOS and Windows, GNU tar on Linux) streamed
  * into seekable zstd frames, through a temp file and a rename: the folder is never held in memory and a failed or
  * interrupted pack never leaves a truncated archive under the final name. The archive holds one top folder, named
- * after the source folder. Extended attributes are left out (`--no-xattrs`, `COPYFILE_DISABLE=1`). Level, long mode,
- * frame size and threads that a caller leaves out come from the `tree` preset.
+ * after the source folder. Extended attributes are left out (`--no-xattrs`). `COPYFILE_DISABLE=1` stops macOS bsdtar
+ * from adding an AppleDouble `._name` entry per file, and without it bsdtar also skipped a real `._name` file. bsdtar
+ * stores a file with holes as GNU sparse 1.0, which {@link TarLister} reads. Level, long mode, frame size and threads
+ * that a caller leaves out come from the `tree` preset.
  */
 export async function packDirectory({
     source: inputSource,
