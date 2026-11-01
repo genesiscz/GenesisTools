@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { registerUsageCommand } from "@app/claude/commands/usage";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { scoreAccounts, sortGrouped } from "./account-picker";
 import type { AccountUsage } from "./api";
@@ -54,4 +55,21 @@ test("usage --help lists --scored", () => {
     registerUsageCommand(program);
     const usage = program.commands.find((c) => c.name() === "usage");
     expect(usage?.helpInformation()).toContain("--scored");
+});
+
+test("scored json of an account without a 5-hour limit: no limits.session, the absence list, neutral numbers", () => {
+    const [scored] = scoreAccounts([
+        {
+            accountName: "work",
+            usage: { five_hour: null, seven_day: { utilization: 39, resets_at: "2099-01-08T00:00:00.000Z" } },
+        },
+    ]);
+    const wire = SafeJSON.parse(SafeJSON.stringify(scored), { strict: true });
+
+    expect(wire.limits.session).toBeUndefined();
+    expect(wire.absentLimits).toEqual([{ key: "five_hour", kind: "session" }]);
+    // Older readers sort on these; they stay the neutral values a missing window always had.
+    expect(wire.sessionHeadroomPct).toBe(100);
+    expect(wire.sessionUsableFraction).toBe(1);
+    expect(wire.cooling).toBe(false);
 });
