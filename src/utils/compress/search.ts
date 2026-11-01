@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { type FileIdentity, FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { logger } from "@genesiscz/utils/logger";
 import { isZstdPath, readZstdFrames } from "./zstd";
 
 /**
@@ -131,5 +135,126 @@ export async function ripgrepFiles({
         // An error (2+) in any run wins; otherwise 0 when any run matched, 1 when none did.
         code: failed > 1 ? failed : Math.min(1, ...codes),
         signal: runs.find((run) => run.signal)?.signal ?? null,
+    };
+}
+
+/** Where a cached search keeps the lines it found in sealed files. */
+export interface RipgrepDigest {
+    /** Names the search: the file is `<dir>/<name>-<hash of the rg args>.json`, so a changed pattern starts empty. */
+    name: string;
+    /** The folder of the digest files, beside the files searched (`dayLogDigestsDir()` for the day logs). */
+    dir: string;
+    /** Whether a file is finished, so its lines may be kept: an earlier day's log, never today's. */
+    sealed: (file: string) => boolean;
+}
+
+/** One pass over a week touches 7 day logs; the limit keeps months of them. */
+const DIGEST_ENTRIES = 64;
+const DIGEST_VERSION = 1;
+
+function isLines(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((line) => typeof line === "string");
+}
+
+/** The digest file of one search: a short hash of its arguments in the name. */
+export function ripgrepDigestPath({ name, dir, args }: { name: string; dir: string; args: string[] }): string {
+    const hash = createHash("sha256").update(args.join("\0")).digest("hex").slice(0, 8);
+    return join(dir, `${name}-${hash}.json`);
+}
+
+/** Read from disk on every search (a few KB), so an entry the daily pass carried over is seen at once. */
+function digestCache(path: string): FileIdentityCache<string[]> {
+    return new FileIdentityCache<string[]>({
+        limit: DIGEST_ENTRIES,
+        persist: { path: () => path, version: DIGEST_VERSION, isValue: isLines },
+    });
+}
+
+function outputLines(stdout: string): string[] {
+    return stdout === "" ? [] : stdout.replace(/\n$/, "").split("\n");
+}
+
+/**
+ * {@link ripgrepFiles} for a fixed search that runs again and again over the same finished files, such as the daemon's
+ * health lines over a week of day logs. The lines rg found in a sealed file are kept on disk with the file's identity
+ * (inode, size, mtime, ctime) and served while the file keeps it, so a finished day, plain or `.zst`, is searched once;
+ * the daily pass carries the entry of a plain day over to its `.zst` (`carrySavedEntries`). Files that are not sealed
+ * (today's log) are searched every time. Kept lines come after the searched ones, so order lines by their content.
+ * `onLine` is not offered: the kept lines are what the caller reads.
+ */
+export async function ripgrepFilesCached({
+    rg,
+    args,
+    files,
+    timeoutMs,
+    digest,
+}: {
+    rg: string;
+    args: string[];
+    files: string[];
+    timeoutMs?: number;
+    digest: RipgrepDigest;
+}): Promise<RipgrepRun & { keptFiles: number }> {
+    const cache = digestCache(ripgrepDigestPath({ name: digest.name, dir: digest.dir, args }));
+    await cache.load();
+    const kept: string[] = [];
+    const searched: string[] = [];
+    const toKeep: Array<{ file: string; identity: FileIdentity }> = [];
+    let keptFiles = 0;
+
+    for (const file of files) {
+        // The identity is taken before the search, so a write during it leaves a newer identity and a miss next time.
+        const identity = digest.sealed(file) ? fileIdentity(file) : null;
+        const lines = identity ? cache.get(file, identity) : undefined;
+
+        if (lines) {
+            kept.push(...lines);
+            keptFiles++;
+        } else if (identity) {
+            toKeep.push({ file, identity });
+        } else {
+            searched.push(file);
+        }
+    }
+
+    // One sealed file per run, so its lines can be kept; they run one after another beside the open files' run, as a
+    // `.zst` costs memory per run.
+    const [open, sealed] = await Promise.all([
+        searched.length > 0 ? ripgrepFiles({ rg, args, files: searched, timeoutMs }) : null,
+        (async () => {
+            const runs: RipgrepRun[] = [];
+
+            for (const { file, identity } of toKeep) {
+                const run = await ripgrepFiles({ rg, args, files: [file], timeoutMs });
+                runs.push(run);
+
+                if (!run.signal && run.code <= 1) {
+                    cache.set(file, identity, outputLines(run.stdout));
+                }
+            }
+
+            return runs;
+        })(),
+    ]);
+
+    if (toKeep.length > 0) {
+        await cache.save();
+    }
+
+    const runs = [...(open ? [open] : []), ...sealed];
+    const codes = runs.map((run) => run.code);
+    const failed = Math.max(0, ...codes);
+    const matched = kept.length > 0 || codes.includes(0);
+    logger.debug(
+        { digest: digest.name, files: files.length, keptFiles, searched: searched.length + toKeep.length },
+        "[compress] cached rg search"
+    );
+
+    return {
+        stdout: runs.map((run) => run.stdout).join("") + kept.map((line) => `${line}\n`).join(""),
+        stderr: runs.map((run) => run.stderr).join(""),
+        code: failed > 1 ? failed : matched ? 0 : 1,
+        signal: runs.find((run) => run.signal)?.signal ?? null,
+        keptFiles,
     };
 }

@@ -7,7 +7,9 @@
  *
  * Arms are GENESIS_TOOLS_HOME roots built by `arms.ts` from the real data (read-only); the daily pass is switched off
  * in them. Scenarios:
- *   daemon-7d      tools daemon stats --since 7d --json (7 day logs, 5 of them .zst in the zst arm)
+ *   daemon-7d      tools daemon stats --since 7d --json (7 day logs, 5 of them .zst in the zst arm); the health lines of
+ *                  finished days are kept from the warmup sample on (`ripgrepFilesCached`), as on a used machine
+ *   daemon-7d-cold the same with the kept lines emptied before every sample: the first run after the search changed
  *   daemon-24h     tools daemon stats --json (today and yesterday, plain in both arms: the control)
  *   jev-day        tools jev sessions --day <the largest compressed day>
  *   proxy-large    tools ai-proxy calls --show on the 144 MB transcript (filtered by its newest call's model)
@@ -20,9 +22,10 @@
  *   bun scripts/benchmarks/compress/read-paths.ts [--runs 7] [--only daemon-7d,jev-day] [--rebuild] [--baseline] [--json]
  */
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
+import { daemonHealthDigestPath } from "@app/daemon/lib/stats";
 import { env } from "@genesiscz/utils/env";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -105,6 +108,19 @@ const SCENARIOS: Scenario[] = [
     {
         name: "daemon-7d",
         command: () => ({ argv: [TOOLS, "daemon", "stats", "--since", "7d", "--json"] }),
+        extract: daemonHealth,
+    },
+    {
+        name: "daemon-7d-cold",
+        command: (arm) => ({
+            argv: [TOOLS, "daemon", "stats", "--since", "7d", "--json"],
+            // Another version reads as empty, so every sample searches all seven days; nothing is deleted.
+            before: () => {
+                const digest = daemonHealthDigestPath(genesisToolsDirIn(armHome(arm), "logs"));
+                mkdirSync(dirname(digest), { recursive: true });
+                writeFileSync(digest, '{"version":0,"entries":{}}');
+            },
+        }),
         extract: daemonHealth,
     },
     { name: "daemon-24h", command: () => ({ argv: [TOOLS, "daemon", "stats", "--json"] }), extract: daemonHealth },
