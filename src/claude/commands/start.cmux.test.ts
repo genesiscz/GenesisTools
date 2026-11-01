@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DirectRunDeps, pumpLines } from "@app/ai/lib/embed/direct-run";
+import { type DirectRunDeps, pumpLines, relayBytes } from "@app/ai/lib/embed/direct-run";
 import type { ScoredAccount } from "@app/claude/lib/usage/account-picker";
 import { rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
 import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
@@ -137,6 +137,7 @@ function directRunner(spawn: () => DirectProcessFixture, signals: EventEmitter):
             off: (name: string, listener: (...args: unknown[]) => void) => signals.off(name, listener),
         } as DirectRunDeps["signals"],
         stdin: () => new ReadableStream(),
+        stdout: () => ({ write: () => undefined, flush: () => undefined }),
     };
 
     return (argv, environment) => runClaudeBinaryDirect({ argv, env: environment }, deps);
@@ -189,6 +190,27 @@ describe("direct SDK launch signals", () => {
         expect(await result).toBe(0);
         expect(killed).toEqual(["SIGINT"]);
         expect(names.map((name) => signals.listenerCount(name))).toEqual([0, 0, 0]);
+    });
+});
+
+describe("stdout relay", () => {
+    test("copies every chunk in order, a line longer than a pipe buffer included", async () => {
+        const encoder = new TextEncoder();
+        const long = `${"x".repeat(200_000)}\n`;
+        const chunks = [long.slice(0, 65_536), long.slice(65_536), '{"next":true}\n'];
+        const source = new ReadableStream<Uint8Array>({
+            start(controller) {
+                for (const chunk of chunks) {
+                    controller.enqueue(encoder.encode(chunk));
+                }
+
+                controller.close();
+            },
+        });
+        const written: Uint8Array[] = [];
+        await relayBytes(source, { write: (chunk) => written.push(chunk), flush: () => undefined });
+
+        expect(new TextDecoder().decode(Buffer.concat(written))).toBe(chunks.join(""));
     });
 });
 
