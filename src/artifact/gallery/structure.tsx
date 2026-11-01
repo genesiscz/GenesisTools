@@ -1,4 +1,4 @@
-import { Compare, Figure, JsonView, Steps, TreeView, treeFromPaths } from "@artifact/kit";
+import { Compare, Figure, HUE, JsonView, Steps, TreeView, treeFromPaths } from "@artifact/kit";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
@@ -61,6 +61,39 @@ export default function StructurePage() {
                             ],
                         },
                         { label: "Client apps", badge: "8", children: [{ label: "Web" }, { label: "Mobile" }] },
+                    ]}
+                />
+            </Demo>
+            <Demo
+                title={'TreeView variant="ascii"'}
+                note="a command tree: badges line up per sibling group, comments in one column, colour inherited"
+            >
+                <TreeView
+                    variant="ascii"
+                    badgeColor={HUE.teal}
+                    nodes={[
+                        {
+                            label: "tools usage",
+                            meta: "overview · --json",
+                            children: [
+                                {
+                                    label: "limits",
+                                    color: HUE.sky,
+                                    meta: "per account now",
+                                    children: [
+                                        { label: "series", badge: "R1 R3", meta: "raw · last · minmax" },
+                                        { label: "forecast", badge: "R5", meta: "was hub forecast" },
+                                    ],
+                                },
+                                {
+                                    label: "spend",
+                                    color: HUE.amber,
+                                    children: [{ label: "summary daily weekly\nsession blocks today" }],
+                                },
+                                { label: "daemon", color: HUE.slate, meta: "register · status" },
+                            ],
+                        },
+                        { label: "tools sessions <id>", badge: "R2", meta: "one transcript:\nreport, stalls" },
                     ]}
                 />
             </Demo>

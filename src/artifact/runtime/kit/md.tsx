@@ -5,6 +5,7 @@ import {
     renderMarkdown as renderMarkdownShared,
     safeMarked,
 } from "../../lib/markdown";
+import { usePageLook } from "./look";
 import { hydrateMermaidFences } from "./mermaid-core";
 
 /**
@@ -37,6 +38,21 @@ export const MD_BODY_CLASS =
     "[&_th]:bg-panel [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-line " +
     "[&_td]:px-2 [&_td]:py-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 " +
     "[&_hr]:my-4 [&_hr]:border-line";
+
+/**
+ * Markdown typography for the document look: the text keeps the size and colour
+ * of its container, inline code is plain mono with no box, bold runs in full ink.
+ */
+export const MD_DOCUMENT_CLASS =
+    "akit-md max-w-none [&_strong]:font-bold [&_strong]:text-ink [&_a]:text-accent [&_a:hover]:underline " +
+    "[&_code]:font-mono [&_code]:text-[0.92em] [&_p+p]:mt-2.5 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:my-1.5 " +
+    "[&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded-card [&_pre]:border " +
+    "[&_pre]:border-line [&_pre]:bg-panel-2 [&_pre]:p-3";
+
+const INLINE_DENSE_CLASS =
+    "[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-panel [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_a]:text-accent [&_a:hover]:underline";
+const INLINE_DOCUMENT_CLASS =
+    "[&_code]:font-mono [&_code]:text-[0.92em] [&_strong]:text-ink [&_a]:text-accent [&_a:hover]:underline";
 
 export interface MdProps {
     /** Markdown text to render. */
@@ -71,17 +87,24 @@ function MdHtml({ html, className }: { html: string; className: string }) {
 /** Render a markdown string (block-level). Fenced code is highlighted; ```mermaid fences render as diagrams. */
 export const Md = memo(function Md({ children, className }: MdProps) {
     const html = useMemo(() => renderMarkdown(children), [children]);
+    const look = usePageLook();
 
-    return <MdHtml html={html} className={`${MD_BODY_CLASS} ${className ?? ""}`} />;
+    return (
+        <MdHtml
+            html={html}
+            className={`${look === "document" ? MD_DOCUMENT_CLASS : MD_BODY_CLASS} ${className ?? ""}`}
+        />
+    );
 });
 
 /** Inline markdown (bold, code, links) with no block wrapper — for table cells and list items. */
 export const MdInline = memo(function MdInline({ children, className }: MdProps) {
     const html = useMemo(() => renderMarkdownInline(children), [children]);
+    const look = usePageLook();
 
     return (
         <span
-            className={`[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-panel [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_a]:text-accent [&_a:hover]:underline ${className ?? ""}`}
+            className={`${look === "document" ? INLINE_DOCUMENT_CLASS : INLINE_DENSE_CLASS} ${className ?? ""}`}
             // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping renderer in lib/markdown.ts
             dangerouslySetInnerHTML={{ __html: html }}
         />

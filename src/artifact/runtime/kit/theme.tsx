@@ -114,11 +114,30 @@ const MODE_OPTIONS = [
 
 export interface ThemeToggleProps {
     label?: string;
+    /** "segmented" (default): three options. "cycle": one pill button ("Theme: system") that steps system, light, dark. */
+    variant?: "segmented" | "cycle";
 }
 
-/** System, Light, Dark. Opt-in: no template renders it by itself. It only changes pages on the `auto` template. */
-export function ThemeToggle({ label = "Theme" }: ThemeToggleProps) {
+const MODE_CYCLE: ThemeMode[] = ["system", "light", "dark"];
+
+/** System, Light, Dark. Opt-in: no template renders it by itself. It only changes pages on a light-dark template (`auto`, `paper`). */
+export function ThemeToggle({ label = "Theme", variant = "segmented" }: ThemeToggleProps) {
     const { mode, setMode } = useTheme();
+
+    if (variant === "cycle") {
+        const next = MODE_CYCLE[(MODE_CYCLE.indexOf(mode) + 1) % MODE_CYCLE.length];
+
+        return (
+            <button
+                type="button"
+                title={`Switch to ${next}`}
+                onClick={() => setMode(next)}
+                className="whitespace-nowrap rounded-full border border-line-2 bg-panel px-3.5 py-1.5 font-mono text-sm font-medium leading-[normal] text-ink-2 transition-[translate,border-color,color] duration-150 hover:-translate-y-px hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
+            >
+                {`${label}: ${mode}`}
+            </button>
+        );
+    }
 
     return (
         <SegmentedControl
