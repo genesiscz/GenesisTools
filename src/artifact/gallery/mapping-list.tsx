@@ -30,7 +30,7 @@ export default function MappingListPage() {
                             to: "tools new usage spend …",
                             note: "Kept for good: scripts call it.",
                         },
-                        { from: "tools hub forecast", to: "tools new usage limits forecast" },
+                        { from: "tools old forecast", to: "tools new usage limits forecast" },
                     ]}
                 />
             </Demo>
