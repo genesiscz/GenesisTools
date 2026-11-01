@@ -1870,6 +1870,20 @@ describe("security review fixes: a typed code is not proof of a person", () => {
         expect(agent.approved).toBe(false);
         expect(calls).toEqual(["typed"]);
     });
+
+    test("tools rm ask passes interactive false: even with approval code it never takes a typed code", async () => {
+        const calls: string[] = [];
+        const dialogOnly = { ...deps("darwin", calls), interactive: () => false };
+        const asked = await confirmByPerson({ ...prompt, approval: "code", openedBy: "ask" }, dialogOnly);
+        const linux = await confirmByPerson(
+            { ...prompt, approval: "code", openedBy: "ask" },
+            { ...deps("linux", calls), interactive: () => false }
+        );
+
+        expect(asked.via).toBe("dialog");
+        expect(linux.approved).toBe(false);
+        expect(calls).toEqual(["dialog"]);
+    });
 });
 
 describe("crash safety: the record comes before the move", () => {

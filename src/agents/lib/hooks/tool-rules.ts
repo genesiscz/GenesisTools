@@ -19,7 +19,7 @@ import {
  * The verbs that let a request through, trust a folder, change settings, or end every batch's grace period
  * (`drain --now` deletes what a person approved with "Move to the trash" and other sessions' batches at once).
  */
-const RM_USER_VERBS = String.raw`(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove)|drain\b[^;&|\n]*?\s--now)\b`;
+const RM_USER_VERBS = String.raw`(?:(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b${String.raw`(?=\s+(?!--help\b|-h\b)[^\s;&|)])`}|drain\b[^;&|\n]*?\s--now\b)`;
 /**
  * Root flags may stand between `rm` and the verb, and Commander still runs the verb (`tools rm -v approve x`,
  * `tools rm -- approve x`), so the rule skips them: `--reason` and `--keep` with their value, any other `-` token.
@@ -30,6 +30,9 @@ const RM_USER_VERB = new RegExp(
     String.raw`(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+${RM_ROOT_FLAGS}${RM_USER_VERBS}|[\\/]rm[\\/]index\.ts\s+${RM_ROOT_FLAGS}${RM_USER_VERBS}`
 );
 
+/** `tools rm approve <one id>` in the statement, for the suggestion: the agent's verb with the same id. */
+const RM_APPROVE_ONE = /((?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+)approve(\s+[a-z0-9]{4,12})(?=\s*(?:$|[;&|)]))/;
+
 export const rmUserVerbs: ShellRule = {
     id: "rm-user-verbs",
     kind: "destructive",
@@ -37,12 +40,13 @@ export const rmUserVerbs: ShellRule = {
     severity: "block",
     why:
         `\`${toolCommand("rm")}\` lets an agent delete presets, its own scratch and its own files; anything else becomes a request ` +
-        "the USER confirms. `approve` deletes what the request names, `roots add` trusts a whole folder, and " +
-        "`config set` moves the trash the drain empties, and `drain --now` ends the restore window of every batch in " +
-        "the trash (the ones a person approved too), so an agent that ran them would approve itself. The verb " +
-        "also asks for a typed code or a macOS dialog; this rule stops the call before it gets that far.",
+        "the USER decides. `approve` is the person's verb: run by a person, it may take a typed code on their terminal. " +
+        "`ask` is the agent's verb: it only opens the person's approval window (Touch ID through GenesisTools.app, armed " +
+        "by a click, or the macOS dialog) and never approves by itself. `roots add` trusts a whole folder, `config set` " +
+        "moves the trash the drain empties, and `drain --now` ends the restore window of every batch in the trash (the " +
+        "ones a person approved too): those are the person's as well.",
     wrong: `${toolCommand("rm")} approve k7m2qd`,
-    right: `${toolCommand("rm")} requests`,
+    right: `${toolCommand("rm")} ask k7m2qd`,
     evidence:
         "Martin, 2026-10-27: agents delete their own things freely, and anything more is confirmed by the user with " +
         "a command the agent cannot run.",
@@ -58,7 +62,13 @@ export const rmUserVerbs: ShellRule = {
                 }
 
                 const lead = match[0].length - match[0].trimStart().length;
-                return { matched: match[0].trim(), index: statement.start + match.index + lead };
+                const one = RM_APPROVE_ONE.exec(scan.command);
+                const suggestion = one ? scan.command.replace(RM_APPROVE_ONE, "$1ask$2") : undefined;
+                return {
+                    matched: match[0].trim(),
+                    index: statement.start + match.index + lead,
+                    ...(suggestion ? { suggestion } : {}),
+                };
             }
         }
 

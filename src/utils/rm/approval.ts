@@ -186,6 +186,11 @@ export interface ApprovalPrompt {
     remember?: ApprovalRememberOption[];
     /** Row changes measured after the window opened (`request` rows marked `measuring`); absent: rows are final. */
     updates?: ApprovalUpdates;
+    /**
+     * `ask`: an agent opened this prompt (`tools rm ask`). The window then arms Touch ID only after the person clicks,
+     * so a touch meant for another prompt never approves it.
+     */
+    openedBy?: "ask";
 }
 
 /** The app's window answered (`outcome`), or there is no app that offers it (`missing`). */
@@ -469,6 +474,11 @@ export function appApproveParams(prompt: ApprovalPrompt, cwd = process.cwd()): R
         params.live = true;
     }
 
+    // An agent opened it: the sensor listens only after the person clicks Approve with Touch ID.
+    if (prompt.openedBy === "ask") {
+        params.arm = "click";
+    }
+
     return params;
 }
 
@@ -530,7 +540,7 @@ async function askApp(prompt: ApprovalPrompt): Promise<AppApproval> {
     return answer;
 }
 
-const DEFAULT_DEPS: ApprovalDeps = {
+export const DEFAULT_APPROVAL_DEPS: ApprovalDeps = {
     interactive: isInteractive,
     platform: process.platform,
     typed: askTyped,
@@ -548,7 +558,7 @@ const DEFAULT_DEPS: ApprovalDeps = {
  */
 export async function confirmByPerson(
     prompt: ApprovalPrompt,
-    deps: ApprovalDeps = DEFAULT_DEPS
+    deps: ApprovalDeps = DEFAULT_APPROVAL_DEPS
 ): Promise<ApprovalOutcome> {
     const approval = prompt.approval ?? "auto";
 
