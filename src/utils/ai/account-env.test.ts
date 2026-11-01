@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { accountEnvVar, accountFromEnv, psEnvValue } from "./account-env";
+import { accountEnvVar, accountFromEnv, embedAccountEnvVar, parseEmbedAccountRequest, psEnvValue } from "./account-env";
 
 test("a key with regex metacharacters is matched literally", () => {
     // `readProcessEnvKeys(pid, keys)` takes the key list from its caller, and the key is
@@ -121,4 +121,13 @@ test("DOCUMENTED LIMIT: a value holding a ` WORD=` fragment is truncated at it",
     // the limit, and an account name never has this shape. `npm_lifecycle_script` does.
     expect(psEnvValue("cmd K=a b=c PATH=/x", "K")).toBe("a");
     expect(psEnvValue("cmd K=work laptop PATH=/x", "K")).toBe("work laptop");
+});
+
+test("an embed request is auto, an account or a proxy target", () => {
+    expect(embedAccountEnvVar("claude")).toBe("TOOLS_CLAUDE_EMBED_ACCOUNT");
+    expect(parseEmbedAccountRequest(undefined)).toEqual({ kind: "auto" });
+    expect(parseEmbedAccountRequest("  auto ")).toEqual({ kind: "auto" });
+    expect(parseEmbedAccountRequest("work")).toEqual({ kind: "account", name: "work" });
+    expect(parseEmbedAccountRequest("proxy:work/grok")).toEqual({ kind: "proxy", target: "work/grok" });
+    expect(() => parseEmbedAccountRequest("proxy:")).toThrow("names no proxy target");
 });

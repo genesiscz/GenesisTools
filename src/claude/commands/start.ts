@@ -39,6 +39,8 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { runClaudeBinaryDirect, steerModeFromEnv } from "../lib/direct-run";
+import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
 import { finishKeychainSession, injectSecondaryLogin, inspectKeychainBeforeInject } from "../lib/keychain-session";
 import {
     installTeammateWrapper,
@@ -49,7 +51,7 @@ import {
 import { pickSessionForResume } from "./resume";
 import { runProxySession } from "./run";
 
-interface StartOptions {
+export interface StartOptions {
     pick?: boolean;
     autopick?: boolean;
     model?: string;
@@ -222,46 +224,6 @@ async function forwardStderrDroppingZleNoise(stream: ReadableStream<Uint8Array>)
         }
     } finally {
         reader.releaseLock();
-    }
-}
-
-/**
- * `--sdk` runs the real claude executable with no shell between: the user's `ccc`/`claude`
- * wrappers add `--dangerously-skip-permissions`, which would override the permission mode the
- * embedding app chose. The app stops a session by signalling the process it spawned (this one),
- * so each signal is passed on, or claude would keep running after the app let it go.
- */
-async function runClaudeBinaryDirect(argv: string[], launchEnv: Record<string, string | undefined>): Promise<number> {
-    const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
-    let proc: ReturnType<typeof Bun.spawn> | undefined;
-    let pendingSignal: NodeJS.Signals | undefined;
-    const forward = (signal: NodeJS.Signals) => {
-        if (!proc) {
-            pendingSignal ??= signal;
-            return;
-        }
-
-        if (proc.exitCode === null) {
-            proc.kill(signal);
-        }
-    };
-
-    for (const signal of signals) {
-        process.on(signal, forward);
-    }
-
-    try {
-        proc = Bun.spawn({ cmd: argv, stdio: ["inherit", "inherit", "inherit"], env: launchEnv });
-
-        if (pendingSignal && proc.exitCode === null) {
-            proc.kill(pendingSignal);
-        }
-
-        return await proc.exited;
-    } finally {
-        for (const signal of signals) {
-            process.off(signal, forward);
-        }
     }
 }
 
@@ -946,6 +908,15 @@ async function resolveResumeArgs(
     return { args: [] };
 }
 
+/** The `start` launch itself, for `tools claude embed`: never returns, it exits with claude's code. */
+export async function runClaudeStart(
+    nameArg: string | undefined,
+    opts: StartOptions,
+    passthrough: string[]
+): Promise<never> {
+    return main(nameArg, opts, passthrough);
+}
+
 async function main(nameArg: string | undefined, opts: StartOptions, passthrough: string[]): Promise<never> {
     if (opts.sdk && (opts.tmux || opts.cmux)) {
         out.error("--sdk cannot be combined with --tmux or --cmux: the embedding app owns claude's stdio.");
@@ -994,9 +965,17 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         ...opts,
         resumedAccount: resumedSessionId ? accountFromPinJournal(resumedSessionId) : null,
     };
+    const tokenNames = withToken.map((a) => a.name);
+    const hostProbe = opts.sdk === true && isHostProbe(passthrough);
+    // A probe takes the account the last real embed launch picked: it sends no turn, so it needs no usage ranking.
+    const automatic = !alias && (opts.autopick === true || isAutoAccount(nameArg, tokenNames));
+    const probeAccount = hostProbe && automatic ? readEmbedLastPick(tokenNames) : null;
     let accountName: string;
 
-    if (alias) {
+    if (probeAccount) {
+        logger.info({ account: probeAccount }, "[start] host probe reuses the last embed pick");
+        accountName = probeAccount;
+    } else if (alias) {
         accountName =
             (await resolveSmartAlias(alias, withToken, modelId)) ??
             (await pickAccount(withToken, pickOpts, modelId, aiConfig));
@@ -1011,6 +990,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         accountName = await resolveAccountName(nameArg, withToken, opts, modelId, aiConfig);
     } else {
         accountName = await pickAccount(withToken, pickOpts, modelId, aiConfig);
+    }
+
+    // Only an automatic pick is remembered: the probes of an auto instance must land where its threads do.
+    if (opts.sdk && !hostProbe && automatic) {
+        writeEmbedLastPick(accountName);
     }
 
     const account = withToken.find((a) => a.name === accountName)!;
@@ -1187,7 +1171,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
     try {
         if (opts.sdk) {
-            exitCode = await runClaudeBinaryDirect([cmd, ...extraArgs], launchEnv);
+            exitCode = await runClaudeBinaryDirect({
+                argv: [cmd, ...extraArgs],
+                env: launchEnv,
+                steer: steerModeFromEnv(),
+            });
         } else if (opts.tmux) {
             const {
                 currentTmuxSessionName,

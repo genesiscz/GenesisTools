@@ -16,6 +16,42 @@ export function accountEnvVar(alias: AccountProviderAlias): string {
     return `TOOLS_${alias.toUpperCase()}_ACCOUNT`;
 }
 
+/**
+ * The variable a host app (T3 Code) sets on one provider instance to name the account its embed launcher runs as:
+ * `TOOLS_CLAUDE_EMBED_ACCOUNT`. It is an INPUT, apart from the `TOOLS_<ALIAS>_ACCOUNT` stamp, because every nested
+ * process of a session inherits the stamp and reading it back would pin a child by accident.
+ */
+export function embedAccountEnvVar(alias: AccountProviderAlias): string {
+    return `TOOLS_${alias.toUpperCase()}_EMBED_ACCOUNT`;
+}
+
+/** What an embed launcher was asked to run as. */
+export type EmbedAccountRequest =
+    | { kind: "auto" }
+    | { kind: "account"; name: string }
+    | { kind: "proxy"; target: string };
+
+/** Unset, empty or `auto` picks automatically; `proxy:<account>/<provider>` goes through the ai-proxy. */
+export function parseEmbedAccountRequest(value: string | null | undefined): EmbedAccountRequest {
+    const trimmed = value?.trim() ?? "";
+
+    if (trimmed === "" || trimmed === "auto") {
+        return { kind: "auto" };
+    }
+
+    if (trimmed.startsWith("proxy:")) {
+        const target = trimmed.slice("proxy:".length).trim();
+
+        if (target === "") {
+            throw new Error(`"${trimmed}" names no proxy target; use proxy:<account>/<provider>.`);
+        }
+
+        return { kind: "proxy", target };
+    }
+
+    return { kind: "account", name: trimmed };
+}
+
 export interface LiveAccount {
     /** The account name, or null when the process was launched outside `tools <tool> run`. */
     account: string | null;

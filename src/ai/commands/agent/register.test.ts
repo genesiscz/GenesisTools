@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { splitEmbedArgv } from "@app/ai/commands/agent/embed";
 import { codexSpec } from "@app/codex/lib/spec";
 import { grokSpec } from "@app/grok/lib/spec";
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
@@ -228,4 +229,19 @@ test("cmux send tries the spec's structured rung first, and an unknown outcome t
         errorSpy.mockRestore();
         process.exitCode = 0;
     }
+});
+
+test("an embed launch takes the account before -- and passes everything after it on", () => {
+    const head = ["bun", "/x/src/claude/index.ts", "embed"];
+
+    expect(splitEmbedArgv([...head, "work", "--", "--output-format", "stream-json"])).toEqual({
+        account: "work",
+        native: ["--output-format", "stream-json"],
+    });
+    expect(splitEmbedArgv([...head, "--", "work", "--resume=abc"])).toEqual({
+        account: undefined,
+        native: ["work", "--resume=abc"],
+    });
+    expect(splitEmbedArgv([...head, "--", "app-server", "--", "x"])?.native).toEqual(["app-server", "--", "x"]);
+    expect(splitEmbedArgv([...head, "work"])).toBeNull();
 });

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ScoredAccount } from "@app/claude/lib/usage/account-picker";
+import { type DirectRunDeps, pumpLines, rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
+import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
 import {
     buildLaunchArgs,
     cmuxPermissionArgs,
@@ -117,19 +122,23 @@ interface DirectProcessFixture {
     exitCode: number | null;
     exited: Promise<number>;
     kill: (signal: string) => void;
+    stdin?: unknown;
 }
 
 type DirectRunner = (argv: string[], environment: Record<string, string>) => Promise<number>;
 
-/** Execute the actual private launch function with fake process signals and no child process. */
-async function directRunner(spawn: () => DirectProcessFixture, signals: EventEmitter): Promise<DirectRunner> {
-    const source = await Bun.file(new URL("./start.ts", import.meta.url)).text();
-    const declaration = source.match(/async function runClaudeBinaryDirect[\s\S]*?\n}/)?.[0];
-    expect(declaration).toBeDefined();
-    const code = new Bun.Transpiler({ loader: "ts" }).transformSync(declaration ?? "");
-    const factory = new Function("Bun", "process", `${code}\nreturn runClaudeBinaryDirect;`);
-    const run: DirectRunner = factory({ spawn }, signals);
-    return run;
+/** The real launch function with fake process signals and no child process. */
+function directRunner(spawn: () => DirectProcessFixture, signals: EventEmitter): DirectRunner {
+    const deps: DirectRunDeps = {
+        spawn,
+        signals: {
+            on: (name: string, listener: (...args: unknown[]) => void) => signals.on(name, listener),
+            off: (name: string, listener: (...args: unknown[]) => void) => signals.off(name, listener),
+        } as DirectRunDeps["signals"],
+        stdin: () => new ReadableStream(),
+    };
+
+    return (argv, environment) => runClaudeBinaryDirect({ argv, env: environment }, deps);
 }
 
 describe("direct SDK launch signals", () => {
@@ -139,7 +148,7 @@ describe("direct SDK launch signals", () => {
         const signals = new EventEmitter();
         const killed: string[] = [];
         const proc = { exitCode: null, exited: Promise.resolve(143), kill: (signal: string) => killed.push(signal) };
-        const run = await directRunner(() => {
+        const run = directRunner(() => {
             expect(names.map((name) => signals.listenerCount(name))).toEqual([1, 1, 1]);
             signals.emit("SIGTERM", "SIGTERM");
             return proc;
@@ -152,7 +161,7 @@ describe("direct SDK launch signals", () => {
 
     test("removes every handler if spawning throws", async () => {
         const signals = new EventEmitter();
-        const run = await directRunner(() => {
+        const run = directRunner(() => {
             throw new Error("spawn failed");
         }, signals);
 
@@ -170,7 +179,7 @@ describe("direct SDK launch signals", () => {
                 killed.push(signal);
             },
         };
-        const run = await directRunner(() => proc, signals);
+        const run = directRunner(() => proc, signals);
         const result = run(["fixture"], {});
         signals.emit("SIGINT", "SIGINT");
         proc.exitCode = 0;
@@ -179,6 +188,49 @@ describe("direct SDK launch signals", () => {
         expect(await result).toBe(0);
         expect(killed).toEqual(["SIGINT"]);
         expect(names.map((name) => signals.listenerCount(name))).toEqual([0, 0, 0]);
+    });
+});
+
+describe("steer priority rewrite", () => {
+    const steer =
+        '{"type":"user","message":{"role":"user","content":"stop that"},"parent_tool_use_id":null,"priority":"now"}';
+
+    test("a now user message becomes next, and nothing else changes", () => {
+        expect(rewriteSteerLine(`${steer}\n`)).toBe(`${steer.replace('"now"', '"next"')}\n`);
+        expect(rewriteSteerLine(steer)).toBe(steer.replace('"now"', '"next"'));
+    });
+
+    test("other lines pass byte for byte", () => {
+        const next = steer.replace('"now"', '"next"');
+        const control = '{"type":"control_request","request":{"subtype":"interrupt"},"note":"now"}\n';
+
+        expect(rewriteSteerLine(`${next}\n`)).toBe(`${next}\n`);
+        expect(rewriteSteerLine(control)).toBe(control);
+        expect(rewriteSteerLine('not json "now"\n')).toBe('not json "now"\n');
+        expect(rewriteSteerLine('{"type":"user","priority":"now"}\r\n')).toBe('{"type":"user","priority":"next"}\r\n');
+    });
+
+    test("the pump rewrites across chunk splits and closes the child's stdin", async () => {
+        const encoder = new TextEncoder();
+        const text = `${steer}\n{"type":"user","priority":"later"}\n${steer}`;
+        const source = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode(text.slice(0, 30)));
+                controller.enqueue(encoder.encode(text.slice(30, 140)));
+                controller.enqueue(encoder.encode(text.slice(140)));
+                controller.close();
+            },
+        });
+        const written: string[] = [];
+        let ended = false;
+        await pumpLines(
+            source,
+            { write: (chunk: string) => written.push(chunk), flush: () => undefined, end: () => (ended = true) },
+            rewriteSteerLine
+        );
+
+        expect(written.join("")).toBe(text.replaceAll('"now"', '"next"'));
+        expect(ended).toBe(true);
     });
 });
 
@@ -232,5 +284,24 @@ describe("stickyResumePick", () => {
         ).toBeNull();
         expect(stickyResumePick([account("work")], "personal")).toBeNull();
         expect(stickyResumePick([account("work")], null)).toBeNull();
+    });
+});
+
+describe("host probe launches", () => {
+    test("a T3 capability probe is a probe; a thread launch is not", () => {
+        const probe = ["--output-format", "stream-json", "--no-session-persistence", "--settings", "{}"];
+
+        expect(isHostProbe(probe)).toBe(true);
+        expect(isHostProbe([...probe, "--resume=abc"])).toBe(false);
+        expect(isHostProbe(["--session-id=abc", "--output-format", "stream-json"])).toBe(false);
+    });
+
+    test("the last pick round-trips and is dropped when the account is gone", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "embed-pick-")), "last.json");
+
+        expect(readEmbedLastPick(["work"], path)).toBeNull();
+        writeEmbedLastPick("work", path);
+        expect(readEmbedLastPick(["work", "personal"], path)).toBe("work");
+        expect(readEmbedLastPick(["personal"], path)).toBeNull();
     });
 });
