@@ -32,7 +32,8 @@ const ALL = registry(
     "question_tokens",
     "fetch_markdown",
     "fetch_jsonld",
-    "alza_search_products"
+    "alza_search_products",
+    "waze_police"
 );
 
 afterEach(() => {
@@ -92,6 +93,7 @@ describe("filterRegistryByCapabilities", () => {
         expect(withCapabilities("jev")).toEqual(["jev_live"]);
         expect(withCapabilities("fetch")).toEqual(["fetch_jsonld", "fetch_markdown"]);
         expect(withCapabilities("alza")).toEqual(["alza_search_products"]);
+        expect(withCapabilities("waze")).toEqual(["waze_police"]);
     });
 
     test("an unset filter leaves every tool enabled", () => {
