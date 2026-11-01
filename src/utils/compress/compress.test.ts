@@ -336,7 +336,7 @@ describe("verified zstd writer", () => {
         expect(searchLedger({ caller: "test-verified-batch", path: dir })).toEqual([]);
     });
 
-    it("a batch whose outputs all verify renames each and records each; its writers commit only through it", async () => {
+    it("a batch whose outputs all verify renames each and records each, a writer finished early too", async () => {
         const dir = scratch("verified-batch-ok");
         const first = join(dir, "a.jsonl.zst");
         const second = join(dir, "b.jsonl.zst");
@@ -345,6 +345,11 @@ describe("verified zstd writer", () => {
         const [one, two] = [batch.add(first), batch.add(second)];
         expect(() => batch.add(first)).toThrow("already has a writer");
         await one!.push(logText(20));
+        await one!.finish();
+        // Finished early (its file closed and read back), and still not renamed: the batch has not committed.
+        expect(one!.state).toBe("verified");
+        expect(readFileSync(first, "utf8")).toBe("old first");
+        await expect(one!.push("late")).rejects.toThrow("verified");
         await two!.push(logText(30));
         await expect(one!.commit()).rejects.toThrow("commit the batch");
 

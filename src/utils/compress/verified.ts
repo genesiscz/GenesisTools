@@ -53,9 +53,15 @@ export interface VerifiedZstdWriter {
     /** Appends bytes (a string is written as UTF-8). Await each push before the next. A failure aborts the writer. */
     push(bytes: Uint8Array | string): Promise<void>;
     /**
-     * Finishes, verifies and renames over the target, then records the ledger entry. Throws (and removes the partial,
-     * leaving an existing target untouched) when the read-back differs: {@link ZstdVerificationError}. A writer from a
-     * batch is committed by its batch.
+     * Ends the input now: the last frames and the seek table are written, the partial is fsynced, closed and read back
+     * (state `verified`), and nothing is renamed yet. A batch member that is complete should call it, so its open file
+     * and buffered frames (up to `threads` frames) are released before the batch commits. A failure aborts the writer.
+     */
+    finish(): Promise<void>;
+    /**
+     * Finishes (unless already finished), verifies and renames over the target, then records the ledger entry. Throws
+     * (and removes the partial, leaving an existing target untouched) when the read-back differs:
+     * {@link ZstdVerificationError}. A writer from a batch is committed by its batch.
      */
     commit(): Promise<VerifiedZstdResult>;
     /** Removes the partial. Safe to call at any time; does nothing after a commit or a second time. */
@@ -67,9 +73,10 @@ export interface VerifiedZstdBatch {
     /** A writer for one more output, with the batch's options and `overrides`. One writer per target. */
     add(target: string, overrides?: Omit<Partial<VerifiedZstdOptions>, "caller">): VerifiedZstdWriter;
     /**
-     * Verifies every writer, then renames them all. When one fails to verify (or was aborted), every partial is
-     * removed, no target changes, and the error is thrown. The renames run only after all verified; a rename that
-     * fails then (the folder removed meanwhile) leaves the outputs renamed before it in place and removes the rest.
+     * Finishes and verifies every writer not finished yet, then renames them all. When one fails to verify (or was
+     * aborted), every partial is removed, no target changes, and the error is thrown. The renames run only after all
+     * verified; a rename that fails then (the folder removed meanwhile) leaves the outputs renamed before it in place
+     * and removes the rest.
      */
     commit(): Promise<VerifiedZstdResult[]>;
     /** Aborts every writer. */
@@ -166,7 +173,7 @@ class Writer implements VerifiedZstdWriter {
             throw new Error(`${this.target} belongs to a batch: commit the batch`);
         }
 
-        await this.verify();
+        await this.finish();
         return this.publish();
     }
 
@@ -181,8 +188,12 @@ class Writer implements VerifiedZstdWriter {
     }
 
     /** Finishes the frames, flushes the partial and reads it back; on any failure the writer is aborted. */
-    async verify(): Promise<void> {
-        this.assertOpen("commit");
+    async finish(): Promise<void> {
+        if (this.current === "verified") {
+            return;
+        }
+
+        this.assertOpen("finish");
 
         try {
             const stats = await this.frames.finish();
@@ -327,7 +338,7 @@ class Batch implements VerifiedZstdBatch {
         this.assertOpen();
 
         for (const writer of this.members) {
-            if (writer.state !== "open") {
+            if (writer.state !== "open" && writer.state !== "verified") {
                 this.abort();
                 throw new ZstdVerificationError(
                     `${writer.target} was ${writer.state} before the batch commit; no output of the batch was renamed`,
@@ -336,7 +347,7 @@ class Batch implements VerifiedZstdBatch {
             }
 
             try {
-                await writer.verify();
+                await writer.finish();
             } catch (err) {
                 this.abort();
                 const targets = err instanceof ZstdVerificationError ? err.targets : [writer.target];
