@@ -2,6 +2,7 @@ import { pickLaunchAccount } from "@app/ai/lib/accounts/pick-launch-account";
 import { runBinaryDirect } from "@app/ai/lib/embed/direct-run";
 import type { EmbedLauncher, EmbedLaunchInput } from "@app/ai/lib/embed/types";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { grokLaunchAuth } from "./launcher";
@@ -54,7 +55,7 @@ export interface GrokEmbedDeps {
 const defaultDeps: GrokEmbedDeps = {
     resolveBinary: resolveGrokBinary,
     pickAccount: (requested) =>
-        pickLaunchAccount({ alias: "grok", tool: "tools grok embed", subcommand: ["embed"], requested }),
+        pickLaunchAccount({ alias: "grok", tool: toolCommand("grok embed"), subcommand: ["embed"], requested }),
     launchAuth: grokLaunchAuth,
     // Grok drops the rest of a line on a short write, so it gets a pipe of its own (see runBinaryDirect).
     runChild: (input) => runBinaryDirect({ ...input, relayStdout: true }),
@@ -71,7 +72,7 @@ export async function runGrokEmbed(input: EmbedLaunchInput, deps: GrokEmbedDeps 
 
     if (request.kind === "proxy") {
         out.error(
-            `tools grok embed cannot run through the ai-proxy (proxy:${request.target}). Name a grok account or auto.`
+            `${toolCommand("grok embed")} cannot run through the ai-proxy (proxy:${request.target}). Name a grok account or auto.`
         );
         process.exitCode = 2;
         return;
