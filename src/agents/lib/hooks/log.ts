@@ -293,6 +293,60 @@ export function firedLogPath(logPath: string): string {
     return logPath.replace(/(\.jsonl)?$/, "-fired.jsonl");
 }
 
+export interface DecisionLogRead {
+    records: Record<string, unknown>[];
+    /** Torn or partial lines: concurrent hook processes append to the file, so one is a realistic state. */
+    skipped: number;
+}
+
+/**
+ * Every record of a hooks log, oldest first: the generation a rotation moved to `<path>.1`, then `<path>`, so the
+ * newest records a reader asks for are still there right after a rotation. A generation that does not exist (ENOENT)
+ * is empty; with `missingOk: false` the read still throws when neither exists. Any other error throws, so a folder or
+ * file that refuses the read is never reported as an empty log.
+ */
+export function readDecisionLog(path: string, { missingOk }: { missingOk: boolean }): DecisionLogRead {
+    const records: Record<string, unknown>[] = [];
+    let skipped = 0;
+    let missing: unknown = null;
+    let found = 0;
+
+    for (const file of [`${path}.1`, path]) {
+        let text: string;
+
+        try {
+            text = readFileSync(file, "utf8");
+        } catch (err) {
+            if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
+                throw err;
+            }
+
+            missing = err;
+            continue;
+        }
+
+        found += 1;
+
+        for (const line of text.split("\n")) {
+            if (line.length === 0) {
+                continue;
+            }
+
+            try {
+                records.push(SafeJSON.parse(line, { strict: true }) as Record<string, unknown>);
+            } catch {
+                skipped += 1;
+            }
+        }
+    }
+
+    if (found === 0 && !missingOk) {
+        throw missing;
+    }
+
+    return { records, skipped };
+}
+
 /** One line per hook run. A log failure must never break the tool call. */
 export function logDecision(record: DecisionRecord, logPath: string): void {
     append(logPath, record);

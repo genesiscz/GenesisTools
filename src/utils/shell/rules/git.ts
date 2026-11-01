@@ -1,7 +1,7 @@
 // git shapes that destroy work or someone else's commits.
 
-import { existsSync, lstatSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
     commandTokenIndex,
     commandWord,
@@ -353,7 +353,9 @@ function restoreSource(args: string[]): [ref: string, at: number] | undefined {
 
 function restoreRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
     const args = inv.tokens.slice(inv.sub + 1).map((t) => t.text);
-    const flags = args.filter((a) => a.startsWith("-"));
+    const dashAt = args.indexOf("--");
+    // A word after `--` is a file: `git restore -- -m` discards the changes to a file named -m.
+    const flags = (dashAt === -1 ? args : args.slice(0, dashAt)).filter((a) => a.startsWith("-"));
     const has = (long: string, letter: string) => flags.some((f) => f === long || shortLetters(f).includes(letter));
     const staged = has("--staged", "S");
 
@@ -368,7 +370,6 @@ function restoreRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
     // only part of what the user meant to revert. Without `--` a quoted path cannot be
     // placed at all, so there is no suggestion rather than a partial one.
     const [ref, refAt] = restoreSource(args) ?? [undefined, -1];
-    const dashAt = args.indexOf("--");
     const dashToken = dashAt === -1 ? undefined : inv.tokens[inv.sub + 1 + dashAt];
     const subToken = inv.tokens[inv.sub];
     const unquotedPaths = () =>
@@ -463,7 +464,13 @@ function cdTarget(scan: ShellScan, statement: Span): string | null {
 // `git worktree add … <dir>; … cd <dir> … <revert>`: the statement of the add, or -1. A new worktree holds no
 // uncommitted work. A `;` in the chain lets the revert run in an old folder when the add failed. A `||` skips the cd
 // on success or runs the revert only after a failure, and a subshell or group ends its own cd: no fresh worktree.
+// The revert itself must write the folder the shell is in: a `-C`, `--git-dir`, `--work-tree`, an assignment or a
+// wrapper in front of git points it at another tree.
 function freshWorktreeAdd(scan: ShellScan, inv: GitInvocation): number {
+    if (gitPlace(scan, inv) !== "") {
+        return -1;
+    }
+
     for (let w = inv.statement - 1; w >= 0; w--) {
         const dir = worktreeAddDir(scan, inv.unit[w]);
 
@@ -573,15 +580,86 @@ function onlyCreates(scan: ShellScan, revert: Revert): boolean {
     // lstat: a dangling symlink is a file the checkout replaces.
     return (
         folder !== null &&
-        paths.every((path) => lstatSync(resolve(folder, path), { throwIfNoEntry: false }) === undefined)
+        paths.every((path) => lstatSync(resolve(folder, path), { throwIfNoEntry: false }) === undefined) &&
+        !(revert.resetsIndex && indexMayHold(folder, paths))
     );
 }
 
-// `test -z "$(git status --porcelain --untracked-files=all -- <paths>)" && `: the status is empty only when no path is
-// untracked, modified or staged, so a checkout behind it overwrites nothing that is not committed.
-// `--untracked-files=all` overrides a `status.showUntrackedFiles=no` that hides an untracked file from the status.
+// Whether the index of the repository git finds from `folder` may hold one of `paths`. A checkout from a ref also
+// resets each path's index entry, and an entry staged and then deleted from the working tree exists nowhere else.
+// No repository means git refuses the checkout. The index is searched as bytes: versions 2 and 3 spell each entry's
+// whole path with a NUL after it, and a sparse index a folder's path with a `/`. A version 4 index shortens paths and
+// a split index keeps them in a shared file, so those, an unreadable index and a `.git` file that names no git dir
+// may hold every path. Case is ignored, as a case-insensitive volume does.
+function indexMayHold(folder: string, paths: string[]): boolean {
+    try {
+        const real = realpathSync(folder);
+        let top = real;
+
+        while (!existsSync(join(top, ".git"))) {
+            if (dirname(top) === top) {
+                return false;
+            }
+
+            top = dirname(top);
+        }
+
+        const dotGit = join(top, ".git");
+        const pointer = statSync(dotGit).isDirectory()
+            ? dotGit
+            : /^gitdir: (.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+
+        if (!pointer) {
+            return true;
+        }
+
+        const gitDir = resolve(top, pointer);
+        let index: Buffer;
+
+        try {
+            index = readFileSync(join(gitDir, "index"));
+        } catch (err) {
+            // A repository with nothing staged yet has no index.
+            return !(err instanceof Error && "code" in err && err.code === "ENOENT");
+        }
+
+        if (
+            index.toString("latin1", 0, 4) !== "DIRC" ||
+            ![2, 3].includes(index.readUInt32BE(4)) ||
+            readdirSync(gitDir).some((name) => name.startsWith("sharedindex."))
+        ) {
+            return true;
+        }
+
+        const entries = index.toString("latin1").toLowerCase();
+
+        return paths.some((path) => {
+            const name = relative(top, resolve(real, path)).split(sep).join("/").toLowerCase();
+            const folders = name.split("/").slice(0, -1);
+
+            return (
+                name === "" ||
+                name === ".." ||
+                name.startsWith("../") ||
+                isAbsolute(name) ||
+                /[^\x20-\x7e]/.test(name) ||
+                entries.includes(`${name}\0`) ||
+                folders.some((_, k) => entries.includes(`${folders.slice(0, k + 1).join("/")}/\0`))
+            );
+        });
+    } catch {
+        return true;
+    }
+}
+
+// `test -z "$(git status --porcelain --untracked-files=all --ignored -- <paths> || echo status-failed)" && `: the
+// status is empty only when no path is untracked, ignored, modified or staged, so a checkout behind it overwrites
+// nothing that is not committed. `--untracked-files=all` overrides a `status.showUntrackedFiles=no` that hides an
+// untracked file, and `--ignored` lists an ignored file the ref tracks. A status that fails prints its error on
+// stderr and nothing on stdout, so the `|| echo` fills the test and the checkout does not run.
 function cleanGate(gitPart: string, paths: string[]): string {
-    return `test -z "$(${gitPart}status --porcelain --untracked-files=all -- ${paths.join(" ")})" && `;
+    const status = `${gitPart}status --porcelain --untracked-files=all --ignored -- ${paths.join(" ")}`;
+    return `test -z "$(${status} || echo status-failed)" && `;
 }
 
 // The statement right before the checkout is that gate on the same paths, and only `&&` lets the checkout run.
@@ -941,9 +1019,10 @@ export const gitCheckoutOverwritesFile: ShellRule = {
         "whatever was there. Nothing records the old content, so a fix you just wrote is gone. " +
         "`git stash push -- <files>` gets the same clean tree and keeps the change recoverable. Only " +
         "`git restore --staged` (index only) is safe. A checkout, restore --source or show from another ref passes " +
-        'behind `test -z "$(git status --porcelain --untracked-files=all -- <files>)" &&`, which fails on any ' +
-        "untracked, modified or staged file; --ours, --theirs, -m, --merge and --conflict re-create a conflict. " +
-        "When the folder is known and no path exists yet, the command only creates files and passes.",
+        'behind `test -z "$(git status --porcelain --untracked-files=all --ignored -- <files> || echo status-failed)" ' +
+        "&&`, which fails on any untracked, ignored, modified or staged file and when the status itself fails; " +
+        "--ours, --theirs, -m, --merge and --conflict re-create a conflict. When the folder is known and no path exists " +
+        "yet (for a checkout from a ref, in the index either), the command only creates files and passes.",
     wrong: "git checkout -- src/utils/ai/grok/models.ts",
     right: 'git stash push -m "models.ts before revert" -- src/utils/ai/grok/models.ts',
     evidence:

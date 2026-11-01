@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 
 import { scanShell } from "../scan";
@@ -350,6 +351,24 @@ describe("stderr-discarded-then-counted-covered: the block stays", () => {
 
     it("when the match is not at a / boundary", () => {
         expect(tags("ls ~/ab 2>&1 | head; ls ~/a 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+    });
+
+    it("when the producer's flag, primary or value can fail, which a sibling listing never shows", () => {
+        expect(tags("ls src; find src -not-a-primary 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tags("ls src; find src -newer stamp 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tags("ls src; ls --colr src 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tags("ls src; find src -type f 2>/dev/null | wc -l")).toEqual([`${COVERED}:context`]);
+    });
+
+    it("when a relative path is read in another folder than the sibling's, or one the guard cannot place", () => {
+        expect(tags("ls src; cd other; find src -type f 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tagsIn("/repo", "ls src; cd other; find src -type f 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tagsIn("/repo", "ls src; cd $D; find src -type f 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        // The same folder after the cd, and an absolute path from any folder, still cover.
+        expect(tagsIn("/repo", "cd other; ls src; find src -type f 2>/dev/null | wc -l")).toEqual([
+            `${COVERED}:context`,
+        ]);
+        expect(tags("ls /x; cd other; find /x -type f 2>/dev/null | wc -l")).toEqual([`${COVERED}:context`]);
     });
 
     it(". / ~ and $HOME match only themselves, never as a parent", () => {
@@ -838,6 +857,31 @@ describe("stderr-discarded-then-counted-scratch: a literal path under /tmp", () 
         }
 
         expect(tagsIn("/tmp/x", "ls out 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+    });
+
+    it("the block stays for /tmp itself, a link out of /tmp and a folder that refuses the listing", () => {
+        const dir = mkdtempSync("/tmp/devnull-scratch-");
+        mkdirSync(`${dir}/open`);
+        mkdirSync(`${dir}/closed`);
+        symlinkSync("/usr", `${dir}/link`);
+
+        try {
+            // /tmp holds other users' folders, and the link reads a tree outside it.
+            expect(tags("find /tmp/ -name x 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+            expect(tags(`ls ${dir}/link 2>/dev/null | wc -l`)).toEqual([`${COUNT}:block`]);
+            // A readable folder and a missing path keep the note.
+            expect(tags(`ls ${dir}/open 2>/dev/null | wc -l`)).toEqual([`${SCRATCH}:context`]);
+            expect(tags(`ls ${dir}/missing 2>/dev/null | wc -l`)).toEqual([`${SCRATCH}:context`]);
+
+            // Root lists a folder whatever its mode, so the refusal needs another user.
+            if (process.getuid?.() !== 0) {
+                chmodSync(`${dir}/closed`, 0o000);
+                expect(tags(`ls ${dir}/closed 2>/dev/null | wc -l`)).toEqual([`${COUNT}:block`]);
+            }
+        } finally {
+            chmodSync(`${dir}/closed`, 0o700);
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     it("an unknown ls, du or stat flag also prints 0, so the block stays", () => {
@@ -1547,10 +1591,10 @@ describe("corpus fixtures that must fire", () => {
             [`${COVERED}:context`],
         ],
         [
-            "cat /tmp/tasks/x.output 2>/dev/null; echo \"--- copy progress ---\"; find /Users/Martin/.claude.bkp -type f 2>/dev/null | wc -l | tr -d ' '",
+            "cat /tmp/tasks/x.output 2>/dev/null; echo \"--- copy progress ---\"; find /Users/alice/.claude.bkp -type f 2>/dev/null | wc -l | tr -d ' '",
             [`${COUNT}:block`],
         ],
-        ['echo "files: $(find /Users/Martin/.claude.test.clone -type f 2>/dev/null | wc -l)"', [`${COUNT}:block`]],
+        ['echo "files: $(find /Users/alice/.claude.test.clone -type f 2>/dev/null | wc -l)"', [`${COUNT}:block`]],
         [
             "ls database/seeders/E2e/*.php 2>/dev/null | wc -l | tr -d ' '; echo \"tracked E2e count:\"; git ls-files database/seeders/E2e/ | wc -l | tr -d ' '",
             [`${COUNT}:block`],
@@ -1562,7 +1606,7 @@ describe("corpus fixtures that must fire", () => {
         ],
         [
             // The first find lists the same folder with 2>&1, so a refused listing prints there.
-            "echo \"=== all .har in Downloads ===\"; find /Users/Martin/Downloads -maxdepth 1 -iname '*.har' 2>&1 | head -20; echo \"=== count ===\"; find /Users/Martin/Downloads -maxdepth 1 -iname '*.har' 2>/dev/null | wc -l",
+            "echo \"=== all .har in Downloads ===\"; find /Users/alice/Downloads -maxdepth 1 -iname '*.har' 2>&1 | head -20; echo \"=== count ===\"; find /Users/alice/Downloads -maxdepth 1 -iname '*.har' 2>/dev/null | wc -l",
             [`${COVERED}:context`],
         ],
         [

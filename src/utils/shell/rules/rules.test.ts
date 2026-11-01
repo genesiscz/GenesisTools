@@ -417,6 +417,15 @@ describe("biome-unsafe-deletes-comments", () => {
         ).toEqual(["bunx biome check --write --only=style/useBlockStatements --only=correctness/noUnusedImports a.ts"]);
     });
 
+    it("edits a call once when a double-quoted -c body shows its $(…) a second time", () => {
+        expect(fired('bash -c "x=$(bunx biome lint --only=correctness/noUnusedImports --write --unsafe src)"')).toEqual(
+            ['bash -c "x=$(bunx biome lint --only=correctness/noUnusedImports --write src)"']
+        );
+        expect(fired('bash -c "x=$(bunx biome check --write --unsafe src)"')).toEqual([
+            `bash -c "x=$(bunx biome check --write --unsafe ${SKIP} src)"`,
+        ]);
+    });
+
     it.each(["correctness", "lint/correctness", "lint"])(
         "blocks --only=%s, a group that holds noUnusedImports",
         (group) => {
