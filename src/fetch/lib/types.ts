@@ -33,7 +33,7 @@ export interface TransportResponse {
 export interface HttpTransport {
     readonly name: TransportName;
     send(request: TransportRequest): Promise<TransportResponse>;
-    /** Releases what the transport holds (the chrome sidecar). It may be used again afterwards. */
+    /** Releases what the transport holds (the chrome worker). It may be used again afterwards. */
     close(): Promise<void>;
 }
 

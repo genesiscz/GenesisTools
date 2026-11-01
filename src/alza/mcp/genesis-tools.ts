@@ -45,7 +45,7 @@ export function alzaToolEntries(): Record<string, ToolEntry> {
     );
 }
 
-/** Ends the account context and its Chrome sidecar; the server calls it when its stdin ends. */
+/** Ends the account context and its Chrome worker; the server calls it when its stdin ends. */
 export async function closeAlzaTools(): Promise<void> {
     await toolset?.close();
 }

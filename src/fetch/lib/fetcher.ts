@@ -68,7 +68,7 @@ export interface GetOptions {
 }
 
 export interface FetcherOptions {
-    /** Ends the idle chrome sidecar after this many ms. Leave unset in a CLI run, which calls close() itself. */
+    /** Ends the idle chrome worker after this many ms. Leave unset in a CLI run, which calls close() itself. */
     idleCloseMs?: number;
     /** Ready transports used instead of creating them from TRANSPORTS (tests pass in-process fakes). */
     transports?: Partial<Record<TransportName, HttpTransport>>;
@@ -91,7 +91,7 @@ function redirectTarget(response: TransportResponse, from: URL): URL | null {
 
 /**
  * The one fetch path behind `tools fetch`, its MCP server and the genesis-tools `fetch_*` group. It owns the
- * transports it creates (the chrome one holds a Python sidecar), so every owner calls close() when done.
+ * transports it creates (the chrome one holds a curl worker thread), so every owner calls close() when done.
  */
 export class Fetcher {
     private readonly transports = new Map<TransportName, HttpTransport>();

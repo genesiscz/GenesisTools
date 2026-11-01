@@ -14,7 +14,7 @@ const transport = z
     .enum(TRANSPORT_CHOICES)
     .optional()
     .describe(
-        "plain = Bun fetch; chrome = a real Chrome TLS/HTTP2 fingerprint (curl_cffi, passes Cloudflare bot walls); " +
+        "plain = Bun fetch; chrome = a real Chrome TLS/HTTP2 fingerprint (libcurl-impersonate, passes Cloudflare bot walls); " +
             "auto (default) = plain, then chrome once on 403/429/503 or a recognised challenge page"
     );
 const headers = z
