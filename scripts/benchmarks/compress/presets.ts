@@ -133,8 +133,10 @@ async function samples(): Promise<Record<string, Buffer>> {
     return {
         "text (repo .ts)": concatFiles(join(REPO, "src"), /\.ts$/, SAMPLE),
         "jsonl (day log)": newestDayLogSample(),
-        "tree (src/utils tar)": Buffer.from(await sampleFolder(join(REPO, "src", "utils"), SAMPLE)),
-        "tree (typescript tar)": Buffer.from(await sampleFolder(join(REPO, "node_modules", "typescript"), SAMPLE)),
+        "tree (src/utils tar)": Buffer.from(await sampleFolder(join(REPO, "src", "utils"), { bytes: SAMPLE })),
+        "tree (typescript tar)": Buffer.from(
+            await sampleFolder(join(REPO, "node_modules", "typescript"), { bytes: SAMPLE })
+        ),
         "binary (biome)": existsSync(biome) ? readFileSync(biome).subarray(0, SAMPLE) : Buffer.alloc(0),
         "database (sqlite)": sqliteFixture(),
         "media (random)": Buffer.from(crypto.getRandomValues(new Uint8Array(16 * MiB))),

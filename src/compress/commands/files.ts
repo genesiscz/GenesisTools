@@ -1,4 +1,4 @@
-import { createWriteStream } from "node:fs";
+import { createWriteStream, readFileSync } from "node:fs";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
@@ -25,8 +25,16 @@ interface PackOptions {
     removeOriginal?: boolean;
     force?: boolean;
     output?: string;
+    filesFrom?: string;
     dryRun?: boolean;
     json?: boolean;
+}
+
+/** A `--files-from` list: one path per line, taken as it is (a path may hold spaces); empty lines are skipped. */
+function readFileList(path: string): string[] {
+    return readFileSync(path, "utf8")
+        .split(/\r?\n/)
+        .filter((line) => line !== "");
 }
 
 function percent(share: number): string {
@@ -63,6 +71,14 @@ async function runPack(paths: string[], options: PackOptions): Promise<void> {
         return;
     }
 
+    if (options.filesFrom && paths.length > 1) {
+        out.error("--files-from takes one folder only: the folder the listed paths are relative to.");
+        process.exitCode = 1;
+        return;
+    }
+
+    const files = options.filesFrom ? readFileList(options.filesFrom) : undefined;
+
     const level = options.level ? Number(options.level) : undefined;
     const minSaving = options.minSaving !== undefined ? Number(options.minSaving) / 100 : undefined;
     const results: unknown[] = [];
@@ -75,6 +91,7 @@ async function runPack(paths: string[], options: PackOptions): Promise<void> {
             level,
             minSaving,
             force: options.force,
+            files,
         };
 
         try {
@@ -90,6 +107,10 @@ async function runPack(paths: string[], options: PackOptions): Promise<void> {
                         `${plan.preset.name} (level ${plan.level}${plan.preset.long ? ", long" : ""}; ${plan.reason})`,
                         12
                     );
+                    if (plan.files) {
+                        renderCliKeyRow("files", `${plan.files.length} listed in ${options.filesFrom}`, 12);
+                    }
+
                     renderCliKeyRow("trial", `saves ${percent(plan.trialSaving)} on a sample`, 12);
                     renderCliKeyRow(
                         "estimate",
@@ -119,7 +140,7 @@ async function runPack(paths: string[], options: PackOptions): Promise<void> {
 
             if (!options.json) {
                 out.log.success(
-                    `${record.source} → ${record.target}: ${formatBytes(record.sourceBytes)} → ${formatBytes(record.targetBytes)} (x${record.ratio.toFixed(1)}, ${record.preset} level ${record.level}), verified${record.removedOriginal ? ", original removed" : ", original kept"}`
+                    `${record.source}${record.files ? ` (${record.files} listed files)` : ""} → ${record.target}: ${formatBytes(record.sourceBytes)} → ${formatBytes(record.targetBytes)} (x${record.ratio.toFixed(1)}, ${record.preset} level ${record.level}), verified${record.removedOriginal ? ", original removed" : ", original kept"}`
                 );
 
                 if (warning) {
@@ -181,9 +202,16 @@ async function runUnpack(
     }
 }
 
-function runVerify(archive: string, options: { against?: string; json?: boolean }): void {
+function runVerify(archive: string, options: { against?: string; filesFrom?: string; json?: boolean }): void {
+    if (options.filesFrom && !options.against) {
+        out.error("--files-from needs --against <folder>: the folder the listed paths are relative to.");
+        process.exitCode = 1;
+        return;
+    }
+
     try {
-        const result = verifyPath({ archive, against: options.against });
+        const files = options.filesFrom ? readFileList(options.filesFrom) : undefined;
+        const result = verifyPath({ archive, against: options.against, files });
 
         if (!result.ok) {
             process.exitCode = 1;
@@ -250,6 +278,10 @@ export function registerFileCommands(program: Command): void {
         .option("-l, --level <n>", "zstd level, overriding the preset's")
         .option("--min-saving <percent>", "skip when a trial on a sample saves less (default 30)")
         .option("--remove-original", "remove the original after the output is verified (default: keep it)")
+        .option(
+            "--files-from <list>",
+            "pack only the files a list names (one path per line, relative to the one folder given); --remove-original removes only them"
+        )
         .option("--force", "compress even when the trial saves too little")
         .option("-o, --output <path>", "output path (one input only)")
         .option("--dry-run", "show the preset, the trial saving and the estimate; write nothing")
@@ -272,6 +304,7 @@ export function registerFileCommands(program: Command): void {
         )
         .argument("<archive>", ".zst file")
         .option("--against <path>", "the original file or folder to compare with")
+        .option("--files-from <list>", "with --against <folder>: compare only the files the list names (a list pack)")
         .option("--json", "machine-readable result")
         .action(runVerify);
 
