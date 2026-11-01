@@ -123,6 +123,53 @@ describe("exit-code-after-pipeline: blocks when the last element's status is mea
     });
 });
 
+describe("exit-code-after-pipeline: the pipefail correction", () => {
+    it("wraps the pipeline as typed and never makes the producer run to EOF, so the correction always ends", () => {
+        for (const command of [
+            'seq 1 1000000 | head -1; echo "exit=$?"',
+            "yes | head -1; echo $?",
+            "tail -f x.log | head -5; echo $?",
+        ]) {
+            const v = violation(command, PIPE);
+
+            expect(v?.suggestion).toBe(`(set -o pipefail; ${v?.matched})${command.slice((v?.matched ?? "").length)}`);
+        }
+    });
+
+    it("closes the wrapper before a trailing comment, which would swallow it", () => {
+        expect(violation('cmd | head -5  # top\necho "rc=$?"', PIPE)?.suggestion).toBe(
+            '(set -o pipefail; cmd | head -5)  # top\necho "rc=$?"'
+        );
+        expect(violation("cmd 2>&1 | tail -3 # last lines\necho $?", PIPE)?.suggestion).toBe(
+            "(set -o pipefail; cmd 2>&1 | tail -3) # last lines\necho $?"
+        );
+        // A `#` inside a quoted argument is not a comment.
+        expect(violation('cmd | tail -n 5 "a #b"; echo $?', PIPE)?.suggestion).toBe(
+            '(set -o pipefail; cmd | tail -n 5 "a #b"); echo $?'
+        );
+    });
+
+    it("the corrected command fires nothing", () => {
+        for (const command of [
+            'seq 1 1000000 | head -1; echo "exit=$?"',
+            "git log | head -100 | tail -5; echo $?",
+            'cd wt && grep -rn x . | head -30; echo "exit $?"',
+        ]) {
+            const suggestion = violation(command, PIPE)?.suggestion;
+
+            expect(suggestion).toBeDefined();
+            expect(tags(suggestion as string)).toEqual([]);
+        }
+    });
+
+    it("the message explains 141 after head under pipefail", () => {
+        const text = renderViolation(violation("cmd | head -3; echo $?", PIPE) as ShellViolation);
+
+        expect(text).toContain("not after head");
+        expect(text).toContain("141 (SIGPIPE)");
+    });
+});
+
 describe("exit-code-after-pipeline: the many ways $? gets consumed", () => {
     it("echo with text around it", () => {
         expect(blocks('cmd | tail; echo "--- exit $? ---"')).toEqual([PIPE]);
@@ -212,6 +259,180 @@ describe("exit-code-after-grep: context when the last element's status might be 
     });
 });
 
+describe("exit-code-after-grep: the corrected command reads the left status from $pipestatus", () => {
+    it("inserts left_exit right after the first $?, inside the same quotes", () => {
+        const command = 'tools mcp-manager list --json 2>/dev/null | rg -i alza; echo "exit-rg=$?"';
+
+        expect(violation(command, GREP)?.suggestion).toBe(
+            'tools mcp-manager list --json 2>/dev/null | rg -i alza; echo "exit-rg=$? left_exit=${pipestatus[1]}"'
+        );
+    });
+
+    it("unquoted echo, printf with $? in its format, and the ${?} spelling", () => {
+        expect(violation("cmd | grep x; echo $?", GREP)?.suggestion).toBe(
+            "cmd | grep x; echo $? left_exit=${pipestatus[1]}"
+        );
+        expect(violation('cmd | rg x; printf "rc=$?\\n"', GREP)?.suggestion).toBe(
+            'cmd | rg x; printf "rc=$? left_exit=${pipestatus[1]}\\n"'
+        );
+        expect(violation('cmd | jq .a; echo "status=${?}"', GREP)?.suggestion).toBe(
+            'cmd | jq .a; echo "status=${?} left_exit=${pipestatus[1]}"'
+        );
+    });
+
+    it("offers none when printf takes $? as a separate argument, since printf reuses its format for it", () => {
+        expect(violation('seq 3 | grep 9; printf "rc=%d\\n" $?', GREP)?.suggestion).toBeUndefined();
+        expect(violation("cmd | rg x; printf 'rc=%s\\n' $?", GREP)?.suggestion).toBeUndefined();
+        expect(violation('cmd | rg x; printf -v out "%s" "$?"', GREP)?.suggestion).toBeUndefined();
+    });
+
+    it("offers none when $? sits inside $(( )), where the text would break the arithmetic", () => {
+        expect(violation("seq 3 | grep 9; echo $(( $? + 0 ))", GREP)?.suggestion).toBeUndefined();
+        expect(violation('seq 3 | grep 9; echo "n=$(( $? * 2 ))"', GREP)?.suggestion).toBeUndefined();
+        expect(violation('seq 3 | grep 9; echo "$(( 1 + 1 )) rc=$?"', GREP)?.suggestion).toBe(
+            'seq 3 | grep 9; echo "$(( 1 + 1 )) rc=$? left_exit=${pipestatus[1]}"'
+        );
+    });
+
+    it("spells the left status for the shell that runs the consumer", () => {
+        const bash = violation("bash -c 'seq 3 | grep 9; echo \"rc=$?\"'", GREP);
+        const sh = violation("sh -c 'seq 3 | grep 9; rc=$?; echo $rc'", GREP);
+
+        expect(bash?.suggestion).toBe("bash -c 'seq 3 | grep 9; echo \"rc=$? left_exit=${PIPESTATUS[0]}\"'");
+        expect(sh?.suggestion).toBe("sh -c 'seq 3 | grep 9; rc=$? left_rc=${PIPESTATUS[0]}; echo $rc'");
+        expect(violation("/bin/bash -c 'cmd | rg x; echo $?'", GREP)?.suggestion).toBe(
+            "/bin/bash -c 'cmd | rg x; echo $? left_exit=${PIPESTATUS[0]}'"
+        );
+        expect(violation("zsh -c 'cmd | grep x; echo \"rc=$?\"'", GREP)?.suggestion).toBe(
+            "zsh -c 'cmd | grep x; echo \"rc=$? left_exit=${pipestatus[1]}\"'"
+        );
+        expect(violation("bash <<'E'\ncmd | grep x\necho \"rc=$?\"\nE", GREP)?.suggestion).toBe(
+            "bash <<'E'\ncmd | grep x\necho \"rc=$? left_exit=${PIPESTATUS[0]}\"\nE"
+        );
+        // A backtick body runs in the shell around it.
+        expect(violation("bash -c 'x=`cmd | grep y; echo $?`'", GREP)?.suggestion).toBe(
+            "bash -c 'x=`cmd | grep y; echo $? left_exit=${PIPESTATUS[0]}`'"
+        );
+    });
+
+    it("offers none where no shell spelling fits: dash, ksh93, or a body the outer shell expands first", () => {
+        for (const command of [
+            "dash -c 'cmd | grep x; echo \"rc=$?\"'",
+            "ksh -c 'cmd | grep x; echo \"rc=$?\"'",
+            'zsh -c "cmd | grep x; echo rc=$?"',
+            'bash <<E\ncmd | grep x\necho "rc=$?"\nE',
+        ]) {
+            const v = violation(command, GREP);
+
+            expect(v?.severity).toBe("context");
+            expect(v?.suggestion).toBeUndefined();
+        }
+    });
+
+    it("inserts after the first live $? only", () => {
+        expect(violation('cmd | grep x; echo "a=$? b=$?"', GREP)?.suggestion).toBe(
+            'cmd | grep x; echo "a=$? left_exit=${pipestatus[1]} b=$?"'
+        );
+        expect(violation("cmd | grep x; echo '$?' \"rc=$?\"", GREP)?.suggestion).toBe(
+            "cmd | grep x; echo '$?' \"rc=$? left_exit=${pipestatus[1]}\""
+        );
+    });
+
+    it("appends left_NAME after an assignment NAME=$?", () => {
+        expect(violation("cmd | grep x; rc=$?; echo $rc", GREP)?.suggestion).toBe(
+            "cmd | grep x; rc=$? left_rc=${pipestatus[1]}; echo $rc"
+        );
+        expect(violation('cmd | sed s/a/b/; code="$?"', GREP)?.suggestion).toBe(
+            'cmd | sed s/a/b/; code="$?" left_code=${pipestatus[1]}'
+        );
+    });
+
+    it("offers no corrected command for any other consumer, and never the pipefail wrapper", () => {
+        const test = violation("cmd | grep x; [ $? -eq 0 ] && echo ok", GREP);
+
+        expect(test?.severity).toBe("context");
+        expect(test?.suggestion).toBeUndefined();
+        expect(violation("cmd | rg x; exit $?", GREP)?.suggestion).toBeUndefined();
+        expect(violation("cmd | rg x; rc=$? other=1", GREP)?.suggestion).toBeUndefined();
+
+        for (const command of ["cmd | grep x; echo $?", "cmd | awk '{print}'; rc=$?", "cmd | rg x; exit $?"]) {
+            expect(violation(command, GREP)?.suggestion ?? "").not.toContain("pipefail");
+        }
+    });
+
+    it("the corrected command fires nothing", () => {
+        for (const command of [
+            "cmd | grep x; echo $?",
+            'bun test 2>&1 | rg "fail"; echo "tests exit=$?"',
+            "cmd | grep x; rc=$?; echo $rc",
+            "bash -c 'seq 3 | grep 9; echo \"rc=$?\"'",
+            "sh -c 'seq 3 | grep 9; rc=$?; echo $rc'",
+            "/bin/bash -c 'cmd | rg x; echo $?'",
+            "bash <<'E'\ncmd | grep x\necho \"rc=$?\"\nE",
+        ]) {
+            const suggestion = violation(command, GREP)?.suggestion;
+
+            expect(suggestion).toBeDefined();
+            expect(tags(suggestion as string)).toEqual([]);
+        }
+    });
+});
+
+describe("exit-code-after-grep: a deliberate match test is silent", () => {
+    it("the label names the filter or a match, and every left element keeps stderr on screen", () => {
+        expect(tags('git worktree list | grep feature-x; echo "grep_exit=$?"')).toEqual([]);
+        expect(tags('cmd | rg -c x; echo "count-rc=$?"')).toEqual([]);
+        expect(tags('cmd | rg x; echo "match-exit=$?"')).toEqual([]);
+        expect(tags('git ls-tree -r origin/x | rg -i template; echo "template search exit=$?"')).toEqual([]);
+        expect(tags('curl -fsSL https://example.com | rg x; echo "match=$?"')).toEqual([]);
+    });
+
+    it("still fires when the label names no filter or match, or names the left command", () => {
+        expect(tags('bun test 2>&1 | rg fail; echo "tests exit=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('ls node_modules | rg -i alza; echo "node_modules exit=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags("cmd | grep x; echo $?")).toEqual([`${GREP}:context`]);
+        expect(tags('cmd | grep x; echo "$? = grep exit"')).toEqual([`${GREP}:context`]);
+    });
+
+    it("still fires when the label names a filter that runs on the left, not the last element", () => {
+        expect(tags('jq .a in.json | grep x; echo "jq_exit=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('sed -n 1,5p f.txt | grep x; echo "sed_exit=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('git grep foo | rg bar; echo "git-grep exit=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags("awk '{print $1}' f.txt | rg x; echo \"awk rc=$?\"")).toEqual([`${GREP}:context`]);
+        expect(tags('jq . f.json | grep x; echo "jq count=$?"')).toEqual([`${GREP}:context`]);
+    });
+
+    it("stays silent when the label names the last filter or a match, whatever runs on the left", () => {
+        expect(tags('jq .a in.json | grep x; echo "grep_exit=$?"')).toEqual([]);
+        expect(tags('grep -r foo src | grep -v test; echo "grep_exit=$?"')).toEqual([]);
+        expect(tags('sed -n 1,5p f.txt | rg x; echo "match=$?"')).toEqual([]);
+    });
+
+    it("still fires when a left element discards or merges stderr", () => {
+        expect(tags('tools x list 2>/dev/null | rg -i alza; echo "exit-rg=$?"')).toEqual([
+            `${GREP}:context`,
+            "stderr-discarded-then-read:context",
+        ]);
+        expect(tags('cmd 2>&1 | grep x; echo "grep=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('cmd |& grep x; echo "grep=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('cmd &>/tmp/x | grep x; echo "grep=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('cmd 2>/tmp/e | sort | grep x; echo "grep=$?"')).toEqual([`${GREP}:context`]);
+    });
+
+    it("still fires when a left curl fails silently", () => {
+        expect(tags('curl -s https://example.com | rg x; echo "match=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('curl --silent -L https://example.com | rg x; echo "match=$?"')).toEqual([`${GREP}:context`]);
+        expect(tags('curl -sL https://example.com | rg x; echo "match=$?"')).toEqual([`${GREP}:context`]);
+    });
+
+    it("a deliberate test does not hide a later misread in the same command", () => {
+        const command = 'git worktree list | grep feat; echo "grep_exit=$?"; cmd 2>&1 | rg fail; echo "tests exit=$?"';
+
+        expect(tags(command)).toEqual([`${GREP}:context`]);
+        expect(violation(command, GREP)?.matched).toBe("cmd 2>&1 | rg fail");
+    });
+});
+
 describe("exit-code-after-pipeline: does not fire", () => {
     it("when the last element is a shell or a real program", () => {
         expect(tags("cmd | bash; echo $?")).toEqual([]);
@@ -240,7 +461,7 @@ describe("exit-code-after-pipeline: does not fire", () => {
         expect(tags('cmd | tail; echo "rc=${PIPESTATUS[0]} tail=$?"')).toEqual([`${ZSH}:block`]);
     });
 
-    it("when pipefail is set anywhere in the command", () => {
+    it("when pipefail is set earlier in the same shell", () => {
         expect(tags("set -o pipefail; cmd | tail; echo $?")).toEqual([]);
         expect(tags("set -eo pipefail\ncmd | tail\necho $?")).toEqual([]);
         expect(tags("setopt pipefail; cmd | tail; echo $?")).toEqual([]);
@@ -308,6 +529,103 @@ console.log(out);
 '; echo $?`;
 
         expect(tags(command)).toEqual([]);
+    });
+});
+
+describe("pipefail is decided for each pipeline, in the shell and scope that runs it", () => {
+    it("a -c body that turns pipefail on before its pipeline is silent", () => {
+        expect(tags("zsh -c 'set -o pipefail; false | tail -1; echo \"rc=$?\"'")).toEqual([]);
+        expect(tags("bash -c 'set -o pipefail; false | tail -1; echo \"rc=$?\"'")).toEqual([]);
+        expect(tags("zsh -c 'set -o pipefail; cmd | grep x; echo $?'")).toEqual([]);
+    });
+
+    it("a -c body does not inherit the outer pipefail: it is a new shell", () => {
+        expect(blocks("set -o pipefail; zsh -c 'cmd | tail; echo $?'")).toEqual([PIPE]);
+    });
+
+    it("a shell started with its own pipefail option runs its -c body under it", () => {
+        for (const command of [
+            "bash -o pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "bash -eo pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "zsh -o pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "zsh -o PIPE_FAIL -c 'false | tail -1; echo \"rc=$?\"'",
+            "zsh --pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "zsh --pipe-fail -c 'false | tail -1; echo \"rc=$?\"'",
+            "env X=1 bash -o errexit -o pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "bash -o pipefail -c 'cmd | grep x; echo $?'",
+        ]) {
+            expect(tags(command)).toEqual([]);
+        }
+    });
+
+    it("a shell started with pipefail turned off, or with another option, does not", () => {
+        for (const command of [
+            "bash +o pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "zsh --no-pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "bash -o pipefail +o pipefail -c 'false | tail -1; echo \"rc=$?\"'",
+            "bash -o errexit -c 'false | tail -1; echo \"rc=$?\"'",
+        ]) {
+            expect(blocks(command)).toEqual([PIPE]);
+        }
+    });
+
+    it("a heredoc fed to a shell is a new shell: pipefail neither leaks out of it nor into it", () => {
+        const leaksOut = "bash <<'E'\nset -o pipefail\ntrue | tail -1\nE\nfalse | tail -1; echo \"rc=$?\"";
+
+        expect(blocks(leaksOut)).toEqual([PIPE]);
+        expect(violation(leaksOut, PIPE)?.matched).toBe("false | tail -1");
+        expect(blocks("set -o pipefail\nbash <<'E'\ncmd | tail\necho $?\nE")).toEqual([PIPE]);
+        expect(tags("bash <<'E'\nset -o pipefail\ncmd | tail\necho $?\nE")).toEqual([]);
+        expect(tags("bash -o pipefail <<'E'\ncmd | tail\necho $?\nE")).toEqual([]);
+        // The `)` of a case pattern in the body does not close the outer subshell.
+        expect(tags("(set -o pipefail\nbash <<'E'\ncase $1 in a) echo a;; esac\nE\ncmd | tail; echo $?)")).toEqual([]);
+    });
+
+    it("a heredoc fed to a program is data, so a pipefail in it counts for nothing", () => {
+        expect(blocks("cat <<'E'\nset -o pipefail\nE\ncmd | tail; echo $?")).toEqual([PIPE]);
+    });
+
+    it("a pipefail scoped to a closed subshell does not cover a later pipeline", () => {
+        const command = '(set -o pipefail; true | tail -1); false | tail -1; echo "rc=$?"';
+
+        expect(blocks(command)).toEqual([PIPE]);
+        expect(violation(command, PIPE)?.matched).toBe("false | tail -1");
+        expect(tags('(set -o pipefail; true | grep x); cmd | grep y; echo "rc=$?"')).toEqual([`${GREP}:context`]);
+        expect(blocks("zsh -c '(set -o pipefail; true | tail -1); false | tail -1; echo \"rc=$?\"'")).toEqual([PIPE]);
+    });
+
+    it("a pipefail set after the pipeline does not cover it", () => {
+        const command = 'bun a.ts 2>&1 | tail -5; echo "a=$?"; (set -o pipefail; bun b.ts | tail -1); echo "b=$?"';
+
+        expect(blocks(command)).toEqual([PIPE]);
+        expect(violation(command, PIPE)?.matched).toBe("bun a.ts 2>&1 | tail -5");
+    });
+
+    it("turning pipefail off again ends the exemption", () => {
+        expect(blocks("set +o pipefail; false | tail -1; echo $?")).toEqual([PIPE]);
+        expect(blocks("set -o pipefail; set +o pipefail; cmd | tail; echo $?")).toEqual([PIPE]);
+        expect(blocks("setopt pipefail; unsetopt pipefail; cmd | tail; echo $?")).toEqual([PIPE]);
+        expect(blocks("set -o pipefail; setopt no_pipe_fail; cmd | tail; echo $?")).toEqual([PIPE]);
+    });
+
+    it("every spelling that turns it on counts", () => {
+        expect(tags("set -euo pipefail; cmd | tail; echo $?")).toEqual([]);
+        expect(tags("set -o errexit -o pipefail; cmd | tail; echo $?")).toEqual([]);
+        expect(tags("setopt PIPE_FAIL; cmd | tail; echo $?")).toEqual([]);
+        expect(tags("unsetopt nopipefail; cmd | tail; echo $?")).toEqual([]);
+        expect(tags("{ set -o pipefail; }; cmd | tail; echo $?")).toEqual([]);
+    });
+
+    it("a command substitution inherits the setting before it, and its own setting stays inside", () => {
+        expect(tags("set -o pipefail; x=$(cmd | tail -1; echo $?); echo $x")).toEqual([]);
+        expect(tags("set -o pipefail; x=`cmd | tail -1; echo $?`; echo $x")).toEqual([]);
+        expect(blocks("x=$(cmd | tail -1; echo $?); echo $x")).toEqual([PIPE]);
+        expect(blocks("x=$(set -o pipefail; true); cmd | tail; echo $?")).toEqual([PIPE]);
+    });
+
+    it("the pipefail correction itself stays silent, also inside a -c body", () => {
+        expect(tags('(set -o pipefail; cmd | tail -1); echo "rc=$?"')).toEqual([]);
+        expect(tags("zsh -c '(set -o pipefail; cmd | tail -1); echo \"rc=$?\"'")).toEqual([]);
     });
 });
 
