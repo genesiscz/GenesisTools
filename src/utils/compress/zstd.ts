@@ -1,5 +1,11 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { constants as zlibConstants, zstdCompress, zstdCompressSync } from "node:zlib";
+import {
+    constants as zlibConstants,
+    zstdCompress,
+    zstdCompressSync,
+    zstdDecompress,
+    zstdDecompressSync,
+} from "node:zlib";
 
 /**
  * zstd for files that are written once and read later: seekable frames, a seek table, and frame-by-frame reads.
@@ -219,8 +225,50 @@ export function zstdContentBytes(path: string): number | undefined {
     }
 }
 
+/** zstd's default decoder limit (`ZSTD_WINDOWLOG_LIMIT_DEFAULT`): `Bun.zstdDecompress*` refuses a larger window. */
+const DEFAULT_WINDOW_LOG_MAX = 27;
+/** The largest window zstd writes on 64-bit (`ZSTD_WINDOWLOG_MAX_64`, `zstd --long=31`). */
+const MAX_WINDOW_LOG = 31;
+const LONG_WINDOW_DECODE = { params: { [zlibConstants.ZSTD_d_windowLogMax]: MAX_WINDOW_LOG } };
+
+/** The window a frame's decoder needs, from its header: the content size of a single-segment frame. */
+function frameWindowBytes(frame: Uint8Array): number {
+    const header = Buffer.from(frame.buffer, frame.byteOffset + 4, Math.min(18, Math.max(0, frame.length - 4)));
+    const descriptor = header[0] ?? 0;
+
+    if ((descriptor >> 5) & 1) {
+        return headerContentSize(header, descriptor).contentSize ?? 0;
+    }
+
+    const windowLog = 10 + ((header[1] ?? 0) >> 3);
+    return 2 ** windowLog + (2 ** windowLog / 8) * ((header[1] ?? 0) & 7);
+}
+
+/**
+ * Whether a frame needs a window over zstd's default limit, as `zstd --long=31` writes from a pipe (2 GiB, no content
+ * size). `Bun.zstdDecompress*` takes no window option, so such a frame goes through `node:zlib` with
+ * `ZSTD_d_windowLogMax` 31; its decode of one frame is right on Bun 1.3.13 too. Every other frame keeps Bun's decoder.
+ */
+function needsLongWindow(frame: Uint8Array): boolean {
+    return frameWindowBytes(frame) > 2 ** DEFAULT_WINDOW_LOG_MAX;
+}
+
+function decodeFrameSync(frame: Uint8Array): Uint8Array {
+    return needsLongWindow(frame) ? zstdDecompressSync(frame, LONG_WINDOW_DECODE) : Bun.zstdDecompressSync(frame);
+}
+
+function decodeFrame(frame: Uint8Array): Promise<Uint8Array> {
+    if (!needsLongWindow(frame)) {
+        return Bun.zstdDecompress(frame);
+    }
+
+    return new Promise((resolve, reject) => {
+        zstdDecompress(frame, LONG_WINDOW_DECODE, (err, result) => (err ? reject(err) : resolve(result)));
+    });
+}
+
 export function decompressFrame(fd: number, frame: ZstdFrame): Uint8Array {
-    return Bun.zstdDecompressSync(readExactly(fd, frame.compressedSize, frame.offset));
+    return decodeFrameSync(readExactly(fd, frame.compressedSize, frame.offset));
 }
 
 /**
@@ -265,7 +313,7 @@ export async function* readZstdFrames(
 
         while (next < ordered.length || window.length > 0) {
             while (next < ordered.length && window.length < Math.max(1, concurrency)) {
-                window.push(Bun.zstdDecompress(readExactly(fd, ordered[next]!.compressedSize, ordered[next]!.offset)));
+                window.push(decodeFrame(readExactly(fd, ordered[next]!.compressedSize, ordered[next]!.offset)));
                 next += 1;
             }
 

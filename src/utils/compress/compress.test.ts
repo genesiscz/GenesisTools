@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createZstdCompress, constants as zlibConstants } from "node:zlib";
 import { env } from "@genesiscz/utils/env";
 import {
     readFirstLines,
@@ -55,7 +56,7 @@ import {
     verifyArchiveAgainstFolder,
 } from "./tar";
 import { compressStream, createVerifiedZstdBatch, createVerifiedZstdWriter, ZstdVerificationError } from "./verified";
-import { readSeekTable, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
+import { readSeekTable, readZstdFrames, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
 
 const root = mkdtempSync(join(tmpdir(), "compress-test-"));
 let counter = 0;
@@ -82,6 +83,24 @@ function logText(lines: number): string {
         { length: lines },
         (_, index) => `{"n":${index},"msg":"line ${index} ${"x".repeat(index % 50)}"}`
     ).join("\n");
+}
+
+/** One zstd frame with a 2 GiB window and no content size: what `zstd --long=31` writes from a pipe. */
+function longWindowZstd(data: Uint8Array): Promise<Buffer> {
+    const encoder = createZstdCompress({
+        params: {
+            [zlibConstants.ZSTD_c_windowLog]: 31,
+            [zlibConstants.ZSTD_c_enableLongDistanceMatching]: 1,
+        },
+    });
+    const chunks: Buffer[] = [];
+    encoder.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const done = new Promise<Buffer>((resolve, reject) => {
+        encoder.on("end", () => resolve(Buffer.concat(chunks)));
+        encoder.on("error", reject);
+    });
+    encoder.end(data);
+    return done;
 }
 
 function framesOf(path: string) {
@@ -923,6 +942,50 @@ describe("folder archives", () => {
         checksum(badSize.subarray(0, 512));
         writeFileSync(archive, Bun.zstdCompressSync(badSize));
         expect(() => verifyPath({ archive })).toThrow();
+    });
+
+    it("verifies, unpacks and reads an archive with a 2 GiB window (zstd -19 --long=31 from a pipe)", async () => {
+        const dir = scratch("long-window");
+        const tree = makeTree(dir);
+        const tar = Bun.spawnSync(["tar", "--no-xattrs", "-cf", "-", "-C", dir, "tree"], {
+            env: { ...process.env, COPYFILE_DISABLE: "1" },
+        });
+        expect(tar.exitCode).toBe(0);
+        // The zstd CLI writes a 2 GiB window and no content size when it reads a pipe; node's stream encoder with
+        // windowLog 31 writes the same frame header, so the test runs where the CLI is missing too.
+        const archives = [await longWindowZstd(tar.stdout)];
+
+        if (Bun.which("zstd")) {
+            const cli = Bun.spawnSync(["zstd", "-q", "-19", "--long=31", "-c"], {
+                stdin: tar.stdout,
+                env: process.env,
+            });
+            expect(cli.exitCode).toBe(0);
+            archives.push(cli.stdout);
+        }
+
+        for (const [index, bytes] of archives.entries()) {
+            expect({ singleSegment: (bytes[4]! >> 5) & 1, windowLog: 10 + (bytes[5]! >> 3) }).toEqual({
+                singleSegment: 0,
+                windowLog: 31,
+            });
+            const archive = join(dir, `long-${index}`, "tree.tar.zst");
+            mkdirSync(join(dir, `long-${index}`));
+            writeFileSync(archive, bytes);
+
+            expect(Buffer.concat([...readZstdFramesSync(archive)]).equals(tar.stdout)).toBe(true);
+            const streamed: Uint8Array[] = [];
+
+            for await (const frame of readZstdFrames(archive)) {
+                streamed.push(frame);
+            }
+
+            expect(Buffer.concat(streamed).equals(tar.stdout)).toBe(true);
+            expect(verifyPath({ archive, against: tree }).ok).toBe(true);
+            const into = join(dir, `restored-${index}`);
+            await expandPath({ archive, into, caller: "test" });
+            expect(readFileSync(join(into, "tree", "top.txt"), "utf8")).toBe("top\n");
+        }
     });
 
     it("restores files and folders into missing nested destinations", async () => {
