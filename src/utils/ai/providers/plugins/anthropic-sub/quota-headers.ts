@@ -111,8 +111,9 @@ export function usageFromQuotaHeaders(headers: Headers): UsageResponse | null {
     };
 
     return {
-        // A window the headers leave out has no active period: the endpoint answers that as 0 with no reset.
-        five_hour: fiveHour ?? { utilization: 0, resets_at: null },
+        // No 5h headers beside the weekly ones: the account has no 5-hour limit (since 2026-10-31; an idle
+        // account with one still gets them, 0 % with a reset 5 hours out). Never a made-up 0 % window.
+        five_hour: fiveHour,
         seven_day: sevenDay ?? { utilization: 0, resets_at: null },
         ...(fable ? { seven_day_overage_included: fable } : {}),
         quota,
@@ -198,6 +199,8 @@ function keptFrom(previous: UsageResponse): Partial<UsageResponse> {
  * limits) is kept from that reading, and `quota.endpointAsOf` says when it was taken. A cheap probe
  * carries no Fable window, so the last header reading's Fable window stays, with `quota.fableReadAt`.
  * The result always carries a `limits` list, because `normalizeLimits` reads that list over the flat windows.
+ * The headers alone decide whether the 5-hour window exists: without it the result has `five_hour: null`
+ * and no `session` entry, not even the one the kept endpoint reading had, whose numbers would read as live.
  */
 export function mergeHeaderReading(
     fresh: UsageResponse,
@@ -222,10 +225,13 @@ export function mergeHeaderReading(
               ? new Date(previousFetchedAt).toISOString()
               : undefined;
     const endpoint = previous && endpointAsOf !== undefined ? keptFrom(previous) : {};
-    const base = Array.isArray(endpoint.limits) ? endpoint.limits : [];
     const fable = freshFable ?? keptFable;
+    const fiveHour = fresh.five_hour;
+    const base = Array.isArray(endpoint.limits)
+        ? endpoint.limits.filter((limit) => fiveHour || limit.kind !== "session")
+        : [];
     const updates = [
-        limitFrom({ kind: "session", window: fresh.five_hour, status: quota.fiveHourStatus, quota }),
+        ...(fiveHour ? [limitFrom({ kind: "session", window: fiveHour, status: quota.fiveHourStatus, quota })] : []),
         limitFrom({ kind: "weekly_all", window: fresh.seven_day, status: quota.sevenDayStatus, quota }),
         ...(fable
             ? [
@@ -325,7 +331,7 @@ export async function fetchUsageFromHeaders(
         logger.debug(
             {
                 status: res.status,
-                fiveHour: usage.five_hour.utilization,
+                fiveHour: usage.five_hour?.utilization ?? null,
                 sevenDay: usage.seven_day.utilization,
                 fable: usage.seven_day_overage_included?.utilization ?? null,
             },

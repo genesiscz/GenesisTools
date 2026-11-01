@@ -1,5 +1,6 @@
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { UpstreamStatusError } from "@genesiscz/utils/ai/http-auth";
+import type { AbsentLimit } from "@genesiscz/utils/ai/providers/account-features";
 import {
     applyPollGateOutcomes,
     blockedEntry,
@@ -134,7 +135,12 @@ export interface ApiSpend {
 }
 
 export interface UsageResponse {
-    five_hour: UsageBucket;
+    /**
+     * The 5-hour window. `null` on a fresh reading: the account has no 5-hour limit (since 2026-10-31 some
+     * accounts carry only the weekly windows). Rows written before that never hold null; read the state with
+     * `fiveHourState` (`limits.ts`), never from this field alone.
+     */
+    five_hour: UsageBucket | null;
     seven_day: UsageBucket;
     seven_day_opus?: UsageBucket | null;
     seven_day_sonnet?: UsageBucket | null;
@@ -178,6 +184,12 @@ export interface AccountUsage {
     /** Refresh-grant expiry (Unix ms) — past this the account needs a browser re-login. */
     refreshExpiresAt?: number;
     usage?: UsageResponse;
+    /**
+     * Windows the account does not have, copied from the snapshot (`AccountUsageSnapshot.absentLimits`), so
+     * the snapshot-to-row-to-snapshot round trip keeps them. `fiveHourState(usage)` answers the same question
+     * from the reading itself.
+     */
+    absentLimits?: AbsentLimit[];
     error?: string;
     /** The OAuth path failed though `usage` came from the long-lived token's rate-limit headers. */
     oauthFailure?: string;
@@ -390,6 +402,8 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     // A header reading may START the 5-hour window of an idle account (a reading after a closed window
     // showed 0 % and a reset 5 hours out, 4 of 4 times on 2026-09-28). Martin allows that, so a closed
     // window no longer holds the reading back: waiting kept accounts stale for hours while in use.
+    // An idle account with a 5-hour limit still gets the 5h headers, so since 2026-10-31 a reading
+    // without them means the account has no 5-hour limit (`five_hour: null`, `fiveHourState`).
     const longLived = headerReadingToken(account, probe);
     const viaHeaders = async (why: string, extra: { oauthFailure?: string } = {}): Promise<AccountUsage> => {
         const readAt = args.previousFetchedAt;
