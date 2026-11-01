@@ -1,3 +1,4 @@
+import { absentLimitsOf } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
 import { snapshotToAccountUsage, toLimitWindows } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { recordSnapshots } from "@genesiscz/utils/ai/usage-poll/record";
@@ -67,12 +68,15 @@ export async function recordAll(accounts: AccountUsage[]): Promise<void> {
             continue;
         }
 
+        const absentLimits = account.absentLimits ?? absentLimitsOf(account.usage);
+
         snapshots.push({
             provider: PROVIDER,
             accountId: "",
             accountName: account.accountName,
             fetchedAt: new Date().toISOString(),
             limits: toLimitWindows(account.usage),
+            ...(absentLimits.length > 0 ? { absentLimits } : {}),
             native: account.usage,
         });
     }

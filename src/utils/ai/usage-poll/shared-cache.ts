@@ -323,6 +323,9 @@ export const SNAPSHOT_OPS: UsageEntryOps<AccountUsageSnapshot> = {
     backfill: (entry, previous, previousFetchedAt) => ({
         ...entry,
         limits: previous.limits,
+        // The absence belongs to the same reading as the limits: without it a stale row of an account
+        // with no 5-hour limit read as "5h unknown".
+        ...(previous.absentLimits === undefined ? {} : { absentLimits: previous.absentLimits }),
         // The bars on this row were fetched THEN, not now. Stamping the failed round's own
         // clock on them made every consumer print "fetched just now" above data that was
         // hours old, right beside the "stale" marker that said the opposite.

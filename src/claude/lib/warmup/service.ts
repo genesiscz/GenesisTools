@@ -1,4 +1,5 @@
 import type { AccountUsage, UsageResponse } from "@app/claude/lib/usage/api";
+import { fiveHourState } from "@app/claude/lib/usage/limits";
 import { warmupAccounts } from "@genesiscz/utils/ai/warmup";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
@@ -19,20 +20,26 @@ function todayDateString(): string {
     return formatLocalDate(new Date());
 }
 
-function shouldWarmSession(usage: UsageResponse, startHour: number, endHour: number): boolean {
-    const hour = currentHour();
-
-    if (!isWithinSchedule(hour, startHour, endHour)) {
+/**
+ * A session warmup starts the 5-hour window. An account without a 5-hour limit has none to start: its
+ * reset never appears, so without this check every daemon tick in the schedule sent a turn (and a
+ * "Session started" notification) to it.
+ */
+export function shouldWarmSession(
+    usage: UsageResponse,
+    { startHour, endHour, hour = currentHour() }: { startHour: number; endHour: number; hour?: number }
+): boolean {
+    if (!isWithinSchedule(hour, startHour, endHour) || fiveHourState(usage) === "absent") {
         return false;
     }
 
-    const fiveHour = usage.five_hour;
+    const resetsAt = usage.five_hour?.resets_at;
 
-    if (!fiveHour.resets_at) {
+    if (!resetsAt) {
         return true;
     }
 
-    return new Date(fiveHour.resets_at).getTime() < Date.now();
+    return new Date(resetsAt).getTime() < Date.now();
 }
 
 function shouldWarmWeekly(usage: UsageResponse): boolean {
@@ -111,8 +118,14 @@ export async function processWarmupRules(usageResults: AccountUsage[]): Promise<
                 continue;
             }
 
-            if (shouldWarmSession(result.usage, startHour, endHour)) {
-                const wasUnused = !result.usage.five_hour.resets_at || result.usage.five_hour.utilization === 0;
+            if (fiveHourState(result.usage) === "absent") {
+                logger.debug({ account: accountName }, "[warmup] no session warmup: the account has no 5-hour limit");
+                continue;
+            }
+
+            if (shouldWarmSession(result.usage, { startHour, endHour })) {
+                const fiveHour = result.usage.five_hour;
+                const wasUnused = !fiveHour?.resets_at || fiveHour.utilization === 0;
 
                 logger.info(`Session warmup: sending to ${accountName}`);
                 const sent = await sendWarmupMessage(accountName);

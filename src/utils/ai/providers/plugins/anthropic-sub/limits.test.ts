@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { UsageResponse } from "./api";
-import { normalizeLimits, normalizeSpend } from "./limits";
+import { fiveHourState, normalizeLimits, normalizeSpend } from "./limits";
 
 const sampleWithLimits: UsageResponse = {
     five_hour: { utilization: 34, resets_at: "2026-06-26T15:59:59Z" },
@@ -88,6 +88,78 @@ describe("normalizeLimits — new-shape (limits[] present)", () => {
             ],
         };
         expect(normalizeLimits(usage)).toEqual([]);
+    });
+});
+
+describe("fiveHourState", () => {
+    const WEEKLY_LIMIT = {
+        kind: "weekly_all",
+        group: "weekly",
+        percent: 40,
+        severity: "normal",
+        resets_at: "2026-11-08T12:00:00Z",
+        scope: null,
+        is_active: true,
+    };
+    const IDLE_SESSION = { ...WEEKLY_LIMIT, kind: "session", group: "session", percent: 0, resets_at: null };
+    const SEVEN_DAY = { utilization: 40, resets_at: "2026-11-08T12:00:00Z" };
+    /** What a build before 2026-11-01 stored for a header reading without the 5h headers. */
+    const OLD_HEADER_READING: UsageResponse = {
+        five_hour: { utilization: 0, resets_at: null },
+        seven_day: SEVEN_DAY,
+        limits: [{ ...IDLE_SESSION, is_active: false }, WEEKLY_LIMIT],
+        quota: { source: "headers", fiveHourStatus: null, sevenDayStatus: "allowed", representativeClaim: "seven_day" },
+    };
+
+    test("a null window, or an endpoint list without the session entry, is an account without a 5-hour limit", () => {
+        expect(fiveHourState({ five_hour: null, seven_day: SEVEN_DAY })).toBe("absent");
+        expect(fiveHourState({ five_hour: null, seven_day: SEVEN_DAY, limits: [WEEKLY_LIMIT] })).toBe("absent");
+        // The endpoint's answer for such an account is not sampled yet: it may leave the window out entirely.
+        expect(fiveHourState({ seven_day: SEVEN_DAY, limits: [WEEKLY_LIMIT] } as unknown as UsageResponse)).toBe(
+            "absent"
+        );
+    });
+
+    test("an old header reading without the 5h status is absent, and normalizeLimits drops its made-up window", () => {
+        expect(fiveHourState(OLD_HEADER_READING)).toBe("absent");
+        expect(normalizeLimits(OLD_HEADER_READING).map((limit) => limit.bucket)).toEqual(["seven_day"]);
+    });
+
+    test("negative control: an idle window of an account that has one stays a window", () => {
+        // The endpoint answers an idle 5h window as 0 % with no reset: that alone never means absent.
+        const idleEndpoint: UsageResponse = {
+            five_hour: { utilization: 0, resets_at: null },
+            seven_day: SEVEN_DAY,
+            limits: [IDLE_SESSION, WEEKLY_LIMIT],
+        };
+        const idleHeaders: UsageResponse = {
+            ...OLD_HEADER_READING,
+            quota: { source: "headers", fiveHourStatus: "allowed", sevenDayStatus: "allowed" },
+        };
+
+        expect(fiveHourState(idleEndpoint)).toBe("present");
+        expect(fiveHourState(idleHeaders)).toBe("present");
+        expect(normalizeLimits(idleEndpoint).map((limit) => limit.bucket)).toEqual(["five_hour", "seven_day"]);
+        expect(fiveHourState({ five_hour: { utilization: 0, resets_at: null }, seven_day: SEVEN_DAY })).toBe("present");
+    });
+
+    test("a list without the session entry beside a flat 5h window that is in use is still a window", () => {
+        const live = { five_hour: { utilization: 100, resets_at: "2026-11-01T18:00:00Z" }, seven_day: SEVEN_DAY };
+
+        expect(fiveHourState({ ...live, limits: [WEEKLY_LIMIT] })).toBe("present");
+        // The same list beside an idle or missing flat window: the endpoint left the window out.
+        expect(
+            fiveHourState({
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: SEVEN_DAY,
+                limits: [WEEKLY_LIMIT],
+            })
+        ).toBe("absent");
+    });
+
+    test("a row that cannot tell is unknown, never absent", () => {
+        expect(fiveHourState(undefined)).toBe("unknown");
+        expect(fiveHourState({ seven_day: SEVEN_DAY } as unknown as UsageResponse)).toBe("unknown");
     });
 });
 
