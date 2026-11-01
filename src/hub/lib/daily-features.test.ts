@@ -19,6 +19,7 @@ import {
     parseNumstat,
 } from "./digest";
 import {
+    absentKey,
     buildForecast,
     forecastClock,
     forecastFromSamples,
@@ -408,6 +409,45 @@ describe("forecast", () => {
         expect(account?.warning).toBe(`Weekly runs out at ${forecastClock(at, NOW)}, before its reset`);
         expect(forecastClock(at, NOW)).toMatch(/^\w{3} \w{3} \d{2} \d{2}:\d{2}$/);
         expect(forecastClock(NOW, NOW)).toMatch(/^\d{2}:\d{2}$/);
+    });
+
+    test("an account without a 5-hour limit gets no 5h window from its old rows, and names it absent", async () => {
+        const resetsAt = new Date(NOW.getTime() + 3 * 3_600_000).toISOString();
+        // A 5h series that would warn "runs out", recorded before the account lost its 5-hour limit.
+        const old5h = [0, 10, 20, 30].map((minutes, index) =>
+            sample({ utilization: 60 + index * 10, timestamp: isoAgo(30 - minutes), resetsAt })
+        );
+        const weekly = sample({ bucket: "seven_day", kind: "weekly", utilization: 30, timestamp: isoAgo(5) });
+        const side = sample({ account: "side", utilization: 5, timestamp: isoAgo(5) });
+        const absent = new Map([[absentKey("anthropic-sub", "work"), ["five_hour"]]]);
+
+        const [sideForecast, work] = forecastFromSamples([...old5h, weekly, side], NOW, absent);
+
+        expect(work).toMatchObject({ account: "work", absentWindows: ["five_hour"], warning: null });
+        expect(work.windows.map((window) => window.bucket)).toEqual(["seven_day"]);
+        // Negative control: an account with its 5h window keeps it, and names nothing absent.
+        expect(sideForecast.windows.map((window) => window.bucket)).toEqual(["five_hour"]);
+        expect(sideForecast.absentWindows).toBeUndefined();
+
+        // buildForecast asks the reader it is given, so the hub's JSON carries the same list.
+        const db = new Database(":memory:");
+        db.run(`CREATE TABLE usage_snapshots (provider TEXT, account_name TEXT, bucket TEXT, kind TEXT,
+            utilization REAL, resets_at TEXT, timestamp TEXT)`);
+        for (const row of [...old5h, weekly]) {
+            db.run("INSERT INTO usage_snapshots VALUES (?, ?, ?, ?, ?, ?, ?)", [
+                row.provider,
+                row.account,
+                row.bucket,
+                row.kind,
+                row.utilization,
+                row.resetsAt,
+                row.timestamp,
+            ]);
+        }
+
+        const built = await buildForecast({ now: NOW, open: () => db, readAbsent: async () => absent });
+        expect(built.accounts).toEqual([expect.objectContaining({ account: "work", absentWindows: ["five_hour"] })]);
+        expect(built.accounts[0].windows.map((window) => window.bucket)).toEqual(["seven_day"]);
     });
 
     test("groups by account and names the earliest window that runs out first", () => {

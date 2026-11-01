@@ -2,11 +2,14 @@ import type { Database } from "bun:sqlite";
 import { activeDeltas, chooseRate } from "@app/claude/lib/usage/burn-pace";
 import { projectTimeToLimit, type TimestampedValue } from "@app/claude/lib/usage/rate-math";
 import { openHistoryReadOnly } from "@genesiscz/utils/agent-sessions/database";
+import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { logger } from "@genesiscz/utils/logger";
 
 // `tools hub forecast`: when each account's current 5-hour and weekly windows run out at the recent
 // burn rate. It only READS `usage_snapshots` (what the usage poller already recorded) through a
-// read-only handle: no API fetch, no schema write (`UsageLimitsDb` runs CREATE/ALTER on open).
+// read-only handle: no API fetch, no schema write (`UsageLimitsDb` runs CREATE/ALTER on open). It also
+// reads the poller's `snapshots.json` for the windows an account no longer has (`absentLimits`): the
+// table keeps an absent window's last rows, and a forecast from them described a window that is gone.
 
 const log = logger.child({ component: "hub/forecast" });
 
@@ -52,6 +55,11 @@ export interface AccountForecast {
     provider: string;
     account: string;
     windows: WindowForecast[];
+    /**
+     * Bucket keys the account does not have, from its current usage snapshot (`["five_hour"]` for an
+     * account without a 5-hour limit). None of them is in `windows`. Omitted when nothing is absent.
+     */
+    absentWindows?: string[];
     /** The earliest window that runs out before its reset, if any. */
     warning: string | null;
 }
@@ -235,11 +243,52 @@ function warningOf(windows: readonly WindowForecast[], nowMs: number): string | 
     return `${early.label} runs out at ${forecastClock(at, new Date(nowMs))}, before its reset`;
 }
 
-/** Groups samples (any order) by provider/account/bucket and forecasts each window. */
-export function forecastFromSamples(samples: readonly UsageSample[], now: Date = new Date()): AccountForecast[] {
+/** Absent bucket keys per account, keyed by `absentKey(provider, account)`. */
+export type AbsentWindows = ReadonlyMap<string, readonly string[]>;
+
+export function absentKey(provider: string, account: string): string {
+    return `${provider}\u0000${account}`;
+}
+
+/** The absent windows the poller's last snapshots name, read-only. An unreadable file means none known. */
+export async function readAbsentWindows(): Promise<AbsentWindows> {
+    const absent = new Map<string, string[]>();
+
+    try {
+        const cache = await readSnapshotsCache();
+
+        for (const [provider, entry] of Object.entries(cache?.providers ?? {})) {
+            for (const snapshot of entry.accounts) {
+                const keys = (snapshot.absentLimits ?? []).map((limit) => limit.key);
+
+                if (keys.length > 0) {
+                    absent.set(absentKey(provider, snapshot.accountName), keys);
+                }
+            }
+        }
+    } catch (error) {
+        log.debug({ error }, "forecast: snapshots.json unreadable; no window is known absent");
+    }
+
+    return absent;
+}
+
+/**
+ * Groups samples (any order) by provider/account/bucket and forecasts each window. A bucket the account's
+ * current snapshot lists as absent gets no window: its rows are history of a window the account lost.
+ */
+export function forecastFromSamples(
+    samples: readonly UsageSample[],
+    now: Date = new Date(),
+    absent: AbsentWindows = new Map()
+): AccountForecast[] {
     const groups = new Map<string, UsageSample[]>();
 
     for (const sample of samples) {
+        if (absent.get(absentKey(sample.provider, sample.account))?.includes(sample.bucket)) {
+            continue;
+        }
+
         const key = `${sample.provider}\u0000${sample.account}\u0000${sample.bucket}`;
         const list = groups.get(key) ?? [];
         list.push(sample);
@@ -258,8 +307,15 @@ export function forecastFromSamples(samples: readonly UsageSample[], now: Date =
         }
 
         const { provider, account } = list[0];
-        const key = `${provider}\u0000${account}`;
-        const entry = accounts.get(key) ?? { provider, account, windows: [], warning: null };
+        const key = absentKey(provider, account);
+        const absentWindows = absent.get(key);
+        const entry = accounts.get(key) ?? {
+            provider,
+            account,
+            windows: [],
+            ...(absentWindows?.length ? { absentWindows: [...absentWindows] } : {}),
+            warning: null,
+        };
         entry.windows.push(window);
         accounts.set(key, entry);
     }
@@ -318,11 +374,13 @@ export async function buildForecast({
     account,
     now = new Date(),
     open = () => openHistoryReadOnly(),
+    readAbsent = readAbsentWindows,
 }: {
     provider?: string;
     account?: string;
     now?: Date;
     open?: () => Database | undefined;
+    readAbsent?: () => Promise<AbsentWindows>;
 } = {}): Promise<ForecastResult> {
     const started = performance.now();
     const db = open();
@@ -338,7 +396,8 @@ export async function buildForecast({
             provider,
             account,
         });
-        const accounts = forecastFromSamples(samples, now);
+        const absent = await readAbsent();
+        const accounts = forecastFromSamples(samples, now, absent);
         const elapsedMs = Math.round(performance.now() - started);
         log.debug({ samples: samples.length, accounts: accounts.length, elapsedMs }, "forecast built");
         return { generatedAt: now.toISOString(), source: db.filename, accounts, elapsedMs };
