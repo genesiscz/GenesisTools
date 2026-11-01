@@ -5,7 +5,7 @@ import { WarmupFailure, type WarmupOutcome } from "@genesiscz/utils/ai/providers
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiAccountsListCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface WarmupResult {
@@ -100,7 +100,7 @@ export function selectWarmupAccounts(
             const account = store.account(selector);
 
             if (!account) {
-                throw new Error(`No account named "${selector}". List them with: ${toolCommand("ai accounts list")}`);
+                throw new Error(`No account named "${selector}". List them with: ${aiAccountsListCommand()}`);
             }
 
             if (opts.provider && account.provider !== opts.provider) {

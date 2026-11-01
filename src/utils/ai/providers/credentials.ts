@@ -1,5 +1,11 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import {
+    aiAccountsLoginCommand,
+    aiConfigAccountAddCommand,
+    aiConfigAccountEditApiKeyCommand,
+    aiConfigAccountEditPathCommand,
+    aiConfigAccountEditUseEnvCommand,
+} from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveSecret } from "@genesiscz/utils/security";
 import { shellWord } from "@genesiscz/utils/shell/quote";
@@ -42,12 +48,13 @@ function keySource(envKey: string | undefined): string {
 
 /** Gives an EXISTING account an API key. A keyless account needs this, not a second account. */
 export function storeApiKeyCommand(args: { accountName: string; envKey?: string }): string {
-    return `${keySource(args.envKey)} | ${toolCommand("ai config account edit")} ${shellWord(args.accountName)} --api-key-stdin`;
+    return `${keySource(args.envKey)} | ${aiConfigAccountEditApiKeyCommand(shellWord(args.accountName))}`;
 }
 
 /** Creates an account holding an API key, for a provider that has no account at all. */
 export function addApiKeyAccountCommand(args: { providerId: string; envKey?: string }): string {
-    return `${keySource(args.envKey)} | ${toolCommand("ai config account add")} --provider ${shellWord(args.providerId)} --name ${shellWord(args.providerId)} --api-key-stdin`;
+    const id = shellWord(args.providerId);
+    return `${keySource(args.envKey)} | ${aiConfigAccountAddCommand({ provider: id, name: id, apiKeyStdin: true })}`;
 }
 
 /**
@@ -66,7 +73,7 @@ function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly 
     const hints = missing.map((field) => {
         if (field === "authFile" || field === "dataDir") {
             const flag = field === "authFile" ? "--auth-file" : "--data-dir";
-            return `Set it with: ${toolCommand("ai config account edit")} ${shellWord(account.name)} ${flag} <path>`;
+            return `Set it with: ${aiConfigAccountEditPathCommand(shellWord(account.name), flag)}`;
         }
 
         if (field === "apiKey") {
@@ -75,7 +82,7 @@ function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly 
         }
 
         // A token is minted by a login, and a login by name updates that account.
-        return `Log in again with: ${toolCommand("ai accounts login")} ${shellWord(account.name)} --provider ${shellWord(account.provider)}`;
+        return `Log in again with: ${aiAccountsLoginCommand(shellWord(account.name), shellWord(account.provider))}`;
     });
 
     // Only an API key can come from the environment (`resolveCredential` consults
@@ -84,7 +91,7 @@ function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly 
     // into a shell, and `--use-env A or B` is not a command anyone can run.
     if (missing.includes("apiKey") && spec.envKeys.length > 0) {
         hints.push(
-            `or allow the environment: ${toolCommand("ai config account edit")} ${shellWord(account.name)} --use-env ${spec.envKeys.join(",")}`
+            `or allow the environment: ${aiConfigAccountEditUseEnvCommand(shellWord(account.name), spec.envKeys)}`
         );
     }
 

@@ -1,8 +1,11 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { moduleDir, requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+
+const requireLazy = createRequire(import.meta.url);
 
 /** One preset as a printed link needs it. */
 export interface GatePreset {
@@ -58,7 +61,7 @@ function isMissing(err: unknown): boolean {
 /** A failed gate read or write. Absent is normal; the logger loads only when there is something to say. */
 function gateDiag(reason: string, err: unknown): void {
     // lazy: saves 12.5 ms cold import (tools ts imports analyze src/utils/logger.ts, 2026-10-15) — every link reads the gate
-    const { logger }: typeof import("@genesiscz/utils/logger") = require("@genesiscz/utils/logger");
+    const { logger }: typeof import("@genesiscz/utils/logger") = requireLazy("@genesiscz/utils/logger");
 
     logger.warn({ err, path: linkGatePath() }, reason);
 }

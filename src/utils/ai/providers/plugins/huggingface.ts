@@ -1,4 +1,4 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiConfigDefaultSetCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import type { ImageModel } from "ai";
 import { resolveCredential } from "../credentials";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-types";
@@ -97,7 +97,7 @@ export const huggingFacePlugin: ProviderPlugin = {
             language: (modelId: string) => {
                 throw new Error(
                     `huggingface generates images here; it has no chat model (${modelId}). ` +
-                        `Point chat at another account with: ${toolCommand("ai config default set")} chat <@account/...>`
+                        `Point chat at another account with: ${aiConfigDefaultSetCommand("chat")}`
                 );
             },
             image: (modelId: string) => toImageModel(apiKey, modelId || MODEL_ID_FALLBACK),

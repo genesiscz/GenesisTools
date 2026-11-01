@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
+import { notifyAuthorizeCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
 import {
@@ -65,7 +65,7 @@ export async function sendViaGenesisApp(opts: NotificationOptions): Promise<stri
         logger.warn(
             { error: outcome.error },
             outcome.error.code === "not_determined"
-                ? `GenesisTools.app has never been granted notifications; run ${toolCommand("notify authorize")}. Falling back to terminal-notifier.`
+                ? `GenesisTools.app has never been granted notifications; run ${notifyAuthorizeCommand()}. Falling back to terminal-notifier.`
                 : "GenesisTools.app may not post notifications; grant it in System Settings > Notifications. Falling back to terminal-notifier."
         );
     }

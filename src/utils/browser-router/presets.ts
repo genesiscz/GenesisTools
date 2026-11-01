@@ -1,4 +1,8 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import {
+    browserRouterLinkHostCommand,
+    claudeCmuxFindLinkCommand,
+    macosMailOpenCommand,
+} from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_MARKDOWN_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
 import { type Capability, type CapabilityCheck, hasCapability } from "./capabilities";
@@ -159,7 +163,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             id: "mail",
             title: "Mail",
             kind: "installable",
-            description: `https://<link host>/mail/show/<rowid> opens that message in Mail (${toolCommand("macos mail open")}).`,
+            description: `https://<link host>/mail/show/<rowid> opens that message in Mail (${macosMailOpenCommand()}).`,
             enabledIf: ["platform:darwin"],
             needsLinkHost: true,
             routes: withHost((host) => [
@@ -225,7 +229,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             description:
                 "https://<link host>/claude/find/<session>/decision/<n> scrolls that live Claude session to where " +
                 "DECISION <n> was first asked; /claude/find/<session>?q=<text>&at=oldest|newest finds any text " +
-                `(asks first unless minted here with ${toolCommand("claude cmux find")} --link). ` +
+                `(asks first unless minted here with ${claudeCmuxFindLinkCommand()}). ` +
                 "It opens the transcript view (ctrl+o) and searches there, then raises the tab.",
             enabledIf: ["claude:installed", "cmux:installed"],
             needsLinkHost: true,
@@ -348,7 +352,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
     ];
 }
 
-const LINK_HOST_MISSING = `a link host (${toolCommand("browser-router link-host")} <host>)`;
+const LINK_HOST_MISSING = `a link host (${browserRouterLinkHostCommand()})`;
 
 /** The catalog for this config: routes built on its link host, availability from this Mac. */
 export function presets({

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { tsSourcemapsEnvCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { alignOffset, type NormalizedCode, normalizeIdentifiers } from "./align.ts";
@@ -186,7 +186,7 @@ export async function findDeployedCommit(options: FindCommitOptions): Promise<Fi
         const differs = Object.entries(wanted).filter(([name, value]) => options.env?.[name] !== value);
         if (differs.length > 0) {
             notes.push(
-                `the bundle inlines ${differs.length} env value(s) this build did not get the same; pass them so the build matches: ${envFlags(Object.fromEntries(differs.slice(0, 6))).join(" ")}${differs.length > 6 ? ` (all of them: ${toolCommand("ts", "sourcemaps", "env")})` : ""}`
+                `the bundle inlines ${differs.length} env value(s) this build did not get the same; pass them so the build matches: ${envFlags(Object.fromEntries(differs.slice(0, 6))).join(" ")}${differs.length > 6 ? ` (all of them: ${tsSourcemapsEnvCommand()})` : ""}`
             );
         }
 

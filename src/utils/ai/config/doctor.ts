@@ -1,5 +1,5 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { aiConfigAccountEditUseEnvCommand, aiConfigSecretExportCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { lastVaultExportAt, masterKeySource, secrets } from "@genesiscz/utils/security";
 import { describeCredential } from "../providers/credentials";
@@ -144,7 +144,7 @@ function checkEnvShadowing(account: AccountEntry, plugin: ProviderPlugin): Docto
             account.name,
             "warn",
             `${shadowed.join(", ")} set in the environment but deliberately ignored (useEnvApiKey is off for it); ` +
-                `enable with: ${toolCommand("ai config account edit")} ${account.name} --use-env ${shadowed.join(",")}`
+                `enable with: ${aiConfigAccountEditUseEnvCommand(account.name, shadowed)}`
         ),
     ];
 }
@@ -206,7 +206,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
                       "escrow",
                       "security",
                       "warn",
-                      `the vault has never been exported; losing the keychain entry would lose every secret. Run: ${toolCommand("ai config secret export")} --out <file>`
+                      `the vault has never been exported; losing the keychain entry would lose every secret. Run: ${aiConfigSecretExportCommand()}`
                   )
                 : check("escrow", "security", "ok", `last exported ${new Date(exportedAt).toISOString()}`)
         );

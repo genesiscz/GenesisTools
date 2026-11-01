@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import type { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
 import { logger } from "@genesiscz/utils/logger";
@@ -7,6 +8,8 @@ import { SqliteVectorStore } from "@genesiscz/utils/search/stores/sqlite-vector-
 import type { VectorSearchHit, VectorStore } from "@genesiscz/utils/search/stores/vector-store";
 import type { SearchEngine as ISearchEngine, SearchOptions, SearchResult } from "@genesiscz/utils/search/types";
 import { createEmbeddingTable, createFTS5Table } from "./schema";
+
+const requireLazy = createRequire(import.meta.url);
 
 /**
  * BM25 and cosine scores live on different scales:
@@ -244,11 +247,15 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
         // Try sqlite-vec (default or explicit)
         try {
-            const { loadSqliteVec } = require("../../stores/sqlite-vec-loader");
+            const { loadSqliteVec }: typeof import("../../stores/sqlite-vec-loader") = requireLazy(
+                "../../stores/sqlite-vec-loader"
+            );
             const vecLoaded = loadSqliteVec(this.db);
 
             if (vecLoaded) {
-                const { SqliteVecVectorStore } = require("../../stores/sqlite-vec-store");
+                const { SqliteVecVectorStore }: typeof import("../../stores/sqlite-vec-store") = requireLazy(
+                    "../../stores/sqlite-vec-store"
+                );
                 this._vectorStore = new SqliteVecVectorStore(this.db, {
                     tableName: this.config.tableName,
                     dimensions: this.embedder.dimensions,

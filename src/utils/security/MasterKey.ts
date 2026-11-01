@@ -2,8 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { aiConfigSecretImportCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { appGateKey } from "./keyring/app-gate";
@@ -83,7 +83,7 @@ export async function masterKey(): Promise<Buffer> {
             "No master-key rung answered, but the vault already holds encrypted entries. " +
                 "Minting a new key would make every one of them permanently undecryptable. " +
                 `Restore the OS keychain item, set ${variable}, enable the key file, ` +
-                `or re-import a vault export with: ${toolCommand("ai config secret import")}`
+                `or re-import a vault export with: ${aiConfigSecretImportCommand()}`
         );
     }
 

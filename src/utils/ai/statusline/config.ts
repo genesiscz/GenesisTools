@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiStatuslineRunCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -158,7 +158,7 @@ export function formatStatuslineInstallCommand(opts: {
     entryPath?: string;
 }): string {
     if (opts.viaTools) {
-        return `${toolCommand("ai statusline run")} --${opts.host}`;
+        return aiStatuslineRunCommand(opts.host);
     }
 
     return shellCommandLine([

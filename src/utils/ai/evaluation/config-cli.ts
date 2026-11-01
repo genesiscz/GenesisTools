@@ -1,5 +1,6 @@
-import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { jevConfigSetProviderTypesafeCommand } from "@genesiscz/utils/genesis-tools/tools/suggest";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -103,10 +104,7 @@ async function showConfig(options: ConfigOptions): Promise<void> {
 
     out.println(table.toString());
     out.println(pc.dim(`  ${jevSettingsPath()}`));
-    // replaceCommand: the hint is a set command, not the current argv with words appended
-    out.println(
-        pc.dim(`  ${suggestCommand("tools jev", { replaceCommand: ["config", "set", "provider", "typesafe"] })}`)
-    );
+    out.println(pc.dim(`  ${jevConfigSetProviderTypesafeCommand()}`));
 }
 
 async function pickSpec(): Promise<SettingSpec | null> {
@@ -138,7 +136,7 @@ async function setConfig(key: string | undefined, value: string | undefined): Pr
     if (key === undefined || value === undefined) {
         if (!isInteractive()) {
             ui.err("jev config set needs a key and a value.");
-            ui.info(suggestCommand("tools jev", { replaceCommand: ["config", "set", "provider", "typesafe"] }));
+            ui.info(jevConfigSetProviderTypesafeCommand());
             ui.info(`Keys: ${JEV_SETTINGS.map((spec) => spec.key).join(", ")}`);
             process.exitCode = 1;
             return;

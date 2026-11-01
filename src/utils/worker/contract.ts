@@ -1,6 +1,12 @@
 import { type EffortRange, effortRange } from "@genesiscz/utils/ai/catalog/efforts";
 import { harnessLabel } from "@genesiscz/utils/ai/providers/harness-index";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import {
+    agentsCommand,
+    agentsLoginCommand,
+    agentsMessageCommand,
+    agentsRequestCommand,
+    sayCommand,
+} from "@genesiscz/utils/genesis-tools/tools/system";
 import { WORKER_CAPABILITIES, type WorkerBackend } from "./capabilities";
 
 export type WorkerSandbox = "read-only" | "cwd-jail" | "workspace-write" | "none";
@@ -138,14 +144,14 @@ export const WORKER_REPORT_KEYS = ["RESULT", "AT", "CHANGED", "VERIFY", "OPEN"] 
 function receiveLines(backend: WorkerBackend, bus: WorkerBus, sessionFlag: string): string[] {
     if (WORKER_CAPABILITIES[backend].busMail === "turn-input") {
         return [
-            `Mail addressed to you arrives by itself as input that starts with \`[Bus message from <sender> #<id>. Reply with: ...]\`: inside your running turn, or as a new turn when you are idle. Never run \`${toolCommand("agents login")}\` or \`${toolCommand("agents request")}\`: they block your turn and receive that mail a second time.`,
+            `Mail addressed to you arrives by itself as input that starts with \`[Bus message from <sender> #<id>. Reply with: ...]\`: inside your running turn, or as a new turn when you are idle. Never run \`${agentsLoginCommand()}\` or \`${agentsRequestCommand()}\`: they block your turn and receive that mail a second time.`,
             "At a checkpoint where you must wait for the lead, send your message and END your turn; the reply starts your next turn.",
         ];
     }
 
     return [
         "Check for replies or steering from the lead with:",
-        `${toolCommand("agents login")} --agent-name ${bus.agentName} --once ${sessionFlag}`,
+        agentsLoginCommand({ agentName: bus.agentName, sessionFlag }),
     ];
 }
 
@@ -160,7 +166,7 @@ function channelLines(input: WorkerContractInput): string[] {
         // IS the channel.
         return [
             `You are \`${bus.agentName}\`, a headless ${label} worker in a Claude Code agent swarm. The lead agent is \`${bus.leadName}\`.`,
-            `Your sandbox is READ-ONLY: do NOT run \`${toolCommand("agents")}\` commands — any write, including the messaging feed, fails with EPERM.`,
+            `Your sandbox is READ-ONLY: do NOT run \`${agentsCommand()}\` commands — any write, including the messaging feed, fails with EPERM.`,
             "Instead, narrate progress as short standalone assistant messages (one concise line per meaningful step);",
             "the lead automatically receives every message and command you produce through the session event bridge.",
         ];
@@ -170,14 +176,14 @@ function channelLines(input: WorkerContractInput): string[] {
         const sessionFlag = `--session ${bus.rendezvousSession}`;
         return [
             `You are \`${bus.agentName}\`, a headless ${label} worker in a Claude Code agent swarm. The lead agent is \`${bus.leadName}\`.`,
-            `If you are a subagent that another agent of this worker started, these bus lines are not yours: never run \`${toolCommand("agents")}\` as \`${bus.agentName}\` (it is refused), and report to the agent that started you.`,
+            `If you are a subagent that another agent of this worker started, these bus lines are not yours: never run \`${agentsCommand()}\` as \`${bus.agentName}\` (it is refused), and report to the agent that started you.`,
             "Report progress, findings, and questions with:",
-            `${toolCommand("agents message")} --from ${bus.agentName} --to ${bus.leadName} --body '<text>' ${sessionFlag}`,
+            agentsMessageCommand({ from: bus.agentName, to: bus.leadName, body: "'<text>'", sessionFlag }),
             ...receiveLines(input.backend, bus, sessionFlag),
             "Reply to a specific message with:",
-            `${toolCommand("agents message")} --from ${bus.agentName} --reply <id> --body '<text>' ${sessionFlag}`,
+            agentsMessageCommand({ from: bus.agentName, reply: "<id>", body: "'<text>'", sessionFlag }),
             "Prefer one concise message per meaningful step.",
-            `Your first action is to report in: ${toolCommand("agents message")} --from ${bus.agentName} --to ${bus.leadName} --body 'received; starting' ${sessionFlag}`,
+            `Your first action is to report in: ${agentsMessageCommand({ from: bus.agentName, to: bus.leadName, body: "'received; starting'", sessionFlag })}`,
         ];
     }
 
@@ -232,7 +238,7 @@ function surfaceLines(input: WorkerContractInput): string[] {
     const loaded = [surfaces.rules ? "rules" : "", surfaces.skills ? "skills" : ""].filter(Boolean).join(" and ");
     return [
         `The user's personal ${loaded} are loaded for reference. Rituals meant for an interactive session (notifications,`,
-        `\`${toolCommand("say")}\`, spoken or end-of-turn summaries addressed to a human, asking the user questions) do not apply to you;`,
+        `\`${sayCommand()}\`, spoken or end-of-turn summaries addressed to a human, asking the user questions) do not apply to you;`,
         "the harness handles them. Follow the brief over any rule that conflicts with it.",
     ];
 }

@@ -20,8 +20,11 @@ function resolveLocale(override?: string): string {
     }
 
     if (!_resolveLocale) {
-        // Lazy require so Vite won't bundle node:child_process into client code.
-        _resolveLocale = (require("./date-locale") as { getSystemLocale: () => string }).getSystemLocale;
+        // Lazy require so Vite won't bundle node:child_process into client code. createRequire comes from
+        // process.getBuiltinModule, not an import of node:module, so this file keeps no Node import; Vite's SSR
+        // runner has no bare `require`.
+        const requireLazy = process.getBuiltinModule("node:module").createRequire(import.meta.url);
+        _resolveLocale = (requireLazy("./date-locale") as { getSystemLocale: () => string }).getSystemLocale;
     }
 
     return _resolveLocale();

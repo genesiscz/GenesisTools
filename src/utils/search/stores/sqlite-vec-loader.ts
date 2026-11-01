@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { createRequire } from "node:module";
 import { logger } from "@genesiscz/utils/logger";
 import {
     ensureExtensionCapableSQLiteCore,
@@ -10,6 +11,7 @@ import {
 export { HOMEBREW_SQLITE_PATHS };
 
 const state = getSqliteVecLoaderState;
+const requireLazy = createRequire(import.meta.url);
 
 /**
  * Try to swap bun:sqlite to a build that supports extension loading.
@@ -78,7 +80,7 @@ export function loadSqliteVec(db: Database): boolean {
     }
 
     try {
-        const sqliteVec = require("sqlite-vec");
+        const sqliteVec = requireLazy("sqlite-vec");
         sqliteVec.load(db);
         s.extensionAvailable = true;
         return true;
@@ -104,7 +106,7 @@ export function isSqliteVecAvailable(): boolean {
     }
 
     try {
-        require.resolve("sqlite-vec");
+        requireLazy.resolve("sqlite-vec");
         s.extensionAvailable = true;
         return true;
     } catch {

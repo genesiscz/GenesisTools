@@ -1,5 +1,5 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { jevLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { isSecureRef, resolveSecret, secrets } from "@genesiscz/utils/security";
 import { Storage } from "@genesiscz/utils/storage";
@@ -137,7 +137,5 @@ export async function resolveApiKey(provider: EvaluationProviderId = "vercel"): 
         return oidcToken;
     }
 
-    throw new Error(
-        `No ${provider} credential. Run ${toolCommand("jev login")} --provider ${provider} or set ${variable}.`
-    );
+    throw new Error(`No ${provider} credential. Run ${jevLoginCommand(provider)} or set ${variable}.`);
 }

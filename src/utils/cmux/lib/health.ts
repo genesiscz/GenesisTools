@@ -1,7 +1,7 @@
 import { basename } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
 import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
+import { cmuxDoctorCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { listProcesses, readCpuPercents, readExecutablePath } from "@genesiscz/utils/process/processes";
 
 /**
@@ -147,12 +147,12 @@ function describeUnresponsive(context: string, health: CmuxHealth): string {
         case "not-running":
             return `${context}: cmux is not running.`;
         case "socket-dead":
-            return `${context}: the cmux app is running (pid ${health.appPid}) but its socket does not answer — run \`${toolCommand("cmux doctor")}\`.`;
+            return `${context}: the cmux app is running (pid ${health.appPid}) but its socket does not answer — run \`${cmuxDoctorCommand()}\`.`;
         case "ui-starved":
             return (
                 `${context}: cmux's UI thread is not responding (ping answers in ${health.probes.ping.ms} ms but ` +
                 `identify starved${health.appCpu !== undefined ? `, app CPU ${health.appCpu}%` : ""}) — likely a UI livelock. ` +
-                `Run \`${toolCommand("cmux doctor")}\` for triage and the rescue recipe.`
+                `Run \`${cmuxDoctorCommand()}\` for triage and the rescue recipe.`
             );
         case "access-denied":
             return (

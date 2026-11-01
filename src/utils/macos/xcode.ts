@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { macosPermissionsBuildCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -94,10 +94,10 @@ export function detectXcodeToolchain(options?: DetectXcodeToolchainOptions): Xco
  */
 export function genesisAppBuildHint(toolchain: XcodeToolchain = detectXcodeToolchain()): string {
     if (toolchain.kind === "xcode") {
-        return `Run \`${toolCommand("macos permissions build")}\`.`;
+        return `Run \`${macosPermissionsBuildCommand()}\`.`;
     }
 
-    return `GenesisTools.app needs the full Xcode (SwiftUI macros are not in the Command Line Tools): install Xcode, select it with \`sudo xcode-select -s <path to your Xcode.app>\` (for example /Applications/Xcode.app), then \`${toolCommand("macos permissions build")}\`.`;
+    return `GenesisTools.app needs the full Xcode (SwiftUI macros are not in the Command Line Tools): install Xcode, select it with \`sudo xcode-select -s <path to your Xcode.app>\` (for example /Applications/Xcode.app), then \`${macosPermissionsBuildCommand()}\`.`;
 }
 
 /**
