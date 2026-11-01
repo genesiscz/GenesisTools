@@ -1,7 +1,7 @@
 import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import { type AccountUsageSnapshot, absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { pickRanked, rankAccounts } from "@genesiscz/utils/ai/usage/account-rank";
@@ -49,10 +49,13 @@ function hintFrom(snapshot: AccountUsageSnapshot): string | undefined {
         return snapshot.error;
     }
 
-    const windows = snapshot.limits
-        .filter((limit) => Number.isFinite(limit.percentUsed))
-        .slice(0, 2)
-        .map((limit) => `${limit.label} ${Math.round(limit.percentUsed)}%`);
+    const windows = [
+        ...snapshot.limits
+            .filter((limit) => Number.isFinite(limit.percentUsed))
+            .slice(0, 2)
+            .map((limit) => `${limit.label} ${Math.round(limit.percentUsed)}%`),
+        ...(snapshot.absentLimits ?? []).map(absentLimitText),
+    ];
 
     return windows.length > 0 ? windows.join(" · ") : undefined;
 }
