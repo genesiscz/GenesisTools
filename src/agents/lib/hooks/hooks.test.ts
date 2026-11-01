@@ -964,6 +964,122 @@ describe("collectStaleCaptures", () => {
         rmSync(base, { recursive: true, force: true });
     });
 
+    it("keeps a background capture a post phase is diffing, though its marker is now background.taken", () => {
+        // `flushDeferred` renames `background.json` to `background.taken` before it diffs. A sweep that read the
+        // capture's old age and then found no `background.json` gave it the one-hour limit and removed it mid-diff.
+        const root = mkdtempSync(join(tmpdir(), "gt-hooks-gc-taken-"));
+        const past = new Date(Date.now() - 2 * 3_600_000);
+        const taking = join(root, "claude", "sess", "diff", "taking");
+
+        mkdirSync(join(taking, "1"), { recursive: true });
+        writeFileSync(join(taking, "1", "kept.ts"), "x");
+        writeFileSync(join(taking, "background.taken"), "{}");
+        utimesSync(taking, past, past);
+
+        const result = collectStaleCaptures({ now: Date.now(), abandonedMs: 3_600_000, root, write: true });
+
+        expect(result.removed).toEqual([]);
+        expect(existsSync(taking)).toBe(true);
+
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it("sweeps a capture it cannot list instead of throwing out of the post phase", () => {
+        // Stands in for a capture another sweep removed between this one's `stat` and its size walk: the walk's first
+        // `readdir` threw, and the exception ended the post hook. A plain file fails that `readdir` every time.
+        const root = mkdtempSync(join(tmpdir(), "gt-hooks-gc-unlisted-"));
+        const past = new Date(Date.now() - 2 * 3_600_000);
+        const odd = join(root, "claude", "sess", "diff", "odd");
+
+        mkdirSync(join(root, "claude", "sess", "diff"), { recursive: true });
+        writeFileSync(odd, "not a folder");
+        utimesSync(odd, past, past);
+
+        const result = collectStaleCaptures({ now: Date.now(), abandonedMs: 3_600_000, root, write: true });
+
+        expect(result.removed.map((entry) => entry.path)).toEqual([odd]);
+        expect(existsSync(odd)).toBe(false);
+
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it("does not sweep while another post phase holds the claim, and clears a claim its holder left behind", () => {
+        const base = mkdtempSync(join(tmpdir(), "gt-hooks-gc-claim-"));
+        const root = join(base, "data");
+        const stamp = join(base, "sweep.stamp");
+        const capture = join(root, "claude", "sess", "diff", "abandoned");
+        const past = new Date(Date.now() - 2 * 3_600_000);
+
+        mkdirSync(capture, { recursive: true });
+        utimesSync(capture, past, past);
+        writeFileSync(`${stamp}.claim`, "");
+
+        // Held: no walk, and the stamp stays unwritten, so the holder's sweep is the one that counts.
+        expect(sweepAbandonedCaptures({ now: Date.now(), root, stamp })).toBeNull();
+        expect(existsSync(capture)).toBe(true);
+        expect(existsSync(stamp)).toBe(false);
+
+        // Left behind by a post phase that died mid-sweep: cleared now, and the next post phase sweeps.
+        utimesSync(`${stamp}.claim`, past, past);
+        expect(sweepAbandonedCaptures({ now: Date.now(), root, stamp })).toBeNull();
+        expect(existsSync(`${stamp}.claim`)).toBe(false);
+        expect(sweepAbandonedCaptures({ now: Date.now(), root, stamp })?.removed.map((entry) => entry.path)).toEqual([
+            capture,
+        ]);
+        expect(existsSync(`${stamp}.claim`)).toBe(false);
+
+        rmSync(base, { recursive: true, force: true });
+    });
+
+    it("of the post phases of a parallel batch that all find the sweep due, exactly one sweeps", async () => {
+        // Writing the stamp before the walk did not stop them: every phase that read the stamp before the first
+        // write swept too, and two walks over one capture could both size it while the other removed it.
+        const base = mkdtempSync(join(tmpdir(), "gt-hooks-gc-batch-"));
+        const home = mkdtempSync(join(tmpdir(), "gt-hooks-gc-batch-home-"));
+        const root = join(base, "data");
+        const stamp = join(base, "sweep.stamp");
+        const past = new Date(Date.now() - 2 * 3_600_000);
+
+        for (let index = 0; index < 50; index++) {
+            const capture = join(root, "claude", "sess", "diff", `abandoned-${index}`);
+
+            mkdirSync(join(capture, "1"), { recursive: true });
+            writeFileSync(join(capture, "1", "kept.ts"), "x");
+            utimesSync(capture, past, past);
+        }
+
+        const worker = join(import.meta.dir, "gc.test-worker.ts");
+        const startAt = String(Date.now() + 1000);
+        const children = Array.from({ length: 4 }, () =>
+            Bun.spawn([process.execPath, worker, root, stamp, startAt], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: { ...process.env, GENESIS_TOOLS_HOME: home },
+            })
+        );
+        const outcomes: string[] = [];
+
+        for (const child of children) {
+            const [stdout, stderr, code] = await Promise.all([
+                new Response(child.stdout).text(),
+                new Response(child.stderr).text(),
+                child.exited,
+            ]);
+
+            expect({ code, stderr: code === 0 ? "" : stderr }).toEqual({ code: 0, stderr: "" });
+            outcomes.push(stdout);
+        }
+
+        expect(outcomes.filter((outcome) => outcome === "swept")).toHaveLength(1);
+        expect(outcomes.filter((outcome) => outcome === "skipped")).toHaveLength(3);
+        // Every capture went, and the emptied session folder with them.
+        expect(existsSync(join(root, "claude", "sess", "diff"))).toBe(false);
+        expect(existsSync(`${stamp}.claim`)).toBe(false);
+
+        rmSync(base, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+    }, 30_000);
+
     it("a session sweep ignores age and touches only that session", () => {
         const root = tree();
         const result = collectStaleCaptures({ now: Date.now(), sessionId: "sess-a", root, write: true });
