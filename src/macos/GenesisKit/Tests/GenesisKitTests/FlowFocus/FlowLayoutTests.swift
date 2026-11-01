@@ -49,3 +49,21 @@ final class FlowLayoutTests: XCTestCase {
         return size.height
     }
 }
+
+/// A suggestion row of the Dictation insights keeps Add and Dismiss as buttons while the keyboard is in it, so Tab
+/// reaches Add from the empty replacement field and accepts the proposed spelling (PR #677 review, 2026-11-01).
+final class FlowSuggestionRowLivenessTests: XCTestCase {
+    func testRowRestsWithoutKeyboardOrTypedReplacement() {
+        XCTAssertFalse(FlowSuggestionFocus.keepsRowLive(replacement: "", focus: nil))
+    }
+
+    func testRowStaysLiveWhileTheKeyboardIsInItWithAnEmptyField() {
+        XCTAssertTrue(FlowSuggestionFocus.keepsRowLive(replacement: "", focus: .replacement))
+        XCTAssertTrue(FlowSuggestionFocus.keepsRowLive(replacement: "", focus: .add))
+        XCTAssertTrue(FlowSuggestionFocus.keepsRowLive(replacement: "", focus: .dismiss))
+    }
+
+    func testRowStaysLiveWithATypedReplacement() {
+        XCTAssertTrue(FlowSuggestionFocus.keepsRowLive(replacement: "Kubernetes", focus: nil))
+    }
+}
