@@ -3,6 +3,28 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-01 21:13 — **Decision 31 read "a) a", "b) b" in the widget, "a", "b", "c" in the inbox of every session, and
+  its reasoning sat under "Context" (Martin's screenshots of 20:38).**
+  - *The options were the letters.* One agent posts `options: ["a", "b", "c"]` and writes each option's words only in
+    the prompt as "a) …" lines (18 stored decisions, 16 from one session). Every surface drew the label it got, and
+    every test fixture had options with words. Fix: one TypeScript rule (`decisionOptionLabels`, `shownDecisionText`
+    in `src/question/lib/decisions/option-labels.ts`), applied when `question_post` saves and in every reader (hub
+    Inbox, widget snapshot, CLI, the delivered answer), so old rows read right too. The prompt leaves out its "a) …"
+    lines only when every one of them says exactly what its button says. Rule: before a display change ships, read
+    the real stored shapes (a survey script over the log), not only the fixture.
+  - *The reasoning was labelled Context.* `fromRecord` filled `context` with `row.context ?? row.reasoning` since
+    2026-09-25, so the hub and the widget both showed the agent's reason for its pick as the decision's findings.
+    Fix: Context is the reply's context only; the reasoning follows the proposal on the lightbulb line
+    (`decisionPick`). Rule: a `??` between two fields that mean different things is a mislabel, not a fallback.
+  - *Two surfaces never showed the question.* The inbox of every session's open entry had only its option buttons
+    (now `WidgetPeekSummary`, setting `overviewSummary`, default on), and the hub's card never drew a titled
+    decision's prompt (now `InboxItem.shownPrompt`).
+  - The option words then drew their backticks: a label taken from a markdown prompt line is markdown, so the widget's
+    option rows draw inline markdown now, as the hub's rows did (`WidgetOptionText.markdown`).
+  - Commits on fix/2026-11-01-decision-letter-options: **525561959d** (TypeScript), **b513b117f9** (hub card),
+    **6685a46379** (GenesisKit). Shots: `letters-{card,overview}-{before,after}-graphite.png` from
+    `WidgetDecisionSurfacesTests.testRendersTheLetterDecisionBeforeAndAfter` (`WIDGET_DECISION_SHOTS=<folder>`).
+
 - 2026-10-30 22:17 — **The alert popup's context ran under the option rows ("fix this overlap").**
   - *Six lines of the decision's summary were laid out, nine were drawn, and the last three sat under option a.*
     The summary was a selectable `Text` with `.lineLimit(6)`. A selectable `Text` draws its whole string while it is
