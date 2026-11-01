@@ -2,9 +2,11 @@ import { spawnSync } from "node:child_process";
 import {
     closeSync,
     existsSync,
+    lstatSync,
     openSync,
     readdirSync,
     readFileSync,
+    readlinkSync,
     readSync,
     renameSync,
     rmSync,
@@ -438,12 +440,24 @@ export function renamesIn({
     }
 
     const blobs = new Map<string, string[]>();
-    const copies = gone.flatMap((file) => {
+    const copies: Array<{ file: ChangedFile; copy: string }> = [];
+    const fromHead: ChangedFile[] = [];
+
+    for (const file of gone) {
         const copy = beforeOf?.(file.path) ?? null;
 
-        return copy ? [{ file, copy }] : [];
-    });
-    const fromHead = gone.filter((file) => !copies.some((item) => item.file === file));
+        if (copy === null) {
+            fromHead.push(file);
+            continue;
+        }
+
+        // `hash-object` follows a link, and a captured one dangles or leaves the repository: the first that would
+        // not open ended the run, and every copy after it lost its rename. A link pairs with nothing anyway,
+        // because the fresh side is hashed through its link too.
+        if (!isCapturedLink(copy)) {
+            copies.push({ file, copy });
+        }
+    }
 
     for (const chunk of inChunks(copies, RENAME_ARGS)) {
         const out = gitOut(root, ["hash-object", "--", ...chunk.map((item) => item.copy)], { quiet: true }).split("\n");
@@ -1141,16 +1155,45 @@ export function capturedBefore(item: CapturedEdit): ChangeBytes {
 }
 
 /**
- * The bytes each captured file had before the command, in input order: its copy, or for a clean
- * tracked file the blob at the commit the command started on, capped like `readCapped`. Without
- * either, nothing: a genuinely new file has no before-state.
+ * Whether a captured copy is a symlink. The capture stores a repository's symlink as a link (`cloneTree`), and a
+ * reader that opens one follows it: out of the repository for an absolute target, against the capture folder for
+ * a relative one. Only `git diff --no-index` reads a link as git stores it, by its text.
+ */
+function isCapturedLink(path: string): boolean {
+    try {
+        return lstatSync(path).isSymbolicLink();
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * A captured copy's bytes as git stores them: a symlink is its link text, so the change log never keeps a file
+ * outside the repository as a before-state (`readCapped` follows the link). A path that is gone reads as nothing.
+ */
+function readCapturedCopy(path: string): ChangeBytes {
+    if (!isCapturedLink(path)) {
+        return readCapped(path);
+    }
+
+    try {
+        return capBlob(readlinkSync(path, { encoding: "buffer" }));
+    } catch {
+        return {};
+    }
+}
+
+/**
+ * The bytes each captured file had before the command, in input order: its copy (a link as its text), or for a
+ * clean tracked file the blob at the commit the command started on, capped like `readCapped`. Without either,
+ * nothing: a genuinely new file has no before-state.
  *
  * The git blobs are read per repository in TWO processes however many files there are: one
  * `cat-file --batch-check` for the sizes, then one `cat-file --batch` for the blobs small enough to
  * keep. A codemod over N clean files used to start N `git show` processes inside the hook budget.
  */
 export function capturedBefores(items: CapturedEdit[]): ChangeBytes[] {
-    const results: ChangeBytes[] = items.map((item) => (item.before ? readCapped(item.before) : {}));
+    const results: ChangeBytes[] = items.map((item) => (item.before ? readCapturedCopy(item.before) : {}));
     const byRoot = new Map<string, number[]>();
 
     items.forEach((item, index) => {

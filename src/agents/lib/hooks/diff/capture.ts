@@ -93,9 +93,12 @@ interface Allowed {
 }
 
 interface CloneTree {
-    /** Puts `file` (repo-relative) into the tree, as a clone or a copy where the caps allow each. */
-    put: (file: string, allowed: Allowed) => Stored;
-    /** Makes the symlinks `put` deferred and returns the entries whose link could not be made. */
+    /**
+     * Puts `file` (repo-relative) into the tree, as a clone or a copy where the caps allow each. `declined` names
+     * the paths below a directory entry that did not fit while the rest of it did.
+     */
+    put: (file: string, allowed: Allowed) => { stored: Stored; declined: string[] };
+    /** Makes the symlinks `put` deferred and returns the paths whose link could not be made. */
     finish: () => string[];
 }
 
@@ -110,9 +113,16 @@ interface CloneTree {
  * only regular files are read: a FIFO would block the hook forever.
  */
 function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyFile?: CopyFile }): CloneTree {
-    const links: Array<{ path: string; target: string; file?: string }> = [];
+    const links: Array<{ path: string; target: string; file: string }> = [];
 
-    const place = (source: string, destination: string, allowed: Allowed, file?: string): Placement => {
+    /**
+     * Puts `file` (repo-relative) and adds to `declined` what did not fit below a directory that is otherwise stored.
+     * A child the caps refuse used to give up the whole directory while its clones stayed, and the directory went
+     * into `.left`, so a file the command then created in it read as one that existed. Now only that child does.
+     */
+    const place = (file: string, allowed: Allowed, declined: string[]): Placement => {
+        const source = join(root, file);
+        const destination = join(tree, file);
         const stat = lstatSync(source);
 
         if (stat.isSymbolicLink()) {
@@ -125,17 +135,31 @@ function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyF
             mkdirSync(destination, { recursive: true, mode: DIR_MODE });
 
             let placed: Placement = "cloned";
+            let stored = 0;
+            const refused: string[] = [];
 
-            for (const item of readdirSync(source)) {
-                const inner = place(join(source, item), join(destination, item), allowed);
+            for (const item of readdirSync(source, { withFileTypes: true })) {
+                const child = join(file, item.name);
+                const below: string[] = [];
+                const inner = place(child, allowed, below);
 
                 if (inner === "declined") {
-                    return "declined";
+                    // A `dir/` entry covers every file under it (`leftOutOfCapture`).
+                    refused.push(item.isDirectory() ? `${child}/` : child);
+                    continue;
                 }
 
+                stored += 1;
+                refused.push(...below);
                 placed = inner === "copied" ? "copied" : placed;
             }
 
+            // Nothing of it was stored, so the caller leaves the whole entry out.
+            if (stored === 0 && refused.length > 0) {
+                return "declined";
+            }
+
+            declined.push(...refused);
             return placed;
         }
 
@@ -149,11 +173,13 @@ function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyF
 
     return {
         put: (file, allowed) => {
+            const declined: string[] = [];
+
             try {
-                return place(join(root, file), join(tree, file), allowed, file);
+                return { stored: place(file, allowed, declined), declined };
             } catch (err) {
                 hookDiag("Could not clone or copy a dirty file, so it has no before-state", { err, root, file });
-                return "failed";
+                return { stored: "failed", declined: [] };
             }
         },
         finish: () => {
@@ -165,10 +191,7 @@ function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyF
                     symlinkSync(link.target, link.path);
                 } catch (err) {
                     hookDiag("Could not store a symlink, so it has no before-state", { err, path: link.path });
-
-                    if (link.file) {
-                        failed.push(link.file);
-                    }
+                    failed.push(link.file);
                 }
             }
 
@@ -377,6 +400,8 @@ function fillCapture({
     const take: string[] = [];
     const left: string[] = [];
     const placeholders: string[] = [];
+    /** Paths below a taken directory that did not fit or could not be stored, left out on their own. */
+    const inside: string[] = [];
     let copied = 0;
     let failed = 0;
 
@@ -398,7 +423,7 @@ function fillCapture({
             continue;
         }
 
-        const stored = tree.put(entry.file, allowed);
+        const { stored, declined } = tree.put(entry.file, allowed);
 
         if (stored === "failed") {
             failed += 1;
@@ -411,10 +436,19 @@ function fillCapture({
 
         copied += stored === "copied" ? entry.size : 0;
         take.push(entry.file);
+        inside.push(...declined);
     }
 
     for (const file of tree.finish()) {
-        take.splice(take.indexOf(file), 1);
+        const at = take.indexOf(file);
+
+        // A link below a taken directory leaves only itself out; the directory's other files keep their copies.
+        if (at < 0) {
+            inside.push(file);
+            continue;
+        }
+
+        take.splice(at, 1);
         left.push(file);
         failed += 1;
     }
@@ -440,10 +474,14 @@ function fillCapture({
         why.push(`${failed} could not be cloned or copied`);
     }
 
-    const reason =
-        left.length > 0 ? `${left.length} of ${files.length} dirty entries left out, ${why.join("; ")}` : null;
+    const reasons = [
+        ...(left.length > 0 ? [`${left.length} of ${files.length} dirty entries left out, ${why.join("; ")}`] : []),
+        ...(inside.length > 0
+            ? [`${inside.length} path(s) inside a captured directory left out, over the caps or not storable`]
+            : []),
+    ];
 
-    return { take, left, reason };
+    return { take, left: [...left, ...inside], reason: reasons.length > 0 ? reasons.join("; ") : null };
 }
 
 /**
