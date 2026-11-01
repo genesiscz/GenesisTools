@@ -11,10 +11,10 @@ export { humanTextOf } from "./session.utils";
 export { extractToolInputSummary, extractToolResultText, isAssistantEndTurn } from "./session-helpers";
 export * from "./types";
 
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import { env } from "@genesiscz/utils/env";
+import { readLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -44,13 +44,8 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(
     const messages: T[] = [];
     const seenUuids = options.dedupeUuids ? new Set<string>() : undefined;
 
-    const fileStream = createReadStream(filePath);
-    const rl = createInterface({
-        input: fileStream,
-        crlfDelay: Number.POSITIVE_INFINITY,
-    });
-
-    for await (const line of rl) {
+    // Cut at "\n" only: readline also ends a line at U+2028 and U+2029, which JSON strings carry raw.
+    for await (const line of readLines(filePath)) {
         if (line.trim()) {
             try {
                 // Native parsing: a transcript line is strict JSON. The comment-json default spent

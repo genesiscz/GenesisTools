@@ -231,7 +231,6 @@ interface FailureEnvelope {
 }
 
 const DRIVER_SOURCE = `
-import { createInterface } from "node:readline";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const RealDate = globalThis.Date;
@@ -318,7 +317,22 @@ const execute = async (request) => {
     }
     throw new Error("Unsupported baseline oracle operation");
 };
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+// Requests are cut at "\\n" only: readline also ends a line at U+2028 and U+2029, which JSON strings carry raw. Inline,
+// because the driver is built against the pinned baseline revision, which predates the shared splitLines.
+const requestLines = async function* (input) {
+    const decoder = new TextDecoder();
+    let carried = "";
+    for await (const chunk of input) {
+        const parts = (carried + decoder.decode(chunk, { stream: true })).split("\\n");
+        carried = parts.pop() ?? "";
+        yield* parts;
+    }
+    carried += decoder.decode();
+    if (carried) {
+        yield carried;
+    }
+};
+const lines = requestLines(process.stdin);
 try {
     for await (const rawLine of lines) {
         if (!rawLine.trim()) {
