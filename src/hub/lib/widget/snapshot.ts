@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
+import { decisionOptionLabels, shownDecisionText } from "@app/question/lib/decisions/option-labels";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import {
     type AnsweredVia,
@@ -176,11 +177,17 @@ export interface WidgetSupersededBy {
  * the decision has none, and the card's `body` keeps only the question's own text.
  */
 export interface WidgetDecisionDetails {
-    /** The findings that lead to the decision, markdown: the posted context, else the posted reasoning. */
+    /**
+     * The findings that lead to the decision, markdown: the reply text before its block. A posted decision's reasoning
+     * is never here; it is part of `proposal`.
+     */
     context?: string;
     /** Text under the options about this decision. */
     notes?: string;
-    /** The agent's pick with its reason ("a): it matches both of your instructions"). */
+    /**
+     * The agent's pick with its reason ("a): it matches both of your instructions"): the posted proposal, then the
+     * posted reasoning (`decisionPick` in src/question/lib/inbox/build.ts).
+     */
     proposal?: string;
     confidence?: "high" | "medium" | "low";
     /** The recommended option's letter. */
@@ -828,15 +835,18 @@ function parseWidgetChanges(path: string, target: WidgetTarget): WidgetChanges {
     return { available: true, files: [...files.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100) };
 }
 
-/** An inbox item's `title`, when the decision has text to show. */
+/** An inbox item's `title`, when the decision has text to show: its title, else its prompt as cards show it. */
 function decisionTitle(row: DecisionRecord): { title?: string } {
-    const title = widgetTitle(row.title ?? row.prompt);
+    const title = widgetTitle(row.title ?? shownDecisionText(row).prompt);
     return title ? { title } : {};
 }
 
-/** The prompt under a titled decision, cut at a word near 600 characters; none when the title is the prompt. */
+/**
+ * The prompt under a titled decision, cut at a word near 600 characters; none when the title is the prompt. It is the
+ * prompt as cards show it (`shownDecisionText`): "a) …" lines that only repeat the option buttons under it are left out.
+ */
 export function decisionSummary(row: DecisionRecord): { summary?: string } {
-    const prompt = row.prompt?.trim();
+    const prompt = shownDecisionText(row).prompt.trim();
     if (!prompt || !row.title) {
         return {};
     }
@@ -1303,7 +1313,8 @@ export async function widgetSnapshot({
             number: row.number,
             ...decisionTitle(row),
             ...decisionSummary(row),
-            options: row.options,
+            // A bare letter ("a") takes the words of its line in the prompt, as the session's card shows it.
+            options: decisionOptionLabels(row.prompt, row.options),
             ...(row.recommended ? { recommended: row.recommended } : {}),
             revision: row.revision ?? 1,
             updatedAt: timeOf(row.updatedTs),
@@ -1350,7 +1361,7 @@ export async function widgetSnapshot({
             needsAnswer: false,
             number: row.number,
             ...decisionTitle(row),
-            options: row.options,
+            options: decisionOptionLabels(row.prompt, row.options),
             ...(row.option ? { option: row.option } : {}),
             ...(answer ? { answer: answer.slice(0, 300) } : {}),
             answeredVia: via,
@@ -1578,14 +1589,15 @@ export async function widgetSnapshot({
         const inbox = inboxDecisionOf(row);
         // The prompt is lifted too: an item's attachments are embedded there. With a title (a task's short name) the
         // prompt holds the details and is the body; the context, proposal and notes are their own fields, in the
-        // order the body held them before, so the attachments keep their order.
+        // order the body held them before, so the attachments keep their order. The prompt is the Inbox's
+        // (`inbox.prompt`): without the "a) …" lines that only repeat the option buttons.
         const decisionImages = await liftCardImages(
             [
-                row.title ?? row.prompt,
+                row.title ?? inbox.prompt,
                 cleanVisibleContext(inbox.context ?? ""),
                 cleanVisibleContext(inbox.proposal ?? ""),
                 cleanVisibleContext(inbox.notes ?? ""),
-                row.title ? cleanVisibleContext(row.prompt) : "",
+                row.title ? cleanVisibleContext(inbox.prompt) : "",
             ],
             { budget: budgetFor(session.key) }
         );

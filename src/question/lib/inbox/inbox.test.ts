@@ -16,8 +16,9 @@ import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbo
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets, noNativeReceivers } from "../decisions/deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
+import { decisionOptionLabels, shownDecisionText } from "../decisions/option-labels";
 import { decisionFiles } from "../decisions/paths";
-import { parseDecisionBlocks } from "../decisions/read";
+import { decisionLine, parseDecisionBlocks } from "../decisions/read";
 import {
     type DecisionRecord,
     harvestDecisions,
@@ -28,7 +29,7 @@ import {
 import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
-import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
+import { buildInbox, fromRecord, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
 import { answerDialogItem, parseDialogKey } from "./dialog-answer";
 import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
 import { cachingReadDeps, fillExcerpts, locateRef } from "./excerpts";
@@ -88,6 +89,115 @@ function form(overrides: Partial<AskForm> = {}): AskForm {
         ...overrides,
     };
 }
+
+/** A stored decision row: decision 31's shape unless the test says otherwise. */
+function storedRow(overrides: Partial<DecisionRecord> = {}): DecisionRecord {
+    return {
+        id: "d_31_s-letters",
+        sessionId: "s-letters",
+        number: 31,
+        title: "When to empty the removal folder",
+        prompt: [
+            "The folder holds 81.8 GB. A move frees nothing.",
+            "",
+            "a) empty it now: I open one `tools rm ask` approval",
+            "b) keep it until tomorrow evening, then I ask again",
+            "c) let macOS clear it (reboot or the 3-day cleanup)",
+        ].join("\n"),
+        options: ["a", "b", "c"],
+        recommended: "b",
+        reasoning: "One day is enough to notice anything missing.",
+        state: "open",
+        updatedTs: "2026-11-01T19:10:03.307Z",
+        ...overrides,
+    };
+}
+
+describe("decision option labels", () => {
+    test("bare letters take the words of their prompt lines, which then leave the prompt (decision 31)", () => {
+        const row = storedRow();
+        const words = [
+            "empty it now: I open one `tools rm ask` approval",
+            "keep it until tomorrow evening, then I ask again",
+            "let macOS clear it (reboot or the 3-day cleanup)",
+        ];
+
+        expect(decisionOptionLabels(row.prompt, row.options)).toEqual(words);
+        expect(shownDecisionText(row)).toEqual({
+            prompt: "The folder holds 81.8 GB. A move frees nothing.",
+            options: words,
+        });
+        // The hub's Inbox reads the same: the buttons say the words and the prompt says the rest.
+        const item = fromRecord(row);
+        expect(item.choices.map((choice) => choice.label)).toEqual(words);
+        expect(item.choices.map((choice) => choice.recommended)).toEqual([false, true, false]);
+        expect(item.prompt).toBe("The folder holds 81.8 GB. A move frees nothing.");
+        // The answer delivered to the agent names the option by its words, not "b) b".
+        expect(decisionLine({ ...row, title: undefined, state: "answered", option: "b" })).toBe(
+            "DECISION 31: b) keep it until tomorrow evening, then I ask again"
+        );
+    });
+
+    test("a mixed record: each bare letter in any written form is filled, a real label stays", () => {
+        const prompt = [
+            "Findings:",
+            "a) the cache is cold",
+            "b) the index is stale",
+            "",
+            "Pick one.",
+            "- **a)** Keep the cache",
+            "b) Drop it",
+            "**c. Rebuild it nightly**",
+            "   so the morning run starts warm",
+        ].join("\n");
+        const options = ["a", "Drop it", "(c)"];
+        const words = ["Keep the cache", "Drop it", "Rebuild it nightly\nso the morning run starts warm"];
+
+        // The later list is the options; the findings above keep their letters to themselves.
+        expect(decisionOptionLabels(prompt, options)).toEqual(words);
+        expect(shownDecisionText({ prompt, options })).toEqual({
+            prompt: "Findings:\na) the cache is cold\nb) the index is stale\n\nPick one.",
+            options: words,
+        });
+    });
+
+    test("options with words of their own are unchanged, and lines that say more stay in the prompt", () => {
+        const prompt = "Which one?\n\na) Keep the cache: it saves 2 s per run\nb) Drop it";
+        const options = ["Keep the cache", "Drop it"];
+
+        expect(decisionOptionLabels(prompt, options)).toEqual(options);
+        // Line a says more than its button, so the list stays whole rather than losing only line b.
+        expect(shownDecisionText({ prompt, options })).toEqual({ prompt, options });
+    });
+
+    test("a bare letter with no line keeps its letter, and a prompt that is only the options keeps them", () => {
+        expect(shownDecisionText({ prompt: "Pick one.", options: ["a", "b"] })).toEqual({
+            prompt: "Pick one.",
+            options: ["a", "b"],
+        });
+        expect(shownDecisionText({ prompt: "a) yes\nb) no", options: ["a", "b"] })).toEqual({
+            prompt: "a) yes\nb) no",
+            options: ["yes", "no"],
+        });
+    });
+
+    test("Context is the reply's context only; the reasoning is the agent's pick line, after the proposal", () => {
+        // Decision 31 has reasoning and no proposal: its pick line is the reasoning, and it has no Context.
+        const reasoningOnly = fromRecord(storedRow());
+        expect(reasoningOnly.context).toBeNull();
+        expect(reasoningOnly.proposal).toBe("One day is enough to notice anything missing.");
+        expect(reasoningOnly.reasoning).toBe("One day is enough to notice anything missing.");
+
+        const both = fromRecord(storedRow({ proposal: "b): one day costs nothing." }));
+        expect(both.context).toBeNull();
+        expect(both.proposal).toBe("b): one day costs nothing.\n\nOne day is enough to notice anything missing.");
+
+        // A decision harvested from a reply keeps the reply's text as its Context.
+        const harvested = fromRecord(storedRow({ reasoning: undefined, context: "Done with the reclaim." }));
+        expect(harvested.context).toBe("Done with the reclaim.");
+        expect(harvested.proposal).toBeNull();
+    });
+});
 
 describe("scanTurns", () => {
     test("the last reply asks a decision: its blocks, without the text after the options", () => {
