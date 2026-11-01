@@ -1158,3 +1158,44 @@ describe("every batch of a request", () => {
         expect(requestBatchIds({})).toEqual([]);
     });
 });
+
+describe("a path that came back beside its aside copy", () => {
+    test("approve offers to delete the set-aside copy and leaves the path that came back", async () => {
+        const request = asideRequest("came-back");
+        const [back] = request.targets;
+
+        if (!back?.stored) {
+            throw new Error("expected an aside copy");
+        }
+
+        file(back.path);
+        // A deny cannot put the copy back over the path that came back: the request waits for it.
+        expect(denyRequest(request, { caller: PERSON, via: "cli" }).waiting.map((target) => target.path)).toEqual([
+            back.path,
+        ]);
+        const waiting = loadRmRequest(request.id);
+
+        if (!waiting) {
+            throw new Error("expected the request to wait");
+        }
+
+        const stop = new AbortController();
+        stop.abort();
+        const rows = approvalRows(waiting, entriesOf(waiting), { signal: stop.signal });
+        await rows.done;
+        expect(rows.items.map((item) => item.reason)).toEqual([
+            "Delete the set-aside copy (the path is back in place)",
+        ]);
+
+        const { approved, denied } = splitBySelection(entriesOf(waiting), null);
+        approveDelete({
+            ctx: context(),
+            request: waiting,
+            approved,
+            denied,
+            choices: { selected: null, disposal: "trash", remember: "once", note: null },
+        });
+        expect(existsSync(back.path)).toBe(true);
+        expect(existsSync(back.stored)).toBe(false);
+    });
+});

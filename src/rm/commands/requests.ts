@@ -34,6 +34,8 @@ import {
     approvalRows,
     approveDelete,
     approveRoots,
+    CAME_BACK_REASON,
+    cameBack,
     type DenyOutcome,
     denyRequest,
     savedSizes,
@@ -59,6 +61,11 @@ function approvalLines(
     const lines = entries.map(({ wanted }, index) => {
         const bytes = sizes[index];
         const size = bytes === undefined ? "" : `  ${formatBytes(bytes)}`;
+
+        if (cameBack(wanted)) {
+            return `${shown(wanted.path, ctx.cwd)}${size}  (${CAME_BACK_REASON}: ${wanted.stored})`;
+        }
+
         const where = wanted.stored ? ", moved aside" : "";
         return `${shown(wanted.path, ctx.cwd)}${size}  (${wanted.reason}${where})`;
     });
@@ -194,10 +201,11 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
     }
 
     // A path the person already denied whose aside copy could not go home waits for a deny, not a second
-    // approval; a path that was blocked or changed while they decided can be approved again.
+    // approval; a path that was blocked or changed while they decided can be approved again. A path that came back
+    // beside its copy can never go home, so approving (which deletes only the copy) is the one way forward.
     const deniedBefore = new Set(request.decided?.denied ?? []);
 
-    if (request.targets.some((target) => deniedBefore.has(target.path))) {
+    if (request.targets.some((target) => deniedBefore.has(target.path) && !cameBack(target))) {
         out.println(
             pc.red(`Request ${id} has unfinished recovery. Use ${toolCommand("rm")} deny ${id} to retry the put-back.`)
         );
@@ -371,6 +379,15 @@ function printDenyOutcome(id: string, outcome: DenyOutcome, closedLine: string):
 
     if (outcome.waiting.length > 0) {
         out.println(`Request ${id} still needs recovery.`);
+
+        if (outcome.waiting.some(cameBack)) {
+            out.println(
+                pc.dim(
+                    `  the path is back; ${toolCommand("rm")} approve ${id} deletes the set-aside copy, or move the copy yourself`
+                )
+            );
+        }
+
         process.exitCode = 1;
         return;
     }
