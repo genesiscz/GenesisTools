@@ -54,7 +54,7 @@ describe("the registry", () => {
         }
     });
 
-    it("holds the fifteen general rules; personal ones load from guard.customRules", () => {
+    it("holds the sixteen general rules; personal ones load from guard.customRules", () => {
         expect(SHELL_RULES.map((r) => r.id).sort()).toEqual(
             [
                 "bare-log-command",
@@ -69,6 +69,7 @@ describe("the registry", () => {
                 "rg-replace-cluster",
                 "search-from-root",
                 "stderr-discarded-then-counted",
+                "stderr-discarded-then-counted-covered",
                 "stderr-discarded-then-read",
                 "swiftpm-stale-plan",
                 "zsh-glob-qualifier",
@@ -272,7 +273,7 @@ describe("rendering", () => {
         const text = renderViolation(v);
 
         expect(text).toContain(
-            "[block] 2>/dev/null then a count: a failure is counted as 0 (rule stderr-discarded-then-counted)"
+            "[block] 2>/dev/null then a count: a failure reads as 0 or a blank (rule stderr-discarded-then-counted)"
         );
         expect(text).toContain("matched (offset 0): ls ~/Downloads/*.har 2>/dev/null | wc -l");
         expect(text).toContain("why: stderr is discarded");
