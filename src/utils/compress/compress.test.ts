@@ -1629,12 +1629,13 @@ describe("old day files", () => {
     });
 
     it("two passes over one file keep its verified .zst, and only one daily pass runs per logs folder", async () => {
+        // A small day: the race and the lock do not depend on its size, and the text preset compresses at level 22.
         const now = new Date("2026-10-13T12:00:00");
         const old = new Date("2026-10-10T12:00:00").getTime() / 1000;
         const dayOf = (relative: string) => /^(\d{4}-\d{2}-\d{2})\.log$/.exec(relative)?.[1];
         const day = (dir: string) => {
             const path = join(dir, "2026-10-10.log");
-            writeFileSync(path, logText(20_000));
+            writeFileSync(path, logText(2_000));
             utimesSync(path, old, old);
             return path;
         };
@@ -1647,7 +1648,7 @@ describe("old day files", () => {
         );
         await Promise.all(plans.map((plan) => applyOldFileCompression(plan, { caller: "test", releaseGraceMs: 0 })));
         expect(existsSync(racedPath)).toBe(false);
-        expect([...readLinesSync(`${racedPath}.zst`)].join("\n")).toBe(logText(20_000));
+        expect([...readLinesSync(`${racedPath}.zst`)].join("\n")).toBe(logText(2_000));
 
         const locked = scratch("daily-lock");
         const lockedPath = day(locked);
@@ -1659,7 +1660,7 @@ describe("old day files", () => {
             runs.find((run) => run !== null)?.find(({ target }) => target.name === "logs")?.report.compressed
         ).toEqual([expect.objectContaining({ path: lockedPath })]);
         expect(existsSync(dailyPassLockPath(locked))).toBe(false);
-        expect([...readLinesSync(`${lockedPath}.zst`)].join("\n")).toBe(logText(20_000));
+        expect([...readLinesSync(`${lockedPath}.zst`)].join("\n")).toBe(logText(2_000));
     });
 });
 
