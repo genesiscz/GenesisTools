@@ -1559,3 +1559,65 @@ old and the new binary, and the `--bigfiles --min-bytes 1048576` listing was byt
 Cost, old and new binary interleaved on the worktree (104,567 files), 15:36, load 47 to 65 (system CPU): `--dusize`
 old 2.33, 1.83, 1.59, 1.66, 2.01 s; new 1.74, 1.90, 1.76, 1.70, 1.77 s. `--bigfiles` old 2.69, 1.68, 1.95 s; new
 3.09, 1.87, 1.71 s. The ranges overlap at that load; the join does the same work with one branch more.
+
+## 2026-11-01 22:17 — every `--exclude` is honored: a grown, sorted array instead of 256 fixed slots
+
+`g_excludes` was a fixed array of 256 (`MAX_EXCLUDES`). The library entry `clonesize_run_json` (the bun:ffi path of
+`tools du clonesize`) copied the first 256 and ignored the rest without a word, and the CLI parser counted the dropped
+ones but refused only in `--index` mode. Another session hit it: with 1,032 excludes the walk visited 7 M files instead
+of 2.57 M and reported 72 GB instead of 14.3 GB.
+
+Now the array grows on demand (`excludes_add`, doubling from 64 slots), is sorted once before the walk
+(`excludes_seal`), and the per-folder check (`is_excluded` in the scan and listing walks, the index walk) is a
+`bsearch` with `strcmp`: the same exact-string match as the old loop, in O(log n) instead of O(n) per folder.
+`clonesize_run_json` frees the array before it returns. Before, the stale pointers into the FFI caller's freed
+buffers stayed behind, and `clonesize_bigfiles_json` resets no excludes, so it could read them. When the array cannot
+grow, the CLI exits 1 and the library returns NULL, each with a message. The `--index` refusal and the matching
+256-path check in `buildIndex` (`src/du/lib/index/build.ts`) are gone. `--prune-name` dropped every name past its 64
+slots the same way; the CLI now exits 2 on the 65th and `big_run_json` returns NULL.
+
+Which totals move: only a scan given more than 256 excludes, which now prunes every listed folder. Fixture with
+`keep/` (64 KiB), `victim/` (128 KiB), 299 excludes that match nothing and `victim/` as the 300th: the old binary
+scanned 2 files, 196,608 bytes; the new one 1 file, 65,536 bytes. With 256 or fewer, nothing moves: on T1 (90,129
+files, 22:11) the old and the new binary printed the same `files_scanned`, `naive_bytes` and `unique_bytes` with 0
+and with 256 excludes, and the new binary with 1,032 excludes that match nothing printed the same again. At 22:16,
+after the test wrapper had installed `apps/eve/node_modules` (14,061 files), old and new printed 104,189 files,
+1,791,614,976 naive, 1,332,210,085 unique, 1,586,642,944 unique allocated, 204,972,032 shared, and the new binary
+with 1,032 excludes the same. That install is also why the `bench.sh` T1 totals below differ between the two runs.
+
+Did the match need to be smarter? Excludes that match nothing but share the longest prefix with real paths
+(`<T1>/node_modules/.gt-bench-exclude-NNNN`) are the worst case for a linear scan. A third binary, `linear`, is the
+new code with the old loop in place of the `bsearch`. The cost is userland, so user CPU is the metric; system CPU
+moved 12 to 24 s between rounds that did identical work. Each run includes a zsh wrapper that reads the list into
+argv. Interleaved, 6 rounds, T1 with 104,189 files and 11,183 folders, 22:15 to 22:16, load 164 to 232:
+
+| Binary and excludes | User CPU per run | System CPU median |
+|---|---|---|
+| old, 0 | 0.08 s (all 6) | 20.9 s |
+| new, 0 | 0.08 s (all 6) | 17.4 s |
+| old (linear), 256 | 0.10 to 0.11 s | 17.5 s |
+| new, 256 | 0.08 to 0.09 s | 19.6 s |
+| linear, 1,032 | 0.17 to 0.18 s | 15.8 s |
+| new, 1,032 | 0.09 to 0.11 s | 18.4 s |
+
+hyperfine on the same arms at 22:09 to 22:11 (T1 at 90,129 files and 9,735 folders, load 128 to 181, 5 runs) gave
+the same order: user 0.072, 0.073, 0.095, 0.075, 0.159 and 0.085 s. The linear scan of 1,032 excludes costs about
+0.08 s of CPU per 11,000 folders, about 7 µs per folder, so a tree with 300,000 folders spends about 2 s on it. That
+is small next to the system CPU of such a scan, but it grows with every exclude and every folder, and the binary
+search removes it for one `qsort` per scan. With no excludes the hot loop is unchanged: `(g_nexcludes || g_nforeign)`
+still skips the call.
+
+`bench.sh` (system CPU, mean of 5; T1 grew between the runs, see above):
+
+| Benchmark | before (22:06, load 107 to 200) | after (22:13, load 97 to 187) |
+|---|---|---|
+| T1 flat | 15.98 s | 19.31 s |
+| T1 depth2 | 16.50 s | 18.05 s |
+| T2 flat | 16.75 s | 9.03 s |
+| T2 depth2 | 16.30 s | 15.20 s |
+| T1 cache-warm | 2.79 s | 2.34 s |
+
+At that load the two runs move both ways by up to 46% on unchanged loops, so the interleaved rounds above are the
+comparison that counts. The tests are `clone-controls.test.ts` "clonesize excludes: every one is honored, past the
+256th" (bun:ffi and the CLI binary) and `index.test.ts` "L7" (the `--index` walk through `buildIndex`). A planted 256
+cap in `excludes_add` failed all three.

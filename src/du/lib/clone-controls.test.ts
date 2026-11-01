@@ -1,11 +1,21 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { closeSync, mkdtempSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import {
+    closeSync,
+    mkdirSync,
+    mkdtempSync,
+    openSync,
+    realpathSync,
+    renameSync,
+    rmSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { scanWithBun } from "./bun-scan";
 import { BLK, type CloneFixture, makeCloneFixture } from "./clone-fixture";
-import { scanWithCFfi } from "./engine";
+import { scanWithC, scanWithCFfi } from "./engine";
 import type { ClonesizeResult } from "./types";
 
 const describeOnDarwin = process.platform === "darwin" ? describe : describe.skip;
@@ -147,4 +157,42 @@ describeOnDarwin("cloneOrCopy: a clone holds no blocks of its own until its sour
         expect(r.unique_allocated_bytes).toBe(2 * BYTES);
         expect(r.shared_bytes).toBe(0);
     });
+});
+
+// The native core kept the first 256 excludes in a fixed array and dropped the rest without an error: a scan given
+// 1,032 walked 7 M files instead of 2.57 M. Only the 300th exclude here matches, so any cap below 300 counts victim/.
+describeOnDarwin("clonesize excludes: every one is honored, past the 256th", () => {
+    const KEEP = 64 * 1024;
+    const VICTIM = 128 * 1024;
+    let root: string;
+    let excludes: string[];
+
+    beforeAll(() => {
+        root = realpathSync(mkdtempSync(join(tmpdir(), "gt-clone-excludes-")));
+        mkdirSync(join(root, "keep"));
+        mkdirSync(join(root, "victim"));
+        writeFileSync(join(root, "keep", "a.bin"), Buffer.alloc(KEEP, 0x4b));
+        writeFileSync(join(root, "victim", "b.bin"), Buffer.alloc(VICTIM, 0x56));
+        const misses = Array.from({ length: 299 }, (_, i) => join(root, `missing-${i}`));
+        excludes = [...misses, join(root, "victim")];
+    });
+
+    afterAll(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it("the fixture counts victim/ when nothing is excluded", () => {
+        const r = scanWithCFfi({ path: root, threads: 2 });
+        expect({ files: r.files_scanned, naive: r.naive_bytes }).toEqual({ files: 2, naive: KEEP + VICTIM });
+    });
+
+    for (const [name, scan] of [
+        ["c-ffi", scanWithCFfi],
+        ["c (CLI)", scanWithC],
+    ] as const) {
+        it(`${name}: the 300th exclude prunes victim/`, () => {
+            const r = scan({ path: root, threads: 2, exclude: excludes });
+            expect({ files: r.files_scanned, naive: r.naive_bytes }).toEqual({ files: 1, naive: KEEP });
+        });
+    }
 });

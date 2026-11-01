@@ -209,10 +209,50 @@ static uint64_t g_group_naive[MAX_GROUPS];
 static uint64_t g_group_files[MAX_GROUPS];
 static uint64_t g_group_private[MAX_GROUPS];
 
-// Directory subtrees to prune during the walk (detected git worktrees, etc.).
-#define MAX_EXCLUDES 256
-static const char *g_excludes[MAX_EXCLUDES];
+// Directory subtrees to prune during the walk (detected git worktrees, --exclude).
+// Grown on demand: a fixed 256-slot array dropped every exclude past it without a
+// word, and a scan given 1,032 walked 7 M files instead of 2.57 M. Sorted once
+// before the walk (excludes_seal), so the per-directory check is a binary search
+// instead of a strcmp against every exclude for every directory. The strings stay
+// owned by the caller (argv, or the FFI caller's buffers) and must outlive the walk.
+static const char **g_excludes = NULL;
 static int g_nexcludes = 0;
+static size_t g_excludes_cap = 0;
+
+/** Appends one exclude path. 0 on success, -1 when the array cannot grow. */
+static int excludes_add(const char *path) {
+    if ((size_t)g_nexcludes == g_excludes_cap) {
+        size_t next = g_excludes_cap ? g_excludes_cap * 2 : 64;
+        const char **grown = realloc(g_excludes, next * sizeof(*g_excludes));
+        if (!grown) return -1;
+        g_excludes = grown;
+        g_excludes_cap = next;
+    }
+    g_excludes[g_nexcludes++] = path;
+    return 0;
+}
+
+static void excludes_clear(void) {
+    free(g_excludes);
+    g_excludes = NULL;
+    g_nexcludes = 0;
+    g_excludes_cap = 0;
+}
+
+static int cmp_cstr_ptr(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+/** Sorts the excludes for exclude_listed(). Call after the last excludes_add() and before the walk. */
+static void excludes_seal(void) {
+    if (g_nexcludes > 1) qsort(g_excludes, (size_t)g_nexcludes, sizeof(*g_excludes), cmp_cstr_ptr);
+}
+
+/** Exact string match against the sealed excludes, as the old linear strcmp scan matched. */
+static int exclude_listed(const char *path) {
+    return g_nexcludes > 0 &&
+           bsearch(&path, g_excludes, (size_t)g_nexcludes, sizeof(*g_excludes), cmp_cstr_ptr) != NULL;
+}
 
 // Mount points of OTHER filesystems inside the scan root, pruned before the walk
 // can touch them (`du -x` semantics). Two reasons:
@@ -458,8 +498,7 @@ static char *cloud_json(void) {
 }
 
 static int is_excluded(const char *path) {
-    for (int i = 0; i < g_nexcludes; i++)
-        if (strcmp(g_excludes[i], path) == 0) return 1;
+    if (exclude_listed(path)) return 1;
     for (int i = 0; i < g_nforeign; i++)
         if (strcmp(g_foreign_mounts[i], path) == 0) return 1;
     return 0;
@@ -1890,13 +1929,23 @@ char *clonesize_run_json(const char *path, int threads, int freeable,
     g_walk_cloud_roots = 0;
     if (g_freeable_tree && g_maxdepth < 0) g_maxdepth = 1;
     g_profile = getenv("PROFILE") ? 1 : 0;
-    g_nexcludes = 0;
-    for (int i = 0; i < nexcludes && i < MAX_EXCLUDES; i++) g_excludes[g_nexcludes++] = excludes[i];
+    excludes_clear();
+    for (int i = 0; i < nexcludes; i++) {
+        if (excludes_add(excludes[i]) != 0) {
+            fprintf(stderr, "clonesize: out of memory storing %d exclude paths\n", nexcludes);
+            excludes_clear();
+            return NULL;
+        }
+    }
+    excludes_seal();
 
     reset_state();
     Result R;
-    if (run_scan(path, &R) != 0) return NULL;
-    return format_json(path, &R);
+    char *out = run_scan(path, &R) == 0 ? format_json(path, &R) : NULL;
+    // The strings are the FFI caller's buffers, which die when this returns: a later
+    // entry point (clonesize_bigfiles_json resets no excludes) must not read them.
+    excludes_clear();
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -2003,7 +2052,7 @@ static char *partners_run_json(const char *target, const char *root, int threads
     g_freeable_tree = 0;
     g_min_blocks = 0;
     g_mtime_min = 0;
-    g_nexcludes = 0;
+    excludes_clear();
     g_cache_dir = NULL;
     g_profile = getenv("PROFILE") ? 1 : 0;
     int nthreads = resolve_threads();
@@ -2388,7 +2437,11 @@ static char *big_run_json(const char *const *roots, int nroots, int threads, uns
     g_nthreads = threads;
     g_big_min = min_bytes;
     g_nprune = 0;
-    for (int i = 0; i < nprune && i < MAX_PRUNE_NAMES; i++) g_prune_names[g_nprune++] = prune_names[i];
+    if (nprune > MAX_PRUNE_NAMES) {
+        fprintf(stderr, "clonesize: more than %d prune names (got %d)\n", MAX_PRUNE_NAMES, nprune);
+        return NULL;
+    }
+    for (int i = 0; i < nprune; i++) g_prune_names[g_nprune++] = prune_names[i];
     g_profile = getenv("PROFILE") ? 1 : 0;
     int nthreads = resolve_threads();
 
@@ -2499,7 +2552,7 @@ __attribute__((visibility("default")))
 char *clonesize_cloudfiles_json(const char *root, int threads, unsigned long long min_bytes, int include_cloud) {
     g_skip_cloud = 1;
     g_walk_cloud_roots = include_cloud ? 1 : 0;
-    g_nexcludes = 0;
+    excludes_clear();
     const char *roots[1] = { root };
     return big_run_json(roots, 1, threads, min_bytes, NULL, 0, 1);
 }
@@ -2523,7 +2576,7 @@ __attribute__((visibility("default")))
 char *clonesize_dusize_json(const char *root, int threads) {
     g_skip_cloud = 1;
     g_walk_cloud_roots = 0;
-    g_nexcludes = 0;
+    excludes_clear();
     g_big_cloud_only = 0;
     g_big_dataless_skipped = 0;
     g_big_sum_only = 1;
@@ -2769,11 +2822,6 @@ static int idx_in_list(const char *path, char *const *list, int n) {
     return 0;
 }
 
-static int idx_user_excluded(const char *path) {
-    for (int i = 0; i < g_nexcludes; i++) if (strcmp(g_excludes[i], path) == 0) return 1;
-    return 0;
-}
-
 static int cmp_keep_name(const void *a, const void *b) {
     return strcmp(((const IdxKeep *)a)->name, ((const IdxKeep *)b)->name);
 }
@@ -2988,7 +3036,7 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
                 if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
                 if (g_idx_region && node == 0 && idx_keep_match(name, fileid)) { idx_note_kept(name); continue; }
                 char *sub = idx_child_path(dirpath, name);
-                if (g_nexcludes && idx_user_excluded(sub)) { free(sub); continue; }
+                if (exclude_listed(sub)) { free(sub); continue; }
                 uint32_t fl = 0;
                 if (g_nforeign && idx_in_list(sub, g_foreign_mounts, g_nforeign)) fl = IDX_F_MOUNT;
                 else if (is_cloud_root(dirpath, name)) { fl = IDX_F_CLOUD; note_cloud_root(sub); }
@@ -3418,7 +3466,7 @@ static void usage(const char *me) {
 int main(int argc, char **argv) {
     const char *target = NULL, *partners_of = NULL;
     int json = 0, quiet = 0, volume = 0, topn = 30, bigfiles = 0, cloudfiles = 0;
-    int index_mode = 0, dropped_excludes = 0, dusize = 0;
+    int index_mode = 0, dusize = 0;
     const char *keep_file = NULL;
     // Grown on demand: a fixed 4096 cap dropped every root past it with no
     // diagnostic, so a large fleet got a silently incomplete listing.
@@ -3426,6 +3474,7 @@ int main(int argc, char **argv) {
     int nroots = 0, roots_cap = 0;
     const char *prune[MAX_PRUNE_NAMES];
     int nprune = 0;
+    atexit(excludes_clear);
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if      (!strcmp(a, "--format") && i + 1 < argc) json = !strcmp(argv[++i], "json");
@@ -3436,7 +3485,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--freeable-tree"))          { g_freeable_tree = 1; if (g_maxdepth < 0) g_maxdepth = 1; }
         else if (!strcmp(a, "--min-bytes") && i + 1 < argc) g_min_blocks = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--changed-since") && i + 1 < argc) g_mtime_min = strtoull(argv[++i], NULL, 10);
-        else if (!strcmp(a, "--exclude") && i + 1 < argc) { if (g_nexcludes < MAX_EXCLUDES) g_excludes[g_nexcludes++] = argv[++i]; else { i++; dropped_excludes++; } }
+        else if (!strcmp(a, "--exclude") && i + 1 < argc) {
+            if (excludes_add(argv[++i]) != 0) { fprintf(stderr, "clonesize: out of memory storing --exclude paths\n"); free(roots); return 1; }
+        }
         else if (!strcmp(a, "--partners-of") && i + 1 < argc) partners_of = argv[++i];
         else if (!strcmp(a, "--top") && i + 1 < argc)    topn = atoi(argv[++i]);
         else if (!strcmp(a, "--volume"))                 volume = 1;
@@ -3451,7 +3502,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--big-file-limit") && i + 1 < argc) g_idx_big_limit = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--no-private"))             g_idx_private = 0;
         else if (!strcmp(a, "--stall-seconds") && i + 1 < argc) g_idx_stall_s = atof(argv[++i]);
-        else if (!strcmp(a, "--prune-name") && i + 1 < argc) { if (nprune < MAX_PRUNE_NAMES) prune[nprune++] = argv[++i]; else i++; }
+        else if (!strcmp(a, "--prune-name") && i + 1 < argc) {
+            // Refused, never dropped: an unread name is a folder the listing silently enters.
+            if (nprune == MAX_PRUNE_NAMES) { fprintf(stderr, "clonesize: more than %d --prune-name names\n", MAX_PRUNE_NAMES); free(roots); return 2; }
+            prune[nprune++] = argv[++i];
+        }
         else if (!strcmp(a, "--cache-dir") && i + 1 < argc) g_cache_dir = argv[++i];
         else if (!strcmp(a, "--no-cache"))               g_cache_read = 0;
         else if (!strcmp(a, "--include-cloud"))          g_skip_cloud = 0;
@@ -3470,11 +3525,11 @@ int main(int argc, char **argv) {
         }
     }
     if (!target) { usage(argv[0]); free(roots); return 2; }
+    excludes_seal();
 
     if (index_mode) {
         // One root only: node ids, the fold and the region keep set are per tree.
         if (nroots != 1) { fprintf(stderr, "--index takes exactly one directory\n"); free(roots); return 2; }
-        if (dropped_excludes) { fprintf(stderr, "--index: more than %d --exclude paths\n", MAX_EXCLUDES); free(roots); return 2; }
         if (keep_file && idx_load_keep(keep_file) != 0) { perror(keep_file); free(roots); return 2; }
         g_profile = getenv("PROFILE") ? 1 : 0;
         g_idx_test_block = getenv("CLONESIZE_TEST_BLOCK_DIR");
