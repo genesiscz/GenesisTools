@@ -3,9 +3,8 @@ import { describe, expect, it } from "bun:test";
 import { detectShellViolations, type ShellViolation } from "./index";
 import { rgRules } from "./rg";
 
-// The detection itself is covered exhaustively by ../rgGuard.test.ts through
-// detectBrokenRg; this file pins the registry face: matched, index, suggestion,
-// severity, and the exemptions that shipped after the corpus review.
+// This file pins the registry face (matched, index, suggestion, severity) and the
+// exemptions that shipped after the corpus review.
 
 function only(command: string): ShellViolation | undefined {
     return detectShellViolations(command, rgRules)[0];
@@ -78,6 +77,63 @@ describe("rg-replace-cluster: exemptions from the corpus review", () => {
         expect(only('git commit -m "fix(rg-guard): explain that rg -rn means --replace n"')).toBeUndefined();
         expect(only("cat <<'EOF'\nnever run rg -rn\nEOF")).toBeUndefined();
         expect(only("# rg -rn foo\nrg -n foo")).toBeUndefined();
+    });
+});
+
+describe("rg-replace-cluster: a run that prints no match text", () => {
+    it.each([
+        "rg -rn 'x' src --type ts -l | head -2",
+        "rg -lrn foo src",
+        "rg -rn foo -c .",
+        "rg -rn foo -q .",
+        'rg -rn "user_active|FOREGROUND" --heading -l native/ src/macos 2>&1 | head',
+        "rg -rn foo --files-with-matches .",
+        "rg -rn foo --files-without-match .",
+        "rg -rn foo --count .",
+        "rg -rn foo --count-matches .",
+        "rg -rn foo --quiet .",
+        "rg -rn --files src",
+        "rg -crn foo .",
+        "rg -rn foo -nl .",
+        "rg -rn foo -lt ts .",
+    ])("lets %j through: -l, -c, -q and --files print no replacement", (command) => {
+        expect(only(command)).toBeUndefined();
+    });
+
+    it("reads past a quoted value, which leaves no token, to the flag after it", () => {
+        expect(only("rg -rn \"AuthLogger\" ../packages --glob '*.ts' --glob '*.tsx' -l 2>/dev/null")).toBeUndefined();
+        expect(only("rg -rn foo -g '*.ts' -l .")).toBeUndefined();
+        expect(only('rg -rn foo -g "$GLOB" -l .')).toBeUndefined();
+    });
+
+    it.each([
+        ["rg -rl foo src", "rg -l foo src"],
+        ["rg -rnl foo src", "rg -nl foo src"],
+        ["rg -rnq foo .", "rg -nq foo ."],
+        ["rg -lr foo src", "rg -l foo src"],
+        ["rg -nr foo -l src", "rg -n foo -l src"],
+        ["rg -rn foo -L src", "rg -n foo -L src"],
+    ])(
+        "still blocks %j: the letters after r are the replacement, an r last eats the pattern, -L is --follow",
+        (command, fixed) => {
+            expect(only(command)?.suggestion).toBe(fixed);
+        }
+    );
+
+    it("a flag's value is not an output mode, and neither is a later rg's flag or a path after --", () => {
+        expect(only("rg -rn foo -e -l .")?.matched).toBe("-rn");
+        expect(only("rg -rn foo --glob -l .")?.matched).toBe("-rn");
+        expect(only("rg -rn foo -tl .")?.matched).toBe("-rn");
+        expect(only("rg -rn foo -- -l")?.matched).toBe("-rn");
+        expect(only("rg -rn foo . | rg -l bar")?.matched).toBe("-rn");
+    });
+
+    it("a second -r or --replace takes the next word as its replacement, so a -l there is no output mode", () => {
+        expect(only("rg -rn foo -r -l src")?.suggestion).toBe("rg -n foo -r -l src");
+        expect(only("rg -rn foo --replace -l src")?.suggestion).toBe("rg -n foo --replace -l src");
+        expect(only("rg -rn foo -or -l src")?.matched).toBe("-rn");
+        expect(only("rg -rn foo -or '$1' -l src")).toBeUndefined();
+        expect(only("rg -rn foo --type-clear l -l src")).toBeUndefined();
     });
 });
 

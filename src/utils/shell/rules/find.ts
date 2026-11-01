@@ -11,10 +11,12 @@ import {
     nextRawArgument,
     originalSlice,
     rawToken,
+    type ShellScan,
     type Span,
     splitPipeline,
     tokenize,
 } from "../scan";
+import { RG_LONG_VALUE_FLAGS } from "./rg";
 import type { ShellMatch, ShellRule } from "./types";
 
 // `/`, `~`, `~/`, `$HOME`, `${HOME}`, `/Users/<name>`, `/home/<name>` with or
@@ -52,6 +54,149 @@ const FD_VALUE_FLAGS = new Set([
 // `fd --search-path ~ x` walked the whole home directory unchallenged.
 const FD_ROOT_FLAGS = new Set(["--base-directory", "--search-path"]);
 
+// Primaries and flags that act on each entry: a command run per entry can walk it whatever the
+// depth limit (`find ~ -maxdepth 1 -exec du -sh {} +`), and `-delete` at depth 1 still empties ~.
+const FIND_PER_ENTRY = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete"]);
+const FD_PER_ENTRY = new Set(["--exec", "--exec-batch"]);
+// fd's depth flags, the hidden `--maxdepth` alias included. With several, the last one wins.
+const FD_DEPTH_FLAGS = new Set(["--max-depth", "--maxdepth", "--exact-depth"]);
+// fd short flags that take a value: the rest of the cluster (`-d1`, `-tx`) or the next word.
+const FD_SHORT_VALUE_LETTERS = "cCdEejoStxX";
+
+/**
+ * The words of the simple command from `start` on, as the shell splits them: quotes and backslashes
+ * removed, a glued redirection split off, cut at an unquoted `;`, `|`, `&`, `(`, `)`, newline or comment,
+ * and at the end of the `-c` or backtick body that holds `start`. A scanned token blanks a quoted
+ * value, and the raw text runs into a glued operator (`-maxdepth 1)`) or the quote that closes a body
+ * (`-c '… -d 1'`). `$` and backticks stay in the word, so a caller can tell a value only the shell knows.
+ */
+export function wordsFrom(
+    scan: Pick<ShellScan, "command" | "executableRanges">,
+    start: number,
+    max = Number.POSITIVE_INFINITY
+): string[] {
+    const { command } = scan;
+    const body = scan.executableRanges
+        .filter((range) => start >= range.start && start <= range.end)
+        .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
+    const end = body?.end ?? command.length;
+    const words: string[] = [];
+    let word: string | null = null;
+    let i = start;
+
+    while (i < end && words.length < max) {
+        const ch = command[i];
+
+        if (ch === "\\") {
+            word = (word ?? "") + (command[i + 1] === "\n" ? "" : (command[i + 1] ?? ""));
+            i += 2;
+        } else if (ch === "'" || ch === '"') {
+            let close = i + 1;
+
+            while (close < end && command[close] !== ch) {
+                close += ch === '"' && command[close] === "\\" ? 2 : 1;
+            }
+
+            word = (word ?? "") + command.slice(i + 1, Math.min(close, end));
+            i = close + 1;
+        } else if (ch === " " || ch === "\t") {
+            if (word !== null) {
+                words.push(word);
+                word = null;
+            }
+
+            i++;
+        } else if (
+            "\n;|)".includes(ch) ||
+            (ch === "(" && !/[$<>]$/.test(word ?? "")) ||
+            (ch === "#" && word === null) ||
+            (ch === "&" && !/[<>]$/.test(word ?? "") && command[i + 1] !== ">")
+        ) {
+            break;
+        } else if (
+            (ch === "<" || ch === ">") &&
+            word !== null &&
+            !/^(?:\d+|&)$|[<>&]$/.test(word) &&
+            command[i + 1] !== "("
+        ) {
+            // `--only=x>log` is the word `--only=x` and a redirection; `2>&1` is one redirection.
+            words.push(word);
+            word = null;
+        } else {
+            word = (word ?? "") + ch;
+            i++;
+        }
+    }
+
+    if (word !== null && words.length < max) {
+        words.push(word);
+    }
+
+    return words;
+}
+
+/**
+ * Whether every depth limit is a literal 0 or 1 and nothing acts per entry: one readdir, not a walk.
+ * find reads `-maxdepth N`; fd reads `-d N`, `-dN` (also inside a cluster such as `-Hd1`),
+ * `--max-depth`, `--maxdepth` and `--exact-depth`. BSD `-depth N` is a filter, not a limit:
+ * `find ~ -depth 3` still visits every level.
+ */
+function readsOneLevel(scan: ShellScan, word: "find" | "fd", start: number): boolean {
+    const argv = wordsFrom(scan, start);
+    const limits: string[] = [];
+
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+
+        if (word === "find") {
+            if (FIND_PER_ENTRY.has(arg)) {
+                return false;
+            }
+
+            if (arg === "-maxdepth") {
+                limits.push(argv[i + 1] ?? "");
+            }
+
+            continue;
+        }
+
+        if (arg === "--") {
+            break;
+        }
+
+        if (arg.startsWith("--")) {
+            const [flag = "", inline] = arg.split("=", 2);
+
+            if (FD_PER_ENTRY.has(flag)) {
+                return false;
+            }
+
+            if (FD_DEPTH_FLAGS.has(flag)) {
+                limits.push(inline ?? argv[i + 1] ?? "");
+            }
+
+            continue;
+        }
+
+        // A short cluster up to its first value letter: `-Hx du` runs du per entry, `-tx` is a type.
+        for (let k = 1; arg.startsWith("-") && k < arg.length; k++) {
+            if (arg[k] === "x" || arg[k] === "X") {
+                return false;
+            }
+
+            if (FD_SHORT_VALUE_LETTERS.includes(arg[k])) {
+                if (arg[k] === "d") {
+                    limits.push(k + 1 < arg.length ? arg.slice(k + 1) : (argv[i + 1] ?? ""));
+                }
+
+                break;
+            }
+        }
+    }
+
+    return limits.length > 0 && limits.every((limit) => /^0*[01]$/.test(limit));
+}
+
 // The value after -name / -iname, read from the original command because a
 // quoted pattern (`-iname 'report.har'`) is blank in the cleaned text.
 function firstNameArgument(command: string, tokens: Span[]): string | null {
@@ -73,7 +218,8 @@ export const findFromRoot: ShellRule = {
         "find and fd from / or ~ visit every directory on the disk. That opens hundreds of thousands of " +
         "vnodes, can starve other processes of file handles (MCP servers have dropped with ENFILE " +
         'mid-session), and takes so long that the call usually gets cut off or read as "nothing found". ' +
-        "On macOS Spotlight already indexes the home directory: `mdfind -name <pattern>` answers in milliseconds.",
+        "On macOS Spotlight already indexes the home directory: `mdfind -name <pattern>` answers in milliseconds. " +
+        "A literal depth limit of 1 (`-maxdepth 1`, fd `-d 1`) with no -exec or -delete reads one directory and passes.",
     wrong: "find ~ -iname 'report.har' 2>/dev/null | head",
     right: "mdfind -name 'report.har'   # or scope it: find ~/Downloads -maxdepth 2 -iname 'report.har'",
     evidence:
@@ -164,7 +310,7 @@ export const findFromRoot: ShellRule = {
                         }
                     }
 
-                    if (!rootToken) {
+                    if (!rootToken || readsOneLevel(scan, word, tokens[cmd].start + tokens[cmd].text.length)) {
                         continue;
                     }
 
@@ -196,33 +342,7 @@ const RG_VALUE_FLAGS = new Set([
     "-m",
     "-t",
     "-T",
-    "--after-context",
-    "--before-context",
-    "--context",
-    "--max-depth",
-    "--encoding",
-    "--regexp",
-    "--file",
-    "--glob",
-    "--iglob",
-    "--threads",
-    "--max-columns",
-    "--max-count",
-    "--type",
-    "--type-not",
-    "--type-add",
-    "--sort",
-    "--sortr",
-    "--color",
-    "--colors",
-    "--max-filesize",
-    "--pre",
-    "--pre-glob",
-    "--ignore-file",
-    "--engine",
-    "--path-separator",
-    "--context-separator",
-    "--field-match-separator",
+    ...RG_LONG_VALUE_FLAGS,
 ]);
 const GREP_VALUE_FLAGS = new Set([
     "-A",
