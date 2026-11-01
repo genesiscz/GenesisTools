@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { AccountEntry } from "../../../config/schema";
+import type { AbsentLimit, AccountUsageSnapshot } from "../../account-features";
 
 /**
  * The 429 unlock and the probe guard, asserted at the primitive that SPENDS the grant.
@@ -73,6 +75,8 @@ mock.module("@genesiscz/utils/ai/AIConfig", () => ({
 const { classifyAnthropicFailure, pollAnthropicAccount, snapshotToAccountUsage, toLimitWindows } = await import(
     "./usage"
 );
+const { mergeHeaderReading, QUOTA_PROBE_FALLBACK_MODEL, QUOTA_PROBE_MODEL, QUOTA_PROBE_URL, usageFromQuotaHeaders } =
+    await import("./quota-headers");
 const { failureSnapshot } = await import("@genesiscz/utils/ai/usage-poll/poll");
 const { SNAPSHOT_OPS } = await import("@genesiscz/utils/ai/usage-poll/shared-cache");
 
@@ -154,6 +158,8 @@ describe("anthropic-sub usage.poll", () => {
         expect(snapshot.limits[2]).toMatchObject({ kind: "scoped", scopeModel: "Sonnet" });
         // The legacy `usage-shared` projection and the anthropic TUI presenter both read it.
         expect(snapshot.native).toEqual(USAGE_BODY);
+        // Negative control for the account without a 5-hour limit below: nothing is named absent here.
+        expect(snapshot.absentLimits).toBeUndefined();
     });
 
     it("the snapshot carries the billing anchor and a calendar-day renewal, and converts back to the anchor", async () => {
@@ -381,5 +387,111 @@ describe("anthropic-sub refresh expiry", () => {
         stubFetch(0);
 
         expect((await pollAnthropicAccount(entry("work"))).auth?.refreshExpiresAt).toBe("2026-10-01T12:00:00.000Z");
+    });
+});
+
+describe("an account without a 5-hour limit", () => {
+    const LONG_LIVED = `sk-ant-oat01-${"x".repeat(100)}`;
+    const ABSENT: AbsentLimit[] = [{ key: "five_hour", kind: "session" }];
+    const WEEKLY = { utilization: 11, resets_at: "2026-09-10T20:00:00.000Z" };
+    /** The usage endpoint's answer for such an account is not sampled yet: accept a null window. */
+    const ENDPOINT_BODY = {
+        five_hour: null,
+        seven_day: WEEKLY,
+        limits: [
+            {
+                kind: "weekly_all",
+                group: "weekly",
+                percent: 11,
+                severity: "normal",
+                resets_at: WEEKLY.resets_at,
+                scope: null,
+                is_active: true,
+            },
+        ],
+    };
+
+    /** Headers of such an account: no 5h fields, the weekly window binds. */
+    function weeklyOnlyHeaders(fable?: string): Headers {
+        return new Headers({
+            "anthropic-ratelimit-unified-7d-utilization": "0.11",
+            "anthropic-ratelimit-unified-7d-reset": "1791046800",
+            "anthropic-ratelimit-unified-7d-status": "allowed",
+            "anthropic-ratelimit-unified-status": "allowed",
+            "anthropic-ratelimit-unified-representative-claim": "seven_day",
+            ...(fable === undefined
+                ? {}
+                : {
+                      "anthropic-ratelimit-unified-7d_oi-utilization": fable,
+                      "anthropic-ratelimit-unified-7d_oi-reset": "1791046800",
+                      "anthropic-ratelimit-unified-7d_oi-status": "allowed",
+                  }),
+        });
+    }
+
+    it("gets no five_hour window, names it absent, and keeps that through the AccountUsage row and a stale replay", async () => {
+        useAccount("work");
+        globalThis.fetch = Object.assign(async () => Response.json(ENDPOINT_BODY), {
+            preconnect: originalFetch.preconnect,
+        });
+
+        const snapshot = await pollAnthropicAccount(entry("work"));
+
+        expect(snapshot.limits.map((window) => window.key)).toEqual(["seven_day"]);
+        expect(snapshot.absentLimits).toEqual(ABSENT);
+
+        const row = snapshotToAccountUsage(snapshot);
+        expect(row.usage?.five_hour).toBeNull();
+        expect(row.absentLimits).toEqual(ABSENT);
+
+        const failed = failureSnapshot({ provider: "anthropic-sub", account: entry("work"), reason: "x", now: 0 });
+        expect(SNAPSHOT_OPS.backfill(failed, snapshot, Date.now()).absentLimits).toEqual(ABSENT);
+    });
+
+    it("its last header reading is still reused, so no round asks the Fable model again within 30 minutes", async () => {
+        useAccount("work", { longLivedToken: LONG_LIVED });
+        const sent: string[] = [];
+        // The spy on the spending call: a Fable probe THROWS, every other probe is recorded.
+        globalThis.fetch = Object.assign(
+            async (input: string | URL | Request, init?: RequestInit) => {
+                const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+                const model = String(SafeJSON.parse(String(init?.body ?? "{}")).model);
+
+                if (url !== QUOTA_PROBE_URL || model === QUOTA_PROBE_MODEL) {
+                    throw new Error(`unexpected request: ${url} ${model}`);
+                }
+
+                sent.push(model);
+                return new Response("{}", { status: 200, headers: weeklyOnlyHeaders() });
+            },
+            { preconnect: originalFetch.preconnect }
+        );
+        const fresh = usageFromQuotaHeaders(weeklyOnlyHeaders("0.3"));
+
+        if (!fresh) {
+            throw new Error("the fixture headers carry no window");
+        }
+
+        const native = mergeHeaderReading(fresh, undefined, undefined, Date.now() - 10 * 60_000);
+        const previous = (agoMs: number): AccountUsageSnapshot => ({
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            accountName: "work",
+            fetchedAt: new Date(Date.now() - agoMs).toISOString(),
+            limits: toLimitWindows(native),
+            absentLimits: [{ key: "five_hour", kind: "session" }],
+            native,
+        });
+
+        const reused = await pollAnthropicAccount(entry("work"), { gated: true, previous: previous(60_000) });
+
+        expect(sent).toEqual([]);
+        expect(reused.absentLimits).toEqual(ABSENT);
+
+        const later = await pollAnthropicAccount(entry("work"), { gated: true, previous: previous(3 * 60_000) });
+
+        expect(sent).toEqual([QUOTA_PROBE_FALLBACK_MODEL]);
+        expect(later.limits.map((window) => window.key)).toEqual(["seven_day", "seven_day_fable"]);
+        expect(later.absentLimits).toEqual(ABSENT);
     });
 });

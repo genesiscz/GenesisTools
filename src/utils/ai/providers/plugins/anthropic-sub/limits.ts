@@ -1,4 +1,7 @@
+import type { AbsentLimit } from "../../account-features";
 import type { ApiLimit, ApiSpend, UsageResponse } from "./api";
+import { bucketKind } from "./buckets";
+import type { QuotaHeaderStatus } from "./quota-headers";
 
 export type Severity = "normal" | "warning" | "critical";
 
@@ -132,22 +135,95 @@ function fromLegacyFlat(usage: UsageResponse): NormalizedLimit[] {
     return out;
 }
 
-export function normalizeLimits(usage: UsageResponse): NormalizedLimit[] {
-    if (Array.isArray(usage.limits)) {
-        const out: NormalizedLimit[] = [];
+/**
+ * What a reading says about the account's 5-hour window: it has one ("present"), the account has no
+ * 5-hour limit ("absent"), or the reading cannot tell ("unknown", a row from an old file without the window).
+ *
+ * The one rule every reader asks, so no display infers absence from a 0 % window: an idle window on an
+ * account with a 5-hour limit also reads 0 % with no reset. Absent means:
+ * - `five_hour: null`, which a header reading without the 5h headers writes (since 2026-10-31 some
+ *   accounts have no 5-hour limit, and their answers carry only the weekly headers);
+ * - a `limits[]` with the weekly entry and no `session` entry (the usage endpoint's shape; no sample of it yet);
+ * - a header reading from a build before 2026-11-01, which wrote such a reading as `{ 0, null }` with no
+ *   5h status, until a fresh reading replaces it.
+ */
+export type FiveHourState = "present" | "absent" | "unknown";
 
-        for (const limit of usage.limits) {
-            const normalized = fromApiLimit(limit);
+function isOldHeaderReadingWithoutFiveHour(usage: UsageResponse): boolean {
+    const quota = usage.quota as Partial<QuotaHeaderStatus> | undefined;
+    const window = usage.five_hour;
 
-            if (normalized) {
-                out.push(normalized);
-            }
-        }
+    return (
+        quota?.source === "headers" &&
+        quota.fiveHourStatus === null &&
+        typeof quota.sevenDayStatus === "string" &&
+        window?.utilization === 0 &&
+        window.resets_at === null
+    );
+}
 
-        return out;
+export function fiveHourState(usage: UsageResponse | null | undefined): FiveHourState {
+    if (!usage || typeof usage !== "object") {
+        return "unknown";
     }
 
-    return fromLegacyFlat(usage);
+    if (usage.five_hour === null || isOldHeaderReadingWithoutFiveHour(usage)) {
+        return "absent";
+    }
+
+    const kinds = Array.isArray(usage.limits) ? new Set(usage.limits.map((limit) => limit?.kind)) : new Set();
+
+    if (kinds.has("session")) {
+        return "present";
+    }
+
+    // `unknown` on purpose: a row from an old file may lack the key the type promises.
+    const window: unknown = usage.five_hour;
+    const utilization =
+        typeof window === "object" &&
+        window !== null &&
+        "utilization" in window &&
+        typeof window.utilization === "number"
+            ? window.utilization
+            : undefined;
+    const resetsAt = typeof window === "object" && window !== null && "resets_at" in window ? window.resets_at : null;
+
+    // A list that names the weekly window but no session: the endpoint left the window out, unless the flat
+    // window itself shows a live one (used, or with a reset), which a list of an older shape may not repeat.
+    if (kinds.has("weekly_all") && !(utilization !== undefined && (utilization > 0 || resetsAt))) {
+        return "absent";
+    }
+
+    return utilization === undefined ? "unknown" : "present";
+}
+
+/**
+ * The windows this reading says the account does not have, in the provider-neutral shape
+ * (`AccountUsageSnapshot.absentLimits`); `normalizeLimits` and `toLimitWindows` leave them out.
+ */
+export function absentLimitsOf(usage: UsageResponse | null | undefined): AbsentLimit[] {
+    return fiveHourState(usage) === "absent" ? [{ key: "five_hour", kind: bucketKind("five_hour") }] : [];
+}
+
+export function normalizeLimits(usage: UsageResponse): NormalizedLimit[] {
+    const all = Array.isArray(usage.limits) ? fromApiLimits(usage.limits) : fromLegacyFlat(usage);
+
+    // An old header reading still carries a `session` entry for the window the account does not have.
+    return fiveHourState(usage) === "absent" ? all.filter((limit) => limit.bucket !== "five_hour") : all;
+}
+
+function fromApiLimits(limits: readonly ApiLimit[]): NormalizedLimit[] {
+    const out: NormalizedLimit[] = [];
+
+    for (const limit of limits) {
+        const normalized = fromApiLimit(limit);
+
+        if (normalized) {
+            out.push(normalized);
+        }
+    }
+
+    return out;
 }
 
 export function normalizeSpend(usage: UsageResponse): NormalizedSpend | null {
