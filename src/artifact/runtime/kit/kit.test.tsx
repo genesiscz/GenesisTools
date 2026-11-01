@@ -2632,6 +2632,25 @@ describe("design pages", () => {
         await dom.unmount();
     });
 
+    test("a dense Timeline entry without a badge or an aside keeps the plain stamp block, so an empty stamp still collapses", async () => {
+        const dom = await mountDom(
+            <Timeline
+                entries={[
+                    { time: "", body: "Stamp-less" },
+                    { time: "09:00", title: "Plain" },
+                    { time: "U1", title: "Tagged", badge: "M", aside: "P1" },
+                ]}
+            />
+        );
+        const stamps = [...dom.container.querySelectorAll("li")].map((li) => li.querySelector(":scope > div"));
+        expect(stamps.slice(0, 2).map((s) => s?.outerHTML)).toEqual([
+            '<div class="font-mono text-xs text-dim"></div>',
+            '<div class="font-mono text-xs text-dim">09:00</div>',
+        ]);
+        expect(stamps[2]?.className).toContain("flex");
+        await dom.unmount();
+    });
+
     test("ThemeToggle cycle steps system, light, dark", async () => {
         const dom = await mountDom(<ThemeToggle variant="cycle" />);
         const button = dom.container.querySelector("button");

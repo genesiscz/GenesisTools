@@ -311,15 +311,23 @@ export function Timeline({ entries, asideColor = "var(--accent)" }: TimelineProp
                         className={`absolute -left-[1.85rem] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-canvas ${e.color ? "" : TONE_DOT[e.tone ?? "neutral"]}`}
                         style={e.color ? { background: e.color } : undefined}
                     />
-                    <div className="flex items-baseline gap-2 font-mono text-xs text-dim">
-                        <span style={e.color ? { color: e.color } : undefined}>{e.time}</span>
-                        {e.badge ? <Badge>{e.badge}</Badge> : null}
-                        {e.aside ? (
-                            <span className="ml-auto" style={{ color: asideColor }}>
-                                {e.aside}
-                            </span>
-                        ) : null}
-                    </div>
+                    {/* The flex row only when a badge or an aside needs it: an empty stamp in a flex row stops
+                        the body's top margin from collapsing through it, so every stamp-less entry grew 4 px. */}
+                    {e.badge || e.aside ? (
+                        <div className="flex items-baseline gap-2 font-mono text-xs text-dim">
+                            <span style={e.color ? { color: e.color } : undefined}>{e.time}</span>
+                            {e.badge ? <Badge>{e.badge}</Badge> : null}
+                            {e.aside ? (
+                                <span className="ml-auto" style={{ color: asideColor }}>
+                                    {e.aside}
+                                </span>
+                            ) : null}
+                        </div>
+                    ) : (
+                        <div className="font-mono text-xs text-dim" style={e.color ? { color: e.color } : undefined}>
+                            {e.time}
+                        </div>
+                    )}
                     {e.title ? <div className={`font-medium ${TONE_TEXT[e.tone ?? "neutral"]}`}>{e.title}</div> : null}
                     {e.body ? <div className="mt-1 text-sm text-dim">{renderBody(e.body)}</div> : null}
                 </li>
