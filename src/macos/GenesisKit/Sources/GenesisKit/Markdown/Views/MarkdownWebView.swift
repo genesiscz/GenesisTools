@@ -604,6 +604,10 @@ struct MarkdownWebView: NSViewRepresentable {
         /// The tag of the last render sent to the page, and how often it was sent again because it never arrived.
         private var renderTag = 0
         private var resends = 0
+        /// The document of the last render. A render of the same one keeps the reader's place by block
+        /// (`gnCaptureAnchor`); the first render here, or another document, does not look for the old place.
+        private var renderedDocument: URL?
+        private var renderedOnce = false
 
         func render(_ md: String) {
             guard ready else { pending = md; return }
@@ -618,8 +622,11 @@ struct MarkdownWebView: NSViewRepresentable {
                 self.render(md)
             }
             let mediaJSON = (try? JSONSerialization.data(withJSONObject: map)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            let same = renderedOnce && renderedDocument == parent.documentURL
+            renderedOnce = true
+            renderedDocument = parent.documentURL
             web?.evaluateJavaScript(
-                "window.gnRender(\(MarkdownWebView.jsString(body)),\(props),\(editable),\(vocabulary),\(mediaJSON),\(parent.lineNumbers),\(tag))"
+                "window.gnRender(\(MarkdownWebView.jsString(body)),\(props),\(editable),\(vocabulary),\(mediaJSON),\(parent.lineNumbers),\(tag),\(same))"
             ) { [weak self] result, error in
                 if let error {
                     MarkdownWebView.report("render \(tag) call failed: \(error.localizedDescription)")
@@ -2118,7 +2125,109 @@ window.gnProperties=function(){return gnProps;};
 // WKWebView the tests use (measured 2026-09-08), so the restore this guards
 // only exists on screen.
 var gnNav=0;
-function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
+// ---- The reading position across a render of the same note ----
+// A render replaces the article. Before it, the block at the top of the window is remembered: its tag, its text, its
+// source line and where its top sits. After it, the same block goes back to the same place, so lines an agent added
+// or removed above it never move the words under the reader. A block that is gone gives its place to the block
+// nearest its line, then to the same share of the page. A reader at the very bottom stays at the bottom, so a growing
+// log follows. A render that had to fall back (a half-written file read on the way) keeps the anchor for the next
+// render, as long as the page has not moved since. The selection and a focused task box come back the same way.
+var gnAnchorHeld=null,gnAnchorTop=-1;
+function gnBlockText(el){return (el.textContent||'').replace(/\s+/g,' ').trim().slice(0,400);}
+function gnBlockKey(el){return {tag:el.localName,line:parseInt(el.getAttribute('data-line'),10)||0,text:gnBlockText(el)};}
+// The block with the key's tag and text, the one nearest its old line when several have them.
+function gnBlockFor(key){
+  var art=document.getElementById('gn-article');if(!art||!key)return null;
+  var nodes=art.querySelectorAll(key.tag+'[data-line]'),best=null,bestD=Infinity;
+  for(var i=0;i<nodes.length;i++){
+    if(gnBlockText(nodes[i])!==key.text)continue;
+    var d=Math.abs((parseInt(nodes[i].getAttribute('data-line'),10)||0)-key.line);
+    if(d<bestD){best=nodes[i];bestD=d;}
+  }
+  return best;
+}
+function gnBlockNear(line){
+  var art=document.getElementById('gn-article');if(!art)return null;
+  var nodes=art.querySelectorAll('[data-line]'),best=null,bestD=Infinity;
+  for(var i=0;i<nodes.length;i++){
+    var d=Math.abs((parseInt(nodes[i].getAttribute('data-line'),10)||0)-line);
+    if(d<bestD){best=nodes[i];bestD=d;}
+  }
+  return best;
+}
+function gnCaptureAnchor(){
+  var sc=document.scrollingElement||document.documentElement,art=document.getElementById('gn-article');
+  if(gnAnchorHeld&&Math.abs(sc.scrollTop-gnAnchorTop)<=1)return gnAnchorHeld;
+  gnAnchorHeld=null;
+  if(!art||!art.firstElementChild||sc.scrollTop<=0)return null;
+  var view=sc.clientHeight,height=sc.scrollHeight,edge=gnStickyRoom();
+  var a={frac:height>view?sc.scrollTop/(height-view):0,bottom:height>view+1&&sc.scrollTop+view>=height-2,key:null,offset:0};
+  var nodes=art.querySelectorAll('[data-line]'),hit=null,below=null;
+  for(var i=0;i<nodes.length;i++){
+    var r=nodes[i].getBoundingClientRect();if(r.height<=0)continue;
+    if(r.top<=edge&&r.bottom>edge)hit=nodes[i];
+    else if(r.top>edge){below=nodes[i];break;}
+  }
+  var el=hit||below;
+  if(el){a.key=gnBlockKey(el);a.offset=el.getBoundingClientRect().top;}
+  return a;
+}
+function gnRestoreAnchor(a){
+  if(!a)return;
+  var sc=document.scrollingElement||document.documentElement,view=sc.clientHeight,height=sc.scrollHeight,exact=true,top;
+  if(a.bottom){top=height-view;}
+  else{
+    var el=gnBlockFor(a.key);exact=!!el;
+    if(!el&&a.key){
+      el=gnBlockNear(a.key.line);
+      // The same kind of block on the same line is that block with new words (typing in split view edits the block
+      // at the top): it keeps its offset, or every keystroke would pull it to the edge.
+      if(el&&el.localName===a.key.tag&&(parseInt(el.getAttribute('data-line'),10)||0)===a.key.line)exact=true;
+    }
+    if(el)top=el.getBoundingClientRect().top+sc.scrollTop-(exact?a.offset:Math.max(a.offset,gnStickyRoom()));
+    else top=a.frac*Math.max(0,height-view);
+  }
+  sc.scrollTop=Math.max(0,top);
+  gnAnchorTop=sc.scrollTop;
+  gnAnchorHeld=exact?null:a;
+}
+// A selection end as (its block, characters into the block's text), and back.
+function gnPointKey(node,offset){
+  var el=node&&(node.nodeType===1?node:node.parentNode),block=el&&el.closest?el.closest('#gn-article [data-line]'):null;
+  if(!block)return null;
+  var r=document.createRange();r.selectNodeContents(block);
+  try{r.setEnd(node,offset);}catch(e){return null;}
+  return {key:gnBlockKey(block),chars:r.toString().length};
+}
+// Not gnPointAt: the find's own helper of that name (text offsets in the whole article) is declared further down,
+// and a second declaration in this scope would replace one of them.
+function gnBlockPoint(p){
+  var block=gnBlockFor(p.key);if(!block)return null;
+  var w=document.createTreeWalker(block,NodeFilter.SHOW_TEXT),n,left=p.chars,last=null;
+  while((n=w.nextNode())){if(left<=n.data.length)return {node:n,offset:left};left-=n.data.length;last=n;}
+  return last?{node:last,offset:last.data.length}:null;
+}
+function gnCaptureSelection(){
+  var s=window.getSelection();if(!s||!s.rangeCount||s.isCollapsed)return null;
+  var r=s.getRangeAt(0),a=gnPointKey(r.startContainer,r.startOffset),b=gnPointKey(r.endContainer,r.endOffset);
+  return a&&b?{a:a,b:b}:null;
+}
+function gnRestoreSelection(sel){
+  if(!sel)return;var a=gnBlockPoint(sel.a),b=gnBlockPoint(sel.b);if(!a||!b)return;
+  try{var r=document.createRange();r.setStart(a.node,a.offset);r.setEnd(b.node,b.offset);
+    var s=window.getSelection();s.removeAllRanges();s.addRange(r);}catch(e){}
+}
+function gnCaptureFocus(){
+  var f=document.activeElement;if(!f||!f.classList||!f.classList.contains('gn-task'))return null;
+  var block=f.closest('#gn-article [data-line]');return block?gnBlockKey(block):null;
+}
+function gnRestoreFocus(key){
+  if(!key)return;var block=gnBlockFor(key),box=block&&block.querySelector('input.gn-task');
+  if(box)box.focus({preventScroll:true});
+}
+// `tag` is Swift's render tag; `same` is false when this render shows another document than the last one (a page
+// taken over by another tab), which has no place of its own to keep yet.
+function gnRenderNow(markdown,props,editable,vocabulary,media,lines,tag,same){
   window.gnLastRender=[markdown,props,editable,vocabulary,media,lines];
   if(vocabulary)gnVocab=vocabulary;
   gnCodeLines=!!lines;
@@ -2135,11 +2244,16 @@ function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
     html=html.replace(new RegExp('<p( [^>]*)?>@@GNCALLOUT'+i+'@@<\/p>'),function(_,attrs){return gnRenderCallout(ex.callouts[i],attrs||'');});
   }
   // Replacing the article collapses the page height for an instant, which
-  // clamps the scroll to the top. Split view re-renders while you type, so
-  // the reading position has to survive every render.
+  // clamps the scroll to the top. Split view re-renders while you type, and an
+  // agent writes to an open note, so the reading position has to survive every
+  // render: the same block at the same place (gnCaptureAnchor), in the same
+  // JavaScript task as the new content, so no frame shows the page elsewhere.
   var sc=document.scrollingElement||document.documentElement;
   var keep=sc.scrollTop;
   var nav=gnNav;
+  var kept=same!==false;
+  if(!kept)gnAnchorHeld=null;
+  var anchor=kept?gnCaptureAnchor():null,selection=kept?gnCaptureSelection():null,focus=kept?gnCaptureFocus():null;
   var art=document.getElementById('gn-article');
   art.textContent='';art.appendChild(gnApplyMedia(gnSummaryMarkdown(gnSanitize(html))));
   // An empty note says so, so it never looks like a page that failed to draw. Drawn by CSS: the find and a copy
@@ -2152,7 +2266,16 @@ function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
   gnApplyGit();
   gnApplyDiff();
   if(gnHL)gnApplyHL(false);
-  if(keep>0){
+  if(anchor){
+    gnRestoreAnchor(anchor);
+    // Mermaid and image layout land a frame later and can move the block: put it back once more, unless the
+    // reader or a deliberate jump moved the page meanwhile.
+    window.requestAnimationFrame(function(){
+      if(gnNav!==nav||Math.abs(sc.scrollTop-gnAnchorTop)>1)return;
+      gnRestoreAnchor(anchor);
+      gnOnScroll();
+    });
+  }else if(keep>0){
     sc.scrollTop=keep;
     // Mermaid and image layout land a frame later and can shift the height.
     // A jump to a heading or to a find match counts as a deliberate move and
@@ -2164,6 +2287,8 @@ function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
       gnOnScroll();
     });
   }
+  gnRestoreSelection(selection);
+  gnRestoreFocus(focus);
   gnOnScroll();
 }
 // A render that throws left an empty article and no word about it (Genesis Markdown, 2026-10-13: a note stuck at

@@ -437,6 +437,97 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         return (range, replacement)
     }
 
+    /// Where the reader is, kept across a text change from outside (the file changed on disk, the page set a task):
+    /// the line at the top by its number and its text, and how far into it the view is scrolled, or the bottom of
+    /// a note the reader follows. Without it the view kept its pixel offset, so lines added above moved the text
+    /// under the reader.
+    struct ReadingAnchor: Equatable {
+        var line: Int
+        var text: String
+        /// Points scrolled past the top of the line.
+        var offset: CGFloat
+        /// The view was at the very bottom of a note taller than itself.
+        var bottom: Bool
+
+        /// The top line of `view`; nil at the very top, where the view stays by itself.
+        static func capture(_ view: NSTextView, starts: [Int]) -> ReadingAnchor? {
+            guard let layout = view.layoutManager, let container = view.textContainer,
+                  let scroll = view.enclosingScrollView, layout.numberOfGlyphs > 0 else { return nil }
+            let clip = scroll.contentView.bounds
+            guard clip.minY > 0 else { return nil }
+            let inset = view.textContainerInset.height
+            var probe = clip
+            probe.origin.y = max(0, clip.minY - inset)
+            probe.size.height = 1
+            let character = layout.characterIndexForGlyph(at: layout.glyphRange(forBoundingRect: probe, in: container).location)
+            let line = SourceEditing.line(at: character, starts: starts)
+            let top = lineTop(line, starts: starts, in: view)
+            return ReadingAnchor(line: line, text: text(of: line, starts: starts, in: view.string as NSString),
+                                 offset: clip.minY - top,
+                                 bottom: view.frame.height > clip.height + 1 && clip.maxY >= view.frame.height - 2)
+        }
+
+        /// The anchor's line back at the top after `change` (a range of the old text, replaced by `inserted` UTF-16
+        /// units). The line is looked for where the change moved it, then by its text nearest to there; a line that is
+        /// gone gives its place to the line now at that number.
+        func restore(in view: NSTextView, starts: [Int], oldStart: Int, change: NSRange, inserted: Int) {
+            guard let layout = view.layoutManager, let container = view.textContainer,
+                  let scroll = view.enclosingScrollView else { return }
+            let clip = scroll.contentView.bounds
+            var y: CGFloat
+            if bottom {
+                layout.ensureLayout(for: container)
+                y = view.frame.height - clip.height
+            } else {
+                var predicted = line
+                if oldStart < change.location {
+                    predicted = SourceEditing.line(at: oldStart, starts: starts)
+                } else if oldStart >= NSMaxRange(change) {
+                    predicted = SourceEditing.line(at: oldStart + inserted - change.length, starts: starts)
+                }
+                predicted = min(max(0, predicted), starts.count - 1)
+                // One bridge of the storage for the whole search: `view.string` builds a new string on every read.
+                let string = view.string as NSString
+                var found: Int?
+                for distance in 0..<starts.count {
+                    for candidate in [predicted - distance, predicted + distance] where candidate >= 0 && candidate < starts.count {
+                        if Self.text(of: candidate, starts: starts, in: string) == text { found = candidate; break }
+                    }
+                    if found != nil { break }
+                }
+                y = Self.lineTop(found ?? predicted, starts: starts, in: view) + (found == nil ? 0 : offset)
+            }
+            y = min(max(0, y), max(0, view.frame.height - clip.height))
+            scroll.contentView.scroll(to: NSPoint(x: clip.minX, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        /// The selection after `change`: kept before it, moved with the text after it, collapsed where it overlapped.
+        static func selection(_ range: NSRange, through change: NSRange, inserted: Int, length: Int) -> NSRange {
+            if NSMaxRange(range) <= change.location, range.length > 0 || range.location < change.location { return range }
+            if range.location >= NSMaxRange(change) {
+                return NSRange(location: range.location + inserted - change.length, length: range.length)
+            }
+            return NSRange(location: min(range.location, length), length: 0)
+        }
+
+        private static func text(of line: Int, starts: [Int], in string: NSString) -> String {
+            let start = min(starts[line], string.length)
+            let end = line + 1 < starts.count ? min(starts[line + 1], string.length) : string.length
+            return string.substring(with: NSRange(location: start, length: end - start))
+                .trimmingCharacters(in: .newlines)
+        }
+
+        private static func lineTop(_ line: Int, starts: [Int], in view: NSTextView) -> CGFloat {
+            guard let layout = view.layoutManager, layout.numberOfGlyphs > 0 else { return 0 }
+            let length = view.textStorage?.length ?? 0
+            let start = min(starts[line], length)
+            layout.ensureLayout(forCharacterRange: NSRange(location: 0, length: min(start + 1, length)))
+            let glyph = min(layout.glyphIndexForCharacter(at: start), layout.numberOfGlyphs - 1)
+            return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + view.textContainerInset.height
+        }
+    }
+
     private static func reveal(_ range: NSRange, in view: NSTextView) {
         view.scrollRangeToVisible(range)
         view.showFindIndicator(for: range)
@@ -573,6 +664,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         /// that differs is replaced, through the text view, so it is one step on the editor's undo stack and ⌘Z takes
         /// it back. Assigning `string` registered nothing, so ⌘Z after Replace All undid the typing before it.
         func replaceFromOutside(with text: String, in view: NSTextView) {
+            // Before anything changes: the reader's line, by the old text's lines.
+            let oldStarts = starts
+            let anchor = MarkdownSourceEditor.ReadingAnchor.capture(view, starts: oldStarts)
             invalidateLineStarts()
             let sel = view.selectedRange()
             programmaticSelection = true
@@ -591,7 +685,11 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             }
             view.breakUndoCoalescing()
             let end = (text as NSString).length
-            view.setSelectedRange(NSRange(location: min(sel.location, end), length: 0))
+            let inserted = (change.replacement as NSString).length
+            view.setSelectedRange(MarkdownSourceEditor.ReadingAnchor.selection(sel, through: change.range, inserted: inserted, length: end))
+            if let anchor {
+                anchor.restore(in: view, starts: starts, oldStart: oldStarts[anchor.line], change: change.range, inserted: inserted)
+            }
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

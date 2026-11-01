@@ -1023,6 +1023,9 @@ private struct MarkdownDocumentPane: View {
             live.update(new)
             gutter.textChanged(new)
         }
+        // The file changed on disk (an agent, another editor, a task box): the preview takes it in the same update as
+        // the editor, not a typing beat later, so in split view the two keep the same block in front of the reader.
+        .onChange(of: doc.text) { _, _ in live.reset(doc.displayText) }
         .onAppear { followGutter() }
         .onChange(of: configuration.git) { _, _ in followGutter() }
         .onChange(of: configuration.gitGutter) { _, _ in followGutter() }
