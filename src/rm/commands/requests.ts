@@ -368,7 +368,13 @@ function ownSession(request: RmRequest, caller: RunContext["caller"]): boolean {
  * The picker's deny: the caller's own requests go at once, the other sessions' after ONE person check, and each deny
  * records how the person answered (`touch-id`, `dialog`), so the asking agent reads it as the person's answer.
  */
-async function denyPicked(ids: readonly string[], ctx: RunContext): Promise<void> {
+export async function denyPicked(
+    ids: readonly string[],
+    ctx: RunContext,
+    deps: { ask?: typeof requirePerson; note?: () => Promise<string> } = {}
+): Promise<void> {
+    const ask = deps.ask ?? requirePerson;
+    const note = deps.note ?? (() => p.text({ message: "A note for the asking agent (optional, Enter for none)" }));
     const releases: Array<() => void> = [];
 
     try {
@@ -408,14 +414,14 @@ async function denyPicked(ids: readonly string[], ctx: RunContext): Promise<void
         let typed: string;
 
         try {
-            typed = (await p.text({ message: "A note for the asking agent (optional, Enter for none)" })).trim();
+            typed = (await note()).trim();
         } catch (error) {
             logger.debug({ error }, "rm: the deny note was cancelled");
             out.println("Nothing done.");
             return;
         }
 
-        const answer = await requirePerson(ctx, {
+        const answer = await ask(ctx, {
             title: `Deny ${others.length} request(s) from other sessions?`,
             lines: others.flatMap((request) => [
                 `${request.id} · ${request.caller?.sessionTitle ?? request.caller?.agent ?? "a person"}`,
