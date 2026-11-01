@@ -24,6 +24,11 @@ interface Transfer {
     easy: Pointer;
     headerList: Pointer | null;
     body: Uint8Array[];
+    /** Body bytes curl delivered, kept or not. */
+    received: number;
+    maxBodyBytes?: number;
+    /** The body passed `maxBodyBytes` and the transfer was cut short. */
+    overLimit: boolean;
     headers: Record<string, string>;
     callbacks: JSCallback[];
 }
@@ -40,12 +45,13 @@ function post(message: FromWorker, transfer: Transferable[] = []): void {
     self.postMessage(message, transfer);
 }
 
-function chunkCallback(onChunk: (bytes: Uint8Array) => void): JSCallback {
+/** `onChunk` returns false to refuse the chunk: the short count makes curl end the transfer (CURLE_WRITE_ERROR). */
+function chunkCallback(onChunk: (bytes: Uint8Array) => boolean): JSCallback {
     return new JSCallback(
         (data: Pointer, size: bigint, count: bigint) => {
             const length = Number(size * count);
-            if (length > 0) {
-                onChunk(new Uint8Array(toArrayBuffer(data, 0, length)).slice());
+            if (length > 0 && !onChunk(new Uint8Array(toArrayBuffer(data, 0, length)).slice())) {
+                return 0n;
             }
 
             return BigInt(length);
@@ -56,7 +62,17 @@ function chunkCallback(onChunk: (bytes: Uint8Array) => void): JSCallback {
 
 function start(request: WorkerRequest): void {
     const easy = curl.easyInit();
-    const transfer: Transfer = { id: request.id, easy, headerList: null, body: [], headers: {}, callbacks: [] };
+    const transfer: Transfer = {
+        id: request.id,
+        easy,
+        headerList: null,
+        body: [],
+        received: 0,
+        maxBodyBytes: request.maxBodyBytes,
+        overLimit: false,
+        headers: {},
+        callbacks: [],
+    };
     const target = config.target;
     const impersonated = curl.impersonate(easy, target, true);
     if (impersonated !== 0) {
@@ -66,13 +82,22 @@ function start(request: WorkerRequest): void {
     }
 
     const decoder = new TextDecoder("latin1");
-    const onBody = chunkCallback((bytes) => transfer.body.push(bytes));
+    const onBody = chunkCallback((bytes) => {
+        transfer.received += bytes.byteLength;
+        if (transfer.maxBodyBytes !== undefined && transfer.received > transfer.maxBodyBytes) {
+            transfer.overLimit = true;
+            return false;
+        }
+
+        transfer.body.push(bytes);
+        return true;
+    });
     const onHeader = chunkCallback((bytes) => {
         const line = decoder.decode(bytes).trimEnd();
         if (line.startsWith("HTTP/")) {
             // A new status line starts a new response (a redirect hop or a proxy CONNECT): keep only the last.
             transfer.headers = {};
-            return;
+            return true;
         }
 
         const colon = line.indexOf(":");
@@ -83,6 +108,8 @@ function start(request: WorkerRequest): void {
             const earlier = transfer.headers[name];
             transfer.headers[name] = earlier === undefined ? value : `${earlier}, ${value}`;
         }
+
+        return true;
     });
     transfer.callbacks.push(onBody, onHeader);
 
@@ -171,7 +198,9 @@ function finish(easy: Pointer, result: number): void {
         return;
     }
 
-    if (result === 0) {
+    if (transfer.overLimit) {
+        reply(transfer, 0, `the response body is larger than ${transfer.maxBodyBytes} bytes; the transfer was stopped`);
+    } else if (result === 0) {
         reply(transfer, curl.infoLong(easy, CURLINFO.RESPONSE_CODE), null);
     } else {
         reply(transfer, 0, `curl: (${result}) ${curl.strerror(result)}`);

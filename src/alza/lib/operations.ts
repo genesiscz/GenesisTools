@@ -328,7 +328,7 @@ export const ALZA_OPERATIONS: AlzaOperation[] = [
     operation({
         name: "pc_build_suggest",
         description:
-            "Suggest a compatibility-checked PC parts list within a CZK budget from live Alza listings: cpu, motherboard, ram, gpu, storage, case, cooler, psu. Slow: one category page per role plus bounded product reads.",
+            "Suggest a compatibility-checked PC parts list within a CZK budget from live Alza listings: cpu, motherboard, ram, gpu, storage, case, cooler, psu. Czech storefront only (the budget is CZK). Slow: one category page per role plus bounded product reads.",
         input: z.object({
             budget: z.number().int().min(8000).max(500000).describe("Total budget in CZK, fixed parts included"),
             profile: z
@@ -352,6 +352,13 @@ export const ALZA_OPERATIONS: AlzaOperation[] = [
             psu_headroom: psuHeadroom,
         }),
         run: async (api, i) => {
+            // The budget and the profile splits are CZK amounts; another storefront prices in EUR or HUF.
+            if (api.storefront.currency !== "CZK") {
+                throw new Error(
+                    `pc_build_suggest takes a CZK budget and compares it with listing prices, so it runs on the cz storefront only; this one (${api.storefront.id}) prices in ${api.storefront.currency}.`
+                );
+            }
+
             const data = await new PcBuilder(alzaPcCatalog(api)).suggest({
                 budget: i.budget,
                 profile: i.profile,

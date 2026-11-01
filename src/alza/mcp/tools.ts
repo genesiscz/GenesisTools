@@ -36,9 +36,10 @@ export interface AlzaToolsetOptions {
     includeRaw?: boolean;
 }
 
-function annotations(kind: AccountOperationKind): Tool["annotations"] {
+/** A destructive write (a removal, a replaced file) must not be auto-approved as an additive one. */
+function annotations(kind: AccountOperationKind, destructive = false): Tool["annotations"] {
     if (kind === "write") {
-        return { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+        return { readOnlyHint: false, destructiveHint: destructive, idempotentHint: false, openWorldHint: true };
     }
 
     return { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
@@ -57,13 +58,14 @@ function toolFrom(def: {
     description: string;
     input: z.ZodObject;
     kind: AccountOperationKind;
+    destructive?: boolean;
     run(args: unknown): Promise<OperationResult>;
 }): AlzaMcpTool {
     return {
         name: def.name,
         description: def.description,
         inputSchema: z.toJSONSchema(def.input, { io: "input" }) as Tool["inputSchema"],
-        annotations: annotations(def.kind),
+        annotations: annotations(def.kind, def.destructive),
         call: async (args) => {
             const started = performance.now();
             try {
@@ -81,7 +83,11 @@ function toolFrom(def: {
     };
 }
 
-/** The catalog table and the account table over one account context. A non-diagnostic account call saves the visitor. */
+/**
+ * The catalog table and the account table over one account context. A non-diagnostic account call saves the visitor
+ * even when it fails: a basket add can take a new visitor cookie and then fail on its follow-up read, and the server
+ * closes without saving, so that cookie would be lost.
+ */
 export function alzaMcpTools(ctx: AccountContext, opts: AlzaToolsetOptions = {}): AlzaMcpTool[] {
     return [
         ...ALZA_OPERATIONS.map((op) => toolFrom({ ...op, kind: "read", run: (args) => op.run(ctx.api, args) })),
@@ -89,12 +95,13 @@ export function alzaMcpTools(ctx: AccountContext, opts: AlzaToolsetOptions = {})
             toolFrom({
                 ...op,
                 run: async (args) => {
-                    const result = await op.run(ctx, args);
-                    if (op.kind !== "diagnostic") {
-                        ctx.session.save();
+                    try {
+                        return await op.run(ctx, args);
+                    } finally {
+                        if (op.kind !== "diagnostic") {
+                            ctx.session.save();
+                        }
                     }
-
-                    return result;
                 },
             })
         ),

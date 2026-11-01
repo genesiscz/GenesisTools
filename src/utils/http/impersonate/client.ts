@@ -1,4 +1,5 @@
 import type { Pointer } from "bun:ffi";
+import { untilAborted, withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { openLibcurl } from "./libcurl";
 import { ensureLibcurlImpersonate } from "./library";
@@ -17,6 +18,8 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const REPLY_MARGIN_MS = 15_000;
 /** How long close() waits for the worker to release its curl handles before it terminates it anyway. */
 const CLOSE_GRACE_MS = 2_000;
+/** How long a new worker may take to open the library and answer `ready` (the download has its own deadline). */
+const WORKER_READY_MS = 15_000;
 
 export type ImpersonateProfile = "chrome" | "safari" | "firefox" | "edge";
 
@@ -35,8 +38,10 @@ export interface ImpersonatedRequest {
     body?: string;
     timeoutMs?: number;
     followRedirects?: boolean;
-    /** Rejects the wait when it aborts, and cancels the transfer. */
+    /** Rejects the wait when it aborts, and cancels the transfer. An abort while the worker starts sends nothing. */
     signal?: AbortSignal;
+    /** Stops the transfer and rejects once the body passes this many bytes, so a large answer is never buffered. */
+    maxBodyBytes?: number;
 }
 
 export interface ImpersonatedResponse {
@@ -79,6 +84,10 @@ export class ImpersonatedHttpError extends Error {
     }
 }
 
+function abortedError(method: string, url: string): ImpersonatedHttpError {
+    return new ImpersonatedHttpError(`${method} ${url}: aborted`);
+}
+
 export class ImpersonatedHttpClient {
     private engine: Promise<Engine> | null = null;
     private readonly pending = new Map<number, Pending>();
@@ -93,15 +102,18 @@ export class ImpersonatedHttpClient {
     }
 
     async request(req: ImpersonatedRequest): Promise<ImpersonatedResponse> {
-        req.signal?.throwIfAborted();
+        const method = req.method ?? "GET";
+        if (req.signal?.aborted) {
+            throw abortedError(method, req.url);
+        }
+
         this.cancelIdleClose();
         const id = this.nextId++;
-        const method = req.method ?? "GET";
         const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const started = performance.now();
         let reply: WorkerReply;
         try {
-            const engine = await this.ensureStarted();
+            const engine = await this.engineFor(req, method);
             reply = await new Promise<WorkerReply>((resolve, reject) => {
                 const onAbort = () => {
                     const waiter = this.pending.get(id);
@@ -112,7 +124,7 @@ export class ImpersonatedHttpClient {
                     clearTimeout(waiter.timer);
                     this.pending.delete(id);
                     this.send(engine, { type: "abort", id });
-                    reject(new ImpersonatedHttpError(`${method} ${req.url}: aborted`));
+                    reject(abortedError(method, req.url));
                 };
                 const timer = setTimeout(() => {
                     this.pending.delete(id);
@@ -141,6 +153,7 @@ export class ImpersonatedHttpClient {
                     body: req.body,
                     timeoutMs,
                     followRedirects: req.followRedirects ?? true,
+                    maxBodyBytes: req.maxBodyBytes,
                 });
             });
         } finally {
@@ -228,6 +241,29 @@ export class ImpersonatedHttpClient {
         this.idleTimer.unref?.();
     }
 
+    /**
+     * The running worker. The first request may wait for the library download and the worker start; an abort in that
+     * wait rejects at once, and a request whose signal aborted meanwhile is never posted.
+     */
+    private async engineFor(req: ImpersonatedRequest, method: string): Promise<Engine> {
+        let engine: Engine;
+        try {
+            engine = await untilAborted(this.ensureStarted(), req.signal);
+        } catch (error) {
+            if (req.signal?.aborted) {
+                throw abortedError(method, req.url);
+            }
+
+            throw error;
+        }
+
+        if (req.signal?.aborted) {
+            throw abortedError(method, req.url);
+        }
+
+        return engine;
+    }
+
     private ensureStarted(): Promise<Engine> {
         this.engine ??= this.start().catch((error: unknown) => {
             this.engine = null;
@@ -251,7 +287,7 @@ export class ImpersonatedHttpClient {
         const closed = new Promise<void>((resolve) => {
             markClosed = resolve;
         });
-        const multi = await new Promise<number>((resolve, reject) => {
+        const ready = new Promise<number>((resolve, reject) => {
             worker.onmessage = (event: MessageEvent<FromWorker>) => {
                 const message = event.data;
                 switch (message.type) {
@@ -287,6 +323,17 @@ export class ImpersonatedHttpClient {
                 proxyUrl: this.options.proxyUrl,
             } satisfies ToWorker);
         });
+        let multi: number;
+        try {
+            multi = await withTimeout(
+                ready,
+                WORKER_READY_MS,
+                new ImpersonatedHttpError(`impersonate worker did not start within ${WORKER_READY_MS} ms`)
+            );
+        } catch (error) {
+            worker.terminate();
+            throw error;
+        }
 
         const curl = openLibcurl(files.library);
         const multiHandle = multi as Pointer;

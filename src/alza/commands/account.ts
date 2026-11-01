@@ -19,13 +19,24 @@ function isAccountStatus(data: unknown): data is AccountStatus {
     return typeof data === "object" && data !== null && "signedIn" in data && typeof data.signedIn === "boolean";
 }
 
+/**
+ * The command that opens `url` in the default browser, the URL always one argument. Not `cmd /c start` on Windows:
+ * cmd.exe splits the sign-in URL at its `&`, so the browser would get no `code_challenge` or `state`.
+ */
+export function browserOpener(url: string, platform: NodeJS.Platform = process.platform): [string, string[]] {
+    if (platform === "darwin") {
+        return ["open", [url]];
+    }
+
+    if (platform === "win32") {
+        return ["rundll32", ["url.dll,FileProtocolHandler", url]];
+    }
+
+    return ["xdg-open", [url]];
+}
+
 function openInBrowser(url: string): void {
-    const [cmd, args]: [string, string[]] =
-        process.platform === "darwin"
-            ? ["open", [url]]
-            : process.platform === "win32"
-              ? ["cmd", ["/c", "start", "", url]]
-              : ["xdg-open", [url]];
+    const [cmd, args] = browserOpener(url);
     const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
     opener.on("error", (error) => {
         logger.debug({ error, cmd }, "could not open the browser");
@@ -107,7 +118,7 @@ async function logout(command: Command): Promise<void> {
 
     const ctx = openAccountContext({ storefront });
     try {
-        const { removed } = ctx.auth.logout();
+        const { removed } = await ctx.auth.logout();
         out.log.success(removed ? "Signed out: the stored Alza tokens are gone." : "Nobody was signed in.");
     } finally {
         await ctx.close({ save: false });

@@ -5,6 +5,7 @@ import type { ImpersonatedHttpClient } from "@genesiscz/utils/http/impersonate/c
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { z } from "zod";
 import {
@@ -165,13 +166,24 @@ export interface AlzaAuthOptions {
     pendingFile?: string;
 }
 
+/** The same sign-in: a refresh result may replace only the tokens it was renewed from. */
+function sameSession(a: StoredTokens, b: StoredTokens): boolean {
+    return a.access_token === b.access_token && a.refresh_token === b.refresh_token;
+}
+
 export class AlzaAuth {
     private readonly tokensFile: string;
+    /**
+     * Every change of the tokens file holds this lock, in every process: a long-running MCP server's refresh must not
+     * write back tokens that a CLI logout removed, or that a new sign-in replaced, in the meantime.
+     */
+    private readonly lockFile: string;
     private readonly pendingFile: string;
     private refreshing?: Promise<StoredTokens>;
 
     constructor(private readonly options: AlzaAuthOptions) {
         this.tokensFile = options.tokensFile ?? tokensPath();
+        this.lockFile = `${this.tokensFile}.lock`;
         this.pendingFile = options.pendingFile ?? pendingLoginPath();
     }
 
@@ -204,13 +216,15 @@ export class AlzaAuth {
         return (await this.refreshing).access_token;
     }
 
-    rememberUserId(userId: number): void {
-        const stored = this.readTokens();
-        if (!stored || stored.user_id === userId) {
-            return;
-        }
+    async rememberUserId(userId: number): Promise<void> {
+        await this.withTokensLock(() => {
+            const stored = this.readTokens();
+            if (!stored || stored.user_id === userId) {
+                return;
+            }
 
-        writeSecretFile(this.tokensFile, { ...stored, user_id: userId });
+            writeSecretFile(this.tokensFile, { ...stored, user_id: userId });
+        });
     }
 
     /** Step 1: a new PKCE pair and state, saved to the pending file; returns the URL to open in a browser. */
@@ -278,18 +292,26 @@ export class AlzaAuth {
             logger.warn("alza sign-in returned no refresh token; the session ends when the access token expires");
         }
 
-        writeSecretFile(this.tokensFile, tokens);
-        removeFile(this.pendingFile);
+        await this.withTokensLock(() => {
+            writeSecretFile(this.tokensFile, tokens);
+            removeFile(this.pendingFile);
+        });
         logger.debug({ tokensFile: this.tokensFile, expiresAt: tokens.expires_at }, "alza signed in");
         return tokens;
     }
 
-    /** Forgets the tokens and any waiting sign-in. The visitor basket state stays. */
-    logout(): { removed: boolean } {
-        const removedTokens = removeFile(this.tokensFile);
-        const removedPending = removeFile(this.pendingFile);
-        logger.debug({ removedTokens, removedPending }, "alza signed out");
-        return { removed: removedTokens };
+    /** Forgets the tokens and any waiting sign-in. The visitor basket state stays. A refresh in flight cannot undo it. */
+    async logout(): Promise<{ removed: boolean }> {
+        return this.withTokensLock(() => {
+            const removedTokens = removeFile(this.tokensFile);
+            const removedPending = removeFile(this.pendingFile);
+            logger.debug({ removedTokens, removedPending }, "alza signed out");
+            return { removed: removedTokens };
+        });
+    }
+
+    private withTokensLock<T>(change: () => T): Promise<T> {
+        return withFileLock(this.lockFile, async () => change());
     }
 
     private async refresh(stale: StoredTokens): Promise<StoredTokens> {
@@ -311,8 +333,22 @@ export class AlzaAuth {
             refresh_token: fresh.refresh_token ?? stale.refresh_token,
             user_id: stale.user_id,
         };
-        writeSecretFile(this.tokensFile, saved);
-        return saved;
+        // The network round trip ran without the lock; commit only if the file still holds the session renewed here.
+        return this.withTokensLock(() => {
+            const current = this.readTokens();
+            if (!current) {
+                logger.debug("alza tokens removed while they were being renewed; the renewal is dropped");
+                throw new NotSignedInError(`You signed out while the Alza session was being renewed. ${SIGN_IN_HINT}`);
+            }
+
+            if (!sameSession(current, stale)) {
+                logger.debug("alza tokens changed while they were being renewed; keeping the stored ones");
+                return current;
+            }
+
+            writeSecretFile(this.tokensFile, saved);
+            return saved;
+        });
     }
 
     private async tokenRequest(endpoint: string, fields: Record<string, string>): Promise<StoredTokens> {

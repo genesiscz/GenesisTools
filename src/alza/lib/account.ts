@@ -1,4 +1,6 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ImpersonatedHttpClient } from "@genesiscz/utils/http/impersonate/client";
+import { libcurlImpersonateInstalled } from "@genesiscz/utils/http/impersonate/library";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import {
@@ -46,8 +48,8 @@ export function openAccountContext(opts: {
     close(opts?: { save?: boolean }): Promise<void>;
 } {
     const http = opts.http ?? new ImpersonatedHttpClient({ label: "alza" });
-    const session = VisitorSession.load();
     const storefront = opts.storefront ?? "cz";
+    const session = VisitorSession.forStorefront(storefront);
     const auth = new AlzaAuth({ http, storefront: STOREFRONTS[storefront], visitorId: session.visitorId });
     const api = new AlzaApi({
         storefront,
@@ -110,7 +112,7 @@ export async function userId(ctx: AccountContext): Promise<number> {
     }
 
     userIds.set(ctx, data.user_id);
-    ctx.auth.rememberUserId(data.user_id);
+    await ctx.auth.rememberUserId(data.user_id);
     return data.user_id;
 }
 
@@ -130,9 +132,13 @@ export interface AccountStatus {
 
 /**
  * A diagnostic: reads the token file and, when the access token is still valid, sends it once to getUserData as is.
- * It never refreshes, never writes a file, and neither sends nor takes the visitor cookies.
+ * It never refreshes, never writes a file, and neither sends nor takes the visitor cookies. The first request of a
+ * fresh install downloads the HTTP library, so the check is skipped until another command has installed it.
  */
-export async function accountStatus(ctx: AccountContext): Promise<AccountStatus> {
+export async function accountStatus(
+    ctx: AccountContext,
+    opts: { transportInstalled?: () => boolean } = {}
+): Promise<AccountStatus> {
     const stored = ctx.auth.readTokens();
     const base = { visitorId: ctx.session.visitorId, basketCookie: Boolean(ctx.session.header()?.includes("IDOX=")) };
     if (!stored) {
@@ -154,6 +160,14 @@ export async function accountStatus(ctx: AccountContext): Promise<AccountStatus>
             detail: stored.refresh_token
                 ? "The access token expired; the next account command renews it with the refresh token."
                 : `The access token expired and there is no refresh token. ${SIGN_IN_HINT}`,
+        };
+        return status;
+    }
+
+    if (!(opts.transportInstalled ?? libcurlImpersonateInstalled)()) {
+        status.check = {
+            ok: false,
+            detail: `Not checked: the Chrome-fingerprint HTTP library is not installed yet, and a status check installs nothing. Any catalog command installs it, for example ${toolCommand("alza search ssd")}.`,
         };
         return status;
     }
@@ -188,7 +202,7 @@ export async function afterSignIn(ctx: AccountContext): Promise<{ userId?: numbe
         return {};
     }
 
-    ctx.auth.rememberUserId(data.user_id);
+    await ctx.auth.rememberUserId(data.user_id);
     return { userId: data.user_id, userName: data.user_name ?? undefined };
 }
 
@@ -446,7 +460,15 @@ export function parseOrders(raw: unknown, list: OrderListName): { orders: OrderS
     const page = ordersPageSchema.parse(raw);
     const orders = [...(page.value ?? []), ...(page.orders ?? [])].flatMap((item) => {
         const parsed = orderSchema.safeParse(item);
-        const summary = parsed.success ? toOrderSummary(parsed.data) : undefined;
+        if (!parsed.success) {
+            logger.warn(
+                { list, issues: parsed.error.issues.slice(0, 3) },
+                "alza order list item of an unknown shape skipped"
+            );
+            return [];
+        }
+
+        const summary = toOrderSummary(parsed.data);
         if (!summary) {
             logger.debug({ list }, "alza order list item without an id skipped");
             return [];

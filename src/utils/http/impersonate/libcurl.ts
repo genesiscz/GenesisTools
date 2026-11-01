@@ -1,4 +1,4 @@
-import { CString, dlopen, FFIType, type Pointer, ptr, read } from "bun:ffi";
+import { CString, dlopen, FFIType, type Pointer, read } from "bun:ffi";
 
 /** The curl option numbers this client sets (`CURLOPT(...)` in curl/curl.h: type base + index). */
 export const CURLOPT = {
@@ -49,7 +49,13 @@ const APPLE_ARM64 = process.platform === "darwin" && process.arch === "arm64";
 const PAD_TYPES = APPLE_ARM64 ? Array<FFIType>(6).fill(FFIType.i64) : [];
 const PAD_VALUES = APPLE_ARM64 ? Array<number>(6).fill(0) : [];
 
-type VariadicCall = (handle: Pointer, option: number, ...rest: Array<number | Pointer | null>) => number;
+/**
+ * A pointer argument. Bun passes a TypedArray as its address and keeps the array alive for the whole call; a bare
+ * `ptr(view)` is only a number, so nothing holds the view while C reads it.
+ */
+type PointerArg = Pointer | NodeJS.TypedArray | null;
+
+type VariadicCall = (handle: Pointer, option: number, ...rest: Array<number | PointerArg>) => number;
 
 export interface MultiDone {
     easy: Pointer;
@@ -137,7 +143,7 @@ export function openLibcurl(path: string): Libcurl {
     };
     const infoWord = (easy: Pointer, info: number): bigint => {
         const out = new BigInt64Array(1);
-        getinfoPointer(easy, info, ...PAD_VALUES, ptr(out));
+        getinfoPointer(easy, info, ...PAD_VALUES, out);
         return out[0] ?? 0n;
     };
 
@@ -145,17 +151,17 @@ export function openLibcurl(path: string): Libcurl {
         easyInit: () => required(c.curl_easy_init(), "curl_easy_init"),
         easyCleanup: (easy) => c.curl_easy_cleanup(easy),
         impersonate: (easy, target, defaultHeaders) =>
-            c.curl_easy_impersonate(easy, ptr(cstring(target)), defaultHeaders ? 1 : 0),
+            c.curl_easy_impersonate(easy, cstring(target), defaultHeaders ? 1 : 0),
         setLong: (easy, option, value) => setoptLong(easy, option, ...PAD_VALUES, value),
         setPointer: (easy, option, value) => setoptPointer(easy, option, ...PAD_VALUES, value),
-        setString: (easy, option, value) => setoptPointer(easy, option, ...PAD_VALUES, ptr(cstring(value))),
+        setString: (easy, option, value) => setoptPointer(easy, option, ...PAD_VALUES, cstring(value)),
         infoLong: (easy, info) => Number(infoWord(easy, info)),
         infoString: (easy, info) => {
             const address = Number(infoWord(easy, info));
             return address ? new CString(address as Pointer).toString() : "";
         },
         strerror: (code) => String(c.curl_easy_strerror(code)),
-        slistAppend: (list, line) => c.curl_slist_append(list, ptr(cstring(line))),
+        slistAppend: (list, line) => c.curl_slist_append(list, cstring(line)),
         slistFree: (list) => {
             if (list) {
                 c.curl_slist_free_all(list);
@@ -178,17 +184,13 @@ export function openLibcurl(path: string): Libcurl {
         },
         multiAdd: (multi, easy) => c.curl_multi_add_handle(multi, easy),
         multiRemove: (multi, easy) => c.curl_multi_remove_handle(multi, easy),
-        multiPerform: (multi) => c.curl_multi_perform(multi, ptr(new Int32Array(1))),
+        multiPerform: (multi) => c.curl_multi_perform(multi, new Int32Array(1)),
         multiPoll: (multi, timeoutMs) => c.curl_multi_poll(multi, null, 0, timeoutMs, null),
         multiWakeup: (multi) => c.curl_multi_wakeup(multi),
         multiDone: (multi) => {
             const done: MultiDone[] = [];
             const left = new Int32Array(1);
-            for (
-                let msg = c.curl_multi_info_read(multi, ptr(left));
-                msg;
-                msg = c.curl_multi_info_read(multi, ptr(left))
-            ) {
+            for (let msg = c.curl_multi_info_read(multi, left); msg; msg = c.curl_multi_info_read(multi, left)) {
                 if (read.i32(msg, 0) === CURLMSG_DONE) {
                     done.push({
                         easy: read.ptr(msg, CURLMSG_EASY_OFFSET) as Pointer,

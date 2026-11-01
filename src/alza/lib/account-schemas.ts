@@ -198,7 +198,11 @@ export const orderSchema = z.object({
     totalPrice: z.union([z.string(), z.number()]).nullish(),
     price: z.union([z.string(), z.number()]).nullish(),
     parts: z.array(orderPartSchema).nullish(),
-    documents: z.array(z.object({ name: optStr, self: hyperSchema })).nullish(),
+    /** An optional extra: a documents list of another shape becomes null instead of dropping the whole order. */
+    documents: z
+        .array(z.object({ name: optStr, self: hyperSchema }))
+        .nullish()
+        .catch(null),
     self: hyperSchema,
 });
 export type OrderRaw = z.infer<typeof orderSchema>;

@@ -33,6 +33,40 @@ function asPercent(fraction: unknown): number | undefined {
     return typeof fraction === "number" ? Math.round(fraction * 1000) / 10 : undefined;
 }
 
+/**
+ * The lowest price in force during the `days` before the latest priced point, that point left out. The points are
+ * price changes in date order: the last one at or before the window start still set the price inside the window,
+ * unless it was a null (not sold).
+ */
+export function lowestBeforeLatest(points: PricePoint[], days = 30): number | undefined {
+    const latest = points.findLast((p) => typeof p.price === "number");
+    if (!latest) {
+        return undefined;
+    }
+
+    const end = Date.parse(latest.date);
+    const start = end - days * DAY_MS;
+    let carried: PricePoint | undefined;
+    const prices: number[] = [];
+    for (const point of points) {
+        if (point === latest) {
+            break;
+        }
+
+        if (Date.parse(point.date) <= start) {
+            carried = point;
+        } else if (typeof point.price === "number") {
+            prices.push(point.price);
+        }
+    }
+
+    if (typeof carried?.price === "number") {
+        prices.push(carried.price);
+    }
+
+    return prices.length > 0 ? Math.min(...prices) : undefined;
+}
+
 /** Price history from Hlídač shopů (hlidacshopu.cz), which tracks Alza daily. */
 export async function getPriceHistory(api: AlzaApi, ref: string): Promise<PriceHistory> {
     const product = await getProduct(api, ref);
@@ -61,7 +95,6 @@ export async function getPriceHistory(api: AlzaApi, ref: string): Promise<PriceH
 
     points.sort((a, b) => a.date.localeCompare(b.date));
     const priced = points.filter((p): p is PricePoint & { price: number } => typeof p.price === "number");
-    const last = priced.at(-1);
     const lowest = priced.reduce<(typeof priced)[number] | undefined>(
         (min, p) => (!min || p.price < min.price ? p : min),
         undefined
@@ -70,8 +103,6 @@ export async function getPriceHistory(api: AlzaApi, ref: string): Promise<PriceH
         (max, p) => (!max || p.price > max.price ? p : max),
         undefined
     );
-    const cutoff = last ? new Date(last.date).getTime() - 30 * DAY_MS : 0;
-    const window = priced.filter((p) => new Date(p.date).getTime() >= cutoff && p !== last);
     const metadata = (byUrl.detail ?? detail)?.metadata;
 
     logger.debug({ url, source: byUrl.source, points: points.length }, "alza price history");
@@ -84,7 +115,7 @@ export async function getPriceHistory(api: AlzaApi, ref: string): Promise<PriceH
         currentPrice: product.price,
         lowest: lowest ? { price: lowest.price, date: lowest.date } : undefined,
         highest: highest ? { price: highest.price, date: highest.date } : undefined,
-        lowest30Days: window.length ? Math.min(...window.map((p) => p.price)) : undefined,
+        lowest30Days: lowestBeforeLatest(points),
         realDiscount: asPercent(metadata?.realDiscount),
         claimedDiscount: asPercent(metadata?.claimedDiscount),
     };

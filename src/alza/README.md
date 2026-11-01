@@ -59,7 +59,7 @@ tools alza orders list --limit 20       # active and archived orders (signed in)
 tools alza orders show 1058423434
 tools alza watchdog list                # price and stock watchdogs (Hlídací pes), signed in
 tools alza watchdog add AUPR65708 --price 1999 --stock
-tools alza watchdog remove <id|product>
+tools alza watchdog remove AUPR65708    # the watched product, or a watchdog id from `watchdog list`
 ```
 
 After the sign-in the browser tries to open `alza://identity?code=…` and cannot; copy that URL from the address bar,
@@ -67,33 +67,48 @@ the "open this app?" message, or the DevTools Network tab (turn on "Preserve log
 minutes.
 
 Files, all mode 0600, under `~/.genesis-tools/alza/`: `tokens.json` (access and refresh token, user id),
-`pending-login.json` (the PKCE verifier between the two sign-in steps, removed after the exchange) and `state.json`
-(the visitor id and the `IDOX`/`VST` cookies: the anonymous basket is keyed by the `IDOX` cookie, not by the visitor
-id). An account command renews an expiring access token with the refresh token; `auth status` never does.
+`pending-login.json` (the PKCE verifier between the two sign-in steps, removed after the exchange) and
+`visitors/<storefront>.json` (the visitor id and the `IDOX`/`VST` cookies of one storefront: the anonymous basket is
+keyed by the `IDOX` cookie, not by the visitor id, and alza.cz and alza.sk set their own cookies). An older
+`state.json` is read as the Czech visitor until that visitor is saved again. An account command renews an expiring
+access token with the refresh token; `auth status` never does, and it sends no request until a catalog command has
+downloaded the HTTP library. A renewal never writes tokens back over a logout or a new sign-in from another process.
 
 MCP tools: `account_status`, `cart_show`, `cart_add`, `cart_remove`, `favorites_list`, `orders_list`, `order_show`,
 `watchdog_list`, `watchdog_add`, `watchdog_remove`. The four that change the basket or the watchdogs are annotated
-`readOnlyHint: false`. A tool that needs a sign-in answers "Sign in first: tools alza auth login".
+`readOnlyHint: false`, and the removals (`cart_remove`, `watchdog_remove`, `mutate_list`, and `order_document`,
+which can replace a file) also `destructiveHint: true`. A tool that needs a sign-in answers "Sign in first: tools alza
+auth login".
 
 ## More catalog and account tools
 
 ```bash
 tools alza categories                   # the top level of the category tree (an id shows that category instead)
 tools alza pc check BD750k7a1 AGb650ea DP095b32a64 UY006rm85new CBh5f5   # compatibility of a parts list; code:role when detection fails
-tools alza pc suggest 40000 --profile gaming --cpu amd --skip storage     # a compatible build within the budget (about a minute)
-tools alza account profile | gdpr | subscription | claims [--archive]     # signed in
-tools alza account claim <detailAction href>
+tools alza pc suggest 40000 --profile gaming --cpu amd --skip storage     # a compatible build within a CZK budget (cz only, about a minute)
+tools alza account profile              # signed in, like gdpr, subscription and claims
+tools alza account gdpr
+tools alza account subscription
+tools alza account claims --archive     # without --archive: the active claims
 tools alza account contacts             # Alza's contact channels, no sign-in
 tools alza orders search 1058           # order search, with invoice links
-tools alza orders document <https link> --out invoice.pdf   # only Alza hosts; pdf.alza.cz is read with fetch for binary PDFs
-tools alza orders payments <order> <part>   # payment options of an unpaid part (reads only)
-tools alza checkout delivery | payments | preview   # for the basket, signed in or as the visitor; nothing is ordered
+tools alza orders payments 1058423434 1058423434   # payment options of an unpaid order part (reads only)
+tools alza checkout delivery            # for the basket, signed in or as the visitor; nothing is ordered
+tools alza checkout payments
+tools alza checkout preview
 tools alza checkout pickup 2680         # payments that fit one delivery option, with prices (does not pick a box)
 tools alza checkout address Brno        # postal codes and places
-tools alza favorites add|remove <product> [--later]
+tools alza favorites add AUPR65708      # --later uses the buy-later list
+tools alza favorites remove AUPR65708
 tools alza chat                         # the chatbot's navigation actions (sends nothing)
-tools alza raw <operation> [key=value]  # fixed read-only GET routes; `tools alza mcp --raw` adds mobile_read to MCP
+tools alza raw router_product product_id=9383715   # fixed read-only GET routes; `tools alza raw --help` lists them
 ```
+
+Two commands take a link from another answer. `tools alza account claim` takes a claim's `detailAction` href from
+`tools alza account claims --json`. `tools alza orders document` takes an invoice link from `tools alza orders search`
+and writes it to the file named by `--out` (for example `--out invoice.pdf`). It follows only pdf.alza.cz links (read
+with fetch, for binary PDFs) and the routes of one of the account's orders, never a redirect, and at most 8 MiB.
+`tools alza mcp --raw` adds the raw routes to MCP as `mobile_read`.
 
 The PC builder rules come from [alza-mcp-community](https://github.com/lukabudik/alza-mcp-community) (MIT), adapted to
 the JSON product route. `checkout preview` runs Alza's first checkout step (`sendOrder1`), so MCP marks it as a write,

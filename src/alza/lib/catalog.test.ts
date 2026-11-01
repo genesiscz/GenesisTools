@@ -1,13 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import {
+    ImpersonatedHttpClient,
+    type ImpersonatedRequest,
+    type ImpersonatedResponse,
+} from "@genesiscz/utils/http/impersonate/client";
+import { AlzaApi } from "./api";
+import {
     cardToSummary,
     categoryListingPath,
+    getDeals,
     parseListingCards,
     parsePrice,
     parseReviewDetail,
     productIdFromRef,
     toReview,
 } from "./catalog";
+import { lowestBeforeLatest } from "./history";
+import { findOperation } from "./operations";
 import {
     checkBuild,
     checkCoolerClearance,
@@ -24,13 +33,33 @@ import {
     normalizeSocket,
     normalizeSpecs,
     overallVerdict,
+    PC_CATEGORY_IDS,
     type PcRole,
     type ProductParam,
     parseCzechNumber,
     type RulePart,
 } from "./pc-build";
 import { parsePcPart } from "./pc-build-format";
-import { PcBuilder, type PcCatalog } from "./pc-build-service";
+import { PcBuilder, type PcCatalog, type Product } from "./pc-build-service";
+import { geocodeUrl } from "./pickup";
+
+/** Answers every request from `answer` and records it; never touches the network or the curl worker. */
+class CannedHttp extends ImpersonatedHttpClient {
+    readonly requests: ImpersonatedRequest[] = [];
+
+    constructor(private readonly answer: (req: ImpersonatedRequest) => ImpersonatedResponse) {
+        super({ label: "test" });
+    }
+
+    override async request(req: ImpersonatedRequest): Promise<ImpersonatedResponse> {
+        this.requests.push(req);
+        return this.answer(req);
+    }
+}
+
+const noNetwork = (req: ImpersonatedRequest): ImpersonatedResponse => {
+    throw new Error(`unexpected request in a test: ${req.url}`);
+};
 
 describe("parsePrice", () => {
     test("reads the storefront price formats", () => {
@@ -226,6 +255,13 @@ const PSU_450 = P([
     ["Výkon", "450 W"],
     ["Formát", "ATX"],
 ]);
+const MB_AM4_ATX = P([
+    ["Socket", "AMD AM4"],
+    ["Formát základní desky", "ATX"],
+    ["Typ paměti", "DDR4"],
+    ["Počet slotů RAM", "4 ×"],
+    ["Provedení", "DIMM"],
+]);
 const pcPart = (role: PcRole, code: string, rows: ProductParam[]): RulePart => ({
     code,
     specs: normalizeSpecs(role, rows),
@@ -336,5 +372,127 @@ describe("pc build: CLI part syntax", () => {
         expect(parsePcPart("https://www.alza.cz/x-d9383715.htm")).toEqual({
             code: "https://www.alza.cz/x-d9383715.htm",
         });
+    });
+});
+
+describe("deals", () => {
+    test("pages is a page budget, however sparse the discounts are", async () => {
+        const card = (id: number) =>
+            `<div class="box browsingitem canBuy" data-code="C${id}" data-id="${id}"><a class="name" href="/c-d${id}.htm">Card ${id}</a><span class="ads-pb__price-value">100,-</span></div>`;
+        const page = (n: number) =>
+            `${Array.from({ length: 24 }, (_, i) => card(n * 100 + i)).join("")}<a href="/18851284-p${n + 1}.htm">${n + 1}</a>`;
+        const http = new CannedHttp((req) => {
+            const n = Number(/-p(\d+)\.htm/.exec(req.url)?.[1] ?? 1);
+            return { status: 200, url: req.url, headers: {}, text: page(n) };
+        });
+        const api = new AlzaApi({ http });
+        const deals = await getDeals(api, { categoryId: 18851284, pages: 2 });
+        expect(deals.items).toEqual([]);
+        expect(http.requests.map((r) => r.url)).toEqual([
+            "https://www.alza.cz/18851284.htm",
+            "https://www.alza.cz/18851284-p2.htm",
+        ]);
+    });
+});
+
+describe("price history", () => {
+    test("the 30-day low includes the price carried in from before the window", () => {
+        const at = (date: string, price: number | null) => ({ date, price, originalPrice: null });
+        expect(lowestBeforeLatest([at("2026-12-01", 900), at("2027-01-01", 1000)])).toBe(900);
+        expect(lowestBeforeLatest([at("2026-11-01", 700), at("2026-12-01", 900), at("2027-01-01", 1000)])).toBe(900);
+        expect(lowestBeforeLatest([at("2026-12-10", 950), at("2026-12-20", 990), at("2027-01-01", 1000)])).toBe(950);
+        expect(lowestBeforeLatest([at("2026-12-01", 800), at("2026-12-02", null), at("2027-01-01", 1000)])).toBe(
+            undefined
+        );
+        expect(lowestBeforeLatest([at("2027-01-01", 1000)])).toBeUndefined();
+    });
+});
+
+describe("pickup geocoding", () => {
+    test("a 5-digit postal code is spaced for CZ and SK only", () => {
+        expect(geocodeUrl("11000", "cz").searchParams.get("postalcode")).toBe("110 00");
+        expect(geocodeUrl("811 01", "sk").searchParams.get("postalcode")).toBe("811 01");
+        expect(geocodeUrl("10115", "de").searchParams.get("postalcode")).toBe("10115");
+        expect(geocodeUrl("Brno", "cz").searchParams.get("q")).toBe("Brno");
+    });
+});
+
+describe("pc build: suggest", () => {
+    const fake = (products: Record<string, { name: string; price: number; params: ProductParam[] }>) => {
+        const reads: string[] = [];
+        const listings = new Map<number, string[]>();
+        const product = (code: string): Product => ({
+            code,
+            name: products[code]?.name ?? code,
+            url: `https://example.com/${code}`,
+            price: products[code]?.price,
+            inStock: true,
+            params: products[code]?.params,
+        });
+        const catalog: PcCatalog = {
+            getProductSpecs: async (code) => {
+                reads.push(code);
+                return product(code);
+            },
+            searchProducts: async ({ categoryId }) => ({
+                products: (listings.get(categoryId) ?? []).map((code) => ({ ...product(code), params: undefined })),
+            }),
+            getCategoryFilters: async () => ({ brands: [] }),
+        };
+        return { catalog, reads, listings };
+    };
+
+    test("fixed parts get the role checks and the duplicate guard of check, within the fetch budget", async () => {
+        const { catalog, reads } = fake({ MB1: { name: "Board", price: 3000, params: MB_AM5_ATX } });
+        const builder = new PcBuilder(catalog);
+        await expect(builder.suggest({ budget: 40000, fixedParts: [{ code: "MB1", role: "cpu" }] })).rejects.toThrow(
+            /fixed part MB1: .*looks like a motherboard/
+        );
+        await expect(
+            builder.suggest({ budget: 40000, fixedParts: [{ code: "MB1" }, { code: "MB1" }] })
+        ).rejects.toThrow(/listed twice/);
+        reads.length = 0;
+        await expect(
+            builder.suggest({ budget: 40000, maxDetailFetches: 1, fixedParts: [{ code: "MB1" }, { code: "MB2" }] })
+        ).rejects.toThrow(/2 fixed parts need 2 product reads/);
+        expect(reads).toEqual([]);
+    });
+
+    test("an exhausted fetch budget never picks a card that already failed a rule", async () => {
+        const { catalog, listings } = fake({
+            CPU4: { name: "AMD Ryzen 7 5800X", price: 5000, params: CPU_AM4 },
+            MB5: { name: "Board Five", price: 3000, params: MB_AM5_ATX },
+            MB4: { name: "Board Four", price: 2500, params: MB_AM4_ATX },
+        });
+        listings.set(PC_CATEGORY_IDS.motherboard, ["MB5", "MB4"]);
+        const report = await new PcBuilder(catalog).suggest({
+            budget: 60000,
+            maxDetailFetches: 2,
+            fixedParts: [{ code: "CPU4" }],
+        });
+        const board = report.parts.find((p) => p.role === "motherboard");
+        expect(board?.code).toBe("MB4");
+        expect(board?.specsFetched).toBe(false);
+        expect(report.notes.some((n) => n.includes("skipped MB5 (cpu_socket_motherboard failed)"))).toBe(true);
+    });
+
+    test("a candidate is checked against a pinned part of a later role", async () => {
+        const { catalog, reads, listings } = fake({
+            MB4: { name: "Board Four", price: 2500, params: MB_AM4_ATX },
+            CPU5: { name: "AMD Ryzen 7 7700", price: 6000, params: CPU_AM5_IGPU },
+            CPU4: { name: "AMD Ryzen 7 5800X", price: 5000, params: CPU_AM4 },
+        });
+        listings.set(PC_CATEGORY_IDS.cpu, ["CPU5", "CPU4"]);
+        const report = await new PcBuilder(catalog).suggest({ budget: 60000, fixedParts: [{ code: "MB4" }] });
+        expect(reads.slice(0, 3)).toEqual(["MB4", "CPU5", "CPU4"]);
+        expect(report.parts.find((p) => p.role === "cpu")?.code).toBe("CPU4");
+        expect(report.verdicts.find((v) => v.rule === "cpu_socket_motherboard")?.verdict).toBe("pass");
+    });
+
+    test("pc_build_suggest refuses a storefront that does not price in CZK", async () => {
+        const api = new AlzaApi({ storefront: "sk", http: new CannedHttp(noNetwork) });
+        await expect(findOperation("pc_build_suggest").run(api, { budget: 40000 })).rejects.toThrow(
+            /cz storefront only/
+        );
     });
 });

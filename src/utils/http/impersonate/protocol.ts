@@ -18,6 +18,8 @@ export interface WorkerRequest {
     body?: string;
     timeoutMs: number;
     followRedirects: boolean;
+    /** The worker ends the transfer and replies with an error once the body passes this many bytes. */
+    maxBodyBytes?: number;
 }
 
 export interface WorkerAbort {

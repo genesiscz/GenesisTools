@@ -38,7 +38,7 @@ import {
     type RulePart,
     type RuleVerdict,
     rankCandidates,
-    rulesForRole,
+    rulesForCandidate,
     SUGGEST_ORDER,
     socketHintFromBoardName,
     wattageHintFromName,
@@ -203,6 +203,52 @@ function summarize(parts: BuildPartOut[], verdicts: RuleVerdict[], psuHeadroom: 
     };
 }
 
+function assertDistinctCodes(codes: string[]): void {
+    const dup = codes.find((c, i) => codes.indexOf(c) !== i);
+    if (dup) {
+        throw new Error(`product code ${dup} is listed twice — list each part once`);
+    }
+}
+
+/**
+ * The role of a part the user named (a `check` part or a `suggest` fixed part): an explicit role must fit the spec
+ * table (a laptop is refused as a CPU), and without one the role is detected. `label` prefixes the messages.
+ */
+function resolvePartRole(
+    req: { code: string; role?: PcRole },
+    product: Product,
+    warnings: string[],
+    label: string
+): PcRole {
+    if (req.role) {
+        const c = checkForcedRole(req.role, product.name, product.params);
+        if (c.error) {
+            throw new Error(`${label}${req.code}: ${c.error}`);
+        }
+
+        if (c.warning) {
+            warnings.push(`${label}${req.code}: ${c.warning}`);
+        }
+
+        return req.role;
+    }
+
+    const role = detectRole(product.name, product.params);
+    if (!role) {
+        const device = nonComponentReason(product.params);
+        const why = device
+            ? `— ${device}`
+            : product.params?.length
+              ? "from its specs"
+              : "— its product page returned no spec table";
+        throw new Error(
+            `Could not tell which component ${label}${req.code} ("${product.name}") is ${why}. Pass its role explicitly (cpu, motherboard, ram, gpu, storage, case, cooler, psu).`
+        );
+    }
+
+    return role;
+}
+
 export class PcBuilder {
     constructor(private readonly catalog: PcCatalog) {}
 
@@ -214,10 +260,7 @@ export class PcBuilder {
         if (codes.length > MAX_CHECK_PARTS) {
             throw new Error(`at most ${MAX_CHECK_PARTS} parts per check (each is a product page load)`);
         }
-        const dup = codes.find((c, i) => codes.indexOf(c) !== i);
-        if (dup) {
-            throw new Error(`product code ${dup} is listed twice — list each part once`);
-        }
+        assertDistinctCodes(codes);
 
         const parts: BuildPartOut[] = [];
         const roleWarnings: string[] = [];
@@ -225,27 +268,7 @@ export class PcBuilder {
         for (const req of input.parts) {
             const product = await this.catalog.getProductSpecs(req.code.trim());
             detailFetches++;
-            const role = req.role ?? detectRole(product.name, product.params);
-            if (req.role) {
-                const c = checkForcedRole(req.role, product.name, product.params);
-                if (c.error) {
-                    throw new Error(`${req.code}: ${c.error}`);
-                }
-                if (c.warning) {
-                    roleWarnings.push(`${req.code}: ${c.warning}`);
-                }
-            }
-            if (!role) {
-                const device = nonComponentReason(product.params);
-                const why = device
-                    ? `— ${device}`
-                    : product.params?.length
-                      ? "from its specs"
-                      : "— its product page returned no spec table";
-                throw new Error(
-                    `Could not tell which component ${req.code} ("${product.name}") is ${why}. Pass its role explicitly (cpu, motherboard, ram, gpu, storage, case, cooler, psu).`
-                );
-            }
+            const role = resolvePartRole(req, product, roleWarnings, "");
             parts.push(toPart(role, product, true));
         }
         const specless = parts.filter((p) => p.role !== "storage" && Object.keys(p.specs).length === 0);
@@ -290,14 +313,19 @@ export class PcBuilder {
         let categoryPages = 0;
         const parts: BuildPartOut[] = [];
 
-        // 1. User-pinned parts first: they constrain everything else.
-        for (const req of input.fixedParts ?? []) {
+        // 1. User-pinned parts first: they constrain everything else. Each is one product read of the same budget,
+        // and gets the role checks `check` applies.
+        const fixedParts = input.fixedParts ?? [];
+        assertDistinctCodes(fixedParts.map((p) => p.code.trim()));
+        if (fixedParts.length > maxFetches) {
+            throw new Error(
+                `${fixedParts.length} fixed parts need ${fixedParts.length} product reads, more than the detail-fetch budget (${maxFetches}); raise it or pin fewer parts.`
+            );
+        }
+        for (const req of fixedParts) {
             const product = await this.catalog.getProductSpecs(req.code.trim());
             detailFetches++;
-            const role = req.role ?? detectRole(product.name, product.params);
-            if (!role) {
-                throw new Error(`Could not tell which component fixed part ${req.code} is — pass its role explicitly.`);
-            }
+            const role = resolvePartRole(req, product, notes, "fixed part ");
             parts.push(toPart(role, product, true, "fixed"));
         }
         assertSingleRoles(parts);
@@ -386,10 +414,14 @@ export class PcBuilder {
                 // No compatibility rule depends on storage specs — save the page load.
                 chosen = toPart(role, ordered[0]!, false, "suggested");
             } else {
-                const ruleIds = rulesForRole(role).filter((r) => !(r === "display_output" && plannedGpu));
+                const ruleIds = rulesForCandidate(role, fixedRoles).filter(
+                    (r) => !(r === "display_output" && plannedGpu)
+                );
                 // Detail fetches still needed by the roles after this one (storage needs none).
                 const laterRoles = roles.slice(roles.indexOf(role) + 1).filter((r) => r !== "storage").length;
                 let fallback: BuildPartOut | undefined; // no fail, but a warn/unknown — used if no clean pass turns up
+                // Cards whose specs failed a rule here: the budget fallback below must never pick one of them.
+                const rejected = new Set<string>();
                 let tries = 0;
                 const psuLater = role !== "psu" && roles.slice(roles.indexOf(role) + 1).includes("psu");
                 for (const card of ordered) {
@@ -433,12 +465,14 @@ export class PcBuilder {
                         const need = estimatePower(built, input.psuHeadroom).recommendedPsuW;
                         if (w !== undefined && w < need) {
                             notes.push(`psu: skipped ${card.code} (${w} W is below the recommended ${need} W).`);
+                            rejected.add(card.code);
                             continue;
                         }
                     }
                     const failing = relevant.filter((v) => v.verdict === "fail");
                     if (failing.length > 0) {
                         notes.push(`${role}: skipped ${card.code} (${failing.map((f) => f.rule).join(", ")} failed).`);
+                        rejected.add(card.code);
                         continue;
                     }
                     const doubtful = relevant
@@ -460,10 +494,17 @@ export class PcBuilder {
                     chosen = fallback;
                     notes.push(`${role}: kept ${fallback.code} (no candidate passed cleanly within the tries/budget).`);
                 } else if (!chosen && detailFetches >= maxFetches) {
-                    chosen = toPart(role, ordered[0]!, false, "suggested");
-                    notes.push(
-                        `${role}: detail-fetch budget (${maxFetches}) exhausted — ${chosen.code} picked from its listing card without specs; its rules are unknown. Re-run pc_build_check on the final list.`
-                    );
+                    const unrejected = ordered.find((c) => !rejected.has(c.code));
+                    if (unrejected) {
+                        chosen = toPart(role, unrejected, false, "suggested");
+                        notes.push(
+                            `${role}: detail-fetch budget (${maxFetches}) exhausted — ${chosen.code} picked from its listing card without specs; its rules are unknown. Re-run pc_build_check on the final list.`
+                        );
+                    } else {
+                        notes.push(
+                            `${role}: detail-fetch budget (${maxFetches}) exhausted and every candidate read failed a rule — left empty; pin a part via fixed_parts.`
+                        );
+                    }
                 } else if (!chosen) {
                     notes.push(
                         `${role}: none of the first ${TRIES_PER_ROLE} candidates passed ${ruleIds.join(", ")} — left empty; pin a part via fixed_parts.`
