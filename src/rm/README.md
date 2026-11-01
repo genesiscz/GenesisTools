@@ -23,6 +23,8 @@ tools rm profiles                   # settings per agent, session or project, an
 
 # The user only (an agent's shell call is blocked, and the verb asks a person):
 tools rm approve <id>
+tools rm approve <id> <id> ... [--session <id>] [--older 1d]   # several requests: one window, one person check
+tools rm approve                    # on a terminal: tick requests, then approve, deny or close the gone ones
 tools rm roots add <dir> [--note "<why>"]
 tools rm config set <key> <value>   # approval, ask-action, aside-unsaved, session-scratch, own-files, grace-preset,
                                     # grace-other, trash-root, disable-preset, enable-preset,
@@ -166,7 +168,16 @@ The window answers more than allow or deny, and `approve` does what it picked:
 - **deny**: a person's Deny closes the request and puts everything back. Its note is kept (`tools rm requests --all`)
   and printed to the same session the next time it asks to delete that path.
 
-The typed code and the dialog answer for all paths, to the trash, just this once.
+The typed code and the dialog answer for all paths, to the trash, just this once. The dialog shows 15 lines, so it
+refuses a longer request instead of hiding paths: use GenesisTools.app for those.
+
+Several requests at once: `tools rm approve <id> <id> ...` (or `--session <id prefix>`, `--older 1d`) opens ONE
+window with the rows of all of them and asks the person once. The set is fixed before the window opens, so a request
+an agent makes meanwhile never rides along; a request open in another window, a root request, a request with nothing
+left and one with unfinished recovery are left out with a line each. An in-place path two requests name is one row.
+With no id, on a terminal outside an agent, `tools rm approve` opens a picker: tick requests, then approve them in one
+window, deny them (another session's requests after one person check, with an optional note the agent reads), or
+close the ticked ones nothing is left of.
 
 The window opens before any tree is walked. When `tools rm` opens a delete request it starts `tools rm measure <id>`
 in the background, which saves each path's size, emptiness and file count to
