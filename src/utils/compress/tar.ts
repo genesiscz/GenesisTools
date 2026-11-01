@@ -547,6 +547,8 @@ export interface PackResult {
     tarBytes: number;
     compressedBytes: number;
     frames: number;
+    /** sha256 of the tar stream, hashed while it was written: what decompressing the archive gives back. */
+    sha256: string;
 }
 
 /** Refuses an output inside the folder being archived, including paths through a symlinked parent. */
@@ -592,7 +594,7 @@ export async function packDirectory({
     const source = resolve(inputSource);
     const archive = inputArchive ?? `${source}${FOLDER_ARCHIVE_SUFFIX}`;
     assertArchiveOutsideSource(source, archive);
-    const result: PackResult = { archive, tarBytes: 0, compressedBytes: 0, frames: 0 };
+    const result: PackResult = { archive, tarBytes: 0, compressedBytes: 0, frames: 0, sha256: "" };
 
     await atomicWriteFileStreamed(
         archive,
@@ -606,8 +608,10 @@ export async function packDirectory({
                 env: tar.env,
             });
             const stderr = drain(proc.stderr);
+            const hasher = new Bun.CryptoHasher("sha256");
 
             for await (const chunk of proc.stdout) {
+                hasher.update(chunk);
                 await writer.push(chunk);
             }
 
@@ -621,6 +625,7 @@ export async function packDirectory({
             result.tarBytes = stats.inputBytes;
             result.compressedBytes = stats.outputBytes;
             result.frames = stats.frames;
+            result.sha256 = hasher.digest("hex");
         },
         { mode: 0o600 }
     );
@@ -668,8 +673,15 @@ function extractOptions(): string[] {
 /**
  * Unpacks a `.tar.zst` into `destination` (created when missing) with the system `tar`, fed one decompressed frame at
  * a time. The archive's top folder lands inside `destination`. A `._name` entry is restored as the file it was.
+ * Returns the size and sha256 of the tar stream tar was fed, hashed on the way.
  */
-export async function unpackArchive({ archive, destination }: { archive: string; destination: string }): Promise<void> {
+export async function unpackArchive({
+    archive,
+    destination,
+}: {
+    archive: string;
+    destination: string;
+}): Promise<{ bytes: number; sha256: string }> {
     mkdirSync(destination, { recursive: true });
     const proc = Bun.spawn(["tar", ...extractOptions(), "-kxf", "-", "-C", destination], {
         stdin: "pipe",
@@ -678,9 +690,13 @@ export async function unpackArchive({ archive, destination }: { archive: string;
     });
     const stderr = drain(proc.stderr);
     const stdout = drain(proc.stdout);
+    const hasher = new Bun.CryptoHasher("sha256");
+    let bytes = 0;
 
     try {
         for (const frame of readZstdFramesSync(archive)) {
+            hasher.update(frame);
+            bytes += frame.length;
             proc.stdin.write(frame);
             await proc.stdin.flush();
         }
@@ -696,6 +712,8 @@ export async function unpackArchive({ archive, destination }: { archive: string;
             `tar failed unpacking ${archive} into ${destination} (exit ${exitCode}): ${(await stderr).trim()}`
         );
     }
+
+    return { bytes, sha256: hasher.digest("hex") };
 }
 
 interface WalkedEntry {

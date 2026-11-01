@@ -43,5 +43,10 @@ tools compress daily --dry-run                # what the once-a-day pass would c
 - **Ledger.** `~/.genesis-tools/compress/ledger.jsonl`, one line per operation: paths, sizes, ratio, preset, level,
   long mode, frame size, threads, sha256 in and out, start and end time, host, Bun and zstd versions. The automatic
   passes (day logs, ai-proxy transcripts, migrate-home backups, retired app bundles) record there too.
+  `inputSha256` is the sha256 of what the zstd writer took in, so `zstd -dc --long=31 <target> | shasum -a 256`
+  prints it: the file for a compress, the tar stream for a pack (hashed while it is written; packs before 2026-11-01
+  carry none). `outputSha256` is the `.zst` file itself. `unpack` and a file restore check the restored stream
+  against the newest record that wrote the archive and remove the output when it differs; a record without
+  `inputSha256` is not checked.
 - **Reading compressed files.** `rg -z` reads a `.zst` (it needs the `zstd` CLI); `tools compress cat` needs nothing.
   Every GenesisTools reader of day logs and transcripts opens either form itself.
