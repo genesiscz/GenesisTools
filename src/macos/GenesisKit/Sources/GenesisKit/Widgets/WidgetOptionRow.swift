@@ -59,14 +59,6 @@ public enum WidgetWords {
     }
 }
 
-/// The mark of the recommended option. Green, because orange already means "waits for you" on the same card.
-struct WidgetRecommendedMark: View {
-    var body: some View {
-        Image(systemName: "sparkle").font(.system(size: 11, weight: .semibold)).foregroundStyle(.green)
-            .accessibilityHidden(true)
-    }
-}
-
 /// The small rounded badge before an option's text: the key that picks it, or its letter. The option row and the
 /// answered option row draw this one view.
 struct WidgetOptionBadge: View {
@@ -80,8 +72,9 @@ struct WidgetOptionBadge: View {
     }
 }
 
-/// One option row of a decision: the badge (the key that picks it, or its letter), the text, Staged, the recommended
-/// mark and the keyboard's ring. The alert card, a session's inbox and the inbox of every session draw this one view.
+/// One option row of a decision: the badge (the key that picks it, or its letter), the text with the agent's reason
+/// for it under, Staged, the Recommended badge (the hub Inbox's, `DecisionRecommendedBadge`) and the keyboard's ring.
+/// The alert card, a session's inbox and the inbox of every session draw this one view.
 struct WidgetOptionLabel: View {
     let badge: String
     /// The option's letter before its text, when the badge is a key ("1" stands for "a)").
@@ -90,27 +83,39 @@ struct WidgetOptionLabel: View {
     let picked: Bool
     let recommended: Bool
     var focused = false
+    /// Why this option, when the agent said (`WidgetChoice.rationale`): dim, under the text, as in the hub.
+    var rationale: String? = nil
 
     static let cornerRadius: CGFloat = 8
+    /// Where the option's text starts inside the row: the padding, the 20 pt badge and the gap after it. A line that
+    /// belongs to the option (the agent's pick under it) starts there too.
+    static let textInset: CGFloat = 8 + 20 + 8
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius)
         HStack(alignment: .top, spacing: 8) {
             WidgetOptionBadge(text: badge)
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                if let letter {
-                    Text(verbatim: letter + ")").foregroundStyle(SessionPalette.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if let letter {
+                        Text(verbatim: letter + ")").foregroundStyle(SessionPalette.secondary)
+                    }
+                    Text(text).fixedSize(horizontal: false, vertical: true)
                 }
-                Text(text).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12))
+                if let rationale, !rationale.isEmpty {
+                    Text(.init(rationale)).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .font(.system(size: 12))
             .padding(.top, 2)
             Spacer(minLength: 0)
             if picked {
                 Text("Staged").font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(SessionPalette.blue).padding(.top, 2)
             }
-            if recommended { WidgetRecommendedMark().padding(.top, 3) }
+            // Green, because orange already means "waits for you" on the same card.
+            if recommended { DecisionRecommendedBadge().padding(.top, 1) }
         }
         .padding(8).frame(maxWidth: .infinity, alignment: .leading)
         .background(picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.06), in: shape)
