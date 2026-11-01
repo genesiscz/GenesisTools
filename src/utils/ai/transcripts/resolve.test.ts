@@ -6,6 +6,7 @@ import { createCodexLocate } from "@genesiscz/utils/agent-sessions/readers/codex
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { codexHomesWithLegacy, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
 import {
     directReads,
@@ -16,7 +17,7 @@ import {
     resolveTranscriptsWith,
     type TranscriptRoots,
 } from "./resolve";
-import { rescanWorkerTurns } from "./resolve-core";
+import { listDir, mtimeOf, rescanWorkerTurns } from "./resolve-core";
 
 function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-transcript-"));
@@ -711,5 +712,23 @@ test("codex worker without home resolves a rollout in the default home list", as
                 directReads
             )
         ).toMatchObject({ source: "native", filePath: explicit });
+    });
+});
+
+describe("listDir and mtimeOf", () => {
+    test("a missing folder or file is a normal answer and writes no log line", () => {
+        const root = fixtureRoot();
+        const debug = spyOn(logger, "debug");
+        try {
+            expect(listDir(join(root, "no-subagents"))).toEqual([]);
+            expect(mtimeOf(join(root, "no-transcript.jsonl"))).toBe(0);
+            expect(debug).not.toHaveBeenCalled();
+            // Any other failure is still logged: a file is not a folder.
+            writeFileSync(join(root, "file"), "");
+            expect(listDir(join(root, "file"))).toEqual([]);
+            expect(debug).toHaveBeenCalledTimes(1);
+        } finally {
+            debug.mockRestore();
+        }
     });
 });
