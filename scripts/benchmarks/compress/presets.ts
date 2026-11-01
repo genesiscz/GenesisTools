@@ -18,6 +18,7 @@ import { join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
 import { sampleFolder } from "@genesiscz/utils/compress/operations";
 import { compressFrameSync, decompressBytes } from "@genesiscz/utils/compress/zstd";
+import { readTextChunksSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { listDayLogs } from "@genesiscz/utils/logger/day-logs";
@@ -86,17 +87,52 @@ function sqliteFixture(): Buffer {
     return readFileSync(path).subarray(0, SAMPLE);
 }
 
-async function samples(): Promise<Record<string, Buffer>> {
-    // The newest plain day before today that fills a sample (a test once leaked a `2027-01-15.log`).
+/** The first `SAMPLE` bytes of a day log, plain or `.zst` (decompressed); shorter when the day is smaller. */
+function dayLogSample(path: string): Buffer {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+
+    for (const chunk of readTextChunksSync(path)) {
+        // The reader may reuse a chunk for the next one, so keep a copy.
+        chunks.push(Buffer.from(chunk));
+        bytes += chunk.length;
+
+        if (bytes >= SAMPLE) {
+            break;
+        }
+    }
+
+    return Buffer.concat(chunks).subarray(0, SAMPLE);
+}
+
+/**
+ * The newest day before today that fills a sample (a test once leaked a `2027-01-15.log`). Only today and yesterday
+ * stay plain, so an older day is read from its `.zst`.
+ */
+function newestDayLogSample(): Buffer {
     const today = new Date().toISOString().slice(0, 10);
-    const newestDay = listDayLogs().find(
-        (file) => !file.compressed && file.day < today && statSync(file.path).size > SAMPLE
-    );
+
+    for (const file of listDayLogs()) {
+        if (file.day >= today) {
+            continue;
+        }
+
+        const sample = dayLogSample(file.path);
+
+        if (sample.length >= SAMPLE) {
+            return sample;
+        }
+    }
+
+    return Buffer.alloc(0);
+}
+
+async function samples(): Promise<Record<string, Buffer>> {
     const biome = join(REPO, "node_modules", "@biomejs", "cli-darwin-arm64", "biome");
 
     return {
         "text (repo .ts)": concatFiles(join(REPO, "src"), /\.ts$/, SAMPLE),
-        "jsonl (day log)": newestDay ? readFileSync(newestDay.path).subarray(0, SAMPLE) : Buffer.alloc(0),
+        "jsonl (day log)": newestDayLogSample(),
         "tree (src/utils tar)": Buffer.from(await sampleFolder(join(REPO, "src", "utils"), SAMPLE)),
         "tree (typescript tar)": Buffer.from(await sampleFolder(join(REPO, "node_modules", "typescript"), SAMPLE)),
         "binary (biome)": existsSync(biome) ? readFileSync(biome).subarray(0, SAMPLE) : Buffer.alloc(0),
