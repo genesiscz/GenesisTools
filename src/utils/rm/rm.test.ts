@@ -2027,3 +2027,43 @@ describe("a refusal after the wait names what happened", () => {
         expect(targetChangeReason(pinned)).toBe("another file or folder is there now");
     });
 });
+
+describe("the macOS dialog never hides a path", () => {
+    function dialogDeps(calls: string[]): ApprovalDeps {
+        return {
+            interactive: () => false,
+            platform: "darwin",
+            typed: async () => true,
+            dialog: () => {
+                calls.push("dialog");
+                return true;
+            },
+            app: async () => ({ kind: "missing", detail: "unavailable" }),
+        };
+    }
+
+    const lines = (count: number) => Array.from({ length: count }, (_, index) => `/work/shop/file-${index}.txt`);
+
+    test("a prompt longer than the dialog shows is refused, and the dialog never opens", async () => {
+        const calls: string[] = [];
+        const outcome = await confirmByPerson(
+            { title: "t", lines: lines(16), code: "abc", caller: AGENT },
+            dialogDeps(calls)
+        );
+
+        expect(outcome.approved).toBe(false);
+        expect(outcome.detail).toContain("15 lines");
+        expect(calls).toEqual([]);
+    });
+
+    test("a prompt that fits still asks with the dialog", async () => {
+        const calls: string[] = [];
+        const outcome = await confirmByPerson(
+            { title: "t", lines: lines(15), code: "abc", caller: AGENT },
+            dialogDeps(calls)
+        );
+
+        expect(outcome).toMatchObject({ approved: true, via: "dialog" });
+        expect(calls).toEqual(["dialog"]);
+    });
+});
