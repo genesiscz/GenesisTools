@@ -6,7 +6,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { executePlan, minutesOption, runContext } from "../lib/run";
 
-interface RemoveFlags {
+export interface RemoveFlags {
     dryRun?: boolean;
     json?: boolean;
     reason?: string;
@@ -17,6 +17,39 @@ interface RemoveFlags {
 
 function keepMinutes(flags: RemoveFlags): number | undefined {
     return flags.now ? 0 : flags.keep;
+}
+
+/** The root's remove flags by option key, as a person types them. */
+const ROOT_REMOVE_FLAGS: ReadonlyArray<readonly [keyof RemoveFlags, string]> = [
+    ["dryRun", "-n"],
+    ["json", "--json"],
+    ["reason", "--reason"],
+    ["keep", "--keep"],
+    ["now", "--now"],
+    ["aside", "--aside/--no-aside"],
+];
+
+/** The remove flags set in `opts`: the root's, parsed before a subcommand name. */
+export function rootFlagsBefore(opts: RemoveFlags): string[] {
+    return ROOT_REMOVE_FLAGS.filter(([key]) => opts[key] !== undefined).map(([, flag]) => flag);
+}
+
+/**
+ * `tools rm -n preset all` gave -n to the root and deleted for real. A remove flag before a subcommand name is
+ * refused (exit 2), so it is never dropped in silence.
+ */
+export function refuseRootFlagsBeforeSubcommand(program: Command): void {
+    program.hook("preSubcommand", (root, sub) => {
+        const opts: RemoveFlags = root.opts();
+        const misplaced = rootFlagsBefore(opts);
+
+        if (misplaced.length > 0) {
+            root.error(
+                `${misplaced.join(", ")} must follow the subcommand: ${toolCommand("rm")} ${sub.name()} … ${misplaced.join(" ")}`,
+                { exitCode: 2 }
+            );
+        }
+    });
 }
 
 function addRemoveFlags(command: Command): Command {
