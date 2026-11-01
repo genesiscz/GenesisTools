@@ -21,7 +21,7 @@ import {
     writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createZstdCompress, constants as zlibConstants } from "node:zlib";
 import { env } from "@genesiscz/utils/env";
 import { fileFlags, SF_DATALESS } from "@genesiscz/utils/fs/cloud-placeholder";
@@ -703,6 +703,13 @@ describe("folder archives", () => {
             await expect(
                 compressPath({ source: join(tree, "stub-00.note"), force: true, caller: "test" })
             ).rejects.toThrow("stub-00.note");
+            // A symlink given as the source is read through, so its target is the file that is checked.
+            const link = join(dir, "stub-link.note");
+            symlinkSync(join(tree, "stub-00.note"), link);
+            await expect(compressPath({ source: link, force: true, caller: "test" })).rejects.toThrow(
+                `${link} holds 1 cloud placeholder (1 with the com.dropbox.placeholder xattr`
+            );
+            expect(existsSync(`${link}.zst`)).toBe(false);
 
             // The normal files beside the stubs pack without the flag.
             const listed = await compressPath({ source: tree, files: normal, force: true, caller: "test" });
@@ -785,6 +792,39 @@ describe("folder archives", () => {
         }
     });
 
+    it("keeps a backslash in a listed name on macOS and Linux, where it is part of the name, not a separator", async () => {
+        const dir = scratch("files-backslash");
+        const tree = makeTree(dir);
+
+        if (process.platform === "win32") {
+            // A backslash is the separator here, and no file name holds one.
+            const plan = await planCompressPath({ source: tree, files: ["a\\empty"], force: true });
+            expect(plan.files).toEqual(["a/empty"]);
+            return;
+        }
+
+        // `a\empty` beside the folder `a` that holds `empty`: the list names the first, so only it is packed and removed.
+        writeFileSync(join(tree, "a\\empty"), "backslash\n");
+        const { record } = await compressPath({
+            source: tree,
+            files: ["a\\empty"],
+            removeOriginal: true,
+            force: true,
+            caller: "test",
+        });
+        expect(record.files).toBe(1);
+        expect(
+            listArchive(record.target)
+                .map((entry) => entry.path)
+                .sort()
+        ).toEqual(["tree", "tree/a\\empty"]);
+        expect(existsSync(join(tree, "a\\empty"))).toBe(false);
+        expect(existsSync(join(tree, "a", "empty"))).toBe(true);
+        const into = join(dir, "restored");
+        await expandPath({ archive: record.target, into, caller: "test" });
+        expect(readFileSync(join(into, "tree", "a\\empty"), "utf8")).toBe("backslash\n");
+    });
+
     it("records a pack's tar stream sha256, and unpack checks it against the newest record of the archive", async () => {
         const dir = scratch("pack-sha");
         const tree = makeTree(dir);
@@ -808,6 +848,37 @@ describe("folder archives", () => {
         recordCompression(oldShape);
         await expandPath({ archive, into: join(dir, "old-shape"), caller: "test" });
         expect(readFileSync(join(dir, "old-shape", "tree", "top.txt"), "utf8")).toBe("top\n");
+    });
+
+    it("unpack finds the pack record of an archive named by a relative or aliased path, and records -o absolute", async () => {
+        const dir = scratch("pack-relative");
+        makeTree(dir);
+        const cwd = process.cwd();
+
+        try {
+            // The working folder is the resolved path (/private/var/... on macOS), while `dir` keeps tmpdir()'s alias.
+            process.chdir(dir);
+            const { record } = await compressPath({ source: "tree", target: "tree.zst", force: true, caller: "test" });
+            expect(record.target).toBe(resolve("tree.zst"));
+
+            const { id: _id, ...shape } = record;
+            recordCompression({ ...shape, inputSha256: "0".repeat(64) });
+            await expect(expandPath({ archive: "tree.zst", into: "relative", caller: "test" })).rejects.toThrow(
+                "another sha256"
+            );
+            await expect(
+                expandPath({ archive: join(dir, "tree.zst"), into: join(dir, "aliased"), caller: "test" })
+            ).rejects.toThrow("another sha256");
+            expect(existsSync(join(dir, "relative", "tree"))).toBe(false);
+
+            recordCompression(shape);
+            const restored = await expandPath({ archive: "tree.zst", into: "relative", caller: "test" });
+            expect(restored.source).toBe(resolve("tree.zst"));
+            expect(restored.outputSha256).toBe(record.inputSha256);
+            expect(readFileSync(join(dir, "relative", "tree", "top.txt"), "utf8")).toBe("top\n");
+        } finally {
+            process.chdir(cwd);
+        }
     });
 
     it("compressPath keeps the original unless asked, records the ledger, and expandPath restores the folder", async () => {
