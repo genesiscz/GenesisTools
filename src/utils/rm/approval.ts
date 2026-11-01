@@ -265,14 +265,9 @@ function appleScriptString(text: string): string {
     return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
+/** Shows every line of `prompt`; `confirmByPerson` never sends one longer than MAX_DIALOG_LINES. */
 function showDialog(prompt: ApprovalPrompt): boolean {
-    const shown = prompt.lines.slice(0, MAX_DIALOG_LINES);
-
-    if (prompt.lines.length > MAX_DIALOG_LINES) {
-        shown.push(`…and ${prompt.lines.length - MAX_DIALOG_LINES} more`);
-    }
-
-    const body = `${prompt.title}\n\n${shown.join("\n")}`;
+    const body = `${prompt.title}\n\n${prompt.lines.join("\n")}`;
     const script =
         `display dialog ${appleScriptString(body)} with title "Confirm deletion" ` +
         `buttons {"Cancel", "Approve"} default button "Cancel" cancel button "Cancel" with icon caution giving up after 600`;
@@ -587,6 +582,15 @@ export async function confirmByPerson(
     }
 
     if (deps.platform === "darwin") {
+        // The dialog shows MAX_DIALOG_LINES lines; a longer prompt would let a person approve paths it never showed.
+        if (prompt.lines.length > MAX_DIALOG_LINES) {
+            return {
+                approved: false,
+                via: "none",
+                detail: `the macOS dialog shows ${MAX_DIALOG_LINES} lines and this needs ${prompt.lines.length}: open GenesisTools.app for the approval window, or type the code on a terminal (the approval setting code)`,
+            };
+        }
+
         const approved = deps.dialog(prompt);
         return {
             approved,
