@@ -2667,6 +2667,46 @@ describe("round 7 review regressions", () => {
         expect(result.stdout.toString()).toContain('"live-session":2');
     });
 
+    test("reclaim reads SwiftPM package caches as build output in a dead session, and still spares a real clone", () => {
+        const s = reclaimFixture();
+        const running = "99999999-9999-4999-8999-999999999991";
+        const swiftpmDead = "99999999-9999-4999-8999-999999999992";
+        const cloneDead = "99999999-9999-4999-8999-999999999993";
+        const sessions = join(s.dir, "home", ".claude", "sessions");
+        const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
+        fs.mkdirSync(sessions, { recursive: true });
+        fs.mkdirSync(projects, { recursive: true });
+        fs.writeFileSync(
+            join(sessions, `${process.pid}.json`),
+            SafeJSON.stringify({ pid: process.pid, sessionId: running })
+        );
+        const swiftpmBuild = (id: string) => {
+            const build = join(s.root, "cc", "fixture-project", id, "gk-build");
+            fs.mkdirSync(join(build, "checkouts", "pkg", ".git"), { recursive: true });
+            fs.writeFileSync(join(build, "checkouts", "pkg", ".git", "HEAD"), "ref: refs/heads/main\n");
+            fs.writeFileSync(join(build, "workspace-state.json"), "{}");
+        };
+        swiftpmBuild(running);
+        swiftpmBuild(swiftpmDead);
+        const clone = join(s.root, "cc", "fixture-project", cloneDead, "clone");
+        fs.mkdirSync(join(clone, ".git"), { recursive: true });
+        fs.writeFileSync(join(clone, ".git", "HEAD"), "ref: refs/heads/main\n");
+        fs.writeFileSync(join(clone, "work.txt"), "uncommitted");
+        for (const id of [running, swiftpmDead, cloneDead]) {
+            fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
+        }
+
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            join(s.root, "cc", "fixture-project", swiftpmDead),
+        ]);
+        expect(result.stdout.toString()).toContain('"live-session":1');
+        expect(result.stdout.toString()).toContain('"git-checkout":1');
+    });
+
     test("an apply deletes the plan in /tmp/cc it ran and the expired ones, and keeps a fresh one", () => {
         const s = reclaimFixture();
         const plans = join(s.root, "cc");
