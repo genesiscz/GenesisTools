@@ -165,7 +165,8 @@ function sortKey(entry: ActiveAgentSession): string {
 
 /** The `who` output for one agent; `tools ai accounts who` calls it for Claude. */
 export async function runAgentWho(options: AgentWhoOptions, flags: { json?: boolean; all?: boolean }): Promise<void> {
-    const all = await listActiveAgentSessions(options);
+    // `tools <agent> who` is itself a process of the agent's launcher, and no session.
+    const all = (await listActiveAgentSessions(options)).filter((entry) => entry.pid !== process.pid);
     const entries = (flags.all ? all : withoutHelpers(options, all)).sort((a, b) =>
         sortKey(a).localeCompare(sortKey(b))
     );

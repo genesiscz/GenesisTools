@@ -3,8 +3,9 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type DirectRunDeps, pumpLines } from "@app/ai/lib/embed/direct-run";
 import type { ScoredAccount } from "@app/claude/lib/usage/account-picker";
-import { type DirectRunDeps, pumpLines, rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
+import { rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
 import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
 import {
     buildLaunchArgs,

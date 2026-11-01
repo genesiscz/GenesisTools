@@ -59,6 +59,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load",
     },
+    "src/ai/lib/embed/registry.ts": {
+        table: 2,
+        why: "EMBED_LAUNCHERS, the embed tool table keyed by HarnessId: each launcher lives in its agent tool (src/<agent>/lib/embed.ts), which the drivers cannot import",
+    },
     "src/macos/GenesisKit/Sources/GenesisKit/Sessions/ToolCalls/SessionNativeLog.swift": {
         branch: 3,
         why: "the Swift format owner of the Claude and Codex transcript lines it indexes (the counterpart of the TS readers/, which the guard owns): the bytes of a line pick the indexer; one indexer file per harness is a follow-up that needs a Swift build",

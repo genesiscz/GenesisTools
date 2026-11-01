@@ -1,3 +1,4 @@
+import { type DirectRunDeps, runBinaryDirect } from "@app/ai/lib/embed/direct-run";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -50,139 +51,20 @@ export function rewriteSteerLine(line: string): string {
     return line;
 }
 
-interface StdinSink {
-    write(chunk: string): unknown;
-    flush(): unknown;
-    end(): unknown;
-}
-
-/** Copies the host's stdin to claude line by line through `rewrite`, then closes claude's stdin. */
-export async function pumpLines(
-    source: ReadableStream<Uint8Array>,
-    sink: StdinSink,
-    rewrite: (line: string) => string
-): Promise<void> {
-    const reader = source.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-        for (;;) {
-            const { done, value } = await reader.read();
-
-            if (done) {
-                break;
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-            let newline = buffer.indexOf("\n");
-
-            while (newline !== -1) {
-                sink.write(rewrite(buffer.slice(0, newline + 1)));
-                buffer = buffer.slice(newline + 1);
-                newline = buffer.indexOf("\n");
-            }
-
-            sink.flush();
-        }
-
-        buffer += decoder.decode();
-
-        if (buffer) {
-            sink.write(rewrite(buffer));
-            sink.flush();
-        }
-    } finally {
-        reader.releaseLock();
-        sink.end();
-    }
-}
-
-interface DirectChild {
-    exitCode: number | null;
-    exited: Promise<number>;
-    kill(signal: NodeJS.Signals): void;
-    stdin?: unknown;
-}
-
-export interface DirectRunDeps {
-    spawn(options: {
-        cmd: string[];
-        stdio: ["inherit" | "pipe", "inherit", "inherit"];
-        env: Record<string, string | undefined>;
-    }): DirectChild;
-    signals: Pick<NodeJS.Process, "on" | "off">;
-    stdin(): ReadableStream<Uint8Array>;
-}
-
-const defaultDeps: DirectRunDeps = {
-    spawn: (options) => Bun.spawn(options),
-    signals: process,
-    stdin: () => Bun.stdin.stream(),
-};
-
-function isStdinSink(value: unknown): value is StdinSink {
-    return (
-        typeof value === "object" &&
-        value !== null &&
-        "write" in value &&
-        typeof value.write === "function" &&
-        "flush" in value &&
-        "end" in value
-    );
-}
-
 /**
- * Runs the real claude executable with no shell between: the user's `ccc`/`claude` wrappers add
- * `--dangerously-skip-permissions`, which would override the permission mode the embedding app chose. The app stops
- * a session by signalling the process it spawned (this one), so each signal is passed on, or claude would keep
- * running after the app let it go. With `steer: "next"` the host's stdin goes through {@link rewriteSteerLine}.
+ * Runs the real claude executable for an embedding app (`runBinaryDirect`): the user's `ccc`/`claude` wrappers add
+ * `--dangerously-skip-permissions`, which would override the permission mode the app chose. With `steer: "next"`
+ * the host's stdin goes through {@link rewriteSteerLine}.
  */
-export async function runClaudeBinaryDirect(
+export function runClaudeBinaryDirect(
     input: { argv: string[]; env: Record<string, string | undefined>; steer?: SteerMode },
-    deps: DirectRunDeps = defaultDeps
+    deps?: DirectRunDeps
 ): Promise<number> {
-    const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
-    const steer = input.steer ?? "now";
-    let proc: DirectChild | undefined;
-    let pendingSignal: NodeJS.Signals | undefined;
-    const forward = (signal: NodeJS.Signals) => {
-        if (!proc) {
-            pendingSignal ??= signal;
-            return;
-        }
+    const stdinLines = input.steer === "next" ? rewriteSteerLine : undefined;
 
-        if (proc.exitCode === null) {
-            proc.kill(signal);
-        }
-    };
-
-    for (const signal of signals) {
-        deps.signals.on(signal, forward);
+    if (stdinLines) {
+        logger.info("[direct-run] steer mode next: stdin goes through the priority rewrite");
     }
 
-    try {
-        proc = deps.spawn({
-            cmd: input.argv,
-            stdio: [steer === "next" ? "pipe" : "inherit", "inherit", "inherit"],
-            env: input.env,
-        });
-
-        if (pendingSignal && proc.exitCode === null) {
-            proc.kill(pendingSignal);
-        }
-
-        if (steer === "next" && isStdinSink(proc.stdin)) {
-            logger.info("[direct-run] steer mode next: stdin goes through the priority rewrite");
-            pumpLines(deps.stdin(), proc.stdin, rewriteSteerLine).catch((error) => {
-                logger.warn({ error }, "[direct-run] stdin pump failed");
-            });
-        }
-
-        return await proc.exited;
-    } finally {
-        for (const signal of signals) {
-            deps.signals.off(signal, forward);
-        }
-    }
+    return runBinaryDirect({ argv: input.argv, env: input.env, ...(stdinLines ? { stdinLines } : {}) }, deps);
 }
