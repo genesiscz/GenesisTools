@@ -18,6 +18,7 @@ import {
     hardDenyReason,
     isRmMeasurementRunning,
     isRootActive,
+    kickDrainer,
     listRmRequests,
     loadRmMeasurements,
     type MoveOptions,
@@ -35,7 +36,9 @@ import {
     type RmRequestMeasurements,
     type RmRequestTarget,
     type RmRoot,
+    type RmRuleContext,
     type RmTarget,
+    recheckAfterWait,
     recordRmMeasurement,
     requestBatchIds,
     requestsAlsoNaming,
@@ -49,7 +52,7 @@ import {
     updateRmRequest,
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
-import type { RunContext } from "./run";
+import type { PersonAnswer, RunContext } from "./run";
 
 /** One target of a request with what is at its location now (the aside copy when it was moved). */
 export interface ApproveEntry {
@@ -466,6 +469,165 @@ export function denyRequest(
         note,
     });
     return { back, waiting, lost };
+}
+
+/** Prints what a deny did: the copies that were already gone, then the closed line, or that some copies still wait. */
+export function printDenyOutcome(id: string, outcome: DenyOutcome, closedLine: string): void {
+    if (outcome.lost.length > 0) {
+        const paths = outcome.lost.map((target) => target.path).join(", ");
+        out.println(pc.yellow(`${outcome.lost.length} set-aside copy(ies) were already gone: ${paths}`));
+    }
+
+    if (outcome.waiting.length > 0) {
+        out.println(`Request ${id} still needs recovery.`);
+
+        if (outcome.waiting.some(cameBack)) {
+            out.println(
+                pc.dim(
+                    `  the path is back; ${toolCommand("rm")} approve ${id} deletes the set-aside copy, or move the copy yourself`
+                )
+            );
+        }
+
+        process.exitCode = 1;
+        return;
+    }
+
+    out.println(closedLine);
+}
+
+/**
+ * Records the decision on the request: approved (with the ticked and the put-back paths) and its batch. A path that
+ * was refused, changed while the person decided, or could not be moved keeps the request pending, with only those.
+ */
+export function saveApproved(input: {
+    request: RmRequest;
+    answer: PersonAnswer;
+    approved: readonly ApproveEntry[];
+    denied: readonly ApproveEntry[];
+    pending: readonly RmRequestTarget[];
+    batchId?: string;
+    ctx: RunContext;
+}): void {
+    const { request, answer, approved, denied, pending, batchId, ctx } = input;
+    saveRmRequest({
+        ...request,
+        status: pending.length > 0 ? "pending" : "approved",
+        targets: pending.length > 0 ? request.targets.filter((target) => pending.includes(target)) : request.targets,
+        decidedAt: new Date().toISOString(),
+        decidedVia: answer.via,
+        decided: {
+            approved: [
+                ...new Set([...(request.decided?.approved ?? []), ...approved.map((entry) => entry.wanted.path)]),
+            ],
+            denied: [...new Set([...(request.decided?.denied ?? []), ...denied.map((entry) => entry.wanted.path)])],
+            disposal: request.kind === "delete" ? answer.choices.disposal : undefined,
+            remember: request.kind === "delete" ? answer.choices.remember : undefined,
+        },
+        // A second approval of the same request makes a second batch: both stay restorable, the newest is batchId.
+        batchId: batchId ?? request.batchId,
+        batchIds: batchId ? [...requestBatchIds(request), batchId] : request.batchIds,
+    });
+    appendRmLedger({ action: "approve", requestId: request.id, via: answer.via, caller: ctx.caller, batchId });
+}
+
+function exitPendingFor(id: string, pending: readonly RmRequestTarget[]): void {
+    if (pending.length === 0) {
+        return;
+    }
+
+    out.println(
+        pc.yellow(`Request ${id} stays pending for ${pending.length} blocked, changed or not put back path(s).`)
+    );
+    process.exitCode = 1;
+}
+
+/** The rules a request's paths are checked against once more: a root's are the hard-deny ones only. */
+export type ApprovalDenyCheck = (target: RmTarget, rules: RmRuleContext) => string | null;
+
+/**
+ * Does what the person answered for one request: a Deny puts everything back; otherwise the ticked rows of
+ * `selected` (null: every row) are checked again (the prompt can wait for minutes) and moved, the unticked ones put
+ * back, and `blocked` (refused before the prompt, or not shown in it) keeps the request pending.
+ */
+export function applyApprovalAnswer(input: {
+    ctx: RunContext;
+    request: RmRequest;
+    openEntries: readonly ApproveEntry[];
+    blocked: readonly ApproveEntry[];
+    answer: PersonAnswer;
+    selected: readonly string[] | null;
+    denyOf: ApprovalDenyCheck;
+    /** Starts the background drain after the move; tests replace it. */
+    kickDrainer?: (config: RunContext["config"]) => void;
+}): void {
+    const { ctx, request, openEntries, blocked, answer, selected, denyOf } = input;
+    const id = request.id;
+
+    if (!answer.approved) {
+        if (answer.deniedByPerson) {
+            const outcome = denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+            printDenyOutcome(id, outcome, `Request ${id} denied.`);
+        }
+
+        return;
+    }
+
+    const { approved, denied } = splitBySelection(openEntries, selected);
+
+    if (approved.length === 0) {
+        const outcome = denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+        printDenyOutcome(id, outcome, `Nothing was ticked: request ${id} denied.`);
+        return;
+    }
+
+    // The prompt can wait for minutes: each ticked path must still name what the person was shown, and still pass
+    // the rules no approval overrides. A changed one stays in the request, which stays pending for it, as do the
+    // paths refused before the prompt.
+    const pending: RmRequestTarget[] = blocked.map((entry) => entry.wanted);
+    const ready = approved.filter(({ wanted, target }) => {
+        const reason = recheckAfterWait(target, ctx.rules, denyOf);
+
+        if (reason) {
+            out.println(pc.red(`refuse ${wanted.path}: ${reason}`));
+            pending.push(wanted);
+        }
+
+        return reason === null;
+    });
+
+    if (ready.length === 0) {
+        process.exitCode = 1;
+        return;
+    }
+
+    if (request.kind === "root") {
+        approveRoots(ctx, request, ready, answer.via);
+        saveApproved({ request, answer, approved: ready, denied, pending, ctx });
+        exitPendingFor(id, pending);
+        return;
+    }
+
+    const { batch, back } = approveDelete({
+        ctx,
+        request,
+        approved: ready,
+        denied,
+        choices: answer.choices,
+        onRefused: (entry) => pending.push(entry.wanted),
+        sizes: savedSizes(request, ready),
+    });
+    const moved = ready.filter((entry) => !pending.includes(entry.wanted));
+    // An unticked aside copy that could not go home stays pending, so its aside folder stays guarded.
+    pending.push(
+        ...stillAside(
+            denied.map((entry) => entry.wanted),
+            back
+        )
+    );
+    saveApproved({ request, answer, approved: moved, denied, pending, batchId: batch?.id, ctx });
+    (input.kickDrainer ?? kickDrainer)(ctx.config);
+    exitPendingFor(id, pending);
 }
 
 /** Trusts each approved folder of a root request. */

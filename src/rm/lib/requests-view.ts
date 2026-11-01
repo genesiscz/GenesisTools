@@ -137,6 +137,11 @@ function requestRow(view: RequestView, now: Date, withSession: boolean): string 
     );
 }
 
+/** One request as a single line, as the picker of `tools rm approve` offers it: id, age, size, state, path, why. */
+export function renderRequestRow(view: RequestView, now: Date): string {
+    return requestRow(view, now, false).trimStart();
+}
+
 function pathRows(view: RequestView, now: Date): string[] {
     const { request } = view;
     return request.targets.map((target, index) => {

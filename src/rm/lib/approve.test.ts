@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli";
 import {
     type ApprovalItemUpdate,
+    type ApprovalPrompt,
     createRmRequest,
     defaultRmConfig,
     defaultRuleContext,
@@ -46,7 +47,7 @@ import {
 } from "@genesiscz/utils/rm";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
-import { saveApproved, underDecisionLock } from "../commands/requests";
+import { approveMany, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { createRmProgram } from "../program";
 import {
@@ -55,6 +56,7 @@ import {
     approvalRows,
     approveDelete,
     denyRequest,
+    saveApproved,
     splitBySelection,
 } from "./approve";
 import { shortRmPath } from "./display";
@@ -1249,5 +1251,111 @@ describe("the request writes production runs", () => {
         const again = denyRequest(loadRmRequest(request.id) ?? request, { caller: AGENT, via: "cli" });
         expect(again.back.returned).toEqual([kept.path]);
         expect(loadRmRequest(request.id)?.status).toBe("denied");
+    });
+});
+
+describe("one window for several requests", () => {
+    /** An in-place delete request for `paths`, each a fresh file under `folder`. */
+    function inPlaceAsk(folder: string, names: string[]): RmRequest {
+        const targets = names.map((name) => ({
+            path: file(join(base, folder, name)),
+            kind: "file" as const,
+            rule: "default",
+            reason: "no rule allows it",
+        }));
+        return createRmRequest({ kind: "delete", caller: AGENT, cwd: base, reason: null, targets });
+    }
+
+    /** A person who answers `selected` (null: every row) and records what the window showed. */
+    function person(prompts: ApprovalPrompt[], selected: string[] | null = null, during?: () => void) {
+        return async (_ctx: RunContext, prompt: Pick<ApprovalPrompt, "title" | "lines" | "request">) => {
+            prompts.push({ ...prompt, code: "", caller: PERSON });
+            during?.();
+            return {
+                approved: true,
+                via: "touch-id",
+                choices: { selected, disposal: "trash" as const, remember: "once" as const, note: null },
+                deniedByPerson: false,
+            };
+        };
+    }
+
+    async function batch(ids: string[], ask: ReturnType<typeof person>): Promise<void> {
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany(ids, context(), { ask, kickDrainer: () => undefined });
+        } finally {
+            process.exitCode = exitCode;
+        }
+    }
+
+    test("an in-place path two requests name is one row, and both requests end approved", async () => {
+        const first = inPlaceAsk("batch-shared", ["shared.txt"]);
+        const shared = first.targets[0]?.path ?? "";
+        const second = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            targets: [{ path: shared, kind: "file", rule: "default", reason: "no rule allows it" }],
+        });
+        const prompts: ApprovalPrompt[] = [];
+        await batch([second.id, first.id], person(prompts));
+
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]?.request?.items.map((item) => item.path)).toEqual([shared]);
+        expect(loadRmRequest(first.id)?.status).toBe("approved");
+        expect(loadRmRequest(second.id)?.status).toBe("approved");
+        expect(existsSync(shared)).toBe(false);
+    });
+
+    test("a request made while the window is open is not touched", async () => {
+        const asked = inPlaceAsk("batch-fixed", ["one.txt"]);
+        const other = inPlaceAsk("batch-fixed", ["two.txt"]);
+        const late: RmRequest[] = [];
+        const prompts: ApprovalPrompt[] = [];
+        await batch(
+            [asked.id, other.id],
+            person(prompts, null, () => {
+                late.push(inPlaceAsk("batch-late", ["late.txt"]));
+            })
+        );
+
+        expect(late).toHaveLength(1);
+        expect(late.map((request) => loadRmRequest(request.id)?.status)).toEqual(["pending"]);
+        expect(late.map((request) => existsSync(request.targets[0]?.path ?? ""))).toEqual([true]);
+        expect(loadRmRequest(asked.id)?.status).toBe("approved");
+    });
+
+    test("a request open in another window is left out and stays pending", async () => {
+        const free = inPlaceAsk("batch-busy", ["free.txt"]);
+        const busy = inPlaceAsk("batch-busy", ["busy.txt"]);
+        writeFileSync(rmRequestLockFile(busy.id), String(process.ppid));
+        const prompts: ApprovalPrompt[] = [];
+
+        try {
+            await batch([free.id, busy.id], person(prompts));
+        } finally {
+            renameSync(rmRequestLockFile(busy.id), join(base, "busy-lock-moved"));
+        }
+
+        expect(prompts[0]?.request?.items.map((item) => item.path)).toEqual(free.targets.map((t) => t.path));
+        expect(loadRmRequest(busy.id)?.status).toBe("pending");
+        expect(existsSync(busy.targets[0]?.path ?? "")).toBe(true);
+    });
+
+    test("ticking one row of each request approves only that row in each", async () => {
+        const first = inPlaceAsk("batch-pick-a", ["a1.txt", "a2.txt"]);
+        const second = inPlaceAsk("batch-pick-b", ["b1.txt", "b2.txt"]);
+        const [a1, a2] = first.targets.map((target) => target.path);
+        const [b1, b2] = second.targets.map((target) => target.path);
+        const prompts: ApprovalPrompt[] = [];
+        await batch([first.id, second.id], person(prompts, [a1 ?? "", b1 ?? ""]));
+
+        expect(prompts[0]?.title).toBe("Delete 4 items from 2 requests?");
+        expect(loadRmRequest(first.id)?.decided?.approved).toEqual([a1]);
+        expect(loadRmRequest(second.id)?.decided?.approved).toEqual([b1]);
+        expect([a1, a2, b1, b2].map((path) => existsSync(path ?? ""))).toEqual([false, true, false, true]);
     });
 });
