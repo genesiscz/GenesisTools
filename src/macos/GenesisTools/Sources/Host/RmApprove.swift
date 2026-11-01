@@ -312,11 +312,12 @@ struct RmWindowContent {
         return parts.joined(separator: ", ")
     }
 
-    /// "Empty folder", "12.4 KB", "Already gone", "Measuring…".
+    /// "0 B", "12.4 KB", "Already gone", "Measuring…". An empty folder reads "0 B": its "empty folder" chip says the
+    /// rest, so the row does not say it twice.
     static func size(_ item: RmApproveItem) -> String? {
         if item.kind == "missing" { return "Already gone" }
         if item.measuring == true { return "Measuring…" }
-        if item.kind == "dir", item.empty == true { return "Empty folder" }
+        if item.kind == "dir", item.empty == true { return ByteFormat.file(0) }
         guard let bytes = item.bytes else { return nil }
         if bytes == 0, item.kind == "file" { return "Empty file" }
         return ByteFormat.file(bytes)
