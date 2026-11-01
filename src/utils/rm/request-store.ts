@@ -1,7 +1,17 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { type RmRequest, readRmRequestFile, rmRequestFile, rmRequestsDir, saveRmRequest } from "./requests";
+import { appendRmLedger } from "./ledger";
+import { pathPresent, requestLive } from "./request-state";
+import {
+    RM_REQUEST_TTL_MS,
+    type RmRequest,
+    readRmRequestFile,
+    rmRequestFile,
+    rmRequestsDir,
+    saveRmRequest,
+} from "./requests";
+import type { RmCaller } from "./rules";
 import { acquireDrainerLock } from "./trash";
 
 /** The lock a decision holds on request `id`: one approve, deny, settle or prune writes a request at a time. */
@@ -108,4 +118,88 @@ export function updateRmRequest(
     } finally {
         lock.release();
     }
+}
+
+/** Why prune may close a pending request, or null: it never moves, restores or deletes a file. */
+export function pruneReason(
+    request: RmRequest,
+    now: Date,
+    present: (path: string) => boolean = pathPresent
+): "gone" | "expired" | null {
+    if (request.status !== "pending") {
+        return null;
+    }
+
+    if (requestLive(request, present).state === "gone") {
+        return "gone";
+    }
+
+    const inPlaceOnly = request.targets.every((target) => target.stored === undefined);
+    return inPlaceOnly && now.getTime() - Date.parse(request.createdAt) > RM_REQUEST_TTL_MS ? "expired" : null;
+}
+
+export interface RmPruneResult {
+    closed: Array<{ id: string; status: "gone" | "expired" }>;
+    /** Requests open in an approval window right now: left as they are. */
+    busy: string[];
+}
+
+/**
+ * Closes the pending requests nobody can decide any more: every path and copy gone (status `gone`), or an in-place
+ * request past its TTL (status `expired`, what readers already show). Nothing on disk moves.
+ */
+export function pruneRmRequests(
+    options: {
+        dir?: string;
+        now?: Date;
+        dryRun?: boolean;
+        caller?: RmCaller | null;
+        present?: (path: string) => boolean;
+    } = {}
+): RmPruneResult {
+    const dir = options.dir ?? rmRequestsDir();
+    const now = options.now ?? new Date();
+    const result: RmPruneResult = { closed: [], busy: [] };
+
+    if (!existsSync(dir)) {
+        return result;
+    }
+
+    const ids = readdirSync(dir)
+        .filter((name) => /^[a-z0-9]{4,12}\.json$/.test(name))
+        .map((name) => name.slice(0, -5))
+        .sort();
+
+    for (const id of ids) {
+        const raw = readRmRequestFile(rmRequestFile(id, dir));
+        const reason = raw ? pruneReason(raw, now, options.present) : null;
+
+        if (!reason) {
+            continue;
+        }
+
+        if (options.dryRun) {
+            result.closed.push({ id, status: reason });
+            continue;
+        }
+
+        const update = updateRmRequest(
+            id,
+            (fresh) => {
+                const again = pruneReason(fresh, now, options.present);
+                return again ? { ...fresh, status: again, decidedAt: now.toISOString(), decidedVia: "prune" } : null;
+            },
+            dir
+        );
+
+        if (update.kind === "busy") {
+            result.busy.push(id);
+        } else if (update.kind === "saved") {
+            const status = update.request.status === "gone" ? "gone" : "expired";
+            result.closed.push({ id, status });
+            appendRmLedger({ action: "close", requestId: id, reason: status, caller: options.caller ?? null });
+        }
+    }
+
+    return result;
 }
