@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
-import { grantWarningText, headerExtras, overviewFetchError, staleHeaderText } from "./account-section";
+import {
+    absentRowsFor,
+    estimateAccountHeight,
+    grantWarningText,
+    headerExtras,
+    overviewFetchError,
+    staleHeaderText,
+} from "./account-section";
 
 const NOW = new Date("2026-07-24T20:00:00.000Z").getTime();
 const WIDE = 200;
@@ -206,5 +213,26 @@ describe("overviewFetchError", () => {
         });
 
         expect(text).toBeNull();
+    });
+});
+
+describe("an account without a 5-hour limit", () => {
+    const PROMINENT = ["five_hour", "seven_day", "seven_day_sonnet"];
+    const WEEKLY = { utilization: 40, resets_at: "2026-07-30T12:00:00.000Z" };
+
+    test("gets one 'no 5h limit' row instead of a 0 % session bar, and the height counts it", () => {
+        const absent = account({ usage: { five_hour: null, seven_day: WEEKLY } });
+
+        expect(absentRowsFor(absent, PROMINENT)).toEqual([{ key: "five_hour", kind: "session" }]);
+        // Header + margin, the weekly row with its countdown line, and the one absent row.
+        expect(estimateAccountHeight(absent, PROMINENT, 45)).toBe(5);
+    });
+
+    test("negative control: an idle 5h window keeps its bar row and gets no absent row", () => {
+        const idle = account({ usage: { five_hour: { utilization: 0, resets_at: null }, seven_day: WEEKLY } });
+
+        expect(absentRowsFor(idle, PROMINENT)).toEqual([]);
+        // The idle row costs two lines on a narrow column ("not used" drops below the bar).
+        expect(estimateAccountHeight(idle, PROMINENT, 45)).toBe(6);
     });
 });

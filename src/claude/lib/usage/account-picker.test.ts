@@ -577,3 +577,80 @@ describe("scoreAccounts — plan gate", () => {
         expect(scoreAccounts([paid], { now: NOW })[0].tier).toBe("ready");
     });
 });
+
+describe("an account without a 5-hour limit", () => {
+    /** What a header reading of such an account holds: no 5h window, the weekly windows only. */
+    const noFiveHour = (weeklyUsed: number, weeklyResetHours = 96): UsageResponse => ({
+        five_hour: null,
+        seven_day: { utilization: weeklyUsed, resets_at: hoursFromNow(weeklyResetHours) },
+    });
+
+    test("ranks by its weekly window alone: a spent 5h window elsewhere sinks, a roomier weekly elsewhere wins", () => {
+        const absent = account("work", noFiveHour(50));
+        // A real 5h window nearly spent: cooling, even with more weekly room.
+        const cooling = account(
+            "personal",
+            usage({
+                five_hour: { utilization: 99, resets_at: hoursFromNow(1) },
+                seven_day: { utilization: 20, resets_at: hoursFromNow(96) },
+            })
+        );
+        // A fresh 5h window and more weekly room: the weekly window decides, so it wins.
+        const roomier = account("side", usage({ seven_day: { utilization: 10, resets_at: hoursFromNow(96) } }));
+
+        const order = sortGrouped(scoreAccounts([cooling, absent, roomier], { now: NOW }));
+
+        expect(order.map((scored) => scored.accountName)).toEqual(["side", "work", "personal"]);
+        const work = order[1];
+        expect(work).toMatchObject({
+            tier: "ready",
+            cooling: false,
+            sessionHeadroomPct: 100,
+            sessionUsableFraction: 1,
+            absentLimits: [{ key: "five_hour", kind: "session" }],
+        });
+        expect(work.limits?.session).toBeUndefined();
+        expect(work.why).toContain("no 5h limit");
+        expect(work.why).not.toContain("5h 100% left");
+    });
+
+    test("on a tie it goes before an idle 5h window, which caps a burst once the first turn opens it", () => {
+        const idle = account("personal", usage({ seven_day: { utilization: 50, resets_at: hoursFromNow(96) } }));
+        const absent = account("work", noFiveHour(50));
+
+        expect(scoreAccounts([idle, absent], { now: NOW }).map((scored) => scored.accountName)).toEqual([
+            "work",
+            "personal",
+        ]);
+        expect(sortGrouped(scoreAccounts([idle, absent], { now: NOW })).map((s) => s.accountName)).toEqual([
+            "work",
+            "personal",
+        ]);
+    });
+
+    test("an old header reading's made-up 0 % session never shows as a 5h window", () => {
+        const old = account(
+            "work",
+            usage({
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 50, resets_at: hoursFromNow(96) },
+                limits: [
+                    { kind: "session", percent: 0, severity: "normal", resets_at: null, scope: null, is_active: false },
+                    {
+                        kind: "weekly_all",
+                        percent: 50,
+                        severity: "normal",
+                        resets_at: hoursFromNow(96),
+                        scope: null,
+                        is_active: true,
+                    },
+                ],
+                quota: { source: "headers", fiveHourStatus: null, sevenDayStatus: "allowed" },
+            })
+        );
+        const [scored] = scoreAccounts([old], { now: NOW });
+
+        expect(scored.limits?.session).toBeUndefined();
+        expect(scored.absentLimits).toEqual([{ key: "five_hour", kind: "session" }]);
+    });
+});

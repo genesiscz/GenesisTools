@@ -13,7 +13,9 @@ import {
 } from "@app/claude/lib/config";
 import { partialRenameAdvice, renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
 import { fetchUsage } from "@app/claude/lib/usage/api";
+import { fiveHourState } from "@app/claude/lib/usage/limits";
 import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
+import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
@@ -23,7 +25,7 @@ import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -305,12 +307,24 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
 
     warmup.session.enabled = enabled;
 
+    // An account without a 5-hour limit has no session to start: the warmup skips it, so say so here.
+    const cachedUsage = await peekSharedUsage().catch((error: unknown) => {
+        logger.debug({ error }, "[warmup] usage cache unreadable; no account is marked as without a 5h limit");
+        return null;
+    });
+    const noFiveHour = new Set(
+        (cachedUsage?.accounts ?? [])
+            .filter((row) => fiveHourState(row.usage) === "absent")
+            .map((row) => row.accountName)
+    );
+
     // Account selection (multiselect)
     const accounts = await p.multiselect({
         message: "Which accounts to warm up?",
         options: accountNames.map((name) => ({
             value: name,
             label: `${name}${aiConfig.getAccount(name)?.label ? ` (${aiConfig.getAccount(name)?.label})` : ""}`,
+            ...(noFiveHour.has(name) ? { hint: "no 5h limit: the session warmup skips it" } : {}),
         })),
         initialValues: warmup.session.accounts.filter((a) => accountNames.includes(a)),
         required: true,

@@ -76,6 +76,24 @@ describe("extractCompactLimits", () => {
         expect(compact.fable).toBeUndefined();
     });
 
+    test("an account without a 5-hour limit has no session, also from an old header reading's made-up one", () => {
+        expect(extractCompactLimits({ five_hour: null, seven_day: { utilization: 30, resets_at: null } })).toEqual({
+            weekly: { leftPct: 70, resetsAt: null },
+        });
+
+        const old: UsageResponse = {
+            ...usageWithLimits([
+                { kind: "session", percent: 0, severity: "normal", resets_at: null, scope: null, is_active: false },
+                { kind: "weekly_all", percent: 30, severity: "normal", resets_at: null, scope: null, is_active: true },
+            ]),
+            quota: { source: "headers", fiveHourStatus: null, sevenDayStatus: "allowed" },
+        };
+        expect(extractCompactLimits(old).session).toBeUndefined();
+        // Negative control: the same list from the endpoint is an idle window that exists.
+        const { quota: _quota, ...endpoint } = old;
+        expect(extractCompactLimits(endpoint).session).toEqual({ leftPct: 100, resetsAt: null });
+    });
+
     test("falls back to the legacy flat buckets when limits[] is absent", () => {
         const compact = extractCompactLimits({
             five_hour: { utilization: 25, resets_at: "2026-07-24T21:00:00.000Z" },

@@ -4,7 +4,7 @@ import { formatRelativeTime } from "@genesiscz/utils/format";
 import pc from "picocolors";
 import type { AccountUsage } from "./api";
 import type { NormalizedSpend, Severity } from "./limits";
-import { normalizeLimits, normalizeSpend } from "./limits";
+import { fiveHourState, normalizeLimits, normalizeSpend } from "./limits";
 import { planAllowsClaudeCode } from "./subscription";
 
 const BAR_WIDTH = 40;
@@ -163,13 +163,23 @@ export function renderAccountUsage(account: AccountUsage): string {
         lines.push(pc.yellow(`  ⚠ Stale data (updated ${ago}) — ${truncateReason(account.stale.reason)}`));
     }
 
+    const noFiveHour = fiveHourState(account.usage) === "absent";
+
     // A fallback reading: the OAuth path could not answer, so the long-lived token read the headers.
     if (isHeaderReading(account.usage)) {
         const keptAt = endpointAsOf(account.usage);
         const kept = keptAt
             ? `; the other limits as of ${formatRelativeTime(new Date(keptAt), { compact: true })}`
             : "";
-        lines.push(pc.dim(`  5h, weekly and Fable from the rate-limit headers${kept}`));
+        const windows = noFiveHour ? "Weekly and Fable" : "5h, weekly and Fable";
+        lines.push(pc.dim(`  ${windows} from the rate-limit headers${kept}`));
+    }
+
+    // No bar for a window the account does not have: an empty 0 % bar read as an unused 5-hour window.
+    if (noFiveHour) {
+        lines.push(bucketLabel("five_hour"));
+        lines.push(pc.dim("  — no 5h limit on this account"));
+        lines.push("");
     }
 
     const limits = normalizeLimits(account.usage);

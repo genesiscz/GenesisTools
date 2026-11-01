@@ -1,10 +1,10 @@
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
-import type { ScoredAccount } from "./account-picker";
+import { hasNoSessionLimit, type ScoredAccount } from "./account-picker";
 import { atYourPace, type PaceScope } from "./burn-pace";
 import { UsageHistoryDb } from "./history-db";
-import { accountCells, type DetailBlockPace, detailBlock, TIER_BADGE } from "./usage-table";
+import { accountCells, type DetailBlockPace, detailBlock, NO_SESSION_LIMIT_LEGEND, TIER_BADGE } from "./usage-table";
 
 interface AccountTableOptions {
     message: string;
@@ -42,7 +42,9 @@ function pacesFor(accountName: string, acc: ScoredAccount, now: Date, scope: Pac
 export function buildAccountTableOpts(opts: AccountTableOptions, now: Date = new Date()): TableSelectOptions<string> {
     return {
         message: opts.message,
-        hint: "(best first, % left)",
+        hint: opts.scored.some(hasNoSessionLimit)
+            ? `(best first, % left · ${NO_SESSION_LIMIT_LEGEND})`
+            : "(best first, % left)",
         columns: [
             { label: "ACCOUNT", minWidth: 7 },
             { label: "5H", align: "right", minWidth: 4 },
