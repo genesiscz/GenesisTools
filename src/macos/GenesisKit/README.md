@@ -10089,7 +10089,9 @@ Time:
 
 Menu-bar title:
 
-- `title(mode: MenuBarTitleMode, alias: String?, fiveHourLeftPct: Double?, todayCost: Double?, todayTokens: Int?, weekCost: Double?, monthCost: Double?, timeRemaining: String?, sevenDayLeftPct: Double? = nil) -> String?`: the title for the mode, with `timeRemaining` appended after ` · `. The percents are the headroom left. When the data the mode needs is missing, only `timeRemaining` is returned, or nil when that is empty too.
+- `title(mode: MenuBarTitleMode, alias: String?, fiveHour: WindowReading, todayCost: Double?, todayTokens: Int?, weekCost: Double?, monthCost: Double?, timeRemaining: String?, sevenDay: WindowReading = .unknown) -> String?`: the title for the mode, with `timeRemaining` appended after ` · `. When the data the mode needs is missing, only `timeRemaining` is returned, or nil when that is empty too. A window the account has no limit for (`.noLimit`; since 2026-10-31 some Claude accounts have no 5-hour limit) never shows as a percent: `quotaAndSpend` leaves its percent out (`work · $3.50 · 1.25 MTok`), `fiveHour` and `sevenDay` say `no 5h` and `no 7d`, and `utilization` takes the smallest leftover of the windows that exist.
+- `title(mode:alias:fiveHourLeftPct: Double?, …, sevenDayLeftPct: Double? = nil) -> String?`: the same with plain percents, where nil means `.unknown`. It cannot say "no limit"; it stays for callers that do not know that yet.
+- `WindowReading`: one window's reading, `.left(Double)` (the headroom left, in percent), `.noLimit` or `.unknown`. `init(leftPct: Double?)` maps a percent or nil.
 - `providerChips(_ chips: [ProviderChip]) -> String?`: chips joined as `C 41% · X 12% · G $3`. Nil for an empty list. `ProviderChip` has `init(glyph: String, value: String)`.
 
 Session titles:
@@ -10100,21 +10102,25 @@ Session titles:
 ```swift
 let cost = TitleFormatter.formatCostCompact(3)   // "$3"
 let title = TitleFormatter.title(
-    mode: .quotaAndSpend, alias: "work", fiveHourLeftPct: 72, todayCost: 3.5,
+    mode: .quotaAndSpend, alias: "work", fiveHour: .left(72), todayCost: 3.5,
     todayTokens: 1_250_000, weekCost: nil, monthCost: nil, timeRemaining: "1h32m")
 // "work 72% · $3.50 · 1.25 MTok · 1h32m"
+let noFiveHour = TitleFormatter.title(
+    mode: .quotaAndSpend, alias: "personal", fiveHour: .noLimit, todayCost: 3.5,
+    todayTokens: 1_250_000, weekCost: nil, monthCost: nil, timeRemaining: nil)
+// "personal · $3.50 · 1.25 MTok"
 ```
 
 #### `MenuBarTitleMode`
 
 What the menu-bar title shows. It is a `String` enum that conforms to `CaseIterable`, `Equatable` and `Sendable`. Pass it to `TitleFormatter.title(mode:...)`.
 
-- `quotaAndSpend`: the alias, the five-hour percent left, today's cost and today's tokens.
+- `quotaAndSpend`: the alias, the five-hour percent left, today's cost and today's tokens. Without the percent when the account has no five-hour limit.
 - `todayUsage`: today's cost and tokens.
 - `todayCost`, `weeklyCost`, `monthlyCost`: one cost.
 - `todayTokens`: today's tokens.
-- `fiveHour`, `sevenDay`: the percent left in that window.
-- `utilization`: the smaller of the two percents left, the most depleted window.
+- `fiveHour`, `sevenDay`: the percent left in that window, or `no 5h` / `no 7d` when the account has no such limit.
+- `utilization`: the smaller of the two percents left, the most depleted window. A window the account has no limit for does not count.
 - `none`: no mode text. Only the `timeRemaining` text shows, when one is given.
 
 ```swift

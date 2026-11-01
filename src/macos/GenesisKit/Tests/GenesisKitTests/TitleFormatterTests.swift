@@ -234,6 +234,54 @@ extension TitleFormatterTests {
         XCTAssertNil(TitleFormatter.providerChips([]))
     }
 
+    /// An account without a 5h limit (Anthropic, 2026-10-31) is never titled as a percent of that window: `personal`
+    /// has no 5h limit, `work` has one at 82% left.
+    func testAnAccountWithoutAFiveHourLimitLeavesTheWindowOutOfTheTitle() {
+        func title(_ mode: MenuBarTitleMode, alias: String, fiveHour: TitleFormatter.WindowReading, seven: TitleFormatter.WindowReading = .unknown) -> String? {
+            TitleFormatter.title(
+                mode: mode,
+                alias: alias,
+                fiveHour: fiveHour,
+                todayCost: 12.3,
+                todayTokens: 3_100_000,
+                weekCost: nil,
+                monthCost: nil,
+                timeRemaining: nil,
+                sevenDay: seven
+            )
+        }
+        XCTAssertEqual(title(.quotaAndSpend, alias: "personal", fiveHour: .noLimit), "personal · $12.30 · 3.10 MTok")
+        XCTAssertEqual(title(.quotaAndSpend, alias: "work", fiveHour: .left(82)), "work 82% · $12.30 · 3.10 MTok")
+        XCTAssertNil(title(.quotaAndSpend, alias: "work", fiveHour: .unknown), "no reading still gives no title")
+
+        XCTAssertEqual(title(.fiveHour, alias: "personal", fiveHour: .noLimit), "no 5h")
+        XCTAssertEqual(title(.fiveHour, alias: "work", fiveHour: .left(82)), "82%")
+        XCTAssertNil(title(.fiveHour, alias: "work", fiveHour: .unknown))
+
+        // The missing window is no constraint: the most depleted window that exists wins.
+        XCTAssertEqual(title(.utilization, alias: "personal", fiveHour: .noLimit, seven: .left(61)), "61%")
+        XCTAssertEqual(title(.utilization, alias: "work", fiveHour: .left(82), seven: .left(61)), "61%")
+        XCTAssertEqual(title(.sevenDay, alias: "personal", fiveHour: .noLimit, seven: .left(61)), "61%")
+    }
+
+    /// Genesis still calls the percent form: a nil percent is "unknown", as before.
+    func testThePercentFormReadsNilAsUnknown() {
+        XCTAssertEqual(TitleFormatter.WindowReading(leftPct: 82), .left(82))
+        XCTAssertEqual(TitleFormatter.WindowReading(leftPct: nil), .unknown)
+        let title = TitleFormatter.title(
+            mode: .utilization,
+            alias: "work",
+            fiveHourLeftPct: nil,
+            todayCost: nil,
+            todayTokens: nil,
+            weekCost: nil,
+            monthCost: nil,
+            timeRemaining: nil,
+            sevenDayLeftPct: 61
+        )
+        XCTAssertEqual(title, "61%")
+    }
+
     /// Menu-bar money drops cents it does not need, and keeps the ones it does.
     func testFormatCostCompactDropsWholeCents() {
         XCTAssertEqual(TitleFormatter.formatCostCompact(3), "$3")
