@@ -132,7 +132,9 @@ export function limitSeriesFrom(
     entries: readonly LimitHistoryEntry[],
     accounts: readonly LimitHistoryAccount[],
     labels: ReadonlyMap<string, string>,
-    filter: SnapshotFilter
+    filter: SnapshotFilter,
+    /** `<provider::name>|<key>` of the windows the current snapshots list as absent: their series end. */
+    absent: ReadonlySet<string> = new Set()
 ): LimitSeries[] {
     const byProviderName = new Map(
         accounts.map((account) => [providerAccountKey(account.provider, account.name), account] as const)
@@ -146,6 +148,8 @@ export function limitSeriesFrom(
             const key = providerAccountKey(entry.provider, entry.account);
             const account = byProviderName.get(key);
 
+            const ended = absent.has(`${key}|${entry.key}`) ? entry.points.at(-1)?.t : undefined;
+
             return {
                 accountId: account?.id ?? entry.account,
                 accountName: entry.account,
@@ -153,6 +157,7 @@ export function limitSeriesFrom(
                 key: entry.key,
                 label: labels.get(`${key}|${entry.key}`) ?? entry.key,
                 points: entry.points,
+                ...(ended ? { endedAt: ended } : {}),
             };
         })
         .filter((series) => !wanted || wanted.has(series.accountId) || wanted.has(series.accountName));

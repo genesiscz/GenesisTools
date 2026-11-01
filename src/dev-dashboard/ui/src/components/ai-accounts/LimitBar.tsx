@@ -1,4 +1,5 @@
-import type { LimitWindow } from "@app/dev-dashboard/contract/ai-accounts";
+import type { AbsentLimit, LimitWindow } from "@app/dev-dashboard/contract/ai-accounts";
+import { absentLimitKindLabel, absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 
 interface LimitBarProps {
     window: LimitWindow;
@@ -113,6 +114,29 @@ export function LimitBar({ window, nowMs }: LimitBarProps) {
             ) : resetsIn ? (
                 <span className="text-xs text-[var(--dd-text-muted)]">{resetsIn}</span>
             ) : null}
+        </div>
+    );
+}
+
+/** The words of an absent window's row: a dash where the percent goes, then why. */
+export function absentLimitRowText(limit: AbsentLimit): { label: string; value: string } {
+    return { label: absentLimitKindLabel(limit), value: `— ${absentLimitText(limit)}` };
+}
+
+/**
+ * A window the account does not have (no 5-hour limit): one muted line, no bar. A `LimitBar` at 0 % with
+ * "Not used" read as an unused 5h window.
+ */
+export function AbsentLimitRow({ limit }: { limit: AbsentLimit }) {
+    const { label, value } = absentLimitRowText(limit);
+
+    return (
+        <div
+            className="flex items-baseline justify-between text-sm"
+            title={`${absentLimitText(limit)} on this account`}
+        >
+            <span className="text-[var(--dd-text-muted)]">{label}</span>
+            <span className="dd-ai-mono text-[var(--dd-text-muted)]">{value}</span>
         </div>
     );
 }

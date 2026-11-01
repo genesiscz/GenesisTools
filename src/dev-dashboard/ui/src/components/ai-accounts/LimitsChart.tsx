@@ -51,13 +51,20 @@ export function seriesKey(s: LimitSeries): string {
 /**
  * Every window is sampled independently, so exact-timestamp joins leave most
  * rows with one value. Coalesce into minute buckets and carry the last known
- * value forward: utilization is a level that holds until the next sample.
+ * value forward: utilization is a level that holds until the next sample. A
+ * series with `endedAt` (the account no longer has that window) stops there.
  */
 export function mergeLimitSeries(series: LimitSeries[]): Row[] {
     const samples: Sample[] = [];
+    const endMinute = new Map<string, number>();
 
     for (const s of series) {
         const key = seriesKey(s);
+        const endedMs = s.endedAt ? new Date(s.endedAt).getTime() : Number.NaN;
+
+        if (Number.isFinite(endedMs)) {
+            endMinute.set(key, Math.floor(endedMs / 60_000));
+        }
 
         for (const point of s.points) {
             const ms = new Date(point.t).getTime();
@@ -80,6 +87,13 @@ export function mergeLimitSeries(series: LimitSeries[]): Row[] {
     for (const sample of samples) {
         if (sample.minute !== currentMinute) {
             currentMinute = sample.minute;
+
+            for (const [key, end] of endMinute) {
+                if (sample.minute > end) {
+                    delete last[key];
+                }
+            }
+
             currentRow = { t: sample.minute * 60_000, ...last };
             rows.push(currentRow);
         }
