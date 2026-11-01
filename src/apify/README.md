@@ -51,7 +51,7 @@ tools apify run abort RUN_ID
 
 `run start` requires a JSON object from a file or stdin, up to 8 MiB, and a positive `--max-cost`. It passes that USD amount to Apify's `maxTotalChargeUsd`. `--max-items` passes Apify's pay-per-result charging limit; it does not guarantee the Actor returns exactly that many items. See the [run API contract](https://docs.apify.com/api/v2/actors-runs-post).
 
-Runs start asynchronously. Save the returned run ID and inspect it with `run show`; `defaultDatasetId` identifies the output dataset. The tool never starts a sample run while logging in, searching, inspecting schemas, or reading costs. It never retries a paid start automatically. A timeout or broken connection after a start leaves the outcome unknown; inspect recent runs before trying again. Explicit aborts do not undo already incurred charges.
+Runs start asynchronously. Save the returned run ID and inspect it with `run show`; `defaultDatasetId` identifies the output dataset. The tool never starts a sample run while logging in, searching, inspecting schemas, or reading costs. It never retries a paid start automatically. A timeout, a broken connection, a server error, or a reply that breaks off or cannot be parsed after a start leaves the outcome unknown; inspect recent runs before trying again. Explicit aborts do not undo already incurred charges.
 
 Run lists show actual `usageTotalUsd` values returned by Apify. Their sum is explicitly a subtotal of the returned page. Missing amounts appear as unknown, and running jobs may still accrue usage.
 
@@ -72,7 +72,7 @@ tools apify costs --since 2026-01-01T09:00:00+01:00 --until 2026-01-01T12:00:00+
 tools apify costs --since 2026-01-01T00:00:00Z --page-size 100 --max-pages 50
 ```
 
-`usage` reads the account's current monthly platform usage. `costs` follows run pages and sums only the API's recorded `usageTotalUsd`. Both time bounds are inclusive and apply to when a run started, not when it finished. Supply ISO datetimes with a timezone; an omitted `--until` captures the current instant once. The bounds reach every API request through `startedAfter` and `startedBefore`.
+`usage` reads the account's current monthly platform usage. `costs` follows run pages and sums only the API's recorded `usageTotalUsd`. Both time bounds are inclusive and apply to when a run started, not when it finished. Supply ISO datetimes with a timezone; a date the calendar does not have, such as February 30, is refused. An omitted `--until` captures the current instant once. The bounds reach every API request through `startedAfter` and `startedBefore`.
 
 The cost report includes individual runs and actor subtotals, missing-cost counts, unfinished runs, scanned page counts and `paginationComplete`. By default it reads at most 10 pages of 100 records. When it reaches that cap, encounters duplicates or sees the result total change, it marks the result incomplete and exposes the reason and next offset. Increase `--max-pages` and rerun the same fixed window to obtain a complete result. Never treat a capped subtotal as an account total.
 
