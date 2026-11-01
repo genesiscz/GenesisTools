@@ -503,8 +503,9 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<string> {
 /**
  * The `tar -c` call that packs a folder, or only `files` of it (paths relative to the folder, `/` separators). A list
  * is packed under the folder's name with each file's parent folders and nothing else (`--no-recursion`, the names on
- * stdin), so the archive keeps the one top folder that unpack expects. `COPYFILE_DISABLE=1` keeps macOS bsdtar from
- * adding AppleDouble entries.
+ * stdin), so the archive keeps the one top folder that unpack expects. Each name is taken as it is: a backslash stays
+ * part of the name ({@link TAR_OPTIONS} `namesFromList`). `COPYFILE_DISABLE=1` keeps macOS bsdtar from adding
+ * AppleDouble entries.
  */
 export function tarCreateCommand(
     source: string,
@@ -520,7 +521,19 @@ export function tarCreateCommand(
     const names = [top, ...[...parentFolders(files)].sort().map((folder) => `${top}/${folder}`)];
     names.push(...files.map((file) => `${top}/${file}`));
     return {
-        cmd: ["tar", "--no-xattrs", "--no-recursion", "--null", "-cf", "-", "-C", dirname(source), "-T", "-"],
+        cmd: [
+            "tar",
+            "--no-xattrs",
+            "--no-recursion",
+            "--null",
+            ...TAR_OPTIONS[tarFlavor()].namesFromList,
+            "-cf",
+            "-",
+            "-C",
+            dirname(source),
+            "-T",
+            "-",
+        ],
         stdin: Buffer.from(`${names.join("\0")}\0`),
         env: childEnv,
     };
@@ -648,26 +661,42 @@ export function listArchive(archive: string, { hash = false }: { hash?: boolean 
     return lister.entries;
 }
 
-let systemTarIsBsdtar: boolean | undefined;
+type TarFlavor = "bsdtar" | "gnu" | "other";
+
+let systemTarFlavor: TarFlavor | undefined;
+
+/** Which `tar` is on PATH, asked once per process: bsdtar (macOS, Windows), GNU tar (most Linux) or another one. */
+function tarFlavor(): TarFlavor {
+    if (systemTarFlavor === undefined) {
+        const version = Bun.spawnSync(["tar", "--version"], { stdout: "pipe", stderr: "pipe" }).stdout.toString();
+        systemTarFlavor = version.includes("bsdtar") ? "bsdtar" : version.includes("GNU tar") ? "gnu" : "other";
+    }
+
+    return systemTarFlavor;
+}
 
 /**
- * Extract options for the system `tar`. bsdtar on macOS reads every `._name` entry as AppleDouble metadata
- * (libarchive's `mac-ext`, on by default where copyfile exists): it writes no file for it and applies its bytes to the
- * entry that follows, so a real `._name` file from the folder vanished on unpack, or the unpack failed on the next
- * entry's metadata. `COPYFILE_DISABLE` and `--no-mac-metadata` leave that reading on; `tar:!mac-ext` turns it off.
- * GNU tar has no `--options` and does not read `._` entries that way.
+ * The options each system `tar` needs here.
+ *
+ * `extract`: bsdtar on macOS reads every `._name` entry as AppleDouble metadata (libarchive's `mac-ext`, on by default
+ * where copyfile exists): it writes no file for it and applies its bytes to the entry that follows, so a real `._name`
+ * file from the folder vanished on unpack, or the unpack failed on the next entry's metadata. `COPYFILE_DISABLE` and
+ * `--no-mac-metadata` leave that reading on; `tar:!mac-ext` turns it off. GNU tar has no `--options` and does not read
+ * `._` entries that way.
+ *
+ * `namesFromList`: GNU tar unquotes the names it reads with `-T` (`\\`, `\n`, `\b` and octal escapes), so a listed
+ * file named `a\b` would be read as another name; `--no-unquote` takes each name as it is. bsdtar takes them as they
+ * are.
  */
-function extractOptions(): string[] {
-    if (process.platform !== "darwin") {
-        return [];
-    }
+const TAR_OPTIONS: Record<TarFlavor, { extract: readonly string[]; namesFromList: readonly string[] }> = {
+    bsdtar: { extract: process.platform === "darwin" ? ["--options", "tar:!mac-ext"] : [], namesFromList: [] },
+    gnu: { extract: [], namesFromList: ["--no-unquote"] },
+    other: { extract: [], namesFromList: [] },
+};
 
-    if (systemTarIsBsdtar === undefined) {
-        const version = Bun.spawnSync(["tar", "--version"], { stdout: "pipe", stderr: "pipe" });
-        systemTarIsBsdtar = version.stdout.toString().includes("bsdtar");
-    }
-
-    return systemTarIsBsdtar ? ["--options", "tar:!mac-ext"] : [];
+function extractOptions(): readonly string[] {
+    // Only macOS needs an extract option, so nothing else spawns `tar --version` for an unpack.
+    return process.platform === "darwin" ? TAR_OPTIONS[tarFlavor()].extract : [];
 }
 
 /**
