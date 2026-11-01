@@ -11,7 +11,7 @@
 // repository the reply names (a URL, a path, or a known repository's name as a plain word), and only then the session
 // checkout's. A session that works in two or more checkouts gets no silent guess: the title the reply wrote after the
 // number picks the repository whose PR has it, and with no such evidence the number stays text.
-import type { HookStream, TurnStepChunk, TurnStepInput, TurnStepResult } from "claude-code";
+import type { HookStream, PromptComposeSection, TurnStepChunk, TurnStepInput, TurnStepResult } from "claude-code";
 import { sessionCheckouts } from "./checkouts";
 import { COMMIT, checkHubLink, commitLink, type ForgeProject } from "./commit-links";
 import { decisionLink, encodePath, finderLink, type GenesisProbe, genesisProbe, mdLink } from "./genesis";
@@ -247,6 +247,20 @@ export function forgetPullRequests(): void {
     pullRequests.clear();
     prIncludeMissing = false;
 }
+
+/**
+ * The system prompt's word on PR references while the links mod is on: a reference the model writes with its
+ * repository is one the mod never has to guess, and a guess is what put a PR in the wrong repository before.
+ */
+export const PR_REFERENCE_SECTION: PromptComposeSection = {
+    id: "genesis-tools-mods:pr-references",
+    scope: "session",
+    text: [
+        "# PR and MR references",
+        "The genesis-tools-mods links mod turns a bare #123 in your reply into a link, and for that it must guess the repository. Do not make it guess.",
+        "Write every PR as a full markdown link with its title: [#123 (title)](https://github.com/owner/repo/pull/123). When you cannot write the link, write owner/repo#123. A bare #123 is acceptable only when the session works in one repository and no other repository appears in the reply.",
+    ].join("\n"),
+};
 
 /** The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. */
 type LinkedPullRequest = { token: string; repo: string; why: string; url: string };
