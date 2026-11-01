@@ -25,6 +25,8 @@ ROOT="$2"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 RESULTS="${REPO_ROOT}/scripts/benchmarks/clones/measure-results.jsonl"
+# Today's day log, which stays plain (only today and yesterday do; the daily pass stores an older day as
+# <day>.log.zst, read it with `tools compress cat <plain name>` or `rg -z`).
 LOG_FILE="${HOME}/.genesis-tools/logs/$(date +%Y-%m-%d).log"
 
 echo "[measure-bench] label=${LABEL} root=${ROOT}" >&2

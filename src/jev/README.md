@@ -497,6 +497,7 @@ it. Timings go to the profiling log with
 
 ```sh
 rg '"component":"control-gate"' ~/.genesis-tools/logs/$(date +%F).log | tail -5
+# A day before yesterday is <day>.log.zst: rg -z, or tools compress cat ~/.genesis-tools/logs/<day>.log | rg ...
 PROFILE=jev-evaluate,control-native tools jev listen --app Calculator --transcript session.jsonl --stt fixture
 ```
 
