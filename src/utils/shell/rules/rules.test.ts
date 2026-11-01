@@ -54,7 +54,7 @@ describe("the registry", () => {
         }
     });
 
-    it("holds the sixteen general rules; personal ones load from guard.customRules", () => {
+    it("holds the seventeen general rules; personal ones load from guard.customRules", () => {
         expect(SHELL_RULES.map((r) => r.id).sort()).toEqual(
             [
                 "bare-log-command",
@@ -64,6 +64,7 @@ describe("the registry", () => {
                 "exit-code-after-pipeline",
                 "find-from-root",
                 "git-checkout-overwrites-file",
+                "git-checkout-overwrites-saved-file",
                 "git-push-force-without-lease",
                 "pipestatus-under-zsh",
                 "rg-replace-cluster",
