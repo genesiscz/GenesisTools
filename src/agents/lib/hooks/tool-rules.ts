@@ -5,9 +5,17 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SHELL_RULES, type ShellMatch, type ShellRule } from "@genesiscz/utils/shell/rules";
 import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
 
+/** The verbs that let a request through, trust a folder, or change settings. */
+const RM_USER_VERBS = String.raw`(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b`;
+/**
+ * Root flags may stand between `rm` and the verb, and Commander still runs the verb (`tools rm -v approve x`,
+ * `tools rm -- approve x`), so the rule skips them: `--reason` and `--keep` with their value, any other `-` token.
+ */
+const RM_ROOT_FLAGS = String.raw`(?:(?:--(?:reason|keep)(?:\s+|=)\S+|-\S+)\s+)*`;
 /** The `tools rm` verbs that let a request through, trust a folder, or change settings: a person's to run. */
-const RM_USER_VERB =
-    /(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b|[\\/]rm[\\/]index\.ts\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b/;
+const RM_USER_VERB = new RegExp(
+    String.raw`(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+${RM_ROOT_FLAGS}${RM_USER_VERBS}|[\\/]rm[\\/]index\.ts\s+${RM_ROOT_FLAGS}${RM_USER_VERBS}`
+);
 
 export const rmUserVerbs: ShellRule = {
     id: "rm-user-verbs",

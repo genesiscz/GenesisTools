@@ -31,13 +31,31 @@ describe("rm-user-verbs", () => {
         "tools rm config set trash-root /tmp/GenesisTools/other",
         "script -q /dev/null tools rm approve k7m2qd",
         "bun src/rm/index.ts approve k7m2qd",
+        // Root flags and `--` before the verb: Commander still runs the verb.
+        "tools rm -v approve k7m2qd",
+        "tools rm -- approve k7m2qd",
+        "tools rm --json approve k7m2qd",
+        "tools rm --keep 1d approve k7m2qd",
+        "tools rm --keep=1d approve k7m2qd",
+        'tools rm --reason "two words" approve k7m2qd',
+        "tools rm -v -n roots add /tmp/x",
+        "bun src/rm/index.ts -v approve k7m2qd",
     ];
 
     it.each(caught)("blocks %j", (command) => {
         expect(ids(command)).toContain("rm-user-verbs");
     });
 
-    const allowed = ["tools rm requests", "tools rm roots", "tools rm roots remove /tmp/x", "tools rm deny k7m2qd"];
+    const allowed = [
+        "tools rm requests",
+        "tools rm roots",
+        "tools rm roots remove /tmp/x",
+        "tools rm deny k7m2qd",
+        "tools rm ./approve",
+        "tools rm -v requests --json",
+        "tools rm -n node_modules",
+        'git commit -m "document tools rm -v approve <id> for the user"',
+    ];
 
     it.each(allowed)("leaves %j alone", (command) => {
         expect(ids(command)).not.toContain("rm-user-verbs");
