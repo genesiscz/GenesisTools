@@ -156,8 +156,19 @@ export type PinAuth = "token" | "keychain";
  */
 export type PinAuthSource = "launch-env" | "argv" | "oauth-env" | "default-named" | "default-bare";
 
+/**
+ * The app that hosted the session (T3 Code), and its id for it (the T3 thread). The hook records it when the
+ * agent's env carries a host marker (`AGENT_HOST_MARKERS` in `src/utils/ai/active-processes.ts`).
+ */
+export interface PinHost {
+    kind: string;
+    id: string;
+}
+
 export interface SessionPin {
     sessionId: string;
+    /** ABSENT on every pin of a session that no app hosted, and on every pin written before 2026-11-01. */
+    host?: PinHost;
     /**
      * Which agent wrote this record. ABSENT means Claude.
      *

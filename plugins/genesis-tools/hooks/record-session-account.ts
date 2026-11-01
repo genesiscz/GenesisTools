@@ -42,8 +42,42 @@ interface HookInput {
     hookEventName?: string;
 }
 
+/** The app that hosts this session (T3 Code), and its id for it (the T3 thread). */
+interface PinHost {
+    kind: string;
+    id: string;
+}
+
+/**
+ * The apps that host agent sessions, each recognised by the variable it sets on every agent it starts.
+ *
+ * 🛑 A copy: the source is `AGENT_HOST_MARKERS` in `src/utils/ai/active-processes.ts`, which this standalone
+ * hook cannot import. A new host is one row in BOTH tables; `record-hook.test.ts` fails while they differ.
+ */
+export const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string }[] = [
+    { kind: "t3", envKey: "T3CODE_THREAD_ID" },
+];
+
+/**
+ * The host named by the env. No payload carries it: the marker is the host app's own variable. It is inherited,
+ * so an agent that a hosted session starts (a `tools codex` worker) records the same host and thread.
+ */
+export function hostFromEnv(env: NodeJS.ProcessEnv): PinHost | null {
+    for (const marker of AGENT_HOST_MARKERS) {
+        const id = env[marker.envKey];
+
+        if (id) {
+            return { kind: marker.kind, id };
+        }
+    }
+
+    return null;
+}
+
 interface SessionPin {
     sessionId: string;
+    /** Absent when no host marker is set: every reader treats a missing host as "no app hosted it". */
+    host?: PinHost;
     /**
      * Which agent wrote this record. ABSENT means Claude: every line written before this
      * field existed is a Claude session, or a Codex one wrongly holding a Claude account, and
@@ -474,8 +508,10 @@ function main(raw: string): void {
     // The journal's default harness writes no `provider`, so no earlier pin of it can match `pinAccount`.
     const journalDefault = harness === JOURNAL_DEFAULT_HARNESS;
     const fromPayload = typeof input.model === "string" ? input.model.trim() : "";
+    const host = hostFromEnv(process.env);
     const pin: SessionPin = {
         sessionId,
+        ...(host ? { host } : {}),
         ...(journalDefault ? {} : { provider: harness }),
         // Env wins: `tools <agent> run` said which account this process is. The home binding
         // covers a terminal the user opened themselves (`accountHomeProvider`; Claude has none).

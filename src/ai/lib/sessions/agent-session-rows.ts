@@ -8,7 +8,7 @@ import {
     type SessionCmuxLocation,
 } from "@app/claude/lib/usage/session-rows";
 import { catalogHistory, openHistoryCached } from "@genesiscz/utils/agent-sessions/open-service";
-import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
+import type { PinHost, SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { historyPathUnderRoot } from "@genesiscz/utils/agent-sessions/project-scope";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
@@ -53,6 +53,8 @@ export interface AgentSessionRow {
      * started before the hook learned about Codex, or outside `tools codex run`, stays null.
      */
     account: string | null;
+    /** The app that hosted the session (a T3 Code thread), from its pin; null when none did or no pin says. */
+    host?: PinHost | null;
     filePath: string;
     /** Native home this session was read from. The only provenance Codex has. */
     sourceHome?: string;
@@ -252,6 +254,7 @@ async function nativeRowsOf(
             mtime: record.mtime,
             model: null,
             account: accountOf(record),
+            host: pins.get(record.sessionId)?.host ?? null,
             filePath: record.filePath,
             ...(record.sourceHome ? { sourceHome: record.sourceHome } : {}),
             archived: record.archived,

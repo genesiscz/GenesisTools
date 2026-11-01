@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
+import { agentHostFromEnv } from "@genesiscz/utils/ai/active-processes";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { priorAccount } from "../../../../plugins/genesis-tools/hooks/record-session-account";
+import { AGENT_HOST_MARKERS, priorAccount } from "../../../../plugins/genesis-tools/hooks/record-session-account";
 
 /**
  * The pin journal is written by a standalone hook script in the plugin (it cannot import
@@ -41,6 +42,8 @@ async function runHook(payload: string, env: Record<string, string> = {}): Promi
             TOOLS_GROK_ACCOUNT: "",
             CLAUDE_CODE_OAUTH_TOKEN: "",
             CMUX_WORKSPACE_ID: "",
+            // This suite may run inside a T3 Code thread, whose marker would give every pin a host.
+            T3CODE_THREAD_ID: "",
             ...env,
         },
     });
@@ -508,5 +511,39 @@ describe("pin lines split across chunks", () => {
             expect(priorAccount(path, "s1", "codex", chunk)).toBe("wörk-ünïcödé");
         }
         await rm(dir, { recursive: true, force: true });
+    });
+});
+
+describe("the app that hosts a session", () => {
+    test("a T3 Code env records the host as one nested object", async () => {
+        await runHook('{"session_id":"t3-session","cwd":"/tmp/project"}', { T3CODE_THREAD_ID: "thread-fixture-1" });
+
+        expect((await readPins())[0]?.host).toEqual({ kind: "t3", id: "thread-fixture-1" });
+    });
+
+    test("no host marker records no host field at all", async () => {
+        await runHook('{"session_id":"plain-session","cwd":"/tmp/project"}');
+
+        const text = await readFile(join(home, ".genesis-tools", "claude-code", "session-pins.jsonl"), "utf8");
+        expect(text).not.toContain('"host"');
+    });
+
+    // The hook cannot import src/, so it keeps a copy of the marker table. A proxy env records every key
+    // `agentHostFromEnv` asks for, which is the source table's whole key list, in order.
+    test("the plugin's marker table matches the one in src/utils/ai/active-processes.ts", () => {
+        const asked: string[] = [];
+        const recorder = new Proxy({} as Record<string, string>, {
+            get(_target, key) {
+                if (typeof key === "string") {
+                    asked.push(key);
+                }
+
+                return undefined;
+            },
+        });
+        agentHostFromEnv(recorder);
+        const source = asked.map((envKey) => ({ kind: agentHostFromEnv({ [envKey]: "x" })?.kind, envKey }));
+
+        expect(source).toEqual(AGENT_HOST_MARKERS.map(({ kind, envKey }) => ({ kind, envKey })));
     });
 });

@@ -1229,7 +1229,7 @@ final class HubModel {
     }
 
     static func searchText(_ row: HubSession) -> String {
-        [row.displayTitle, row.project ?? "", row.account ?? "", row.provider, row.sessionId, row.cwd]
+        [row.displayTitle, row.project ?? "", row.account ?? "", row.host?.kind ?? "", row.provider, row.sessionId, row.cwd]
             .joined(separator: " ").lowercased()
     }
 
@@ -2951,6 +2951,9 @@ private struct SessionRowView: View, Equatable {
                             .padding(.vertical, 1)
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
                             .layoutPriority(-1)
+                    }
+                    if let host = session.host {
+                        Badge(host.badge, tooltip: "Ran in \(host.appName), thread \(host.id)")
                     }
                     Spacer(minLength: 0)
                     if let activity, activity.showsWord {
