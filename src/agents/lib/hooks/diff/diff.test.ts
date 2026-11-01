@@ -674,6 +674,57 @@ describe("the diffs that went missing on 2026-11-01", () => {
         expect(stripAnsi(decision.message ?? "")).toContain("GLUED-CD-EDIT");
         inOther(["checkout", "-q", "--", "edited.ts"]);
     });
+
+    it("shows a rewrite of an existing file in a temp scratch folder by default", () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "gt-scratch-")));
+        const rules = join(scratch, "find-fd.ts");
+
+        try {
+            writeFileSync(rules, "const REACH = 4;\n");
+
+            const current = begin({
+                command: `cd ${scratch} && python3 - <<'EOF'\np = "find-fd.ts"\ns = open(p).read()\nopen(p, "w").write(s.replace("4", "5"))\nEOF`,
+            });
+
+            writeFileSync(rules, "const REACH = 5; // SCRATCH-REWRITE\n");
+
+            const decision = runDiffPost({ payload: current, config: plain });
+
+            expect(decision.files).toContain(rules);
+            expect(stripAnsi(decision.message ?? "")).toContain("SCRATCH-REWRITE");
+        } finally {
+            rmSync(scratch, { recursive: true, force: true });
+        }
+    });
+
+    it("says which setting hid a scratch file or a created one, instead of `no change`", () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "gt-scratch-")));
+        const rules = join(scratch, "find-fd.ts");
+        const made = join(scratch, "made.ts");
+        const off = { ...plain, diff: { ...plain.diff, showTempScratch: false } };
+
+        try {
+            writeFileSync(rules, "const REACH = 4;\n");
+
+            const hidden = begin({ command: `sed -i '' s/4/5/ ${rules}` }, off.diff);
+            writeFileSync(rules, "const REACH = 5;\n");
+
+            const scratchDecision = runDiffPost({ payload: hidden, config: off });
+
+            expect(scratchDecision.files).toEqual([]);
+            expect(scratchDecision.reason).toContain("diff.showTempScratch");
+
+            const created = begin({ command: `cat > ${made} <<'EOF'\nx\nEOF` });
+            writeFileSync(made, "x\n");
+
+            const createdDecision = runDiffPost({ payload: created, config: plain });
+
+            expect(createdDecision.files).toEqual([]);
+            expect(createdDecision.reason).toContain("diff.namedPathsShowCreated");
+        } finally {
+            rmSync(scratch, { recursive: true, force: true });
+        }
+    });
 });
 
 describe("the emergency stop", () => {
@@ -961,7 +1012,7 @@ describe("an ambiguous cd target is refused, not guessed", () => {
 describe("files the command NAMES rather than works in", () => {
     // Both shapes below were measured on 2026-09-21 producing a silent
     // `no change since this command began` while the file really had changed.
-    // Its files live in a temp folder outside git, which `showTempScratch` hides by default.
+    // Its files live in a temp folder outside git, which `showTempScratch: false` hides; it is set on here explicitly.
     const plain = {
         ...DEFAULT_HOOKS_CONFIG,
         diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, showTempScratch: true, columns: 0 },
@@ -2469,6 +2520,12 @@ describe("silentReason", () => {
         expect(silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 0, suppressed: new Map() })).toBe(
             "no change since this command began"
         );
+        expect(
+            silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 0, suppressed: new Map(), scratch: 2 })
+        ).toBe("2 changed file(s) in a temp folder outside git, hidden by diff.showTempScratch");
+        expect(
+            silentReason({ covered: 0, uncaptured: 0, claimed: 0, stale: 0, suppressed: new Map(), created: 1 })
+        ).toBe("1 file(s) the command created, known only from its named paths, hidden by diff.namedPathsShowCreated");
     });
 
     it("reports a mix as a mix, instead of claiming the first cause was everything", () => {
@@ -5303,16 +5360,17 @@ describe("the misfires of 2026-10-14", () => {
         expect(decision.message).toContain("Full diff:");
     });
 
-    it("leaves a named file in a temp folder outside git alone, unless showTempScratch", () => {
+    it("leaves a named file in a temp folder outside git alone while showTempScratch is off", () => {
         const scratch = realpathSync(mkdtempSync(join(tmpdir(), "gt-scratch-")));
         const note = join(scratch, "body.md");
 
         try {
             writeFileSync(note, "draft\n");
 
-            const hidden = begin({ command: `bun /x/cli.ts ${note}` });
+            const off = { ...plain, diff: { ...plain.diff, showTempScratch: false } };
+            const hidden = begin({ command: `bun /x/cli.ts ${note}` }, off.diff);
             writeFileSync(note, "draft\nSCRATCH-EDIT\n");
-            expect(runDiffPost({ payload: hidden, config: plain }).files).not.toContain(note);
+            expect(runDiffPost({ payload: hidden, config: off }).files).not.toContain(note);
 
             const diff = { ...plain.diff, showTempScratch: true };
             const shown = begin({ command: `bun /x/cli.ts ${note}` }, diff);
@@ -5482,7 +5540,7 @@ describe("the misfires of 2026-10-14", () => {
         // Outside the task's repository, so the task cannot claim the flushing call's own file.
         const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "gt-order-")));
         const own = join(elsewhere, "own-order.ts");
-        // A named file in a temp folder outside git is hidden by default.
+        // A named file in a temp folder outside git is hidden when `showTempScratch` is off; this case needs it shown.
         const config = { ...plain, diff: { ...plain.diff, showTempScratch: true } };
 
         mkdirSync(tasks, { recursive: true });
