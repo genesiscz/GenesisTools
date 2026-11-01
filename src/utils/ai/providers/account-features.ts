@@ -123,7 +123,11 @@ export interface LimitMoney {
     capCurrency?: string;
 }
 
-/** One rate-limit window, provider-neutral. Claude has 5 to 6, codex 2, grok 1 (monthly). */
+/**
+ * One rate-limit window, provider-neutral. Claude has 4 to 6 (an account without a 5-hour limit has no
+ * `five_hour`), codex 2, grok 1 (monthly). A window the provider confirmed missing goes to
+ * `AccountUsageSnapshot.absentLimits`, never here as a 0 % window.
+ */
 export interface LimitWindow {
     /** Provider-native id: `five_hour`, `seven_day_opus`, `primary`, `monthly`. */
     key: string;
@@ -143,6 +147,43 @@ export interface LimitWindow {
     money?: LimitMoney;
 }
 
+/** A window the provider confirmed this account does not have. */
+export interface AbsentLimit {
+    /** The `LimitWindow.key` the window would carry: `five_hour`. */
+    key: string;
+    kind: LimitKind;
+}
+
+/** The snapshot names an absent window that matches every given field (`{ kind: "session" }`, `{ key }`). */
+export function hasAbsentLimit(
+    snapshot: Pick<AccountUsageSnapshot, "absentLimits"> | undefined,
+    match: Partial<AbsentLimit>
+): boolean {
+    return (snapshot?.absentLimits ?? []).some(
+        (limit) =>
+            (match.key === undefined || limit.key === match.key) &&
+            (match.kind === undefined || limit.kind === match.kind)
+    );
+}
+
+/** The words every surface prints for an absent window: "no 5h limit" for a session window. */
+export function absentLimitText(limit: Pick<AbsentLimit, "kind">): string {
+    return limit.kind === "session" ? "no 5h limit" : `no ${limit.kind} limit`;
+}
+
+const LIMIT_KIND_LABELS: Record<LimitKind, string> = {
+    session: "Session (5h)",
+    weekly: "Weekly",
+    monthly: "Monthly",
+    scoped: "Scoped",
+    credit: "Credit",
+};
+
+/** A row label for an absent window, which carries no `label` of its own. */
+export function absentLimitKindLabel(limit: Pick<AbsentLimit, "kind">): string {
+    return LIMIT_KIND_LABELS[limit.kind];
+}
+
 /** The unit the TUI, the daemon, the dashboard and the Genesis app all consume. */
 export interface AccountUsageSnapshot {
     /** Plugin id. */
@@ -154,6 +195,13 @@ export interface AccountUsageSnapshot {
     /** ISO. */
     fetchedAt: string;
     limits: LimitWindow[];
+    /**
+     * Windows the provider confirmed this account does not have (an Anthropic account without a 5-hour
+     * limit: `[{ key: "five_hour", kind: "session" }]`). Such a window is never in `limits`. A renderer shows
+     * "no limit" for it, never 0 % and never "no data"; a picker treats it as no constraint. Missing on a
+     * row written before 2026-11-01: a window that is in neither list is unknown.
+     */
+    absentLimits?: AbsentLimit[];
     plan?: {
         name?: string;
         status?: string;
@@ -222,8 +270,9 @@ export interface UsagePollOptions {
      */
     orgBlocked?: ReadonlySet<string>;
     /**
-     * This account's snapshot from the PREVIOUS round, when one is cached. Anthropic reads its
-     * 5-hour window from it before a header reading, which may start a window on an idle account.
+     * This account's snapshot from the PREVIOUS round, when one is cached. Anthropic reuses a recent
+     * header reading from it, keeps its Fable window and lays a header reading over its endpoint
+     * fields, whether or not the account has a 5-hour window.
      */
     previous?: AccountUsageSnapshot;
     /**
@@ -424,9 +473,9 @@ export interface WarmupOutcome {
     /** Which route sent the request, for the CLI's hint column (`oauth`, `login-long`, ...). */
     via: string;
     /**
-     * Set when nothing was sent because the account has no quota left to start: the reason, with
-     * the reset time. A skip is not a failure, so the report and the exit code leave it out of the
-     * failed count.
+     * Set when nothing was sent because there is nothing to start: no quota left, or no 5-hour limit on an
+     * account whose weekly window already runs. The reason, with the reset time. A skip is not a failure, so
+     * the report and the exit code leave it out of the failed count.
      */
     skipped?: string;
 }

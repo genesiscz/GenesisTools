@@ -15,7 +15,7 @@ import type { AccountUsage, UsageResponse } from "./api";
 import { ANTHROPIC_SUB, isSubscriptionExpiredError, isUsageBucket, pollAccount } from "./api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, bucketKind } from "./buckets";
 import type { Severity } from "./limits";
-import { normalizeLimits, normalizeSpend } from "./limits";
+import { absentLimitsOf, normalizeLimits, normalizeSpend } from "./limits";
 import { isQuotaHeaderFailure } from "./quota-headers";
 import { calendarDay, nextRenewalDate } from "./subscription";
 
@@ -166,11 +166,16 @@ async function legacyEntryFor(account: AccountEntry): Promise<{ entry: AIAccount
     return { entry, config };
 }
 
-/** The previous round's usage payload, when it has the endpoint's shape (a header reading has it too). */
-function previousUsageOf(snapshot: AccountUsageSnapshot | undefined): UsageResponse | undefined {
+/**
+ * The previous round's usage payload, when it has the endpoint's shape (a header reading has it too).
+ * Keyed on the weekly window, which every account has: an account without a 5-hour limit has
+ * `five_hour: null`, and a check on that window dropped every such reading, so no header reading was
+ * reused and every 2-minute round asked the Fable model (its 400-a-week probe budget gone in 13 hours).
+ */
+export function previousUsageOf(snapshot: AccountUsageSnapshot | undefined): UsageResponse | undefined {
     const native = snapshot?.native;
 
-    if (!native || typeof native !== "object" || !("five_hour" in native) || !isUsageBucket(native.five_hour)) {
+    if (!native || typeof native !== "object" || !("seven_day" in native) || !isUsageBucket(native.seven_day)) {
         return undefined;
     }
 
@@ -211,9 +216,12 @@ export async function pollAnthropicAccount(
         return { ...snapshot, error: usage.error ?? "no usage payload" };
     }
 
+    const absentLimits = absentLimitsOf(usage.usage);
+
     return {
         ...snapshot,
         limits: toLimitWindows(usage.usage),
+        ...(absentLimits.length > 0 ? { absentLimits } : {}),
         // The legacy `usage-shared` projection the Genesis app reads is built from this,
         // and so is the anthropic TUI presenter. It must always be set.
         native: usage.usage,
@@ -243,6 +251,7 @@ export function snapshotToAccountUsage(snapshot: AccountUsageSnapshot): AccountU
         ...(snapshot.plan?.contradictedAt === undefined ? {} : { planContradictedAt: snapshot.plan.contradictedAt }),
         ...(refreshExpiresAt === undefined || Number.isNaN(refreshExpiresAt) ? {} : { refreshExpiresAt }),
         ...(snapshot.native === undefined ? {} : { usage: snapshot.native as UsageResponse }),
+        ...(snapshot.absentLimits === undefined ? {} : { absentLimits: snapshot.absentLimits }),
         ...(snapshot.error === undefined ? {} : { error: snapshot.error }),
         ...(snapshot.stale === undefined
             ? {}

@@ -4,8 +4,14 @@
  * This door keeps the claude TUI and the dev-dashboard on the old specifier.
  */
 export type {
+    FiveHourState,
     NormalizedLimit,
     NormalizedSpend,
     Severity,
 } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
-export { normalizeLimits, normalizeSpend } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
+export {
+    absentLimitsOf,
+    fiveHourState,
+    normalizeLimits,
+    normalizeSpend,
+} from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";

@@ -78,7 +78,7 @@ const {
     QUOTA_PROBE_MODEL,
     QUOTA_PROBE_URL,
 } = await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/quota-headers");
-const { normalizeLimits } = await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits");
+const { fiveHourState, normalizeLimits } = await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits");
 const { anthropicUsage } = await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage");
 const { CC_VERSION, SUBSCRIPTION_SYSTEM_PREFIX } = await import("@genesiscz/utils/claude/subscription-billing");
 
@@ -105,6 +105,17 @@ function quotaHeaders(five = "0.23", seven = "0.39", fable?: string): Headers {
                   "anthropic-ratelimit-unified-7d_oi-status": "allowed",
               }),
     });
+}
+
+/** An account without a 5-hour limit: no 5h headers, the weekly window binds. */
+function weeklyOnlyHeaders(seven = "0.39", fable?: string): Headers {
+    const headers = quotaHeaders("0", seven, fable);
+
+    for (const field of ["utilization", "reset", "status"]) {
+        headers.delete(`anthropic-ratelimit-unified-5h-${field}`);
+    }
+
+    return headers;
 }
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -209,11 +220,16 @@ describe("usageFromQuotaHeaders", () => {
         expect(isHeaderReading(usage ?? undefined)).toBe(true);
     });
 
-    it("is null without either window, and a missing 5h window reads as no active period", () => {
+    it("is null without either window, and without the 5h headers the account has no 5-hour limit", () => {
         expect(usageFromQuotaHeaders(new Headers({ "content-type": "application/json" }))).toBeNull();
 
-        const weeklyOnly = new Headers({ "anthropic-ratelimit-unified-7d-utilization": "0.5" });
-        expect(usageFromQuotaHeaders(weeklyOnly)?.five_hour).toEqual({ utilization: 0, resets_at: null });
+        // Since 2026-10-31 such an account's answers carry only the weekly headers, claim "seven_day".
+        const usage = usageFromQuotaHeaders(weeklyOnlyHeaders("0.5"));
+
+        expect(usage?.five_hour).toBeNull();
+        expect(usage?.seven_day.utilization).toBe(50);
+        expect(fiveHourState(usage)).toBe("absent");
+        expect(percents(usage ?? undefined)).toEqual({ seven_day: 50 });
     });
 });
 
@@ -293,7 +309,7 @@ describe("fetchUsageFromHeaders", () => {
 
         const capped = recorder([() => new Response("{}", { status: 429, headers: quotaHeaders("1", "0.4") })]);
         expect(
-            (await fetchUsageFromHeaders(LONG_LIVED, { ...OPEN, fetchImpl: capped.fetchImpl })).five_hour.utilization
+            (await fetchUsageFromHeaders(LONG_LIVED, { ...OPEN, fetchImpl: capped.fetchImpl })).five_hour?.utilization
         ).toBe(100);
     });
 
@@ -305,7 +321,7 @@ describe("fetchUsageFromHeaders", () => {
         const usage = await fetchUsageFromHeaders(LONG_LIVED, { ...OPEN, fetchImpl });
 
         expect(sent.map((request) => request.model)).toEqual([QUOTA_PROBE_MODEL, QUOTA_PROBE_FALLBACK_MODEL]);
-        expect(usage.five_hour.utilization).toBe(23);
+        expect(usage.five_hour?.utilization).toBe(23);
         expect(usage.seven_day_overage_included).toBeUndefined();
     });
 
@@ -343,6 +359,32 @@ describe("mergeHeaderReading", () => {
 
         expect(percents(second)).toEqual({ five_hour: 30, seven_day: 39, seven_day_fable: 7 });
         expect(second.quota).toMatchObject({ endpointAsOf: new Date(ENDPOINT_AT).toISOString() });
+    });
+
+    it("headers without a 5h window drop the session limit the kept endpoint reading had", () => {
+        const fresh = usageFromQuotaHeaders(weeklyOnlyHeaders("0.39", "0.06")) as Usage;
+        const merged = mergeHeaderReading(fresh, ENDPOINT_READING, ENDPOINT_AT);
+
+        // The endpoint's 33 % session would otherwise read as a live 5h window.
+        expect(merged.five_hour).toBeNull();
+        expect(merged.limits?.map((limit) => limit.kind)).toEqual(["weekly_all", "weekly_scoped"]);
+        expect(percents(merged)).toEqual({ seven_day: 39, seven_day_fable: 6 });
+        expect(merged.seven_day_breakdown).toEqual(ENDPOINT_READING.seven_day_breakdown);
+        expect(fiveHourState(merged)).toBe("absent");
+
+        // A chain keeps it absent, and an account that gets a 5h window back shows it again.
+        const next = mergeHeaderReading(usageFromQuotaHeaders(weeklyOnlyHeaders("0.4")) as Usage, merged, NOW);
+        expect(next.limits?.some((limit) => limit.kind === "session")).toBe(false);
+        const back = mergeHeaderReading(usageFromQuotaHeaders(quotaHeaders("0.05", "0.4")) as Usage, next, NOW);
+        expect(percents(back)).toMatchObject({ five_hour: 5, seven_day: 40 });
+        expect(fiveHourState(back)).toBe("present");
+    });
+
+    it("negative control: headers with a 5h window still overwrite the endpoint's session numbers", () => {
+        const merged = mergeHeaderReading(usageFromQuotaHeaders(quotaHeaders("0.5")) as Usage, ENDPOINT_READING, 0);
+
+        expect(merged.limits?.filter((limit) => limit.kind === "session").map((limit) => limit.percent)).toEqual([50]);
+        expect(fiveHourState(merged)).toBe("present");
     });
 
     it("without an endpoint reading, the limits come from the headers alone", () => {
@@ -495,7 +537,7 @@ describe("pollAccount with a long-lived token", () => {
         allowForceRefresh = true;
         const result = await poll(withPair());
 
-        expect(result.usage?.five_hour.utilization).toBe(20);
+        expect(result.usage?.five_hour?.utilization).toBe(20);
         expect(isHeaderReading(result.usage)).toBe(false);
         expect(resolveCalls.some((call) => call.forceRefresh)).toBe(true);
         expect(requests).toEqual([USAGE_URL, USAGE_URL]);
@@ -531,7 +573,7 @@ describe("pollAccount with a long-lived token", () => {
         };
         const again = await poll(withPair(), { previousUsage: closed, previousFetchedAt: NOW - 3 * 60_000 });
 
-        expect(again.usage?.five_hour.utilization).toBe(23);
+        expect(again.usage?.five_hour?.utilization).toBe(23);
         expect(requests).toEqual([QUOTA_PROBE_URL]);
     });
 
@@ -539,7 +581,7 @@ describe("pollAccount with a long-lived token", () => {
         stubFetch();
         const read = await poll(withPair(), { headersOnly: true });
 
-        expect(read.usage?.five_hour.utilization).toBe(23);
+        expect(read.usage?.five_hour?.utilization).toBe(23);
         expect(resolveCalls).toEqual([]);
 
         const closed = {
@@ -552,7 +594,7 @@ describe("pollAccount with a long-lived token", () => {
             previousFetchedAt: NOW - 3 * 60_000,
         });
 
-        expect(again.usage?.five_hour.utilization).toBe(23);
+        expect(again.usage?.five_hour?.utilization).toBe(23);
         expect(resolveCalls).toEqual([]);
     });
 
@@ -579,7 +621,7 @@ describe("pollAccount with a long-lived token", () => {
             previousFetchedAt: NOW - 60_000,
         });
 
-        expect(recent.usage?.five_hour.utilization).toBe(50);
+        expect(recent.usage?.five_hour?.utilization).toBe(50);
         expect(recent.readAt).toBe(NOW - 60_000);
         expect(requests).toEqual([]);
 
@@ -589,7 +631,7 @@ describe("pollAccount with a long-lived token", () => {
             previousFetchedAt: NOW - 2 * 60_000,
         });
 
-        expect(due.usage?.five_hour.utilization).toBe(23);
+        expect(due.usage?.five_hour?.utilization).toBe(23);
         expect(due.readAt).toBeUndefined();
         expect(requests).toEqual([QUOTA_PROBE_URL]);
     });

@@ -251,6 +251,38 @@ describe("writeSnapshotsCache", () => {
         expect(cache?.providers["grok-sub"].accounts[0].accountName).toBe("work");
     });
 
+    test("an account without a 5-hour limit keeps absentLimits on the wire and has no five_hour window", async () => {
+        useTempHome();
+        const absent: AccountUsageSnapshot = {
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            accountName: "work",
+            fetchedAt: "2026-11-01T15:00:00.000Z",
+            limits: [{ key: "seven_day", label: "Weekly (all)", kind: "weekly", percentUsed: 30 }],
+            absentLimits: [{ key: "five_hour", kind: "session" }],
+            native: { five_hour: null, seven_day: { utilization: 30, resets_at: null } },
+        };
+
+        await writeSnapshotsCache(
+            {
+                "anthropic-sub": {
+                    alias: "claude",
+                    displayName: "Claude",
+                    prominent: ["five_hour", "seven_day"],
+                    accounts: [absent],
+                },
+            },
+            new Date("2026-11-01T15:00:01.000Z")
+        );
+
+        const [row] = (await readSnapshotsCache())?.providers["anthropic-sub"].accounts ?? [];
+
+        expect(row.absentLimits).toEqual([{ key: "five_hour", kind: "session" }]);
+        expect(row.limits.map((window) => window.key)).toEqual(["seven_day"]);
+        // `native` never reaches the all-provider file.
+        expect(row.native).toBeUndefined();
+    });
+
     test("a round that changes nothing does not rewrite the file; one that does, does", async () => {
         useTempHome();
         const round = slice("grok-sub", "grok", "work");
