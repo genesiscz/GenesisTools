@@ -1,7 +1,7 @@
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteIo, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteIo, existingMode, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
 import { type ContentDigest, verifyCompressedFile } from "./file";
 import { type LedgerRecord, recordCompression } from "./ledger";
@@ -27,7 +27,10 @@ export interface VerifiedZstdOptions extends ZstdParams {
     lineAligned?: boolean;
     /** Overrides the preset: frames compressed at once on the thread pool. */
     threads?: number;
-    /** File mode of the result, applied past the umask (`0o600` for private data); default 0666 minus the umask. */
+    /**
+     * File mode of the result, applied past the umask (`0o600` for private data). Default: the mode of the target it
+     * replaces, so a private file stays private; for a new target 0666 minus the umask. The partial has it from birth.
+     */
     mode?: number;
     /** Where the bytes came from, for the ledger's `source` (the log a rotation read); default `stream`. */
     source?: string;
@@ -117,6 +120,8 @@ class Writer implements VerifiedZstdWriter {
     private readonly outputHash = new Bun.CryptoHasher("sha256");
     private readonly startedAt = new Date().toISOString();
     private readonly batched: boolean;
+    /** The mode the output is published with; undefined leaves a new file at 0666 minus the umask. */
+    private readonly mode: number | undefined;
     private fd: number | undefined;
     private current: VerifiedZstdState = "open";
     private sealed: { digest: ContentDigest; stats: SeekableWriterStats } | undefined;
@@ -141,8 +146,11 @@ class Writer implements VerifiedZstdWriter {
             mkdirSync(dir, { recursive: true });
         }
 
+        // Without an explicit mode a replaced target keeps its own, as atomicWriteFileSync does: a 0600 transcript
+        // must not come back 0644, nor sit readable in the partial before the rename.
+        this.mode = options.mode ?? existingMode(this.target);
         this.partialPath = `${this.target}.${process.pid}.${partialCounter++}.partial`;
-        this.fd = openSync(this.partialPath, "wx", options.mode ?? 0o666);
+        this.fd = openSync(this.partialPath, "wx", this.mode ?? 0o666);
         this.frames = new SeekableZstdWriter({
             write: (bytes) => this.write(bytes),
             ...this.settings,
@@ -206,8 +214,8 @@ class Writer implements VerifiedZstdWriter {
             this.closeFile();
 
             // The open's mode is masked by umask; re-applied so a private output is never published wider.
-            if (this.options.mode !== undefined) {
-                chmodSync(this.partialPath, this.options.mode);
+            if (this.mode !== undefined) {
+                chmodSync(this.partialPath, this.mode);
             }
 
             const digest: ContentDigest = { bytes: stats.inputBytes, sha256: this.inputHash.digest("hex") };
