@@ -87,7 +87,11 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the env accessor namespaces (x, grok, codex, copilot, aiProxy, …): variables grouped by the tool or service that reads them, a wider set than the harnesses",
     },
-    "src/utils/rm/aside.ts": {
+    "plugins/genesis-tools/hooks/session-scratch.ts": {
+        table: 2,
+        why: "a standalone plugin copy of AGENT_SCRATCH_DIRS (src/utils/rm/scratch-dirs.ts), which a hook cannot import; a test in src/utils/rm/rm.test.ts pins both to the same folder",
+    },
+    "src/utils/rm/scratch-dirs.ts": {
         table: 1,
         why: "keyed by the runtime agent of the caller (claude-code, codex, grok, copilot), a wider set than the harnesses",
     },

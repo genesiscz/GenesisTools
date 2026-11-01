@@ -16,19 +16,10 @@ import {
     saveRmRequest,
 } from "./requests";
 import type { RmCaller, RmTarget, RmVerdict } from "./rules";
+import { agentScratchDir } from "./scratch-dirs";
 import { newBatchId, type RenameHooks, RmTargetChangedError, renameVerified, trashItemName } from "./trash";
 
-/** The folder under the shared temp root each agent keeps its session scratch in. */
-export const AGENT_SCRATCH_DIRS: Readonly<Record<string, string>> = {
-    "claude-code": "cc",
-    codex: "codex",
-    grok: "grok",
-    copilot: "copilot",
-};
-
-export function agentScratchDir(agent: string): string {
-    return AGENT_SCRATCH_DIRS[agent] ?? "agents";
-}
+export { AGENT_SCRATCH_DIRS, agentScratchDir } from "./scratch-dirs";
 
 /** The roots a session's scratch may live under: the shared `cc` convention and the agent's own folder. */
 export function sessionScratchRoots(caller: RmCaller): string[] {
