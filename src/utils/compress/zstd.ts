@@ -24,7 +24,10 @@ const SEEK_FOOTER_BYTES = 9;
 
 /** Input bytes per frame. A tail read decompresses about one frame; 4 MiB keeps that near 5 ms. */
 export const DEFAULT_FRAME_BYTES = 4 * 1024 * 1024;
-/** zstd level for files written by this module. Level 3 is zstd's own default: ~300 MB/s in, ~1 GB/s out. */
+/**
+ * zstd level of the raw frame helpers here when a caller names none (zstd's own default). Files written through
+ * `compressFile` and `packDirectory` take their preset's level instead (`presets.ts`).
+ */
 export const DEFAULT_ZSTD_LEVEL = 3;
 /** The file name suffix every compressed file here carries. */
 export const ZSTD_SUFFIX = ".zst";

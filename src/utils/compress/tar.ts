@@ -4,6 +4,7 @@ import { env } from "@genesiscz/utils/env";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
 import { readExistingAncestorSync } from "./file";
+import { PRESETS } from "./presets";
 import { readZstdFramesSync, SeekableZstdWriter, type ZstdParams } from "./zstd";
 
 /** The suffix of a folder packed by {@link packDirectory}: `video_files` becomes `video_files.zst` (tar inside zstd). */
@@ -345,14 +346,17 @@ export function assertArchiveOutsideSource(source: string, archive: string): voi
  * Packs a folder into one `.tar.zst` with the system `tar` (bsdtar on macOS and Windows, GNU tar on Linux) streamed
  * into seekable zstd frames, through a temp file and a rename: the folder is never held in memory and a failed or
  * interrupted pack never leaves a truncated archive under the final name. The archive holds one top folder, named
- * after the source folder. Extended attributes are left out (`--no-xattrs`, `COPYFILE_DISABLE=1`).
+ * after the source folder. Extended attributes are left out (`--no-xattrs`, `COPYFILE_DISABLE=1`). Level, long mode,
+ * frame size and threads that a caller leaves out come from the `tree` preset.
  */
 export async function packDirectory({
     source: inputSource,
     archive: inputArchive,
-    frameBytes,
-    threads,
-    ...params
+    level = PRESETS.tree.level,
+    long = PRESETS.tree.long,
+    checksum,
+    frameBytes = PRESETS.tree.frameBytes,
+    threads = PRESETS.tree.threads,
 }: ZstdParams & {
     source: string;
     archive?: string;
@@ -367,7 +371,7 @@ export async function packDirectory({
     await atomicWriteFileStreamed(
         archive,
         async (write) => {
-            const writer = new SeekableZstdWriter({ write, frameBytes, threads, ...params });
+            const writer = new SeekableZstdWriter({ write, frameBytes, threads, level, long, checksum });
             const proc = Bun.spawn(["tar", "--no-xattrs", "-cf", "-", "-C", dirname(source), basename(source)], {
                 stdout: "pipe",
                 stderr: "pipe",
