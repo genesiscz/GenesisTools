@@ -258,6 +258,37 @@ export function requestsAlsoNaming(
     return found;
 }
 
+/**
+ * For each in-place path, the pending request of the same agent and session that already names it in place: asking
+ * again would open a second request for the same object (n5vpfy and yzbyqx, 2026-11-01).
+ */
+export function alreadyAskedInPlace(
+    paths: readonly string[],
+    caller: Pick<RmCaller, "agent" | "sessionId">,
+    pending: readonly RmRequest[]
+): Map<string, string> {
+    const found = new Map<string, string>();
+
+    if (!caller.sessionId) {
+        return found;
+    }
+
+    const own = pending
+        .filter((request) => request.status === "pending" && request.kind === "delete")
+        .filter((request) => request.caller?.agent === caller.agent && request.caller?.sessionId === caller.sessionId)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+    for (const path of paths) {
+        const hit = own.find((request) => request.targets.some((target) => !target.stored && target.path === path));
+
+        if (hit) {
+            found.set(path, hit.id);
+        }
+    }
+
+    return found;
+}
+
 export interface RmPriorDenial {
     path: string;
     requestId: string;

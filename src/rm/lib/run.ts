@@ -5,6 +5,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import {
     type ApprovalChoices,
     type ApprovalPrompt,
+    alreadyAskedInPlace,
     appendRmLedger,
     approvalItemReason,
     confirmByPerson,
@@ -378,9 +379,34 @@ function requestForAsked(
     const asideOn = options.aside ?? ctx.config.askAction === "aside";
     const asideable = asideOn ? asked.filter((item) => ctx.config.asideUnsaved || !item.verdict.unsaved) : [];
     const inPlace = asked.filter((item) => !asideable.includes(item));
+    // An in-place path this session already asked about waits in that request; a second one would ask twice. An
+    // aside path is never matched: its moved copy is a new object.
+    const askedBefore = alreadyAskedInPlace(
+        inPlace.map((item) => item.target.path),
+        ctx.caller,
+        listRmRequests()
+    );
+    const freshInPlace = inPlace.filter((item) => !askedBefore.has(item.target.path));
+
+    if (!options.json) {
+        for (const [path, id] of askedBefore) {
+            out.println(pc.yellow(`already waits in request ${id}: ${shown(path, ctx.cwd)}`));
+        }
+    }
+
+    if (asideable.length === 0 && freshInPlace.length === 0) {
+        const first = [...askedBefore.values()][0] ?? "";
+
+        if (!options.json) {
+            printRequestHint(first, inPlace.length);
+        }
+
+        return { id: first, denials };
+    }
+
     const { request, aside } = createAsideRequest({
         aside: asideable,
-        inPlace,
+        inPlace: freshInPlace,
         caller: ctx.caller,
         cwd: ctx.cwd,
         reason: options.reason ?? null,
@@ -400,13 +426,13 @@ function requestForAsked(
             out.println(pc.dim(`  kept in place ${shown(k.input.target.path, ctx.cwd)}: ${k.reason}`));
         }
 
-        for (const item of inPlace.filter((i) => asideOn && i.verdict.unsaved)) {
+        for (const item of freshInPlace.filter((i) => asideOn && i.verdict.unsaved)) {
             out.println(
                 pc.dim(`  kept in place ${shown(item.target.path, ctx.cwd)}: unsaved work, /tmp loses it on reboot`)
             );
         }
 
-        printRequestHint(request.id, asked.length);
+        printRequestHint(request.id, request.targets.length);
     }
 
     return { id: request.id, denials };
