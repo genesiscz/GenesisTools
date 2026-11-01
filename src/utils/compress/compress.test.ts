@@ -20,6 +20,7 @@ import {
     unlinkSync,
     utimesSync,
     writeFileSync,
+    writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -988,4 +989,33 @@ describe("day logs", () => {
         expect(streamed.sort()).toEqual(both.stdout.split("\n").filter(Boolean).sort());
         expect(absent.code).toBe(1);
     });
+
+    it.skipIf(!ripgrepBinary())(
+        "a .zst that does not decode fails the search with exit 2, and a cached search keeps nothing for it",
+        async () => {
+            const dir = scratch("rg-broken");
+            const plain = join(dir, "2026-10-10.log");
+            writeFileSync(plain, logText(2000));
+            const { target } = await compressFile({ source: plain, frameBytes: 4096 });
+            unlinkSync(plain);
+            // A frame in the middle no longer passes its checksum: rg would count only the lines before it.
+            const fd = openSync(target, "r+");
+            writeSync(fd, Buffer.alloc(64, 0x41), 0, 64, Math.floor(statSync(target).size / 2));
+            closeSync(fd);
+            const args = ["--no-config", "--no-filename", "-c", "-F", "line"];
+
+            const run = await ripgrepFiles({ rg: ripgrepBinary()!, args, files: [target] });
+            expect([run.code, run.signal]).toEqual([2, null]);
+            expect(run.stderr).toContain(target);
+
+            const digest = { name: "t", dir: dayLogDigestsDir(dir), sealed: () => true };
+            const cached = await ripgrepFilesCached({ rg: ripgrepBinary()!, args, files: [target], digest });
+            expect([cached.code, cached.keptFiles]).toEqual([2, 0]);
+            const digestPath = ripgrepDigestPath({ ...digest, args });
+            const saved: unknown = existsSync(digestPath)
+                ? SafeJSON.parse(readFileSync(digestPath, "utf8"), { strict: true })
+                : { entries: {} };
+            expect(isObject(saved) && isObject(saved.entries) ? Object.keys(saved.entries) : saved).toEqual([]);
+        }
+    );
 });
