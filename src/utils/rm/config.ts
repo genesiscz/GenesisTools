@@ -49,7 +49,8 @@ export type RmAskAction = "aside" | "request";
 
 /**
  * How a person confirms: `auto` uses Touch ID through GenesisTools.app when the installed app offers it and falls back
- * to `code` otherwise; `touch-id` refuses without the app; `code` is the typed code on a terminal, or the macOS dialog.
+ * to the dialog otherwise; `touch-id` refuses without the app; `code` is the typed code on a terminal, or the
+ * platform's dialog (osascript, zenity or kdialog, a PowerShell message box).
  */
 export type RmApproval = "auto" | "touch-id" | "code";
 

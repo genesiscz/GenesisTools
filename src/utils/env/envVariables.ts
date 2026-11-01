@@ -301,6 +301,8 @@ export const env = {
         /** Bundle id of the .app that launched this process tree (macOS sets it); the TCC client for CLI children. */
         getHostBundleIdentifier: () => getTrimmed("__CFBundleIdentifier"),
         getDarwinKitTimeoutMs: () => parseIntEnv("DARWINKIT_TIMEOUT_MS", 0),
+        /** A graphical session a window can open on: X11 (`DISPLAY`) or Wayland (`WAYLAND_DISPLAY`). */
+        hasGraphicalDisplay: () => Boolean(getTrimmed("DISPLAY") || getTrimmed("WAYLAND_DISPLAY")),
     },
 
     editor: {
