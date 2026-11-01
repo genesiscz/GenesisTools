@@ -78,6 +78,7 @@ const batch = createVerifiedZstdBatch({ caller: "my-rotation", preset: "text", s
 try {
     const day = batch.add(`${base}-2026-10-31.jsonl.zst`);
     await day.push(lineBytes); // await each push
+    await day.finish(); // the day is complete: written, closed and read back now, renamed with the batch
     await batch.commit(); // every output verified, then every one renamed; one failure renames none
 } finally {
     batch.abort(); // no-op after a commit
@@ -89,8 +90,10 @@ try {
   `verifyCompressedFile` (decompressed size and sha256 must equal the input) and only then renames it over the target.
   A failed push, write or read-back removes the partial and leaves an existing target byte for byte as it was
   (`ZstdVerificationError` names the targets).
-- A batch verifies every output before it renames the first. The renames are not one atomic step: a rename that fails
-  after all verified (the folder removed meanwhile) leaves the earlier outputs renamed and removes the rest.
+- A batch verifies every output before it renames the first. Call `finish()` on a member once its input is complete:
+  until then it keeps its file open and up to `threads` frames in memory (16 MiB for `text`). The renames are not one
+  atomic step: a rename that fails after all verified (the folder removed meanwhile) leaves the earlier outputs
+  renamed and removes the rest.
 - Each commit lands in the ledger as `op: "compress"` with the options' `caller` and `source` (default `stream`).
   `compressStream(chunks, { target, caller })` is the one-output form for an iterable.
 - Read the result with `readLines` / `readLinesSync` (`@genesiscz/utils/fs/read-lines`): they open plain and `.zst`
