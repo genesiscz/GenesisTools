@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { serializeWidgetMedia } from "../composer/serialize";
 import { composeHandoff } from "../insights/handoff";
-import { type WidgetSources, widgetSnapshot } from "./snapshot";
+import { type WidgetSources, widgetCardText, widgetSnapshot } from "./snapshot";
 import { widgetRoot } from "./storage";
 import { type WidgetAsset, widgetSessionKey } from "./types";
 
@@ -77,7 +77,7 @@ export async function createWidgetHandoff({
         paragraphs.push(`Original transcript: ${session.transcriptPath}`);
     }
     for (const card of snapshot.cards.slice(-12)) {
-        paragraphs.push(`## ${card.kind}: ${card.title}`, `State: ${card.status}`, card.body);
+        paragraphs.push(`## ${card.kind}: ${card.title}`, `State: ${card.status}`, widgetCardText(card));
         for (const image of card.attachments) {
             paragraphs.push(`Image: ${image.path}`);
         }

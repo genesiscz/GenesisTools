@@ -396,7 +396,12 @@ export function decisionItemId(sessionId: string, number: number): string {
     return `d_${number}_${sessionId}`;
 }
 
-function fromRecord(row: DecisionRecord): InboxDecision {
+/**
+ * A stored decision as the Inbox shows it: its context, notes, proposal, confidence, the options with their reasons,
+ * the delivery line and the `file:line` refs its text names (not read yet: `fillExcerpts` in excerpts.ts reads them).
+ * The widget's decision cards take their details from here too, so both surfaces show the same things.
+ */
+export function fromRecord(row: DecisionRecord): InboxDecision {
     return {
         kind: "decision",
         id: row.id,
