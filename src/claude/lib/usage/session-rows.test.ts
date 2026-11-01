@@ -59,7 +59,7 @@ mock.module("@genesiscz/utils/agent-sessions/session-backward", () => ({
     },
 }));
 
-const pins = new Map<string, { account: string | null }>();
+const pins = new Map<string, { account: string | null; host?: { kind: string; id: string } }>();
 const cmuxRefs = new Map<string, { surfaceId: string | null; at: number }>();
 
 mock.module("@genesiscz/utils/agent-sessions/pins", () => ({
@@ -80,6 +80,7 @@ import {
     GROK_CACHE_TTL_MS,
     listSessionRows,
     listSessionRowsWithTimings,
+    rowsOnHost,
 } from "./session-rows";
 
 const NOW = 1_700_000_000_000;
@@ -317,6 +318,7 @@ describe("listSessionRows", () => {
                 "cwdShort",
                 "filePath",
                 "gitBranch",
+                "host",
                 "lastCacheAt",
                 "lastUserAt",
                 "model",
@@ -633,6 +635,24 @@ describe("listSessionRows", () => {
         expect(rows[0]?.cmux?.surfaceId).toBe("surface-uuid");
     });
 
+    test("rows carry the host their pin names, null without one, and rowsOnHost keeps that host's rows", async () => {
+        listing.sessions = [
+            record({ filePath: "/tmp/hosted.jsonl", sessionId: "HOSTED-ID", mtime: NOW - 5 * MIN }),
+            record({ filePath: "/tmp/plain.jsonl", sessionId: "plain-id", mtime: NOW - 6 * MIN }),
+        ];
+        tails.set("/tmp/hosted.jsonl", [OPUS_LINE]);
+        tails.set("/tmp/plain.jsonl", [OPUS_LINE]);
+        pins.set("HOSTED-ID", { account: "work", host: { kind: "t3", id: "thread-1" } });
+        pins.set("plain-id", { account: "work" });
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        const host = new Map(rows.map((row) => [row.sessionId, row.host]));
+        expect(host.get("HOSTED-ID")).toEqual({ kind: "t3", id: "thread-1" });
+        expect(host.get("plain-id")).toBeNull();
+        expect(rowsOnHost(rows, "t3").map((row) => row.sessionId)).toEqual(["HOSTED-ID"]);
+        expect(rowsOnHost(rows, "other")).toEqual([]);
+    });
+
     test("rows with equal clocks keep a deterministic order across polls", async () => {
         const ts = new Date(NOW - 2 * 60 * MIN).toISOString();
         const line = `{"type":"assistant","timestamp":"${ts}","isSidechain":false,"message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`;
@@ -664,6 +684,7 @@ test("usage sessions is registered with --json and --hours", () => {
     expect(help).toContain("--json");
     expect(help).toContain("--hours");
     expect(help).toContain("--min");
+    expect(help).toContain("--host <kind>");
 });
 
 describe("the saved tail cache", () => {

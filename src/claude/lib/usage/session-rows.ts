@@ -1,6 +1,6 @@
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
-import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
+import { loadPins, type PinHost } from "@genesiscz/utils/agent-sessions/pins";
 import {
     type ClaudeTailUsage,
     emptyClaudeTailUsage,
@@ -80,6 +80,8 @@ export interface SessionRow {
      * both "no pin recorded" and a plain keychain launch (pin with account null).
      */
     account: string | null;
+    /** The app that hosted the session (a T3 Code thread), from the same pin; null when none did or no pin says. */
+    host: PinHost | null;
     /** Recorded cmux location from the refs journal — where the session started, unverified. */
     cmux: SessionCmuxLocation | null;
     /**
@@ -319,6 +321,7 @@ export async function extractTailUsageUncached(filePath: string): Promise<{ usag
 
 interface RowJoins {
     accounts: Map<string, string | null>;
+    hosts: Map<string, PinHost>;
     cmux: Map<string, SessionCmuxLocation>;
     live: Set<string> | null;
 }
@@ -357,6 +360,7 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
         continuedIn: usage.continuedIn,
         lastUserAt: usage.lastUserAt,
         account: joins.accounts.get(sessionId.toLowerCase()) ?? null,
+        host: joins.hosts.get(sessionId.toLowerCase()) ?? null,
         cmux: joins.cmux.get(sessionId.toLowerCase()) ?? null,
         alive: joins.live ? joins.live.has(sessionId.toLowerCase()) : null,
         filePath: record.filePath,
@@ -429,9 +433,14 @@ export async function listSessionRowsWithTimings(
     const joins = await prof.measureAsync("journals", async () => {
         const pins = await loadPins({ readOnly: true }).catch(() => new Map());
         const accounts = new Map<string, string | null>();
+        const hosts = new Map<string, PinHost>();
 
         for (const [sessionId, pin] of pins) {
             accounts.set(sessionId.toLowerCase(), pin.account ?? null);
+
+            if (pin.host) {
+                hosts.set(sessionId.toLowerCase(), pin.host);
+            }
         }
 
         const cmux = new Map<string, SessionCmuxLocation>();
@@ -451,7 +460,7 @@ export async function listSessionRowsWithTimings(
             });
         }
 
-        return { accounts, cmux, live: (opts.liveSessionIds ?? liveClaudeSessionIds)() };
+        return { accounts, hosts, cmux, live: (opts.liveSessionIds ?? liveClaudeSessionIds)() };
     });
     const joinMs = performance.now() - joinStarted;
     const rank: Record<CacheStatus, number> = { HOT: 0, COOLING: 1, CRITICAL: 2, COLD: 3 };
@@ -475,6 +484,11 @@ export async function listSessionRowsWithTimings(
             records: records.length,
         },
     };
+}
+
+/** The rows whose session ran inside this host app (`t3`), so an account's T3 sessions can be read apart. */
+export function rowsOnHost<Row extends Pick<SessionRow, "host">>(rows: Row[], kind: string): Row[] {
+    return rows.filter((row) => row.host?.kind === kind);
 }
 
 /** Same row math as the usage TUI Sessions tab. */

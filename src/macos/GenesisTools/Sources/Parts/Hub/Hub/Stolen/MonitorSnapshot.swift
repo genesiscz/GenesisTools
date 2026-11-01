@@ -38,6 +38,25 @@ public struct SessionCmuxRef: Equatable, Sendable, Codable {
     }
 }
 
+/// GenesisTools adaptation: the app that hosted a session (T3 Code) and its id for it, from the session's pin.
+public struct SessionHost: Equatable, Sendable, Codable {
+    /// `t3` for T3 Code; the hook's marker table (`AGENT_HOST_MARKERS`) names every kind.
+    public var kind: String
+    /// The host's id for this session: a T3 Code thread id.
+    public var id: String
+
+    public init(kind: String, id: String) {
+        self.kind = kind
+        self.id = id
+    }
+
+    /// The badge text: `T3` for `t3`.
+    public var badge: String { kind.uppercased() }
+
+    /// The app's name for the tooltip; an unknown kind reads as itself.
+    public var appName: String { kind == "t3" ? "T3 Code" : kind }
+}
+
 public struct MonitorSessionRow: Equatable, Sendable, Codable, Identifiable {
     /// Per-TRANSCRIPT-FILE identity, not per session id.
     ///
@@ -92,6 +111,8 @@ public struct MonitorSessionRow: Equatable, Sendable, Codable, Identifiable {
     /// (every account shares one home, and no rollout names one), so for Codex nil also
     /// covers every session that predates the hook learning about Codex.
     public var account: String?
+    /// GenesisTools adaptation: the app that hosted the session, from its pin; nil when none did or no pin says.
+    public var host: SessionHost?
     public var cmux: SessionCmuxRef?
     public var filePath: String
     /// Native home the session was read from (`~/.codex`, `~/.grok`). Codex's only provenance.
@@ -172,7 +193,8 @@ public struct MonitorSessionRow: Equatable, Sendable, Codable, Identifiable {
         cmux: SessionCmuxRef? = nil,
         filePath: String = "",
         sourceHome: String? = nil,
-        archived: Bool? = nil
+        archived: Bool? = nil,
+        host: SessionHost? = nil
     ) {
         self.provider = provider
         self.sessionId = sessionId
@@ -199,12 +221,13 @@ public struct MonitorSessionRow: Equatable, Sendable, Codable, Identifiable {
         self.filePath = filePath
         self.sourceHome = sourceHome
         self.archived = archived
+        self.host = host
     }
 
     private enum CodingKeys: String, CodingKey {
         case provider, sessionId, title, cwd, cwdShort, project, gitBranch, mtime, lastCacheAt, model, modelSwitched
         case cacheStatus, cacheTtlSec, cacheLifetimeSec, totalTokens, cacheReadTokens, cacheCreateTokens, contextTokens
-        case compacted, lastUserAt, account, cmux, filePath, sourceHome, archived
+        case compacted, lastUserAt, account, cmux, filePath, sourceHome, archived, host
     }
 
     /// Lenient on the two keys older writers omit: `provider` (the Claude-only command never
@@ -237,6 +260,7 @@ public struct MonitorSessionRow: Equatable, Sendable, Codable, Identifiable {
         filePath = try c.decodeIfPresent(String.self, forKey: .filePath) ?? ""
         sourceHome = try c.decodeIfPresent(String.self, forKey: .sourceHome)
         archived = try c.decodeIfPresent(Bool.self, forKey: .archived)
+        host = try c.decodeIfPresent(SessionHost.self, forKey: .host)
     }
 }
 

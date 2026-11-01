@@ -146,6 +146,22 @@ describe("pins", () => {
     });
 });
 
+describe("the host a pin records", () => {
+    test("a row with a host and a row without one both load, and only the first carries a host", async () => {
+        await mkdir(dirname(pinsPath()), { recursive: true });
+        await writeFile(
+            pinsPath(),
+            `${SafeJSON.stringify(pin({ sessionId: "hosted", host: { kind: "t3", id: "thread-1" } }))}\n` +
+                `${SafeJSON.stringify(pin({ sessionId: "plain" }))}\n`
+        );
+
+        const pins = await loadPins({ readOnly: true });
+        expect(pins.get("hosted")?.host).toEqual({ kind: "t3", id: "thread-1" });
+        expect(pins.get("plain")?.host).toBeUndefined();
+        expect(pins.get("plain")?.account).toBe("max-primary");
+    });
+});
+
 describe("one journal, three agents", () => {
     test("a provider filter keeps that agent's records, and an untagged record is claude's", async () => {
         await recordPin(pin({ sessionId: "claude-1", account: "personal" }));

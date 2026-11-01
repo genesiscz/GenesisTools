@@ -43,7 +43,8 @@ export function registerUsageCommand(program: Command): void {
         .option("--json", "Output as JSON")
         .option("--hours <n>", "Only sessions with mtime within this many hours", "6")
         .option("--min <n>", "If fewer than N rows after --hours, append older sessions")
-        .action(async (opts: { json?: boolean; hours?: string; min?: string }) => {
+        .option("--host <kind>", "Only sessions an app hosted, by its kind in the pin journal (t3 = T3 Code)")
+        .action(async (opts: { json?: boolean; hours?: string; min?: string; host?: string }) => {
             const hoursRaw = typeof opts.hours === "string" ? opts.hours : "6";
             const hours = Number.parseInt(hoursRaw, 10);
 
@@ -62,10 +63,13 @@ export function registerUsageCommand(program: Command): void {
             }
 
             const prof = profiler.scope("claude-sessions");
-            const { listSessionRowsWithTimings } = await import("@app/claude/lib/usage/session-rows");
-            const { rows, timings } = await prof.measureAsync("list", () =>
+            const { listSessionRowsWithTimings, rowsOnHost } = await import("@app/claude/lib/usage/session-rows");
+            const listed = await prof.measureAsync("list", () =>
                 listSessionRowsWithTimings({ hours, minRows, excludeSubagents: true })
             );
+            const { timings } = listed;
+            // After `--min`: it tops up the whole list, and the filter then keeps that list's hosted rows.
+            const rows = opts.host ? rowsOnHost(listed.rows, opts.host) : listed.rows;
             logger.debug({ timings }, "usage sessions timings");
             prof.summary("usage sessions");
             out.result({ fetchedAt: Date.now(), rows, timings });
