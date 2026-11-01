@@ -1,9 +1,18 @@
 // Shell guard rules about GenesisTools' own commands. They sit here and not in src/utils/shell/rules, because those
 // modules are copied into another repo where `tools` names a different binary.
 
+import { isAbsolute } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SHELL_RULES, type ShellMatch, type ShellRule } from "@genesiscz/utils/shell/rules";
-import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
+import {
+    commandTokenIndex,
+    commandWord,
+    originalSlice,
+    type ShellScan,
+    type Span,
+    splitPipeline,
+    tokenize,
+} from "@genesiscz/utils/shell/scan";
 
 /** The verbs that let a request through, trust a folder, or change settings. */
 const RM_USER_VERBS = String.raw`(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b`;
@@ -111,7 +120,202 @@ export const rmUseToolsRm: ShellRule = {
     },
 };
 
-export const GENESIS_TOOLS_RULES: readonly ShellRule[] = [rmUserVerbs, rmUseToolsRm];
+/** A full session id as the harnesses write it: a UUID. */
+const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The agent scratch roots directly in /tmp (`AGENT_SCRATCH_DIRS` in src/utils/rm/aside.ts): never loose themselves. */
+const SCRATCH_ROOT_NAMES = new Set(["cc", "codex", "grok", "copilot", "agents"]);
+const TEMP_CHILD = /^(?:\/private)?\/tmp\/([^/]+)\/?$|^\$\{?TMPDIR\}?\/([^/]+)\/?$/;
+const CC_SCRATCH = /^(?:\/private)?\/tmp\/cc\/[^/]+\/([^/]+)/;
+const REDIRECT = /^(?:\d|&)?>>?\|?/;
+
+/**
+ * A path `tools rm` will not delete without asking: a file or folder directly in the temp root, or one under
+ * `/tmp/cc/<project>/` whose session level is not a full session id.
+ */
+function isLooseScratch(path: string): boolean {
+    const child = TEMP_CHILD.exec(path);
+
+    if (child) {
+        return !SCRATCH_ROOT_NAMES.has(child[1] ?? child[2] ?? "");
+    }
+
+    const level = CC_SCRATCH.exec(path)?.[1];
+    return level !== undefined && !SESSION_UUID.test(level);
+}
+
+function unquote(arg: string): string {
+    return arg.replace(/^(["'])(.*)\1$/, "$2");
+}
+
+/**
+ * Where a pipeline element ends in the original command: the scanner blanks quoted text and trims the element, so a
+ * trailing quoted argument lies past `element.text`, in the blanked run before the next separator.
+ */
+function elementEnd(scan: ShellScan, element: Span): number {
+    let end = element.start + element.text.length;
+
+    while (end < scan.cleaned.length && /\s/.test(scan.cleaned[end])) {
+        end++;
+    }
+
+    return end;
+}
+
+/** The arguments of one pipeline element as typed (quotes kept), after `from`: the scanner blanks a quoted one. */
+function rawArgsAfter(scan: ShellScan, from: number, end: number): Array<{ text: string; index: number }> {
+    const out: Array<{ text: string; index: number }> = [];
+    const re = /'[^']*'|"[^"]*"|\S+/g;
+    const text = scan.command.slice(from, end);
+    let m = re.exec(text);
+
+    while (m) {
+        out.push({ text: m[0], index: from + m.index });
+        m = re.exec(text);
+    }
+
+    return out;
+}
+
+/** The paths one pipeline element writes: redirect targets, `-o`/`--output` values, and `tee` or `mkdir` arguments. */
+function writeTargets(scan: ShellScan, element: Span): Array<{ text: string; index: number }> {
+    const tokens = tokenize(element);
+    const end = elementEnd(scan, element);
+    const targets: Array<{ text: string; index: number }> = [];
+    const cmd = commandTokenIndex(tokens, scan.command);
+    const word = cmd === -1 ? "" : commandWord(tokens[cmd].text);
+
+    for (const [i, token] of tokens.entries()) {
+        const op =
+            REDIRECT.exec(token.text)?.[0] ?? (token.text === "-o" || token.text === "--output" ? token.text : "");
+        const attached = token.text.startsWith("--output=")
+            ? token.text.slice("--output=".length)
+            : token.text.slice(op.length);
+
+        if (op === "" && !token.text.startsWith("--output=")) {
+            continue;
+        }
+
+        if (attached.startsWith("&")) {
+            continue;
+        }
+
+        if (attached !== "") {
+            targets.push({ text: attached, index: token.start + token.text.length - attached.length });
+            continue;
+        }
+
+        const [next] = rawArgsAfter(scan, token.start + token.text.length, tokens[i + 1]?.start ?? end);
+        const value = next ?? rawArgsAfter(scan, token.start + token.text.length, end)[0];
+
+        if (value) {
+            targets.push(value);
+        }
+    }
+
+    if (word === "tee" || word === "mkdir") {
+        for (const arg of rawArgsAfter(scan, tokens[cmd].start + tokens[cmd].text.length, end)) {
+            if (!arg.text.startsWith("-") && !REDIRECT.test(arg.text)) {
+                targets.push(arg);
+            }
+        }
+    }
+
+    return targets.map((target) => ({
+        text: unquote(target.text),
+        index: target.index + (target.text !== unquote(target.text) ? 1 : 0),
+    }));
+}
+
+/** A file or folder written directly in /tmp, or under /tmp/cc without a full session id: tools rm asks for it later. */
+export const tmpLooseScratch: ShellRule = {
+    id: "tmp-loose-scratch",
+    // The kind only decides whether a long command softens a block; this rule is a warn either way.
+    kind: "misread",
+    title: `write scratch to /tmp/cc/<project>/<full session id>/, so ${toolCommand("rm")} deletes it without asking`,
+    severity: "warn",
+    why:
+        `\`${toolCommand("rm")}\` deletes inside this session's scratch folder without asking only when its name is ` +
+        "the FULL session id. A file directly in /tmp, or under /tmp/cc with no session folder or with a short id, " +
+        "becomes a request the user must approve later, and an agent cannot clean up after itself.",
+    wrong: "curl -sS https://example.com/a.json -o /tmp/a.json",
+    right: "curl -sS https://example.com/a.json -o /tmp/cc/shop/aaaaaaaa-1111-4111-8111-111111111111/a.json",
+    evidence:
+        "2026-11-01: 5 of 24 open rm requests were loose /tmp files, and 4 (395 MB) were scratch folders named " +
+        "with the 8-character session prefix.",
+    detect(scan): ShellMatch | null {
+        for (const statements of scan.units) {
+            for (const statement of statements) {
+                for (const element of splitPipeline(statement)) {
+                    const loose = writeTargets(scan, element).find((target) => isLooseScratch(target.text));
+
+                    if (loose) {
+                        return { matched: loose.text, index: loose.index };
+                    }
+                }
+            }
+        }
+
+        return null;
+    },
+};
+
+const TOOLS_RM = /(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\b|[\\/]rm[\\/]index\.ts\b/;
+const IN_CC_SCRATCH = /^(?:\/private)?\/tmp\/cc\//;
+
+/** `mv <path outside scratch> /tmp/cc/...` next to `tools rm`: moving a path into scratch skips the user. */
+export const rmMvIntoScratch: ShellRule = {
+    id: "rm-mv-into-scratch",
+    kind: "destructive",
+    title: `run ${toolCommand("rm")} on the original path; moving it into scratch skips the user`,
+    severity: "warn",
+    why:
+        `\`${toolCommand("rm")}\` deletes inside a session's scratch without asking because the session made what is ` +
+        "there. A path moved in from elsewhere was not made by the session, so deleting it there skips the user's " +
+        "check that the rule table would have asked for, and the user's work can go with it.",
+    wrong:
+        "mv ~/Downloads/old-build /tmp/cc/shop/aaaaaaaa-1111-4111-8111-111111111111/ && " +
+        `${toolCommand("rm")} /tmp/cc/shop/aaaaaaaa-1111-4111-8111-111111111111/old-build`,
+    right: `${toolCommand("rm")} ~/Downloads/old-build`,
+    evidence: "2026-11-01: a session moved a folder it did not make into its scratch and deleted it there.",
+    detect(scan): ShellMatch | null {
+        const statements = scan.units.flat();
+
+        if (!statements.some((statement) => TOOLS_RM.test(statement.text))) {
+            return null;
+        }
+
+        const cwdInScratch = scan.cwd !== undefined && IN_CC_SCRATCH.test(`${scan.cwd}/`);
+
+        for (const statement of statements) {
+            for (const element of splitPipeline(statement)) {
+                const tokens = tokenize(element);
+                const cmd = commandTokenIndex(tokens, scan.command);
+
+                if (cmd === -1 || commandWord(tokens[cmd].text) !== "mv") {
+                    continue;
+                }
+
+                const end = elementEnd(scan, element);
+                const args = rawArgsAfter(scan, tokens[cmd].start + tokens[cmd].text.length, end).filter(
+                    (arg) => !arg.text.startsWith("-")
+                );
+                const destination = args.at(-1);
+                const sources = args.slice(0, -1).map((arg) => unquote(arg.text));
+                const outside = (path: string) =>
+                    !IN_CC_SCRATCH.test(path) && (isAbsolute(path) || path.startsWith("~") || !cwdInScratch);
+
+                if (destination && IN_CC_SCRATCH.test(unquote(destination.text)) && sources.some(outside)) {
+                    const index = tokens[cmd].start;
+                    return { matched: scan.command.slice(index, destination.index + destination.text.length), index };
+                }
+            }
+        }
+
+        return null;
+    },
+};
+
+export const GENESIS_TOOLS_RULES: readonly ShellRule[] = [rmUserVerbs, rmUseToolsRm, tmpLooseScratch, rmMvIntoScratch];
 
 /** Every rule the guard runs before custom ones: the shared registry plus GenesisTools' own. */
 export const BUILT_IN_RULES: readonly ShellRule[] = [...SHELL_RULES, ...GENESIS_TOOLS_RULES];

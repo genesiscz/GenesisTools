@@ -136,3 +136,72 @@ describe("rm-user-verbs and quoted text", () => {
         expect(ids(`bash -c "tools rm approve k7m2qd"`)).toContain("rm-user-verbs");
     });
 });
+
+describe("tmp-loose-scratch", () => {
+    const session = "aaaaaaaa-1111-4111-8111-111111111111";
+    const caught = [
+        "echo hi > /tmp/out.txt",
+        "bun run build 2>/tmp/build.log",
+        'curl -sS https://example.com/a.json -o "/tmp/a.json"',
+        "curl -sS https://example.com/a.json --output=/private/tmp/a.json",
+        "bun test | tee $TMPDIR/test.log",
+        "mkdir -p /tmp/probe",
+        "mkdir -p /tmp/cc/shop/aaaaaaaa/run1",
+        "echo x > /tmp/cc/shop/notes.txt",
+    ];
+
+    it.each(caught)("warns on %j", (command) => {
+        const v = only(command, "tmp-loose-scratch");
+
+        expect(v?.severity).toBe("warn");
+        expect(command.slice(v?.index ?? 0)).toStartWith(v?.matched ?? "missing");
+    });
+
+    const allowed = [
+        `echo hi > /tmp/cc/shop/${session}/out.txt`,
+        `mkdir -p /tmp/cc/shop/${session}/worktrees/x`,
+        "bun run build > /dev/null 2>&1",
+        "echo hi > ./out.txt",
+        "mkdir -p /tmp/cc",
+        "mkdir -p /tmp/cc/shop",
+        'git commit -m "echo hi > /tmp/out.txt"',
+        "cat /tmp/out.txt",
+    ];
+
+    it.each(allowed)("leaves %j alone", (command) => {
+        expect(ids(command)).not.toContain("tmp-loose-scratch");
+    });
+});
+
+describe("rm-mv-into-scratch", () => {
+    const scratch = "/tmp/cc/shop/aaaaaaaa-1111-4111-8111-111111111111";
+
+    it.each([
+        `mv ~/Downloads/old-build ${scratch}/ && tools rm ${scratch}/old-build`,
+        `mv /work/shop/dist ${scratch}/dist; ./tools rm ${scratch}/dist`,
+    ])("warns on %j", (command) => {
+        expect(only(command, "rm-mv-into-scratch")?.severity).toBe("warn");
+    });
+
+    it.each([
+        `mv ${scratch}/a ${scratch}/b && tools rm ${scratch}/b`,
+        `mv ~/Downloads/old-build ${scratch}/`,
+        "tools rm ~/Downloads/old-build",
+        "mv ./a ./b && tools rm ./b",
+    ])("leaves %j alone", (command) => {
+        expect(ids(command)).not.toContain("rm-mv-into-scratch");
+    });
+
+    it("both scratch rules exist, and their examples trip no other built-in rule", () => {
+        const scratchRules = GENESIS_TOOLS_RULES.filter((r) =>
+            ["tmp-loose-scratch", "rm-mv-into-scratch"].includes(r.id)
+        );
+
+        expect(scratchRules.map((rule) => rule.id).sort()).toEqual(["rm-mv-into-scratch", "tmp-loose-scratch"]);
+
+        for (const rule of scratchRules) {
+            expect(ids(rule.wrong)).toEqual([rule.id]);
+            expect(ids(rule.right)).toEqual([]);
+        }
+    });
+});
