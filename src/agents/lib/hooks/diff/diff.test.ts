@@ -5412,6 +5412,54 @@ describe("the misfires of 2026-10-14", () => {
         }
     });
 
+    it("hands a finished background task only to a later call of the agent that started it", () => {
+        const project = `gt-bg-agent-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
+        const output = join(tasks, "bgagent1.output");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const target = join(repo, "subagent-background.ts");
+
+        mkdirSync(tasks, { recursive: true });
+        writeFileSync(output, "");
+
+        try {
+            const started = begin({
+                toolUseId: "bg-agent-call",
+                command: `bun /x/long.ts ${target}`,
+                raw: { agent_id: "agent-sub" },
+            });
+            const deferred = runDiffPost({
+                payload: {
+                    ...started,
+                    transcriptPath: transcript,
+                    toolResponse: { backgroundTaskId: "bgagent1" },
+                },
+                config: plain,
+            });
+
+            expect(deferred.decision).toBe("deferred");
+
+            writeFileSync(target, "SUBAGENT-BACKGROUND\n");
+            writeFileSync(output, "done\n\n[exited with code 0]\n");
+
+            // The main agent shares the session: its next call must not print the subagent's task.
+            const main = begin({ command: "true", transcriptPath: transcript });
+            expect(flushDeferred({ payload: main, config: plain })).toEqual([]);
+
+            const other = begin({ command: "true", transcriptPath: transcript, raw: { agent_id: "agent-other" } });
+            expect(flushDeferred({ payload: other, config: plain })).toEqual([]);
+
+            const own = begin({ command: "true", transcriptPath: transcript, raw: { agent_id: "agent-sub" } });
+            const flushed = flushDeferred({ payload: own, config: plain });
+
+            expect(flushed.map((item) => item.task?.id)).toEqual(["bgagent1"]);
+            expect(flushed[0]?.message).toContain("SUBAGENT-BACKGROUND");
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(target, { force: true });
+        }
+    });
+
     it("saves a cut background diff under a note name the full-diff mod does not draw", () => {
         const project = `gt-bg-note-${process.pid}`;
         const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
