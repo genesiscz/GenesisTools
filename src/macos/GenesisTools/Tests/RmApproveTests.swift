@@ -304,18 +304,21 @@ final class RmApproveTests: XCTestCase {
         XCTAssertEqual(chip?.help.contains("stray copy left by a wrong cd or a doubled path"), true)
     }
 
-    /// A folder with nothing inside gets a grey "empty folder" chip, whether the CLI says `empty` or counts 0 files; the
-    /// reason line then does not say it again.
+    /// A folder with nothing inside gets a grey "empty folder" chip, whether the CLI says `empty` or a whole walk counts
+    /// 0 files; the reason line then does not say it again. A walk stopped at its cap read only part of the tree, so its
+    /// 0 files is no chip.
     func testAnEmptyFolderGetsAChip() {
         let items = [
             RmApproveItem(path: "/w/a", kind: "dir", bytes: 0, empty: true, storedAt: nil, reason: "r"),
             RmApproveItem(path: "/w/b", kind: "dir", bytes: 4096, empty: nil, storedAt: nil, reason: "r", folderStats: RmApproveFolderStats(files: 0)),
             RmApproveItem(path: "/w/c", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r", folderStats: RmApproveFolderStats(files: 12)),
             RmApproveItem(path: "/w/d.txt", kind: "file", bytes: 0, empty: nil, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "/w/e", kind: "dir", bytes: 4096, empty: false, storedAt: nil, reason: "r",
+                          folderStats: RmApproveFolderStats(files: 0, capped: true)),
         ]
         let content = RmWindowContent.build(request(items), home: "/Users/someone", icons: false, markdownApp: false)
 
-        XCTAssertEqual(content.items.map { $0.notes.map(\.word) }, [["empty folder"], ["empty folder"], [], []])
+        XCTAssertEqual(content.items.map { $0.notes.map(\.word) }, [["empty folder"], ["empty folder"], [], [], []])
         XCTAssertEqual(content.items[0].notes.first?.tone, .quiet)
         XCTAssertEqual(content.items[1].reasonLine, "r.")
     }
@@ -348,13 +351,18 @@ final class RmApproveTests: XCTestCase {
     /// `rule` decodes when sent and is absent from an older CLI.
     func testTheRiskChipFollowsGitAndTheRule() throws {
         func level(_ kind: String, bytes: Int64? = 100, empty: Bool? = nil, git: String? = nil, rule: String? = nil,
-                   files: Int? = nil) -> ApprovalRisk.Level {
+                   files: Int? = nil, capped: Bool? = nil) -> ApprovalRisk.Level {
             RmWindowContent.risk(RmApproveItem(path: "/w/x", kind: kind, bytes: bytes, empty: empty, storedAt: nil, reason: "r", rule: rule,
-                                               git: git.map { RmApproveGit(state: $0) }, folderStats: files.map { RmApproveFolderStats(files: $0) })).level
+                                               git: git.map { RmApproveGit(state: $0) },
+                                               folderStats: files.map { RmApproveFolderStats(files: $0, capped: capped) })).level
         }
         XCTAssertEqual(level("missing", git: "untracked"), .low)
         XCTAssertEqual(level("dir", empty: true), .low)
         XCTAssertEqual(level("dir", files: 0), .low)
+        // A walk stopped at its cap saw only part of the tree; a rule that found unsaved work keeps its red chip.
+        XCTAssertEqual(level("dir", files: 0, capped: true), .review)
+        XCTAssertEqual(level("dir", rule: "nested-repos", files: 0, capped: true), .unsaved)
+        XCTAssertEqual(level("dir", rule: "unsaved-clone", files: 0), .unsaved)
         XCTAssertEqual(level("file", bytes: 0), .low)
         XCTAssertEqual(level("file", git: "ignored"), .low)
         XCTAssertEqual(level("file", git: "clean"), .low)

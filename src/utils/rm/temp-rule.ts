@@ -142,7 +142,9 @@ function changedSince(dir: string, sinceMs: number, maxEntries = 20_000): boolea
 
         try {
             stat = lstatSync(next);
-        } catch {
+        } catch (error) {
+            // Gone since its folder was listed: nothing there changed.
+            logger.debug({ path: next, error }, "rm: a scratch entry went away during the walk");
             continue;
         }
 

@@ -76,7 +76,7 @@ export function runContext(): RunContext {
 export function ruleContextFor(config: RmConfig, caller: RmCaller, cwd: string): RmRuleContext {
     return defaultRuleContext(config, caller, cwd, {
         hints: { enablePreset: rmEnablePresetCommand },
-        ownBashWrite: caller.sessionId ? bashWriteLookup(caller.sessionId) : undefined,
+        ownBashWrites: caller.sessionId ? bashWriteLookup(caller.sessionId) : undefined,
     });
 }
 

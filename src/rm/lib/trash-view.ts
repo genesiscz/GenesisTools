@@ -105,7 +105,8 @@ export function renderTrash(batches: readonly TrashBatch[], options: TrashViewOp
     const ids = batches.map((batch) => batch.id);
     const sorted = [...batches].sort((a, b) => Date.parse(a.drainAfter) - Date.parse(b.drainAfter));
     const items = batches.reduce((sum, batch) => sum + batch.items.length, 0);
-    const next = sorted.find((batch) => !batch.incomplete);
+    // A failed batch waits for a forced drain (`drain --now`), so it is never the next one the drainer takes.
+    const next = sorted.find((batch) => !batch.incomplete && !batch.failed);
     const known = batches.flatMap((batch) =>
         options.measured?.has(batch.id) ? [options.measured.get(batch.id) ?? 0] : batch.items.map((i) => i.bytes ?? 0)
     );
