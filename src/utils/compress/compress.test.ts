@@ -35,18 +35,22 @@ import {
     readTextChunks,
     storedFilePath,
 } from "@genesiscz/utils/fs/read-lines";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createDailyFileStream } from "@genesiscz/utils/logger";
 import { startDailyCompressionOnce } from "@genesiscz/utils/logger/daily-trigger";
 import {
+    dayLogDigestsDir,
     dayLogName,
     dayLogPath,
     dayOfPlainDayLog,
+    isSealedDayLog,
     listDayLogs,
     parseDayLogName,
 } from "@genesiscz/utils/logger/day-logs";
+import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
-import { planDailyCompression } from "./daily";
+import { planDailyCompression, runDailyCompression } from "./daily";
 import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { recordCompression, searchLedger } from "./ledger";
 import { CompressRefusal, compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
@@ -57,7 +61,7 @@ import {
     planFolderRetention,
     planOldFileCompression,
 } from "./retention";
-import { ripgrepFiles } from "./search";
+import { ripgrepDigestPath, ripgrepFiles, ripgrepFilesCached } from "./search";
 import {
     assertArchiveOutsideSource,
     listArchive,
@@ -1678,6 +1682,48 @@ describe("day logs", () => {
         expect(startDailyCompressionOnce(dir, "2026-10-13")).toBe(false);
         expect(readdirSync(dir)).toEqual([]);
     });
+
+    it.skipIf(!ripgrepBinary())(
+        "a cached search keeps a finished day's lines while the file is unchanged, and the pass carries them to the .zst",
+        async () => {
+            const dir = scratch("digest");
+            const sealed = join(dir, "2026-10-10.log");
+            const today = join(dir, "2026-10-13.log");
+            writeFileSync(sealed, logText(400));
+            writeFileSync(today, logText(30));
+            const old = new Date("2026-10-10T12:00:00").getTime() / 1000;
+            utimesSync(sealed, old, old);
+            const args = ["--no-config", "--no-filename", "--no-line-number", "-F", "-e", '"n":7,'];
+            const digest = {
+                name: "t",
+                dir: dayLogDigestsDir(dir),
+                sealed: (file: string) => isSealedDayLog(file, "2026-10-13"),
+            };
+            const search = (files: string[], rg = ripgrepBinary()!) => ripgrepFilesCached({ rg, args, files, digest });
+            const lines = (stdout: string) => stdout.split("\n").filter(Boolean).sort();
+
+            const first = await search([sealed, today]);
+            expect([first.code, first.keptFiles, lines(first.stdout).length]).toEqual([0, 0, 2]);
+            const saved: unknown = SafeJSON.parse(readFileSync(ripgrepDigestPath({ ...digest, args }), "utf8"), {
+                strict: true,
+            });
+            expect(isObject(saved) && isObject(saved.entries) ? Object.keys(saved.entries) : saved).toEqual([sealed]);
+
+            // No rg runs for a kept day: a missing binary would fail the search.
+            const kept = await search([sealed], join(dir, "no-rg"));
+            expect([kept.code, kept.keptFiles, kept.stdout]).toEqual([0, 1, `${logText(400).split("\n")[7]}\n`]);
+
+            await runDailyCompression({ now: new Date("2026-10-20T12:00:00"), logsDir: dir, releaseGraceMs: 0 });
+            expect(existsSync(`${sealed}.zst`)).toBe(true);
+            const carried = await search([`${sealed}.zst`], join(dir, "no-rg"));
+            expect([carried.code, carried.keptFiles, carried.stdout]).toEqual([0, 1, kept.stdout]);
+
+            writeFileSync(join(dir, "2026-10-10.log"), logText(400));
+            await compressFile({ source: join(dir, "2026-10-10.log") });
+            const changed = await search([`${sealed}.zst`]);
+            expect([changed.code, changed.keptFiles]).toEqual([0, 0]);
+        }
+    );
 
     it.skipIf(!ripgrepBinary())("ripgrepFiles finds the same lines in a .zst as in its plain twin", async () => {
         const dir = scratch("rg");
