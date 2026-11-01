@@ -546,6 +546,207 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         release?.resume()
     }
 
+    // MARK: - The hub Inbox card's context (2026-11-01)
+
+    /// The decision of the 2026-11-01 screenshot with an invented session, paths and answer: a context taller than the
+    /// fold, one cited file with its lines, a proposal, a reason on option b, high confidence. "sent" adds the pick,
+    /// an answer of its own and a delivery.
+    static func contextCard(_ key: String, status: String = "open") -> [String: Any] {
+        let excerpt = [
+            #"import { commandTokenIndex, commandWord, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";"#,
+            "",
+            "/** The `tools rm` verbs that let a request through, trust a folder, or change settings: a person's to run. */",
+            "const RM_USER_VERB =",
+            #"    /(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b|[\\/]rm[\\/]index\.ts\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b/;"#,
+            "",
+            "export const rmUserVerbs: ShellRule = {",
+            #"    id: "rm-user-verbs","#,
+            #"    kind: "destructive","#,
+            #"    severity: "block","#,
+            "};",
+        ].joined(separator: "\n")
+        let context = "The block protects nothing that the dialog does not already protect, but AGENTS.md is your "
+            + "shared policy, so I do not change it without your word. The `--help` false positive of the same rule is "
+            + "fixed separately and does not depend on this.\n\n"
+            + "Today an agent that runs `tools rm approve <id>` is stopped before the dialog opens, so a large delete "
+            + "waits until you type the command yourself.\n\n"
+            + "- The dialog asks for Touch ID, so an agent cannot approve its own request.\n"
+            + "- A size floor keeps small scratch deletes quiet.\n"
+            + "- The rule's message names the command you can run instead.\n"
+            + "- A refused approval says which rule refused it and where its setting lives.\n"
+            + "- Nothing changes for a person who types the command in a terminal."
+        var details: [String: Any] = [
+            "context": context, "confidence": "high", "recommended": "a",
+            "proposal": "a): it matches both of your instructions. The dialog stays the only approval path.",
+            "refs": [[
+                "path": "src/agents/lib/hooks/tool-rules.ts", "line": 9,
+                "absolute": "/Users/alice/Projects/Fixture/src/agents/lib/hooks/tool-rules.ts",
+                "excerpt": excerpt, "startLine": 6, "language": "typescript", "missing": false, "matches": 1,
+                "from": "posted",
+            ]],
+        ]
+        var card: [String: Any] = [
+            "id": "decision:d1", "kind": "decision", "sessionKey": key, "sourceId": "d1",
+            "at": Date().timeIntervalSince1970 * 1000 - 60_000,
+            "title": "May an agent start `tools rm approve <id>` to open the approval dialog?", "body": "",
+            "status": status, "revision": 1, "number": 1,
+            "choices": [
+                ["id": "a", "title": "allow at 1 GB or more", "recommended": true],
+                ["id": "b", "title": "allow any size", "recommended": false,
+                 "rationale": "every delete would ask for Touch ID"],
+                ["id": "c", "title": "keep the block, fix the message", "recommended": false],
+            ],
+            "attachments": [], "refs": [["type": "file", "value": "src/agents/lib/hooks/tool-rules.ts"]], "read": true,
+            "sourceContext": ["sessionId": "fixture-0", "agent": "claude", "project": "Fixture",
+                              "cwd": "/Users/alice/Projects/Fixture", "repoRoot": "/Users/alice/Projects/Fixture",
+                              "branch": "feat/2026-10-13-enhancements"],
+        ]
+        if status == "sent" {
+            card["option"] = "a"
+            card["answer"] = "a) allow it at the size I set, and have the agent ask before anything under 10 MB."
+            card["answeredVia"] = "inbox"
+            details["delivery"] = ["route": "claude-peer", "target": "original Claude session",
+                                   "at": "2026-11-01T17:31:00.000Z"]
+        }
+        card["decision"] = details
+        return card
+    }
+
+    /// A card and preferences from a hub older than the decision details still decode: no details, no reasons, and the
+    /// card's text is its body.
+    func testACardFromAnOlderHubDecodesWithoutDetails() throws {
+        let old = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(
+            withJSONObject: Self.card(key + "0", number: 8)))
+        XCTAssertNil(old.decision)
+        XCTAssertTrue(old.choices.allSatisfy { $0.rationale == nil })
+        XCTAssertEqual(old.fullText, old.body)
+        let model = try model()
+        defer { model.stop() }
+        let preferences = try XCTUnwrap(model.snapshot?.state.preferences)
+        XCTAssertNil(preferences.decisionContext)
+        XCTAssertNil(preferences.decisionCode)
+        XCTAssertNil(preferences.decisionProposal)
+    }
+
+    /// A card with the hub's details decodes every field in the hub's shape (`DecisionRef`, `DecisionDelivery`), and
+    /// its whole text carries the context, the pick and the notes for read aloud and the previews.
+    func testACardWithTheHubsDetailsDecodesThemAll() throws {
+        let card = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(
+            withJSONObject: Self.contextCard(key + "0", status: "sent")))
+        let details = try XCTUnwrap(card.decision)
+        XCTAssertEqual(details.confidence, "high")
+        XCTAssertEqual(details.recommended, "a")
+        XCTAssertTrue(details.context?.hasPrefix("The block protects nothing") == true)
+        let ref = try XCTUnwrap(details.refs?.first)
+        XCTAssertEqual(ref.displayPath, "src/agents/lib/hooks/tool-rules.ts:9")
+        XCTAssertEqual(ref.startLine, 6)
+        XCTAssertTrue(ref.hasContent)
+        XCTAssertEqual(ref.lines, MarkdownLineRange(first: 9, last: 9))
+        XCTAssertEqual(ref.file(under: "/elsewhere"), "/Users/alice/Projects/Fixture/src/agents/lib/hooks/tool-rules.ts")
+        XCTAssertEqual(card.choices[1].rationale, "every delete would ask for Touch ID")
+        let delivery = try XCTUnwrap(details.delivery)
+        XCTAssertFalse(delivery.isQueued)
+        XCTAssertTrue(delivery.line.hasPrefix("Sent "), delivery.line)
+        XCTAssertTrue(delivery.line.hasSuffix(" to original Claude session"), delivery.line)
+        XCTAssertTrue(card.fullText.contains("The block protects nothing"))
+        XCTAssertTrue(card.fullText.contains("it matches both of your instructions"))
+        let missing = try JSONDecoder().decode(DecisionRef.self, from: Data(
+            #"{"path":"src/gone.ts","line":3,"missing":true,"searched":["/Users/alice/Projects/Fixture"],"matches":0}"#.utf8))
+        XCTAssertTrue(missing.hasContent)
+        XCTAssertEqual(missing.unresolvedNote.label, "can't locate")
+        XCTAssertEqual(missing.file(under: "/Users/alice/Projects/Fixture"), "/Users/alice/Projects/Fixture/src/gone.ts")
+    }
+
+    /// The agent's pick sits under the option it recommends, without the letter it starts with; above the options when
+    /// it names another option, when the card is answered, or when the setting says so.
+    func testTheAgentsPickSitsUnderItsOptionWithoutTheLetter() throws {
+        XCTAssertEqual(WidgetProposal.underOption("a): it matches both", letter: "a"), "it matches both")
+        XCTAssertEqual(WidgetProposal.underOption("(b) cheaper", letter: "b"), "cheaper")
+        XCTAssertEqual(WidgetProposal.underOption("A. the safe one", letter: "a"), "the safe one")
+        XCTAssertEqual(WidgetProposal.underOption("I would keep it", letter: "a"), "I would keep it")
+        XCTAssertNil(WidgetProposal.underOption("b) the other one", letter: "a"))
+        let open = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(
+            withJSONObject: Self.contextCard(key + "0")))
+        let placed = try XCTUnwrap(WidgetProposal.placement(open, preferences: nil))
+        XCTAssertEqual(placed.letter, "a")
+        XCTAssertEqual(placed.text, "it matches both of your instructions. The dialog stays the only approval path.")
+        let sent = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(
+            withJSONObject: Self.contextCard(key + "0", status: "sent")))
+        XCTAssertNil(WidgetProposal.placement(sent, preferences: nil), "an answered card shows no options")
+        let model = try model(preferences: ["decisionProposal": "above"])
+        defer { model.stop() }
+        XCTAssertNil(WidgetProposal.placement(open, preferences: model.snapshot?.state.preferences))
+        // The Code section shows the cited file, so the list under the buttons does not name it again.
+        XCTAssertTrue(LiveWidgetView.listedRefs(open, preferences: nil).isEmpty)
+        let hidden = try self.model(preferences: ["decisionCode": "hide"])
+        defer { hidden.stop() }
+        XCTAssertEqual(LiveWidgetView.listedRefs(open, preferences: hidden.snapshot?.state.preferences).count, 1)
+    }
+
+    /// The open decision card as a session's inbox draws it, rendered in a window that is never ordered front: the
+    /// Context section folded with Show all, the Code section with the cited path and its lines, the confidence chip,
+    /// the Recommended badge, the reason on option b and the agent's pick under option a. Code set to Hide leaves the
+    /// Code section out; Context set to Open drops Show all for Show less.
+    func testTheOpenDecisionCardDrawsItsContextAndCode() throws {
+        let text = try decisionCardText(preferences: [:])
+        for expected in ["Context", "Show all", "Code", "tool-rules.ts:9", "High confidence", "Recommended",
+                         "RM_USER_VERB", "every delete would ask", "it matches both of your instructions"] {
+            XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
+        }
+        XCTAssertFalse(text.contains("a): it matches"), "the pick under option a drops its letter: \(text)")
+        let hidden = try decisionCardText(preferences: ["decisionCode": "hide", "decisionContext": "open"])
+        XCTAssertFalse(hidden.contains("RM_USER_VERB"), hidden)
+        XCTAssertFalse(hidden.contains("tool-rules.ts:9"), hidden)
+        XCTAssertTrue(hidden.contains("Show less"), hidden)
+        XCTAssertTrue(hidden.contains("types the command in a terminal"), "open shows the whole context: \(hidden)")
+    }
+
+    private func decisionCardText(preferences: [String: Any]) throws -> String {
+        let model = try model(preferences: preferences, cards: [Self.contextCard(key + "0")])
+        defer { model.stop() }
+        model.error = nil
+        model.openCard(try XCTUnwrap(model.cards.first { $0.number == 1 }))
+        let view = LiveWidgetView(model: model, edge: .right, embedded: true)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, model.panelTheme)
+            .environment(\.colorScheme, .dark)
+        let rep = try KitShots.render(view, size: CGSize(width: Self.widgetWidth, height: 1400), name: "decision-context",
+                                      settle: 1.2)
+        return try recognizedText(try XCTUnwrap(rep.cgImage))
+    }
+
+    /// The narrowest real width of a session's inbox: the agents panel's 560 pt minimum
+    /// (`WidgetClusterGeometry.detailSize`) less the 44 pt side rail (`WidgetSideStripMetrics.width`).
+    static let widgetWidth: CGFloat = 560 - WidgetSideStripMetrics.width
+
+    /// The decision card with the hub's context, open and answered, for the visual check of 2026-11-01:
+    /// `WIDGET_DECISION_SHOTS=<folder>` writes `decision-context-<state>-<theme>.png` at the widget's narrowest real
+    /// width. The widget draws dark only (`WidgetHostView`: `.preferredColorScheme(.dark)`), so the two looks are its
+    /// default panel (graphite) and a coloured theme panel (dusk).
+    func testRendersTheDecisionCardWithItsContext() throws {
+        guard let folder = ProcessInfo.processInfo.environment["WIDGET_DECISION_SHOTS"] else { return }
+        let themes: [(String, NativeSettingsTheme, Color)] = [
+            ("graphite", .graphite, NativeThemePalette.graphiteBase), ("dusk", .dusk, NativeThemePalette.duskBase),
+        ]
+        for status in ["open", "sent"] {
+            for (name, theme, base) in themes {
+                let model = try model(cards: [Self.contextCard(key + "0", status: status)])
+                defer { model.stop() }
+                model.error = nil
+                model.openCard(try XCTUnwrap(model.cards.first { $0.number == 1 }))
+                let view = LiveWidgetView(model: model, edge: .right, embedded: true)
+                    .frame(width: Self.widgetWidth, height: status == "open" ? 1240 : 1000, alignment: .top)
+                    .background(base)
+                    .environment(\.nativeSettingsTheme, theme)
+                    .environment(\.colorScheme, .dark)
+                let rep = try KitShots.render(view, size: CGSize(width: Self.widgetWidth, height: status == "open" ? 1240 : 1000),
+                                              name: "decision-context-\(status)-\(name)", settle: 1.2)
+                try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                    .write(to: URL(fileURLWithPath: folder).appendingPathComponent("decision-context-\(status)-\(name).png"))
+            }
+        }
+    }
+
     private func recognizedText(_ image: CGImage) throws -> String {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate

@@ -349,6 +349,31 @@ private struct WidgetGeneralSettings: View {
                         .accessibilityIdentifier("widget.fileLinkClick")
                 }
             }
+            NativeSettingsCard("Decision cards", subtitle: "What an open decision shows besides its question and options, as the hub's Inbox card does.") {
+                NativeSettingsRow("Context", detail: "The findings that lead to the decision. Folded shows about eight lines with Show all; Open shows all of it.") {
+                    Picker("Context", selection: string("decisionContext", prefs?.decisionContext ?? "folded")) {
+                        Text("Folded").tag("folded")
+                        Text("Open").tag("open")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                        .accessibilityIdentifier("widget.decisionContext")
+                }
+                Divider()
+                NativeSettingsRow("Code", detail: "The lines of each file the decision cites, read from disk, with the cited line marked. Long lines scroll sideways.") {
+                    Picker("Code", selection: string("decisionCode", prefs?.decisionCode ?? "show")) {
+                        Text("Show").tag("show")
+                        Text("Hide").tag("hide")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                        .accessibilityIdentifier("widget.decisionCode")
+                }
+                Divider()
+                NativeSettingsRow("The agent's pick", detail: "The agent's reason for the option it recommends, behind a lightbulb: under that option, or above the options as in the hub.") {
+                    Picker("The agent's pick", selection: string("decisionProposal", prefs?.decisionProposal ?? "option")) {
+                        Text("Under the option").tag("option")
+                        Text("Above the options").tag("above")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                        .accessibilityIdentifier("widget.decisionProposal")
+                }
+            }
             NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {
                 NativeSettingsToggle(
                     "Decisions and questions", detail: "A new question that waits for your answer.",
