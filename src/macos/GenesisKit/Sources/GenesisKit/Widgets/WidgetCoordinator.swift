@@ -64,6 +64,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     var panelMonitorsInstalled: Bool { localMouse != nil || globalMouse != nil || keyboard != nil }
     /// "Show the widget" in the Widget settings. Off until the first snapshot says otherwise.
     public var panelsEnabled: Bool { model.snapshot?.state.preferences.showWidget ?? false }
+    /// Called when the edge panels come or go with `panelsEnabled` (and once at start). The widget face holds its
+    /// "widget is on screen" lock with it, which another face's ⌘Q question reads.
+    public var panelsShownChanged: ((Bool) -> Void)?
     private var topHeaderHeight: CGFloat = 36
     private var topCompactWidth: CGFloat = 360
     private var screenID: String {
@@ -570,7 +573,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private func rebuildPanels() {
         let previous = panels
         // The one gate for the edge panels: while "Show the widget" is off, none exist and no monitor runs.
+        let wasShown = lastShown
         lastShown = panelsEnabled
+        if wasShown != panelsEnabled { panelsShownChanged?(panelsEnabled) }
         guard panelsEnabled else {
             previous.values.forEach { $0.hide() }
             panels = [:]

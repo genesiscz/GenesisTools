@@ -41,6 +41,8 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
         ], defaults: defaults,
         appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window")
     private var aboutInfo: [String] = []
+    /// Drops the settings window's PartPresence lock when the window closes.
+    private var windowCloseObserver: NSObjectProtocol?
     private(set) var plugins: [FeatureSettingsPlugin] = []
 
     init(mode: FeatureSettingsMode) {
@@ -71,7 +73,19 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
 
     func addAboutInfo(_ line: String) { aboutInfo.append(line) }
 
-    func showSettings(pageID: String?) { window.show(pageID: pageID) }
+    func showSettings(pageID: String?) {
+        window.show(pageID: pageID)
+        // The ⌘Q question names this face "Settings" only while the window is open (Host/PartQuit): closed, the
+        // process stays to host the parts' services, and nothing called Settings is on screen.
+        guard mode == .live, let shown = window.window else { return }
+        PartPresence.hold(PartPresence.settingsWindow)
+        guard windowCloseObserver == nil else { return }
+        windowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: shown, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { PartPresence.release(PartPresence.settingsWindow) }
+        }
+    }
 
     func close() { window.close() }
 
@@ -190,7 +204,7 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenu
         let settings = application.addItem(withTitle: "Feature settings…", action: #selector(showSettings), keyEquivalent: "")
         settings.target = self
         ClickyKeymap.shared.bind(settings, to: ClickyKeymap.settings)
-        // Titled by what this process runs ("Quit Clicky" while Clicky's status item is up), in `validateMenuItem`.
+        // Titled by what this process shows ("Quit Clicky and Settings" while Clicky is on), in `validateMenuItem`.
         let quit = application.addItem(withTitle: "Quit Settings", action: #selector(requestQuit), keyEquivalent: "")
         quit.target = self
         ClickyKeymap.shared.bind(quit, to: ClickyKeymap.quit)
@@ -208,8 +222,10 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenu
     }
 
     @objc private func showSettings() { shell.showSettings(pageID: nil) }
-    /// ⌘Q asks before it quits while other GenesisTools parts run (Host/PartQuit). This process holds Clicky and the
-    /// settings window, so the question calls it Clicky while Clicky is up.
+    /// ⌘Q asks before it quits while other GenesisTools parts run (Host/PartQuit). The quit ends this whole process,
+    /// so the question names everything in it that is up: Clicky while it is on, Settings while the window is open.
+    /// The widget's Dictation and Focus run here too, but a running widget face takes them over when this process
+    /// ends (FlowFocusRuntime's client reconnects on the owner's exit).
     @objc private func requestQuit() { PartQuit.request(face: Self.face) }
     private static let face = "--features"
 
