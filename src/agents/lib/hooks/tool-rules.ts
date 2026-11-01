@@ -15,8 +15,11 @@ import {
     tokenize,
 } from "@genesiscz/utils/shell/scan";
 
-/** The verbs that let a request through, trust a folder, or change settings. */
-const RM_USER_VERBS = String.raw`(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b`;
+/**
+ * The verbs that let a request through, trust a folder, change settings, or end every batch's grace period
+ * (`drain --now` deletes what a person approved with "Move to the trash" and other sessions' batches at once).
+ */
+const RM_USER_VERBS = String.raw`(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove)|drain\b[^;&|\n]*?\s--now)\b`;
 /**
  * Root flags may stand between `rm` and the verb, and Commander still runs the verb (`tools rm -v approve x`,
  * `tools rm -- approve x`), so the rule skips them: `--reason` and `--keep` with their value, any other `-` token.
@@ -30,12 +33,13 @@ const RM_USER_VERB = new RegExp(
 export const rmUserVerbs: ShellRule = {
     id: "rm-user-verbs",
     kind: "destructive",
-    title: `${toolCommand("rm")} approve, roots add, config set and profile set/remove are the user's to run, never an agent's`,
+    title: `${toolCommand("rm")} approve, roots add, config set, profile set/remove and drain --now are the user's to run, never an agent's`,
     severity: "block",
     why:
         `\`${toolCommand("rm")}\` lets an agent delete presets, its own scratch and its own files; anything else becomes a request ` +
         "the USER confirms. `approve` deletes what the request names, `roots add` trusts a whole folder, and " +
-        "`config set` moves the trash the drain empties, so an agent that ran them would approve itself. The verb " +
+        "`config set` moves the trash the drain empties, and `drain --now` ends the restore window of every batch in " +
+        "the trash (the ones a person approved too), so an agent that ran them would approve itself. The verb " +
         "also asks for a typed code or a macOS dialog; this rule stops the call before it gets that far.",
     wrong: `${toolCommand("rm")} approve k7m2qd`,
     right: `${toolCommand("rm")} requests`,

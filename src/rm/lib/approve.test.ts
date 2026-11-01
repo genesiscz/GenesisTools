@@ -51,6 +51,7 @@ import { type Command, CommanderError } from "commander";
 import { describePolicy } from "../commands/profiles";
 import { approveMany, denyPicked, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
+import { agentMayDrainEarly } from "../commands/trash";
 import { createRmProgram } from "../program";
 import {
     type ApprovalRowDeps,
@@ -1525,6 +1526,45 @@ describe("one window for several requests", () => {
         expect(loadRmRequest(first.id)?.decided?.approved).toEqual([a1]);
         expect(loadRmRequest(second.id)?.decided?.approved).toEqual([b1]);
         expect([a1, a2, b1, b2].map((path) => existsSync(path ?? ""))).toEqual([false, true, false, true]);
+    });
+});
+
+describe("an agent's drain --now", () => {
+    const own: RmCaller = { agent: "claude-code", sessionId: "sess-drain", isInAgent: true };
+    const item = (rule: string) => ({ original: "/work/a", stored: "/t/a", kind: "file" as const, rule });
+
+    test("ends the grace of this session's own batches only, never an approved one", () => {
+        const other = { ...own, sessionId: "sess-other" };
+        expect(agentMayDrainEarly({ caller: own, items: [item("default")] }, own)).toBe(true);
+        expect(agentMayDrainEarly({ caller: other, items: [item("default")] }, own)).toBe(false);
+        expect(agentMayDrainEarly({ caller: { ...own, agent: "codex" }, items: [item("default")] }, own)).toBe(false);
+        // An approved batch carries the asking session as its caller and the grace the person picked.
+        expect(agentMayDrainEarly({ caller: own, items: [item("approved k7m2qd")] }, own)).toBe(false);
+        expect(agentMayDrainEarly({ caller: null, items: [item("default")] }, own)).toBe(false);
+        expect(agentMayDrainEarly({ caller: own, items: [item("default")] }, { ...own, sessionId: null })).toBe(false);
+    });
+
+    test("a forced drain with the filter keeps another session's batch and an approved one", async () => {
+        const paths = { batchesDir: join(base, "drain-filter", "batches"), lockPath: join(base, "drain-filter", "l") };
+        const moved = (name: string, caller: RmCaller, rule: string) =>
+            moveToTrash([{ target: resolveTarget(file(join(base, "drain-filter-src", name)), base), rule }], {
+                config,
+                caller,
+                graceMinutes: 60,
+                paths,
+            })?.items[0]?.stored ?? "";
+        const mine = moved("mine.txt", own, "default");
+        const theirs = moved("theirs.txt", { ...own, sessionId: "sess-other" }, "default");
+        const approved = moved("approved.txt", own, "approved k7m2qd");
+
+        try {
+            await drainDue({ config, paths, force: true, forceOnly: (batch) => agentMayDrainEarly(batch, own) });
+            expect([mine, theirs, approved].map((stored) => existsSync(stored))).toEqual([false, true, true]);
+        } finally {
+            await drainDue({ config, paths, force: true });
+        }
+
+        expect([theirs, approved].map((stored) => existsSync(stored))).toEqual([false, false]);
     });
 });
 
