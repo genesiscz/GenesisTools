@@ -18,6 +18,8 @@
  * - anything inside it is a socket or a FIFO (a live service), or a `.git` (a repository or worktree: remove those
  *   with `git worktree remove` / the worktree-lock release, never by deleting files);
  * - a running process holds a file open inside it (lsof is refreshed before every removal; a failed listing stops apply);
+ * - it is, holds or lies in the aside folder of a `tools rm` request that waits for a person (re-read right before
+ *   every removal, own-session plans included);
  * - anything inside it changed in the last --min-age-hours (default 6; newest mtime or ctime in the tree);
  * - it is a symlink, belongs to another user, or lives on another device;
  * - its tree could not be scanned within the time budget.
@@ -575,10 +577,13 @@ export function ownBuildOutput(sessionDir: string): string[] {
     return out.sort();
 }
 
-/** The guards for one entry of an own-session plan; the live-session guard is the one it leaves out. */
+/**
+ * The guards for one entry of an own-session plan; the live-session guard is the one it leaves out. A pending
+ * `tools rm` aside folder is refused here too: the session that runs the reclaim is the one that asked.
+ */
 export function judgeOwn(
     path: string,
-    options: { sessionDirs: string[]; open: string[]; minAgeMinutes: number }
+    options: { sessionDirs: string[]; open: string[]; minAgeMinutes: number; pending?: readonly PendingAside[] }
 ): Candidate | string {
     const st = lstatSync(path, { throwIfNoEntry: false });
 
@@ -612,6 +617,12 @@ export function judgeOwn(
         return "skipped-folder";
     }
 
+    const pending = options.pending ?? pendingAsideDirs();
+
+    if (pendingAsideFor(real, pending) || pendingAsideFor(path, pending)) {
+        return "aside-pending";
+    }
+
     const kind = buildOutputKind(path);
 
     if (!kind) {
@@ -633,6 +644,41 @@ export function judgeOwn(
     }
 
     return { path, ino: st.ino, bytes: tree.bytes, newest: tree.newest };
+}
+
+/**
+ * Why apply must not move `path` now, or null. Read fresh, immediately before the irreversible move, for both plan
+ * kinds: scanning earlier candidates may take minutes, and a `tools rm` run can put an aside copy under the entry or
+ * a process can open a file in it meanwhile. The pending asides are read after the slow lsof listing, so they are the
+ * last thing read before the rename; both the lexical and the canonical path are checked. A failed lsof listing
+ * throws and stops apply: an old snapshot cannot authorize a deletion. Tests pass `open` and `pending`.
+ */
+export function moveBlocker(
+    path: string,
+    fresh: { open?: readonly string[]; pending?: readonly PendingAside[] } = {}
+): string | null {
+    const open = fresh.open ?? openPaths();
+    let real: string;
+
+    try {
+        real = realpathSync(path);
+    } catch {
+        return "gone";
+    }
+
+    const inside = (o: string) => o === path || o.startsWith(`${path}/`) || o === real || o.startsWith(`${real}/`);
+
+    if (open.some(inside)) {
+        return "open-file";
+    }
+
+    const pending = fresh.pending ?? pendingAsideDirs();
+
+    if (pendingAsideFor(real, pending) || pendingAsideFor(path, pending)) {
+        return "aside-pending";
+    }
+
+    return null;
 }
 
 /** The session folder an own-session entry sits in (canonical paths only): its quarantine goes there, on one volume. */
@@ -891,11 +937,9 @@ function main(): void {
                 continue;
             }
 
-            // Scanning earlier candidates may take minutes. Refresh immediately before the irreversible move.
-            // A failed listing throws and stops apply; an old snapshot cannot authorize a deletion.
-            const freshOpen = openPaths();
-            if (freshOpen.some((path) => path === planned.path || path.startsWith(planned.path + "/"))) {
-                refused["open-file"] = (refused["open-file"] ?? 0) + 1;
+            const blocker = moveBlocker(planned.path);
+            if (blocker) {
+                refused[blocker] = (refused[blocker] ?? 0) + 1;
                 continue;
             }
 

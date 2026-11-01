@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { sendInboxMessage } from "@app/question/lib/message";
 import { toolCommand } from "@genesiscz/utils/cli";
@@ -7,6 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import { agentDisplayName, type RmNotifyOnRequest, type RmRequest, rmDataDir } from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import type { RunContext } from "./run";
 
 /** One post per asking session in this window: a burst of requests is one ping, and the picker shows them all. */
@@ -61,6 +62,50 @@ function readState(path: string): NotifyState | null {
     return null;
 }
 
+function writeState(path: string, state: NotifyState): void {
+    mkdirSync(dirname(path), { recursive: true });
+    atomicWriteFileSync(path, `${SafeJSON.stringify(state)}\n`);
+}
+
+/**
+ * Claims the session's notice window for `requestId` under the state file's lock: the state names this request
+ * BEFORE anything is sent, so a second `tools rm` of the same session that asks at the same moment finds it and stays
+ * quiet. Null when a notice went out (or is going out) within the window; else the state the claim replaced.
+ */
+async function claimWindow(
+    path: string,
+    now: Date,
+    requestId: string
+): Promise<{ previous: NotifyState | null } | null> {
+    return withFileLock(`${path}.lock`, async () => {
+        const last = readState(path);
+
+        if (last && now.getTime() - Date.parse(last.at) < RM_NOTIFY_WINDOW_MS) {
+            logger.debug({ request: requestId, last }, "rm: a request notice went to this session recently");
+            return null;
+        }
+
+        writeState(path, { at: now.toISOString(), requestId });
+        return { previous: last };
+    });
+}
+
+/** Gives the window back after a failed delivery, so the session's next request tries again; only its own claim. */
+async function releaseWindow(path: string, requestId: string, previous: NotifyState | null): Promise<void> {
+    await withFileLock(`${path}.lock`, async () => {
+        if (readState(path)?.requestId !== requestId) {
+            return;
+        }
+
+        if (previous) {
+            writeState(path, previous);
+            return;
+        }
+
+        unlinkSync(path);
+    });
+}
+
 /** The notice for a new request: who asks, how many items, where they wait, and the command that opens it. */
 export function requestNotice(request: RmRequest): RequestNotice {
     const caller = request.caller;
@@ -83,8 +128,10 @@ export function requestNotice(request: RmRequest): RequestNotice {
 
 /**
  * Tells the person a new request waits, the way `notify.onRequest` says (default: the GenesisTools inbox), at most
- * once per asking session in RM_NOTIFY_WINDOW_MS. It only names the command: no window opens by itself, so no Touch
- * ID panel appears while the person expects another prompt. A failure is logged and never fails the run.
+ * once per asking session in RM_NOTIFY_WINDOW_MS, also when several `tools rm` runs of the session ask at once (the
+ * window is claimed before the send). It only names the command: no window opens by itself, so no Touch ID panel
+ * appears while the person expects another prompt. A failure is logged and never fails the run; a failed delivery
+ * gives the window back, so the session's next request tries again.
  */
 export async function notifyNewRequest(
     request: RmRequest,
@@ -99,20 +146,29 @@ export async function notifyNewRequest(
     }
 
     const path = statePath(caller.sessionId ?? `no-session-${caller.agent}`);
-    const now = deps.now();
-    const last = readState(path);
+    let claim: { previous: NotifyState | null } | null;
 
-    if (last && now.getTime() - Date.parse(last.at) < RM_NOTIFY_WINDOW_MS) {
-        logger.debug({ request: request.id, last }, "rm: a request notice went to this session recently");
+    try {
+        claim = await claimWindow(path, deps.now(), request.id);
+    } catch (error) {
+        logger.warn({ request: request.id, mode, error }, "rm: could not claim the request notice window");
+        return;
+    }
+
+    if (!claim) {
         return;
     }
 
     try {
         await deps.send(mode, requestNotice(request));
-        mkdirSync(dirname(path), { recursive: true });
-        atomicWriteFileSync(path, `${SafeJSON.stringify({ at: now.toISOString(), requestId: request.id })}\n`);
         logger.debug({ request: request.id, mode }, "rm: told the person about a new request");
     } catch (error) {
         logger.warn({ request: request.id, mode, error }, "rm: could not tell the person about a new request");
+
+        try {
+            await releaseWindow(path, request.id, claim.previous);
+        } catch (releaseError) {
+            logger.warn({ request: request.id, error: releaseError }, "rm: could not give the notice window back");
+        }
     }
 }

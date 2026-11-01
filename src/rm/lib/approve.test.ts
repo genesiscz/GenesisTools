@@ -67,7 +67,7 @@ import {
 } from "./approve";
 import { shortRmPath } from "./display";
 import { renderLedger } from "./log-view";
-import { notifyNewRequest, type RequestNotice } from "./notify";
+import { type NotifyDeps, notifyNewRequest, type RequestNotice } from "./notify";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
 import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
 import { renderConfig, renderPresets, renderRoots } from "./settings-view";
@@ -958,6 +958,64 @@ describe("a run that asks", () => {
         });
         expect(sent).toHaveLength(1);
     });
+
+    test("two runs of one session that ask at the same moment send one notice; a failed send gives the window back", async () => {
+        const notice = (sessionId: string, id: string): RmRequest => ({
+            id,
+            kind: "delete",
+            createdAt: new Date().toISOString(),
+            caller: { ...AGENT, sessionId },
+            cwd: base,
+            reason: null,
+            status: "pending",
+            targets: [{ path: join(base, "notify-race", `${id}.txt`), kind: "file", rule: "default", reason: "x" }],
+        });
+        const sent: string[] = [];
+        let open = () => {};
+        const gate = new Promise<void>((resolve) => {
+            open = resolve;
+        });
+        const slow: NotifyDeps = {
+            // A second send opens the gate at once, so a double send fails the count instead of hanging the test.
+            send: async (_mode, message) => {
+                sent.push(message.title);
+
+                if (sent.length > 1) {
+                    open();
+                }
+
+                await gate;
+            },
+            now: () => new Date(),
+        };
+        const calls = [
+            notifyNewRequest(notice("sess-7777", "race01"), context(), slow),
+            notifyNewRequest(notice("sess-7777", "race02"), context(), slow),
+        ];
+        await Promise.race(calls);
+        open();
+        await Promise.all(calls);
+
+        expect(sent).toHaveLength(1);
+
+        const delivered: string[] = [];
+        const failing: NotifyDeps = {
+            send: async () => {
+                throw new Error("the inbox is down");
+            },
+            now: () => new Date(),
+        };
+        const working: NotifyDeps = {
+            send: async (_mode, message) => {
+                delivered.push(message.title);
+            },
+            now: () => new Date(),
+        };
+        await notifyNewRequest(notice("sess-8888", "fail01"), context(), failing);
+        await notifyNewRequest(notice("sess-8888", "fail02"), context(), working);
+
+        expect(delivered).toEqual([`${toolCommand("rm")} request fail02`]);
+    });
 });
 
 interface Seen {
@@ -1560,6 +1618,53 @@ describe("one window for several requests", () => {
         expect(loadRmRequest(first.id)?.status).toBe("approved");
         expect(loadRmRequest(second.id)?.status).toBe("approved");
         expect(existsSync(shared)).toBe(false);
+    });
+
+    test("a Deny reaches a request whose only path is the shared row another request owns", async () => {
+        const first = inPlaceAsk("batch-deny-shared", ["shared.txt"]);
+        const shared = first.targets[0]?.path ?? "";
+        const second = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            targets: [{ path: shared, kind: "file", rule: "default", reason: "no rule allows it" }],
+        });
+        const prompts: ApprovalPrompt[] = [];
+        const deny: ReturnType<typeof person> = async (_ctx, prompt) => {
+            prompts.push({ ...prompt, code: "", caller: PERSON });
+            return {
+                approved: false,
+                via: "touch-id",
+                choices: { selected: null, disposal: "trash", remember: "once", note: null },
+                deniedByPerson: true,
+            };
+        };
+        await batch([first.id, second.id], deny);
+
+        expect(prompts[0]?.request?.items.map((item) => item.path)).toEqual([shared]);
+        expect([first.id, second.id].map((id) => loadRmRequest(id)?.status)).toEqual(["denied", "denied"]);
+        expect(existsSync(shared)).toBe(true);
+    });
+
+    test("an unticked shared row denies that path in every request that names it", async () => {
+        const first = inPlaceAsk("batch-untick-shared", ["shared.txt", "own.txt"]);
+        const [shared, own] = first.targets.map((target) => target.path);
+        const second = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            targets: [{ path: shared ?? "", kind: "file", rule: "default", reason: "no rule allows it" }],
+        });
+        const prompts: ApprovalPrompt[] = [];
+        await batch([first.id, second.id], person(prompts, [own ?? ""]));
+
+        expect(prompts[0]?.request?.items.map((item) => item.path).sort()).toEqual([own, shared].sort());
+        expect(loadRmRequest(first.id)?.status).toBe("approved");
+        expect(loadRmRequest(first.id)?.decided?.denied).toEqual([shared]);
+        expect(loadRmRequest(second.id)?.status).toBe("denied");
+        expect([shared, own].map((path) => existsSync(path ?? ""))).toEqual([true, false]);
     });
 
     test("a request made while the window is open is not touched", async () => {
