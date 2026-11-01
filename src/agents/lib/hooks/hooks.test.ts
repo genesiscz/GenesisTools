@@ -835,17 +835,18 @@ describe("collectStaleCaptures", () => {
     function tree(): string {
         const root = mkdtempSync(join(tmpdir(), "gt-hooks-gc-"));
 
+        // The layout capturePre writes: root N's dirty files under `<call>/<n>/`.
         for (const call of ["old", "new"]) {
             const dir = join(root, "claude", "sess-a", "diff", call);
 
-            mkdirSync(dir, { recursive: true });
-            writeFileSync(join(dir, "1.tar"), "x".repeat(100));
+            mkdirSync(join(dir, "1"), { recursive: true });
+            writeFileSync(join(dir, "1", "kept.ts"), "x".repeat(100));
         }
 
         const other = join(root, "claude", "sess-b", "diff", "call");
 
-        mkdirSync(other, { recursive: true });
-        writeFileSync(join(other, "1.tar"), "y".repeat(50));
+        mkdirSync(join(other, "1"), { recursive: true });
+        writeFileSync(join(other, "1", "kept.ts"), "y".repeat(50));
         utimesSync(join(root, "claude", "sess-a", "diff", "old"), new Date(0), new Date(0));
 
         return root;
@@ -865,13 +866,21 @@ describe("collectStaleCaptures", () => {
 
     it("a dry run reports the same set and deletes nothing", () => {
         const root = tree();
+        // A capture stores a repository's symlink as a link: it weighs its own few bytes, not its target's.
+        const elsewhere = mkdtempSync(join(tmpdir(), "gt-hooks-gc-target-"));
+        const target = join(elsewhere, "big.bin");
+
+        writeFileSync(target, "z".repeat(5000));
+        symlinkSync(target, join(root, "claude", "sess-a", "diff", "old", "1", "link.bin"));
+
         const result = collectStaleCaptures({ now: Date.now(), horizonMs: 3_600_000, root });
 
         expect(result.removed).toHaveLength(1);
-        expect(result.bytes).toBe(100);
+        expect(result.bytes).toBe(100 + target.length);
         expect(existsSync(join(root, "claude", "sess-a", "diff", "old"))).toBe(true);
 
         rmSync(root, { recursive: true, force: true });
+        rmSync(elsewhere, { recursive: true, force: true });
     });
 
     it("a session sweep ignores age and touches only that session", () => {
@@ -936,8 +945,8 @@ describe("the sweep leaves no empty shell behind", () => {
         const root = mkdtempSync(join(tmpdir(), "gt-hooks-shell-"));
         const call = join(root, "claude", "sess", "diff", "one");
 
-        mkdirSync(call, { recursive: true });
-        writeFileSync(join(call, "1.tar"), "x");
+        mkdirSync(join(call, "1"), { recursive: true });
+        writeFileSync(join(call, "1", "kept.ts"), "x");
 
         collectStaleCaptures({ now: Date.now(), sessionId: "sess", root, write: true });
 
@@ -953,10 +962,10 @@ describe("the sweep leaves no empty shell behind", () => {
         const stale = join(root, "claude", "sess", "diff", "old");
         const live = join(root, "claude", "sess", "diff", "new");
 
-        mkdirSync(stale, { recursive: true });
-        mkdirSync(live, { recursive: true });
-        writeFileSync(join(stale, "1.tar"), "x");
-        writeFileSync(join(live, "1.tar"), "y");
+        mkdirSync(join(stale, "1"), { recursive: true });
+        mkdirSync(join(live, "1"), { recursive: true });
+        writeFileSync(join(stale, "1", "kept.ts"), "x");
+        writeFileSync(join(live, "1", "kept.ts"), "y");
         utimesSync(stale, new Date(0), new Date(0));
 
         collectStaleCaptures({ now: Date.now(), horizonMs: 3_600_000, root, write: true });
