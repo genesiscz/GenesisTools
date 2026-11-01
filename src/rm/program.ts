@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -56,15 +56,21 @@ export function createRmProgram(): Command {
 
 /**
  * `tools rm log` lists the audit log also when the agent meant the file `./log`: the run exits 0, and the agent may
- * believe the file is gone. When a file with the subcommand's name sits in the current folder, stderr says how to
- * delete it.
+ * believe the file is gone. When a file (or a symlink) with the subcommand's name sits in the current folder, stderr
+ * says how to delete it instead. A folder of that name gets no note: in `~/.genesis-tools/rm` the `requests` folder
+ * is the request store, and in `src/` the `config` folder is a tool.
  */
 function noteFileNamedLikeSubcommand(program: Command): void {
     program.hook("preSubcommand", (_root, sub) => {
         const name = sub.name();
+        const entry = lstatSync(join(process.cwd(), name), { throwIfNoEntry: false });
 
-        if (existsSync(join(process.cwd(), name))) {
-            out.printlnErr(pc.dim(`a file named ${name} exists here: delete it with ${toolCommand("rm")} ./${name}`));
+        if (entry && (entry.isFile() || entry.isSymbolicLink())) {
+            out.printlnErr(
+                pc.dim(
+                    `${name} here is a file; to delete it instead of running the ${name} subcommand, write ${toolCommand("rm")} ./${name}`
+                )
+            );
         }
     });
 }

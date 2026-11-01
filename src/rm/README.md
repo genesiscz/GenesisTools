@@ -88,7 +88,7 @@ them back. An aside request never expires, and `tools rm requests <id>` shows wh
 ## Reading the requests
 
 `tools rm requests` prints one summary line (open requests, paths, the size set aside, the paths in place, the oldest
-age), a `Needs a look` line, then one group per asking session, newest first, with one row per request: id, age
+age; all from the disk now, so a gone path is not in place and a lost copy is not aside), a `Needs a look` line, then one group per asking session, newest first, with one row per request: id, age
 (yellow from a day, red from three days), size, live state, a short path and why. The long reason and the aside
 location print only in the detail view: `tools rm requests <id>`, or `--long` for every listed request.
 
@@ -100,7 +100,9 @@ The live state comes from the disk at the time of the listing, which reads only:
 - `copy lost`: the aside copy is gone (something outside `tools rm` deleted it).
 
 Filters: `--session <id prefix>`, `--agent <name>`, `--project <name>`, `--older 1d`. `--sort age|size` prints a flat
-list instead of groups, `--paths` one row per path, `--all` also the closed requests. `--json` prints the saved
+list instead of groups, `--paths` one row per path, `--all` also the closed requests: a closed one shows its status
+(`approved`, `denied`, `expired`, `gone`; per path in `--paths` and the detail), and the summary counts it as closed,
+never as something to look at. `--json` prints the saved
 requests as before. A flag goes after the subcommand name (`tools rm requests --json`); a delete flag typed before a
 subcommand (`tools rm -n preset all`) is refused with exit 2.
 
@@ -218,7 +220,8 @@ GenesisTools.app cannot ask) cannot change once it shows, so it lists only the s
 
 `tools rm log` lists the audit log, also when the file `./log` was meant; `tools rm -- log` does the same, because
 Commander still runs the subcommand after `--`. Write `tools rm ./log` (any path with a `/`). When a file with the
-subcommand's name is in the current folder, the subcommand prints one line on stderr that says so.
+subcommand's name is in the current folder, the subcommand prints one line on stderr that says so. A folder of that
+name gets no note (`~/.genesis-tools/rm` holds the `requests` store).
 
 ## Opt-in cache presets
 
