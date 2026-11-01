@@ -134,7 +134,8 @@ public final class ApprovalDialogModel: ObservableObject {
                 warning: String?, footnote: String, rememberChoices: [ApprovalRemember], rememberNote: String?,
                 allowTitle: String, deadline: Date?, identifier: String, items: [ApprovalItem] = [],
                 verifier: ApprovalVerifier? = nil, links: [ApprovalLink] = [], summary: String? = nil,
-                disposals: [ApprovalChoice] = [], hint: String? = nil, selectable: Bool = false) {
+                disposals: [ApprovalChoice] = [], hint: String? = nil, selectable: Bool = false,
+                touchIDWaitsForClick: Bool = false) {
         self.title = title
         self.purpose = purpose
         self.command = command
@@ -158,6 +159,16 @@ public final class ApprovalDialogModel: ObservableObject {
         self.disposal = disposals.first?.id ?? ""
         self.selected = Set(items.map(\.id))
         verifier?.onVerified = { [weak self] method in self?.verified(method: method) }
+        // An agent opened the window itself: the sensor stays off until the person clicks "Approve with Touch ID…".
+        if touchIDWaitsForClick {
+            verifier?.waitForClick()
+        }
+    }
+
+    /// "Approve with Touch ID…" in a window an agent opened: the sensor listens from now on, as in any other window
+    /// (with nothing ticked, from the first tick).
+    public func armTouchID() {
+        verifier?.arm(listen: !denying && !(selectable && selected.isEmpty))
     }
 
     /// The same rows with newer facts (a size measured after the window opened); the ticks stay as the person left them.
@@ -523,19 +534,14 @@ struct ApprovalVerifyFooter: View {
                     .foregroundStyle(message.isProblem ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 6) {
-                if let deadline = model.deadline {
-                    (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            // Beside three buttons the line is short: the countdown stays whole and the key hint goes, rather than
+            // both cut to "Denies i… · Esc de…".
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    countdown
+                    keyHint
                 }
-                if let hint = model.hint {
-                    Text(verbatim: "· \(hint)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
+                countdown
             }
         } trailing: {
             if model.denying {
@@ -556,10 +562,42 @@ struct ApprovalVerifyFooter: View {
     }
 
     @ViewBuilder
+    private var countdown: some View {
+        if let deadline = model.deadline {
+            (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder
+    private var keyHint: some View {
+        if let hint = model.hint {
+            Text(verbatim: "· \(hint)")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+    }
+
+    /// Nothing ticked in a window with checkboxes.
+    private var nothingSelected: Bool {
+        model.selectable && model.selected.isEmpty
+    }
+
+    /// The sensor is off only because the window waits for the person's click (an agent opened it).
+    private var offUntilClick: Bool {
+        verifier.waitsForClick && verifier.state == .paused && !nothingSelected && !model.denying
+    }
+
+    @ViewBuilder
     private var sensor: some View {
         switch verifier.state {
         case .unavailable, .password:
             ApprovalStateGlyph(symbol: "lock.fill", size: 18, style: .secondary)
+        case .paused where offUntilClick:
+            ApprovalStateGlyph(symbol: "touchid", size: 18, style: .secondary)
         case .paused:
             ApprovalStateGlyph(symbol: "checklist", size: 18, style: .secondary)
         case .verified:
@@ -574,6 +612,7 @@ struct ApprovalVerifyFooter: View {
     private var headline: String {
         switch verifier.state {
         case .idle, .listening, .failed: return "Touch ID to approve"
+        case .paused where offUntilClick: return "Touch ID is off"
         case .paused: return "Nothing selected"
         case .password: return "Waiting for your password"
         case .unavailable: return "Approve with your password"
@@ -585,6 +624,8 @@ struct ApprovalVerifyFooter: View {
         switch verifier.state {
         case .failed(let text): return (text, true)
         case .unavailable(let text): return (text, false)
+        // The purpose says why it is off; the three buttons leave this column too narrow for a sentence.
+        case .paused where offUntilClick: return nil
         case .paused: return ("Tick at least one row, or deny.", false)
         case .password: return ("The system asks for your password in its own window.", false)
         default: return nil
@@ -627,10 +668,20 @@ struct ApprovalVerifyFooter: View {
                     .pointerCursor()
                     .accessibilityIdentifier("\(model.identifier)-password")
             } else {
+                // The password is a person's act, so it works while the sensor waits for the click.
                 Button("Use password…", action: verifier.usePassword)
-                    .disabled(verifier.state == .password || verifier.state == .paused)
+                    .disabled(verifier.state == .password || (verifier.state == .paused && !offUntilClick))
                     .pointerCursor(verifier.state != .password)
                     .accessibilityIdentifier("\(model.identifier)-password")
+            }
+            // Not on Return: a stray Return must never arm the sensor.
+            if verifier.waitsForClick, verifier.state == .paused {
+                Button("Approve with Touch ID…", action: model.armTouchID)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(nothingSelected)
+                    .pointerCursor(!nothingSelected)
+                    .help(nothingSelected ? "Tick at least one row first." : "Turns the sensor on; then touch it to approve.")
+                    .accessibilityIdentifier("\(model.identifier)-arm")
             }
             Button("Deny…", action: model.denyWithNote)
                 .pointerCursor()
