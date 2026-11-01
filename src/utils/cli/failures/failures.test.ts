@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, unlinkSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressFile } from "@genesiscz/utils/compress/file";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { Command } from "commander";
 import { claudeProjectFolder } from "./caller";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
-import { appendFailure, readFailures, type ToolFailure } from "./record";
+import { appendFailure, failureDays, failureLogPath, readFailures, type ToolFailure } from "./record";
 import { RUN_ID_ENV } from "./run-id";
 import { signalExitStatus } from "./signal-status";
 import {
@@ -278,6 +279,59 @@ describe("failure records", () => {
 
         expect([...readFailures({ fromDay: "2026-10-22", toDay: "2026-10-22", dir })]).toEqual([failure]);
         expect([...readFailures({ fromDay: "2026-10-23", toDay: "2026-10-24", dir })]).toEqual([]);
+    });
+
+    it("reads a day the daily pass compressed, and a day once while its plain file and .zst both exist", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-failures-zst-"));
+        const failureOn = (id: string, date: number, runId: string): ToolFailure => ({
+            v: 1,
+            id,
+            at: new Date(2026, 9, date, 12).toISOString(),
+            kind: "interrupt",
+            tool: "fixture",
+            command: "fixture run",
+            argv: ["run"],
+            exitCode: 130,
+            message: null,
+            errorName: null,
+            stack: null,
+            stderrTail: null,
+            fatal: true,
+            durationMs: 10,
+            pid: 2,
+            ppid: 1,
+            cwd: "/repo",
+            traceId: null,
+            toolsRoot: "/repo",
+            caller: null,
+            runId,
+        });
+        const written = [failureOn("z-20", 20, "run-20"), failureOn("z-21", 21, "run-21"), failureOn("z-22", 22, "")];
+
+        for (const failure of written) {
+            appendFailure(failure, dir);
+        }
+
+        await compressFile({ source: failureLogPath("2026-10-20", dir) });
+        unlinkSync(failureLogPath("2026-10-20", dir));
+        await compressFile({ source: failureLogPath("2026-10-21", dir) });
+
+        expect(failureDays(dir)).toEqual(["2026-10-20", "2026-10-21", "2026-10-22"]);
+        expect([...readFailures({ fromDay: "2026-10-20", toDay: "2026-10-22", dir })]).toEqual(written);
+        const end = recordSignalEnd({
+            tool: "fixture",
+            runId: "run-20",
+            startedAt: new Date(2026, 9, 20, 11),
+            signal: "SIGTERM",
+            status: null,
+            viaLauncher: false,
+            childPid: 2,
+            toolsRoot: "/repo",
+            caller: () => null,
+            now: new Date(2026, 9, 22, 13),
+            dir,
+        });
+        expect(end).toBeNull();
     });
 });
 

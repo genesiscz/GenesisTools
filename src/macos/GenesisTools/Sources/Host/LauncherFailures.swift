@@ -78,9 +78,16 @@ enum LauncherFailures {
         String(Int64((date.timeIntervalSince1970 * 1000).rounded(.down)), radix: 36)
     }
 
-    /// launcher.ts `childRecorded`: whether a record of this run is already in a day file it could be in.
+    /// launcher.ts `childRecorded`: whether a record of this run is already in a day file it could be in. A record
+    /// carries the time it was written, and the tool or the `tools` wrapper writes it when the run ends, which is
+    /// just now: so it is in today's file, or in yesterday's for a run that ended across midnight. The daily pass
+    /// keeps those two days plain (src/utils/compress/daily.ts `DAY_LOGS_PLAIN_DAYS`, pinned by
+    /// LauncherFailuresTests) and stores older days as `<day>-failures.jsonl.zst`, which this launcher cannot decode
+    /// (macOS has no zstd). So the scan starts no earlier than yesterday, whenever the run started; TypeScript's
+    /// `readFailures` reads both forms.
     static func recorded(runId: String, since: Date, now: Date, directory: URL) -> Bool {
-        var day = since
+        let yesterday = Calendar(identifier: .gregorian).date(byAdding: .day, value: -1, to: now) ?? now
+        var day = max(since, yesterday)
         let last = localDay(now)
         while localDay(day) <= last {
             let url = failureLogURL(day: localDay(day), directory: directory)
