@@ -56,7 +56,8 @@ const defaultDeps: GrokEmbedDeps = {
     pickAccount: (requested) =>
         pickLaunchAccount({ alias: "grok", tool: "tools grok embed", subcommand: ["embed"], requested }),
     launchAuth: grokLaunchAuth,
-    runChild: (input) => runBinaryDirect(input),
+    // Grok drops the rest of a line on a short write, so it gets a pipe of its own (see runBinaryDirect).
+    runChild: (input) => runBinaryDirect({ ...input, relayStdout: true }),
 };
 
 /**
