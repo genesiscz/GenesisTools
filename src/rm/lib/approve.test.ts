@@ -34,6 +34,7 @@ import {
     type RmConfig,
     type RmRequest,
     readRmLedger,
+    requestBatchIds,
     resolveTarget,
     restoreBatch,
     rmCallerFromRuntime,
@@ -58,7 +59,7 @@ import {
 } from "./approve";
 import { shortRmPath } from "./display";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
-import { executePlan, type RunContext } from "./run";
+import { executePlan, type PersonAnswer, type RunContext } from "./run";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
 const PERSON: RmCaller = { agent: "person", sessionId: null, isInAgent: false };
@@ -1096,5 +1097,64 @@ describe("nothing left to decide", () => {
         expect(
             readRmLedger().filter((entry) => entry.action === "lost" && entry.requestId === request.id)
         ).toMatchObject([{ path: lost.path }]);
+    });
+});
+
+describe("every batch of a request", () => {
+    const answer: PersonAnswer = {
+        approved: true,
+        via: "touch-id",
+        choices: { selected: null, disposal: "trash", remember: "once", note: null },
+        deniedByPerson: false,
+    };
+
+    test("a request approved in two steps keeps both batches, the newest in batchId", () => {
+        const targets = ["a.txt", "b.txt"].map((name) => ({
+            path: join(base, "two-steps", name),
+            kind: "file" as const,
+            rule: "default",
+            reason: "no rule allows it",
+        }));
+        const request = createRmRequest({ kind: "delete", caller: AGENT, cwd: base, reason: null, targets });
+        const second = request.targets[1];
+
+        if (!second) {
+            throw new Error("expected two targets");
+        }
+
+        saveApproved({
+            request,
+            answer,
+            approved: [],
+            denied: [],
+            pending: [second],
+            batchId: "20261101-100000-1-aaaa",
+            ctx: context(),
+        });
+        const partly = loadRmRequest(request.id);
+
+        if (!partly) {
+            throw new Error("expected the request to stay pending");
+        }
+
+        saveApproved({
+            request: partly,
+            answer,
+            approved: [],
+            denied: [],
+            pending: [],
+            batchId: "20261101-110000-1-bbbb",
+            ctx: context(),
+        });
+        const done = loadRmRequest(request.id);
+
+        expect(done?.status).toBe("approved");
+        expect(done ? requestBatchIds(done) : []).toEqual(["20261101-100000-1-aaaa", "20261101-110000-1-bbbb"]);
+        expect(done?.batchId).toBe("20261101-110000-1-bbbb");
+    });
+
+    test("a request saved before batchIds reads its one batch", () => {
+        expect(requestBatchIds({ batchId: "20261031-170802-1-6ce5" })).toEqual(["20261031-170802-1-6ce5"]);
+        expect(requestBatchIds({})).toEqual([]);
     });
 });

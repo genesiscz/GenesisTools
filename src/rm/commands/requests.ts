@@ -19,6 +19,7 @@ import {
     recheckAfterWait,
     recoverAsideJournals,
     rememberOptions,
+    requestBatchIds,
     requestLive,
     resolveTarget,
     saveRmRequest,
@@ -97,7 +98,9 @@ export function saveApproved(input: {
             disposal: request.kind === "delete" ? answer.choices.disposal : undefined,
             remember: request.kind === "delete" ? answer.choices.remember : undefined,
         },
+        // A second approval of the same request makes a second batch: both stay restorable, the newest is batchId.
         batchId: batchId ?? request.batchId,
+        batchIds: batchId ? [...requestBatchIds(request), batchId] : request.batchIds,
     });
     appendRmLedger({ action: "approve", requestId: request.id, via: answer.via, caller: ctx.caller, batchId });
 }

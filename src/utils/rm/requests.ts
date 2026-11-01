@@ -40,8 +40,10 @@ export interface RmRequest {
     asideDir?: string;
     /** What the person picked: the paths approved and the paths denied (put back), and how the approved ones go. */
     decided?: RmRequestDecision;
-    /** The trash batch an approved delete made; `tools rm restore <request id>` resolves to it. */
+    /** The newest trash batch an approval made; kept for readers older than `batchIds`. */
     batchId?: string;
+    /** Every trash batch the approvals made, oldest first; `tools rm restore <request id>` restores each. */
+    batchIds?: string[];
     /** The person's note on a deny, shown to the agent when it asks for the same path again. */
     deniedNote?: string;
 }
@@ -223,6 +225,15 @@ export function listRmRequests(options: { all?: boolean; dir?: string; now?: Dat
         .filter((request): request is RmRequest => request !== null)
         .filter((request) => options.all || request.status === "pending")
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Every trash batch the approvals of `request` made, oldest first; a file saved before `batchIds` has `batchId` only. */
+export function requestBatchIds(request: Pick<RmRequest, "batchId" | "batchIds">): string[] {
+    if (request.batchIds && request.batchIds.length > 0) {
+        return request.batchIds;
+    }
+
+    return request.batchId ? [request.batchId] : [];
 }
 
 /** The trash batch the approved request `id` made; null when there is no such request or it made none. */

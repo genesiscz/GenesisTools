@@ -6,6 +6,7 @@ import {
     type RmRequestLive,
     type RmRequestTarget,
     type RmTargetLiveState,
+    requestBatchIds,
     requestLive,
     requestsAlsoNaming,
 } from "@genesiscz/utils/rm";
@@ -253,7 +254,7 @@ export function renderRequestDetail(view: RequestView, now: Date): string[] {
 
     if (decided) {
         const denied = request.decided?.denied.length ?? 0;
-        const batches = request.batchId ? [request.batchId] : [];
+        const batches = requestBatchIds(request);
         lines.push(
             `  decided  ${decided}, ${denied} denied${batches.length > 0 ? `; batches ${batches.join(", ")}` : ""}`
         );
