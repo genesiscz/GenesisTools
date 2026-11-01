@@ -1272,6 +1272,33 @@ export function allocateBudget(
     return out;
 }
 
+/** The roles whose specs each rule compares (the PSU wattage rule also reads the CPU and GPU draw). */
+export const RULE_ROLES: Record<RuleId, readonly PcRole[]> = {
+    cpu_socket_motherboard: ["cpu", "motherboard"],
+    ram_motherboard: ["ram", "motherboard"],
+    ram_cpu: ["ram", "cpu"],
+    psu_wattage: ["psu", "cpu", "gpu"],
+    gpu_length_case: ["gpu", "case"],
+    cooler_clearance_case: ["cooler", "case"],
+    cooler_socket: ["cooler", "cpu"],
+    motherboard_form_factor_case: ["motherboard", "case"],
+    psu_form_factor_case: ["psu", "case"],
+    display_output: ["cpu", "gpu"],
+};
+
+/**
+ * Rules a candidate for `role` must pass: `rulesForRole` for the parts picked before it, plus every rule between
+ * `role` and a pinned part. A pinned part of a later role (a fixed motherboard when the CPU is picked) is never picked
+ * again, so its rules are checked here or never.
+ */
+export function rulesForCandidate(role: PcRole, pinned: ReadonlySet<PcRole>): RuleId[] {
+    const withPinned = (Object.keys(RULE_ROLES) as RuleId[]).filter(
+        (rule) =>
+            RULE_ROLES[rule].includes(role) && RULE_ROLES[rule].some((other) => other !== role && pinned.has(other))
+    );
+    return [...new Set([...rulesForRole(role), ...withPinned])];
+}
+
 /** Rules relevant to accepting a candidate for `role`, given the parts chosen so far. */
 export function rulesForRole(role: PcRole): RuleId[] {
     switch (role) {

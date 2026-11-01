@@ -11,6 +11,8 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
  */
 const VERSION = "2.3.2";
 const RELEASE_URL = `https://github.com/lexiforest/curl-impersonate/releases/download/v${VERSION}`;
+/** The whole first-use download, body included; the largest archive is about 28 MB. */
+const DOWNLOAD_TIMEOUT_MS = 180_000;
 
 interface PlatformAsset {
     triple: string;
@@ -51,6 +53,20 @@ export interface LibcurlImpersonateFiles {
 
 let resolved: Promise<LibcurlImpersonateFiles> | undefined;
 
+/**
+ * True when the library and the current CA bundle are on disk, so starting a client writes nothing. Reads only: a
+ * diagnostic asks this before it sends a request, because the first request downloads and writes the library.
+ */
+export function libcurlImpersonateInstalled(): boolean {
+    const asset = ASSETS[`${process.platform}-${process.arch}`];
+    if (!asset) {
+        return false;
+    }
+
+    const dir = libraryDir();
+    return existsSync(join(dir, libraryFileName(asset))) && existsSync(caBundlePath(dir, caBundlePem()));
+}
+
 /** Downloads the pinned library on first use (about 7-28 MB per platform), then answers from disk. */
 export function ensureLibcurlImpersonate(): Promise<LibcurlImpersonateFiles> {
     resolved ??= install().catch((error: unknown) => {
@@ -70,8 +86,8 @@ async function install(): Promise<LibcurlImpersonateFiles> {
         );
     }
 
-    const dir = toolDataDir("impersonate", `libcurl-impersonate-${VERSION}`);
-    const library = join(dir, asset.library.split("/").pop() ?? asset.library);
+    const dir = libraryDir();
+    const library = join(dir, libraryFileName(asset));
     const caBundle = writeCaBundle(dir);
     if (existsSync(library)) {
         return { library, caBundle };
@@ -80,12 +96,7 @@ async function install(): Promise<LibcurlImpersonateFiles> {
     mkdirSync(dir, { recursive: true });
     const url = `${RELEASE_URL}/libcurl-impersonate-v${VERSION}.${asset.triple}.tar.gz`;
     logger.info({ url, dir }, "downloading libcurl-impersonate");
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`libcurl-impersonate download failed: HTTP ${response.status} for ${url}`);
-    }
-
-    const archive = Buffer.from(await response.arrayBuffer());
+    const archive = await download(url);
     const digest = createHash("sha256").update(archive).digest("hex");
     if (digest !== asset.sha256) {
         throw new Error(`libcurl-impersonate checksum mismatch for ${url}: got ${digest}, pinned ${asset.sha256}`);
@@ -106,9 +117,45 @@ async function install(): Promise<LibcurlImpersonateFiles> {
     return { library, caBundle };
 }
 
+/** The archive, read whole within DOWNLOAD_TIMEOUT_MS; the signal also ends a body that stalls after the headers. */
+async function download(url: string): Promise<Buffer> {
+    try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        if (!response.ok) {
+            throw new Error(`libcurl-impersonate download failed: HTTP ${response.status} for ${url}`);
+        }
+
+        return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+        if (error instanceof Error && error.name === "TimeoutError") {
+            throw new Error(
+                `libcurl-impersonate download did not finish within ${DOWNLOAD_TIMEOUT_MS / 1000} s: ${url}`
+            );
+        }
+
+        throw error;
+    }
+}
+
+function libraryDir(): string {
+    return toolDataDir("impersonate", `libcurl-impersonate-${VERSION}`);
+}
+
+function libraryFileName(asset: PlatformAsset): string {
+    return asset.library.split("/").pop() ?? asset.library;
+}
+
+function caBundlePem(): string {
+    return `${tls.rootCertificates.join("\n")}\n`;
+}
+
+function caBundlePath(dir: string, pem: string): string {
+    return join(dir, `ca-${createHash("sha256").update(pem).digest("hex").slice(0, 12)}.pem`);
+}
+
 function writeCaBundle(dir: string): string {
-    const pem = `${tls.rootCertificates.join("\n")}\n`;
-    const path = join(dir, `ca-${createHash("sha256").update(pem).digest("hex").slice(0, 12)}.pem`);
+    const pem = caBundlePem();
+    const path = caBundlePath(dir, pem);
     if (!existsSync(path) || readFileSync(path, "utf8") !== pem) {
         mkdirSync(dir, { recursive: true });
         const temp = `${path}.${process.pid}.tmp`;

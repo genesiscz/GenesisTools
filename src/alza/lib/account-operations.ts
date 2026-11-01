@@ -58,6 +58,8 @@ export interface AccountOperation {
     description: string;
     input: z.ZodObject;
     kind: AccountOperationKind;
+    /** A write that deletes or replaces something (a basket line, a watchdog, a list entry, a local file). */
+    destructive?: boolean;
     /** Left out of the MCP tool list unless the server is started with the raw tools (`mobile_read`). */
     hidden?: boolean;
     run(ctx: AccountContext, args: unknown): Promise<OperationResult>;
@@ -77,6 +79,7 @@ function accountOperation<S extends z.ZodObject>(def: {
     description: string;
     input: S;
     kind: AccountOperationKind;
+    destructive?: boolean;
     hidden?: boolean;
     run(ctx: AccountContext, input: z.infer<S>): Promise<OperationResult>;
 }): AccountOperation {
@@ -288,6 +291,7 @@ export const ACCOUNT_OPERATIONS: AccountOperation[] = [
         description: "Remove a product from the basket, whatever its quantity.",
         input: z.object({ product }),
         kind: "write",
+        destructive: true,
         run: async (ctx, i) => {
             const data = await removeFromCart(ctx, { product: i.product });
             return {
@@ -362,6 +366,7 @@ export const ACCOUNT_OPERATIONS: AccountOperation[] = [
         description: "Remove a watchdog, by its id from watchdog_list or by the product it watches.",
         input: z.object({ watchdog: z.string().min(1).describe("Watchdog id (UUID) or the watched product") }),
         kind: "write",
+        destructive: true,
         run: async (ctx, i) => {
             const data = await removeWatchdog(ctx, { ref: i.watchdog });
             return { data, markdown: `Watchdog ${data.removed} removed.` };
@@ -538,14 +543,15 @@ export const ACCOUNT_OPERATIONS: AccountOperation[] = [
     accountOperation({
         name: "order_document",
         description:
-            "Download an order invoice or document to a file. The link must be an https Alza document URL (invoices: pdf.alza.cz), as order_search returns it; redirects are not followed.",
+            "Download an order invoice or document to a file. The link must be an https Alza document URL as order_search returns it: a pdf.alza.cz invoice, or a route of one of the account's orders. Redirects are not followed; at most 8 MiB.",
         input: z.object({
             url: z.string().min(10).max(800).describe("The document link from order_search or order_show"),
             output: z.string().min(1).describe("File path to write"),
             overwrite: z.boolean().optional().describe("Replace an existing file"),
         }),
-        // Writes a local file, so MCP clients must not treat it as read-only.
+        // Writes a local file, so MCP clients must not treat it as read-only; with overwrite it replaces one.
         kind: "write",
+        destructive: true,
         run: async (ctx, i) => {
             const data = await orderDocument(ctx, { href: i.url, output: i.output, overwrite: i.overwrite });
             return {
@@ -599,6 +605,7 @@ export const ACCOUNT_OPERATIONS: AccountOperation[] = [
             list: z.enum(LIST_NAMES).optional().describe("favorites (default) or later"),
         }),
         kind: "write",
+        destructive: true,
         run: async (ctx, i) => {
             const data = await mutateList(ctx, { action: i.action, product: i.product, list: i.list ?? "favorites" });
             return {

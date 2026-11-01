@@ -4,6 +4,10 @@ import type { PickupPlace } from "./types";
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const USER_AGENT = "GenesisTools-alza/1.0 (postal-code geocoder)";
+/** The whole lookup, body included. */
+const GEOCODE_TIMEOUT_MS = 15_000;
+/** Countries whose 5-digit postal codes are written "NNN NN", the form Nominatim matches for them. */
+const SPACED_POSTAL_CODES = new Set(["cz", "sk"]);
 
 export interface GeoPoint {
     latitude: number;
@@ -11,12 +15,13 @@ export interface GeoPoint {
     label?: string;
 }
 
-/** A postal code or a place name to coordinates through OpenStreetMap Nominatim (sends only the query text). */
-export async function geocode(query: string, countryCode: string): Promise<GeoPoint> {
+/** The Nominatim search for a postal code (a 5-digit one spaced as "NNN NN" in CZ and SK only) or a place name. */
+export function geocodeUrl(query: string, countryCode: string): URL {
     const url = new URL(NOMINATIM);
     const compact = query.replace(/\s+/g, "");
     if (/^\d{5}$/.test(compact)) {
-        url.searchParams.set("postalcode", `${compact.slice(0, 3)} ${compact.slice(3)}`);
+        const spaced = SPACED_POSTAL_CODES.has(countryCode.toLowerCase());
+        url.searchParams.set("postalcode", spaced ? `${compact.slice(0, 3)} ${compact.slice(3)}` : compact);
     } else {
         url.searchParams.set("q", query);
     }
@@ -24,12 +29,33 @@ export async function geocode(query: string, countryCode: string): Promise<GeoPo
     url.searchParams.set("countrycodes", countryCode);
     url.searchParams.set("format", "json");
     url.searchParams.set("limit", "1");
-    const response = await fetch(url, { headers: { "user-agent": USER_AGENT, accept: "application/json" } });
-    if (!response.ok) {
-        throw new Error(`Nominatim answered HTTP ${response.status} for ${query}`);
-    }
+    return url;
+}
 
-    const rows: unknown = await response.json();
+/** The rows of one Nominatim search, read within GEOCODE_TIMEOUT_MS (the signal also ends a stalled body). */
+async function nominatimRows(url: URL, query: string): Promise<unknown> {
+    try {
+        const response = await fetch(url, {
+            headers: { "user-agent": USER_AGENT, accept: "application/json" },
+            signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+            throw new Error(`Nominatim answered HTTP ${response.status} for ${query}`);
+        }
+
+        return await response.json();
+    } catch (error) {
+        if (error instanceof Error && error.name === "TimeoutError") {
+            throw new Error(`Nominatim did not answer within ${GEOCODE_TIMEOUT_MS / 1000} s for "${query}"; try again`);
+        }
+
+        throw error;
+    }
+}
+
+/** A postal code or a place name to coordinates through OpenStreetMap Nominatim (sends only the query text). */
+export async function geocode(query: string, countryCode: string): Promise<GeoPoint> {
+    const rows = await nominatimRows(geocodeUrl(query, countryCode), query);
     const first = Array.isArray(rows) ? rows[0] : undefined;
     const latitude = Number(first?.lat);
     const longitude = Number(first?.lon);

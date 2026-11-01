@@ -419,8 +419,20 @@ export const DOCUMENT_HOSTS = new Set([
     "pdf.alza.cz",
 ]);
 const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
+/** The whole download, body included. */
+const DOCUMENT_TIMEOUT_MS = 30_000;
+/** The invoice host serves documents only, so any path there is a document. */
+const PDF_HOST = "pdf.alza.cz";
+/**
+ * On the other hosts a GET with the account token can do more than read (`sendOrder1` starts checkout state), so only
+ * the routes of one order of the account are followed: where order responses link their documents.
+ */
+const ORDER_DOCUMENT_PATH = /^\/api\/users\/\d{1,16}\/v\d{1,2}\/orders\/\d{6,16}(?:\/[\w.-]+)*\/?$/;
 
-/** An absolute https URL on an Alza document host, with no credentials in it. Throws with the reason otherwise. */
+/**
+ * An absolute https URL with no credentials in it: any path on pdf.alza.cz, or one order's route on another Alza
+ * document host. Throws with the reason otherwise.
+ */
 export function validateDocumentUrl(href: string): URL {
     let url: URL;
     try {
@@ -441,7 +453,80 @@ export function validateDocumentUrl(href: string): URL {
         );
     }
 
+    if (url.hostname !== PDF_HOST && !ORDER_DOCUMENT_PATH.test(url.pathname)) {
+        throw new AlzaApiError(
+            `${url.pathname} on ${url.hostname} is not an order document route; only ${PDF_HOST} links and /api/users/<id>/v1/orders/<order>/… links are followed.`,
+            400
+        );
+    }
+
     return url;
+}
+
+/** The body, read chunk by chunk and given up as soon as it passes `maxBytes`, so a large answer is never buffered. */
+async function readBodyWithin(response: Response, maxBytes: number): Promise<Uint8Array> {
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+        await response.body?.cancel();
+        throw new AlzaApiError(`The document is larger than ${maxBytes} bytes (${declared}); not saved.`, 413);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+        return new Uint8Array(0);
+    }
+
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let chunk = await reader.read();
+    while (!chunk.done) {
+        total += chunk.value.byteLength;
+        if (total > maxBytes) {
+            await reader.cancel();
+            throw new AlzaApiError(`The document is larger than ${maxBytes} bytes; not saved.`, 413);
+        }
+
+        chunks.push(chunk.value);
+        chunk = await reader.read();
+    }
+
+    return Buffer.concat(chunks);
+}
+
+/** pdf.alza.cz with plain fetch: no redirect is followed, and the deadline covers the body as well. */
+async function fetchPdfDocument(
+    url: URL,
+    headers: Record<string, string>
+): Promise<{ body: Uint8Array; contentType?: string }> {
+    try {
+        const response = await fetch(url, {
+            headers,
+            redirect: "manual",
+            signal: AbortSignal.timeout(DOCUMENT_TIMEOUT_MS),
+        });
+        if (response.status >= 300 && response.status < 400) {
+            throw new AlzaApiError(
+                `The document link redirected to ${response.headers.get("location") ?? "?"}; not followed.`,
+                response.status
+            );
+        }
+
+        if (!response.ok) {
+            throw new AlzaApiError(`${PDF_HOST} answered HTTP ${response.status} for the document.`, response.status);
+        }
+
+        const contentType = response.headers.get("content-type") ?? undefined;
+        return { body: await readBodyWithin(response, MAX_DOCUMENT_BYTES), contentType };
+    } catch (error) {
+        if (error instanceof Error && error.name === "TimeoutError") {
+            throw new AlzaApiError(
+                `${PDF_HOST} did not send the document within ${DOCUMENT_TIMEOUT_MS / 1000} s.`,
+                504
+            );
+        }
+
+        throw error;
+    }
 }
 
 /**
@@ -473,23 +558,16 @@ export async function orderDocument(
 
     let body: Uint8Array;
     let contentType: string | undefined;
-    if (url.hostname === "pdf.alza.cz") {
-        const response = await fetch(url, { headers, redirect: "manual" });
-        if (response.status >= 300 && response.status < 400) {
-            throw new AlzaApiError(
-                `The document link redirected to ${response.headers.get("location") ?? "?"}; not followed.`,
-                response.status
-            );
-        }
-
-        if (!response.ok) {
-            throw new AlzaApiError(`pdf.alza.cz answered HTTP ${response.status} for the document.`, response.status);
-        }
-
-        contentType = response.headers.get("content-type") ?? undefined;
-        body = new Uint8Array(await response.arrayBuffer());
+    if (url.hostname === PDF_HOST) {
+        ({ body, contentType } = await fetchPdfDocument(url, headers));
     } else {
-        const response = await ctx.api.http.request({ url: url.toString(), headers, followRedirects: false });
+        const response = await ctx.api.http.request({
+            url: url.toString(),
+            headers,
+            followRedirects: false,
+            timeoutMs: DOCUMENT_TIMEOUT_MS,
+            maxBodyBytes: MAX_DOCUMENT_BYTES,
+        });
         if (response.status < 200 || response.status >= 300) {
             throw new AlzaApiError(
                 `${url.hostname} answered HTTP ${response.status} for the document.`,

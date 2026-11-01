@@ -1,8 +1,92 @@
 import { describe, expect, test } from "bun:test";
-import { findCartLine, parseCart, parseWatchdogDialog, parseWatchdogList, toOrderSummary } from "./account";
-import { gridOrderSchema, watchdogDialogSchema, watchdogListSchema } from "./account-schemas";
-import { isExpiring, jwtExpiryMs, parseRedirect, pkceChallenge } from "./auth";
-import { splitSetCookie, VisitorSession } from "./state";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+    ImpersonatedHttpClient,
+    type ImpersonatedRequest,
+    type ImpersonatedResponse,
+} from "@genesiscz/utils/http/impersonate/client";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { browserOpener } from "../commands/account";
+import { alzaMcpTools } from "../mcp/tools";
+import {
+    type AccountContext,
+    accountStatus,
+    findCartLine,
+    parseCart,
+    parseOrders,
+    parseWatchdogDialog,
+    parseWatchdogList,
+    toOrderSummary,
+} from "./account";
+import { validateDocumentUrl } from "./account-extras";
+import { gridOrderSchema, type StoredTokens, watchdogDialogSchema, watchdogListSchema } from "./account-schemas";
+import { AlzaApi } from "./api";
+import { AlzaAuth, isExpiring, jwtExpiryMs, NotSignedInError, parseRedirect, pkceChallenge } from "./auth";
+import { splitSetCookie, statePath, VisitorSession } from "./state";
+import { STOREFRONTS } from "./storefront";
+
+/** Answers every request from `answer` and records it; never touches the network or the curl worker. */
+class CannedHttp extends ImpersonatedHttpClient {
+    readonly requests: ImpersonatedRequest[] = [];
+
+    constructor(
+        private readonly answer: (req: ImpersonatedRequest) => ImpersonatedResponse | Promise<ImpersonatedResponse>
+    ) {
+        super({ label: "test" });
+    }
+
+    override async request(req: ImpersonatedRequest): Promise<ImpersonatedResponse> {
+        this.requests.push(req);
+        return this.answer(req);
+    }
+}
+
+const ok = (req: ImpersonatedRequest, body: unknown, headers: Record<string, string> = {}): ImpersonatedResponse => ({
+    status: 200,
+    url: req.url,
+    headers,
+    text: SafeJSON.stringify(body),
+});
+
+const VISITOR = "11111111-2222-4333-8444-555555555555";
+
+function tempDir(prefix: string): string {
+    return mkdtempSync(join(tmpdir(), `${prefix}-`));
+}
+
+function tokens(access: string, refresh: string, expiresAt: string): StoredTokens {
+    return {
+        access_token: access,
+        refresh_token: refresh,
+        token_type: "Bearer",
+        expires_at: expiresAt,
+        obtained_at: "2026-11-01T10:00:00Z",
+    };
+}
+
+function writeTokens(path: string, value: StoredTokens): void {
+    writeFileSync(path, SafeJSON.stringify(value));
+}
+
+function accountContext(http: CannedHttp, dir: string): AccountContext {
+    const session = VisitorSession.load(join(dir, "visitor.json"));
+    const auth = new AlzaAuth({
+        http,
+        storefront: STOREFRONTS.cz,
+        visitorId: session.visitorId,
+        tokensFile: join(dir, "tokens.json"),
+        pendingFile: join(dir, "pending.json"),
+    });
+    const api = new AlzaApi({
+        http,
+        visitorId: session.visitorId,
+        cookies: session,
+        accessToken: () => auth.accessToken(),
+    });
+    return { api, auth, session };
+}
 
 const WATCHDOG = "0f1e2d3c-4b5a-4968-8776-655443322110";
 
@@ -56,6 +140,21 @@ describe("visitor cookies", () => {
         const [maxAge, past] = splitSetCookie("IDOX=x; max-age=0, VST=y; expires=Thu, 01 Jan 1970 00:00:00 GMT");
         expect(maxAge?.expired).toBe(true);
         expect(past?.expired).toBe(true);
+    });
+
+    test("each storefront keeps its own visitor; the legacy file is read as the Czech one and moved on save", () => {
+        const dir = tempDir("alza-visitors");
+        const legacy = join(dir, "state.json");
+        writeFileSync(legacy, SafeJSON.stringify({ visitorId: VISITOR, cookies: { IDOX: "czech" } }));
+        const cz = VisitorSession.load(join(dir, "cz.json"), legacy);
+        expect(cz.visitorId).toBe(VISITOR);
+        expect(cz.header()).toBe("IDOX=czech");
+        cz.save();
+        expect(VisitorSession.load(join(dir, "cz.json")).header()).toBe("IDOX=czech");
+        const sk = VisitorSession.load(join(dir, "sk.json"));
+        expect(sk.header()).toBeUndefined();
+        expect(sk.visitorId).not.toBe(VISITOR);
+        expect(statePath("sk")).not.toBe(statePath("cz"));
     });
 
     test("the session keeps only the visitor cookies, the last value winning", () => {
@@ -203,5 +302,150 @@ describe("orders", () => {
             "1058000001"
         );
         expect(toOrderSummary({ orderName: "?" })).toBeUndefined();
+    });
+});
+
+describe("order lists and documents", () => {
+    test("a documents entry of another shape drops the documents, not the order", () => {
+        const { orders } = parseOrders(
+            { value: [{ orderId: "1058423434", documents: [{ name: 42, self: { value: [{ value: "no name" }] } }] }] },
+            "search"
+        );
+        expect(orders.map((o) => o.id)).toEqual(["1058423434"]);
+        expect(orders[0]?.documents).toBeUndefined();
+    });
+
+    test("a document link is pdf.alza.cz, or a route of one order on the other hosts", () => {
+        expect(validateDocumentUrl("https://pdf.alza.cz/any/path/invoice.pdf").hostname).toBe("pdf.alza.cz");
+        expect(validateDocumentUrl("https://www.alza.cz/api/users/42/v1/orders/1058423434/documents/1").pathname).toBe(
+            "/api/users/42/v1/orders/1058423434/documents/1"
+        );
+        expect(() => validateDocumentUrl("https://www.alza.cz/services/restservice.svc/v4/sendOrder1")).toThrow(
+            /not an order document route/
+        );
+        expect(() => validateDocumentUrl("https://webapi.alza.cz/api/users/42/v1/orders/active")).toThrow(
+            /not an order document route/
+        );
+        expect(() => validateDocumentUrl("https://example.com/api/users/42/v1/orders/1058423434")).toThrow(
+            /not an Alza document host/
+        );
+    });
+});
+
+describe("sign-in browser opener", () => {
+    test("Windows gets the URL as one argument, never through cmd.exe", () => {
+        const url = "https://identity.alza.cz/connect/authorize?client_id=x&response_type=code&state=s";
+        expect(browserOpener(url, "win32")).toEqual(["rundll32", ["url.dll,FileProtocolHandler", url]]);
+        expect(browserOpener(url, "darwin")).toEqual(["open", [url]]);
+        expect(browserOpener(url, "linux")).toEqual(["xdg-open", [url]]);
+    });
+});
+
+describe("account status", () => {
+    test("sends nothing until the HTTP library is installed, then checks the token once", async () => {
+        const dir = tempDir("alza-status");
+        const http = new CannedHttp((req) => ok(req, { user_id: 42, user_name: "Alice" }));
+        const ctx = accountContext(http, dir);
+        writeTokens(join(dir, "tokens.json"), tokens("access", "refresh", "2099-01-01T00:00:00Z"));
+
+        const skipped = await accountStatus(ctx, { transportInstalled: () => false });
+        expect(http.requests).toHaveLength(0);
+        expect(skipped.check?.detail).toMatch(/not installed yet/);
+
+        const checked = await accountStatus(ctx, { transportInstalled: () => true });
+        expect(http.requests).toHaveLength(1);
+        expect(checked.check).toMatchObject({ ok: true, userName: "Alice" });
+    });
+});
+
+describe("token renewal", () => {
+    const EXPIRED = "2026-01-01T00:00:00Z";
+    const renewal = (during: () => Promise<void>) =>
+        new CannedHttp(async (req) => {
+            if (req.url.endsWith("/.well-known/openid-configuration")) {
+                return { status: 404, url: req.url, headers: {}, text: "" };
+            }
+
+            await during();
+            return ok(req, { access_token: "renewed", refresh_token: "renewed-refresh", expires_in: 3600 });
+        });
+    const authFor = (http: CannedHttp, dir: string) =>
+        new AlzaAuth({
+            http,
+            storefront: STOREFRONTS.cz,
+            visitorId: VISITOR,
+            tokensFile: join(dir, "tokens.json"),
+            pendingFile: join(dir, "pending.json"),
+        });
+
+    test("a renewal writes the new tokens when nothing else changed them", async () => {
+        const dir = tempDir("alza-renew");
+        writeTokens(join(dir, "tokens.json"), tokens("stale", "stale-refresh", EXPIRED));
+        const auth = authFor(
+            renewal(async () => {}),
+            dir
+        );
+        expect(await auth.accessToken()).toBe("renewed");
+        expect(auth.readTokens()?.refresh_token).toBe("renewed-refresh");
+    });
+
+    test("a logout during the renewal stays a logout", async () => {
+        const dir = tempDir("alza-renew-logout");
+        writeTokens(join(dir, "tokens.json"), tokens("stale", "stale-refresh", EXPIRED));
+        const other = authFor(new CannedHttp(() => ({ status: 500, url: "", headers: {}, text: "" })), dir);
+        const auth = authFor(
+            renewal(async () => {
+                await other.logout();
+            }),
+            dir
+        );
+        await expect(auth.accessToken()).rejects.toBeInstanceOf(NotSignedInError);
+        expect(existsSync(join(dir, "tokens.json"))).toBe(false);
+    });
+
+    test("a new sign-in during the renewal is not overwritten", async () => {
+        const dir = tempDir("alza-renew-switch");
+        writeTokens(join(dir, "tokens.json"), tokens("stale", "stale-refresh", EXPIRED));
+        const auth = authFor(
+            renewal(async () => {
+                writeTokens(join(dir, "tokens.json"), tokens("other-account", "other-refresh", "2099-01-01T00:00:00Z"));
+            }),
+            dir
+        );
+        expect(await auth.accessToken()).toBe("other-account");
+        expect(readFileSync(join(dir, "tokens.json"), "utf8")).toContain("other-account");
+    });
+});
+
+describe("MCP account tools", () => {
+    test("removals are annotated destructive, additions are not", () => {
+        const tools = alzaMcpTools(
+            accountContext(new CannedHttp(() => ({ status: 500, url: "", headers: {}, text: "" })), tempDir("alza-mcp"))
+        );
+        const hint = (name: string) => tools.find((t) => t.name === name)?.annotations?.destructiveHint;
+        expect(["cart_remove", "watchdog_remove", "mutate_list", "order_document"].map(hint)).toEqual([
+            true,
+            true,
+            true,
+            true,
+        ]);
+        expect(["cart_add", "watchdog_add", "cart_show"].map(hint)).toEqual([false, false, false]);
+    });
+
+    test("a basket add that fails after taking a visitor cookie still saves the cookie", async () => {
+        const dir = tempDir("alza-mcp-save");
+        const http = new CannedHttp((req) =>
+            req.url.includes("/basket/add")
+                ? ok(
+                      req,
+                      { err: 0, data: { code: "AUPR65708", name: "Tester" } },
+                      { "set-cookie": "IDOX=fresh; path=/" }
+                  )
+                : { status: 500, url: req.url, headers: {}, text: "basket read failed" }
+        );
+        const cartAdd = alzaMcpTools(accountContext(http, dir)).find((t) => t.name === "cart_add");
+        const result = await cartAdd?.call({ product: "AUPR65708" });
+        expect(result?.isError).toBe(true);
+        expect(VisitorSession.load(join(dir, "visitor.json")).header()).toBe("IDOX=fresh");
     });
 });

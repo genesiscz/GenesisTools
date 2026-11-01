@@ -6,16 +6,26 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type VisitorState, visitorStateSchema } from "./account-schemas";
 import type { AlzaCookieJar } from "./api";
+import type { StorefrontId } from "./storefront";
 
 /**
  * The visitor identity that has to survive between CLI runs. Live probe 2026-11-01: the anonymous basket is keyed by
  * the `IDOX` cookie (a new process with the same Balancer-Guid saw an empty basket; one with only `IDOX` saw it), so
- * the visitor id alone is not enough and the two long-lived visitor cookies are kept beside it.
+ * the visitor id alone is not enough and the two long-lived visitor cookies are kept beside it. Each storefront has
+ * its own visitor: alza.cz and alza.sk set different `VST` cookies for their own hosts.
  */
 
 const PERSISTED_COOKIES = new Set(["IDOX", "VST"]);
 
-export function statePath(): string {
+export function statePath(storefront: StorefrontId): string {
+    return toolDataDir("alza", "visitors", `${storefront}.json`);
+}
+
+/**
+ * Before the visitors were split per storefront, one `state.json` held the visitor of every storefront. It is read as
+ * the Czech visitor (the default storefront) until that visitor is saved to its own file.
+ */
+export function legacyStatePath(): string {
     return toolDataDir("alza", "state.json");
 }
 
@@ -62,6 +72,25 @@ export function splitSetCookie(header: string, now = Date.now()): SetCookie[] {
         });
 }
 
+function readState(path: string): VisitorState | undefined {
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const parsed = visitorStateSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+        if (parsed.success) {
+            return parsed.data;
+        }
+
+        logger.warn({ path, issues: parsed.error.issues.slice(0, 3) }, "alza state file has an unknown shape");
+    } catch (error) {
+        logger.warn({ error, path }, "alza state file is unreadable; starting a new visitor");
+    }
+
+    return undefined;
+}
+
 export class VisitorSession implements AlzaCookieJar {
     private dirty: boolean;
 
@@ -73,20 +102,20 @@ export class VisitorSession implements AlzaCookieJar {
         this.dirty = isNew;
     }
 
-    /** Reads the saved visitor, or starts a new one in memory. Never writes. */
-    static load(path = statePath()): VisitorSession {
-        if (existsSync(path)) {
-            try {
-                const parsed = visitorStateSchema.safeParse(
-                    SafeJSON.parse(readFileSync(path, "utf8"), { strict: true })
-                );
-                if (parsed.success) {
-                    return new VisitorSession(parsed.data, path, false);
-                }
+    /** The saved visitor of one storefront (the Czech one may still be in the legacy file), or a new one. Never writes. */
+    static forStorefront(storefront: StorefrontId): VisitorSession {
+        return VisitorSession.load(statePath(storefront), storefront === "cz" ? legacyStatePath() : undefined);
+    }
 
-                logger.warn({ path, issues: parsed.error.issues.slice(0, 3) }, "alza state file has an unknown shape");
-            } catch (error) {
-                logger.warn({ error, path }, "alza state file is unreadable; starting a new visitor");
+    /**
+     * Reads the saved visitor from `path`, else from `legacyPath` (marked unsaved, so the next save moves it to
+     * `path`), else starts a new one in memory. Never writes.
+     */
+    static load(path: string, legacyPath?: string): VisitorSession {
+        for (const source of legacyPath ? [path, legacyPath] : [path]) {
+            const state = readState(source);
+            if (state) {
+                return new VisitorSession(state, path, source !== path);
             }
         }
 

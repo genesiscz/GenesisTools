@@ -133,6 +133,13 @@ export interface SearchOptions {
     maxPrice?: number;
     inStock?: boolean;
     discounted?: boolean;
+    /** Result pages to read at most (capped at MAX_PAGES), however few of their products pass the filters. */
+    maxPages?: number;
+}
+
+/** How many pages a listing reads: the caller's page budget, never more than MAX_PAGES. */
+function pageBudget(maxPages: number | undefined): number {
+    return Math.min(MAX_PAGES, Math.max(1, maxPages ?? MAX_PAGES));
 }
 
 /** Keyword search over the app's v5 search route. Price, stock and discount filters apply to the fetched pages. */
@@ -143,7 +150,7 @@ export async function searchProducts(api: AlzaApi, opts: SearchOptions): Promise
     let total: number | undefined;
     let page = startPage;
     let hasMore = false;
-    for (; page < startPage + MAX_PAGES; page++) {
+    for (; page < startPage + pageBudget(opts.maxPages); page++) {
         const result = await api.search({
             term: opts.term,
             page,
@@ -203,6 +210,8 @@ export interface CategoryListingOptions {
     maxPrice?: number;
     inStock?: boolean;
     discounted?: boolean;
+    /** Listing pages to read at most (capped at MAX_PAGES), however few of their products pass the filters. */
+    maxPages?: number;
 }
 
 /**
@@ -296,7 +305,7 @@ export async function listCategory(api: AlzaApi, opts: CategoryListingOptions): 
     let total: number | undefined;
     let page = startPage;
     let hasMore = false;
-    for (; page < startPage + MAX_PAGES; page++) {
+    for (; page < startPage + pageBudget(opts.maxPages); page++) {
         const { html } = await api.html(categoryListingPath(opts, page));
         const parsed = parseListingCards(html, api.storefront.currency, api.storefront.baseUrl);
         total = parsed.total ?? total;
@@ -565,14 +574,17 @@ export interface DealsOptions {
     pages?: number;
 }
 
-/** Discounted products of a search or a category, the biggest discount first. */
+/**
+ * Discounted products of a search or a category, the biggest discount first. `pages` is the page budget: exactly that
+ * many result pages are read (fewer when the listing ends), however sparse the discounts are.
+ */
 export async function getDeals(api: AlzaApi, opts: DealsOptions): Promise<ListingPage> {
-    const scanLimit = (opts.pages ?? 4) * SEARCH_PAGE_SIZE;
+    const scan = { limit: Number.POSITIVE_INFINITY, maxPages: opts.pages ?? 4, discounted: true };
     let listing: ListingPage;
     if (opts.categoryId) {
-        listing = await listCategory(api, { categoryId: opts.categoryId, limit: scanLimit, discounted: true });
+        listing = await listCategory(api, { categoryId: opts.categoryId, ...scan });
     } else if (opts.term) {
-        listing = await searchProducts(api, { term: opts.term, limit: scanLimit, discounted: true });
+        listing = await searchProducts(api, { term: opts.term, ...scan });
     } else {
         throw new AlzaApiError("Deals need a search term or a category id.", 400);
     }
