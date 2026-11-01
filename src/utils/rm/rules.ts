@@ -2,7 +2,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync } from "n
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
-import { formatCount } from "@genesiscz/utils/format";
+import { formatBytes, formatCount } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
@@ -21,6 +21,15 @@ import {
     VOLUME_TRASH_DIR,
 } from "./paths";
 import { allPresets, matchPreset, presetsFor } from "./presets";
+import { scratchRootNames } from "./scratch-dirs";
+import {
+    defaultTempRoots,
+    isSystemTempName,
+    measureTempTree,
+    scratchSessionLive,
+    type TempTreeFacts,
+    userTempDir,
+} from "./temp-rule";
 
 export type RmVerdictKind = "allow" | "ask" | "deny";
 
@@ -107,6 +116,12 @@ export interface RmRuleContext {
     asidePending: (target: RmTarget) => string | null;
     git: (target: RmTarget) => RmGitFacts;
     nestedRepos: (target: RmTarget) => string[];
+    /** The temp roots the tmp-small rule covers, resolved (`/private/tmp`, the per-user temp folder). */
+    tempRoots: readonly string[];
+    /** One bounded walk of a temp path: its size up to the limit, the repositories in it, a socket. */
+    tempTree: (path: string, limitBytes: number) => TempTreeFacts;
+    /** Whether another session's `/tmp/<agent dir>/<project>/<session>` scratch belongs to a session still running. */
+    scratchLive: (session: string, dir: string) => boolean;
     /** Commands a reason may name, passed in by the GenesisTools caller (`src/utils/genesis-tools/tools/hints.ts`). */
     hints?: RmRuleHints;
 }
@@ -404,6 +419,12 @@ export const RM_RULES: readonly RmRule[] = [
         },
     },
     {
+        // After every rule that asks for unsaved work: what reaches it is untracked, outside a work tree's new files
+        // and no unsaved clone. Before nested-repos: a clean, pushed repository inside is no reason to ask.
+        id: "tmp-small",
+        evaluate: (target, ctx, git) => tmpSmallVerdict(target, ctx, git),
+    },
+    {
         id: "nested-repos",
         evaluate: (target, ctx) => {
             const repos = target.kind === "dir" ? ctx.nestedRepos(target) : [];
@@ -449,6 +470,71 @@ export const RM_RULES: readonly RmRule[] = [
         }),
     },
 ];
+
+/**
+ * The tmp-small rule (owner, 2026-11-01: "the size limit for deleting a temp path without a request ... when a path
+ * falls under such a rule, tools rm must never ask the person"): a path inside a temp root, at most `tmpSmallMB`,
+ * holding no socket and no repository with unsaved work at any depth, is deleted without a request. A scratch root
+ * or a project folder under it holds every session's scratch and never matches; a session's scratch folder matches
+ * only once that session has ended. The system's and running services' folders at the top of a temp root stay.
+ */
+function tmpSmallVerdict(target: RmTarget, ctx: RmRuleContext, git: () => RmGitFacts): RmVerdict | null {
+    const limitMB = ctx.config.tmpSmallMB;
+
+    if (limitMB <= 0 || target.kind === "missing") {
+        return null;
+    }
+
+    const root = ctx.tempRoots.find((tempRoot) => isInside(target.canonical, tempRoot));
+
+    if (!root) {
+        return null;
+    }
+
+    const [top, project, session] = pathSegments(relative(root, target.canonical));
+
+    if (!top || isSystemTempName(top)) {
+        return null;
+    }
+
+    if (scratchRootNames().has(top)) {
+        if (!project || !session) {
+            return null;
+        }
+
+        // The caller's own scratch is the session-scratch rule's, which a profile may have turned off.
+        if (session === ctx.caller.sessionId || ctx.scratchLive(session, join(root, top, project, session))) {
+            return null;
+        }
+    }
+
+    const facts = ctx.tempTree(target.path, limitMB * 1024 * 1024);
+
+    if (facts.over || facts.refuse) {
+        return null;
+    }
+
+    for (const repo of facts.repos) {
+        const inside = ctx.git(resolveTarget(repo, ctx.cwd));
+
+        if (inside.unsavedClone || inside.linkedWorktreeOf) {
+            return null;
+        }
+    }
+
+    const around = git();
+
+    if (around.tracked > 0 || around.untracked > 0) {
+        return null;
+    }
+
+    const where = root === realOrSelf(sharedTempRoot()) ? "/tmp" : root === userTempDir() ? "per-user temp" : root;
+    return {
+        kind: "allow",
+        rule: "tmp-small",
+        reason: `${where} path, ${formatBytes(facts.bytes)} under ${limitMB} MB, not git-tracked, no unsaved repo inside`,
+    };
+}
 
 /** The general reason of the default rule; the listing hides it on every row and prints its legend once. */
 const DEFAULT_ASK_REASON = "no rule allows it: a preset, this session's scratch or own files, or a trusted root";
@@ -825,6 +911,7 @@ export function defaultRuleContext(
     hints?: RmRuleHints
 ): RmRuleContext {
     const pending = pendingAsideDirs();
+    const live = new Map<string, boolean>();
     return {
         config,
         caller,
@@ -836,6 +923,13 @@ export function defaultRuleContext(
         asidePending: (target) => pendingAsideFor(target.canonical, pending),
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
+        tempRoots: defaultTempRoots(),
+        tempTree: measureTempTree,
+        scratchLive: (session, dir) => {
+            const known = live.get(dir) ?? scratchSessionLive(session, dir);
+            live.set(dir, known);
+            return known;
+        },
         hints,
     };
 }
