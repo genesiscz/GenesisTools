@@ -330,10 +330,15 @@ public final class PathLinkHandler {
     }
 
     /// For `OpenURLAction`: `.handled` for a file link, `.systemAction` for anything else, with the `https:` a
-    /// network-path link lacks (schemeless, Launch Services answers it with the -50 alert).
+    /// network-path link lacks (schemeless, Launch Services answers it with the -50 alert). A `file:` URL on another
+    /// machine is never given to the system (Foundation drops the host and opens the local file at the same path),
+    /// and it gets the missing-file notice.
     @MainActor
     public func open(_ url: URL) -> OpenURLAction.Result {
         switch PathLink.target(for: url) {
+        case let .other(destination) where destination.isFileURL:
+            system.reportMissing(destination.absoluteString)
+            return .handled
         case let .other(destination):
             return destination == url ? .systemAction : .systemAction(destination)
         case let .path(path, lines):
