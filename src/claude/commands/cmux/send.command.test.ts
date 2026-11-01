@@ -144,6 +144,15 @@ test("paste submits one literal multiline message without chunking paths or issu
     expect(events.some((event) => event.startsWith("send"))).toBe(false);
 });
 
+test("a single line with a backslash goes as one literal paste, so cmux never reads its \\n as Enter", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const text = String.raw`readLines splits on "\n" only, never on  `;
+    expect(await sendCommand(SESSION_A, text, { enter: true }, deps)).toBe(true);
+    expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual([
+        `paste --surface surface:41 --submit -- ${text}`,
+    ]);
+});
+
 test("paste can leave the complete message unsubmitted and never retries an uncertain paste", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
     expect(await sendCommand(SESSION_A, "a\nb\\n", { paste: true, enter: false }, deps)).toBe(true);

@@ -507,7 +507,9 @@ export async function sendCommand(
     }
 
     // Multi-line text always goes as one paste: typed keystrokes turn each newline into Enter, so the agent got
-    // every line as its own prompt. A single line keeps the typed path unless --paste asks for the paste.
+    // every line as its own prompt. A backslash goes the same way: `cmux send` reads `\n` and `\r` in its text as
+    // Enter and `\t` as Tab, so a message that mentions "\n" was cut in two at it and only half of it was submitted
+    // (2026-11-01). A single line without a backslash keeps the typed path unless --paste asks for the paste.
     if (option !== undefined) {
         if (!surfaceId) {
             return refuseOption({
@@ -527,7 +529,7 @@ export async function sendCommand(
         });
     }
 
-    const paste = opts.paste === true || text.includes("\n");
+    const paste = opts.paste === true || /[\n\r\\]/.test(text);
     const force = opts.force === true;
 
     if (surfaceId) {
