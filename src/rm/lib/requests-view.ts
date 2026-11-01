@@ -284,7 +284,7 @@ function summaryLines(allViews: readonly RequestView[], now: Date): string[] {
 function footerLines(views: readonly RequestView[], caller: RmCaller): string[] {
     const rm = toolCommand("rm");
     const footer = caller.isInAgent
-        ? `The user approves: ! ${rm} approve <id>   Cancel your own: ${rm} deny <id>   Detail: ${rm} requests <id>`
+        ? `The user approves: ! ${rm} approve <id>   Open their window: ${rm} ask <id> (background)   Cancel your own: ${rm} deny <id>   Detail: ${rm} requests <id>`
         : `Approve: ${rm} approve <id>   Detail: ${rm} requests <id>   Close gone and expired: ${rm} prune`;
     const anyDefault = views.some((view) => view.request.targets.some((target) => target.rule === "default"));
     const anyLost = views.some((view) => isOpen(view) && view.live.targets.includes("copy-lost"));

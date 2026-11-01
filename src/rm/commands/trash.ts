@@ -203,8 +203,8 @@ export function registerTrashCommands(program: Command): void {
             }
 
             const leftNote = agentOnly
-                ? ` ${formatCount(left, "batch", "batches")} of other sessions or approved by the user keep their grace period (only the user drains them early).`
-                : ` ${formatCount(left, "batch", "batches")} still in their grace period (--now drains them).`;
+                ? ` ${formatCount(left, "batch", "batches")} of other sessions or approved by the user ${left === 1 ? "keeps its" : "keep their"} grace period (only the user drains them early).`
+                : ` ${formatCount(left, "batch", "batches")} still in ${left === 1 ? "its" : "their"} grace period (--now drains them).`;
             out.println(
                 `Drained ${formatCount(drained.batches + swept.batches, "batch", "batches")}, ${formatBytes(drained.bytes + swept.bytes)} freed in ${elapsed()}.` +
                     (left > 0 ? pc.dim(leftNote) : "")
