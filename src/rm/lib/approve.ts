@@ -23,6 +23,7 @@ import {
     type MoveOptions,
     measureTarget,
     moveToTrash,
+    pathPresent,
     probeItemGit,
     type ReturnResult,
     RM_APPROVED_TRASH_MINUTES,
@@ -389,6 +390,15 @@ export function putBack(targets: readonly RmRequestTarget[], caller: RmCaller | 
     return back;
 }
 
+/** What a deny did: the put-back, the copies that still wait (the path is taken), and the copies already gone. */
+export interface DenyOutcome {
+    back: ReturnResult;
+    /** Aside copies that could not go home because something is there now: the request stays pending for them. */
+    waiting: RmRequestTarget[];
+    /** Aside copies something outside `tools rm` deleted: nothing is left to put back or to guard. */
+    lost: RmRequestTarget[];
+}
+
 /**
  * Closes a request without doing it: aside items go back, the status is `denied`, and a person's note is kept on
  * the request and in the ledger, so the agent reads why when it asks again.
@@ -396,12 +406,29 @@ export function putBack(targets: readonly RmRequestTarget[], caller: RmCaller | 
 export function denyRequest(
     request: RmRequest,
     options: { caller: RmCaller | null; via: string; note?: string | null }
-): ReturnResult {
-    const back = putBack(request.targets, options.caller, request.id);
+): DenyOutcome {
+    // Read before the put-back, which empties the stored location of every copy it returns.
+    const lost = request.targets.filter((target) => target.stored !== undefined && !pathPresent(target.stored));
+    const back = putBack(
+        request.targets.filter((target) => !lost.includes(target)),
+        options.caller,
+        request.id
+    );
     const waiting = stillAside(request.targets, back);
 
     if (back.kept.length === 0) {
         removeEmptyAsideDir(request.asideDir);
+    }
+
+    for (const target of lost) {
+        appendRmLedger({
+            action: "lost",
+            requestId: request.id,
+            caller: options.caller,
+            path: target.path,
+            stored: target.stored,
+            reason: "the aside copy was already gone at the deny",
+        });
     }
 
     const retry = options.via === "cli" && request.decidedVia !== undefined && request.decidedVia !== "cli";
@@ -428,7 +455,7 @@ export function denyRequest(
         via: options.via,
         note,
     });
-    return back;
+    return { back, waiting, lost };
 }
 
 /** Trusts each approved folder of a root request. */

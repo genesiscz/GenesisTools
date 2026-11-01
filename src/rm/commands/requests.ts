@@ -19,9 +19,11 @@ import {
     recheckAfterWait,
     recoverAsideJournals,
     rememberOptions,
+    requestLive,
     resolveTarget,
     saveRmRequest,
     stillAside,
+    updateRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -31,6 +33,7 @@ import {
     approvalRows,
     approveDelete,
     approveRoots,
+    type DenyOutcome,
     denyRequest,
     savedSizes,
     splitBySelection,
@@ -180,6 +183,13 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
         return;
     }
 
+    if (requestLive(request).state === "gone") {
+        out.println(
+            `Nothing left to decide: request ${id} is gone (its paths were moved or deleted). Close it: ${toolCommand("rm")} prune`
+        );
+        return;
+    }
+
     // A path the person already denied whose aside copy could not go home waits for a deny, not a second
     // approval; a path that was blocked or changed while they decided can be approved again.
     const deniedBefore = new Set(request.decided?.denied ?? []);
@@ -209,6 +219,7 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
     }
 
     if (openEntries.length === 0) {
+        out.println(pc.red(`Nothing to approve in ${id}: every path was refused above.`));
         process.exitCode = 1;
         return;
     }
@@ -239,15 +250,12 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
 
     if (!answer.approved) {
         if (answer.deniedByPerson) {
-            const back = denyRequest(request, {
+            const outcome = denyRequest(request, {
                 caller: ctx.caller,
                 via: answer.via,
                 note: answer.choices.note,
             });
-            out.println(back.kept.length ? `Request ${id} still needs recovery.` : `Request ${id} denied.`);
-            if (back.kept.length) {
-                process.exitCode = 1;
-            }
+            printDenyOutcome(id, outcome, `Request ${id} denied.`);
         }
 
         return;
@@ -256,13 +264,8 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
     const { approved, denied } = splitBySelection(openEntries, answer.choices.selected);
 
     if (approved.length === 0) {
-        const back = denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
-        out.println(
-            back.kept.length ? `Request ${id} still needs recovery.` : `Nothing was ticked: request ${id} denied.`
-        );
-        if (back.kept.length) {
-            process.exitCode = 1;
-        }
+        const outcome = denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+        printDenyOutcome(id, outcome, `Nothing was ticked: request ${id} denied.`);
         return;
     }
 
@@ -331,9 +334,45 @@ function denyOne(id: string, ctx: RunContext): void {
         return;
     }
 
-    const back = denyRequest(request, { caller: ctx.caller, via: "cli" });
-    out.println(back.kept.length ? `Request ${id} still needs recovery.` : `Request ${id} closed.`);
-    process.exitCode = back.kept.length > 0 ? 1 : 0;
+    // Nothing is left to put back: close it the way prune does, as gone, not as a deny.
+    if (requestLive(request).state === "gone") {
+        const update = updateRmRequest(id, (fresh) =>
+            fresh.status === "pending"
+                ? { ...fresh, status: "gone", decidedAt: new Date().toISOString(), decidedVia: "cli" }
+                : null
+        );
+
+        if (update.kind !== "saved") {
+            out.println(pc.red(`Request ${id} could not be closed (${update.kind}).`));
+            process.exitCode = 1;
+            return;
+        }
+
+        appendRmLedger({ action: "close", requestId: id, reason: "gone", caller: ctx.caller });
+        out.println(`Request ${id} closed: nothing was left.`);
+        process.exitCode = 0;
+        return;
+    }
+
+    const outcome = denyRequest(request, { caller: ctx.caller, via: "cli" });
+    printDenyOutcome(id, outcome, `Request ${id} closed.`);
+    process.exitCode = outcome.waiting.length > 0 ? 1 : 0;
+}
+
+/** Prints what a deny did: the copies that were already gone, then the closed line, or that some copies still wait. */
+function printDenyOutcome(id: string, outcome: DenyOutcome, closedLine: string): void {
+    if (outcome.lost.length > 0) {
+        const paths = outcome.lost.map((target) => target.path).join(", ");
+        out.println(pc.yellow(`${outcome.lost.length} set-aside copy(ies) were already gone: ${paths}`));
+    }
+
+    if (outcome.waiting.length > 0) {
+        out.println(`Request ${id} still needs recovery.`);
+        process.exitCode = 1;
+        return;
+    }
+
+    out.println(closedLine);
 }
 
 export function registerRequestCommands(program: Command): void {
