@@ -159,6 +159,10 @@ Safety rules, all of them load-bearing:
   APFS clones of each other, so removing one run while a newer one stays frees almost nothing;
   packing the old ones together is what frees their space. Restore a run with
   `tools compress unpack ~/.genesis-tools/codex/migrate-home/<stamp>.zst`.
+- **Packed backups are capped when a run is applied.** A `<stamp>.zst` stays while it is among
+  the newest 2 or younger than 14 days, whichever keeps more; the newest always stays. Change it
+  with `migrateHome.backups.keepArchives` and `keepArchiveDays` in
+  `~/.genesis-tools/codex/config.json`. A dry run never deletes.
 - **Every copy is verified** by size and SHA-256 before the run counts it.
 - **The date tree is preserved verbatim.** Paths are never re-derived from the rollout header
   timestamp, which differs from the filename timestamp.

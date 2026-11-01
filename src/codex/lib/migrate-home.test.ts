@@ -1,7 +1,16 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { listArchive } from "@genesiscz/utils/compress/tar";
@@ -9,6 +18,8 @@ import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
 import {
+    type BackupPolicy,
+    DEFAULT_BACKUP_POLICY,
     type DesktopState,
     discoverSourceHomes,
     enumerateRollouts,
@@ -16,6 +27,8 @@ import {
     mergeDesktopState,
     migrateHome,
     normaliseRootPath,
+    planBackupRetention,
+    retainBackups,
     SESSION_INDEX_FILE,
 } from "./migrate-home";
 
@@ -982,5 +995,76 @@ describe("compressed rollouts (Codex 0.164 writes old ones as .jsonl.zst)", () =
         });
 
         expect(plan.totals).toMatchObject({ rollouts: 1, toCopy: 0, alreadyPresent: 1, collisions: 0 });
+    });
+});
+
+describe("packed backup snapshots", () => {
+    const NOW = new Date("2026-11-01T12:00:00Z");
+    const DAY = 86_400_000;
+    const policy: BackupPolicy = { keepArchives: 2, keepArchiveDays: 14 };
+
+    function plantArchives(root: string, ages: number[]): string[] {
+        mkdirSync(root, { recursive: true });
+        return ages.map((age, index) => {
+            const path = join(root, `2026090${index}-120000.zst`);
+            writeFileSync(path, "x");
+            const seconds = (NOW.getTime() - age * DAY) / 1000;
+            utimesSync(path, seconds, seconds);
+            return path;
+        });
+    }
+
+    const names = (root: string) => readdirSync(root).sort();
+
+    test("defaults keep the newest two archives or any younger than two weeks", () => {
+        expect(DEFAULT_BACKUP_POLICY).toEqual({ keepArchives: 2, keepArchiveDays: 14 });
+    });
+
+    test("keeps the newest N and every archive younger than D, whichever keeps more", async () => {
+        const young = scratch();
+        plantArchives(young, [1, 5, 10, 20, 40]);
+        await retainBackups(young, NOW, policy);
+        expect(names(young)).toEqual(["20260900-120000.zst", "20260901-120000.zst", "20260902-120000.zst"]);
+
+        const old = scratch();
+        plantArchives(old, [20, 30, 40]);
+        await retainBackups(old, NOW, policy);
+        expect(names(old)).toEqual(["20260900-120000.zst", "20260901-120000.zst"]);
+    });
+
+    test("the newest archive survives any setting, even a count of zero and an age of zero", async () => {
+        const root = scratch();
+        plantArchives(root, [100, 200]);
+        await retainBackups(root, NOW, { keepArchives: 0, keepArchiveDays: 0 });
+        expect(names(root)).toEqual(["20260900-120000.zst"]);
+    });
+
+    test("the plan names what would go and removes nothing", () => {
+        const root = scratch();
+        plantArchives(root, [20, 30, 40]);
+        const before = names(root);
+        const plan = planBackupRetention(root, NOW, policy);
+
+        expect(plan.deleteArchives.map((path) => basename(path))).toEqual(["20260902-120000.zst"]);
+        expect(names(root)).toEqual(before);
+    });
+
+    test("a dry run of the migration leaves old snapshots alone", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", []);
+        const source = makeHome(root, ".codex-alpha", [{ date: "2026-09-07", uuid: uuid("0901") }]);
+        const backups = join(root, "backups");
+        plantArchives(backups, [100, 200, 300, 400]);
+        const before = names(backups);
+
+        await migrateHome({
+            from: [source],
+            to: destination,
+            backupRoot: backups,
+            stamp: "s",
+            inspectOpenFiles: clear,
+        });
+
+        expect(names(backups)).toEqual(before);
     });
 });
