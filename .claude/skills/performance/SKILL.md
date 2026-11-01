@@ -60,8 +60,9 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
 - "Which function is slow?" → `tools ts profile` (`references/profiling.md`).
 - "Which thread, or which system call?" → `tools ts profile --threads`, or `/usr/bin/sample <pid> <secs> 1 -mayDie`.
 - "How long does each phase take in production?" → the repository profiler: `PROFILE=<scope>` per run, lines in
-  `~/.genesis-tools/logs/<date>-profiling.log` (the usage daemon logs `tick.*` CPU there on every tick). A day older
-  than a week is `<date>-profiling.log.zst`: `rg -z`, or `tools compress cat`.
+  `~/.genesis-tools/logs/<date>-profiling.log` (the usage daemon logs `tick.*` CPU there on every tick). Only today
+  and yesterday stay plain; an older day is `<date>-profiling.log.zst`: `tools genesis-tools logs profile --since
+  <when>`, `tools compress cat <plain name>`, or `rg -z`.
 - "Is A faster than B?" → a benchmark pair under `scripts/benchmarks/`, A/B in fresh processes.
 - "What is burning CPU right now?" → `tools doctor cpu`.
 - "Would FFI or C help?" → `references/ffi-and-native.md` first. FFI wins when one call replaces many JS calls or
