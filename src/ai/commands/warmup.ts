@@ -37,7 +37,9 @@ function renderResult(result: WarmupResult): string {
 export function registerWarmupCommand(program: Command, opts: { provider?: string; tool: string }): void {
     const warmup = program
         .command("warmup [account...]")
-        .description("Send one tiny request per account to start its session timer")
+        .description(
+            "Send one tiny request per account to start its session timer (an account without a 5-hour limit only when its weekly window is idle)"
+        )
         .option("--all", "Every enabled account in scope, no prompt")
         .option("--json", "Machine-readable results");
 
@@ -91,7 +93,7 @@ export function registerWarmupCommand(program: Command, opts: { provider?: strin
         const results = await warmupAccounts({ store, ...selection });
         const skipped = results.filter((r) => r.skipped).length;
         const failed = results.filter((r) => !r.ok && !r.skipped).length;
-        const skippedNote = skipped > 0 ? `, ${skipped} skipped (no quota left)` : "";
+        const skippedNote = skipped > 0 ? `, ${skipped} skipped (nothing to start)` : "";
         spinner?.stop(
             failed === 0
                 ? `${results.length - skipped} account(s) warmed up${skippedNote}`

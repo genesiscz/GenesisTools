@@ -161,7 +161,7 @@ The `ai-usage-poll` tick recomputes that file once a minute, so a poller on any 
 
 ## `ai warmup`: start a session timer on every account
 
-One tiny request per account (five output tokens, on the smallest model where the provider lets a ChatGPT-style account pick one; codex accounts reject a pinned slug, so they use the account's default model), so a rolling window starts now instead of on the first real call. The selection, the send and the report live in `@genesiscz/utils/ai/warmup`; `tools claude warmup`, `tools codex warmup` and `tools grok warmup` are the same command pinned to one provider, and the usage daemon's scheduled warmups call the same function.
+One tiny request per account (five output tokens, on the smallest model where the provider lets a ChatGPT-style account pick one; codex accounts reject a pinned slug, so they use the account's default model), so a rolling window starts now instead of on the first real call. An Anthropic account without a 5-hour limit has no session timer: it is skipped when its weekly window already runs, and the daemon's session warmup never sends to it. The selection, the send and the report live in `@genesiscz/utils/ai/warmup`; `tools claude warmup`, `tools codex warmup` and `tools grok warmup` are the same command pinned to one provider, and the usage daemon's scheduled warmups call the same function.
 
 ```bash
 tools ai warmup                       # pick accounts (TTY)
