@@ -3,6 +3,23 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-01 21:52 — **Markdown viewer: task boxes, the reading position after a change on disk, file names as links.**
+  - *The first task box drew at the small macOS control size (about 11 pt beside 16 px text).* `width:1em` on an
+    `<input>` uses the input's own 13.33 px control font, and WebKit picks the control size from that. Fix:
+    `font-size:inherit` before the em sizes (05dcd660c5). Lesson: size a form control in a web page from the text's
+    font, never from the control's own `em`, and look at a rendered PNG before calling it done.
+  - *A note an agent wrote to jumped to the top* (Martin: "it shouldnt jump to the start of the document"). The page
+    kept a pixel offset across a render, and a writer that truncates first gave one render of an empty or partial
+    file, which clamped the offset to 0 for good. Fix: keep the block at the top by its text and offset, hold that
+    anchor through a render that had to fall back, and restore in the same JavaScript task as the new content
+    (0b94dca56c). On the first try the selection did not come back: the new `gnPointAt` had the name of the find's
+    own helper, declared later in the same script, which silently replaced it. A test now fails on any function the
+    page script declares twice. Also first missed: typing in the top block changes its text, so the "block is gone"
+    fallback pulled it to the edge on every keystroke; the same kind of block on the same line now keeps its offset.
+  - *Prose such as `UpgradePlan.md line 72` was a link to http://upgradeplan.md.* markdown-it's linkify
+    reads `.md`, `.sh`, `.py`, `.rs` as country domains. Fix: such a schemaless name links only when the click's own
+    resolver finds the file, and then as a relative link; otherwise it is text.
+
 - 2026-10-30 22:17 — **The alert popup's context ran under the option rows ("fix this overlap").**
   - *Six lines of the decision's summary were laid out, nine were drawn, and the last three sat under option a.*
     The summary was a selectable `Text` with `.lineLimit(6)`. A selectable `Text` draws its whole string while it is
