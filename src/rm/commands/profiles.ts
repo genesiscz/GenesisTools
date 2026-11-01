@@ -55,7 +55,12 @@ interface PolicyView {
     roots?: Array<string | { path: string }>;
 }
 
-function describePolicy(config: PolicyView): string[] {
+/** A profile's grace: an unset one keeps the configured value, which `-` read as "none". */
+function graceText(minutes: number | undefined): string {
+    return minutes === undefined ? "as configured" : `${minutes} min`;
+}
+
+export function describePolicy(config: PolicyView): string[] {
     const lines: string[] = [];
 
     if (config.askAction) {
@@ -76,7 +81,7 @@ function describePolicy(config: PolicyView): string[] {
 
     if (config.grace) {
         lines.push(
-            `grace: presets ${config.grace.presetMinutes ?? "-"} min, others ${config.grace.otherMinutes ?? "-"} min`
+            `grace: presets ${graceText(config.grace.presetMinutes)}, others ${graceText(config.grace.otherMinutes)}`
         );
     }
 

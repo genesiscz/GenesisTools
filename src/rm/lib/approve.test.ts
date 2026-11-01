@@ -48,6 +48,7 @@ import {
 } from "@genesiscz/utils/rm";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
+import { describePolicy } from "../commands/profiles";
 import { approveMany, denyPicked, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { createRmProgram } from "../program";
@@ -65,6 +66,7 @@ import { renderLedger } from "./log-view";
 import { notifyNewRequest, type RequestNotice } from "./notify";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
 import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
+import { renderConfig, renderPresets, renderRoots } from "./settings-view";
 import { batchSuffix, renderTrash, resolveBatchSuffix } from "./trash-view";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
@@ -1694,5 +1696,75 @@ describe("the log view", () => {
 
         expect(rows).toHaveLength(5);
         expect(rows[0]).toBe("  15:27 drain    1.0 MB a");
+    });
+});
+
+describe("the settings views", () => {
+    test("config prints one row per setting with its default and where the value comes from", () => {
+        const defaults = defaultRmConfig();
+        const base = { ...defaults, askAction: "request" as const };
+        const effective = { ...base, grace: { ...base.grace, otherMinutes: 240 } };
+        const lines = renderConfig({
+            base,
+            effective,
+            profiles: ["workers"],
+            defaults,
+            path: "/home/shop/rm/config.json",
+        }).map(stripAnsi);
+
+        expect(lines[0]).toBe("/home/shop/rm/config.json");
+        expect(lines[1]).toMatch(/^SETTING\s+VALUE\s+DEFAULT\s+FROM$/);
+        expect(lines.find((line) => line.startsWith("ask-action"))).toMatch(/^ask-action\s+request\s+aside\s+file$/);
+        expect(lines.find((line) => line.startsWith("grace-other"))).toMatch(
+            /^grace-other\s+240 min\s+60 min\s+profile workers$/
+        );
+        expect(lines.find((line) => line.startsWith("approval"))).toMatch(/^approval\s+auto\s+auto\s+default$/);
+        expect(lines.at(-1)).toBe(`Change (a person): ${toolCommand("rm")} config set <setting> <value>`);
+    });
+
+    test("presets print one row each with a state cell, home as ~, and the opt-in command once", () => {
+        const home = "/home/shop";
+        const all = [
+            {
+                id: "node_modules",
+                description: "installed packages",
+                names: ["node_modules"],
+                markers: ["package.json"],
+            },
+            {
+                id: "bun-cache",
+                description: "bun's cache",
+                names: [],
+                within: "/home/shop/.bun/install/cache",
+                optIn: true,
+            },
+            { id: "python", description: "bytecode", names: ["__pycache__"] },
+        ];
+        const lines = renderPresets({ all, enabled: new Set(["node_modules"]), disabled: ["python"], home }).map(
+            stripAnsi
+        );
+
+        expect(lines[0]).toMatch(/^ID\s+STATE\s+DELETES\s+NEXT TO\s+WHAT$/);
+        expect(lines[1]).toMatch(/^node_modules\s+● on\s+node_modules\s+next to package\.json\s+installed packages$/);
+        expect(lines[2]).toMatch(/^bun-cache\s+● opt-in\s+every folder in ~\/\.bun\/install\/cache\s+-\s+bun's cache$/);
+        expect(lines[3]).toMatch(/^python\s+● off\s+__pycache__/);
+        expect(lines.filter((line) => line.includes("config set enable-preset"))).toHaveLength(1);
+    });
+
+    test("roots print a table with the scope and the local time they were added", () => {
+        const lines = renderRoots(
+            [{ path: "/home/shop/scratch", addedAt: "2026-11-01T12:00:00.000Z", via: "cli", note: "build output" }],
+            "/home/shop"
+        ).map(stripAnsi);
+
+        expect(lines[0]).toMatch(/^PATH\s+SCOPE\s+ADDED\s+NOTE$/);
+        expect(lines[1]).toMatch(/^~\/scratch\s+always\s+2026-11-01 \d\d:\d\d cli\s+build output$/);
+        expect(renderRoots([], "/home/shop")[0]).toContain("roots add <dir>");
+    });
+
+    test("a profile's unset grace reads as configured, never as a dash", () => {
+        expect(describePolicy({ grace: { otherMinutes: 240 } })).toContain(
+            "grace: presets as configured, others 240 min"
+        );
     });
 });
