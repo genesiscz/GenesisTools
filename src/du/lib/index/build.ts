@@ -209,9 +209,6 @@ export async function buildIndex(opts: BuildOptions): Promise<BuildResult> {
     // The C walk compares excludes with the canonical paths it builds, so `/tmp/x`,
     // `/private/tmp/x/` and a path through a symlink must all become the same string.
     const excludes = (opts.excludes ?? []).map((p) => canonicalPath(p).replace(/\/+$/, "") || "/");
-    if (excludes.length > 256) {
-        throw new IndexError("usage", `At most 256 --exclude paths (got ${excludes.length}).`);
-    }
 
     assertDiskFree(opts.db, opts.minFreeBytes ?? defaultMinFreeBytes(dbBytes(opts.db)));
 

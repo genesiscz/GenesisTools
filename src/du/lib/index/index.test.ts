@@ -654,7 +654,7 @@ int main(int argc, char **argv) {
     g_idx_big_floor = 0;
     g_idx_big_limit = strtoull(argv[3], NULL, 10);
     if (root_mode) {
-        g_excludes[g_nexcludes++] = "/excluded";
+        excludes_add("/excluded");
         g_foreign_mounts[g_nforeign++] = "/mounted";
     }
     idx_setup_attrlist();
@@ -1285,6 +1285,21 @@ describeOnDarwin("du index: review regressions (2026-10-13 CLI review)", () => {
             root,
             ...OPTS,
             excludes: [`${join(base, "l6-link", "a", "d")}/`],
+        });
+        expect(r.alloc_bytes).toBe(oracle(join(root, "a")).alloc - oracle(join(root, "a", "d")).alloc);
+    });
+
+    it("L7: the 300th exclude still excludes (the walk once refused more than 256)", async () => {
+        const root = join(base, "l7");
+        mkdirSync(join(root, "a", "d"), { recursive: true });
+        write(join(root, "a", "d", "f.bin"), 300 * KB);
+        write(join(root, "a", "e.bin"), 200 * KB);
+        const misses = Array.from({ length: 299 }, (_, i) => join(root, `missing-${i}`));
+        const r = await buildIndex({
+            db: join(base, "l7.db"),
+            root,
+            ...OPTS,
+            excludes: [...misses, join(root, "a", "d")],
         });
         expect(r.alloc_bytes).toBe(oracle(join(root, "a")).alloc - oracle(join(root, "a", "d")).alloc);
     });
