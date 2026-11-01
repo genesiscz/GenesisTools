@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, type Dirent, lstatSync, readdirSync, type Stats, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDatalessFile, underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
@@ -105,7 +106,7 @@ export function captureRoots(payload: HookPayload, config: DiffConfig): string[]
  * asking for both at once is free. An empty repository has no HEAD, and rev-parse then
  * echoes the literal `HEAD` and exits 128, which `objectId` rejects.
  */
-function rootsOf(dirs: string[], config: DiffConfig): CapturedRoot[] {
+function rootsOf(dirs: string[], config: DiffConfig, skipped: string[] = []): CapturedRoot[] {
     const roots: CapturedRoot[] = [];
 
     for (const dir of dirs) {
@@ -113,8 +114,20 @@ function rootsOf(dirs: string[], config: DiffConfig): CapturedRoot[] {
             break;
         }
 
+        // A repository inside a cloud storage folder is never a root: its `git status` and the `tar` of its dirty
+        // files would read placeholders, and every read downloads one (see cloud-placeholder.ts).
+        if (underCloudRoot(dir)) {
+            skipped.push(`${dir}: under a cloud storage folder, not captured`);
+            continue;
+        }
+
         const lines = gitOut(dir, ["rev-parse", "--show-toplevel", "HEAD"], { quiet: true }).split("\n");
         const top = (lines[0] ?? "").trim();
+
+        if (top.length > 0 && underCloudRoot(top)) {
+            skipped.push(`${top}: under a cloud storage folder, not captured`);
+            continue;
+        }
 
         if (top.length > 0 && !roots.some((entry) => entry.root === top)) {
             roots.push({ root: top, head: objectId((lines[1] ?? "").trim()) });
@@ -242,11 +255,12 @@ function planCapture({
 }): CapturePlan {
     const fileCap = megabytes(config.maxCaptureFileMB);
     const totalCap = megabytes(config.maxCaptureMB);
-    const sized = files.map((file) => ({
-        file,
-        size: entryBytes(join(root, file), fileCap),
-        mine: mentioned(file),
-    }));
+    const sized = files.map((file) => {
+        const found = { placeholder: false };
+        const size = entryBytes(join(root, file), fileCap, found);
+
+        return { file, size, mine: mentioned(file), placeholder: found.placeholder };
+    });
 
     // The session's own files first, then smallest first. Measured 2026-09-30 on the vault: 835
     // dirty entries, 400 captured, and the notes a session was editing were among the 435 left
@@ -256,8 +270,16 @@ function planCapture({
     const take: string[] = [];
     const left: string[] = [];
     let bytes = 0;
+    let placeholders = 0;
 
     for (const entry of sized) {
+        // `tar` reads the bytes, and reading a cloud placeholder downloads it.
+        if (entry.placeholder) {
+            left.push(entry.file);
+            placeholders += 1;
+            continue;
+        }
+
         const overFile = entry.size > fileCap;
         const overTotal = bytes + entry.size > totalCap;
 
@@ -270,10 +292,20 @@ function planCapture({
         take.push(entry.file);
     }
 
+    const why: string[] = [];
+
+    if (left.length > placeholders) {
+        why.push(
+            `over the ${config.maxCaptureFileMB} MB per-entry / ${config.maxCaptureMB} MB total / ${config.maxCaptureFiles} entry cap`
+        );
+    }
+
+    if (placeholders > 0) {
+        why.push(`${placeholders} hold cloud placeholders a read would download`);
+    }
+
     const reason =
-        left.length > 0
-            ? `${left.length} of ${files.length} dirty entries left out, over the ${config.maxCaptureFileMB} MB per-entry / ${config.maxCaptureMB} MB total / ${config.maxCaptureFiles} entry cap`
-            : null;
+        left.length > 0 ? `${left.length} of ${files.length} dirty entries left out, ${why.join("; ")}` : null;
 
     return { take, left, reason };
 }
@@ -291,7 +323,7 @@ function planCapture({
  * rather than a full traversal, and a symlink is never followed: `tar` stores the link, and
  * following one could count a target outside the repository or loop.
  */
-function entryBytes(path: string, limit: number): number {
+function entryBytes(path: string, limit: number, found: { placeholder: boolean }): number {
     let stat: Stats;
 
     try {
@@ -307,6 +339,7 @@ function entryBytes(path: string, limit: number): number {
     }
 
     if (!stat.isDirectory()) {
+        found.placeholder = isDatalessFile(stat);
         return stat.size;
     }
 
@@ -342,7 +375,14 @@ function entryBytes(path: string, limit: number): number {
             }
 
             try {
-                total += lstatSync(child).size;
+                const childStat = lstatSync(child);
+
+                if (isDatalessFile(childStat)) {
+                    found.placeholder = true;
+                    return total;
+                }
+
+                total += childStat.size;
             } catch {
                 // Same vanishing-path case as above, one level down.
             }
@@ -363,12 +403,12 @@ function entryBytes(path: string, limit: number): number {
  */
 export function capturePre(payload: HookPayload, config: DiffConfig): CaptureResult {
     const dirs = commandDirs(payload.command, payload.cwd);
-    const captured_roots = rootsOf(dirs, config);
+    const skipped: string[] = [];
+    const captured_roots = rootsOf(dirs, config, skipped);
     const roots = captured_roots.map((entry) => entry.root);
     const wanted = config.watchNamedPaths
         ? namedArguments(payload.command, dirs).filter((path) => !harnessOwnFile(path))
         : [];
-    const skipped: string[] = [];
     let captured = 0;
 
     const session = safeSegment(payload.sessionId);
