@@ -58,7 +58,8 @@ function removeTempFile(tmp: string): void {
     }
 }
 
-function existingMode(filePath: string): number | undefined {
+/** The permission bits of the file a write replaces, so a 0600 file is never republished wider; none for a new file. */
+export function existingMode(filePath: string): number | undefined {
     try {
         return statSync(filePath).mode & 0o777;
     } catch {
