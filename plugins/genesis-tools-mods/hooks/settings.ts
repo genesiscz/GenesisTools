@@ -42,8 +42,8 @@ export interface ModsSettings {
     hooks: { tokens: boolean; dedupe: boolean };
     /**
      * `readings`: every refresh and reading goes to `mods-log/<feature>.jsonl` too (the git rows of each pass, the
-     * session files reading, the answers scans, the link candidates). Commands, failures and the hook ledger are
-     * always logged. Each append is a process, and the readings were 90% of them (2026-10-30).
+     * session files reading, the answers scans). Commands, failures, the hook ledger and what the links mod changed
+     * in a reply are always logged. Each append is a process, and the readings were 90% of them (2026-10-30).
      */
     log: { readings: boolean };
     sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
