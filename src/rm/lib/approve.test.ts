@@ -23,6 +23,7 @@ import {
     defaultRmConfig,
     defaultRuleContext,
     drainDue,
+    evaluateTarget,
     isRootActive,
     listRmRequests,
     loadRmConfig,
@@ -517,6 +518,12 @@ describe("config set", () => {
         expect(applyRmSetting(base, "ask-min-mb", "25").notify.askMinMB).toBe(25);
         expect(applyRmSetting(base, "sweep-every", "2m").sweep.everyMinutes).toBe(2);
         expect(applyRmSetting(base, "sweep-linger", "2h").sweep.lingerMinutes).toBe(120);
+        expect(applyRmSetting(base, "tmp-small-exclude", "/tmp/staging").tmpSmallExcluded).toEqual([
+            "/tmp/removable",
+            "/tmp/staging",
+        ]);
+        expect(applyRmSetting(base, "tmp-small-include", "/tmp/removable").tmpSmallExcluded).toEqual([]);
+        expect(() => applyRmSetting(base, "tmp-small-exclude", "relative/dir")).toThrow();
         expect(() => applyRmSetting(base, "tmp-small-mb", "-1")).toThrow();
         expect(() => applyRmSetting(base, "tmp-small-mb", "lots")).toThrow();
         expect(() => applyRmSetting(base, "sweep-every", "0")).toThrow();
@@ -1913,6 +1920,53 @@ describe("tools rm ask: an agent opens the person's window", () => {
         );
         expect(lines.at(-1)).toBe(`Hand the user: ! ${toolCommand("rm")} approve ${request.id}`);
         expect(loadRmRequest(request.id)?.status).toBe("pending");
+    });
+
+    test("a folder staged in /tmp/removable becomes a request whatever its size, and ask opens it", async () => {
+        const removable = join(base, "removable");
+        const staged = join(removable, "disk-reclaim-20261101-1915");
+        file(join(staged, "old-cache", "entry.bin"));
+        const staging = { ...config, notify: { ...config.notify, askMinMB: 0 }, tmpSmallMB: 10 };
+        const temp = { ...staging, tmpSmallExcluded: [removable] };
+        const rules = { ...defaultRuleContext(temp, AGENT, base), tempRoots: [base], scratchLive: () => false };
+        const target = resolveTarget(staged, base);
+        const verdict = evaluateTarget(target, rules);
+
+        expect(verdict).toMatchObject({ kind: "ask", rule: "default" });
+        expect(verdict.reason).toBe(
+            `inside ${removable}, a staging area for the user's review: tmp-small never deletes there (tmp-small-exclude)`
+        );
+        // The negative control: without the exclusion, the same few bytes go without a request.
+        expect(evaluateTarget(target, { ...rules, config: { ...staging, tmpSmallExcluded: [] } })).toMatchObject({
+            kind: "allow",
+            rule: "tmp-small",
+        });
+
+        const ctx: RunContext = { ...context(), caller: AGENT, config: temp, base: temp, rules };
+        const exitCode = process.exitCode;
+        let requestId: string | null;
+
+        try {
+            const result = await executePlan(
+                [{ target, verdict }],
+                ctx,
+                { aside: true },
+                { ...DRY_DEPS, asideRoot: join(base, "aside", "disk-reclaim") }
+            );
+            requestId = result.requestId;
+        } finally {
+            process.exitCode = exitCode;
+        }
+
+        expect(requestId).not.toBeNull();
+        expect(loadRmRequest(requestId ?? "")?.status).toBe("pending");
+
+        const { prompts, code } = await ask(requestId ?? "", ctx);
+
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]?.openedBy).toBe("ask");
+        expect(code).toBe(0);
+        expect(loadRmRequest(requestId ?? "")?.status).toBe("approved");
     });
 
     test("a root request is the person's to open: the hand-over line, exit 1", async () => {

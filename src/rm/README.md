@@ -28,9 +28,10 @@ tools rm approve <id> <id> ... [--session <id>] [--older 1d]   # several request
 tools rm approve                    # on a terminal: tick requests, then approve, deny or close the gone ones
 tools rm roots add <dir> [--note "<why>"]
 tools rm config set <key> <value>   # approval, notify-on-request, notify-on-failure, ask-min-mb, ask-action, aside-unsaved,
-                                    # session-scratch, own-files, own-bash-files, tmp-small-mb, grace-preset, grace-other,
-                                    # grace-scratch, sweep-every, sweep-linger, trash-root, disable-preset, enable-preset,
-                                    # disable-profile, enable-profile
+                                    # session-scratch, own-files, own-bash-files, tmp-small-mb, tmp-small-exclude,
+                                    # tmp-small-include, grace-preset, grace-other, grace-scratch, sweep-every,
+                                    # sweep-linger, trash-root, disable-preset, enable-preset, disable-profile,
+                                    # enable-profile
 tools rm profile set <name> --agent codex --ask-action request [...]
 tools rm profile remove <name>
 ```
@@ -75,7 +76,11 @@ The first rule that answers decides.
    `GenesisTools`, ...). Another session's `/tmp/<agent dir>/<project>/<session>` scratch matches only once that
    session ended: the Claude session registry does not list it (an unreadable registry counts as live) and nothing
    inside changed for 12 hours. The reason names the conditions: `/tmp path, 284 KB under 10 MB, not git-tracked,
-   no unsaved repo inside`.
+   no unsaved repo inside`. A folder of `tmpSmallExcluded` (default `["/tmp/removable"]`; `tmp-small-exclude <dir>`
+   adds one, `tmp-small-include <dir>` takes it out) never matches, whatever its size: it is a staging area the
+   person reviews, such as the `/tmp/removable/disk-reclaim-<ts>/` folders a disk reclaim leaves. `tools rm` of one
+   from an agent opens a request, the default rule's reason says `inside /tmp/removable, a staging area for the
+   user's review: tmp-small never deletes there (tmp-small-exclude)`, and `tools rm ask <id>` opens it for the person.
 12. **nested-repos** (ask): a folder that holds git repositories.
 13. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
    `package.json`, `dist`/`build`/`.next`/`.turbo`/... next to `package.json`, `.build` next to `Package.swift`,
@@ -308,7 +313,8 @@ names the command that turns the preset on. Then `tools rm preset bun-cache --in
 ## Configuration
 
 `~/.genesis-tools/rm/config.json` holds `askAction`, `asideUnsaved`, `allowSessionScratch`, `allowOwnFiles`,
-`ownFilesFromBash`, `tmpSmallMB`, `roots`, `protect`, `grace` (`presetMinutes`, `otherMinutes`, `scratchMinutes`),
+`ownFilesFromBash`, `tmpSmallMB`, `tmpSmallExcluded`, `roots`, `protect`, `grace` (`presetMinutes`, `otherMinutes`,
+`scratchMinutes`),
 `trashRoot`, `disabledPresets`, `enabledPresets`, `profiles`, `disabledProfiles`, `approval`, `notify` (`onRequest`,
 `onFailure`, `askMinMB`), `sweep` (`everyMinutes`, `lingerMinutes`) and `customPresets` (`{ "id", "description",
 "names": ["*.cache"], "markers": ["package.json"] }`). The rule settings (`ownFilesFromBash`, `tmpSmallMB`, `grace`)
