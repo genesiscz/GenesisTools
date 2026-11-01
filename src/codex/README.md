@@ -329,7 +329,7 @@ set, sandbox escalations, and file-change approval requests pause and are forwar
 messages. Resolve one with `tools codex approve --name <n> --request <id>` or `deny`. Codex 0.162.1 has no protocol
 mode that pauses its built-in trusted read-only commands; `untrusted` is its strictest supported command policy.
 The daemon accepts no request itself: the worker's own bus commands (`tools agents message`, `login`, `request`,
-`leave`) and read-only commands go to the lead like any other, because an automatic approval of a parsed shell
+`leave`) and any read-only command Codex asks about go to the lead like any other, because an automatic approval of a parsed shell
 script is only as safe as its parser. A file-change approval names the files it writes (`edit src/a.ts, README.md`);
 the request itself carries only an item id.
 
