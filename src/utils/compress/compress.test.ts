@@ -1,3 +1,4 @@
+import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import {
     chmodSync,
@@ -34,6 +35,7 @@ import {
     readTextChunks,
     storedFilePath,
 } from "@genesiscz/utils/fs/read-lines";
+import { createDailyFileStream } from "@genesiscz/utils/logger";
 import { startDailyCompressionOnce } from "@genesiscz/utils/logger/daily-trigger";
 import {
     dayLogName,
@@ -1577,6 +1579,45 @@ describe("day logs", () => {
         expect(parseDayLogName("app-perf.log")).toBeUndefined();
         expect(storedFilePath(join(dir, "2026-10-11-failures.jsonl"))).toBe(join(dir, "2026-10-11-failures.jsonl.zst"));
         expect(storedFilePath(join(dir, "2026-10-09.log"))).toBeUndefined();
+    });
+
+    it("the logger closes its day file when the day ends, and no program it execs inherits the file", async () => {
+        const dir = scratch("rollover");
+        const midnight = new Date(2026, 9, 13, 24, 0, 0, 0).getTime();
+        let clock = midnight - 150;
+        const stream = createDailyFileStream(() => dir, { now: () => clock });
+        const file = join(dir, "2026-10-13.log");
+        // The fds of this process that hold `path` (/dev/fd is this process's table on macOS and Linux).
+        const holders = (path: string) => {
+            const ino = statSync(path).ino;
+            return readdirSync("/dev/fd").filter((name) => {
+                try {
+                    return fstatSync(Number(name)).ino === ino;
+                } catch {
+                    return false;
+                }
+            });
+        };
+
+        expect(holders(file)).toHaveLength(1);
+
+        if (process.platform === "darwin") {
+            const { symbols } = dlopen("/usr/lib/libSystem.B.dylib", {
+                fcntl: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+            });
+            const F_GETFD = 1;
+            const FD_CLOEXEC = 1;
+            expect(symbols.fcntl(Number(holders(file)[0]), F_GETFD) & FD_CLOEXEC).toBe(FD_CLOEXEC);
+        }
+
+        await Bun.sleep(400);
+        expect(holders(file)).toEqual([]);
+
+        clock = midnight + 1000;
+        await new Promise<void>((resolve, reject) => stream.write("next\n", (err) => (err ? reject(err) : resolve())));
+        expect(readFileSync(join(dir, "2026-10-14.log"), "utf8")).toBe("next\n");
+        expect(holders(join(dir, "2026-10-14.log"))).toHaveLength(1);
+        stream.destroy();
     });
 
     it("the daily pass keeps a week of day logs and two days of transcripts plain, and never starts from a test process", () => {
