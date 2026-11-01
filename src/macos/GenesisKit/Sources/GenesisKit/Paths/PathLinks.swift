@@ -18,7 +18,8 @@ public enum PathLinkTarget: Equatable {
     /// A file or folder: a schemeless path (`/Users/…`, `~/…`, or relative) or a `file:` URL, percent-decoded,
     /// with a `:12`, `:12:5` or `#L10-L20` suffix taken off into `lines` (both ends of a range).
     case path(String, lines: MarkdownLineRange?)
-    /// Anything else: a web page, an app's scheme, an in-page anchor.
+    /// Anything else: a web page, an app's scheme, an in-page anchor, a `file:` URL on another machine. A
+    /// network-path link (`//example.org/docs`) is a web page with its scheme left out, so it carries `https:`.
     case other(URL)
 }
 
@@ -72,6 +73,18 @@ public enum PathLink {
         let scheme = url.scheme?.lowercased()
         guard scheme == nil || scheme == "file" else { return .other(url) }
 
+        // A host names another machine, and `URL.path` drops it: read as a path, `//example.org/docs` was the local
+        // `/docs`. Without a scheme it is a web link (`//localhost:3000/` too); a `file:` URL is on this Mac only as
+        // `file:///…` or `file://localhost/…`.
+        if let host = url.host(percentEncoded: false), !host.isEmpty {
+            if scheme == nil {
+                return .other(webURL(url))
+            }
+            if host.lowercased() != "localhost" {
+                return .other(url)
+            }
+        }
+
         // `URL.path` is percent-decoded: `%C4%8CEZ/a%20b.md` reads `ČEZ/a b.md`.
         let raw = url.path
         guard !raw.isEmpty else { return .other(url) }
@@ -80,6 +93,13 @@ public enum PathLink {
         let split = splitLine(raw)
         let suffix = split.line.flatMap { MarkdownLineRange(first: $0, last: $0) }
         return .path(split.path, lines: MarkdownLineRange.parse(url.fragment) ?? suffix)
+    }
+
+    /// A network-path link with the scheme a browser would give it here, where no page supplies one.
+    private static func webURL(_ url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        components.scheme = "https"
+        return components.url ?? url
     }
 
     /// `/a/b.md:12` and `/a/b.md:12:5` (line and column): the path and line 12. A colon followed by anything but
@@ -309,15 +329,17 @@ public final class PathLinkHandler {
         MainActor.assumeIsolated { self?.open(url) ?? .systemAction }
     }
 
-    /// For `OpenURLAction`: `.handled` for a file link, `.systemAction` for anything else.
+    /// For `OpenURLAction`: `.handled` for a file link, `.systemAction` for anything else, with the `https:` a
+    /// network-path link lacks (schemeless, Launch Services answers it with the -50 alert).
     @MainActor
     public func open(_ url: URL) -> OpenURLAction.Result {
-        guard case let .path(path, lines) = PathLink.target(for: url) else {
-            return .systemAction
+        switch PathLink.target(for: url) {
+        case let .other(destination):
+            return destination == url ? .systemAction : .systemAction(destination)
+        case let .path(path, lines):
+            perform(path: path, lines: lines, menu: menuClick())
+            return .handled
         }
-
-        perform(path: path, lines: lines, menu: menuClick())
-        return .handled
     }
 
     @MainActor
