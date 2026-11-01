@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { CString, dlopen, FFIType, ptr } from "bun:ffi";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -11,7 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listBigFiles } from "@app/du/lib/engine";
+import { ensureDylib, listBigFiles } from "@app/du/lib/engine";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
 
 const MB = 1 << 20;
@@ -136,4 +138,93 @@ describe.skipIf(skip.onWindows || process.platform !== "darwin")("listBigFiles (
         const r = await listBigFiles({ roots: [mounts], minBytes: 1 });
         expect(r.filesListed).toBe(0);
     }, 60_000);
+});
+
+// The CLI and big_run_json kept the first 64 prune names and dropped the rest without an error, so a 65th name was a
+// folder the listing silently entered. Both now refuse it, and the 64th name must still prune: it is the only name
+// that matches here, so a cap below 64 lists victim/.
+describe.skipIf(skip.onWindows || process.platform !== "darwin")("prune names: 64 honored, 65 refused", () => {
+    const MAX_PRUNE_NAMES = 64;
+    type BigfilesFfiJson = { files_listed: number; files: { path: string }[] };
+    let outer: string;
+    const pruneNames = (n: number) => [...Array.from({ length: n - 1 }, (_, i) => `missing-${i}`), "victim"];
+
+    beforeAll(() => {
+        outer = mkdtempSync(join(tmpdir(), "gt-bigfiles-prune-"));
+        mkdirSync(join(outer, "keep"));
+        mkdirSync(join(outer, "victim"));
+        writeFileSync(join(outer, "keep", "a.bin"), Buffer.alloc(2 * MB, 1));
+        writeFileSync(join(outer, "victim", "b.bin"), Buffer.alloc(2 * MB, 2));
+    });
+
+    afterAll(() => {
+        rmSync(outer, { recursive: true, force: true });
+    });
+
+    // clonesize_bigfiles_json is not bound in engine.ts (listBigFiles uses the subprocess), so the test binds it.
+    let lib: ReturnType<typeof openBigfilesLib> | null = null;
+    function openBigfilesLib() {
+        return dlopen(ensureDylib(), {
+            clonesize_bigfiles_json: {
+                args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.u64, FFIType.ptr, FFIType.i32],
+                returns: FFIType.ptr,
+            },
+            clonesize_free: { args: [FFIType.ptr], returns: FFIType.void },
+        });
+    }
+
+    function bigfilesFfi(names: string[]): BigfilesFfiJson | null {
+        lib ??= openBigfilesLib();
+        const rootBufs = [Buffer.from(`${outer}\0`, "utf8")];
+        const nameBufs = names.map((n) => Buffer.from(`${n}\0`, "utf8"));
+        const rootPtrs = new BigUint64Array(rootBufs.map((b) => BigInt(ptr(b))));
+        const namePtrs = new BigUint64Array(nameBufs.map((b) => BigInt(ptr(b))));
+        const res = lib.symbols.clonesize_bigfiles_json(
+            ptr(rootPtrs),
+            rootBufs.length,
+            2,
+            BigInt(MB),
+            nameBufs.length > 0 ? ptr(namePtrs) : null,
+            nameBufs.length
+        );
+        // keep the string buffers alive until the call returned
+        void rootBufs;
+        void nameBufs;
+        if (!res) {
+            return null;
+        }
+
+        const json = new CString(res).toString();
+        lib.symbols.clonesize_free(res);
+        return SafeJSON.parse(json, { strict: true });
+    }
+
+    it("the fixture lists victim/ when nothing is pruned", async () => {
+        const r = await listBigFiles({ roots: [outer], minBytes: MB });
+        expect(r.files.map((f) => f.path)).toEqual([join(outer, "keep", "a.bin"), join(outer, "victim", "b.bin")]);
+    });
+
+    it("CLI: the 64th --prune-name still prunes its folder", async () => {
+        const r = await listBigFiles({ roots: [outer], minBytes: MB, pruneNames: pruneNames(MAX_PRUNE_NAMES) });
+        expect(r.files.map((f) => f.path)).toEqual([join(outer, "keep", "a.bin")]);
+        expect(r.filesListed).toBe(1);
+    });
+
+    it("CLI: a 65th --prune-name exits 2 with a diagnostic instead of being dropped", async () => {
+        await expect(
+            listBigFiles({ roots: [outer], minBytes: MB, pruneNames: pruneNames(MAX_PRUNE_NAMES + 1) })
+        ).rejects.toThrow(
+            `clonesize --bigfiles exited with 2: clonesize: more than ${MAX_PRUNE_NAMES} --prune-name names`
+        );
+    });
+
+    it("library: clonesize_bigfiles_json honors the 64th prune name", () => {
+        const r = bigfilesFfi(pruneNames(MAX_PRUNE_NAMES));
+        expect(r?.files.map((f) => f.path)).toEqual([join(outer, "keep", "a.bin")]);
+        expect(r?.files_listed).toBe(1);
+    });
+
+    it("library: clonesize_bigfiles_json returns NULL for 65 prune names", () => {
+        expect(bigfilesFfi(pruneNames(MAX_PRUNE_NAMES + 1))).toBeNull();
+    });
 });
