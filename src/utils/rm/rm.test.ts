@@ -91,6 +91,7 @@ import {
     restoreBatch,
     returnAside,
     rmLedgerPath,
+    rmMeasurementsDir,
     rmRequestLockFile,
     runDrainer,
     saveRmConfig,
@@ -1829,6 +1830,32 @@ describe("measurements written by two processes at once", () => {
         expect(
             readRmLedger().filter((entry) => entry.action === "measure" && entry.requestId === "conc01")
         ).toHaveLength(30);
+    });
+});
+
+describe("the ledger claim of an aside copy's size", () => {
+    test("an empty marker is a claim in progress, and only an old empty marker is taken over", () => {
+        const requestsDir = dir("claim-requests");
+        const request = { id: "emp001", caller: AGENT };
+        const target = { path: "/work/shop/claim", stored: "/aside/claim" };
+        const item = { path: target.path, location: target.stored, at: "", mtimeMs: 1, bytes: 9 };
+        const lines = () => readRmLedger().filter((entry) => entry.requestId === "emp001").length;
+        recordRmMeasurement({ request, target, item, requestsDir });
+        const measurements = join(rmMeasurementsDir(requestsDir), "emp001");
+        const marker = join(measurements, readdirSync(measurements).find((name) => name.endsWith(".ledger")) ?? "x");
+
+        expect(lines()).toBe(1);
+
+        // Another process opened the marker with O_EXCL and has not written its pid yet.
+        writeFileSync(marker, "");
+        recordRmMeasurement({ request, target, item, requestsDir });
+        expect(lines()).toBe(1);
+
+        // An empty marker that old belongs to a process that died between the open and the write.
+        const old = new Date(Date.now() - 60_000);
+        utimesSync(marker, old, old);
+        recordRmMeasurement({ request, target, item, requestsDir });
+        expect(lines()).toBe(2);
     });
 });
 
