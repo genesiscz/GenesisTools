@@ -2,7 +2,6 @@ import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync } from "n
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
@@ -107,6 +106,13 @@ export interface RmRuleContext {
     asidePending: (target: RmTarget) => string | null;
     git: (target: RmTarget) => RmGitFacts;
     nestedRepos: (target: RmTarget) => string[];
+    /** Commands a reason may name, passed in by the GenesisTools caller (`src/utils/genesis-tools/tools/hints.ts`). */
+    hints?: RmRuleHints;
+}
+
+export interface RmRuleHints {
+    /** The command that turns an opt-in preset on. */
+    enablePreset?: (id: string) => string;
 }
 
 export function resolveTarget(input: string, cwd: string): RmTarget {
@@ -506,7 +512,8 @@ function defaultAskReason(target: RmTarget, ctx: RmRuleContext): string {
     const preset = offOptInPreset(target, ctx);
 
     if (preset) {
-        return `matches the opt-in preset ${preset.id}, which is off; the user can turn it on: ${toolCommand("rm")} config set enable-preset ${preset.id}`;
+        const command = ctx.hints?.enablePreset?.(preset.id);
+        return `matches the opt-in preset ${preset.id}, which is off; the user can turn it on${command ? `: ${command}` : ""}`;
     }
 
     if (sessionId && ctx.config.allowOwnFiles && target.kind === "file") {
@@ -810,7 +817,12 @@ export function sessionOwnFiles(caller: RmCaller): Set<string> {
     }
 }
 
-export function defaultRuleContext(config: RmConfig, caller: RmCaller, cwd: string): RmRuleContext {
+export function defaultRuleContext(
+    config: RmConfig,
+    caller: RmCaller,
+    cwd: string,
+    hints?: RmRuleHints
+): RmRuleContext {
     const pending = pendingAsideDirs();
     return {
         config,
@@ -823,5 +835,6 @@ export function defaultRuleContext(config: RmConfig, caller: RmCaller, cwd: stri
         asidePending: (target) => pendingAsideFor(target.canonical, pending),
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
+        hints,
     };
 }

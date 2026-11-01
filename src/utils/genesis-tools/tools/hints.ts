@@ -84,3 +84,20 @@ export function transclusionHints(): TransclusionHints {
         },
     };
 }
+
+/**
+ * The one line an agent must pass on after `tools rm` opened a request. It stands alone: agents often keep only
+ * `| tail -1` of the output, and a PostToolUse hook repeats it when the output was cut (`>/dev/null`).
+ */
+export function rmRequestHintLine(id: string, count: number): string {
+    const rm = toolCommand("rm");
+    return (
+        `rm request ${id}: ${count} path(s) wait for the user. Do not run approve yourself. ` +
+        `Tell the user: ! ${rm} approve ${id}. Cancel your own: ${rm} deny ${id}`
+    );
+}
+
+/** The command that turns an opt-in `tools rm` preset on, for the default rule's reason. */
+export function rmEnablePresetCommand(id: string): string {
+    return `${toolCommand("rm")} config set enable-preset ${id}`;
+}
