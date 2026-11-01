@@ -10,7 +10,15 @@ import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
  */
 export type CodexProcessKind = "tui" | "app-server" | "daemon";
 
-export const CODEX_HELPER_KINDS = ["app-server", "daemon"] as const;
+export const CODEX_HELPER_KINDS = ["daemon"] as const;
+
+/**
+ * An app-server is machinery behind a `tools codex run` TUI, but an app-server an embedding app runs (T3 Code sets
+ * its thread on it) has no TUI in front of it: it is the session, so `who` lists it.
+ */
+export function isCodexHelper(process: { kind: string; host: { kind: string } | null }): boolean {
+    return process.kind === "app-server" && process.host === null;
+}
 
 export function classifyCodexArgs(args: string): CodexProcessKind | null {
     const tokens = args.split(/\s+/);

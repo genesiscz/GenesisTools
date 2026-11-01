@@ -3,7 +3,7 @@ import { registerRunCommand } from "@app/codex/commands/run";
 import { createCodexAdapter } from "@genesiscz/utils/agent-sessions/codex-sessions";
 import { codexDriver } from "./driver";
 import { codexLauncher } from "./launcher";
-import { CODEX_HELPER_KINDS, classifyCodexArgs, codexResumeIdFromArgs } from "./process-scan";
+import { CODEX_HELPER_KINDS, classifyCodexArgs, codexResumeIdFromArgs, isCodexHelper } from "./process-scan";
 
 /** What `tools codex` is. Codex's own extra verbs register beside this, never inside it. */
 export const codexSpec: AgentToolSpec = {
@@ -16,6 +16,7 @@ export const codexSpec: AgentToolSpec = {
     processScan: {
         classify: classifyCodexArgs,
         helperKinds: CODEX_HELPER_KINDS,
+        isHelper: isCodexHelper,
         resumeIdFromArgs: codexResumeIdFromArgs,
     },
     help: {
