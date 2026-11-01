@@ -15,18 +15,28 @@ import {
 } from "./retention";
 
 /**
- * How many recent days stay plain. Day logs: the last 7, because `tools daemon stats --since 7d` scans up to 7 days
- * with rg, and with five of them compressed it took +87% CPU (3.5 GB to decompress on 2026-10-13, see
- * `scripts/benchmarks/compress/read-paths.ts`), over the 30% read budget. Older days are read one at a time (jev
- * sessions, a tail, an rg by hand), which costs the same or less from a `.zst`.
+ * How many recent days of the day files (`<day>.log`, `<day>-profiling.log`, `<day>-failures.jsonl`) stay plain: today
+ * and yesterday. No writer appends to an older day (each picks the file by the current local date, and the logger
+ * closes yesterday's file at midnight), and the pass runs just after midnight, when yesterday was written a minute ago
+ * and the 2-hour quiet window skips it anyway. `tools daemon stats --since 7d` reads a week within the 30% read budget
+ * because it keeps the health lines of finished days (`ripgrepFilesCached`, `scripts/benchmarks/compress/read-paths.ts`);
+ * the other readers take one day at a time, which costs the same or less from a `.zst`. The app launcher reads today's
+ * and yesterday's failures as plain files (LauncherFailures.swift `recorded`).
  */
-export const DAY_LOGS_PLAIN_DAYS = 7;
+export const DAY_LOGS_PLAIN_DAYS = 2;
 /** ai-proxy transcripts: today and yesterday in UTC (a realtime session keeps writing its start day after midnight). */
 export const TRANSCRIPTS_PLAIN_DAYS = 2;
 /** The app's hang and stack captures (`logs/hangs/`): today and yesterday stay plain for `tools hub dev monitor`. */
 export const HANGS_PLAIN_DAYS = 2;
 
 const DAY_MS = 86_400_000;
+
+/** The local day `days` calendar days before `now` (a calendar step, so a daylight-saving day counts as one day). */
+function localDaysBefore(now: Date, days: number): string {
+    const day = new Date(now);
+    day.setDate(day.getDate() - days);
+    return formatLocalDate(day);
+}
 
 export interface DailyTarget {
     /** Ledger caller and report label. */
@@ -43,7 +53,7 @@ function utcDay(time: number): string {
     return new Date(time).toISOString().slice(0, 10);
 }
 
-/** What the daily pass compresses: old day logs and old ai-proxy transcripts. */
+/** What the daily pass compresses: old day files (day logs, profiling, failures), ai-proxy transcripts, hangs. */
 export function dailyTargets({
     now = new Date(),
     logsDir = genesisToolsDir("logs"),
@@ -65,7 +75,7 @@ export function dailyTargets({
                     fromIdentity: identity,
                     to: compressed,
                 }),
-            firstPlainDay: formatLocalDate(new Date(now.getTime() - (DAY_LOGS_PLAIN_DAYS - 1) * DAY_MS)),
+            firstPlainDay: localDaysBefore(now, DAY_LOGS_PLAIN_DAYS - 1),
         },
         {
             name: "ai-proxy-transcripts",
@@ -81,7 +91,7 @@ export function dailyTargets({
             recursive: false,
             // `hang-<local stamp>.txt` (HangWatch.swift) and `stack-<local stamp>.txt` (MainStackSampler.swift).
             dayOf: (relative) => /^(?:hang|stack)-(\d{4}-\d{2}-\d{2})-\d{6}\.txt$/.exec(relative)?.[1],
-            firstPlainDay: formatLocalDate(new Date(now.getTime() - (HANGS_PLAIN_DAYS - 1) * DAY_MS)),
+            firstPlainDay: localDaysBefore(now, HANGS_PLAIN_DAYS - 1),
         },
     ];
 }
