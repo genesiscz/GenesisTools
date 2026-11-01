@@ -1,9 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { gitRules } from "./git";
 import { detectShellViolations, type ShellViolation } from "./index";
 
-function ids(command: string): string[] {
-    return detectShellViolations(command, gitRules).map((v) => v.ruleId);
+function ids(command: string, cwd?: string): string[] {
+    return detectShellViolations(command, gitRules, cwd ? { cwd } : {}).map((v) => v.ruleId);
 }
 
 function only(command: string, ruleId: string): ShellViolation | undefined {
@@ -11,6 +14,7 @@ function only(command: string, ruleId: string): ShellViolation | undefined {
 }
 
 const CHECKOUT = "git-checkout-overwrites-file";
+const FRESH = "git-checkout-in-fresh-worktree";
 const SAVED = "git-checkout-overwrites-saved-file";
 const FORCE = "git-push-force-without-lease";
 const gate = (paths: string, git = "git") =>
@@ -76,11 +80,24 @@ describe("git-checkout-overwrites-file: fires", () => {
         expect(ids('git restore "a b.ts" other.ts')).toEqual([CHECKOUT]);
     });
 
-    it("git restore does not take the --source value for a path", () => {
-        const suggestion = 'git stash push -m "before restore" -- src/x.ts';
+    it("git restore --source <ref> is gated like a checkout from that ref, and the value is no path", () => {
+        for (const command of [
+            "git restore --source HEAD~1 src/x.ts",
+            "git restore -s HEAD~1 src/x.ts",
+            "git restore --source=HEAD~1 src/x.ts",
+            "git restore -sHEAD~1 src/x.ts",
+            "git restore -Ws HEAD~1 src/x.ts",
+            "git restore --source main -- src/x.ts",
+        ]) {
+            const suggestion = only(command, CHECKOUT)?.suggestion;
 
-        expect(only("git restore --source HEAD~1 src/x.ts", CHECKOUT)?.suggestion).toBe(suggestion);
-        expect(only("git restore -s HEAD~1 src/x.ts", CHECKOUT)?.suggestion).toBe(suggestion);
+            expect(suggestion).toBe(`${gate("src/x.ts")}${command}`);
+            expect(ids(suggestion ?? "")).toEqual([]);
+        }
+
+        expect(only("git restore --source=HEAD src/x.ts", CHECKOUT)?.suggestion).toBe(
+            'git stash push -m "before restore" -- src/x.ts'
+        );
     });
 
     it("behind `sudo -n`, whose -n takes no value", () => {
@@ -374,12 +391,48 @@ describe("git-checkout-overwrites-file: a fresh worktree and the command's own s
         expect(ids("git worktree add /tmp/w/x main && cd /tmp/w/x && git restore a.ts")).toEqual([]);
     });
 
-    it("fires when a ; can let the checkout run in another folder, or the cd went elsewhere (case 89)", () => {
-        expect(
-            ids(
-                'L=/tmp/cc/app/s1/bench; W=/tmp/cc/app/s1/worktrees/pr658; git worktree add -q --detach $W origin/feat/x > $L/wt658.log 2>&1; echo "wt exit=$?"; cd $W && git checkout 330c98a774 -- src/a.ts src/b.ts && git status --short'
-            )
-        ).toEqual([CHECKOUT]);
+    it("is a context note when a ; can let the checkout run in an old folder (case 89), from the add on", () => {
+        const command =
+            'L=/tmp/cc/app/s1/bench; W=/tmp/cc/app/s1/worktrees/pr658; git worktree add -q --detach $W origin/feat/x > $L/wt658.log 2>&1; echo "wt exit=$?"; cd $W && git checkout 330c98a774 -- src/a.ts src/b.ts && git status --short';
+        const violations = detectShellViolations(command, gitRules);
+        const start = command.indexOf("git worktree add");
+
+        expect(violations.map((v) => [v.ruleId, v.severity])).toEqual([[FRESH, "context"]]);
+        expect(violations[0].index).toBe(start);
+        expect(violations[0].matched).toBe(command.slice(start, command.indexOf(" && git status")));
+        expect(violations[0].suggestion).toBeUndefined();
+        expect(ids("git worktree add /tmp/w/x main && cd /tmp/w/x; git checkout abc -- a.ts")).toEqual([FRESH]);
+        expect(ids("git worktree add /tmp/w/x main\ncd /tmp/w/x && git restore a.ts")).toEqual([FRESH]);
+    });
+
+    it("blocks when a || on the way skips the cd or runs the checkout only after a failure", () => {
+        const skipped = "git worktree add /tmp/w/x main || cd /tmp/w/x && git checkout abc -- a.ts";
+        const suggestion = only(skipped, CHECKOUT)?.suggestion;
+
+        expect(ids(skipped)).toEqual([CHECKOUT]);
+        expect(suggestion).toBe(skipped.replace("git checkout", `${gate("a.ts")}git checkout`));
+        expect(ids(suggestion ?? "")).toEqual([]);
+        // `a || <gate> && <checkout>` skips the gate when `a` succeeds, so no gate is offered there.
+        blockedWithoutSuggestion([
+            "git worktree add /tmp/w/x main && cd /tmp/w/x || git checkout abc -- a.ts",
+            "false || git checkout main -- a.ts",
+        ]);
+    });
+
+    it("passes a gated checkout after a ; joined worktree add, where the gate covers the old folder", () => {
+        expect(ids(`git worktree add /tmp/w/x main; cd /tmp/w/x && ${gate("a.ts")}git checkout abc -- a.ts`)).toEqual(
+            []
+        );
+    });
+
+    it("yields to the block when another revert in the command is not in the fresh worktree", () => {
+        const command = "git worktree add /w main; cd /w && git checkout x -- a.ts; cd /repo && git checkout -- b.ts";
+
+        expect(ids(command)).toEqual([CHECKOUT]);
+        expect(only(command, CHECKOUT)?.matched).toBe("git checkout -- b.ts");
+    });
+
+    it("fires when the cd went elsewhere", () => {
         expect(ids("git worktree add /tmp/w/x && cd /tmp/w/y && git checkout abc -- a.ts")).toEqual([CHECKOUT]);
         expect(ids("git worktree add /tmp/w/x && cd /tmp/w/x && cd /repo && git checkout abc -- a.ts")).toEqual([
             CHECKOUT,
@@ -395,6 +448,24 @@ describe("git-checkout-overwrites-file: a fresh worktree and the command's own s
         expect(
             ids(`${gate("a.ts b.ts")}git checkout main -- a.ts b.ts && bun test a.test.ts && git checkout HEAD -- a.ts`)
         ).toEqual([]);
+    });
+
+    it("passes a show or restore swap that the chain undoes from HEAD, so the corrected swap does not re-fire", () => {
+        for (const [swap, undo, path] of [
+            ["git show main:a.ts > a.ts", "git show HEAD:a.ts > a.ts", "a.ts"],
+            ["git restore -s main src/x.ts", "git restore -s HEAD src/x.ts", "src/x.ts"],
+            ["git restore -s main src/x.ts", "git checkout HEAD -- src/x.ts", "src/x.ts"],
+            ["git checkout main -- src/x.ts", "git show HEAD:src/x.ts > src/x.ts", "src/x.ts"],
+        ]) {
+            const command = `${swap} && bun test && ${undo}`;
+            const v = only(command, CHECKOUT);
+
+            expect(v?.matched).toBe(swap);
+            expect(v?.suggestion).toBe(`${gate(path)}${command}`);
+            expect(ids(v?.suggestion ?? "")).toEqual([]);
+        }
+
+        expect(ids(`${gate("a.ts")}git show main:a.ts > a.ts; git show HEAD:a.ts > a.ts`)).toEqual([CHECKOUT]);
     });
 
     it("fires on a HEAD revert that a cd or another -C moves away from the swap", () => {
@@ -436,6 +507,167 @@ describe("git-checkout-overwrites-file: a fresh worktree and the command's own s
 
         expect(v?.matched).toBe(`git checkout 8392a4fcd6 -- ${paths}`);
         expect(v?.suggestion).toBe(command.replace("git checkout 8392a4fcd6", `${gate(paths)}git checkout 8392a4fcd6`));
+    });
+});
+
+describe("git-checkout-overwrites-file: git show <ref>:<path> > <path>", () => {
+    it("writes the file it names like a checkout from that ref, so it is gated the same way", () => {
+        for (const [command, target] of [
+            ["git show 1c7b5e0c0e:src/a.ts > src/a.ts", "src/a.ts"],
+            ["git show main:./src/a.ts > src/a.ts", "src/a.ts"],
+            ["git show main:src/a.ts >| src/a.ts", "src/a.ts"],
+            ["git show main:src/a.ts >src/a.ts 2>/dev/null", "src/a.ts"],
+            ["git show --no-color origin/master:src/a.ts > ./src/a.ts", "./src/a.ts"],
+            ["git show main:src/a.ts >& src/a.ts", "src/a.ts"],
+        ]) {
+            const v = only(command, CHECKOUT);
+            const suggestion = command.replace("git show", `${gate(target)}git show`);
+
+            expect(v?.severity).toBe("block");
+            expect(v?.suggestion).toBe(suggestion);
+            expect(ids(suggestion)).toEqual([]);
+        }
+    });
+
+    it("gates a loop variable, and the logged rewrite after case 30 is caught", () => {
+        const command = 'for f in a.ts b.ts; do git show 1c7b5e0c0e:"$f" > "$f"; done';
+
+        expect(only(command, CHECKOUT)?.suggestion).toBe(
+            `for f in a.ts b.ts; do ${gate('"$f"')}git show 1c7b5e0c0e:"$f" > "$f"; done`
+        );
+        expect(ids("cd /tmp/w && git show 1c7b5e0c0e:$f > $f && git status --short")).toEqual([CHECKOUT]);
+    });
+
+    it("from HEAD or the index it offers the stash, like git checkout HEAD -- <path>", () => {
+        expect(only("git show HEAD:a.ts > a.ts", CHECKOUT)?.suggestion).toBe(
+            'git stash push -m "before revert" -- a.ts'
+        );
+        expect(only("git show :a.ts > a.ts && bun test", CHECKOUT)?.suggestion).toBe(
+            'git stash push -m "before revert" -- a.ts && bun test'
+        );
+    });
+
+    it("offers no gate under git -C, where the redirect writes the shell's folder and the status reads another", () => {
+        blockedWithoutSuggestion(["git -C /r show main:a.ts > a.ts"]);
+        expect(ids(`${gate("a.ts", "git -C /r")}git -C /r show main:a.ts > a.ts`)).toEqual([CHECKOUT]);
+    });
+
+    it("never fires on another target, an append, a pipe, a commit or a conflict stage", () => {
+        for (const command of [
+            "git show main:a.ts > /tmp/x",
+            "git show main:a.ts > a.ts.orig",
+            "git show main:b.ts > a.ts",
+            "git show main:a.ts >> a.ts",
+            "git show main:a.ts | rg foo > a.ts",
+            "git show main:a.ts",
+            "git show main > a.ts",
+            "git show :3:a.ts > a.ts",
+            "git show main:a.ts 2> a.ts",
+            "git show main:a.ts >&2",
+        ]) {
+            expect(ids(command)).toEqual([]);
+        }
+    });
+
+    it("is a saved revert when the same command copied the file first", () => {
+        expect(ids("cp a.ts /tmp/a && git show main:a.ts > a.ts")).toEqual([SAVED]);
+    });
+});
+
+describe("git-checkout-overwrites-file: paths that do not exist only create files", () => {
+    const root = mkdtempSync(join(tmpdir(), "git-rule-"));
+    mkdirSync(join(root, "sub"));
+    writeFileSync(join(root, "exists.ts"), "x");
+    writeFileSync(join(root, "sub", "here.ts"), "x");
+    writeFileSync(join(root, "a1.ts"), "x");
+    writeFileSync(join(root, "file1.ts"), "x");
+    symlinkSync("/nonexistent/target", join(root, "dangling.ts"));
+
+    afterAll(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it("passes a checkout, a restore --source or a git show whose every path is absent in a known folder", () => {
+        for (const command of [
+            "git checkout main -- missing.ts other/missing.ts",
+            "git checkout HEAD -- missing.ts",
+            "git restore --source main missing.ts",
+            "git show main:missing.ts > missing.ts",
+            "cd sub && git checkout main -- missing.ts",
+            `cd ${root}/sub; git checkout main -- exists.ts`,
+            "git -C sub checkout main -- missing.ts exists.ts",
+            "git checkout main -- 'my missing.ts'",
+        ]) {
+            expect(ids(command, root)).toEqual([]);
+        }
+
+        // Case 30: the paths were absent in the worktree the command entered.
+        expect(
+            ids(
+                `cd ${root} && git switch -q feat/x && git checkout 1c7b5e0c0e -- src/control/lib/__fixtures__/fake-ax.ts src/control/lib/kept-behaviours.test.ts && git status --short`,
+                "/"
+            )
+        ).toEqual([]);
+    });
+
+    it("still fires when one path exists, the folder is unknown, or a path is no literal file", () => {
+        for (const command of [
+            "git checkout main -- missing.ts exists.ts",
+            "git restore --source main exists.ts",
+            "git show main:exists.ts > exists.ts",
+            "cd sub && git checkout main -- here.ts",
+            "git -C sub checkout main -- here.ts",
+            "git checkout main -- sub",
+            "git checkout main -- .",
+            "git checkout main -- 'missing*.ts'",
+            "git checkout main -- $f",
+            "git checkout main -- ~/missing.ts",
+            "cd $D && git checkout main -- missing.ts",
+            // zsh globs that NO_EXTENDED_GLOB still expands, to a1.ts and file1.ts.
+            "git checkout main -- a(1).ts",
+            "git checkout main -- file<1-3>.ts",
+            // A dangling symlink is a file the checkout replaces.
+            "git checkout main -- dangling.ts",
+        ]) {
+            expect(ids(command, root)).toEqual([CHECKOUT]);
+        }
+
+        expect(ids("git checkout main -- missing.ts")).toEqual([CHECKOUT]);
+        expect(ids("git checkout main -- missing.ts", join(root, "gone"))).toEqual([CHECKOUT]);
+    });
+
+    it("still fires when the folder the checkout runs in is not the one a cd named", () => {
+        for (const command of [
+            // The failed cd leaves the shell in the fixture, where exists.ts is.
+            "cd nosuch; git checkout main -- exists.ts",
+            // The subshell's cd ends with it, and a skipped cd moves nothing.
+            "(cd sub); git checkout main -- exists.ts",
+            "false && cd sub; git checkout main -- exists.ts",
+            "cd sub & git checkout main -- exists.ts",
+            "sh -c 'cd sub; git checkout main -- exists.ts'",
+            "for d in sub; do cd sub; done; git checkout main -- exists.ts",
+            // eval and a sourced script can change the folder where no cd statement shows it.
+            "eval cd sub; git checkout main -- here.ts",
+            "source ./go.sh; git checkout main -- here.ts",
+            ". ./go.sh && git checkout main -- here.ts",
+        ]) {
+            expect(ids(command, root)).toEqual([CHECKOUT]);
+        }
+    });
+
+    it("still fires when an earlier statement can have made the path, and for a revert from the index", () => {
+        for (const command of [
+            "git stash pop && git checkout main -- missing.ts",
+            "printf x > missing.ts; git checkout main -- missing.ts",
+            // A move brings a folder in by a name that is no path segment, or by a parent folder's name.
+            "mv ../wip/* . && git checkout main -- missing.ts",
+            "rsync -a --remove-source-files ../wip/lib/ lib/ && git checkout main -- lib/missing.ts",
+            "git apply ../wip.patch && git checkout main -- missing.ts",
+            "git checkout -- missing.ts",
+            "git restore missing.ts",
+        ]) {
+            expect(ids(command, root)).toEqual([CHECKOUT]);
+        }
     });
 });
 
@@ -484,6 +716,14 @@ describe("git-checkout-overwrites-saved-file", () => {
         expect(ids("git diff a.ts >/tmp/a.patch && git restore a.ts")).toEqual([SAVED]);
         expect(ids('cp "my file.ts" /tmp/x && git checkout -- "my file.ts"')).toEqual([SAVED]);
         expect(ids("cp a.ts b.ts /tmp/bak/ && git checkout main -- a.ts b.ts")).toEqual([SAVED]);
+    });
+
+    it("reads >& <file> as stdout and stderr into the file, and >&2 or >& 2 as no file", () => {
+        expect(ids("git diff -- a.ts >& /tmp/cc/a.patch && git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("git diff -- a.ts >&/tmp/cc/a.patch && git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("git diff -- a.ts 1>& /tmp/cc/a.patch && git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("git diff -- a.ts >&2 && git checkout -- a.ts")).toEqual([CHECKOUT]);
+        expect(ids("git diff -- a.ts >& 2 && git checkout -- a.ts")).toEqual([CHECKOUT]);
     });
 
     it("blocks when a path was not saved, or the save does not hold the work", () => {
