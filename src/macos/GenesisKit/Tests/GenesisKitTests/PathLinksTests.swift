@@ -98,6 +98,12 @@ final class PathLinksTests: XCTestCase {
         XCTAssertNotEqual(String(describing: result), String(describing: OpenURLAction.Result.systemAction),
                           "the control: a bare system action, which hands Launch Services the schemeless URL, differs")
         XCTAssertEqual(spy.calls, [])
+
+        let remoteSpy = self.spy()
+        let remoteResult = handler(remoteSpy).open(remote)
+        XCTAssertEqual(String(describing: remoteResult), String(describing: OpenURLAction.Result.handled),
+                       "never the system, which drops the host and opens the local /share/a.md")
+        XCTAssertEqual(remoteSpy.calls, ["missing file://server.example/share/a.md"])
     }
 
     func testTheFileLinksOfATextAreListedOnceInOrder() {
