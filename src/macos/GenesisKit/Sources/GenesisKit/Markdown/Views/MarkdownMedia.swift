@@ -113,6 +113,28 @@ enum MarkdownMedia {
         return out
     }
 
+    /// Bare file names that markdown-it's linkify reads as web addresses: `Plan.md`, `deploy.sh`, `main.py` and
+    /// `lib.rs` end in a country domain (`.md` is Moldova), so prose that names a file became a link to
+    /// `http://plan.md`. The page links such a name only when it is in the map as a `file` this note can open
+    /// (`MarkdownMediaRegistry.update`), and then as a relative link; otherwise it stays text (Martin, 2026-11-01).
+    /// `.zip` and `.mov` are real domains too and get the same rule.
+    private static let bareFileNamePattern = try! NSRegularExpression(
+        pattern: #"(?<![\p{L}\p{N}_./:@~-])[\p{L}\p{N}_][\p{L}\p{N}_.-]*\.(?:md|sh|py|rs|pl|pm|cc|mm|ml|ps|so|tf|zip|mov)(?![\p{L}\p{N}_-])"#,
+        options: [.caseInsensitive])
+
+    /// Every bare file name of that kind in the body, once each, at most 200.
+    static func bareFileNames(in markdown: String) -> [String] {
+        let ns = markdown as NSString
+        var seen = Set<String>()
+        var out: [String] = []
+        for match in bareFileNamePattern.matches(in: markdown, range: NSRange(location: 0, length: ns.length)) {
+            let name = ns.substring(with: match.range)
+            if seen.insert(name).inserted { out.append(name) }
+            if out.count == 200 { break }
+        }
+        return out
+    }
+
     static func isRemote(_ key: String) -> Bool {
         guard let colon = key.range(of: #"^[a-zA-Z][a-zA-Z0-9+.-]*:"#, options: .regularExpression) else { return false }
         return key[colon].lowercased() != "file:"
@@ -380,13 +402,14 @@ final class MarkdownMediaRegistry {
             return [:]
         }
         let references = MarkdownMedia.references(in: markdown)
+        let fileNames = MarkdownMedia.bareFileNames(in: markdown)
         let index = context.vaultRoot.map(indexForVault)
         // A link written as a bare note name (`[[Plan#Heading]]`) is found through the same scan: start it now, so
         // the first hover or click on it already has an answer.
         if references.isEmpty, markdown.contains("[[") || markdown.contains("](") {
             index?.refreshIfNeeded {}
         }
-        if !references.isEmpty, let onIndexReady {
+        if !references.isEmpty || !fileNames.isEmpty, let onIndexReady {
             index?.refreshIfNeeded { [weak self] in
                 guard let self, self.generation == ticket else { return }
                 onIndexReady()
@@ -413,6 +436,15 @@ final class MarkdownMediaRegistry {
                 item["src"] = "\(MarkdownMedia.scheme)://m/\(token)"
             }
             map[ref.key] = item
+        }
+        // A bare `Plan.md` links only when a click on it would open something: the same resolver as the click
+        // (the note's folder, the vault root, then the vault's notes by name once the scan is ready).
+        for name in fileNames {
+            let key = MarkdownMedia.key(name)
+            guard map[key] == nil,
+                  MarkdownDocumentLinks.resolve(name, folder: context.folder, vaultRoot: context.vaultRoot?.path, index: index) != nil
+            else { continue }
+            map[key] = ["kind": "file", "name": name]
         }
         entries = next
         tokenByPath = nextTokens

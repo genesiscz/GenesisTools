@@ -1475,6 +1475,28 @@ window.gnTaskMode=function(edit,lock){
   }
 };
 
+// A bare file name is no web address: linkify reads `Plan.md`, `deploy.sh` and `main.py` as domains (`.md` is
+// Moldova) and linked them to http://plan.md. Such a fuzzy link (no scheme, no `www.`, no slash, no `@`) stays a link
+// only when Swift found the file for this note (`gnMedia`, kind `file`, MarkdownMediaRegistry.update), and then it is
+// a relative link that opens the file like `[x](./x.md)`; otherwise it is plain text. A link with a scheme or `www.`
+// is a web link as before.
+var GN_FILE_NAME=/\.(md|sh|py|rs|pl|pm|cc|mm|ml|ps|so|tf|zip|mov)$/i;
+md.core.ruler.after('linkify','gn_file_names',function(state){
+  var t=state.tokens;
+  for(var i=0;i<t.length;i++){
+    var kids=t[i].type==='inline'?t[i].children:null;if(!kids)continue;
+    for(var j=kids.length-3;j>=0;j--){
+      var open=kids[j],label=kids[j+1];
+      if(open.type!=='link_open'||open.markup!=='linkify'||label.type!=='text'||kids[j+2].type!=='link_close')continue;
+      var text=label.content;
+      if(!GN_FILE_NAME.test(text)||/^(https?:|www\.)/i.test(text)||/[\/@]/.test(text))continue;
+      var hit=gnMedia[gnMediaKey(text)];
+      if(hit&&hit.kind==='file'){open.attrSet('href',text);open.attrJoin('class','gn-file-link');}
+      else{kids.splice(j+2,1);kids.splice(j,1);}
+    }
+  }
+});
+
 // Source line of a line in the text markdown-it saw: the same number, unless
 // gnExtractCallouts had to add a line (then gnLineMap says where each came from).
 var gnLineMap=null;
