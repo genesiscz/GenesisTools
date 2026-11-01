@@ -41,6 +41,7 @@ const SHOWN_SETTINGS: ReadonlyArray<{ key: string; value: (config: RmConfig) => 
     { key: "own-files", value: (c) => yesNo(c.allowOwnFiles) },
     { key: "own-bash-files", value: (c) => yesNo(c.ownFilesFromBash) },
     { key: "tmp-small-mb", value: (c) => (c.tmpSmallMB > 0 ? `${c.tmpSmallMB} MB` : "off") },
+    { key: "tmp-small-exclude", value: (c) => list(c.tmpSmallExcluded) },
     { key: "grace-preset", value: (c) => `${c.grace.presetMinutes} min` },
     { key: "grace-other", value: (c) => `${c.grace.otherMinutes} min` },
     { key: "grace-scratch", value: (c) => `${c.grace.scratchMinutes} min` },

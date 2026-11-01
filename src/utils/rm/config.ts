@@ -1,10 +1,10 @@
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { defaultTrashRoot } from "./paths";
+import { defaultTrashRoot, sharedTempRoot } from "./paths";
 
 /** A folder the user trusts an agent to delete anything inside (the hard-deny rules still apply). */
 export interface RmRoot {
@@ -123,6 +123,11 @@ export interface RmConfig extends RmPolicy {
     profiles: RmProfile[];
     /** Built-in profiles the user turned off, by name. */
     disabledProfiles: string[];
+    /**
+     * Folders the tmp-small rule never deletes in, whatever the size: staging areas a person reviews before one
+     * approved `tools rm` clears them (a disk reclaim stages removals in `/tmp/removable/disk-reclaim-<ts>/`).
+     */
+    tmpSmallExcluded: string[];
     /** How a person confirms. Not a profile setting: it belongs to the person, not to the caller. */
     approval: RmApproval;
     /**
@@ -166,6 +171,7 @@ export function defaultRmConfig(): RmConfig {
         allowOwnFiles: true,
         ownFilesFromBash: true,
         tmpSmallMB: 10,
+        tmpSmallExcluded: [join(sharedTempRoot(), "removable")],
     };
 }
 
@@ -290,7 +296,13 @@ function validateRmConfig(value: unknown): void {
         });
         return true;
     };
-    check(value, { protect: texts, disabledPresets: texts, enabledPresets: texts, disabledProfiles: texts });
+    check(value, {
+        protect: texts,
+        disabledPresets: texts,
+        enabledPresets: texts,
+        disabledProfiles: texts,
+        tmpSmallExcluded: texts,
+    });
     policy(value);
     check(value, {
         approval: isRmApproval,
@@ -442,6 +454,9 @@ export function parseRmConfig(raw: unknown): RmConfig {
         disabledPresets: strings(raw.disabledPresets),
         enabledPresets: strings(raw.enabledPresets),
         disabledProfiles: strings(raw.disabledProfiles),
+        tmpSmallExcluded: Array.isArray(raw.tmpSmallExcluded)
+            ? strings(raw.tmpSmallExcluded)
+            : defaults.tmpSmallExcluded,
         customPresets: Array.isArray(raw.customPresets)
             ? raw.customPresets.map(parsePreset).filter((p): p is RmPreset => p !== null)
             : [],

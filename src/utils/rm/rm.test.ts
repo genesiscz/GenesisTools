@@ -3040,3 +3040,27 @@ describe("the request sweep: a rule decides a pending request after it was asked
         expect(drainerNeeded(empty, none, requestsDir)).toBe(true);
     });
 });
+
+describe("tmp-small never deletes inside a staging root", () => {
+    test("/tmp/removable is the default staging root, and config set adds and removes one", () => {
+        expect(defaultRmConfig().tmpSmallExcluded).toEqual(["/tmp/removable"]);
+        expect(parseRmConfig({}).tmpSmallExcluded).toEqual(["/tmp/removable"]);
+        expect(parseRmConfig({ tmpSmallExcluded: [] }).tmpSmallExcluded).toEqual([]);
+    });
+
+    test("a path of any size inside a staging root keeps its request, and the reason names the root", () => {
+        const temp = dir("staged-tmp");
+        const removable = dir("staged-tmp", "removable");
+        const staged = dir("staged-tmp", "removable", "disk-reclaim-20261101-1915");
+        file(join(staged, "tiny.txt"));
+        const c = ctx({ tempRoots: [temp], config: { ...config, tmpSmallExcluded: [removable] } });
+        const verdict = evaluateTarget(resolveTarget(staged, c.cwd), c);
+
+        expect(verdict.kind).toBe("ask");
+        expect(verdict.reason).toContain(`inside ${removable}, a staging area for the user's review`);
+        expect(verdictOf(staged, ctx({ tempRoots: [temp], config: { ...config, tmpSmallExcluded: [] } }))).toEqual({
+            kind: "allow",
+            rule: "tmp-small",
+        });
+    });
+});
