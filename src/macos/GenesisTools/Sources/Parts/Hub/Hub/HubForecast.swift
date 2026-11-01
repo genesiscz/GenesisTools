@@ -278,5 +278,6 @@ struct HubForecastRow: View {
             Spacer(minLength: 0)
         }
         .frame(minHeight: 22)
+        .liveRow()
     }
 }
