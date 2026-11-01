@@ -34,6 +34,18 @@ export {
     verifyArchiveAgainstFolder,
 } from "./tar";
 export {
+    type CompressStreamOptions,
+    compressStream,
+    createVerifiedZstdBatch,
+    createVerifiedZstdWriter,
+    type VerifiedZstdBatch,
+    type VerifiedZstdOptions,
+    type VerifiedZstdResult,
+    type VerifiedZstdState,
+    type VerifiedZstdWriter,
+    ZstdVerificationError,
+} from "./verified";
+export {
     compressBytes,
     DEFAULT_FRAME_BYTES,
     DEFAULT_ZSTD_LEVEL,

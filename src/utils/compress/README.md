@@ -34,7 +34,9 @@ uses `node:zlib`'s one-frame compressor, the only API that takes parameters (che
 | Decompress to a file | `decompressFile` | `file.ts` |
 | Frames of a file, sync or ahead on the thread pool | `readZstdFramesSync`, `readZstdFrames` | `zstd.ts` |
 | Write seekable frames from a stream | `SeekableZstdWriter` | `zstd.ts` |
-| Lines, first lines, last lines of plain or `.zst` | `readLinesSync`, `readFirstLines`, `readLastLines`, `readTextChunks` | `fs/read-lines.ts` |
+| Compress a stream, or several outputs together, verified and atomic | `createVerifiedZstdWriter`, `createVerifiedZstdBatch`, `compressStream` | `verified.ts` |
+| Lines, first lines, last lines of plain or `.zst` | `readLines`, `readLinesSync`, `readFirstLines`, `readLastLines`, `readTextChunks` | `fs/read-lines.ts` |
+| Lines of any byte stream (stdin, a ranged `createReadStream`), cut at `\n` only | `splitLines`, `splitLinesSync` | `fs/read-lines.ts` |
 | rg over plain and `.zst` files (no zstd CLI) | `ripgrepFiles`, `zstdContentStream` | `search.ts` |
 | Pack, list, unpack, verify a folder | `packDirectory`, `listArchive`, `unpackArchive`, `verifyArchiveAgainstFolder` | `tar.ts` |
 | One safe compress or restore with a ledger entry | `planCompressPath`, `compressPath`, `expandPath`, `verifyPath` | `operations.ts` |
@@ -63,6 +65,39 @@ a day's file, which costs one `existsSync` of `.daily-compress-<day>` and, for t
 exclusive create and a detached low-priority `bun src/utils/compress/daily-pass.ts`. Off in tests and with
 `GENESIS_TOOLS_NO_DAILY_COMPRESS=1`. `tools compress daily --dry-run` shows what it would do. Before it compresses,
 the process runs the `tools rm` keepalive against macOS tmp_cleaner (`refreshWaitingRmData`, `src/rm/README.md`).
+
+## Compressing a stream, verified
+
+For bytes that are not a file yet (a log rotation's day lines, a generated export), use `verified.ts` instead of a
+hand-rolled `.partial` file, hasher and rename:
+
+```ts
+import { createVerifiedZstdBatch } from "@genesiscz/utils/compress";
+
+const batch = createVerifiedZstdBatch({ caller: "my-rotation", preset: "text", source: livePath });
+try {
+    const day = batch.add(`${base}-2026-10-31.jsonl.zst`);
+    await day.push(lineBytes); // await each push
+    await batch.commit(); // every output verified, then every one renamed; one failure renames none
+} finally {
+    batch.abort(); // no-op after a commit
+}
+```
+
+- A writer writes `<target>.<pid>.<n>.partial` next to the target through `SeekableZstdWriter` (the preset's frames,
+  default `text`), hashing what it is given. `commit()` finishes the frames, fsyncs, reads the file back with
+  `verifyCompressedFile` (decompressed size and sha256 must equal the input) and only then renames it over the target.
+  A failed push, write or read-back removes the partial and leaves an existing target byte for byte as it was
+  (`ZstdVerificationError` names the targets).
+- A batch verifies every output before it renames the first. The renames are not one atomic step: a rename that fails
+  after all verified (the folder removed meanwhile) leaves the earlier outputs renamed and removes the rest.
+- Each commit lands in the ledger as `op: "compress"` with the options' `caller` and `source` (default `stream`).
+  `compressStream(chunks, { target, caller })` is the one-output form for an iterable.
+- Read the result with `readLines` / `readLinesSync` (`@genesiscz/utils/fs/read-lines`): they open plain and `.zst`
+  files and give both the same lines. Lines are cut at `\n` only, never at a lone `\r`, U+2028 or U+2029 (a CRLF line
+  keeps its `\r`, as `text.split("\n")` does; content that ends with `\n` yields a final empty line). Never read JSONL
+  with `node:readline`: it ends lines at U+2028 and U+2029, which `JSON.stringify` leaves raw inside strings, and it
+  cut 144 records of a hook log in two (2026-11-01). `splitLines(stream)` does the same for stdin or a byte range.
 
 ## Presets
 
