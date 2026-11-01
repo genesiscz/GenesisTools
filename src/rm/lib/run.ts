@@ -27,6 +27,7 @@ import {
     type RmConfig,
     type RmPlanItem,
     type RmPriorDenial,
+    type RmRequest,
     type RmRuleContext,
     type RmVerdictKind,
     recheckAfterWait,
@@ -37,6 +38,7 @@ import {
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
 import { liveSizes } from "./approve";
+import { notifyNewRequest } from "./notify";
 
 export interface RunContext {
     /** The settings this caller runs under: the saved config with the matching profiles applied. */
@@ -91,9 +93,15 @@ export interface ExecuteDeps {
     kickDrainer: (config: RmConfig) => void;
     /** The aside root; the caller's session scratch when absent. */
     asideRoot?: string;
+    /** Tells the person a new request waits (`notify.onRequest`); never fails the run. */
+    notifyRequest: (request: RmRequest, ctx: RunContext) => Promise<void>;
 }
 
-const DEFAULT_EXECUTE_DEPS: ExecuteDeps = { startMeasurement: startRmMeasurement, kickDrainer };
+const DEFAULT_EXECUTE_DEPS: ExecuteDeps = {
+    startMeasurement: startRmMeasurement,
+    kickDrainer,
+    notifyRequest: notifyNewRequest,
+};
 
 /**
  * Carries out a plan: refused paths are reported, paths that need a person become a request (or, for a person at a
@@ -248,6 +256,10 @@ export async function executePlan(
         const asking = requestForAsked(asked, ctx, options, deps);
         result.requestId = asking.id;
         result.denials = asking.denials;
+
+        if (asking.created) {
+            await deps.notifyRequest(asking.created, ctx);
+        }
     }
 
     deps.kickDrainer(ctx.config);
@@ -365,7 +377,7 @@ function requestForAsked(
     ctx: RunContext,
     options: ExecuteOptions,
     deps: ExecuteDeps
-): { id: string; denials: RmPriorDenial[] } {
+): { id: string; denials: RmPriorDenial[]; created: RmRequest | null } {
     const denials = priorDenials(
         asked.map((item) => item.target.path),
         ctx.caller.sessionId,
@@ -401,7 +413,7 @@ function requestForAsked(
             printRequestHint(first, inPlace.length);
         }
 
-        return { id: first, denials };
+        return { id: first, denials, created: null };
     }
 
     const { request, aside } = createAsideRequest({
@@ -435,7 +447,7 @@ function requestForAsked(
         printRequestHint(request.id, request.targets.length);
     }
 
-    return { id: request.id, denials };
+    return { id: request.id, denials, created: request };
 }
 
 function summary(item: RmPlanItem): Record<string, string | undefined> {

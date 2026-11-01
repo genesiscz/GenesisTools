@@ -60,8 +60,9 @@ import {
     splitBySelection,
 } from "./approve";
 import { shortRmPath } from "./display";
+import { notifyNewRequest, type RequestNotice } from "./notify";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
-import { executePlan, type PersonAnswer, type RunContext } from "./run";
+import { type ExecuteDeps, executePlan, type PersonAnswer, type RunContext } from "./run";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
 const PERSON: RmCaller = { agent: "person", sessionId: null, isInAgent: false };
@@ -764,6 +765,7 @@ describe("a run that asks", () => {
                     startMeasurement: (id) => started.push(id),
                     kickDrainer: () => undefined,
                     asideRoot: join(base, "aside", "ask-once"),
+                    notifyRequest: async () => undefined,
                 }
             );
             const opened = listRmRequests().filter((request) => !before.has(request.id));
@@ -779,16 +781,25 @@ describe("a run that asks", () => {
     });
 
     /** Runs `tools rm <path> --no-aside` for `caller`, as an agent would, and returns the request id it got. */
-    async function askInPlace(path: string, caller: RmCaller, started: string[]): Promise<string | null> {
+    async function askInPlace(
+        path: string,
+        caller: RmCaller,
+        started: string[],
+        options: { notifyRequest?: ExecuteDeps["notifyRequest"]; ctx?: RunContext } = {}
+    ): Promise<string | null> {
         const verdict = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
         const exitCode = process.exitCode;
 
         try {
             const result = await executePlan(
                 [{ target: resolveTarget(path, base), verdict }],
-                { ...context(), caller },
+                { ...(options.ctx ?? context()), caller },
                 { aside: false },
-                { startMeasurement: (id) => started.push(id), kickDrainer: () => undefined }
+                {
+                    startMeasurement: (id) => started.push(id),
+                    kickDrainer: () => undefined,
+                    notifyRequest: options.notifyRequest ?? (async () => undefined),
+                }
             );
             return result.requestId;
         } finally {
@@ -817,6 +828,33 @@ describe("a run that asks", () => {
 
         expect(second).not.toBe(first);
         expect(started).toHaveLength(2);
+    });
+
+    test("a new request reaches the person once per session in ten minutes, and never with notify-on-request none", async () => {
+        const sent: RequestNotice[] = [];
+        const notifyRequest: ExecuteDeps["notifyRequest"] = (request, ctx) =>
+            notifyNewRequest(request, ctx, {
+                send: async (_mode, notice) => {
+                    sent.push(notice);
+                },
+                now: () => new Date(),
+            });
+        const caller: RmCaller = { ...AGENT, sessionId: "sess-5555", sessionTitle: "probe work", project: "shop" };
+        const started: string[] = [];
+        const first = await askInPlace(file(join(base, "notify", "a.txt")), caller, started, { notifyRequest });
+        const second = await askInPlace(file(join(base, "notify", "b.txt")), caller, started, { notifyRequest });
+
+        expect(second).not.toBe(first);
+        expect(sent.map((notice) => notice.text)).toEqual([
+            `Claude Code in shop (probe work) asks to delete 1 item. Review: ${toolCommand("rm")} approve ${first}`,
+        ]);
+
+        const quiet = { ...context(), base: { ...config, notify: { onRequest: "none" as const } } };
+        await askInPlace(file(join(base, "notify", "c.txt")), { ...caller, sessionId: "sess-6666" }, started, {
+            notifyRequest,
+            ctx: quiet,
+        });
+        expect(sent).toHaveLength(1);
     });
 });
 

@@ -26,7 +26,7 @@ tools rm approve <id>
 tools rm approve <id> <id> ... [--session <id>] [--older 1d]   # several requests: one window, one person check
 tools rm approve                    # on a terminal: tick requests, then approve, deny or close the gone ones
 tools rm roots add <dir> [--note "<why>"]
-tools rm config set <key> <value>   # approval, ask-action, aside-unsaved, session-scratch, own-files, grace-preset,
+tools rm config set <key> <value>   # approval, notify-on-request, ask-action, aside-unsaved, session-scratch, own-files, grace-preset,
                                     # grace-other, trash-root, disable-preset, enable-preset,
                                     # disable-profile, enable-profile
 tools rm profile set <name> --agent codex --ask-action request [...]
@@ -170,6 +170,11 @@ The window answers more than allow or deny, and `approve` does what it picked:
 
 The typed code and the dialog answer for all paths, to the trash, just this once. The dialog shows 15 lines, so it
 refuses a longer request instead of hiding paths: use GenesisTools.app for those.
+
+A new request from an agent reaches the person on its own: the setting `notify-on-request` picks `inbox` (the
+default: a GenesisTools inbox message under the asking session), `notification` (a macOS notification) or `none`.
+It posts at most once per asking session in 10 minutes and only names `tools rm approve <id>`; it never opens the
+approval window by itself.
 
 Several requests at once: `tools rm approve <id> <id> ...` (or `--session <id prefix>`, `--older 1d`) opens ONE
 window with the rows of all of them and asks the person once. The set is fixed before the window opens, so a request
