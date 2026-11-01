@@ -857,10 +857,10 @@ describe("presets", () => {
         );
 
         expect(levels).toEqual({
-            text: "22",
-            tree: "19 long",
+            text: "9",
+            tree: "9 long",
             binary: "9 long",
-            database: "19",
+            database: "9",
             media: "1",
             fast: "1",
             max: "22 long",
@@ -915,7 +915,6 @@ describe("presets", () => {
         expect(readFileSync(packedUnset.archive).equals(readFileSync(packedPreset.archive))).toBe(true);
         expect(readFileSync(packedUnset.archive).equals(readFileSync(packed3.archive))).toBe(false);
         expect(verifyArchiveAgainstFolder({ archive: packedPreset.archive, source: tree }).ok).toBe(true);
-        // Six writes at levels 19 and 22: CPU-bound by design, so a loaded machine gets room.
     }, 30_000);
 });
 
