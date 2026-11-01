@@ -69,6 +69,8 @@ package func runHost() -> Never {
         if !NativePreview.enabled { FaceMarker.install() }
         // A rebuild reopens the settings, hub, review, widget and feature settings faces with these exact arguments (App/FaceRecord.swift).
         if !NativePreview.enabled { FaceRecord.write(arguments) }
+        // Another face's "Quit All" (⌘Q) reaches this face through its own terminate path (PartQuit/QuitFlow.swift).
+        if PartQuit.face(ofArguments: arguments) != nil { FaceQuitSignal.listen() }
     }
 
     // GenesisTools --link-relay: the windowless face that takes every link Launch Services delivers to a running

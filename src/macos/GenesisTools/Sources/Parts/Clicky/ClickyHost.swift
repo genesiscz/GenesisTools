@@ -5,6 +5,8 @@ import SwiftUI
 @MainActor
 final class ClickyHost: NSObject {
     static let shared = ClickyHost()
+    /// The part id (AppParts, parts.ts), which also names Clicky in the quit question's table (PartQuit.hostedParts).
+    static let partID = "clicky"
     /// The settings window's own appearance instance (`NativeSettingsAppearance.shared`), so a change on General and
     /// Clicky's copy of it never disagree.
     let model = ClickyModel(appearance: .shared)
@@ -23,6 +25,8 @@ final class ClickyHost: NSObject {
         item.button?.target = self
         item.button?.action = #selector(togglePopover)
         self.item = item
+        // Another face's ⌘Q question names Clicky only while this lock is held (Host/PartQuit/RunningParts.swift).
+        PartPresence.hold(Self.partID)
         model.stateDidChange = { [weak self] in
             guard let self else { return }
             self.item?.button?.toolTip = "Clicky · \(self.model.status)"
@@ -43,6 +47,7 @@ final class ClickyHost: NSObject {
         model.stateDidChange = nil
         if let item { NSStatusBar.system.removeStatusItem(item) }
         item = nil
+        PartPresence.release(Self.partID)
     }
 
     @objc private func togglePopover() {
