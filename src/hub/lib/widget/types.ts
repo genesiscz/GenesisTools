@@ -157,6 +157,11 @@ export const widgetPreferencesSchema = z.object({
             modifiers: z.number().int().min(0).max(0xffff),
         })
         .default({ keyCode: 0x0d, modifiers: 0x1900 }),
+    /**
+     * A click on a file link in a card, a prompt or a transcript: a note in Genesis Markdown when it is installed and
+     * any other file in its default app ("genesis-markdown"), every file in its default app, or a menu at the click.
+     */
+    fileLinkClick: z.enum(["genesis-markdown", "default-app", "ask"]).default("genesis-markdown"),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.

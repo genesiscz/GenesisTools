@@ -365,6 +365,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var openShortcutEnabled: Bool?
     /// The shortcut, as a Carbon key code and modifier mask (`HotkeyChord`).
     public var openShortcut: WidgetShortcutChord?
+    /// A click on a file link in a card, a prompt or a transcript (`FileLinkClick`): "genesis-markdown" (default, a
+    /// note in Genesis Markdown when it is installed, any other file in its default app), "default-app" or "ask".
+    public var fileLinkClick: String?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
