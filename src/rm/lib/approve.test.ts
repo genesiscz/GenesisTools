@@ -47,7 +47,7 @@ import {
 } from "@genesiscz/utils/rm";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
-import { approveMany, underDecisionLock } from "../commands/requests";
+import { approveMany, denyPicked, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { createRmProgram } from "../program";
 import {
@@ -1357,5 +1357,61 @@ describe("one window for several requests", () => {
         expect(loadRmRequest(first.id)?.decided?.approved).toEqual([a1]);
         expect(loadRmRequest(second.id)?.decided?.approved).toEqual([b1]);
         expect([a1, a2, b1, b2].map((path) => existsSync(path ?? ""))).toEqual([false, true, false, true]);
+    });
+});
+
+describe("a person denies from the picker", () => {
+    test("another session's requests are denied after one person check, with the person's way and note", async () => {
+        const asker: RmCaller = { agent: "claude-code", sessionId: "sess-4444", isInAgent: true };
+        const requests = ["one.txt", "two.txt"].map((name) =>
+            createRmRequest({
+                kind: "delete",
+                caller: asker,
+                cwd: base,
+                reason: null,
+                targets: [
+                    {
+                        path: file(join(base, "picker-deny", name)),
+                        kind: "file",
+                        rule: "default",
+                        reason: "no rule allows it",
+                    },
+                ],
+            })
+        );
+        const asked: string[] = [];
+        const exitCode = process.exitCode;
+
+        try {
+            await denyPicked(
+                requests.map((request) => request.id),
+                context(),
+                {
+                    ask: async (_ctx, prompt) => {
+                        asked.push(prompt.title);
+                        return {
+                            approved: true,
+                            via: "touch-id",
+                            choices: { selected: null, disposal: "trash", remember: "once", note: null },
+                            deniedByPerson: false,
+                        };
+                    },
+                    note: async () => "these are fixtures, keep them",
+                }
+            );
+        } finally {
+            process.exitCode = exitCode;
+        }
+
+        expect(asked).toEqual(["Deny 2 request(s) from other sessions?"]);
+        expect(requests.map((request) => loadRmRequest(request.id))).toMatchObject([
+            { status: "denied", decidedVia: "touch-id", deniedNote: "these are fixtures, keep them" },
+            { status: "denied", decidedVia: "touch-id", deniedNote: "these are fixtures, keep them" },
+        ]);
+        const paths = requests.flatMap((request) => request.targets.map((target) => target.path));
+        expect(priorDenials(paths, "sess-4444", listRmRequests({ all: true })).map((denial) => denial.note)).toEqual([
+            "these are fixtures, keep them",
+            "these are fixtures, keep them",
+        ]);
     });
 });
