@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { OBJECT_RETENTION_DAYS } from "@genesiscz/utils/agents/objects/maintain";
 import { listWorktrees } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -14,7 +15,8 @@ import { type ChangeEvent, sessionChangesPath } from "./log";
 const log = logger.child({ component: "agents/blame" });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_WINDOW_DAYS = 30;
+/** The object store keeps every blob a row of this window names (`maintain.ts`), so a default blame has all of them. */
+const DEFAULT_WINDOW_DAYS = OBJECT_RETENTION_DAYS;
 const MAX_CHANGE_LOGS = 400;
 /** A line this short (a lone brace, an empty line) says nothing about who wrote it. */
 const MIN_LINE_CHARS = 3;

@@ -605,6 +605,33 @@ The enforced budgets are 30 ms for the guard stage and 110 ms for the pre phase
 imports worth 31 ms are not affordable. Diagnostics go through `hookDiag`, into the same JSONL
 as the decisions.
 
+## The change-log object store
+
+The hooks write the before and after bytes of every changed file into one bare git repository,
+`~/.genesis-tools/agents/_objects` (`src/utils/agents/objects/store.ts`), and each row of
+`~/.genesis-tools/agents/<session>/changes.jsonl` names its blobs by oid. The store has no refs, so
+to git every object is unreachable: `git gc`, `git prune` or `git repack -a -d` would drop or skip
+all of them. What a reader needs comes from the rows. Never run those commands against the store.
+
+```bash
+tools compress daily --dry-run   # the daily pass's plan, its agents-objects step included; changes nothing
+tools compress daily             # the daily pass now: the logs, then agents-objects under its lock
+```
+
+- **When:** the `agents-objects` step of the logger's once-a-day pass (`runDailyCompression` in
+  `src/utils/compress/daily.ts`, detached at low priority). It writes one before/after log line.
+- **What stays:** every blob a row of the last 30 days names, in one pack that `pack-objects` builds
+  from that list, with the row's path as the delta hint (1.14 GiB of loose objects pack to 227 MB;
+  a later pass reuses the deltas and takes seconds). A loose copy goes only when the new pack's own
+  index lists it. A loose blob no row names stays while it is younger than 30 days (a hook writes
+  the blob before its row; `changes --store-blobs` writes blobs a reader then asks for).
+- **Why 30 days:** `tools agents blame` reads 30 days by default (`OBJECT_RETENTION_DAYS`, shared).
+  An older row keeps its file list, and its diff shows as `missing-blob`.
+- **Racing hooks:** dropped objects move aside first; 20 s later (longer than a hook's budget) the
+  rows written meanwhile are read, and any object they name comes back. One step at a time
+  (`gt-maintenance/lock` in the store). The store gets `gc.auto=0` and `gc.pruneExpire=never` when it
+  is made and on every pass, so no git command can start a gc that prunes it.
+
 ## Proving a change
 
 ```bash
