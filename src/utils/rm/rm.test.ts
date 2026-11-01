@@ -97,6 +97,7 @@ import {
     scanPresets,
     sweepOrphans,
     type TrashPaths,
+    targetChangeReason,
     totalRmLedger,
     trashItemName,
     trashRootChangeBlocker,
@@ -2085,5 +2086,18 @@ describe("prune", () => {
             "pending",
         ]);
         expect(existsSync(join(here, "kept.txt")) && existsSync(join(here, "aside", "copy.txt"))).toBe(true);
+    });
+});
+
+describe("a refusal after the wait names what happened", () => {
+    test("a path moved away since the check is gone now, and a new file there is another file", () => {
+        const path = file(join(dir("gone-now"), "a.txt"));
+        const pinned = resolveTarget(path, base);
+        renameSync(path, `${path}.moved`);
+
+        expect(targetChangeReason(pinned)).toBe("it is gone now (moved or deleted since the check)");
+
+        file(path, "new");
+        expect(targetChangeReason(pinned)).toBe("another file or folder is there now");
     });
 });
