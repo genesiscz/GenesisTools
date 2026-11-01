@@ -60,6 +60,17 @@ export interface TrashBatch {
      * record without the field (every record written before it existed) is complete.
      */
     incomplete?: true;
+    /**
+     * Set when the drain could not delete these items (a folder without write permission): they stay in the trash,
+     * restorable, and only a forced drain (`drain --now`) tries again, so the drainer neither loops nor tells twice.
+     */
+    failed?: { at: string; reason: string };
+}
+
+/** What a drain could not delete, for the caller that tells the person (`notify.onFailure`). */
+export interface DrainFailure {
+    batch: TrashBatch;
+    items: Array<{ path: string; reason: string }>;
 }
 
 /** Whether a pid still runs the process that made a claim or lock at `markedAtMs`; tests replace it. */
@@ -664,18 +675,43 @@ async function deleteStored(
     return size;
 }
 
-/** Deletes one claimed batch's items in parallel, each checked by `assertInsideTrash` first. */
-async function drainClaimed(
-    batch: TrashBatch,
-    claimedFile: string,
-    config: RmConfig,
-    onItem?: (progress: DrainProgress) => void
-): Promise<DrainResult> {
+/**
+ * Deletes one claimed batch's items in parallel, each checked by `assertInsideTrash` first. An item that cannot be
+ * deleted gets a `fail` ledger line and stays on the record, which goes back marked `failed` instead of looping.
+ */
+async function drainClaimed(input: {
+    batch: TrashBatch;
+    claimedFile: string;
+    paths: TrashPaths;
+    config: RmConfig;
+    onItem?: (progress: DrainProgress) => void;
+}): Promise<DrainResult & { failure?: DrainFailure }> {
+    const { batch, claimedFile, config } = input;
     const present = batch.items.filter((item) => existsSync(item.stored) || isBrokenLink(item.stored));
+    const failed: Array<{ item: TrashItem; reason: string }> = [];
     const sizes = await Promise.all(
         present.map(async (item) => {
             const elapsed = createStopwatch();
-            const size = await deleteStored(item.stored, config, "item", item.bytes);
+            let size: number;
+
+            try {
+                size = await deleteStored(item.stored, config, "item", item.bytes);
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                failed.push({ item, reason });
+                appendRmLedger({
+                    action: "fail",
+                    path: item.original,
+                    stored: item.stored,
+                    batchId: batch.id,
+                    rule: item.rule,
+                    reason,
+                    caller: batch.caller,
+                });
+                logger.warn({ batch: batch.id, stored: item.stored, error }, "rm: the drain could not delete an item");
+                return 0;
+            }
+
             appendRmLedger({
                 action: "drain",
                 path: item.original,
@@ -684,15 +720,34 @@ async function drainClaimed(
                 bytes: size,
                 caller: batch.caller,
             });
-            onItem?.({ path: item.original, bytes: size, elapsed: elapsed() });
+            input.onItem?.({ path: item.original, bytes: size, elapsed: elapsed() });
             return size;
         })
     );
     const bytes = sizes.reduce((sum, size) => sum + size, 0);
+    const items = present.length - failed.length;
+
+    if (failed.length > 0) {
+        const kept: TrashBatch = {
+            ...batch,
+            items: failed.map((entry) => entry.item),
+            failed: { at: new Date().toISOString(), reason: failed[0]?.reason ?? "unknown" },
+        };
+        writeBatch(kept, input.paths, claimedFile);
+        renameSync(claimedFile, batchFile(input.paths, batch.id));
+        logger.debug({ batch: batch.id, items, failed: failed.length, bytes }, "rm: batch drained in part");
+        return {
+            batches: items > 0 ? 1 : 0,
+            items,
+            bytes,
+            failure: { batch: kept, items: failed.map(({ item, reason }) => ({ path: item.original, reason })) },
+        };
+    }
+
     removeEmptyBatchDirs(batch, config);
     unlinkSync(claimedFile);
-    logger.debug({ batch: batch.id, items: present.length, bytes }, "rm: batch drained");
-    return { batches: 1, items: present.length, bytes };
+    logger.debug({ batch: batch.id, items, bytes }, "rm: batch drained");
+    return { batches: 1, items, bytes };
 }
 
 function isBrokenLink(path: string): boolean {
@@ -714,6 +769,8 @@ export interface DrainOptions {
     onItem?: (progress: DrainProgress) => void;
     /** Whether a claim's pid still runs the process that made it (`isProcessAliveSince` unless a test says). */
     claimAlive?: ClaimAlive;
+    /** Called once per batch whose items the drain could not all delete. */
+    onFailure?: (failure: DrainFailure) => void;
 }
 
 /** Drains every complete batch whose grace has passed (or all of them with `force`), batches in parallel. */
@@ -721,16 +778,25 @@ export async function drainDue(options: DrainOptions): Promise<DrainResult> {
     const paths = options.paths ?? defaultTrashPaths();
     const now = (options.now ?? new Date()).getTime();
     const claimed = listBatches(paths)
-        .filter(
-            (batch) =>
-                !batch.incomplete &&
-                (Date.parse(batch.drainAfter) <= now ||
-                    (options.force === true && (options.forceOnly?.(batch) ?? true)))
-        )
+        .filter((batch) => {
+            const forced = options.force === true && (options.forceOnly?.(batch) ?? true);
+            // A batch that failed waits for a forced drain: retrying it on every pass would loop and tell again.
+            return !batch.incomplete && (forced || (!batch.failed && Date.parse(batch.drainAfter) <= now));
+        })
         .map((batch) => ({ batch, file: claimBatch(paths, batch.id, "draining") }))
         .filter((entry): entry is { batch: TrashBatch; file: string } => entry.file !== null);
     const results = await Promise.all(
-        claimed.map(({ batch, file }) => drainClaimed(batch, file, options.config, options.onItem))
+        claimed.map(({ batch, file }) =>
+            drainClaimed({ batch, claimedFile: file, paths, config: options.config, onItem: options.onItem }).then(
+                (drained) => {
+                    if (drained.failure) {
+                        options.onFailure?.(drained.failure);
+                    }
+
+                    return drained;
+                }
+            )
+        )
     );
 
     return results.reduce(
@@ -1209,6 +1275,8 @@ export interface DrainerOptions {
     paths?: TrashPaths;
     now?: () => Date;
     sleep?: (ms: number) => Promise<void>;
+    /** Called once per batch whose items the drain could not all delete. */
+    onFailure?: (failure: DrainFailure) => void;
 }
 
 /**
@@ -1228,7 +1296,8 @@ export async function runDrainer(options: DrainerOptions): Promise<DrainResult> 
         total.bytes += result.bytes;
     };
 
-    add(await drainDue({ config: options.config, paths, now: now() }));
+    const onFailure = options.onFailure;
+    add(await drainDue({ config: options.config, paths, now: now(), onFailure }));
     const release = acquireDrainerLock(paths.lockPath);
 
     if (!release) {
@@ -1239,8 +1308,9 @@ export async function runDrainer(options: DrainerOptions): Promise<DrainResult> 
         add(await sweepOrphans({ config: options.config, paths, now: now() }));
 
         while (true) {
-            add(await drainDue({ config: options.config, paths, now: now() }));
-            const waiting = listBatches(paths).filter((batch) => !batch.incomplete);
+            add(await drainDue({ config: options.config, paths, now: now(), onFailure }));
+            // A failed batch waits for a person's forced drain, not for this loop.
+            const waiting = listBatches(paths).filter((batch) => !batch.incomplete && !batch.failed);
 
             if (waiting.length === 0) {
                 break;

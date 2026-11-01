@@ -553,6 +553,61 @@ describe("trash", () => {
         release?.();
     });
 
+    test("an item the drain cannot delete lands in the ledger, stays in the trash, is told once and not retried", async () => {
+        const failPaths = {
+            batchesDir: join(base, "fail-state", "batches"),
+            lockPath: join(base, "fail-state", "lock"),
+        };
+        const locked = dir("drain-fail", "locked");
+        file(join(locked, "inner", "keep.txt"));
+        const fine = file(join(dir("drain-fail"), "fine.txt"));
+        const batch = moveToTrash(
+            [locked, fine].map((path) => ({ target: resolveTarget(path, base), rule: "test" })),
+            { config, caller: AGENT, graceMinutes: 0, paths: failPaths }
+        );
+        const stored = batch?.items.find((item) => item.original === locked)?.stored ?? "";
+        // A folder without write permission (a Go module cache is 0555) keeps its entries from `rm -rf`.
+        chmodSync(join(stored, "inner"), 0o555);
+        const told: Array<{ id: string; paths: string[] }> = [];
+        const onFailure = (failure: { batch: { id: string }; items: Array<{ path: string; reason: string }> }) =>
+            told.push({ id: failure.batch.id, paths: failure.items.map((item) => item.path) });
+
+        try {
+            const drained = await drainDue({ config, paths: failPaths, onFailure });
+
+            expect(drained.items).toBe(1);
+            expect(told).toEqual([{ id: batch?.id ?? "", paths: [locked] }]);
+            expect(existsSync(join(stored, "inner", "keep.txt"))).toBe(true);
+            const failed = readRmLedger().filter((entry) => entry.action === "fail" && entry.batchId === batch?.id);
+            expect(failed.map((entry) => entry.path)).toEqual([locked]);
+            expect(failed[0]?.reason).toMatch(/E[A-Z]+/);
+            const [kept] = listBatches(failPaths);
+            expect(kept?.items.map((item) => item.original)).toEqual([locked]);
+            expect(kept?.failed?.reason).toMatch(/E[A-Z]+/);
+
+            // The next drain and the drainer leave it alone: no retry every second, no second message.
+            expect((await drainDue({ config, paths: failPaths, onFailure })).items).toBe(0);
+            let slept = 0;
+            await runDrainer({
+                config,
+                paths: failPaths,
+                onFailure,
+                sleep: async () => {
+                    slept++;
+                },
+            });
+            expect(slept).toBe(0);
+            expect(told).toHaveLength(1);
+        } finally {
+            chmodSync(join(stored, "inner"), 0o755);
+        }
+
+        // A forced drain (a person's drain --now) tries it again, and now it goes.
+        expect((await drainDue({ config, paths: failPaths, force: true, onFailure })).items).toBe(1);
+        expect(existsSync(stored)).toBe(false);
+        expect(listBatches(failPaths)).toEqual([]);
+    });
+
     test("the drainer waits for the grace period, then drains and exits", async () => {
         const target = resolveTarget(file(join(dir("t2"), "b.txt")), base);
         moveToTrash([{ target, rule: "test" }], { config, caller: null, graceMinutes: 5, paths: trashPaths });

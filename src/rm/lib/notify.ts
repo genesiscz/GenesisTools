@@ -2,10 +2,18 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { sendInboxMessage } from "@app/question/lib/message";
 import { toolCommand } from "@genesiscz/utils/cli";
+import { formatCount } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
-import { agentDisplayName, type RmNotifyOnRequest, type RmRequest, rmDataDir } from "@genesiscz/utils/rm";
+import {
+    agentDisplayName,
+    type DrainFailure,
+    type RmConfig,
+    type RmNotifyOnRequest,
+    type RmRequest,
+    rmDataDir,
+} from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import type { RunContext } from "./run";
@@ -170,5 +178,45 @@ export async function notifyNewRequest(
         } catch (releaseError) {
             logger.warn({ request: request.id, error: releaseError }, "rm: could not give the notice window back");
         }
+    }
+}
+/** The notice for a drain that could not delete everything: which batch, which paths and why, and the two ways on. */
+export function drainFailureNotice(failure: DrainFailure): RequestNotice {
+    const rm = toolCommand("rm");
+    const count = failure.items.length;
+    const shown = failure.items
+        .slice(0, 3)
+        .map((item) => `${item.path} (${item.reason})`)
+        .join("; ");
+    const more = count > 3 ? `; ${count - 3} more` : "";
+    return {
+        title: `${rm} could not delete ${formatCount(count, "item")}`,
+        text:
+            `The drain of batch ${failure.batch.id} could not delete ${shown}${more}. ` +
+            `${count === 1 ? "It stays" : "They stay"} in the trash. Retry: ${rm} drain --now. ` +
+            `Bring ${count === 1 ? "it" : "them"} back: ${rm} restore ${failure.batch.id}`,
+    };
+}
+
+/**
+ * Tells the person a drain failed, the way `notify.onFailure` says (default: the GenesisTools inbox). The drain
+ * marks such a batch and leaves it for a forced drain, so this runs once per failure. A failure to tell is logged.
+ */
+export async function notifyDrainFailure(
+    failure: DrainFailure,
+    config: RmConfig,
+    deps: NotifyDeps = DEFAULT_NOTIFY_DEPS
+): Promise<void> {
+    const mode = config.notify.onFailure;
+
+    if (mode === "none") {
+        return;
+    }
+
+    try {
+        await deps.send(mode, drainFailureNotice(failure));
+        logger.debug({ batch: failure.batch.id, mode }, "rm: told the person about a drain failure");
+    } catch (error) {
+        logger.warn({ batch: failure.batch.id, mode, error }, "rm: could not tell the person about a drain failure");
     }
 }
