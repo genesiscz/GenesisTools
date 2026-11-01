@@ -1199,3 +1199,55 @@ describe("a path that came back beside its aside copy", () => {
         expect(existsSync(back.stored)).toBe(false);
     });
 });
+
+describe("the request writes production runs", () => {
+    const answer: PersonAnswer = {
+        approved: true,
+        via: "touch-id",
+        choices: { selected: null, disposal: "trash", remember: "once", note: null },
+        deniedByPerson: false,
+    };
+
+    test("a partial approval keeps an initially blocked aside target pending and its folder guarded", () => {
+        const request = asideRequest("partial-approval");
+        const [blocked, approved] = request.targets;
+
+        if (!blocked || !approved) {
+            throw new Error("expected two aside copies");
+        }
+
+        saveApproved({ request, answer, approved: [], denied: [], pending: [blocked], ctx: context() });
+        const saved = loadRmRequest(request.id);
+        expect(saved?.status).toBe("pending");
+        expect(saved?.targets).toEqual([blocked]);
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+
+        if (!saved) {
+            throw new Error("expected the request to stay pending");
+        }
+
+        saveApproved({ request: saved, answer, approved: [], denied: [], pending: [], ctx: context() });
+        expect(loadRmRequest(request.id)?.status).toBe("approved");
+    });
+
+    test("a copy that cannot go home keeps the request pending, and a second deny closes it once the path is free", () => {
+        const request = asideRequest("deny-kept");
+        const [kept, other] = request.targets;
+
+        if (!kept || !other) {
+            throw new Error("expected two aside copies");
+        }
+
+        file(kept.path);
+        const first = denyRequest(request, { caller: AGENT, via: "cli" });
+        expect(first.waiting.map((target) => target.path)).toEqual([kept.path]);
+        expect(first.back.returned).toEqual([other.path]);
+        expect(loadRmRequest(request.id)?.status).toBe("pending");
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+
+        renameSync(kept.path, `${kept.path}.agent-copy`);
+        const again = denyRequest(loadRmRequest(request.id) ?? request, { caller: AGENT, via: "cli" });
+        expect(again.back.returned).toEqual([kept.path]);
+        expect(loadRmRequest(request.id)?.status).toBe("denied");
+    });
+});
