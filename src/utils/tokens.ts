@@ -3,6 +3,10 @@
  * Two modes: fast heuristic (no deps) and accurate encoder-based.
  */
 
+import { createRequire } from "node:module";
+
+const requireLazy = createRequire(import.meta.url);
+
 /**
  * Fast heuristic token estimation (~4 chars/token). No dependencies.
  */
@@ -18,7 +22,7 @@ export function estimateTokens(text: string): number {
  */
 export function countTokens(text: string): number {
     try {
-        const { encode } = require("gpt-3-encoder");
+        const { encode } = requireLazy("gpt-3-encoder");
         return encode(text).length;
     } catch {
         const trimmed = text.trim();
@@ -54,7 +58,7 @@ export function limitToTokens(text: string, maxTokens?: number): { text: string;
     }
 
     try {
-        const { encode, decode } = require("gpt-3-encoder");
+        const { encode, decode } = requireLazy("gpt-3-encoder");
         const encoded = encode(text);
         const truncated = encoded.slice(0, maxTokens);
         return {

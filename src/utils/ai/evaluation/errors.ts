@@ -1,4 +1,4 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { jevLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 
 export const GATEWAY_VERIFICATION_URL = "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card";
 
@@ -161,7 +161,7 @@ export function describeGatewayFailure({
     }
 
     if (statusCode === 401) {
-        return `AI Gateway rejected the credential. Run \`${toolCommand("jev login")}\` with an AI Gateway API key.`;
+        return `AI Gateway rejected the credential. Run \`${jevLoginCommand()}\` with an AI Gateway API key.`;
     }
 
     if (gatewayMessage) {

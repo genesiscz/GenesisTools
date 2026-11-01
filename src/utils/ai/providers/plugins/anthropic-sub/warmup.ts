@@ -9,7 +9,7 @@ import {
     sendLongLivedInferencePing,
     type TokenVerdict,
 } from "@genesiscz/utils/claude/token-verify";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { claudeLoginCommand, claudeLoginLongCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { ANTHROPIC_SUB, type UsageResponse } from "./api";
 import { describeAnthropicFailure } from "./failure";
@@ -136,7 +136,7 @@ export async function anthropicWarmup(
 
     if (!hasOAuthPair(account)) {
         if (!longLived) {
-            throw new Error(`no credentials stored. Run: ${toolCommand("claude login")} ${account.name}`);
+            throw new Error(`no credentials stored. Run: ${claudeLoginCommand(account.name)}`);
         }
 
         logger.info({ account: account.name }, "[warmup] no OAuth pair, using the login-long token");
@@ -153,7 +153,7 @@ export async function anthropicWarmup(
 
         if (!longLived) {
             throw new Error(
-                `${err instanceof Error ? err.message : String(err)}. Or attach a long-lived token: ${toolCommand("claude login-long")} ${account.name}`
+                `${err instanceof Error ? err.message : String(err)}. Or attach a long-lived token: ${claudeLoginLongCommand(account.name)}`
             );
         }
 

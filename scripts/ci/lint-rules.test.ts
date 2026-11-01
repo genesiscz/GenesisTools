@@ -1032,11 +1032,32 @@ describe("no-tool-command-in-utils", () => {
         expect(rules('const h = "run `tools json2md build` again";', "src/utils/x/a.ts")).toContain(rule);
     });
 
+    test("flags a computed tool name: a suggestEnumFlag call and a template whose next word is written out", () => {
+        const enumFlag = 'const h = suggestEnumFlag(`tools ${name} history`, "--format", ["a"]);';
+        expect(rules(enumFlag, "src/utils/x/a.ts")).toContain(rule);
+        expect(rules('const h = suggestEnumFlag(tool, "--format", ["a"]);', "src/utils/x/a.ts")).not.toContain(rule);
+        expect(rules("const h = `Run \\`tools ${name} history index\\` once`;", "src/utils/x/a.ts")).toContain(rule);
+        expect(rules("const h = `tail the log: tools ${key} ${verb} attach`;", "src/utils/x/a.ts")).toContain(rule);
+        expect(rules("const h = `tools ${name}${verb}`;", "src/utils/x/a.ts")).not.toContain(rule);
+        expect(rules('const h = `after tools ${args.join(" ")}`;', "src/utils/x/a.ts")).not.toContain(rule);
+        expect(rules(enumFlag, "src/utils/genesis-tools/tools/suggest.ts")).not.toContain(rule);
+    });
+
     test("passes prose, comments, hints.ts and code outside src/utils", () => {
         expect(rules('const h = "the tools are slow";', "src/utils/x/a.ts")).not.toContain(rule);
         expect(rules("// run tools json2md build\nconst a = 1;", "src/utils/x/a.ts")).not.toContain(rule);
         expect(rules('const h = toolCommand("say");', "src/utils/genesis-tools/tools/hints.ts")).not.toContain(rule);
         expect(rules('const h = toolCommand("say");', "src/notify/index.ts")).not.toContain(rule);
+    });
+
+    test("allows command text in every file of src/utils/genesis-tools/tools/, and in no other util", () => {
+        const command = 'export const c = () => toolCommand("ai accounts list");';
+        expect(rules(command, "src/utils/genesis-tools/tools/ai.ts")).not.toContain(rule);
+        expect(
+            rules('export const c = () => suggestCommand("tools jev", {});', "src/utils/genesis-tools/tools/suggest.ts")
+        ).not.toContain(rule);
+        expect(rules(command, "src/utils/genesis-tools/probe.ts")).toContain(rule);
+        expect(rules(command, "src/utils/ai/accounts.ts")).toContain(rule);
     });
 
     test("every ratchet entry still names a command, so a migrated file leaves the list", async () => {

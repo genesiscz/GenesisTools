@@ -11,6 +11,11 @@ import * as p from "@clack/prompts";
 import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { formatDuration } from "@genesiscz/utils/format";
+import {
+    dashboardAppAttachCommand,
+    dashboardAppDependencyUpCommand,
+} from "@genesiscz/utils/genesis-tools/tools/services";
+import { currentCommandWithForce } from "@genesiscz/utils/genesis-tools/tools/suggest";
 import { logger, out } from "@genesiscz/utils/logger";
 import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { getPortOwner } from "@genesiscz/utils/network";
@@ -193,7 +198,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         reportBrokenDashboard(config, readiness.broken, ctx.logFile, pid);
     } else if (!readiness.ready) {
         out.warn(
-            `Readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: tools ${config.key} ${config.commandName} attach`
+            `Readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: ${dashboardAppAttachCommand(config.key, config.commandName)}`
         );
     } else {
         out.log.success(
@@ -300,7 +305,7 @@ async function preparePort(ctx: LifecycleContext, port: number, opts: UpOptions)
         }
 
         if (choice === null) {
-            out.info(`  Use --force to kill the owner and start: ${suggestCommand("tools", { add: ["--force"] })}`);
+            out.info(`  Use --force to kill the owner and start: ${currentCommandWithForce()}`);
         }
     }
 
@@ -869,7 +874,7 @@ async function resolveDependencies(ctx: LifecycleContext, opts: UpOptions, mode:
             await startDep();
         } else if (choice === null) {
             out.warn(
-                `Dependency ${dep.app.config.key} is not running. Run \`tools ${dep.app.config.commandName} up\` on the dependency to start it.`
+                `Dependency ${dep.app.config.key} is not running. Run \`${dashboardAppDependencyUpCommand(dep.app.config.commandName)}\` on the dependency to start it.`
             );
         }
     }

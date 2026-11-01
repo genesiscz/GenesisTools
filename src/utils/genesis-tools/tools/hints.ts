@@ -3,12 +3,16 @@ import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import type { CmdToolVerb, TransclusionHints } from "@genesiscz/utils/transclude";
 
 /**
- * Every GenesisTools command that a shared module under `src/utils` shows or runs, in one place.
+ * This folder, `src/utils/genesis-tools/tools/`, is the one place under `src/utils` that names a GenesisTools command.
+ * A util imports the function for the command it shows or runs from `@genesiscz/utils/genesis-tools/tools/<file>`
+ * and calls it. `ai.ts`, `system.ts` and `services.ts` build their lines with `toolCommand()` alone, so importing one
+ * loads nothing more; `suggest.ts` holds the lines built with `suggestCommand()`, for the utils that already load the
+ * CLI executor. A copy of `src/utils` in another repository, whose binary is not `tools`, edits only this folder.
+ * lint-rules `no-tool-command-in-utils` allows a `tools …` command under `src/utils` only in this folder.
  *
- * A util never imports this file. A GenesisTools command, MCP server or other entry point calls one of these and
- * passes the result into the util as an option, so a copy of the util in another repo, where `toolCommand()` names
- * a different binary, gets no hint and prints none. lint-rules `no-tool-command-in-utils` allows a `tools …`
- * command under `src/utils` only here (and in the files its ratchet list still names).
+ * The functions in this file are passed by their GenesisTools caller into a util as an option (the json2md rebuild
+ * command, the notification speaker, the transclusion hints). This file loads the process helpers, so a util imports
+ * the lighter files above rather than this one.
  */
 
 /** The command json2md writes into a document's stamp, so a reader can rebuild it. */

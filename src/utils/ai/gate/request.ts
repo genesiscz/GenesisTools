@@ -7,7 +7,7 @@ import { CredentialUnavailableError, resolveCredential } from "@genesiscz/utils/
 import type { CredentialSpec } from "@genesiscz/utils/ai/providers/plugin-types";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import { longLivedTokenUsable } from "@genesiscz/utils/claude/token-verify";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiAccountsListCommand, aiConfigAccountAddCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { type Approver, appApprover } from "./approve";
 import { describeClient, type ProcessLookup } from "./client-identity";
@@ -89,7 +89,13 @@ function hasStoredApiKey(account: AccountEntry): boolean {
 }
 
 function addGateAccountCommand(provider: GateApiKeyProvider): string {
-    return `printf '%s' "$${API_KEY_ENV[provider]}" | ${toolCommand("ai config account add")} --provider ${provider} --name ${provider}-gate --tag ${GATE_ONLY_TAG} --api-key-stdin`;
+    const add = aiConfigAccountAddCommand({
+        provider,
+        name: `${provider}-gate`,
+        tag: GATE_ONLY_TAG,
+        apiKeyStdin: true,
+    });
+    return `printf '%s' "$${API_KEY_ENV[provider]}" | ${add}`;
 }
 
 /**
@@ -186,14 +192,14 @@ function defaultApiKeyAccount(accounts: AccountEntry[], provider: GateApiKeyProv
 
 function unknownAccountMessage(request: GateRequest): string {
     if (request.account !== undefined) {
-        return `No AI account named "${request.account}" (${toolCommand("ai accounts list")}).`;
+        return `No AI account named "${request.account}" (${aiAccountsListCommand()}).`;
     }
 
     if (isApiKeyGateProvider(request.provider)) {
         return `No enabled ${request.provider} account stores an API key. Add one for the gate with: ${addGateAccountCommand(request.provider)}`;
     }
 
-    return `Name the ${request.provider} account with --account (${toolCommand("ai accounts list")}).`;
+    return `Name the ${request.provider} account with --account (${aiAccountsListCommand()}).`;
 }
 
 function auditClient(identity: ClientIdentity) {

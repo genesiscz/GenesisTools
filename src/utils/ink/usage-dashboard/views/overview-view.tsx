@@ -1,6 +1,6 @@
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { prominentFor, type UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiAccountsListCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useMemo, useState } from "react";
@@ -154,7 +154,7 @@ export function OverviewView({ results, config, presenters, sortMode = "urgency"
     if (accounts.length === 0) {
         return (
             <Box paddingX={1}>
-                <Text dimColor>{`No accounts to show. Run: ${toolCommand("ai accounts list")}`}</Text>
+                <Text dimColor>{`No accounts to show. Run: ${aiAccountsListCommand()}`}</Text>
             </Box>
         );
     }

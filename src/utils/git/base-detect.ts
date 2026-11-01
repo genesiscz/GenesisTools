@@ -1,4 +1,4 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { gitConfigInitCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { BaseNotFoundError, createGit } from "./core";
 import type { OriginDriver, PrInfo } from "./origins/types";
@@ -236,7 +236,7 @@ export async function detectBase(opts: DetectBaseOptions): Promise<DetectedBase>
     }
 
     throw new BaseNotFoundError(
-        `Could not detect a base branch: pass --base <ref>, or declare git.mainPrBranch with \`${toolCommand("git config init")}\`.`
+        `Could not detect a base branch: pass --base <ref>, or declare git.mainPrBranch with \`${gitConfigInitCommand()}\`.`
     );
 }
 

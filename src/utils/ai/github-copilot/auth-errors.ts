@@ -1,10 +1,10 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiProxyAccountsLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 
 export class CopilotAuthExpiredError extends Error {
     readonly authPath: string;
 
     constructor(authPath: string) {
-        super(`GitHub Copilot auth expired or missing. Run: ${toolCommand("ai-proxy accounts login")} github-copilot`);
+        super(`GitHub Copilot auth expired or missing. Run: ${aiProxyAccountsLoginCommand("github-copilot")}`);
         this.name = "CopilotAuthExpiredError";
         this.authPath = authPath;
     }

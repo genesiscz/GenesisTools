@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DiarTurn } from "@genesiscz/utils/ai/transcription/align-speakers";
 import { convertToWhisperWav } from "@genesiscz/utils/audio/converter";
 import { logger } from "@genesiscz/utils/logger";
 import { ensureDiarizationModels } from "./models";
+
+const requireLazy = createRequire(import.meta.url);
 
 interface SherpaWave {
     samples: Float32Array;
@@ -49,7 +52,7 @@ export async function diarizeLocal(audio: Buffer, opts?: { speakers?: number }):
         // Load the native addon FIRST — it throws synchronously on an
         // unsupported platform, so failing here avoids the ~31 MB model
         // download and the wav transcode on machines that can't diarize.
-        const sherpa = require("sherpa-onnx-node") as SherpaModule;
+        const sherpa = requireLazy("sherpa-onnx-node") as SherpaModule;
 
         const wav = await convertToWhisperWav(audio); // 16 kHz mono 16-bit
         await Bun.write(wavPath, wav);

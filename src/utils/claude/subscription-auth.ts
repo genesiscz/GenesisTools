@@ -1,6 +1,6 @@
 import { appendFileSync, chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { retry } from "@genesiscz/utils/async";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { claudeLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -380,7 +380,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         throw new Error(
             accountName
                 ? `Account "${accountName}" not found in AI config`
-                : `No default account configured. Run \`${toolCommand("claude login")}\` first.`
+                : `No default account configured. Run \`${claudeLoginCommand()}\` first.`
         );
     }
 
@@ -409,7 +409,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             : "has no recorded expiry";
         throw new Error(
             `Access token for "${name}" ${reason} and refresh is disabled for diagnosis ` +
-                `(a refresh token is single-use, so a probe must not spend it). Run: ${toolCommand("claude login")} ${name}`
+                `(a refresh token is single-use, so a probe must not spend it). Run: ${claudeLoginCommand(name)}`
         );
     }
 
@@ -447,7 +447,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         const lastInvalidGrant = invalidGrantSince(name);
 
         if (lastInvalidGrant && Date.now() - lastInvalidGrant < INVALID_GRANT_COOLDOWN_MS) {
-            throw new Error(`Token expired (invalid_grant). Run: ${toolCommand("claude login")} ${name}`);
+            throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
         }
 
         // Refresh with retry on transient errors (5xx, network)
@@ -482,18 +482,18 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                             `[token-refresh] ${name}: journal recovery failed: ` +
                                 `${recoveryErr instanceof Error ? recoveryErr.message : recoveryErr}`
                         );
-                        throw new Error(`Token expired (invalid_grant). Run: ${toolCommand("claude login")} ${name}`);
+                        throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
                     }
                 } else {
                     await markInvalidGrant(name);
-                    throw new Error(`Token expired (invalid_grant). Run: ${toolCommand("claude login")} ${name}`);
+                    throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
                 }
             } else {
                 // `cause` keeps the transport code (ENOTFOUND, ConnectionRefused) so the
                 // poll gate can tell a dead network from a dead account.
                 throw new Error(
                     `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
-                        `Run \`${toolCommand("claude login")} ${name}\` if this persists.`,
+                        `Run \`${claudeLoginCommand(name)}\` if this persists.`,
                     { cause: err }
                 );
             }
@@ -528,7 +528,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         if (acc.tokens.expiresAt && claudeOAuth.needsRefresh(acc.tokens.expiresAt)) {
             throw new Error(
                 `Token for "${name}" is expired and no refresh token is available. ` +
-                    `Run: ${toolCommand("claude login")} ${name}`
+                    `Run: ${claudeLoginCommand(name)}`
             );
         }
 
