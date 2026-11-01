@@ -1,9 +1,11 @@
+import { homedir } from "node:os";
 import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import {
     allPresets,
     appendRmLedger,
     BUILTIN_PROFILES,
+    defaultRmConfig,
     defaultTrashPaths,
     isAskAction,
     isRmApproval,
@@ -23,6 +25,7 @@ import {
 import type { Command } from "commander";
 import pc from "picocolors";
 import { minutesOption, requirePerson, runContext } from "../lib/run";
+import { renderConfig, renderPresets } from "../lib/settings-view";
 
 const SETTINGS = [
     "approval",
@@ -168,17 +171,8 @@ export function registerSettingsCommands(program: Command): void {
                 return;
             }
 
-            for (const preset of all) {
-                const off = enabled.has(preset.id)
-                    ? ""
-                    : preset.optIn && !config.disabledPresets.includes(preset.id)
-                      ? pc.yellow(` (opt-in: ${toolCommand("rm")} config set enable-preset ${preset.id})`)
-                      : pc.red(" (disabled)");
-                const names = preset.within ? `every folder in ${preset.within}` : preset.names.join(", ");
-                const markers = preset.markers ? ` next to ${preset.markers.join(" or ")}` : "";
-                const parents = preset.parentNames ? ` inside ${preset.parentNames.join(" or ")}` : "";
-                out.println(`${pc.bold(preset.id)}${off} ${preset.description}`);
-                out.println(pc.dim(`  ${names}${markers}${parents}`));
+            for (const line of renderPresets({ all, enabled, disabled: config.disabledPresets, home: homedir() })) {
+                out.println(line);
             }
         });
 
@@ -186,11 +180,27 @@ export function registerSettingsCommands(program: Command): void {
 
     config
         .command("show", { isDefault: true })
-        .description("print the settings and where they live")
-        .action(() => {
-            const { config: current } = runContext();
-            out.println(pc.dim(rmConfigPath()));
-            out.result(current);
+        .description("print the settings, their defaults and where each value comes from")
+        .option("--json", "print the saved file as JSON")
+        .action((flags: { json?: boolean }) => {
+            const ctx = runContext();
+
+            if (flags.json) {
+                out.result(ctx.base);
+                return;
+            }
+
+            const view = {
+                base: ctx.base,
+                effective: ctx.config,
+                profiles: ctx.profiles,
+                defaults: defaultRmConfig(),
+                path: rmConfigPath(),
+            };
+
+            for (const line of renderConfig(view)) {
+                out.println(line);
+            }
         });
 
     config
