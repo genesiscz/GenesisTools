@@ -1067,22 +1067,28 @@ final class WidgetVisibilityTests: XCTestCase {
         defer { cleanUp(fixture) }
         let coordinator = fixture.coordinator
         var ordered = 0
+        // The widget face holds its "on screen" lock with this (the ⌘Q question of another face reads it).
+        var shownChanges: [Bool] = []
         coordinator.settingsPresenter = { _ in }
         coordinator.orderFront = { _ in ordered += 1 }
+        coordinator.panelsShownChanged = { shownChanges.append($0) }
         coordinator.start(showSettings: true)
         defer { coordinator.stop() }
         try await waitFor { coordinator.model.snapshot != nil }
         XCTAssertEqual(coordinator.panelCount, 0)
+        XCTAssertEqual(shownChanges, [false], "once at start")
 
         coordinator.model.updatePreferences(["showWidget": .bool(true)])
         XCTAssertTrue(coordinator.panelsEnabled)
         XCTAssertGreaterThan(coordinator.panelCount, 0)
         XCTAssertGreaterThan(ordered, 0, "the panels order front as soon as the switch turns on")
         XCTAssertTrue(coordinator.panelMonitorsInstalled)
+        XCTAssertEqual(shownChanges, [false, true])
 
         coordinator.model.updatePreferences(["showWidget": .bool(false)])
         XCTAssertEqual(coordinator.panelCount, 0)
         XCTAssertFalse(coordinator.panelMonitorsInstalled)
+        XCTAssertEqual(shownChanges, [false, true, false], "a rebuild with the same value calls nothing")
     }
 
     /// "Visible edges" decides whether the top notch panel shows; the "Top notch" module card alone never does.

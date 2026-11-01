@@ -8,14 +8,13 @@ struct RunningFace: Equatable, Sendable {
     let face: String
 }
 
-/// What runs right now, read from the kernel and not from the settings: every window face of this bundle, the parts
-/// this build links, and the parts that live inside another face's process and are up (Clicky's status item in
-/// `--features`). The quit question (QuitDecision.swift) names only what this says runs.
+/// What runs right now, read from the kernel and not from the settings: every window face of this bundle, and the
+/// parts that are up in some face (PartPresence: the widget's panels, Clicky turned on, the settings window open). The
+/// quit question (QuitDecision.swift) names only what this says runs.
 struct RunningPartsSnapshot: Equatable, Sendable {
     var ownPid: Int32
     var faces: [RunningFace]
-    var linkedParts: Set<String>
-    var liveHostedParts: Set<String>
+    var livePresences: Set<String>
 }
 
 /// Reads the snapshot. The live probe asks the kernel; tests pass a fake, so they start no process.
@@ -41,17 +40,23 @@ struct LiveRunningPartsProbe: RunningPartsProbing {
             guard let arguments, let face = PartQuit.face(ofArguments: Array(arguments.dropFirst())) else { return nil }
             return RunningFace(pid: pid, face: face)
         }
-        return RunningPartsSnapshot(
-            ownPid: own, faces: faces, linkedParts: Set(AppParts.linked),
-            liveHostedParts: Set(PartQuit.hostedParts.map(\.id).filter { PartPresence.isUp($0) }))
+        return RunningPartsSnapshot(ownPid: own, faces: faces, livePresences: PartPresence.live())
     }
 }
 
-/// A part that runs inside another face's process holds a lock file while it is up, so any face can ask the kernel
-/// whether it runs. Clicky's status item lives in the feature settings face, and a process scan sees only that face;
-/// "Quit Clicky" in its popover stops Clicky and keeps the process. The kernel drops the lock when the process ends.
+/// A part the user sees holds a lock file while it is up, so any face can ask the kernel whether it runs. A process
+/// scan sees only faces, and a face can run with nothing on screen: the widget with "Show the widget" off, the feature
+/// settings face with its window closed and Clicky off (it stays to host the widget's Dictation and Focus runtime). The
+/// kernel drops the lock when the process ends.
 @MainActor
 package enum PartPresence {
+    /// The widget's edge panels ("Show the widget" on), in `--widget`.
+    package static let widget = "widget"
+    /// Clicky turned on (its key sounds play), in `--features`. Off, its status item may still show, greyed.
+    package static let clicky = "clicky"
+    /// The feature settings window open, in `--features`.
+    package static let settingsWindow = "settings-window"
+
     private static var descriptors: [String: Int32] = [:]
 
     static func lockFile(_ part: String, in directory: URL) -> URL {
@@ -81,6 +86,16 @@ package enum PartPresence {
         guard let descriptor = descriptors.removeValue(forKey: part) else { return }
         flock(descriptor, LOCK_UN)
         close(descriptor)
+    }
+
+    /// Every part of the quit question's table (PartQuit.presences) that is up in some process.
+    static func live(in directory: URL = NativePreview.root) -> Set<String> {
+        Set(PartQuit.presences.map(\.id).filter { isUp($0, in: directory) })
+    }
+
+    /// Holds the part's lock while `up`, else drops it. Cheap to call on every state change.
+    package static func set(_ part: String, up: Bool) {
+        up ? hold(part) : release(part)
     }
 
     /// True while this process or another one holds the part's lock.

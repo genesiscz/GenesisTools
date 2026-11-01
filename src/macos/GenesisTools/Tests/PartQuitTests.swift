@@ -8,14 +8,14 @@ import XCTest
 @MainActor
 final class PartQuitTests: XCTestCase {
     private let own: Int32 = 100
-    private let allLinked: Set<String> = ["features", "hub", "widget", "clicky", "markdown"]
+    private let widget = PartPresence.widget
+    private let clicky = PartPresence.clicky
+    private let window = PartPresence.settingsWindow
 
-    private func snapshot(_ faces: [(Int32, String)], clickyUp: Bool = true, linked: Set<String>? = nil)
-        -> RunningPartsSnapshot
-    {
+    /// By default the widget's panels show and Clicky is on, with the settings window closed.
+    private func snapshot(_ faces: [(Int32, String)], up: Set<String>? = nil) -> RunningPartsSnapshot {
         RunningPartsSnapshot(
-            ownPid: own, faces: faces.map { RunningFace(pid: $0.0, face: $0.1) }, linkedParts: linked ?? allLinked,
-            liveHostedParts: clickyUp ? ["clicky"] : [])
+            ownPid: own, faces: faces.map { RunningFace(pid: $0.0, face: $0.1) }, livePresences: up ?? [widget, clicky])
     }
 
     // MARK: Which processes are faces
@@ -79,30 +79,70 @@ final class PartQuitTests: XCTestCase {
         XCTAssertEqual(question.message, "Hub is also running. Quit All stops it too.")
     }
 
-    /// Clicky lives in the feature settings face; without its status item (or in a build without the part) that
-    /// face is only the settings window.
-    func testClickyIsNamedOnlyWhileItsStatusItemIsUpInABuildThatLinksIt() {
+    /// The feature settings face is named by what it shows, because its quit ends all of it: Clicky while it is on,
+    /// Settings while the window is open.
+    func testTheFeatureSettingsFaceIsNamedByWhatIsUpInIt() {
         let faces: [(Int32, String)] = [(own, "--widget"), (200, "--features")]
 
-        for (clickyUp, linked, expected) in [
-            (true, allLinked, "Clicky"), (false, allLinked, "Settings"),
-            (true, allLinked.subtracting(["clicky"]), "Settings"),
-        ] {
-            let plan = PartQuit.plan(
-                face: "--widget", snapshot: snapshot(faces, clickyUp: clickyUp, linked: linked), behavior: .ask)
-            XCTAssertEqual(plan, .ask(QuitQuestion(thisName: "Widget", otherNames: [expected])))
+        for (up, expected) in [
+            ([widget, clicky], "Clicky"), ([widget, window], "Settings"),
+            ([widget, clicky, window], "Clicky and Settings"),
+        ] as [(Set<String>, String)] {
+            XCTAssertEqual(
+                PartQuit.plan(face: "--widget", snapshot: snapshot(faces, up: up), behavior: .ask),
+                .ask(QuitQuestion(thisName: "Widget", otherNames: [expected])), "\(up)")
         }
     }
 
-    func testTheFeatureSettingsFaceCallsItselfClickyWhileClickyIsUp() {
-        let running = snapshot([(own, "--features"), (300, "--widget")])
+    /// The settings face with its window closed stays to host the widget's Dictation and Focus runtime (and a rebuild
+    /// brings it back with no window). With Clicky off, or in a build without Clicky, nothing of it is on screen.
+    func testAWindowlessSettingsFaceWithClickyOffIsNeverNamedAndNeverAsked() {
+        let running = snapshot([(own, "--widget"), (200, "--features")], up: [widget])
+
+        for behavior in QuitBehavior.allCases {
+            XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: running, behavior: behavior), .quitThis, "\(behavior)")
+        }
+    }
+
+    /// Clicky's status item shows, greyed, in every live settings face; a Clicky nobody turned on is no part.
+    func testClickyLinkedButOffIsNotNamed() {
+        let running = snapshot([(own, "--widget"), (200, "--features"), (300, "--hub")], up: [widget])
 
         XCTAssertEqual(
-            PartQuit.plan(face: "--features", snapshot: running, behavior: .ask),
-            .ask(QuitQuestion(thisName: "Clicky", otherNames: ["Widget"])))
+            PartQuit.plan(face: "--widget", snapshot: running, behavior: .ask),
+            .ask(QuitQuestion(thisName: "Widget", otherNames: ["Hub"])))
         XCTAssertEqual(
-            PartQuit.plan(face: "--features", snapshot: snapshot([(own, "--features"), (300, "--widget")], clickyUp: false), behavior: .ask),
-            .ask(QuitQuestion(thisName: "Settings", otherNames: ["Widget"])))
+            PartQuit.plan(face: "--widget", snapshot: running, behavior: .allParts), .quitAll(otherPids: [300]),
+            "Quit All quits only what the question names")
+    }
+
+    /// With "Show the widget" off the widget face keeps running with no panel.
+    func testAWidgetThatIsOffIsNotNamed() {
+        let running = snapshot([(own, "--features"), (300, "--widget")], up: [clicky])
+
+        for behavior in QuitBehavior.allCases {
+            XCTAssertEqual(
+                PartQuit.plan(face: "--features", snapshot: running, behavior: behavior), .quitThis, "\(behavior)")
+        }
+    }
+
+    func testTheFeatureSettingsFaceNamesItselfByEverythingItsQuitEnds() {
+        let faces: [(Int32, String)] = [(own, "--features"), (300, "--widget")]
+
+        for (up, expected) in [
+            ([widget, clicky], "Clicky"), ([widget, window], "Settings"),
+            ([widget, clicky, window], "Clicky and Settings"),
+            // ⌘Q needs a key window, so this face always shows something; with nothing up it keeps its own name.
+            ([widget], "Settings"),
+        ] as [(Set<String>, String)] {
+            XCTAssertEqual(
+                PartQuit.plan(face: "--features", snapshot: snapshot(faces, up: up), behavior: .ask),
+                .ask(QuitQuestion(thisName: expected, otherNames: ["Widget"])), "\(up)")
+        }
+        let both = QuitQuestion(thisName: "Clicky and Settings", otherNames: ["Widget"])
+        XCTAssertEqual(both.quitThisTitle, "Quit Clicky and Settings")
+        XCTAssertEqual(both.title, "Quit only Clicky and Settings, or all GenesisTools parts?")
+        XCTAssertEqual(PartQuit.ownName(of: "--widget", livePresences: []), "Widget", "a widget that is off")
     }
 
     func testTwoProcessesOfOneFaceAreNamedOnceAndBothQuit() {
@@ -242,6 +282,13 @@ final class PartQuitTests: XCTestCase {
         flock(holder, LOCK_UN)
         close(holder)
         XCTAssertFalse(PartPresence.isUp("fixture", in: directory), "the holder is gone")
+
+        // The probe reads only the table's parts, and only those another process holds.
+        XCTAssertEqual(PartPresence.live(in: directory), [])
+        let window = open(PartPresence.lockFile(PartPresence.settingsWindow, in: directory).path, O_CREAT | O_RDWR, 0o600)
+        XCTAssertEqual(flock(window, LOCK_EX | LOCK_NB), 0)
+        defer { close(window) }
+        XCTAssertEqual(PartPresence.live(in: directory), [PartPresence.settingsWindow])
     }
 }
 
