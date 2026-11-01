@@ -154,6 +154,60 @@ describe("Apify transport", () => {
         expect(calls).toBe(1);
     });
 
+    test("a POST that fails after its headers arrive still reports the unknown outcome and never retries", async () => {
+        const brokenStream = () =>
+            new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('{"data":{"id":"run'));
+                    controller.error(new Error(`connection reset ${TOKEN}`));
+                },
+            });
+        const cases: Array<{ reply: () => Response; expected: string }> = [
+            { reply: () => new Response(brokenStream()), expected: "failed or timed out while reading" },
+            { reply: () => new Response(null), expected: "empty response" },
+            { reply: () => new Response('{"data":'), expected: "invalid JSON" },
+            {
+                reply: () => new Response(SafeJSON.stringify({ data: { status: 1 } })),
+                expected: "unexpected response shape",
+            },
+            { reply: () => new Response(TOKEN, { status: 502 }), expected: "Apify HTTP 502" },
+        ];
+
+        for (const { reply, expected } of cases) {
+            let calls = 0;
+            const client = new ApifyClient({
+                token: TOKEN,
+                fetcher: async () => {
+                    calls++;
+                    return reply();
+                },
+            });
+            const error = await client.start({ actor: "alice/actor", input: {}, maxCost: 1 }).catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(ApifyError);
+            const message = error instanceof Error ? error.message : "";
+            expect(message).toContain(expected);
+            expect(message).toContain("result is unknown");
+            expect(message).not.toContain(TOKEN);
+            expect(calls).toBe(1);
+        }
+    });
+
+    test("a rejected POST and a failed read carry no unknown-outcome warning", async () => {
+        const rejected = new ApifyClient({ token: TOKEN, fetcher: async () => new Response("bad", { status: 400 }) });
+        const rejectedError = await rejected
+            .start({ actor: "alice/actor", input: {}, maxCost: 1 })
+            .catch((e: unknown) => e);
+        expect(rejectedError).toBeInstanceOf(ApifyError);
+        expect(String(rejectedError)).toContain("Apify HTTP 400");
+        expect(String(rejectedError)).not.toContain("result is unknown");
+
+        const garbled = new ApifyClient({ token: TOKEN, fetcher: async () => new Response('{"data":') });
+        const readError = await garbled.me().catch((e: unknown) => e);
+        expect(readError).toBeInstanceOf(ApifyError);
+        expect(String(readError)).toContain("invalid JSON");
+        expect(String(readError)).not.toContain("result is unknown");
+    });
+
     test("HTTP error bodies and invalid upstream shapes cannot echo secrets", async () => {
         const denied = new ApifyClient({ token: TOKEN, fetcher: async () => new Response(TOKEN, { status: 403 }) });
         await expect(denied.me()).rejects.toThrow("Apify HTTP 403");
@@ -305,6 +359,22 @@ describe("recorded costs", () => {
         await expect(summarizeCosts({ source, since: UNTIL, until: SINCE, pageSize: 1, maxPages: 1 })).rejects.toThrow(
             "Since"
         );
+    });
+
+    test("a day the month does not have fails instead of rolling into the next month", () => {
+        for (const value of [
+            "2026-02-29T00:00:00Z",
+            "2026-02-30T00:00:00+01:00",
+            "2026-04-31T00:00:00Z",
+            "2026-06-31T12:00Z",
+            "1900-02-29T00:00:00Z",
+        ]) {
+            expect(() => instant(value)).toThrow("Invalid datetime");
+        }
+
+        expect(instant("2024-02-29T00:00:00Z")).toBe("2024-02-29T00:00:00.000Z");
+        expect(instant("2000-02-29T12:00:00+01:00")).toBe("2000-02-29T11:00:00.000Z");
+        expect(instant("2026-01-31T23:59:59Z")).toBe("2026-01-31T23:59:59.000Z");
     });
 });
 

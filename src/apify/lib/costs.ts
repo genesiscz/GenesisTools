@@ -9,9 +9,28 @@ export interface CostRunSource {
     }>;
 }
 
+const DATETIME = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function daysInMonth(year: number, month: number): number {
+    if (month === 2) {
+        return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+    }
+
+    return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+/** A strict ISO datetime as UTC; a day the month does not have fails instead of rolling into the next month. */
 export function instant(value: string): string {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    const match = DATETIME.exec(value);
+    if (!match) {
         throw new ApifyError("Use an ISO datetime with a timezone, such as 2026-01-01T00:00:00+01:00.");
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
+        throw new ApifyError("Invalid datetime.");
     }
 
     const date = new Date(value);

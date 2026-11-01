@@ -135,6 +135,14 @@ export function sanitizeResult(value: unknown, token?: string): unknown {
     return value;
 }
 
+/**
+ * The warning a failed POST carries once it may have reached Apify: a paid start may already exist, and a retry can
+ * create a second charged run.
+ */
+function outcomeHint(options: RequestOptions = {}): string {
+    return options.method === "POST" ? " The result is unknown; inspect runs before retrying." : "";
+}
+
 async function responseText(response: Response): Promise<string> {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -207,26 +215,31 @@ export class ApifyClient {
                 redirect: "error",
             });
         } catch {
-            const hint = options.method === "POST" ? " The result is unknown; inspect runs before retrying." : "";
-            throw new ApifyError(`Apify request failed or timed out.${hint}`);
+            throw new ApifyError(`Apify request failed or timed out.${outcomeHint(options)}`);
         }
 
         if (!response.ok) {
             await response.body?.cancel();
-            const hint =
+            const auth =
                 response.status === 401 || response.status === 403 ? " Check token permissions or log in again." : "";
-            throw new ApifyError(`Apify HTTP ${response.status}.${hint}`, response.status);
+            const outcome = response.status >= 500 ? outcomeHint(options) : "";
+            throw new ApifyError(`Apify HTTP ${response.status}.${auth}${outcome}`, response.status);
+        }
+
+        let text: string;
+        try {
+            text = await responseText(response);
+        } catch (error) {
+            const reason =
+                error instanceof ApifyError ? error.message : "Apify response failed or timed out while reading.";
+            throw new ApifyError(`${reason}${outcomeHint(options)}`);
         }
 
         let raw: unknown;
         try {
-            raw = SafeJSON.parse(await responseText(response), { strict: true });
-        } catch (error) {
-            if (error instanceof ApifyError) {
-                throw error;
-            }
-
-            throw new ApifyError("Apify returned invalid JSON.");
+            raw = SafeJSON.parse(text, { strict: true });
+        } catch {
+            throw new ApifyError(`Apify returned invalid JSON.${outcomeHint(options)}`);
         }
 
         return sanitizeResult(raw, this.token);
@@ -236,7 +249,7 @@ export class ApifyClient {
         const raw = await this.request(endpoint, options);
         const parsed = z.object({ data: schema }).safeParse(raw);
         if (!parsed.success) {
-            throw new ApifyError("Apify returned an unexpected response shape.");
+            throw new ApifyError(`Apify returned an unexpected response shape.${outcomeHint(options)}`);
         }
 
         return parsed.data.data;
