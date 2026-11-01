@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli";
 import {
     type ApprovalItemUpdate,
     createRmRequest,
@@ -37,6 +38,7 @@ import {
     saveRmConfig,
     stillAside,
 } from "@genesiscz/utils/rm";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
 import { saveApproved } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
@@ -49,6 +51,8 @@ import {
     denyRequest,
     splitBySelection,
 } from "./approve";
+import { shortRmPath } from "./display";
+import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
 import { executePlan, type RunContext } from "./run";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
@@ -822,5 +826,134 @@ describe("flag ownership", () => {
         const error = await parsed(["-n", "preset", "node_modules"]).catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(CommanderError);
         expect(error instanceof CommanderError ? error.exitCode : null).toBe(2);
+    });
+});
+
+describe("the requests listing", () => {
+    const NOW = new Date("2026-11-01T14:00:00.000Z");
+    const ASKER: RmCaller = {
+        agent: "claude-code",
+        sessionId: "aaaaaaaa-1111-4111-8111-111111111111",
+        isInAgent: true,
+        sessionTitle: "cleanup run",
+        project: "shop",
+    };
+    const OTHER: RmCaller = { ...ASKER, sessionId: "bbbbbbbb-2222-4222-8222-222222222222", sessionTitle: "probe work" };
+    const NO_RULE = "no rule allows it: a preset, this session's scratch or own files, or a trusted root";
+    const scratch = "/tmp/cc/shop/aaaaaaaa-1111-4111-8111-111111111111";
+
+    function req(
+        id: string,
+        caller: RmCaller,
+        createdAt: string,
+        targets: RmRequest["targets"],
+        extra: Partial<RmRequest> = {}
+    ): RmRequest {
+        return {
+            id,
+            kind: "delete",
+            createdAt,
+            caller,
+            cwd: "/work/shop",
+            reason: null,
+            targets,
+            status: "pending",
+            ...extra,
+        };
+    }
+
+    const requests: RmRequest[] = [
+        req("aside1", ASKER, "2026-11-01T13:49:00.000Z", [
+            {
+                path: "/tmp/cc-ds.json",
+                kind: "file",
+                rule: "default",
+                reason: NO_RULE,
+                stored: `${scratch}/rm-aside/1/0-x-cc-ds.json`,
+            },
+        ]),
+        req(
+            "gone22",
+            ASKER,
+            "2026-10-31T16:43:00.000Z",
+            [
+                {
+                    path: "/tmp/cc/shop/cccccccc-3333-4333-8333-333333333333/review/pr-1",
+                    kind: "dir",
+                    rule: "nested-repos",
+                    reason: "holds 6 git repositories",
+                },
+            ],
+            {
+                decidedAt: "2026-10-31T17:08:16.000Z",
+                decidedVia: "touch-id",
+                decided: { approved: ["/x/1", "/x/2", "/x/3", "/x/4"], denied: [] },
+                batchId: "20261031-170802-1-6ce5",
+            }
+        ),
+        req("lost33", OTHER, "2026-10-27T23:44:00.000Z", [
+            {
+                path: "/tmp/cc/shop/bbbbbbbb/removals/npm-diff",
+                kind: "dir",
+                rule: "default",
+                reason: NO_RULE,
+                stored: "/tmp/cc/shop/bbbbbbbb-2222-4222-8222-222222222222/rm-aside/2/0-y-npm-diff",
+            },
+        ]),
+        req("dupaaa", OTHER, "2026-11-01T04:29:00.000Z", [
+            { path: "/work/shop/.smoke.tmp.ts", kind: "file", rule: "git-untracked", reason: "1 untracked file" },
+        ]),
+        req("dupbbb", OTHER, "2026-11-01T04:39:00.000Z", [
+            { path: "/work/shop/.smoke.tmp.ts", kind: "file", rule: "git-untracked", reason: "1 untracked file" },
+        ]),
+    ];
+    // On disk: the aside copy of aside1 and the in-place file, nothing else.
+    const present = (path: string) => path.startsWith(`${scratch}/rm-aside/1/`) || path === "/work/shop/.smoke.tmp.ts";
+    const sizes: Record<string, number> = { aside1: 45_056, dupaaa: 4096, dupbbb: 4096, lost33: 839_680 };
+    const views = buildRequestViews(requests, { present, sizeOf: (request) => sizes[request.id] });
+
+    test("one summary, one group per session, no repeated reason, no aside location", () => {
+        const lines = renderRequestList(views, { now: NOW, caller: PERSON }).map(stripAnsi);
+        const text = lines.join("\n");
+        expect(lines[0]).toContain("5 open · 5 paths · 864.0 KB aside · 3 in place · oldest 4d");
+        expect(text).toContain(
+            "Needs a look: 1 gone (gone22) · 1 copy lost (lost33) · 1 asked twice (dupaaa = dupbbb)"
+        );
+        expect(text).not.toContain(NO_RULE);
+        expect(text.split("no rule = ").length).toBe(2);
+        expect(text).not.toContain("rm-aside");
+        expect(text.indexOf("aaaaaaaa cleanup run")).toBeLessThan(text.indexOf("bbbbbbbb probe work"));
+        expect(text).toContain(`Approve: ${toolCommand("rm")} approve <id>`);
+        expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(124);
+    });
+
+    test("an agent reads the agent's footer", () => {
+        const text = renderRequestList(views, { now: NOW, caller: ASKER }).map(stripAnsi).join("\n");
+        expect(text).toContain(`The user approves: ! ${toolCommand("rm")} approve <id>`);
+        expect(text).toContain(`Cancel your own: ${toolCommand("rm")} deny <id>`);
+    });
+
+    test("the detail view shows the decision even when nothing was denied", () => {
+        const gone = views.find((view) => view.request.id === "gone22");
+        const detail = gone ? renderRequestDetail(gone, NOW).map(stripAnsi).join("\n") : "";
+        expect(detail).toContain("4 approved");
+        expect(detail).toContain("via touch-id, 0 denied; batches 20261031-170802-1-6ce5");
+        expect(detail).toContain("nested-repos: holds 6 git repositories");
+    });
+
+    test("paths read short: own scratch, another session, home, temp folder", () => {
+        const ctx = { home: "/Users/alice", tmpdir: "/var/folders/ab/xyz123/T", sessionId: ASKER.sessionId };
+        expect(shortRmPath(`${scratch.replace("/shop/", "/GenesisTools/")}/18-filetree`, ctx)).toBe(
+            "<scratch>/18-filetree"
+        );
+        expect(shortRmPath("/tmp/cc/GenesisTools/cccccccc-3333-4333-8333-333333333333/review/pr-623", ctx)).toBe(
+            "GenesisTools/cccccccc/review/pr-623"
+        );
+        expect(shortRmPath("/private/var/folders/ab/xyz123/T/.tmp-reclaim-58Uz7S", ctx)).toBe(
+            "$TMPDIR/.tmp-reclaim-58Uz7S"
+        );
+        expect(shortRmPath("/Users/alice/Projects/a-long-client-folder-name/shop/.smoke.tmp.ts", ctx)).toBe(
+            "~/Projects/a-long-client-folder-n…/.smoke.tmp.ts"
+        );
     });
 });
