@@ -55,6 +55,11 @@ export type RmApproval = "auto" | "touch-id" | "code";
 
 export const RM_APPROVALS: readonly RmApproval[] = ["auto", "touch-id", "code"];
 
+/** How a person hears of a new request: a GenesisTools inbox message, a macOS notification, or not at all. */
+export type RmNotifyOnRequest = "inbox" | "notification" | "none";
+
+export const RM_NOTIFY_ON_REQUEST: readonly RmNotifyOnRequest[] = ["inbox", "notification", "none"];
+
 /** The settings a profile may change. Lists add to the base config; scalars replace it. */
 export interface RmPolicy {
     askAction: RmAskAction;
@@ -107,6 +112,8 @@ export interface RmConfig extends RmPolicy {
     disabledProfiles: string[];
     /** How a person confirms. Not a profile setting: it belongs to the person, not to the caller. */
     approval: RmApproval;
+    /** How a person hears of what waits for them. The person's, like `approval`, never a profile's. */
+    notify: { onRequest: RmNotifyOnRequest };
 }
 
 export function rmDataDir(...segments: string[]): string {
@@ -129,6 +136,7 @@ export function defaultRmConfig(): RmConfig {
         profiles: [],
         disabledProfiles: [],
         approval: "auto",
+        notify: { onRequest: "inbox" },
         askAction: "aside",
         asideUnsaved: false,
         allowSessionScratch: true,
@@ -244,6 +252,7 @@ function validateRmConfig(value: unknown): void {
     policy(value);
     check(value, {
         approval: isRmApproval,
+        notify: (v) => isRecord(v) && (!("onRequest" in v) || isRmNotifyOnRequest(v.onRequest)),
         trashRoot: isTrashRootName,
         roots: (v) => Array.isArray(v) && v.every(root),
         customPresets: (v) => Array.isArray(v) && v.every(preset),
@@ -306,6 +315,10 @@ function optionalBool(value: unknown): boolean | undefined {
 
 export function isRmApproval(value: unknown): value is RmApproval {
     return RM_APPROVALS.some((approval) => approval === value);
+}
+
+export function isRmNotifyOnRequest(value: unknown): value is RmNotifyOnRequest {
+    return RM_NOTIFY_ON_REQUEST.some((mode) => mode === value);
 }
 
 export function isAskAction(value: unknown): value is RmAskAction {
@@ -383,6 +396,13 @@ export function parseRmConfig(raw: unknown): RmConfig {
             ? raw.profiles.map(parseProfile).filter((p): p is RmProfile => p !== null)
             : [],
         approval: isRmApproval(raw.approval) ? raw.approval : defaults.approval,
+        // A config saved before `notify` existed reads the default.
+        notify: {
+            onRequest:
+                isRecord(raw.notify) && isRmNotifyOnRequest(raw.notify.onRequest)
+                    ? raw.notify.onRequest
+                    : defaults.notify.onRequest,
+        },
         askAction: isAskAction(raw.askAction) ? raw.askAction : defaults.askAction,
         asideUnsaved: bool(raw.asideUnsaved, defaults.asideUnsaved),
         allowSessionScratch: bool(raw.allowSessionScratch, defaults.allowSessionScratch),
