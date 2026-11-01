@@ -13,6 +13,7 @@ const LANES = ["Discovery", "Platform", "Client apps", "Data", "Quality", "Opera
 
 export default function FilterChipsPage() {
     const [value, setValue] = useState(["Discovery", "Platform", "Client apps"]);
+    const [pick, setPick] = useState(["all"]);
 
     return (
         <GalleryPage
@@ -27,6 +28,20 @@ export default function FilterChipsPage() {
                     value={value}
                     onChange={setValue}
                     items={LANES.map((l, i) => ({ id: l, label: l, color: SERIES_COLOR[i], count: ((i * 3) % 7) + 1 }))}
+                />
+            </Demo>
+            <Demo title="Pick one: single" note={`showing ${pick[0] ?? "nothing"}`}>
+                <FilterChips
+                    single
+                    label="Proposal filter"
+                    value={pick}
+                    onChange={setPick}
+                    items={[
+                        { id: "all", label: "All 20" },
+                        { id: "library", label: "Has a library half" },
+                        { id: "ui", label: "UI only" },
+                        { id: "limits", label: "limits" },
+                    ]}
                 />
             </Demo>
             <Demo title="Edge case: a disabled chip" note="All and None leave it alone">

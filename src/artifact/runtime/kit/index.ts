@@ -251,6 +251,16 @@ export {
     ganttSpanDays,
     ganttSpanPx,
 } from "./gantt";
+// Design-document kit: the document look, a top bar, a layered diagram, a segment bar, mapping rows, named hues.
+export {
+    type DiagramEdge,
+    type DiagramLayer,
+    type DiagramNode,
+    LayerDiagram,
+    type LayerDiagramLayout,
+    type LayerDiagramProps,
+    layoutLayerDiagram,
+} from "./layer-diagram";
 export {
     ChangeLedger,
     type ChangeLedgerProps,
@@ -267,10 +277,16 @@ export {
     type LedgerValue,
     ledgerCounts,
 } from "./ledger";
+export { HUE, type HueName, type PageLook, PageLookContext, usePageLook } from "./look";
+export { TopNav, type TopNavLink, type TopNavProps } from "./nav";
 export {
+    type CardField,
     type FilterChipItem,
     FilterChips,
     type FilterChipsProps,
+    Legend,
+    type LegendItem,
+    type LegendProps,
     type StatDelta,
     statDeltaSentence,
     statDeltaTone,
@@ -284,7 +300,14 @@ export {
     type SortableMove,
     sortableMoveBlocked,
 } from "./sortable";
-export { STEP_GLYPH } from "./structure";
+export {
+    type AsciiTreeRow,
+    asciiTreeRows,
+    type MappingItem,
+    MappingList,
+    type MappingListProps,
+    STEP_GLYPH,
+} from "./structure";
 export {
     onColorSchemeChange,
     readThemeMode,
@@ -319,5 +342,8 @@ export {
     type CapacityStatus,
     capacityStatus,
     heatCellBackground,
+    SegmentBar,
+    type SegmentBarItem,
+    type SegmentBarProps,
 } from "./viz";
 export { Wizard, type WizardProps, type WizardStep, wizardFrontier } from "./wizard";

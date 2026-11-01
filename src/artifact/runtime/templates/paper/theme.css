@@ -1,0 +1,29 @@
+/* paper: follows the system, warm paper by day and graphite by night, a sky accent. Made for design documents. */
+/* Each token is written once with light-dark(); data-theme on the root element (ThemeToggle) overrides the system.
+   The dark half is graphite with a cooler panel; the tones double as the six category hues. */
+:root {
+    color-scheme: light dark;
+    --bg: light-dark(#f5f3ee, #0b0d12);
+    --panel: light-dark(#ffffff, #141821);
+    --panel-2: light-dark(#f8f6f1, #191e29);
+    --border: light-dark(#e0dbd0, #252c3a);
+    --border-2: light-dark(#cfc8ba, #313a4b);
+    --text: light-dark(#18202c, #e8ecf3);
+    --text-2: light-dark(#3c4656, #b3bccb);
+    --dim: light-dark(#5d6878, #8a95a8);
+    --accent: light-dark(#0369a1, #38bdf8);
+    --ok: light-dark(#4d7c0f, #a3e635);
+    --warn: light-dark(#a15c07, #f5b942);
+    --err: light-dark(#be123c, #fb7185);
+    --info: light-dark(#0369a1, #38bdf8);
+    --radius: 12px;
+    --font-body: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    --font-heading: "Space Grotesk", ui-sans-serif, -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    --font-code: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+:root[data-theme="light"] {
+    color-scheme: light;
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+}

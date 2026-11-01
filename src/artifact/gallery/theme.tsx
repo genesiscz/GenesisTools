@@ -1,4 +1,4 @@
-import { ChartJs, Mermaid, SERIES_COLOR, ThemeToggle, useTheme } from "@artifact/kit";
+import { ChartJs, HUE, Mermaid, SERIES_COLOR, ThemeToggle, useTheme } from "@artifact/kit";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
@@ -6,7 +6,7 @@ export const meta: GalleryMeta = {
     title: "Light and dark",
     summary:
         "The auto template follows the system. ThemeToggle is the opt-in override; charts and diagrams recolour on a flip.",
-    components: ["ThemeToggle"],
+    components: ["ThemeToggle", "HUE"],
 };
 
 const MONTHS = ["Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
@@ -32,6 +32,19 @@ export default function ThemePage() {
                             style={{ background: color }}
                         >
                             {i + 1}
+                        </span>
+                    ))}
+                </div>
+            </Demo>
+            <Demo title="Named hues" note="HUE, seven categorical colours by name, light and dark pairs">
+                <div className="flex flex-wrap gap-2">
+                    {Object.entries(HUE).map(([name, color]) => (
+                        <span
+                            key={name}
+                            className="inline-flex h-10 w-20 items-end rounded-card p-1 font-mono text-[10px] text-canvas"
+                            style={{ background: color }}
+                        >
+                            {name}
                         </span>
                     ))}
                 </div>

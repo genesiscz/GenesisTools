@@ -48,6 +48,9 @@ const KIT_FILES = [
     "wizard.tsx",
     "editable.tsx",
     "ledger.tsx",
+    "look.ts",
+    "nav.tsx",
+    "layer-diagram.tsx",
     "index.ts",
 ];
 

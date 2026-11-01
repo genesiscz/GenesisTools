@@ -20,7 +20,7 @@ tools artifact gallery gantt                                              # the 
 | `library up` | ONE server: `/` lists every registered artifact folder (counts, age, click to open); each mounts at `/a/<name>/` via a lazily-started sub-server. At most 8 mounts stay live at once; the least recently used one is closed on overflow, because every mount holds compiled modules and file watchers. Clean URLs work under every mount. |
 | `gallery [name]` | Open the built-in kit gallery (every kit component, grouped by family, with a search box), starting the library server first when none runs. A name opens one page, fuzzy and case-insensitive: `gantt`, `time series`, `datatable`. `--list` prints the pages by family and exits; `--no-open` prints the URL only; `--port` uses or starts the library on that port. |
 | `build [target]` | Self-contained single-file HTML into `<dir>/dist/` (override with `-o/--out`; pick the entry with `-e/--entry`). `.html` entries bundle local refs (scripts, stylesheets and media alike); `.tsx` entries bundle via a generated wrapper; `.md` entries render into the template's themed page chrome (`-t/--template` picks the theme). Sibling text-data files embed behind a `fetch()` shim so `file://` works (`--max-embed` caps one file, `--max-embed-total` caps them together). Any explicitly named entry (file target, `--entry`, or a registry entry) embeds ONLY referenced files (never the surrounding vault); a bare directory embeds every sibling data file (`--embed referenced\|tree` overrides). `--watch` rebuilds on change. Idempotent. |
-| `templates` | List the shipped themes: graphite (default), bone, forest, steel, tan, cobalt, auto. |
+| `templates` | List the shipped themes: graphite (default), bone, forest, steel, tan, cobalt, auto, paper (warm paper by day, graphite by night; made for design documents). |
 | `kit` | Print the kit's generated `.d.ts` API — author against it without reading component source. |
 | `types [dir]` | Write an OPTIONAL editor-only `tsconfig.json` (IntelliSense for `@artifact/kit`, repo imports, react). |
 | `init <file>` | Scaffold a starter (`.html` report shape, `.tsx` kit dashboard shape). |
@@ -55,6 +55,16 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
 - Layout: `Page`, `Hero`, `Section`, `Card`/`CardGrid`, `Collapse` (styled details/summary),
   `Tabs` (hash-synced, sticky bar, per-tab status `badge`), `Router`/
   `RouterLink`/`useParams`/`useNavigate` (history API, base-aware, hash fallback on `file://`)
+- Design documents: `Page look="document"` switches every kit component inside to the document
+  scale (display headings, 16 px prose in `--text-2`, roomier cards); `Page nav` takes a `TopNav`
+  (sticky blurred bar: brand, section links, theme button), `backdrop="glow"` adds two soft accent
+  glows, `footer` closes the page. `Hero highlight` paints a phrase with the accent gradient,
+  `Section id`/`number`/`intro` make numbered anchor sections, `Card` builds rich cards (`color` +
+  `edge`, `kicker`, `number`, `subtitle`, `mono`, `dashed`, `tilt`, `lift`, `highlight`, `muted`,
+  `fields`, `lines`, `note`, `footer`), `CardGrid min`/`fill` auto-fits columns, `Legend` keys the
+  marks, `Badge tag` is a lowercase mono label, `Callout bar` is a rule note, `Compare plain`
+  (with `hint`, `weights`) is an open before/after, `HUE` names seven categorical colours. Demo:
+  `src/artifact/gallery/document-look.tsx`; a full page: build any `.tsx` with `-t paper`.
 - Data: `StatGrid` (`delta` against a baseline, `edge` accent, auto-fit `min`), `EditableTable`
   (input cells with drafts, add/remove, validation, totals), `ChangeLedger` + `FieldDiff` +
   `diffFields` (sync history with added, removed and changed fields), `DataTable` (filter, `rowTone`, toned/markdown cells), `SeriesTable`,
@@ -68,11 +78,16 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
   filter; replaces build-time markdown inlining). Fenced code is highlighted (highlight.js core
   + 19 languages, theme-toned); a ```` ```mermaid ```` fence renders as a diagram.
 - Diagrams: `Mermaid` (`chart` = mermaid source; zoom toolbar, copy source, download SVG),
-  `ZoomPane` (scroll + zoom frame for any oversized SVG or image)
+  `ZoomPane` (scroll + zoom frame for any oversized SVG or image), `LayerDiagram` (a layered
+  architecture drawn as SVG in the page, offline: bands of boxes on a column grid with weights,
+  row and column spans, dashed and tinted boxes, arrows with labels, bus lines between bands;
+  `layoutLayerDiagram` is the pure geometry)
 - Diff: `DiffView` (`before`/`after` or a unified `patch`; `unified` or `split`; +/− counts)
-- Structure: `TreeView` + `treeFromPaths` (file trees), `Steps` (status stepper), `Compare`
-  (A vs B columns), `KeyValue` (definition grid), `JsonView` (collapsible JSON), `Figure`
-  (captioned image, click for full size)
+- Structure: `TreeView` + `treeFromPaths` (file trees; `variant="ascii"` prints a command tree
+  with ├─ guides, per-group badge columns and one comment column, `color` inherited), `Steps`
+  (status stepper), `Compare` (A vs B columns), `KeyValue` (definition grid), `MappingList` (old
+  name to new name: `arrow` rows with a note, or `stacked` rows with the old value struck
+  through), `JsonView` (collapsible JSON), `Figure` (captioned image, click for full size)
 - Time series: `TimeSeries` (canvas, tens of thousands of points per series with min/max
   decimation; wheel/pinch zoom, drag pan, Shift-drag box zoom, brush strip, presets, keyboard;
   series chips with Alt-click solo, combined/split layout, per-unit log, % of max, table, CSV and
@@ -80,14 +95,17 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
   `id` persists the view in localStorage and the URL hash; `groups` titles split panels,
   `markerKinds` sets the marker kinds shown at first, `series={[]}` with `spans` draws an activity timeline). Demo: `src/artifact/gallery/time-series.tsx`
 - Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid),
+  `SegmentBar` (one bar cut into weighted segments with labels, captions at both ends),
   `Gantt` + `GanttTable` (sprint axis, tinted lanes, baseline ghosts with a shift label,
   milestones, today line, drag and keyboard editing), `CapacityGrid` (load against capacity)
 - Interactive: `Simulator` (step player), `ParametricSimulator` (sliders/segments/toggles +
-  pure `generate(params)` + presets), `SegmentedControl`, `FilterChips`, `SortableList`,
+  pure `generate(params)` + presets), `SegmentedControl`, `FilterChips` (`single` filters by one
+  category), `SortableList`,
   `Wizard`, `Tooltip`/`useTooltip` (one shared hover card, dark in every theme)
 - Forms: `Button`, `Field`, `TextInput`, `NumberInput`, `DateInput`, `Select`, `Textarea`,
   `FileInput` (dates are `YYYY-MM-DD` strings; every control has a 2 px focus ring)
-- Theme: `ThemeToggle`/`useTheme` (opt-in override for the `auto` template), `SERIES_COLOR`
+- Theme: `ThemeToggle`/`useTheme` (opt-in override for the `auto` and `paper` templates;
+  `variant="cycle"` is one pill button), `SERIES_COLOR`
   (8 lane colours from the shared `--series-*` tokens), `contrastRatio`/`readableTextOn`
 
 The kit gallery (`src/artifact/gallery/`) demos every kit component, one page per family or
