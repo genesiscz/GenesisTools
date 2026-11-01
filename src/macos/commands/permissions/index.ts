@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { formatBytes } from "@genesiscz/utils/format";
 import { retiredAtOf } from "@genesiscz/utils/genesis-tools/app-binary";
 import { out } from "@genesiscz/utils/logger";
 import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
@@ -19,7 +20,9 @@ import {
     buildApp,
     CODESIGN_TRUST_COMMAND,
     describeSource,
+    type RetiredBundlesSummary,
     readManifest,
+    retiredBundlesSummary,
     trustCodesignKeys,
 } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
@@ -100,6 +103,46 @@ function printOldBuilds(builds: OldBuild[]): void {
     ui.dim(
         "  A process keeps the build it started with. After a rebuild, macOS asks once more for Local Network the first time that build reaches your network. The answer covers that build only."
     );
+}
+
+function printRetiredSummary(summary: RetiredBundlesSummary, applied: boolean): void {
+    ui.header("Retired GenesisTools.app bundles");
+    ui.kv("folder", summary.root, 10);
+    ui.kv("bundles", `${summary.folders.length}`, 10);
+    ui.kv(
+        "pinned",
+        summary.pinned === null
+            ? "unknown (the running processes could not be read)"
+            : `${summary.pinned.length} (a running process executes their binary, so they stay)`,
+        10
+    );
+    ui.kv("packed", `${summary.archives.length} .zst`, 10);
+
+    const sharing = summary.sharing;
+
+    if (!sharing) {
+        ui.dim("  No retired bundle to share.");
+        return;
+    }
+
+    const verb = applied ? "shared" : "can share";
+    ui.kv(verb, `${sharing.shared} of ${sharing.files} resource files, ${formatBytes(sharing.sharedBytes)}`, 10);
+    ui.kv(
+        "already",
+        `${sharing.alreadyShared} files share their blocks; ${summary.alreadyVisited} bundles were shared by an earlier pass`,
+        10
+    );
+    ui.kv("took", `${sharing.ms} ms`, 10);
+
+    for (const error of sharing.errors.slice(0, 3)) {
+        ui.warn(`${error.path}: ${error.message}`);
+    }
+
+    if (!applied && sharing.shared > 0) {
+        ui.dim(
+            `  Only Contents/Resources changes: each file becomes an APFS clone of the same bytes, so signatures stay valid. Run ${toolCommand("macos permissions retired", "--apply")}, or let the next build do it.`
+        );
+    }
 }
 
 function printReport(report: PermissionsReport): void {
@@ -309,6 +352,24 @@ export function registerPermissionsCommand(program: Command): void {
             }
 
             ui.raw(`  Next: ${toolCommand("macos permissions")}   (then grant the panes it lists)`);
+        });
+
+    permissions
+        .command("retired")
+        .description(
+            "Retired app bundles kept for running processes, and the resource bytes they could share with the installed one (reads only without --apply)"
+        )
+        .option("--apply", "Share them now: identical resources become APFS clones (a build does this by itself)")
+        .option("--json", "Print the summary as JSON")
+        .action(async (options: { apply?: boolean; json?: boolean }) => {
+            const summary = await retiredBundlesSummary({ apply: options.apply === true });
+
+            if (options.json) {
+                out.result(summary);
+                return;
+            }
+
+            printRetiredSummary(summary, options.apply === true);
         });
 
     permissions

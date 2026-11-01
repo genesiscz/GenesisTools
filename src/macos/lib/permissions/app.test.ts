@@ -13,10 +13,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { getCloneId } from "@genesiscz/utils/macos/apfs";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import * as prompts from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { skip } from "@genesiscz/utils/test/skip";
 import { ClickyLibraryUnavailableError, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
 import {
     bundleClickyLibrary,
@@ -26,8 +28,10 @@ import {
     readAppFaceProcesses,
     readRunningExecutableInodes,
     requireAppBuildSdk,
+    retiredStampsToShare,
     runningExecutableInodes,
     runStreaming,
+    shareRetiredResources,
     sourceHash,
     sourceRootsFor,
     stampAppToolsPath,
@@ -42,6 +46,7 @@ import {
     shouldAsk,
     writeOfferStateTo,
 } from "./build-offer";
+import { shareBundleResources } from "./bundle-resources";
 import {
     createBuildProgressDisplay,
     createSwiftProgressReporter,
@@ -1234,6 +1239,215 @@ describe("an install is stale only when the code it links changed", () => {
             expect(sourceHash(app, ["clicky", "features", "hub", "markdown", "widget"])).toBe(legacyHash);
         } finally {
             rmSync(dirname(app), { recursive: true, force: true });
+        }
+    });
+});
+
+describe.skipIf(skip.unlessMac)("shareBundleResources", () => {
+    const KB64 = 64 * 1024;
+    /** 64 KB of one repeated byte, so a file holds real blocks and two variants never match by accident. */
+    const bytes = (fill: number) => Buffer.alloc(KB64, fill);
+
+    function bundleIn(root: string, stamp: string, files: Record<string, Buffer>): string {
+        const bundle = join(root, stamp, "GenesisTools.app");
+
+        for (const [rel, content] of Object.entries(files)) {
+            const path = join(bundle, "Contents", rel);
+            mkdirSync(dirname(path), { recursive: true });
+            writeFileSync(path, content);
+        }
+
+        return bundle;
+    }
+
+    const inode = (path: string) => statSync(path).ino;
+    const sameClone = (a: string, b: string) => {
+        const id = getCloneId(a);
+        return id !== null && id !== 0n && id === getCloneId(b);
+    };
+
+    it("a dry run counts the identical resources and changes no file", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const files = { "Resources/ClickyLibrary/a.wav": bytes(1), "Resources/AppIcon.icns": bytes(2) };
+            const installed = bundleIn(root, "installed", files);
+            const retired = bundleIn(root, "100", files);
+            const icon = join(retired, "Contents/Resources/AppIcon.icns");
+            const before = inode(icon);
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: false });
+
+            expect(report.shared).toBe(2);
+            expect(report.sharedBytes).toBeGreaterThanOrEqual(2 * KB64);
+            expect(inode(icon)).toBe(before);
+            expect(sameClone(join(installed, "Contents/Resources/AppIcon.icns"), icon)).toBe(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("apply turns each identical resource into a clone of the first bundle's copy and leaves that copy alone", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const installed = bundleIn(root, "installed", {
+                "Resources/ClickyLibrary/a.wav": bytes(1),
+                "Resources/diff-viewer/viewer.js": bytes(3),
+            });
+            const retired = bundleIn(root, "100", {
+                "Resources/ClickyLibrary/a.wav": bytes(1),
+                "Resources/diff-viewer/viewer.js": bytes(4),
+            });
+            const keeper = join(installed, "Contents/Resources/ClickyLibrary/a.wav");
+            const keeperInode = inode(keeper);
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(report.shared).toBe(1);
+            expect(report.errors).toEqual([]);
+            expect(sameClone(keeper, join(retired, "Contents/Resources/ClickyLibrary/a.wav"))).toBe(true);
+            expect(readFileSync(join(retired, "Contents/Resources/ClickyLibrary/a.wav"))).toEqual(bytes(1));
+            expect(inode(keeper)).toBe(keeperInode);
+            // A changed file keeps its own bytes: sharing never makes two different builds look alike.
+            expect(readFileSync(join(retired, "Contents/Resources/diff-viewer/viewer.js"))).toEqual(bytes(4));
+            // The folder swap leaves neither the fresh clone nor the replaced copy behind.
+            expect(readdirSync(join(retired, "Contents/Resources")).sort()).toEqual(["ClickyLibrary", "diff-viewer"]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("enters a folder that differs and shares its equal files one by one", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const installed = bundleIn(root, "installed", {
+                "Resources/ClickyLibrary/a.wav": bytes(1),
+                "Resources/ClickyLibrary/b.wav": bytes(2),
+            });
+            const retired = bundleIn(root, "100", {
+                "Resources/ClickyLibrary/a.wav": bytes(1),
+                "Resources/ClickyLibrary/b.wav": bytes(3),
+                "Resources/ClickyLibrary/c.wav": bytes(4),
+            });
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(report).toMatchObject({ files: 5, shared: 1, alreadyShared: 0, errors: [] });
+            const library = (bundle: string, name: string) => join(bundle, "Contents/Resources/ClickyLibrary", name);
+            expect(sameClone(library(installed, "a.wav"), library(retired, "a.wav"))).toBe(true);
+            expect(readFileSync(library(retired, "b.wav"))).toEqual(bytes(3));
+            expect(readFileSync(library(retired, "c.wav"))).toEqual(bytes(4));
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("never touches the executable, Info.plist or the signature, even when they are identical", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const outside = {
+                "MacOS/GenesisTools": bytes(7),
+                "Info.plist": bytes(8),
+                "_CodeSignature/CodeResources": bytes(9),
+            };
+            const installed = bundleIn(root, "installed", outside);
+            const retired = bundleIn(root, "100", outside);
+            const paths = Object.keys(outside).map((rel) => join(retired, "Contents", rel));
+            const before = paths.map(inode);
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(report.files).toBe(0);
+            expect(paths.map(inode)).toEqual(before);
+            expect(sameClone(join(installed, "Contents/MacOS/GenesisTools"), paths[0])).toBe(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("shares with any earlier bundle that has the same bytes, not only the first one", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+        const rel = "Resources/diff-viewer/viewer.js";
+
+        try {
+            const installed = bundleIn(root, "installed", { [rel]: bytes(1) });
+            const newer = bundleIn(root, "200", { [rel]: bytes(2) });
+            const older = bundleIn(root, "100", { [rel]: bytes(2) });
+            const oldest = bundleIn(root, "050", { [rel]: bytes(1) });
+
+            const report = shareBundleResources({ bundles: [installed, newer, older, oldest], apply: true });
+
+            expect(report.shared).toBe(2);
+            expect(sameClone(join(newer, "Contents", rel), join(older, "Contents", rel))).toBe(true);
+            expect(sameClone(join(installed, "Contents", rel), join(oldest, "Contents", rel))).toBe(true);
+            expect(sameClone(join(installed, "Contents", rel), join(newer, "Contents", rel))).toBe(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("a second pass finds everything shared and clones nothing", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const files = { "Resources/ClickyLibrary/a.wav": bytes(1), "Resources/webview/index.html": bytes(5) };
+            const installed = bundleIn(root, "installed", files);
+            const retired = bundleIn(root, "100", files);
+            shareBundleResources({ bundles: [installed, retired], apply: true });
+            const html = join(retired, "Contents/Resources/webview/index.html");
+            const after = inode(html);
+
+            const again = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(again.shared).toBe(0);
+            expect(again.alreadyShared).toBe(2);
+            expect(inode(html)).toBe(after);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("a retired folder done once is marked and not walked again; a dry run marks nothing", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const files = { "Resources/ClickyLibrary/a.wav": bytes(1) };
+            const installed = bundleIn(root, "installed", files);
+            const retiredRoot = join(root, "retired.noindex");
+            bundleIn(retiredRoot, "200", files);
+            bundleIn(retiredRoot, "100", files);
+
+            const dry = shareRetiredResources({ retiredRoot, installedBundle: installed, apply: false });
+            expect(dry?.shared).toBe(2);
+            expect(retiredStampsToShare(retiredRoot, ["200", "100"])).toEqual(["200", "100"]);
+
+            const applied = shareRetiredResources({ retiredRoot, installedBundle: installed, apply: true });
+            expect(applied?.shared).toBe(2);
+            expect(retiredStampsToShare(retiredRoot, ["200", "100"])).toEqual([]);
+
+            bundleIn(retiredRoot, "300", files);
+            const next = shareRetiredResources({ retiredRoot, installedBundle: installed, apply: true });
+            expect(next).toMatchObject({ bundles: 2, files: 2, shared: 1 });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("skips a bundle that is missing or has no Resources folder", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const installed = bundleIn(root, "installed", { "Resources/AppIcon.icns": bytes(2) });
+            const bare = bundleIn(root, "100", { "MacOS/GenesisTools": bytes(7) });
+
+            const report = shareBundleResources({ bundles: [installed, bare, join(root, "gone.app")], apply: true });
+
+            expect(report).toMatchObject({ bundles: 3, files: 1, shared: 0, errors: [] });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 });

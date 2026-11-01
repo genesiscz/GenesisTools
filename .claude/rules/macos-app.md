@@ -298,6 +298,14 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   `tools` re-enters the current launcher when it differs (`genesisAppLauncher()`). A build that finds no signing
   identity while the installed app is Developer ID signed refuses to install ad-hoc (a sandboxed shell cannot read
   the keychain). Worktree builds install the same way and keep the grants.
+- A pinned retired bundle stays, so every open Claude session keeps one build alive (2026-11-01: 22 pinned folders,
+  3.5 GB, one per build since 10-19). A launcher maps only `Contents/MacOS/GenesisTools` (`lsof` shows `txt`), so
+  after each build a background `tools macos permissions retired --apply` makes the retired bundles'
+  `Contents/Resources` (Clicky sounds, web viewers, icon: about 65 MB of 154 MB) APFS clones of the installed copy;
+  the bytes do not change, so the seal and every grant stay. It never touches the executable, `Info.plist` or
+  `_CodeSignature`, and marks each folder it finished with `resources-shared`. `tools macos permissions retired`
+  alone is the dry run; measure with `tools du clonesize`, never `du`. Only the binary (about 93 MB per pinned
+  build) still piles up while its session lives.
 - After a rebuild, restart a running hub without stealing focus, by its pid only (a `pkill -f` pattern also
   killed other agents' snapshot runs, 2026-09-24): `kill <pid of MacOS/GenesisTools --hub>` if the build did not
   reap it, then `tools hub open --no-activate` with the flags it had.
