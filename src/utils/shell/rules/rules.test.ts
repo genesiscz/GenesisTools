@@ -577,7 +577,19 @@ describe("biome-unsafe-deletes-comments", () => {
         expect(fired(expected)).toEqual([]);
     });
 
-    it.each(["yarn exec", "pnpm exec", "npm exec", "npm exec --"])("blocks unsafe Biome fixes through %s", (runner) => {
+    it.each([
+        "yarn exec",
+        "pnpm exec",
+        "npm exec",
+        "npm exec --",
+        "pnpm -C pkg exec",
+        "pnpm --filter=a exec",
+        "pnpm -r exec",
+        "yarn --cwd pkg exec",
+        "npm --prefix pkg exec",
+        "npx -y",
+        "bunx --bun",
+    ])("blocks unsafe Biome fixes through %s", (runner) => {
         expect(fired(`${runner} biome lint --write --unsafe src`)).toEqual([
             `${runner} biome lint --write --unsafe ${SKIP} src`,
         ]);
@@ -686,6 +698,8 @@ describe("biome-unsafe-deletes-comments", () => {
             "cd sub && NO_COLOR=1 bunx biome check --write --unsafe plain.ts",
             "npx biome check --write --unsafe plain.ts",
             "yarn exec biome check --write --unsafe plain.ts",
+            "pnpm exec biome check --write --unsafe plain.ts",
+            "pnpm exec -- biome check --write --unsafe plain.ts",
         ])("allows %j: no import has a comment the fix could delete", (command) => {
             expect(firedIn(command)).toEqual([]);
         });
@@ -741,7 +755,15 @@ describe("biome-unsafe-deletes-comments", () => {
             ["sudo -D, which moves the folder", "sudo -n -D sub bunx biome check --write --unsafe plain.ts"],
             ["xargs, which adds targets", "xargs bunx biome check --write --unsafe plain.ts < notes.json"],
             ["yarn, which starts biome in the package root", "yarn biome check --write --unsafe plain.ts"],
-            ["pnpm, whose folder is not verified", "pnpm exec biome check --write --unsafe plain.ts"],
+            ["pnpm biome, which runs a package script named biome first", "pnpm biome check --write --unsafe plain.ts"],
+            ["pnpx biome, which downloads the npm package biome", "pnpx biome check --write --unsafe plain.ts"],
+            ["pnpm -C, which moves the folder", "pnpm -C sub exec biome check --write --unsafe plain.ts"],
+            [
+                "pnpm --filter, which starts in the package",
+                "pnpm --filter=a exec biome check --write --unsafe plain.ts",
+            ],
+            ["pnpm -r, which runs in every package", "pnpm -r exec biome check --write --unsafe plain.ts"],
+            ["yarn --cwd, which moves the folder", "yarn --cwd sub exec biome check --write --unsafe plain.ts"],
             ["a zsh >| that hides a target", "bunx biome check --write --unsafe plain.ts >| out.log header.ts"],
             ["a zsh 2>| that hides a target", "bunx biome check --write --unsafe plain.ts 2>| e.log header.ts"],
             ["an output process substitution", "bunx biome check --write --unsafe plain.ts > >(cat) header.ts"],
