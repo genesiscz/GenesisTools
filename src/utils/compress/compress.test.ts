@@ -15,8 +15,10 @@ import {
     rmSync,
     statSync,
     symlinkSync,
+    truncateSync,
     utimesSync,
     writeFileSync,
+    writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -451,6 +453,75 @@ describe("folder archives", () => {
         expect(() =>
             list(sparseArchive("3\n1000\n600\n5000\n300\n10000\n0\n", { "GNU.sparse.minor": "1" }), 512)
         ).toThrow("unsupported GNU sparse format 1.1");
+    });
+
+    it("packs a macOS folder with sparse files, real ._ files and an xattr, verifies it, and unpacks it identically", async () => {
+        const dir = scratch("mac-folder");
+        const tree = join(dir, "tree");
+        mkdirSync(join(tree, "empty"), { recursive: true });
+        writeFileSync(join(tree, "plain.txt"), "plain\n");
+        writeFileSync(join(tree, "real"), "real\n");
+        writeFileSync(join(tree, "._real"), "a real file of the user, not AppleDouble data\n");
+        writeFileSync(join(tree, "._orphan"), "a ._ file without a partner\n");
+        // A data block then a hole, and a file that is all hole: APFS keeps both sparse, so bsdtar writes GNU sparse.
+        // The second name is not ASCII, so bsdtar adds a pax `path` beside `GNU.sparse.name`.
+        writeFileSync(join(tree, "holes.bin"), Buffer.alloc(70_000, 7));
+        truncateSync(join(tree, "holes.bin"), 2 * 1024 * 1024);
+        writeFileSync(join(tree, "naïve hole.bin"), "");
+        truncateSync(join(tree, "naïve hole.bin"), 1024 * 1024);
+        linkSync(join(tree, "holes.bin"), join(tree, "holes-link.bin"));
+        linkSync(join(tree, "plain.txt"), join(tree, "plain-link.txt"));
+        symlinkSync("plain.txt", join(tree, "link"));
+
+        if (process.platform === "darwin") {
+            const tag = Bun.spawnSync(["xattr", "-w", "com.example.tag", "red", join(tree, "plain.txt")], {
+                env: process.env,
+            });
+            expect(tag.exitCode).toBe(0);
+        }
+
+        const packed = await packDirectory({ source: tree });
+        const raw = Buffer.concat([...readZstdFramesSync(packed.archive)]).toString("latin1");
+        expect(raw.includes("GNU.sparse.major=1")).toBe(process.platform === "darwin");
+        expect(raw.includes("._plain.txt")).toBe(false);
+        const check = verifyArchiveAgainstFolder({ archive: packed.archive, source: tree });
+        expect(check).toEqual({ ok: true, entries: 11, missing: [], mismatched: [], extra: [] });
+
+        const out = join(dir, "restored");
+        await unpackArchive({ archive: packed.archive, destination: out });
+        // bsdtar on macOS writes every extracted name in NFD, so the NFC name keeps its letters but not its bytes
+        // (APFS opens it by either form). The archive keeps the source's form; restoring it is a separate change.
+        const names = (folder: string) =>
+            readdirSync(folder)
+                .map((name) => name.normalize("NFC"))
+                .sort();
+        expect(names(join(out, "tree"))).toEqual(names(tree));
+
+        for (const name of [
+            "plain.txt",
+            "plain-link.txt",
+            "real",
+            "._real",
+            "._orphan",
+            "holes.bin",
+            "naïve hole.bin",
+        ]) {
+            expect(readFileSync(join(out, "tree", name)).equals(readFileSync(join(tree, name)))).toBe(true);
+        }
+
+        expect(statSync(join(out, "tree", "holes-link.bin")).ino).toBe(statSync(join(out, "tree", "holes.bin")).ino);
+        expect(statSync(join(out, "tree", "plain-link.txt")).ino).toBe(statSync(join(out, "tree", "plain.txt")).ino);
+        expect(readlinkSync(join(out, "tree", "link"))).toBe("plain.txt");
+        expect(readdirSync(join(out, "tree", "empty"))).toEqual([]);
+
+        // A byte written into a hole changes the rebuilt content, so the check still fails on it.
+        const fd = openSync(join(tree, "holes.bin"), "r+");
+        writeSync(fd, "!", 1024 * 1024);
+        closeSync(fd);
+        expect(verifyArchiveAgainstFolder({ archive: packed.archive, source: tree }).mismatched.sort()).toEqual([
+            "tree/holes-link.bin",
+            "tree/holes.bin",
+        ]);
     });
 
     it("rejects incomplete tar headers, bodies, padding, end markers and invalid headers", async () => {
