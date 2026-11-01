@@ -11,7 +11,7 @@ import Foundation
 
 /// Replaces a file's bytes in one step. The new bytes go to a temporary file in the same folder (created `O_EXCL`,
 /// so nothing else can hold it), which takes the original's permissions, ACL and extended attributes, is synced to
-/// disk, and is then renamed over the original. A reader sees the old file or the new one, never a torn one.
+/// disk, and is then put in the original's place. A reader sees the old file or the new one, never a torn one.
 enum MarkdownAtomicWrite {
     enum Failure: Error, Equatable {
         /// The file no longer has the bytes the new content was made from.
@@ -28,18 +28,35 @@ enum MarkdownAtomicWrite {
     }
 
     /// Writes `data` over `url`. A symlink is followed, so the note it points at changes and the link stays.
-    /// `expected` is the content `data` was made from: the file is read again right before the rename, and a file
-    /// that no longer has it is left alone (`.changed`), so a write that landed meanwhile is never overwritten.
-    static func replace(_ url: URL, with data: [UInt8], expected: [UInt8]?) throws {
+    ///
+    /// `expected` is the content `data` was made from. The new file is swapped into place (`RENAME_SWAP`), and the
+    /// file that comes out is checked AFTER the swap: one that no longer has `expected` goes back (`.changed`). So a
+    /// write that landed before the swap is kept, whether it went into the file or was a new file renamed over it,
+    /// and a write after the swap replaces this one. Apps that use file coordination wait for this write. What no
+    /// check can see: a program that opened the old file before the swap and writes into it after the check; that
+    /// needs the writer's cooperation. A volume that cannot swap gets the check right before a plain rename.
+    ///
+    /// `beforePlacing` runs between the check and the placement; a test writes there as another program would.
+    static func replace(_ url: URL, with data: [UInt8], expected: [UInt8]?, beforePlacing: () -> Void = {}) throws {
         let target = url.resolvingSymlinksInPath()
+        var coordination: NSError?
+        var outcome: Result<Void, Error> = .success(())
+        NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: target, options: .forReplacing,
+                                                         error: &coordination) { granted in
+            outcome = Result { try write(data, over: granted, expected: expected, beforePlacing: beforePlacing) }
+        }
+        if let coordination { throw coordination }
+        try outcome.get()
+    }
+
+    private static func write(_ data: [UInt8], over target: URL, expected: [UInt8]?, beforePlacing: () -> Void) throws {
         let temporary = target.deletingLastPathComponent()
             .appendingPathComponent(".\(target.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = open(temporary.path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw Failure.system("create the temporary file", errno) }
-        var placed = false
-        defer {
-            if !placed { try? FileManager.default.removeItem(at: temporary) }
-        }
+        // Whatever is left at the temporary path when this returns: the new bytes that did not go in, or the old file
+        // the swap took out. Never a file another program wrote: that one is put back in place first.
+        defer { unlink(temporary.path) }
         var original = stat()
         let known = stat(target.path, &original) == 0
         var failure: Failure?
@@ -50,7 +67,7 @@ enum MarkdownAtomicWrite {
             data.withUnsafeBytes { buffer in
                 var offset = 0
                 while offset < buffer.count, let base = buffer.baseAddress {
-                    let written = write(descriptor, base + offset, buffer.count - offset)
+                    let written = Darwin.write(descriptor, base + offset, buffer.count - offset)
                     if written < 0 {
                         if errno == EINTR { continue }
                         failure = .system("write", errno)
@@ -68,13 +85,38 @@ enum MarkdownAtomicWrite {
         if known {
             _ = copyfile(target.path, temporary.path, nil, copyfile_flags_t(COPYFILE_ACL | COPYFILE_XATTR))
         }
-        if let expected {
-            guard let now = FileManager.default.contents(atPath: target.path), now.elementsEqual(expected) else {
-                throw Failure.changed
-            }
+        guard let expected else {
+            guard rename(temporary.path, target.path) == 0 else { throw Failure.system("rename", errno) }
+            return
         }
-        guard rename(temporary.path, target.path) == 0 else { throw Failure.system("rename", errno) }
-        placed = true
+        // A file that already changed costs no swap.
+        guard holds(target, expected) else { throw Failure.changed }
+        beforePlacing()
+        guard renamex_np(temporary.path, target.path, UInt32(RENAME_SWAP)) == 0 else {
+            let code = errno
+            guard code == ENOTSUP || code == EINVAL else { throw Failure.system("swap", code) }
+            guard holds(target, expected) else { throw Failure.changed }
+            guard rename(temporary.path, target.path) == 0 else { throw Failure.system("rename", errno) }
+            return
+        }
+        // The old file is now at the temporary path. It still has `expected`: the new bytes stay, and it goes.
+        if holds(temporary, expected) { return }
+        // Someone wrote it meanwhile: their file goes back in place, and the new bytes come out.
+        guard renamex_np(temporary.path, target.path, UInt32(RENAME_SWAP)) == 0 else {
+            // Theirs is at the temporary path: a plain rename puts it back over the new bytes.
+            guard rename(temporary.path, target.path) == 0 else { throw Failure.system("put the changed file back", errno) }
+            throw Failure.changed
+        }
+        // What came out is not the new bytes: a third program renamed its own file over them after the swap. That one
+        // is the newest, so it goes back in place, and the older write it replaced comes out.
+        if !holds(temporary, data), renamex_np(temporary.path, target.path, UInt32(RENAME_SWAP)) != 0 {
+            guard rename(temporary.path, target.path) == 0 else { throw Failure.system("put the newest file back", errno) }
+        }
+        throw Failure.changed
+    }
+
+    private static func holds(_ url: URL, _ bytes: [UInt8]) -> Bool {
+        FileManager.default.contents(atPath: url.path)?.elementsEqual(bytes) == true
     }
 }
 

@@ -48,6 +48,7 @@ enum MarkdownTaskList {
     private static let quote: UInt8 = 0x3E, dash: UInt8 = 0x2D, star: UInt8 = 0x2A, plus: UInt8 = 0x2B
     private static let dot: UInt8 = 0x2E, paren: UInt8 = 0x29, open: UInt8 = 0x5B, close: UInt8 = 0x5D
     private static let lowerX: UInt8 = 0x78, upperX: UInt8 = 0x58, backtick: UInt8 = 0x60, tilde: UInt8 = 0x7E
+    private static let hash: UInt8 = 0x23, underscore: UInt8 = 0x5F
     private static let bom: [UInt8] = [0xEF, 0xBB, 0xBF]
 
     // MARK: Lines
@@ -110,26 +111,137 @@ enum MarkdownTaskList {
 
     // MARK: Every item
 
-    /// Every task item outside the frontmatter and fenced code, in file order. The frontmatter is found the way
-    /// `MarkdownFrontmatter.split` finds it, so the lines agree with the page's.
+    /// Every task item the page draws as a box, in file order: outside the frontmatter, fenced code and indented code.
+    /// The frontmatter is found the way `MarkdownFrontmatter.split` finds it, so the lines agree with the page's.
+    ///
+    /// A line starts a list item only when its indent, counted from the content of the list item it sits in (or from
+    /// the margin), is under four columns, as CommonMark reads it. Four or more is indented code or the next line of a
+    /// paragraph: text either way, never a box. So `    - [ ] alpha` under a heading is a code example, while the same
+    /// line under `- [ ] parent` is its nested task.
     static func items(in bytes: [UInt8]) -> [MarkdownTaskLine] {
         let lines = lines(bytes)
         var out: [MarkdownTaskLine] = []
         var fence: (mark: UInt8, count: Int)?
+        // The content columns of the open list items, innermost last, inside `depth` quote marks.
+        var open: [Int] = []
+        var depth = 0
+        // A paragraph is open: a less indented line that starts no block continues it, and closes no list item.
+        var paragraph = false
         for n in bodyStart(lines, bytes)..<lines.count {
             let line = bytes[lines[n]]
-            if let mark = fenceMark(line) {
-                if let opened = fence {
-                    if mark.mark == opened.mark, mark.count >= opened.count, mark.bare { fence = nil }
-                } else {
-                    fence = (mark.mark, mark.count)
-                }
+            if let opened = fence {
+                if let mark = fenceMark(line), mark.mark == opened.mark, mark.count >= opened.count, mark.bare { fence = nil }
                 continue
             }
-            guard fence == nil, let found = parse(line) else { continue }
+            let lead = lead(line)
+            guard lead.first < line.endIndex else {
+                paragraph = false
+                continue
+            }
+            if lead.depth != depth {
+                open = []
+                depth = lead.depth
+            }
+            let marker = listMarker(line, at: lead.first, column: lead.column)
+            let opening = fenceMark(line)
+            let interrupting = interrupts(line, at: lead.first)
+            // The list items this line is not indented into end here, unless it is a paragraph's lazy next line.
+            if marker != nil || opening != nil || interrupting || !paragraph {
+                while let last = open.last, lead.column < last { open.removeLast() }
+            }
+            if lead.column - (open.last ?? 0) >= 4 { continue }
+            if let opening {
+                fence = (opening.mark, opening.count)
+                paragraph = false
+                continue
+            }
+            if interrupting {
+                paragraph = false
+                continue
+            }
+            guard let marker else {
+                paragraph = true
+                continue
+            }
+            open.append(marker.content)
+            paragraph = !marker.empty
+            guard !marker.code, let found = parse(line) else { continue }
             out.append(MarkdownTaskLine(line: n, stateOffset: found.state, checked: found.checked, text: found.text))
         }
         return out
+    }
+
+    /// Where a line's content starts: past a BOM, the `>` quote marks (each with the one blank after it) and the
+    /// indent. `column` is that indent in columns after the last quote mark; a tab runs to the next multiple of four.
+    private static func lead(_ line: ArraySlice<UInt8>) -> (depth: Int, column: Int, first: Int) {
+        var i = line.startIndex
+        let end = line.endIndex
+        if line.starts(with: bom) { i += bom.count }
+        var depth = 0
+        var column = 0
+        while true {
+            column = 0
+            while i < end, line[i] == space || line[i] == tab {
+                column = line[i] == tab ? column + 4 - column % 4 : column + 1
+                i += 1
+            }
+            guard i < end, line[i] == quote else { break }
+            depth += 1
+            i += 1
+            if i < end, line[i] == space || line[i] == tab { i += 1 }
+        }
+        return (depth, column, i)
+    }
+
+    /// The list marker at `first` (`-`, `*`, `+`, `1.`, `1)`, then a blank or the end of the line) as the column its
+    /// item's content starts at. `code`: five or more blank columns follow the marker, so the content is indented
+    /// code. `empty`: nothing follows it.
+    private static func listMarker(_ line: ArraySlice<UInt8>, at first: Int, column: Int)
+        -> (content: Int, code: Bool, empty: Bool)? {
+        var i = first
+        let end = line.endIndex
+        if line[i] == dash || line[i] == star || line[i] == plus {
+            i += 1
+        } else {
+            let digits = i
+            while i < end, i - digits < 9, (0x30...0x39).contains(line[i]) { i += 1 }
+            guard i > digits, i < end, line[i] == dot || line[i] == paren else { return nil }
+            i += 1
+        }
+        let marked = column + (i - first)
+        guard i < end else { return (marked + 1, false, true) }
+        guard line[i] == space || line[i] == tab else { return nil }
+        var after = marked
+        while i < end, line[i] == space || line[i] == tab {
+            after = line[i] == tab ? after + 4 - after % 4 : after + 1
+            i += 1
+        }
+        if i == end { return (marked + 1, false, true) }
+        if after - marked >= 5 { return (marked + 1, true, false) }
+        return (after, false, false)
+    }
+
+    /// An ATX heading or a thematic break at `first`: blocks that end a paragraph, and with it every list item the
+    /// line is not indented into. A thematic break wins over a list marker (`- - -`).
+    private static func interrupts(_ line: ArraySlice<UInt8>, at first: Int) -> Bool {
+        let end = line.endIndex
+        var i = first
+        if line[i] == hash {
+            while i < end, line[i] == hash { i += 1 }
+            return i - first <= 6 && (i == end || line[i] == space || line[i] == tab)
+        }
+        let mark = line[first]
+        guard mark == dash || mark == star || mark == underscore else { return false }
+        var count = 0
+        while i < end {
+            if line[i] == mark {
+                count += 1
+            } else if line[i] != space, line[i] != tab {
+                return false
+            }
+            i += 1
+        }
+        return count >= 3
     }
 
     /// The first line after a leading `---` block, or 0.
