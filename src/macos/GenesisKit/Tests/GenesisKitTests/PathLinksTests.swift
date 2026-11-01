@@ -80,6 +80,26 @@ final class PathLinksTests: XCTestCase {
         }
     }
 
+    /// A network-path link (`[Docs](//example.org/docs)`) has no scheme but a host, which `URL.path` drops: read as a
+    /// path it was the local `/docs`. It is a web link, and a `file:` URL that names another machine is not on this Mac.
+    func testANetworkPathLinkIsAWebLinkAndNeverALocalPath() throws {
+        XCTAssertEqual(try target("//example.org/docs#intro"), .other(try XCTUnwrap(URL(string: "https://example.org/docs#intro"))))
+        XCTAssertEqual(try target("//localhost:3000/a.md"), .other(try XCTUnwrap(URL(string: "https://localhost:3000/a.md"))),
+                       "a host is a web server, also on this Mac")
+        let remote = try parsedLink("file://server.example/share/a.md")
+        XCTAssertEqual(PathLink.target(for: remote), .other(remote), "a file on another machine")
+        XCTAssertEqual(try target("file://localhost" + note), .path(note, lines: nil), "localhost is this Mac")
+        XCTAssertEqual(PathLink.pathLinks(inMarkdown: "Read [Docs](//example.org/docs)."), [], "no file link in the text's menu")
+
+        let spy = spy()
+        let result = handler(spy).open(try parsedLink("//example.org/docs"))
+        let web = OpenURLAction.Result.systemAction(try XCTUnwrap(URL(string: "https://example.org/docs")))
+        XCTAssertEqual(String(describing: result), String(describing: web), "the system opens it with https")
+        XCTAssertNotEqual(String(describing: result), String(describing: OpenURLAction.Result.systemAction),
+                          "the control: a bare system action, which hands Launch Services the schemeless URL, differs")
+        XCTAssertEqual(spy.calls, [])
+    }
+
     func testTheFileLinksOfATextAreListedOnceInOrder() {
         let text = """
         Read [the plan](\(note)) and [App.swift](\(source):12), not [the site](https://example.org).
