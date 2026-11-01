@@ -1,5 +1,6 @@
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { formatLocalDate } from "@genesiscz/utils/date";
 import { storedFilePath } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -122,6 +123,21 @@ export function listDayLogs(options: DayLogKindOption & { dir?: string } = {}): 
     }
 
     return [...byDay.values()].sort((a, b) => b.day.localeCompare(a.day));
+}
+
+/**
+ * The folder where a search over the day logs keeps what it found in finished days (`ripgrepFilesCached`), inside the
+ * log folder so every GENESIS_TOOLS_HOME (a test sandbox, a benchmark arm) has its own. The daily pass and the day-file
+ * listing skip it.
+ */
+export function dayLogDigestsDir(dir = dayLogsDir()): string {
+    return join(dir, ".digests");
+}
+
+/** Whether a day file belongs to a day before `today` (local), so nothing writes it any more. */
+export function isSealedDayLog(path: string, today = formatLocalDate(new Date())): boolean {
+    const parsed = parseDayLogName(basename(path));
+    return parsed !== undefined && parsed.day < today;
 }
 
 /** The day of a plain day file of any kind (`2026-10-12.log`, `2026-10-12-failures.jsonl`); undefined otherwise. */

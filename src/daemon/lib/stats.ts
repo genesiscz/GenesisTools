@@ -1,11 +1,11 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { ripgrepFiles } from "@genesiscz/utils/compress/search";
+import { ripgrepDigestPath, ripgrepFilesCached } from "@genesiscz/utils/compress/search";
 import { formatLocalDate, formatLocalFileTimestamp, parseSince, parseUntil, startOfDay } from "@genesiscz/utils/date";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { dayLogPath } from "@genesiscz/utils/logger/day-logs";
+import { dayLogDigestsDir, dayLogPath, isSealedDayLog } from "@genesiscz/utils/logger/day-logs";
 import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -678,10 +678,24 @@ export function summarizeHealthLines(opts: {
     return health;
 }
 
+const HEALTH_DIGEST = "daemon-health";
+
+function healthRgArgs(): string[] {
+    const patterns = HEALTH_MESSAGES.flatMap((entry) => ["-e", entry.prefix]);
+    return ["--no-config", "--no-filename", "--no-line-number", "-F", ...patterns];
+}
+
+/** The file that keeps the health lines of finished days (the benchmark's cold arm empties it). */
+export function daemonHealthDigestPath(logsDir = genesisToolsDir("logs")): string {
+    return ripgrepDigestPath({ name: HEALTH_DIGEST, dir: dayLogDigestsDir(logsDir), args: healthRgArgs() });
+}
+
 /**
  * The daemon's health lines from the day logs (`~/.genesis-tools/logs/<local date>.log`, or `.log.zst` once the daily
  * pass compressed the day) that overlap the window, at most the last 7. A day log can pass 1 GB, so `rg` filters it
- * and only matching lines reach here; a compressed day is decompressed frame by frame into rg's stdin.
+ * and only matching lines reach here; a compressed day is decompressed frame by frame into rg's stdin. The lines of
+ * an earlier day are kept once found (`ripgrepFilesCached`), so only today's log is searched on every run: a week of
+ * days the daily pass compressed cost 2 s each to search again (2026-11-01), against 0.1 s for today's plain file.
  */
 export async function readDaemonHealth(window: StatsWindow): Promise<DaemonHealth> {
     const logsDir = genesisToolsDir("logs");
@@ -712,15 +726,16 @@ export async function readDaemonHealth(window: StatsWindow): Promise<DaemonHealt
         return { ...empty, error: "rg is not on PATH, so the day logs were not scanned" };
     }
 
-    const patterns = HEALTH_MESSAGES.flatMap((entry) => ["-e", entry.prefix]);
-    const { stdout, stderr, code, signal } = await ripgrepFiles({
+    const today = formatLocalDate(new Date());
+    const { stdout, stderr, code, signal, keptFiles } = await ripgrepFilesCached({
         rg,
-        args: ["--no-config", "--no-filename", "--no-line-number", "-F", ...patterns],
+        args: healthRgArgs(),
         files,
         timeoutMs: HEALTH_SCAN_TIMEOUT_MS,
+        digest: { name: HEALTH_DIGEST, dir: dayLogDigestsDir(logsDir), sealed: (file) => isSealedDayLog(file, today) },
     });
 
-    logger.debug({ files, code, signal, bytes: stdout.length }, "[daemon-stats] day-log health scan");
+    logger.debug({ files, keptFiles, code, signal, bytes: stdout.length }, "[daemon-stats] day-log health scan");
 
     // rg exits 1 when nothing matched.
     if (signal || code > 1) {

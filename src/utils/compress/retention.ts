@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { sha256File } from "@genesiscz/utils/fs/hash";
+import type { FileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { logger } from "@genesiscz/utils/logger";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
 import { compressFile, digestZstdContent, verifyCompressedFile } from "./file";
@@ -389,18 +390,26 @@ export interface OldFileReport {
  */
 const RELEASE_GRACE_MS = 10_000;
 
+/** A plain file a verified `.zst` replaced, as it was just before it was retired. */
+export interface ReplacedFile {
+    plain: string;
+    /** The plain file's identity before it was retired, for caches keyed by it (`carrySavedEntries`). */
+    identity: FileIdentity;
+    compressed: string;
+}
+
 /**
  * Retires a plain file that its verified `.zst` replaced, when it is still the file that was compressed (same size
- * and mtime: no late write). Returns the open handle for {@link releaseBlocks}, `null` when the file was retired
- * without one, or `false` when it changed and stays. The handle is opened before the name goes, because a process
- * that still has the file open keeps every block on disk after the unlink: on 2026-11-01 31 handles that launchers
- * and idle loggers held kept 1.2 GB of removed day logs.
+ * and mtime: no late write). Returns its identity and the open handle for {@link releaseBlocks} (`null` when it was
+ * retired without one), or `false` when it changed and stays. The handle is opened before the name goes, because a
+ * process that still has the file open keeps every block on disk after the unlink: on 2026-11-01 31 handles that
+ * launchers and idle loggers held kept 1.2 GB of removed day logs.
  */
 function retireReplaced(
     path: string,
     before: { size: number; mtimeMs: number },
     retire: (path: string) => void
-): number | null | false {
+): { fd: number | null; identity: FileIdentity } | false {
     let fd: number | null = null;
 
     try {
@@ -410,7 +419,7 @@ function retireReplaced(
         logger.debug({ err, path }, "[compress] the plain file did not open for the release; it is only removed");
     }
 
-    let now: { size: number; mtimeMs: number };
+    let now: { ino: number; size: number; mtimeMs: number; ctimeMs: number };
 
     try {
         now = fd === null ? lstatSync(path) : fstatSync(fd);
@@ -437,7 +446,7 @@ function retireReplaced(
         throw err;
     }
 
-    return fd;
+    return { fd, identity: { ino: now.ino, size: now.size, mtimeMs: now.mtimeMs, ctimeMs: now.ctimeMs } };
 }
 
 /**
@@ -500,15 +509,23 @@ export async function applyOldFileCompression(
         retire?: (path: string) => void;
         /** How long a retired file keeps its blocks for a reader that opened it just before; default 10 s. */
         releaseGraceMs?: number;
+        /** Called for each plain file once its `.zst` replaced it (a cache moves its entry over). */
+        onReplaced?: (replaced: ReplacedFile) => void;
     }
 ): Promise<OldFileReport> {
     const retire = options.retire ?? removePath;
     const preset = options.preset ?? PRESETS.text;
     const report: OldFileReport = { plan, compressed: [], failed: [] };
     const held: number[] = [];
-    const keep = (fd: number | null) => {
-        if (fd !== null) {
-            held.push(fd);
+    const replaced = (plain: string, retired: { fd: number | null; identity: FileIdentity }) => {
+        if (retired.fd !== null) {
+            held.push(retired.fd);
+        }
+
+        try {
+            options.onReplaced?.({ plain, identity: retired.identity, compressed: `${plain}${ZSTD_SUFFIX}` });
+        } catch (err) {
+            logger.debug({ err, plain }, "[compress] the replaced-file hook failed; the file is compressed anyway");
         }
     };
 
@@ -522,7 +539,7 @@ export async function applyOldFileCompression(
         const retired = sameContent(target, { bytes: stat.size, path }) ? retireReplaced(path, stat, retire) : false;
 
         if (retired !== false) {
-            keep(retired);
+            replaced(path, retired);
             report.compressed.push({ path, bytes: stat.size, compressedBytes: lstatSync(target).size });
         } else {
             plan.compress.push({ path, bytes: stat.size });
@@ -561,7 +578,7 @@ export async function applyOldFileCompression(
                 continue;
             }
 
-            keep(retired);
+            replaced(path, retired);
             recordCompression({
                 op: "compress",
                 caller: options.caller,

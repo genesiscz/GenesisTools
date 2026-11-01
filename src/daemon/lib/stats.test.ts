@@ -1,15 +1,17 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compressFile } from "@genesiscz/utils/compress/file";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import {
     collectDaemonStats,
+    daemonHealthDigestPath,
     readDaemonHealth,
     readRunOutput,
     readStderrTail,
@@ -359,6 +361,14 @@ describe("summarizeHealthLines", () => {
             );
             expect(health).toMatchObject({ wedged: 1, taskTimedOut: 1, error: null });
             expect(health.files).toEqual([`${older}.zst`, plain]);
+            // Both days are over, so their lines are kept and the next read serves them without a search.
+            const saved: unknown = SafeJSON.parse(readFileSync(daemonHealthDigestPath(logs), "utf8"), { strict: true });
+            const keptPaths = isObject(saved) && isObject(saved.entries) ? Object.keys(saved.entries).sort() : saved;
+            expect(keptPaths).toEqual([plain, `${older}.zst`].sort());
+            const again = await readDaemonHealth(
+                resolveWindow({ since: "2026-10-09", until: "2026-10-10T23:00:00", now: NOW })
+            );
+            expect(again).toEqual(health);
         } finally {
             rmSync(plain, { force: true });
             rmSync(`${older}.zst`, { force: true });
