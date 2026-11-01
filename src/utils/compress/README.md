@@ -44,14 +44,15 @@ uses `node:zlib`'s one-frame compressor, the only API that takes parameters (che
 | Lines, first lines, last lines of plain or `.zst` | `readLines`, `readLinesSync`, `readFirstLines`, `readLastLines`, `readTextChunks` | `fs/read-lines.ts` |
 | Lines of any byte stream (stdin, a ranged `createReadStream`), cut at `\n` only | `splitLines`, `splitLinesSync` | `fs/read-lines.ts` |
 | rg over plain and `.zst` files (no zstd CLI) | `ripgrepFiles`, `zstdContentStream` | `search.ts` |
+| The same search again and again over finished files, their lines kept | `ripgrepFilesCached`, `ripgrepDigestPath` | `search.ts` |
 | Pack, list, unpack, verify a folder | `packDirectory`, `listArchive`, `unpackArchive`, `verifyArchiveAgainstFolder` | `tar.ts` |
 | One safe compress or restore with a ledger entry | `planCompressPath`, `compressPath`, `expandPath`, `verifyPath` | `operations.ts` |
 | Keep N folders, pack older, cap archives | `planFolderRetention`, `applyFolderRetention` | `retention.ts` |
 | Compress day-stamped files once their day is over | `planOldFileCompression`, `applyOldFileCompression` | `retention.ts` |
-| The daily pass (day logs, ai-proxy transcripts) | `runDailyCompression`, `dailyTargets` | `daily.ts` |
+| The daily pass (day files, ai-proxy transcripts, hang captures) | `runDailyCompression`, `dailyTargets` | `daily.ts` |
 | Presets, sniffing, trials | `PRESETS`, `resolvePreset`, `tryPresets`, `trialSaving` | `presets.ts` |
 | The ledger | `recordCompression`, `searchLedger` | `ledger.ts` |
-| Day log paths (plain or `.zst`) | `dayLogPath`, `listDayLogs` | `logger/day-logs.ts` |
+| Day file paths (kinds `log`, `profiling`, `failures`; plain or `.zst`) | `dayLogPath`, `listDayLogs`, `dayLogName`, `isSealedDayLog` | `logger/day-logs.ts` |
 
 Every `plan*` function only reads: it is the dry run. Every `apply*` function removes an original only after the
 output checked out (file: size and sha256 of the decompressed content; folder: every entry, size and file sha256),
@@ -61,7 +62,7 @@ and a file only when its size and mtime did not change while it was read.
 
 | Data | Policy | Reader |
 |---|---|---|
-| `~/.genesis-tools/logs/<date>.log`, `<date>-profiling.log` | daily pass: older than 7 days become `.zst` | `tools daemon stats`, `tools jev sessions`, `{{tail}}`, `poll-duty.ts`, `rg -z` |
+| `~/.genesis-tools/logs/<date>.log`, `<date>-profiling.log`, `<date>-failures.jsonl` | daily pass: older than yesterday become `.zst` | `tools daemon stats` (keeps finished days), `tools genesis-tools logs`, `tools jev sessions`, `{{tail}}`, `{{lines}}`, `poll-duty.ts`, `tools compress cat`, `rg -z` |
 | `~/.genesis-tools/ai-proxy/transcripts/<UTC day>/<session>.jsonl` | daily pass: older than yesterday (UTC) become `.zst` | `tools ai-proxy calls --show` |
 | `~/.genesis-tools/codex/migrate-home/<stamp>/` | after each applied run: newest 2 runs of the last 14 days stay folders, the rest `<stamp>.zst` | restore: `tools compress unpack` |
 | `~/.genesis-tools/app/retired.noindex/<ms>/` | after each build: newest 2 and every running bundle stay folders, idle ones `<ms>.zst`, at most 5 and 14 days | restore: `tools compress unpack` |
@@ -264,10 +265,15 @@ arms interleaved, medians of 7, load 24 → 12, outputs equal):
 | `rg -c` (292 MB day), `rg` vs `rg -z` | 60 → 105 ms (+76%) | 59 → 164 ms (+179%) |
 | `tools compress cat | rg` vs `rg` | 58 → 226 ms | 57 → 356 ms |
 
-The first row is why day logs keep 7 days plain: a week-long rg scan decompresses everything. With that window no
-GenesisTools command reads a compressed day log in its default or widest window; `jev sessions`, tails and
-transcripts read the compressed form within budget (or faster). An `rg -z` by hand on a day older than a week is the
-one path over 30% (+45 ms per 292 MB day).
+The first row is a week-long rg scan that decompresses every day on every run; it kept 7 days plain until
+2026-11-01. Now only today and yesterday stay plain, and `tools daemon stats` keeps the health lines of finished days
+(`ripgrepFilesCached`: one digest file per search in `logs/.digests/`, each entry keyed by the file's identity; the
+daily pass carries a plain day's entry to its `.zst`), so a warm run searches only today. With 5 of 7 days compressed
+a warm `--since 7d` took 724 ms wall and 792 ms CPU (medians of 3, 2026-11-01), against 730 ms and 1,450 ms measured
+the same day with seven plain days (not interleaved). The first run after the search changes searches every day once
+(`daemon-7d-cold` in `read-paths.ts`: 1,669 ms wall). `jev sessions`, the `tools genesis-tools logs` commands, tails
+and transcripts read one day or file at a time, within budget (or faster). An `rg -z` by hand on a day before
+yesterday is the one path over 30% (+45 ms per 292 MB day).
 
 **Restore** (`bun scripts/benchmarks/compress/restore.ts --runs 5`, a 68 MB app bundle): `cp -c -R` 101 ms, `cp -R`
 306 ms, `tools compress unpack` 531 ms.

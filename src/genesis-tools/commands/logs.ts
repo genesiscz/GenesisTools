@@ -3,7 +3,7 @@ import { FAILURE_KINDS, type FailureKind, failuresDir, type ToolFailure } from "
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
-import { dayLogsDir } from "@genesiscz/utils/logger/day-logs";
+import { dayLogName, dayLogsDir } from "@genesiscz/utils/logger/day-logs";
 import { formatTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -395,9 +395,16 @@ export function registerLogsCommand(program: Command): void {
         .description("Where each log lives")
         .action(() => {
             const day = formatLocalDate(new Date());
-            out.println(`failures   ${failuresDir()}/${day}-failures.jsonl`);
-            out.println(`day log    ${dayLogsDir()}/${day}.log`);
-            out.println(`profiling  ${dayLogsDir()}/${day}-profiling.log`);
+            out.println(`failures   ${failuresDir()}/${dayLogName(day, "failures")}`);
+            out.println(`day log    ${dayLogsDir()}/${dayLogName(day, "log")}`);
+            out.println(`profiling  ${dayLogsDir()}/${dayLogName(day, "profiling")}`);
             out.println(`crashes    ${crashReportsDir()}`);
+            out.println(
+                pc.dim(
+                    `\nOnly today and yesterday stay plain: the daily pass stores an older day as <name>.zst. ` +
+                        `${toolCommand("genesis-tools logs day|failures|profile", "--since", "<when>")} reads both, ` +
+                        `${toolCommand("compress cat", "<plain name>")} prints one, rg -z searches one.`
+                )
+            );
         });
 }

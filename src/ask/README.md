@@ -336,19 +336,22 @@ tools ask -v --model gpt-4o "test"
 
 ### Log Files
 
-Logs are stored in the project logs directory at `../../logs/YYYY-MM-DD.log` (relative to `src/ask/`).
+Logs are stored in the shared day log at `~/.genesis-tools/logs/YYYY-MM-DD.log`. Only today and yesterday stay
+plain: the daily pass stores an older day as `YYYY-MM-DD.log.zst`. Read one with
+`tools genesis-tools logs day --tool ask --since <YYYY-MM-DD>`, `tools compress cat ~/.genesis-tools/logs/YYYY-MM-DD.log | jq ...`
+(the plain name finds the `.zst`), or `rg -z`. The commands below read today's plain file.
 
 #### Viewing Logs
 
 ```bash
-# View today's logs in real-time (from project root)
-tail -f logs/$(date +%Y-%m-%d).log
+# View today's logs in real-time
+tail -f ~/.genesis-tools/logs/$(date +%Y-%m-%d).log
 
 # View last 20 lines of today's logs
-tail -n 20 logs/$(date +%Y-%m-%d).log
+tail -n 20 ~/.genesis-tools/logs/$(date +%Y-%m-%d).log
 
 # View all logs for today
-cat logs/$(date +%Y-%m-%d).log
+cat ~/.genesis-tools/logs/$(date +%Y-%m-%d).log
 ```
 
 #### Using jq to Parse Logs
@@ -357,22 +360,22 @@ The logs are in JSON format, use `jq` for powerful querying:
 
 ```bash
 # Get last 10 log entries
-tail -n 10 logs/$(date +%Y-%m-%d).log | jq -r '.'
+tail -n 10 ~/.genesis-tools/logs/$(date +%Y-%m-%d).log | jq -r '.'
 
 # Get last 10 error messages only
-tail -n 100 logs/$(date +%Y-%m-%d).log | jq -r 'select(.level >= 50) | .msg'
+tail -n 100 ~/.genesis-tools/logs/$(date +%Y-%m-%d).log | jq -r 'select(.level >= 50) | .msg'
 
 # Get last 20 debug messages (when running with -v flag)
-tail -n 50 logs/$(date +%Y-%m-%d).log | jq -r 'select(.level == 20) | .msg'
+tail -n 50 ~/.genesis-tools/logs/$(date +%Y-%m-%d).log | jq -r 'select(.level == 20) | .msg'
 
 # Get formatted output with timestamp and message
-tail -n 20 logs/$(date +%Y-%m-%d).log | jq -r '[.time, .level, .msg] | @tsv'
+tail -n 20 ~/.genesis-tools/logs/$(date +%Y-%m-%d).log | jq -r '[.time, .level, .msg] | @tsv'
 
 # Filter logs by specific provider detection
-tail -n 100 logs/$(date +%Y-%m-%d).log | jq -r 'select(.msg | contains("Detected")) | .msg'
+tail -n 100 ~/.genesis-tools/logs/$(date +%Y-%m-%d).log | jq -r 'select(.msg | contains("Detected")) | .msg'
 
 # Get all errors with full context
-tail -n 200 logs/$(date +%Y-%m-%d).log | jq -r 'select(.level >= 50)'
+tail -n 200 ~/.genesis-tools/logs/$(date +%Y-%m-%d).log | jq -r 'select(.level >= 50)'
 ```
 
 #### Log Levels
@@ -388,16 +391,16 @@ tail -n 200 logs/$(date +%Y-%m-%d).log | jq -r 'select(.level >= 50)'
 
 ```bash
 # Search for specific error messages
-grep "ASK tool failed" logs/$(date +%Y-%m-%d).log
+grep "ASK tool failed" ~/.genesis-tools/logs/$(date +%Y-%m-%d).log
 
 # Search for all errors today
-jq -r 'select(.level >= 50) | .msg' logs/$(date +%Y-%m-%d).log
+jq -r 'select(.level >= 50) | .msg' ~/.genesis-tools/logs/$(date +%Y-%m-%d).log
 
 # Search for provider detection issues
-jq -r 'select(.msg | contains("provider")) | .msg' logs/$(date +%Y-%m-%d).log
+jq -r 'select(.msg | contains("provider")) | .msg' ~/.genesis-tools/logs/$(date +%Y-%m-%d).log
 
 # Get chat engine debug messages
-jq -r 'select(.msg | contains("ChatEngine")) | .msg' logs/$(date +%Y-%m-%d).log
+jq -r 'select(.msg | contains("ChatEngine")) | .msg' ~/.genesis-tools/logs/$(date +%Y-%m-%d).log
 ```
 
 ## Provider-Specific Notes
