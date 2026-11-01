@@ -29,7 +29,9 @@ const ALL = registry(
     "question_update",
     "annotate_image",
     "jev_live",
-    "question_tokens"
+    "question_tokens",
+    "fetch_markdown",
+    "fetch_jsonld"
 );
 
 afterEach(() => {
@@ -87,6 +89,7 @@ describe("filterRegistryByCapabilities", () => {
         ]);
         expect(withCapabilities("annotate")).toEqual(["annotate_image"]);
         expect(withCapabilities("jev")).toEqual(["jev_live"]);
+        expect(withCapabilities("fetch")).toEqual(["fetch_jsonld", "fetch_markdown"]);
     });
 
     test("an unset filter leaves every tool enabled", () => {

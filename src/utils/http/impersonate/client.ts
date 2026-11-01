@@ -16,6 +16,8 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 /** The sidecar enforces `timeoutMs`; this margin covers its start and the reply line. */
 const REPLY_MARGIN_MS = 15_000;
 const STDERR_TAIL_CHARS = 2_000;
+/** How long close() waits for the sidecar to exit after its stdin closes before it kills it. */
+const CLOSE_GRACE_MS = 2_000;
 
 export type ImpersonateProfile = "chrome" | "safari" | "firefox" | "edge";
 
@@ -26,6 +28,8 @@ export interface ImpersonatedRequest {
     body?: string;
     timeoutMs?: number;
     followRedirects?: boolean;
+    /** Rejects the wait when it aborts. The sidecar still finishes the request; its reply is dropped. */
+    signal?: AbortSignal;
 }
 
 export interface ImpersonatedResponse {
@@ -42,6 +46,11 @@ export interface ImpersonatedHttpClientOptions {
     proxyUrl?: string;
     /** Names the client in log lines. */
     label?: string;
+    /**
+     * Ends the sidecar after this many ms with no request in flight; the next request starts a new one (with an
+     * empty cookie jar). For a long-lived server, so an idle server holds no Python process.
+     */
+    idleCloseMs?: number;
 }
 
 interface SidecarReply {
@@ -71,6 +80,7 @@ export class ImpersonatedHttpClient {
     private readonly pending = new Map<number, Pending>();
     private nextId = 1;
     private stderrTail = "";
+    private idleTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly profile: ImpersonateProfile;
     private readonly label: string;
 
@@ -95,15 +105,44 @@ export class ImpersonatedHttpClient {
             followRedirects: req.followRedirects ?? true,
         });
 
-        const reply = await new Promise<SidecarReply>((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.pending.delete(id);
-                reject(new ImpersonatedHttpError(`${req.method ?? "GET"} ${req.url}: no reply in ${timeoutMs} ms`));
-            }, timeoutMs + REPLY_MARGIN_MS);
-            this.pending.set(id, { resolve, reject, timer });
-            proc.stdin.write(`${line}\n`);
-            proc.stdin.flush();
-        });
+        req.signal?.throwIfAborted();
+        this.cancelIdleClose();
+        let reply: SidecarReply;
+        try {
+            reply = await new Promise<SidecarReply>((resolve, reject) => {
+                const onAbort = () => {
+                    const waiter = this.pending.get(id);
+                    if (!waiter) {
+                        return;
+                    }
+
+                    clearTimeout(waiter.timer);
+                    this.pending.delete(id);
+                    reject(new ImpersonatedHttpError(`${req.method ?? "GET"} ${req.url}: aborted`));
+                };
+                const timer = setTimeout(() => {
+                    this.pending.delete(id);
+                    req.signal?.removeEventListener("abort", onAbort);
+                    reject(new ImpersonatedHttpError(`${req.method ?? "GET"} ${req.url}: no reply in ${timeoutMs} ms`));
+                }, timeoutMs + REPLY_MARGIN_MS);
+                this.pending.set(id, {
+                    resolve: (value) => {
+                        req.signal?.removeEventListener("abort", onAbort);
+                        resolve(value);
+                    },
+                    reject: (error) => {
+                        req.signal?.removeEventListener("abort", onAbort);
+                        reject(error);
+                    },
+                    timer,
+                });
+                req.signal?.addEventListener("abort", onAbort, { once: true });
+                proc.stdin.write(`${line}\n`);
+                proc.stdin.flush();
+            });
+        } finally {
+            this.scheduleIdleClose();
+        }
 
         const ms = Math.round(performance.now() - started);
         if (reply.error) {
@@ -125,6 +164,7 @@ export class ImpersonatedHttpClient {
 
     /** Ends the sidecar. A CLI run must call it, or the open pipes keep the process alive. */
     async close(): Promise<void> {
+        this.cancelIdleClose();
         const proc = this.proc;
         if (!proc) {
             return;
@@ -137,14 +177,45 @@ export class ImpersonatedHttpClient {
             logger.debug({ error, label: this.label }, "impersonate sidecar stdin already closed");
         }
 
-        const exited = await Promise.race([proc.exited.then(() => true), Bun.sleep(2_000).then(() => false)]);
+        // A cleared timer, not Bun.sleep: a pending sleep keeps the process alive for its full 2 s after the exit.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const exited = await Promise.race([
+            proc.exited.then(() => true),
+            new Promise<false>((resolve) => {
+                timer = setTimeout(() => resolve(false), CLOSE_GRACE_MS);
+            }),
+        ]);
+        clearTimeout(timer);
         if (!exited) {
+            logger.debug({ label: this.label }, "impersonate sidecar did not exit after stdin closed, killing it");
             proc.kill();
         }
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
         await this.close();
+    }
+
+    private cancelIdleClose(): void {
+        if (this.idleTimer) {
+            clearTimeout(this.idleTimer);
+            this.idleTimer = null;
+        }
+    }
+
+    private scheduleIdleClose(): void {
+        const idleMs = this.options.idleCloseMs;
+        if (idleMs === undefined || this.pending.size > 0 || !this.proc) {
+            return;
+        }
+
+        this.cancelIdleClose();
+        this.idleTimer = setTimeout(() => {
+            this.idleTimer = null;
+            logger.debug({ label: this.label, idleMs }, "impersonate sidecar idle, closing it");
+            void this.close();
+        }, idleMs);
+        this.idleTimer.unref?.();
     }
 
     private ensureStarted(): Subprocess<"pipe", "pipe", "pipe"> {
