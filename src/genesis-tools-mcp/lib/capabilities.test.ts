@@ -31,7 +31,8 @@ const ALL = registry(
     "jev_live",
     "question_tokens",
     "fetch_markdown",
-    "fetch_jsonld"
+    "fetch_jsonld",
+    "alza_search_products"
 );
 
 afterEach(() => {
@@ -90,6 +91,7 @@ describe("filterRegistryByCapabilities", () => {
         expect(withCapabilities("annotate")).toEqual(["annotate_image"]);
         expect(withCapabilities("jev")).toEqual(["jev_live"]);
         expect(withCapabilities("fetch")).toEqual(["fetch_jsonld", "fetch_markdown"]);
+        expect(withCapabilities("alza")).toEqual(["alza_search_products"]);
     });
 
     test("an unset filter leaves every tool enabled", () => {

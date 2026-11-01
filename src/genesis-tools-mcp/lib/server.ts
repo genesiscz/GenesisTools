@@ -312,6 +312,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     jev: (name) => name.startsWith("jev_"),
     control: (name) => name.startsWith("control_"),
     fetch: (name) => name.startsWith("fetch_"),
+    alza: (name) => name.startsWith("alza_"),
 };
 
 /**
@@ -339,6 +340,7 @@ const registries = new Map<string, Record<string, ToolEntry>>();
 let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
 let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
 let fetchModule: Promise<typeof import("@app/fetch/mcp/genesis-tools")> | undefined;
+let alzaModule: Promise<typeof import("@app/alza/mcp/genesis-tools")> | undefined;
 
 /**
  * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
@@ -367,10 +369,23 @@ function loadFetchEntries(): Promise<Record<string, ToolEntry>> {
     return fetchModule.then((module) => module.fetchToolEntries());
 }
 
-/** Ends what a loaded group holds open (the fetch group's Chrome sidecar). A group that never loaded holds nothing. */
+/**
+ * The Alza tools (an unofficial Alza.cz client with sign-in, basket and orders) are opt-in: they load only when the
+ * capability list names `alza`, never for an unset list, because most hosts have no use for a shop's 40 tools.
+ */
+function loadAlzaEntries(): Promise<Record<string, ToolEntry>> {
+    alzaModule ??= import("@app/alza/mcp/genesis-tools");
+    return alzaModule.then((module) => module.alzaToolEntries());
+}
+
+/** Ends what a loaded group holds open (the fetch and Alza groups' Chrome sidecars). A group that never loaded holds nothing. */
 async function closeLoadedGroups(): Promise<void> {
     if (fetchModule) {
         await (await fetchModule).closeFetchTools();
+    }
+
+    if (alzaModule) {
+        await (await alzaModule).closeAlzaTools();
     }
 }
 
@@ -382,13 +397,15 @@ async function toolRegistry(
     const withJev = capabilities === undefined || capabilities.includes("jev");
     const withControl = capabilities === undefined || capabilities.includes("control");
     const withFetch = capabilities === undefined || capabilities.includes("fetch");
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}`;
+    const withAlza = capabilities?.includes("alza") ?? false;
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}:${withAlza}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
             ...(withJev ? await loadJevEntries() : {}),
             ...(withControl ? await loadControlEntries() : {}),
             ...(withFetch ? await loadFetchEntries() : {}),
+            ...(withAlza ? await loadAlzaEntries() : {}),
             ...buildToolRegistry(context),
         };
         registries.set(key, registry);
