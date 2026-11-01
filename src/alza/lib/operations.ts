@@ -15,6 +15,7 @@ import {
     productsByEan,
     searchProducts,
 } from "./catalog";
+import { categoriesMarkdown, listCategories } from "./categories";
 import {
     categoryMarkdown,
     compareMarkdown,
@@ -28,6 +29,10 @@ import {
     suggestionsMarkdown,
 } from "./format";
 import { getPriceHistory } from "./history";
+import { PC_ROLES } from "./pc-build";
+import { alzaPcCatalog } from "./pc-build-catalog";
+import { buildReportMarkdown } from "./pc-build-format";
+import { DEFAULT_MAX_DETAIL_FETCHES, MAX_CHECK_PARTS, MAX_DETAIL_FETCHES, PcBuilder } from "./pc-build-service";
 import { findPickupPoints } from "./pickup";
 
 /**
@@ -98,6 +103,21 @@ export const CATEGORY_LISTING_INPUT = z.object({
         .describe("Parameter filters from list_category_filters, e.g. [{param_id: 15361, value_id: 239455089}]"),
     ...listingFilters,
 });
+
+const pcRole = z.enum(PC_ROLES);
+const pcPart = z.object({
+    code: z.string().min(1).describe("Alza product code (e.g. 'BD750m7b1'), numeric id or product URL"),
+    role: pcRole.optional().describe("Component role; detected from the spec table when omitted"),
+});
+const psuHeadroom = z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("PSU headroom over the estimated peak draw (default 0.3)");
+
+export const PC_SUGGEST_PROFILES = ["gaming", "workstation", "office"] as const;
+export const PC_CPU_VENDORS = ["amd", "intel"] as const;
 
 export const ALZA_OPERATIONS: AlzaOperation[] = [
     operation({
@@ -275,6 +295,73 @@ export const ALZA_OPERATIONS: AlzaOperation[] = [
         run: async (api, i) => {
             const data = await getPriceHistory(api, i.product);
             return { data, markdown: historyMarkdown(data, api.storefront.currency) };
+        },
+    }),
+    operation({
+        name: "list_categories",
+        description:
+            "Browse the category tree one level at a time: without parent_id the top level, else the children of that category (ids for list_category and get_category).",
+        input: z.object({
+            parent_id: z.number().int().positive().optional().describe("Parent category id; omit for the top level"),
+        }),
+        run: async (api, i) => {
+            const data = await listCategories(api, i.parent_id);
+            return { data, markdown: categoriesMarkdown(data) };
+        },
+    }),
+    operation({
+        name: "pc_build_check",
+        description: `Check a PC parts list for compatibility: CPU socket, RAM generation and slots, PSU wattage, GPU length and cooler clearance in the case, cooler socket, board and PSU form factor, display output. 1-${MAX_CHECK_PARTS} parts, one product read each.`,
+        input: z.object({
+            parts: z
+                .array(pcPart)
+                .min(1)
+                .max(MAX_CHECK_PARTS)
+                .describe("The build's parts; ram and storage may repeat"),
+            psu_headroom: psuHeadroom,
+        }),
+        run: async (api, i) => {
+            const data = await new PcBuilder(alzaPcCatalog(api)).check({ parts: i.parts, psuHeadroom: i.psu_headroom });
+            return { data, markdown: buildReportMarkdown(data, "PC build check") };
+        },
+    }),
+    operation({
+        name: "pc_build_suggest",
+        description:
+            "Suggest a compatibility-checked PC parts list within a CZK budget from live Alza listings: cpu, motherboard, ram, gpu, storage, case, cooler, psu. Slow: one category page per role plus bounded product reads.",
+        input: z.object({
+            budget: z.number().int().min(8000).max(500000).describe("Total budget in CZK, fixed parts included"),
+            profile: z
+                .enum(PC_SUGGEST_PROFILES)
+                .optional()
+                .describe("gaming (default, GPU-heavy), workstation, office (no GPU)"),
+            cpu_vendor: z.enum(PC_CPU_VENDORS).optional().describe("Only AMD or only Intel CPUs"),
+            fixed_parts: z
+                .array(pcPart)
+                .max(6)
+                .optional()
+                .describe("Parts already chosen; the rest is picked to fit them"),
+            skip_roles: z.array(pcRole).optional().describe("Roles to leave out, e.g. ['storage']"),
+            max_detail_fetches: z
+                .number()
+                .int()
+                .min(1)
+                .max(MAX_DETAIL_FETCHES)
+                .optional()
+                .describe(`Upper bound on product reads (default ${DEFAULT_MAX_DETAIL_FETCHES})`),
+            psu_headroom: psuHeadroom,
+        }),
+        run: async (api, i) => {
+            const data = await new PcBuilder(alzaPcCatalog(api)).suggest({
+                budget: i.budget,
+                profile: i.profile,
+                cpuVendor: i.cpu_vendor,
+                fixedParts: i.fixed_parts,
+                skipRoles: i.skip_roles,
+                maxDetailFetches: i.max_detail_fetches,
+                psuHeadroom: i.psu_headroom,
+            });
+            return { data, markdown: buildReportMarkdown(data, `PC build for ${i.budget} CZK`) };
         },
     }),
     operation({

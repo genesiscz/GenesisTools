@@ -73,3 +73,28 @@ id). An account command renews an expiring access token with the refresh token; 
 MCP tools: `account_status`, `cart_show`, `cart_add`, `cart_remove`, `favorites_list`, `orders_list`, `order_show`,
 `watchdog_list`, `watchdog_add`, `watchdog_remove`. The four that change the basket or the watchdogs are annotated
 `readOnlyHint: false`. A tool that needs a sign-in answers "Sign in first: tools alza auth login".
+
+## More catalog and account tools
+
+```bash
+tools alza categories                   # the top level of the category tree (an id shows that category instead)
+tools alza pc check BD750k7a1 AGb650ea DP095b32a64 UY006rm85new CBh5f5   # compatibility of a parts list; code:role when detection fails
+tools alza pc suggest 40000 --profile gaming --cpu amd --skip storage     # a compatible build within the budget (about a minute)
+tools alza account profile | gdpr | subscription | claims [--archive]     # signed in
+tools alza account claim <detailAction href>
+tools alza account contacts             # Alza's contact channels, no sign-in
+tools alza orders search 1058           # order search, with invoice links
+tools alza orders document <https link> --out invoice.pdf   # only Alza hosts; pdf.alza.cz is read with fetch for binary PDFs
+tools alza orders payments <order> <part>   # payment options of an unpaid part (reads only)
+tools alza checkout delivery | payments | preview   # for the basket, signed in or as the visitor; nothing is ordered
+tools alza checkout pickup 2680         # payments that fit one delivery option, with prices (does not pick a box)
+tools alza checkout address Brno        # postal codes and places
+tools alza favorites add|remove <product> [--later]
+tools alza chat                         # the chatbot's navigation actions (sends nothing)
+tools alza raw <operation> [key=value]  # fixed read-only GET routes; `tools alza mcp --raw` adds mobile_read to MCP
+```
+
+The PC builder rules come from [alza-mcp-community](https://github.com/lukabudik/alza-mcp-community) (MIT), adapted to
+the JSON product route. `checkout preview` runs Alza's first checkout step (`sendOrder1`), so MCP marks it as a write,
+but there is no order step in this tool. Another MCP server can mount every Alza tool through `createAlzaToolset()`
+from `src/alza/mcp/tools.ts` (name, description, JSON input schema, annotations, call).
