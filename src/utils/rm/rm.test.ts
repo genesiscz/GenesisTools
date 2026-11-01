@@ -1909,17 +1909,31 @@ describe("a single-holder lock (the drainer, a request's decision, a measurement
                 "const [lockPath, startAt] = process.argv.slice(2);",
                 "await Bun.sleep(Math.max(0, Number(startAt) - Date.now()));",
                 "process.stdout.write(rm.acquireDrainerLock(lockPath) ? 'won' : 'lost');",
+                // A winner stays alive until the test closes stdin: a racer that started late under load would
+                // otherwise find the winner already exited and take its lock over, rightly, as a dead holder's.
+                "for await (const _ of Bun.stdin.stream()) {}",
             ].join("\n")
         );
         const startAt = String(Date.now() + 700);
         const racers = [1, 2, 3, 4].map(() =>
             Bun.spawn([process.execPath, script, lockPath, startAt], {
                 env: process.env,
+                stdin: "pipe",
                 stdout: "pipe",
                 stderr: "pipe",
             })
         );
-        const said = await Promise.all(racers.map((racer) => new Response(racer.stdout).text()));
+        const said = await Promise.all(
+            racers.map(async (racer) => {
+                const { value } = await racer.stdout.getReader().read();
+
+                return new TextDecoder().decode(value);
+            })
+        );
+
+        for (const racer of racers) {
+            racer.stdin.end();
+        }
 
         expect(await Promise.all(racers.map((racer) => racer.exited))).toEqual([0, 0, 0, 0]);
         expect(said.filter((word) => word === "won")).toHaveLength(1);
