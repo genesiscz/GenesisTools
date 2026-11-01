@@ -320,8 +320,9 @@ export function openPaths(): string[] {
 }
 
 /**
- * True for `<scratch>/checkouts/<package>/.git` when `<scratch>` is a SwiftPM scratch path (`.build`, or a folder with
- * one of SwiftPM's own state files). SwiftPM clones its dependencies there; the user never works in them.
+ * True for `<scratch>/checkouts/<package>/.git` when `<scratch>` is a SwiftPM scratch path: a `.build`, a folder with
+ * one of SwiftPM's own state files, or a folder whose `repositories/` the clone takes its objects from (a resolve
+ * killed before SwiftPM wrote its state files). SwiftPM clones its dependencies there; the user never works in them.
  */
 function isSwiftpmCheckoutGit(gitPath: string): boolean {
     const checkouts = dirname(dirname(gitPath));
@@ -331,9 +332,36 @@ function isSwiftpmCheckoutGit(gitPath: string): boolean {
     }
 
     const scratch = dirname(checkouts);
-    return (
-        basename(scratch) === ".build" || (childNames(scratch) ?? []).some((n) => SWIFTPM_SCRATCH_MARKERS.includes(n))
-    );
+    const names = childNames(scratch) ?? [];
+
+    if (basename(scratch) === ".build" || names.some((n) => SWIFTPM_SCRATCH_MARKERS.includes(n))) {
+        return true;
+    }
+
+    // Anyone can name a folder `repositories`, so it counts only for a clone SwiftPM made from it: SwiftPM runs
+    // `git clone --shared` from `repositories/<package>-<hash>`, which names that folder's objects in the alternates.
+    return names.includes("repositories") && borrowsObjectsFrom(gitPath, join(scratch, "repositories"));
+}
+
+/** True when a clone borrows objects (`objects/info/alternates`) and every store it borrows from lies inside `dir`. */
+function borrowsObjectsFrom(gitPath: string, dir: string): boolean {
+    try {
+        if (!lstatSync(dir).isDirectory()) {
+            return false;
+        }
+
+        const real = realpathSync(dir);
+        const objects = join(gitPath, "objects");
+        const stores = readFileSync(join(objects, "info", "alternates"), "utf8")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line !== "" && !line.startsWith("#"));
+        return (
+            stores.length > 0 && stores.every((store) => realpathSync(resolve(objects, store)).startsWith(`${real}/`))
+        );
+    } catch {
+        return false;
+    }
 }
 
 /** True for `<tmp root>/cc/<project>/<session>`, the folder of one agent session's scratch. */

@@ -2707,6 +2707,50 @@ describe("round 7 review regressions", () => {
         expect(result.stdout.toString()).toContain('"git-checkout":1');
     });
 
+    test("reclaim reads a SwiftPM build with only repositories/ as build output when its clones borrow from there", () => {
+        const s = reclaimFixture();
+        const sessions = join(s.dir, "home", ".claude", "sessions");
+        const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
+        fs.mkdirSync(sessions, { recursive: true });
+        fs.mkdirSync(projects, { recursive: true });
+        fs.writeFileSync(
+            join(sessions, `${process.pid}.json`),
+            SafeJSON.stringify({ pid: process.pid, sessionId: "99999999-9999-4999-8999-999999999990" })
+        );
+        const borrows = "99999999-9999-4999-8999-999999999994";
+        const noAlternates = "99999999-9999-4999-8999-999999999995";
+        const foreign = "99999999-9999-4999-8999-999999999996";
+        // A killed resolve leaves `repositories/` and `checkouts/` before SwiftPM writes any of its state files.
+        const interruptedBuild = (id: string, alternates: ((build: string) => string) | null) => {
+            const build = join(s.root, "cc", "fixture-project", id, "gk-build");
+            const objects = join(build, "repositories", "pkg-0a1b2c3d", "objects");
+            const git = join(build, "checkouts", "pkg", ".git");
+            fs.mkdirSync(objects, { recursive: true });
+            fs.mkdirSync(join(build, "elsewhere", "objects"), { recursive: true });
+            fs.mkdirSync(join(git, "objects", "info"), { recursive: true });
+            fs.writeFileSync(join(git, "HEAD"), "ref: refs/heads/main\n");
+
+            if (alternates) {
+                fs.writeFileSync(join(git, "objects", "info", "alternates"), `${alternates(build)}\n`);
+            }
+        };
+        interruptedBuild(borrows, (build) => join(build, "repositories", "pkg-0a1b2c3d", "objects"));
+        interruptedBuild(noAlternates, null);
+        interruptedBuild(foreign, (build) => join(build, "elsewhere", "objects"));
+        for (const id of [borrows, noAlternates, foreign]) {
+            fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
+        }
+
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            join(s.root, "cc", "fixture-project", borrows),
+        ]);
+        expect(result.stdout.toString()).toContain('"git-checkout":2');
+    });
+
     test("an apply deletes the plan in /tmp/cc it ran and the expired ones, and keeps a fresh one", () => {
         const s = reclaimFixture();
         const plans = join(s.root, "cc");
