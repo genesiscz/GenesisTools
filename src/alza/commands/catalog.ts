@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Command, InvalidArgumentError } from "commander";
 import { SEARCH_SORTS } from "../lib/api";
 import { parseIntArg, parseNumberArg, runOperation } from "./run";
@@ -15,7 +16,7 @@ interface ListingFlags {
 function addListingFlags(command: Command): Command {
     return command
         .option("--limit <n>", "How many products to return", parseIntArg)
-        .option("--brand <id>", "Brand id (see `tools alza filters <category>`)", parseIntArg)
+        .option("--brand <id>", `Brand id (see \`${toolCommand("alza filters", "<category>")}\`)`, parseIntArg)
         .option("--min <price>", "Lowest price", parseNumberArg)
         .option("--max <price>", "Highest price", parseNumberArg)
         .option("--in-stock", "Only products you can buy now")
@@ -68,7 +69,7 @@ export function registerCatalogCommands(program: Command): void {
             .option("--page <n>", "First page, 1-based", parseIntArg)
             .option(
                 "--filter <paramId:valueId>",
-                "Parameter filter, repeatable (see `tools alza filters`)",
+                `Parameter filter, repeatable (see \`${toolCommand("alza filters")}\`)`,
                 parseFilter
             )
     ).action(async (categoryId: number, flags: ListingFlags & { filter?: unknown[] }, command: Command) => {

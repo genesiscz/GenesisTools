@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { z } from "zod";
 import {
     type AccountContext,
@@ -188,7 +189,8 @@ export const ACCOUNT_OPERATIONS: AccountOperation[] = [
     accountOperation({
         name: "account_status",
         description:
-            "Is an Alza account signed in: token expiry, refresh token, user id, and one read-only check that Alza accepts the token. Never renews or changes anything. Sign in with the CLI: tools alza auth login.",
+            "Is an Alza account signed in: token expiry, refresh token, user id, and one read-only check that Alza accepts the token. Never renews or changes anything. Sign in with the CLI: " +
+            `${toolCommand("alza auth login")}.`,
         input: z.object({}),
         kind: "diagnostic",
         run: async (ctx) => {
