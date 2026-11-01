@@ -115,8 +115,29 @@ public enum TitleFormatter {
             .replacingOccurrences(of: "{m}", with: String(minutes))
     }
 
-    /// `fiveHourLeftPct` / `sevenDayLeftPct` are leftover (headroom) percents.
-    /// `utilization` shows the smallest leftover, i.e. the most depleted window.
+    /// What one usage window says for a title. A limit the account does not have (`noLimit`: since 2026-10-31
+    /// some Claude accounts have no 5-hour limit) is never shown as a percent, and it never constrains anything.
+    public enum WindowReading: Equatable, Sendable {
+        /// The headroom left, in percent.
+        case left(Double)
+        /// The account has no such limit.
+        case noLimit
+        /// No reading.
+        case unknown
+
+        /// `left` for a percent, `unknown` for nil: what a caller that has only the percent knows.
+        public init(leftPct: Double?) {
+            self = leftPct.map(WindowReading.left) ?? .unknown
+        }
+
+        var leftPct: Double? {
+            if case .left(let pct) = self { return pct }
+            return nil
+        }
+    }
+
+    /// `fiveHourLeftPct` / `sevenDayLeftPct` are leftover (headroom) percents, nil when unknown. This form cannot say
+    /// that an account has no 5-hour limit; it stays for callers that do not know yet (Genesis' monitor model).
     public static func title(
         mode: MenuBarTitleMode,
         alias: String?,
@@ -128,13 +149,47 @@ public enum TitleFormatter {
         timeRemaining: String?,
         sevenDayLeftPct: Double? = nil
     ) -> String? {
+        title(
+            mode: mode,
+            alias: alias,
+            fiveHour: WindowReading(leftPct: fiveHourLeftPct),
+            todayCost: todayCost,
+            todayTokens: todayTokens,
+            weekCost: weekCost,
+            monthCost: monthCost,
+            timeRemaining: timeRemaining,
+            sevenDay: WindowReading(leftPct: sevenDayLeftPct)
+        )
+    }
+
+    /// The title for `mode`. A window the account has no limit for drops out: `quotaAndSpend` leaves its percent out
+    /// (`work · $3.50 · 1.25 MTok`), `fiveHour` / `sevenDay` say `no 5h` / `no 7d`, and `utilization` shows the
+    /// smallest leftover of the windows that exist, i.e. the most depleted one.
+    public static func title(
+        mode: MenuBarTitleMode,
+        alias: String?,
+        fiveHour: WindowReading,
+        todayCost: Double?,
+        todayTokens: Int?,
+        weekCost: Double?,
+        monthCost: Double?,
+        timeRemaining: String?,
+        sevenDay: WindowReading = .unknown
+    ) -> String? {
         let core: String?
         switch mode {
         case .none:
             core = nil
         case .quotaAndSpend:
-            if let alias, let pct = fiveHourLeftPct, let cost = todayCost, let tokens = todayTokens {
-                core = "\(alias) \(Int(pct))% · \(formatCost(cost)) · \(formatMTok(tokens))"
+            if let alias, let cost = todayCost, let tokens = todayTokens {
+                switch fiveHour {
+                case .left(let pct):
+                    core = "\(alias) \(Int(pct))% · \(formatCost(cost)) · \(formatMTok(tokens))"
+                case .noLimit:
+                    core = "\(alias) · \(formatCost(cost)) · \(formatMTok(tokens))"
+                case .unknown:
+                    core = nil
+                }
             } else {
                 core = nil
             }
@@ -153,11 +208,11 @@ public enum TitleFormatter {
         case .todayTokens:
             core = todayTokens.map(formatMTok)
         case .fiveHour:
-            core = fiveHourLeftPct.map { "\(Int($0))%" }
+            core = windowText(fiveHour, none: "no 5h")
         case .sevenDay:
-            core = sevenDayLeftPct.map { "\(Int($0))%" }
+            core = windowText(sevenDay, none: "no 7d")
         case .utilization:
-            let parts = [fiveHourLeftPct, sevenDayLeftPct].compactMap { $0 }
+            let parts = [fiveHour, sevenDay].compactMap(\.leftPct)
             core = parts.min().map { "\(Int($0))%" }
         }
 
@@ -167,6 +222,15 @@ public enum TitleFormatter {
         case (let text?, nil): return text
         case (nil, let text?): return text
         case (let text?, let suffix?): return "\(text) · \(suffix)"
+        }
+    }
+
+    /// A mode that is one window: its percent, the words for "no such limit", or nil when unknown.
+    private static func windowText(_ reading: WindowReading, none: String) -> String? {
+        switch reading {
+        case .left(let pct): return "\(Int(pct))%"
+        case .noLimit: return none
+        case .unknown: return nil
         }
     }
 
