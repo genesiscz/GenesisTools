@@ -853,7 +853,7 @@ describe("the change-log object store maintenance", () => {
             objects: { root: s.store, logsDir: s.agents, settle: noSettle },
         });
 
-        expect(pass.objectStore).toMatchObject({ packed: 1, dryRun: false });
+        expect(pass?.objectStore).toMatchObject({ packed: 1, dryRun: false });
         expect(s.count()).toMatchObject({ loose: 0, packs: 1, packed: 1 });
         expect(s.readable([named])).toEqual([named]);
     });
