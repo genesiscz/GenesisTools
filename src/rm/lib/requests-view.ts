@@ -4,6 +4,7 @@ import {
     type RmCaller,
     type RmRequest,
     type RmRequestLive,
+    type RmRequestStatus,
     type RmRequestTarget,
     type RmTargetLiveState,
     requestBatchIds,
@@ -20,7 +21,7 @@ export interface RequestView {
     live: RmRequestLive;
     /** Bytes per entry of `request.targets`; undefined when not measured. */
     sizes: (number | undefined)[];
-    /** Other pending requests that name one of this request's in-place paths. */
+    /** Other pending requests that name one of this request's in-place paths (none for a closed request). */
     alsoIn: string[];
 }
 
@@ -33,7 +34,7 @@ export function buildRequestViews(requests: readonly RmRequest[], deps: RequestV
     const pending = requests.filter((request) => request.status === "pending");
     return requests.map((request) => {
         const inPlace = request.targets.filter((target) => !target.stored).map((target) => target.path);
-        const also = requestsAlsoNaming(inPlace, request.id, pending);
+        const also = request.status === "pending" ? requestsAlsoNaming(inPlace, request.id, pending) : new Map();
         return {
             request,
             live: requestLive(request, deps.present),
@@ -82,11 +83,41 @@ const TARGET_STATE: Record<RmTargetLiveState, { kind: DotStatusKind; label: stri
     gone: { kind: "warn", label: "gone" },
 };
 
-function stateCell(live: RmRequestLive): string {
+/** A closed request shows its status, never what is on disk now: an approved request's copy is gone by design. */
+const CLOSED_STATE: Record<Exclude<RmRequestStatus, "pending">, { kind: DotStatusKind; label: string }> = {
+    approved: { kind: "ok", label: "approved" },
+    denied: { kind: "dim", label: "denied" },
+    expired: { kind: "dim", label: "expired" },
+    gone: { kind: "dim", label: "gone" },
+};
+
+function isOpen(view: RequestView): boolean {
+    return view.request.status === "pending";
+}
+
+function stateCell(view: RequestView): string {
+    const { request, live } = view;
     const { kind, label } =
-        live.state === "waiting"
-            ? { kind: "dim" as const, label: live.inPlace === 0 ? "aside" : live.aside === 0 ? "in place" : "mixed" }
-            : TARGET_STATE[live.state];
+        request.status !== "pending"
+            ? CLOSED_STATE[request.status]
+            : live.state === "waiting"
+              ? { kind: "dim" as const, label: live.inPlace === 0 ? "aside" : live.aside === 0 ? "in place" : "mixed" }
+              : TARGET_STATE[live.state];
+    return formatDotStatus(kind, label.padEnd(9));
+}
+
+/** One path's cell: its live state while the request is open; once closed, what the person decided for it. */
+function targetStateCell(view: RequestView, index: number): string {
+    const { request } = view;
+    const path = request.targets[index]?.path ?? "";
+    const { kind, label } =
+        request.status === "pending"
+            ? TARGET_STATE[view.live.targets[index] ?? "gone"]
+            : request.decided?.approved.includes(path)
+              ? CLOSED_STATE.approved
+              : request.decided?.denied.includes(path)
+                ? CLOSED_STATE.denied
+                : CLOSED_STATE[request.status];
     return formatDotStatus(kind, label.padEnd(9));
 }
 
@@ -99,14 +130,33 @@ function decidedText(request: RmRequest): string | null {
     return `${approved} approved ${formatClock(request.decidedAt, { date: "short" })} via ${request.decidedVia ?? "?"}`;
 }
 
-/** The row's short form of a decision so far: "approved 4, Oct 31". */
+/**
+ * The row's short form of a decision so far: "approved 4, Oct 31", "denied 2, Nov 1". A pending request shows what
+ * was decided in part (approved some, or denied with a copy still waiting to go home). A close that decided no path
+ * (prune, an expiry, nothing left) reads "closed Nov 1". A record older than `decided` counts its paths.
+ */
 function decidedShort(request: RmRequest): string {
     if (!request.decidedAt) {
         return "";
     }
 
     const date = formatClock(request.decidedAt, { date: "short" }).split(",")[0] ?? "";
-    return `approved ${request.decided?.approved.length ?? 0}, ${date}`;
+    const approved = request.decided?.approved.length ?? 0;
+    const denied = request.decided?.denied.length ?? 0;
+
+    if (request.status === "pending") {
+        return approved > 0 ? `approved ${approved}, ${date}` : denied > 0 ? `denied ${denied}, ${date}` : "";
+    }
+
+    if (request.status === "approved") {
+        return `approved ${approved || request.targets.length}, ${date}`;
+    }
+
+    if (request.status === "denied") {
+        return `denied ${denied || request.targets.length}, ${date}`;
+    }
+
+    return `closed ${date}`;
 }
 
 function whyCell(view: RequestView): string {
@@ -114,7 +164,7 @@ function whyCell(view: RequestView): string {
     const parts = [
         decidedShort(view.request),
         rules.join(","),
-        view.live.state === "waiting" && view.live.gone > 0 ? `${view.live.gone} gone` : "",
+        isOpen(view) && view.live.state === "waiting" && view.live.gone > 0 ? `${view.live.gone} gone` : "",
         view.alsoIn.length > 0 ? `same path as ${view.alsoIn.join(" ")}` : "",
     ].filter((part) => part !== "");
     return parts.length === 0 ? "" : truncateDisplay(parts.join(" · "), WHY_MAX);
@@ -133,7 +183,7 @@ function requestRow(view: RequestView, now: Date, withSession: boolean): string 
     const session = withSession ? `${sessionKey(request).slice(0, 8).padEnd(8)}  ` : "";
     return (
         `    ${pc.bold(request.id)}  ${session}${ageCell(request.createdAt, now)}  ${sizeCell(sum(view.sizes))}  ` +
-        `${stateCell(view.live)}  ${path}${more}${why ? `  ${pc.dim(why)}` : ""}`
+        `${stateCell(view)}  ${path}${more}${why ? `  ${pc.dim(why)}` : ""}`
     );
 }
 
@@ -145,29 +195,47 @@ export function renderRequestRow(view: RequestView, now: Date): string {
 function pathRows(view: RequestView, now: Date): string[] {
     const { request } = view;
     return request.targets.map((target, index) => {
-        const state = TARGET_STATE[view.live.targets[index] ?? "gone"];
         const rule = target.rule === "default" ? "" : `  ${pc.dim(target.rule)}`;
         return (
             `    ${pc.bold(request.id)}  ${ageCell(request.createdAt, now)}  ${sizeCell(view.sizes[index])}  ` +
-            `${formatDotStatus(state.kind, state.label.padEnd(9))}  ${shortRmPath(target.path, displayContext(request.caller), PATH_MAX)}${rule}`
+            `${targetStateCell(view, index)}  ${shortRmPath(target.path, displayContext(request.caller), PATH_MAX)}${rule}`
         );
     });
 }
 
-function summaryLines(views: readonly RequestView[], now: Date): string[] {
+/**
+ * The head line and what needs a look, both from the open requests only and from what is on disk now: a path that
+ * is gone counts as neither in place nor aside, and a lost copy's bytes are not aside. Closed ones (`--all`) are
+ * only counted.
+ */
+function summaryLines(allViews: readonly RequestView[], now: Date): string[] {
+    const views = allViews.filter(isOpen);
+    const closed = allViews.length - views.length;
     const targets = views.flatMap((view) =>
-        view.request.targets.map((target, index) => ({ target, bytes: view.sizes[index] }))
+        view.request.targets.map((_, index) => ({
+            state: view.live.targets[index] ?? "gone",
+            bytes: view.sizes[index],
+        }))
     );
-    const asideBytes = sum(targets.filter(({ target }) => target.stored).map(({ bytes }) => bytes)) ?? 0;
-    const inPlace = targets.filter(({ target }) => !target.stored).length;
+    const asideBytes =
+        sum(targets.filter(({ state }) => state === "aside" || state === "came-back").map(({ bytes }) => bytes)) ?? 0;
+    const inPlace = targets.filter(({ state }) => state === "in-place").length;
     const oldest = views.reduce(
         (min, view) => (view.request.createdAt < min ? view.request.createdAt : min),
         now.toISOString()
     );
     const paths = `${targets.length} path${targets.length === 1 ? "" : "s"}`;
-    const head =
-        `${pc.bold("rm requests")}  ${views.length} open · ${paths} · ${formatBytes(asideBytes)} aside · ` +
-        `${inPlace} in place · oldest ${formatAgeCell(oldest, now).text}`;
+    const counts = [`${views.length} open`, closed > 0 ? `${closed} closed` : ""].filter((part) => part !== "");
+    const disk =
+        views.length > 0
+            ? [
+                  paths,
+                  `${formatBytes(asideBytes)} aside`,
+                  `${inPlace} in place`,
+                  `oldest ${formatAgeCell(oldest, now).text}`,
+              ]
+            : [];
+    const head = `${pc.bold("rm requests")}  ${[...counts, ...disk].join(" · ")}`;
     const ids = (state: RmRequestLive["state"]) =>
         views.filter((view) => view.live.state === state).map((view) => view.request.id);
     const twice = [
@@ -272,10 +340,7 @@ export function renderRequestDetail(view: RequestView, now: Date): string[] {
     lines.push("  paths");
 
     request.targets.forEach((target, index) => {
-        const state = TARGET_STATE[view.live.targets[index] ?? "gone"];
-        lines.push(
-            `    ${formatDotStatus(state.kind, state.label.padEnd(9))} ${sizeCell(view.sizes[index])}  ${target.path}`
-        );
+        lines.push(`    ${targetStateCell(view, index)} ${sizeCell(view.sizes[index])}  ${target.path}`);
         lines.push(pc.dim(`        ${target.rule}: ${target.reason}`));
 
         if (target.stored) {
