@@ -1562,6 +1562,12 @@ test("links: a bare PR number takes the repository the reply means, not only the
         "#13 -> https://github.com/acme/web/pull/13, in acme/web: the nearest repository the reply names"
     );
     expect(note).toContain("#14 -> https://github.com/acme/api/pull/14, in acme/api: the session's checkout");
+
+    // A full link whose label carries the title, parentheses and all, stays as written and is no PR the mod linked.
+    const full =
+        "- **The PR:** [#7 (fix(web, hooks): the mod's seven, and more)](https://github.com/acme/web/pull/7), branch `feat/x`.\n";
+    expect(await linkLine(one, full)).toBe(full);
+    expect(takeLinkedPullRequestNote()).toBeUndefined();
 });
 
 /** A session working in two checkouts, acme/Toolbox (its folder) and acme/Playground; titles per `repo#n`. */

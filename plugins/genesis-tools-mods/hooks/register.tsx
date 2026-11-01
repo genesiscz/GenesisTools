@@ -29,7 +29,13 @@ import {
     setIdleDueAt,
 } from "./idle";
 import { inbox, inboxChip } from "./inbox";
-import { appendLinkedPullRequestNote, linksStep, rememberToolPaths, takeLinkedPullRequestNote } from "./links";
+import {
+    appendLinkedPullRequestNote,
+    linksStep,
+    PR_REFERENCE_SECTION,
+    rememberToolPaths,
+    takeLinkedPullRequestNote,
+} from "./links";
 import { startLiveClock } from "./live";
 import {
     type CallSection,
@@ -782,6 +788,17 @@ export const register: Register = (on) => {
         }
 
         return yield* stream;
+    });
+
+    // While the links mod is on, the model is told to write a PR with its repository, so the mod need not guess one.
+    on("prompt.compose", async ($, e, next) => {
+        const result = await next(e);
+
+        if (!(await settingsOf(hostOf($))).links.enabled) {
+            return result;
+        }
+
+        return { sections: [...result.sections, PR_REFERENCE_SECTION] };
     });
 
     on("agent.spawn", async ($, e, next) => {
