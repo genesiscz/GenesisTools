@@ -53,7 +53,9 @@ Flags and defaults:
 - `--min-saving <percent>`: 25. A smaller saving discards the output.
 - `--dry-run`: lists each file with its size and skip reason, writes nothing.
 - `--replace`: the result takes the original path; the original goes to the GenesisTools trash and the batch id is
-  printed, so `tools rm restore <batch>` undoes it. Without it the result is `<name>.hevc.<ext>` beside the input.
+  printed. An agent may not replace a file that the `tools rm` rules mark "ask": the verified result stays beside it
+  as `<name>.hevc.<ext>` (status `kept-beside`) and the summary prints the `tools rm <originals>` command a person runs
+  to finish. A person at a terminal replaces as asked, and a "deny" verdict stops everyone. See "Undo a replace". Without it the result is `<name>.hevc.<ext>` beside the input.
 - `--json`: one row per file (input, output, sizes, saving, kept, status, reason, trashBatch).
 
 Skipped with a reason: files already HEVC, files with a data track (an iPhone `.MOV` with `mebx` metadata),
@@ -63,3 +65,13 @@ A result is kept only when it is at least `--min-saving` smaller, its duration i
 is HEVC, audio is present when the input had audio, and a full hardware decode (`ffmpeg -v error -xerror`) prints
 nothing. Otherwise the output is discarded and the input stays. Each ffmpeg runs under `nice -n 10`; background QoS
 (`taskpolicy -b`) starved the jobs on a loaded Mac, so it is not used.
+
+### Undo a replace
+
+`tools rm restore <batch>` alone refuses, because the new file sits at the original path. Two commands undo it; the
+summary prints both after every replace:
+
+~~~sh
+mv ./a.mp4 ./a.hevc.mp4
+tools rm restore <batch>
+~~~

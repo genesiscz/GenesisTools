@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { listBatches } from "@genesiscz/utils/rm";
 import type { MediaFacts } from "@genesiscz/utils/video/media-facts";
 import { findEncoder, judgeOutput, skipReason, type VideoEncoder } from "@genesiscz/utils/video/reencode";
-import { encodeVideos, isEarlierOutput, siblingOutput } from "./encode";
+import { encodeVideos, isEarlierOutput, replaceDecision, siblingOutput } from "./encode";
 
 const encoder = findEncoder("hevc") as VideoEncoder;
 
@@ -93,6 +93,23 @@ describe("judgeOutput", () => {
     });
 });
 
+describe("replaceDecision", () => {
+    test("an agent keeps the result beside a file the rules mark ask", () => {
+        const decision = replaceDecision({ verdict: "ask", reason: "no rule allows it", isInAgent: true });
+        expect(decision.kind).toBe("beside");
+    });
+
+    test("a person replaces an ask file, and anyone replaces an allowed one", () => {
+        expect(replaceDecision({ verdict: "ask", reason: "x", isInAgent: false }).kind).toBe("replace");
+        expect(replaceDecision({ verdict: "allow", reason: "x", isInAgent: true }).kind).toBe("replace");
+    });
+
+    test("deny stops a person and an agent", () => {
+        expect(replaceDecision({ verdict: "deny", reason: "x", isInAgent: false }).kind).toBe("refuse");
+        expect(replaceDecision({ verdict: "deny", reason: "x", isInAgent: true }).kind).toBe("refuse");
+    });
+});
+
 describe("names", () => {
     test("the output sits beside the input and is not taken for an input", () => {
         const output = siblingOutput({ input: "/clips/a.mov", encoder });
@@ -158,10 +175,21 @@ describe("encode with the hardware encoder", () => {
                 dryRun: false,
             });
 
-            expect(row.status).toBe("kept");
+            // The trash rules decide for the temp folder: an agent run gets "ask" and keeps the result beside the
+            // original, a run the rules allow replaces it. Both outcomes must leave a clean, verified state.
             expect(row.kept).toBe(true);
-            expect(statSync(clip).size).toBeLessThan(before * 0.75);
             expect(existsSync(join(dir, "clip.hevc-tmp.mp4"))).toBe(false);
+
+            if (row.status === "kept-beside") {
+                expect(statSync(clip).size).toBe(before);
+                expect(row.output).toBe(join(dir, "clip.hevc.mp4"));
+                expect(statSync(join(dir, "clip.hevc.mp4")).size).toBeLessThan(before * 0.75);
+                expect(row.trashBatch).toBeNull();
+                return;
+            }
+
+            expect(row.status).toBe("kept");
+            expect(statSync(clip).size).toBeLessThan(before * 0.75);
             expect(row.trashBatch).not.toBeNull();
 
             const batch = listBatches().find((candidate) => candidate.id === row.trashBatch);
