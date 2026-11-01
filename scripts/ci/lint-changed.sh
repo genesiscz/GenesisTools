@@ -60,7 +60,9 @@ elif [ ${#files[@]} -eq 0 ]; then
     echo "lint-changed: no changed Biome files against ${BASE}"
 else
     echo "lint-changed: ${#files[@]} changed Biome file(s) against ${BASE}"
-    ./node_modules/.bin/biome check "${files[@]}"
+    # --no-errors-on-unmatched: a diff of only Biome-ignored files (a dashboard with its own biome.json) is a pass,
+    # not "No files were processed"; the pre-push hook calls Biome the same way.
+    ./node_modules/.bin/biome check --no-errors-on-unmatched "${files[@]}"
 fi
 
 # Repo rules own a wider source set than Biome, including Swift. They must run
