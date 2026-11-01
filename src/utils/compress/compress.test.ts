@@ -38,7 +38,7 @@ import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { planDailyCompression } from "./daily";
 import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { searchLedger } from "./ledger";
-import { compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
+import { CompressRefusal, compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
 import { PRESET_NAMES, PRESETS, resolvePreset, sniffSample } from "./presets";
 import {
     applyFolderRetention,
@@ -1016,6 +1016,59 @@ describe("folder archives", () => {
             snapshot.mockRestore();
         }
     });
+
+    it.skipIf(process.platform !== "darwin")(
+        "refuses cloud placeholders by name before reading them, and --include-placeholders packs them as they are",
+        async () => {
+            const dir = scratch("placeholders");
+            const tree = makeTree(dir);
+            const stubs = Array.from({ length: 21 }, (_, index) => `stub-${String(index).padStart(2, "0")}.note`);
+
+            for (const stub of stubs) {
+                writeFileSync(join(tree, stub), Buffer.alloc(8192));
+            }
+
+            // One call marks every stub the way the Dropbox app marked an online-only file before File Provider.
+            const marked = Bun.spawnSync(
+                ["xattr", "-w", "com.dropbox.placeholder", "1", ...stubs.map((stub) => join(tree, stub))],
+                { env: process.env }
+            );
+            expect(marked.exitCode).toBe(0);
+            const refusal = compressPath({ source: tree, force: true, caller: "test" });
+            await expect(refusal).rejects.toBeInstanceOf(CompressRefusal);
+            await expect(refusal).rejects.toThrow(/stub-00\.note, .*stub-19\.note and 1 more/);
+            await expect(refusal).rejects.toThrow("cloud copy");
+            expect(existsSync(`${tree}.zst`)).toBe(false);
+            await expect(
+                compressPath({ source: join(tree, "stub-00.note"), force: true, caller: "test" })
+            ).rejects.toThrow("stub-00.note");
+
+            // The normal files beside the stubs pack without the flag.
+            const listed = await compressPath({
+                source: tree,
+                files: ["top.txt", "link"],
+                force: true,
+                caller: "test",
+            });
+            expect(listed.record.files).toBe(2);
+            rmSync(`${tree}.zst`);
+
+            const { record } = await compressPath({
+                source: tree,
+                includePlaceholders: true,
+                removeOriginal: true,
+                force: true,
+                caller: "test",
+            });
+            expect(record.removedOriginal).toBe(true);
+            expect(existsSync(tree)).toBe(false);
+            const stored = listArchive(`${tree}.zst`, { hash: true }).find(
+                (entry) => entry.path === "tree/stub-00.note"
+            );
+            expect(stored?.size).toBe(8192);
+            expect(stored?.sha256).toBe(new Bun.CryptoHasher("sha256").update(Buffer.alloc(8192)).digest("hex"));
+        }
+    );
 
     it("packs only the listed files of a folder under its name, verifies them, and removes only those", async () => {
         const dir = scratch("files-from");
