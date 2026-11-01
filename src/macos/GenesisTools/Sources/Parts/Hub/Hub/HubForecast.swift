@@ -6,6 +6,8 @@ import SwiftUI
 // already recorded, so a load never spends an API call. It loads when the window becomes key and on
 // the digest's refresh, at most every two minutes; no timer runs. Shown beside a session's account
 // (`HubForecastChip`) and as the Usage section of the Today digest (`HubForecastList`).
+// Since 2026-10-31 some Claude accounts have no 5-hour limit. The CLI then sends no window for it and names it in
+// `absentWindows`: the chip leaves it out and says so in its tooltip, the digest row shows `5h —`. Never `5h 0%`.
 
 struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
     let bucket: String
@@ -74,16 +76,50 @@ struct HubForecastAccount: Decodable, Equatable, Identifiable, Sendable {
     let account: String
     let windows: [HubForecastWindow]
     let warning: String?
+    /// The window keys (buckets) this account has no limit for, such as `five_hour`. Output from a CLI or hub server
+    /// older than the field has no key: nil, read as none.
+    let absentWindows: [String]?
 
     var id: String { "\(provider):\(account)" }
 
-    var current: [HubForecastWindow] { windows.filter(\.isCurrent) }
+    var absent: [String] { absentWindows ?? [] }
 
-    /// The window the chip shows: the one that runs out first before its reset, else the 5h, else the first current.
+    /// The windows that say something about now. A window the account has no limit for is never one, even if a
+    /// writer still sends it: it is no constraint.
+    var current: [HubForecastWindow] {
+        let absent = absent
+        return windows.filter { $0.isCurrent && !absent.contains($0.bucket) }
+    }
+
+    /// The digest row: `5h —` for each window the account has no limit for (the 5h comes first in the other rows
+    /// too), then the current windows.
+    var cells: [HubForecastCell] { absent.map(HubForecastCell.absent) + current.map(HubForecastCell.window) }
+
+    /// The chip's tooltip: a line per current window, a line per window the account has no limit for, the source.
+    var tooltip: String {
+        (current.map { $0.detail() } + absent.map(HubForecastFormat.absentNote) + ["From recorded usage snapshots (tools hub forecast)"])
+            .joined(separator: "\n")
+    }
+
+    /// The window the chip shows: the one that runs out first before its reset, else the 5h (when the account has
+    /// one), else the first current.
     var headline: HubForecastWindow? {
         let current = current
         let early = current.filter(\.beforeReset).min { ($0.exhaustAt ?? "") < ($1.exhaustAt ?? "") }
         return early ?? current.first { $0.kind == "session" } ?? current.first
+    }
+}
+
+enum HubForecastCell: Equatable, Identifiable, Sendable {
+    case window(HubForecastWindow)
+    /// A window key the account has no limit for.
+    case absent(String)
+
+    var id: String {
+        switch self {
+        case .window(let window): return "window:\(window.bucket)"
+        case .absent(let bucket): return "absent:\(bucket)"
+        }
     }
 }
 
@@ -99,6 +135,16 @@ enum HubForecastFormat {
         formatter.locale = Locale(identifier: "en_GB")
         formatter.dateFormat = Calendar.current.isDateInToday(date) ? "HH:mm" : "EEE HH:mm"
         return formatter.string(from: date)
+    }
+
+    /// The short name of a window the CLI lists as absent: it sends only the key. The forecast's own label
+    /// (src/hub/lib/forecast.ts `windowLabel`) for a key it has one for, else the key.
+    static func absentLabel(_ bucket: String) -> String {
+        ["five_hour": "5h"][bucket] ?? bucket
+    }
+
+    static func absentNote(_ bucket: String) -> String {
+        "No \(absentLabel(bucket)) limit on this account"
     }
 }
 
@@ -143,7 +189,8 @@ final class HubForecastStore: ObservableObject {
 }
 
 /// Beside a session's account in its header: the account's most urgent window, orange when it runs
-/// out before it resets. Nothing when the account has no recorded usage.
+/// out before it resets. Nothing when the account has no recorded usage. A window the account has no limit for
+/// is left out of the chip (a compact strip) and named in the tooltip.
 struct HubForecastChip: View {
     let account: String?
     @ObservedObject private var store = HubForecastStore.shared
@@ -159,7 +206,7 @@ struct HubForecastChip: View {
                     .lineLimit(1)
             }
             .foregroundColor(window.beforeReset ? ReviewPalette.modified : window.stale ? ReviewPalette.dim.opacity(0.7) : ReviewPalette.dim)
-            .instantTooltip(entry.current.map { $0.detail() }.joined(separator: "\n") + "\nFrom recorded usage snapshots (tools hub forecast)")
+            .instantTooltip(entry.tooltip)
         }
     }
 }
@@ -194,23 +241,42 @@ struct HubForecastList: View {
                     .foregroundColor(ReviewPalette.dim)
             }
             ForEach(accounts) { entry in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(verbatim: entry.account)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.88))
-                        .frame(width: 150, alignment: .leading)
-                        .lineLimit(1)
-                        .instantTooltip("\(entry.account) · \(entry.provider)")
-                    ForEach(entry.current) { window in
-                        HubForecastSummary(window: window)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(window.beforeReset ? ReviewPalette.modified : (window.stale ? ReviewPalette.dim.opacity(0.7) : ReviewPalette.dim))
-                            .instantTooltip(window.detail())
-                    }
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: 22)
+                HubForecastRow(entry: entry)
             }
         }
+    }
+}
+
+/// One account of the digest's Usage section: its name, then a chip per cell (`5h —` for a window it has no
+/// limit for, as a table shows a missing value).
+struct HubForecastRow: View {
+    let entry: HubForecastAccount
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(verbatim: entry.account)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.88))
+                .frame(width: 150, alignment: .leading)
+                .lineLimit(1)
+                .instantTooltip("\(entry.account) · \(entry.provider)")
+            ForEach(entry.cells) { cell in
+                switch cell {
+                case .window(let window):
+                    HubForecastSummary(window: window)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(window.beforeReset ? ReviewPalette.modified : (window.stale ? ReviewPalette.dim.opacity(0.7) : ReviewPalette.dim))
+                        .instantTooltip(window.detail())
+                case .absent(let bucket):
+                    Text(verbatim: "\(HubForecastFormat.absentLabel(bucket)) —")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(ReviewPalette.dim.opacity(0.7))
+                        .instantTooltip(HubForecastFormat.absentNote(bucket))
+                        .accessibilityLabel(HubForecastFormat.absentNote(bucket))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 22)
     }
 }
