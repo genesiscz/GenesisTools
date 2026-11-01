@@ -2,7 +2,7 @@
 import { env } from "@genesiscz/utils/env";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { pruneFullDiffs } from "../lib/hooks/diff/full";
-import { collectStaleCaptures } from "../lib/hooks/gc";
+import { ABANDONED_CAPTURE_MS, collectStaleCaptures } from "../lib/hooks/gc";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { parseHookPayload } from "../lib/hooks/payload";
 
@@ -26,7 +26,7 @@ if (!payload) {
 const mine = payload.sessionId
     ? collectStaleCaptures({ now: Date.now(), sessionId: payload.sessionId, write: true })
     : { removed: [], kept: 0, bytes: 0, write: true };
-const stale = collectStaleCaptures({ now: Date.now(), write: true });
+const stale = collectStaleCaptures({ now: Date.now(), abandonedMs: ABANDONED_CAPTURE_MS, write: true });
 
 pruneFullDiffs(Date.now());
 
