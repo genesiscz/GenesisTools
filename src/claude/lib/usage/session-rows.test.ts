@@ -1,29 +1,35 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerUsageCommand } from "@app/claude/commands/usage";
 import type { SessionMetadataRecord } from "@genesiscz/utils/claude/history-cache";
+import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 
 const MIN = 60 * 1000;
 const listing: { sessions: SessionMetadataRecord[] } = { sessions: [] };
+/** The options of every `getSessionListing` call, so a test can see whether the window went down to the read. */
+const listingCalls: Array<Record<string, unknown>> = [];
 const tails = new Map<string, string[]>();
 const tailReads: string[] = [];
 const unreadableTails = new Set<string>();
 
 mock.module("@app/claude/lib/history/search", () => ({
-    getSessionListing: async () => ({
-        sessions: listing.sessions,
-        total: listing.sessions.length,
-        subagents: 0,
-        indexed: 0,
-        staleRemoved: 0,
-        reindexed: false,
-        projectCount: 1,
-        scope: "test",
-    }),
+    getSessionListing: async (options: Record<string, unknown> = {}) => {
+        listingCalls.push(options);
+        return {
+            sessions: listing.sessions,
+            total: listing.sessions.length,
+            subagents: 0,
+            indexed: 0,
+            staleRemoved: 0,
+            reindexed: false,
+            projectCount: 1,
+            scope: "test",
+        };
+    },
 }));
 
 mock.module("@genesiscz/utils/claude/session.utils", () => ({
@@ -80,7 +86,6 @@ import {
     GROK_CACHE_TTL_MS,
     listSessionRows,
     listSessionRowsWithTimings,
-    rowsOnHost,
 } from "./session-rows";
 
 const NOW = 1_700_000_000_000;
@@ -635,7 +640,7 @@ describe("listSessionRows", () => {
         expect(rows[0]?.cmux?.surfaceId).toBe("surface-uuid");
     });
 
-    test("rows carry the host their pin names, null without one, and rowsOnHost keeps that host's rows", async () => {
+    test("rows carry the host their pin names, null without one, and the host option keeps that host's rows", async () => {
         listing.sessions = [
             record({ filePath: "/tmp/hosted.jsonl", sessionId: "HOSTED-ID", mtime: NOW - 5 * MIN }),
             record({ filePath: "/tmp/plain.jsonl", sessionId: "plain-id", mtime: NOW - 6 * MIN }),
@@ -649,8 +654,31 @@ describe("listSessionRows", () => {
         const host = new Map(rows.map((row) => [row.sessionId, row.host]));
         expect(host.get("HOSTED-ID")).toEqual({ kind: "t3", id: "thread-1" });
         expect(host.get("plain-id")).toBeNull();
-        expect(rowsOnHost(rows, "t3").map((row) => row.sessionId)).toEqual(["HOSTED-ID"]);
-        expect(rowsOnHost(rows, "other")).toEqual([]);
+        expect((await listSessionRows({ hours: 6, now: NOW, host: "t3" })).map((row) => row.sessionId)).toEqual([
+            "HOSTED-ID",
+        ]);
+        expect(await listSessionRows({ hours: 6, now: NOW, host: "other" })).toEqual([]);
+    });
+
+    test("--min counts hosted rows: an older hosted session is appended past unhosted ones in the window", async () => {
+        listing.sessions = [
+            record({ filePath: "/tmp/plain-a.jsonl", sessionId: "plain-a", mtime: NOW - 5 * MIN }),
+            record({ filePath: "/tmp/plain-b.jsonl", sessionId: "plain-b", mtime: NOW - 6 * MIN }),
+            record({ filePath: "/tmp/old-t3.jsonl", sessionId: "old-t3", mtime: NOW - 30 * 60 * MIN }),
+        ];
+        pins.set("old-t3", { account: "work", host: { kind: "t3", id: "thread-2" } });
+        listingCalls.length = 0;
+
+        const rows = await listSessionRows({ hours: 6, minRows: 1, host: "t3", now: NOW });
+
+        expect(rows.map((row) => row.sessionId)).toEqual(["old-t3"]);
+        // The SQL top-up counts every session, so the window must not go down to the read with a host filter.
+        expect(listingCalls.at(-1)).not.toHaveProperty("newest");
+        expect(listingCalls.at(-1)).not.toHaveProperty("mtimeFrom");
+
+        listingCalls.length = 0;
+        await listSessionRows({ hours: 6, host: "t3", now: NOW });
+        expect(listingCalls.at(-1)).toHaveProperty("mtimeFrom");
     });
 
     test("rows with equal clocks keep a deterministic order across polls", async () => {
@@ -684,7 +712,34 @@ test("usage sessions is registered with --json and --hours", () => {
     expect(help).toContain("--json");
     expect(help).toContain("--hours");
     expect(help).toContain("--min");
-    expect(help).toContain("--host <kind>");
+    expect(help).toContain("--host [kind]");
+});
+
+test("usage sessions refuses a bare or an unknown --host with the known kinds, and lists nothing", async () => {
+    const printed: string[] = [];
+    const printlnErr = spyOn(out, "printlnErr").mockImplementation((text: string) => {
+        printed.push(text);
+    });
+
+    try {
+        for (const flag of [["--host"], ["--host", "nope"]]) {
+            const program = new Command();
+            program.exitOverride();
+            registerUsageCommand(program);
+            listingCalls.length = 0;
+            printed.length = 0;
+
+            await program.parseAsync(["usage", "sessions", ...flag], { from: "user" });
+
+            expect(process.exitCode).toBe(1);
+            expect(listingCalls).toEqual([]);
+            expect(printed.join("\n")).toContain("--host t3");
+            process.exitCode = 0;
+        }
+    } finally {
+        printlnErr.mockRestore();
+        process.exitCode = 0;
+    }
 });
 
 describe("the saved tail cache", () => {

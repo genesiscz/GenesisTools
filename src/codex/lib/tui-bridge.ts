@@ -1,34 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
+import { ACCOUNT_BOUND_ERROR_CODE, ACCOUNT_BOUND_REFUSAL, breaksAccountBinding } from "./account-bound";
 import type { AppServerClient, RpcNotification, RpcServerRequest } from "./app-server-client";
-
-const identityKeys = new Set([
-    "model_provider",
-    "model_providers",
-    "chatgpt_base_url",
-    "forced_login_method",
-    "forced_chatgpt_workspace_id",
-    "cli_auth_credentials_store",
-    "auth",
-    "api_key",
-    "experimental_bearer_token",
-]);
-function changesIdentity(value: unknown): boolean {
-    if (Array.isArray(value)) {
-        // A list is a legitimate place to hide `{model_provider: …}`, so descend into it
-        // rather than treating every array as inert.
-        return value.some((child) => changesIdentity(child));
-    }
-
-    if (!record(value)) {
-        return false;
-    }
-
-    return Object.entries(value).some(([key, child]) =>
-        key === "modelProvider"
-            ? child != null && child !== "openai"
-            : identityKeys.has(key.split(".")[0]) || changesIdentity(child)
-    );
-}
 
 function record(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -131,24 +103,10 @@ export class CodexTuiBridge {
             return;
         }
 
-        if (
-            !this.connected ||
-            !this.initialized ||
-            method.startsWith("account/login") ||
-            method === "account/logout" ||
-            (method.startsWith("config/") && !method.endsWith("/read")) ||
-            changesIdentity(params)
-        ) {
+        if (!this.connected || !this.initialized || breaksAccountBinding(method, params)) {
             if (id !== undefined) {
                 this.options.send(
-                    {
-                        id,
-                        error: {
-                            code: -32600,
-                            message:
-                                "This Codex server is bound to its selected account; login and configuration writes are unavailable",
-                        },
-                    },
+                    { id, error: { code: ACCOUNT_BOUND_ERROR_CODE, message: ACCOUNT_BOUND_REFUSAL } },
                     { kind: "peer", peer }
                 );
             }

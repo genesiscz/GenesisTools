@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -41,9 +42,13 @@ export function readEmbedLastPick(names: readonly string[], path = lastPickPath(
     }
 }
 
+/**
+ * Saves the pick for the next host probe. Atomic, and it makes the folder: a probe reads this file while the next
+ * launch may be writing it, and a half-written file read as no pick, so the probe ran the full usage ranking again.
+ */
 export function writeEmbedLastPick(account: string, path = lastPickPath()): void {
     try {
-        writeFileSync(path, SafeJSON.stringify({ account, at: new Date().toISOString() }, { strict: true }));
+        atomicWriteFileSync(path, SafeJSON.stringify({ account, at: new Date().toISOString() }, { strict: true }));
     } catch (error) {
         logger.debug({ error, path }, "[embed] last pick not saved");
     }

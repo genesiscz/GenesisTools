@@ -41,10 +41,10 @@ final class VaultUnlockTests: XCTestCase {
 
         XCTAssertNil(VaultWindowLock.acquire(path, waiting: 0.3), "a held lock stays refused until its timeout")
 
+        // No bound on the time waited: the release is not synchronized with the retry loop, so a busy scheduler can
+        // move it to either side of the first attempt. That the lock is taken at all is the claim.
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { close(held) }
         let waited = try XCTUnwrap(VaultWindowLock.acquire(path, waiting: 5), "the lock is taken once the holder lets go")
-        XCTAssertGreaterThan(waited.waited, 0.2)
-        XCTAssertLessThan(waited.waited, 2)
         close(waited.fd)
     }
 

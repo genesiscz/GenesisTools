@@ -63,6 +63,9 @@ const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string; carriesId: bo
     { kind: "t3", envKey: "T3CODE_CLI_PATH", carriesId: false },
 ];
 
+/** Every host kind a pin or a process row can name, each once: the closed value set of a `--host` flag. */
+export const AGENT_HOST_KINDS: readonly string[] = [...new Set(AGENT_HOST_MARKERS.map((marker) => marker.kind))];
+
 export function agentHostFromEnv(environment: Readonly<Record<string, string>> | null | undefined): AgentHost | null {
     for (const marker of AGENT_HOST_MARKERS) {
         const value = environment?.[marker.envKey];

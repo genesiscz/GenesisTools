@@ -49,6 +49,21 @@ export function instanceIdFor(alias: HarnessId, account: string): string {
     return `${OWNED_INSTANCE_PREFIX}${alias}-${slug}`.slice(0, INSTANCE_ID_MAX).replace(/-+$/, "");
 }
 
+/**
+ * Two different account names that map to one instance id: `work laptop` and `work-laptop`, `Work` and `work`, or two
+ * names that differ only past the id's 64th character. Writing both would leave one instance whose variable names the
+ * second account under the first one's display name, so nothing is written.
+ */
+export class InstanceIdCollisionError extends Error {
+    constructor(id: string, accounts: readonly string[]) {
+        const named = accounts.length >= 2 ? accounts.map((account) => `"${account}"`).join(" and ") : "Two instances";
+        super(
+            `${named} map to the same T3 Code instance id "${id}", so one would run as the other. Rename one of the accounts, or remove that instance from T3 Code's settings first; nothing was written.`
+        );
+        this.name = "InstanceIdCollisionError";
+    }
+}
+
 export function defaultDisplayName(alias: HarnessId, account: string): string {
     return `${harnessLabel(alias)} (${account})`;
 }
@@ -83,6 +98,20 @@ function upsertVariable(rows: T3EnvironmentVariable[], name: string, value: stri
  * unless it says `enabled: true`.
  */
 export function buildInstance(existing: T3Instance | undefined, request: InstanceRequest): T3Instance {
+    const bound = existing ? instanceEmbed(existing) : null;
+    const id = instanceIdFor(request.alias, request.account);
+
+    // An instance another account name already runs as, under this id. A hand edit to a value with another id is not
+    // a collision: the request puts back the account the id names.
+    if (
+        bound !== null &&
+        bound.alias === request.alias &&
+        bound.value !== request.account &&
+        instanceIdFor(bound.alias, bound.value) === id
+    ) {
+        throw new InstanceIdCollisionError(id, [bound.value, request.account]);
+    }
+
     const spec = request.host;
     let environment = upsertVariable(existing?.environment ?? [], embedAccountEnvVar(request.alias), request.account);
 

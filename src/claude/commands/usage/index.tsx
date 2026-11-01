@@ -43,8 +43,8 @@ export function registerUsageCommand(program: Command): void {
         .option("--json", "Output as JSON")
         .option("--hours <n>", "Only sessions with mtime within this many hours", "6")
         .option("--min <n>", "If fewer than N rows after --hours, append older sessions")
-        .option("--host <kind>", "Only sessions an app hosted, by its kind in the pin journal (t3 = T3 Code)")
-        .action(async (opts: { json?: boolean; hours?: string; min?: string; host?: string }) => {
+        .option("--host [kind]", "Only sessions an app hosted, by its kind in the pin journal (t3 = T3 Code)")
+        .action(async (opts: { json?: boolean; hours?: string; min?: string; host?: string | true }) => {
             const hoursRaw = typeof opts.hours === "string" ? opts.hours : "6";
             const hours = Number.parseInt(hoursRaw, 10);
 
@@ -62,14 +62,31 @@ export function registerUsageCommand(program: Command): void {
                 }
             }
 
+            let host: string | undefined;
+            if (opts.host !== undefined) {
+                // A closed value set: a bare `--host` or an unknown kind gets the list, never an empty result.
+                const { AGENT_HOST_KINDS } = await import("@genesiscz/utils/ai/active-processes");
+
+                if (opts.host === true || !AGENT_HOST_KINDS.includes(opts.host)) {
+                    out.printlnErr(
+                        suggestEnumFlag("tools claude usage sessions", "--host", AGENT_HOST_KINDS, {
+                            subcommand: ["usage", "sessions"],
+                            ...(opts.host === true ? {} : { given: opts.host }),
+                        })
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
+                host = opts.host;
+            }
+
             const prof = profiler.scope("claude-sessions");
-            const { listSessionRowsWithTimings, rowsOnHost } = await import("@app/claude/lib/usage/session-rows");
-            const listed = await prof.measureAsync("list", () =>
-                listSessionRowsWithTimings({ hours, minRows, excludeSubagents: true })
+            const { listSessionRowsWithTimings } = await import("@app/claude/lib/usage/session-rows");
+            // The host filter runs inside the listing, before `--min` tops it up, so `--min` counts hosted rows.
+            const { rows, timings } = await prof.measureAsync("list", () =>
+                listSessionRowsWithTimings({ hours, minRows, excludeSubagents: true, ...(host ? { host } : {}) })
             );
-            const { timings } = listed;
-            // After `--min`: it tops up the whole list, and the filter then keeps that list's hosted rows.
-            const rows = opts.host ? rowsOnHost(listed.rows, opts.host) : listed.rows;
             logger.debug({ timings }, "usage sessions timings");
             prof.summary("usage sessions");
             out.result({ fetchedAt: Date.now(), rows, timings });

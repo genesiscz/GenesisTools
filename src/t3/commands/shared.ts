@@ -55,6 +55,7 @@ export function parseAlias(value: string): HarnessId | null {
 export function upsertFor(request: InstanceRequest): InstanceUpsert {
     return {
         id: instanceIdFor(request.alias, request.account),
+        account: request.account,
         build: (existing) => buildInstance(existing, request),
     };
 }
