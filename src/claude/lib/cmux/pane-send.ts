@@ -14,6 +14,7 @@ import { type DialogKeyPress, planDialogKeys } from "@genesiscz/utils/agents/dia
 import { type OpenDialog, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { isCmuxInvalidParams } from "@genesiscz/utils/cmux/lib/command-error";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -452,8 +453,9 @@ export async function sendToSessionPane(
             return { kind: "typed", query: queryTrim, target, surfaceId, enter, source: result.source };
         } catch (err) {
             // cmux answers `invalid_params` before it touches the pane, so such a paste sent nothing and is safe to
-            // retry. Any other failed paste may have landed and is never sent twice.
-            const refused = err instanceof Error && err.message.includes("invalid_params");
+            // retry. Any other failed paste may have landed and is never sent twice. The code comes from cmux's own
+            // answer: the error message also prints the pasted text, which can say `invalid_params` itself.
+            const refused = isCmuxInvalidParams(err);
 
             if (result.source !== "recorded" || (paste && !refused)) {
                 throw err;

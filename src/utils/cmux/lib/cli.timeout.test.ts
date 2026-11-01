@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { DEFAULT_CMUX_TIMEOUT_MS, runCmux, runCmuxJSON, runCmuxOk } from "./cli";
+import { CmuxCommandError } from "./command-error";
 
 /**
  * Regression test: `runCmux` gained a kill + SIGKILL escalation behind an opt-in
@@ -31,6 +32,10 @@ describe("runCmux timeout", () => {
         fakeCmuxOnPath("#!/bin/sh\nsleep 30\n");
 
         await expect(runCmuxOk(["anything"], { timeoutMs: 300, killGraceMs: 50 })).rejects.toThrow();
+        // A timeout carries no cmux failure code, even when the command line itself says invalid_params.
+        const pasted = runCmuxOk(["paste", "--", "invalid_params"], { timeoutMs: 300, killGraceMs: 50 });
+        await expect(pasted).rejects.toBeInstanceOf(CmuxCommandError);
+        await expect(pasted).rejects.toMatchObject({ cmuxCode: undefined });
         await expect(runCmuxJSON(["anything"], { timeoutMs: 300, killGraceMs: 50 })).rejects.toThrow();
     });
 

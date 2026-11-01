@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
+import { CmuxCommandError } from "@genesiscz/utils/cmux/lib/command-error";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -11,6 +12,8 @@ const LIVE_SURFACE_UUID = "22222222-2222-4222-8222-222222222222";
 // A surface the app no longer knows: the send against it fails, which is what
 // makes the recorded-ref path fall back to the matcher.
 const DEAD_SURFACE_UUID = "44444444-4444-4444-8444-444444444444";
+// A surface whose paste times out: cmux may have pasted before it stopped answering.
+const HUNG_SURFACE_UUID = "55555555-5555-4555-8555-555555555555";
 
 let snapshot: CmuxLiveSnapshot;
 let events: string[] = [];
@@ -26,7 +29,20 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
         events.push(args.join(" "));
 
         if (args.includes(DEAD_SURFACE_UUID)) {
-            throw new Error("invalid_params: Surface is not a terminal");
+            throw new CmuxCommandError(args, {
+                code: 1,
+                stdout: "",
+                stderr: "Error: invalid_params: Surface is not a terminal",
+            });
+        }
+
+        if (args.includes(HUNG_SURFACE_UUID)) {
+            throw new CmuxCommandError(args, {
+                code: -1,
+                stdout: "",
+                stderr: "cmux paste timed out after 30000 ms",
+                timedOut: true,
+            });
         }
 
         return { code: 0, stdout: "", stderr: "" };
@@ -177,6 +193,17 @@ test("paste can leave the message unsubmitted, and a paste cmux refused before s
     expect(events.filter((event) => event.startsWith("paste"))).toEqual([
         `paste --surface ${DEAD_SURFACE_UUID} --submit -- a\nb`,
         "paste --surface surface:41 --submit -- a\nb",
+    ]);
+});
+
+test("a paste that failed another way is never sent twice, even when the message itself says invalid_params", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    // The thrown message prints the pasted text, so only cmux's own answer may say that the paste was refused.
+    const hung = { ...deps, lookupRefs: () => recordedRefs({ surfaceId: HUNG_SURFACE_UUID }) };
+    const text = "cmux answered invalid_params: Surface is not a terminal";
+    await expect(sendCommand(SESSION_A, text, { paste: true }, hung)).rejects.toThrow("timed out");
+    expect(events.filter((event) => event.startsWith("paste"))).toEqual([
+        `paste --surface ${HUNG_SURFACE_UUID} --submit -- ${text}`,
     ]);
 });
 
