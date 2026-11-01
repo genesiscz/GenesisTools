@@ -73,7 +73,7 @@ export default function StructurePage() {
                     badgeColor={HUE.teal}
                     nodes={[
                         {
-                            label: "tools usage",
+                            label: "tools new usage",
                             meta: "overview · --json",
                             children: [
                                 {
