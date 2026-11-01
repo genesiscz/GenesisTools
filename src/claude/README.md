@@ -244,7 +244,8 @@ than guessed at, because typing into the wrong agent session is worse than not t
 `--first` overrides that for the non-weak cases. `--no-enter` leaves the text in the prompt
 without submitting it, and `--dry-run` prints the pane it would type into and stops.
 Multi-line text always goes as one `cmux paste --submit` (typed keystrokes turned every newline
-into its own prompt); `--paste` asks for the paste for a single line too.
+into its own prompt), and so does any text with a backslash (`cmux send` reads `\n`, `\r` and `\t`
+in its text as Enter and Tab); `--paste` asks for the paste for a single line too.
 
 `send` refuses to type while the session shows a question, plan or permission dialog, because
 the text plus Enter would pick an option the user never chose (a live paste into an open
