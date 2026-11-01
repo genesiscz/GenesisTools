@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { sessionScratchPath } from "../../../plugins/genesis-tools/hooks/session-scratch";
 import {
     type AppApproval,
     type ApprovalDeps,
@@ -2149,5 +2150,22 @@ describe("the default rule says what nearly matched", () => {
         expect(
             reasonOf(file(join(dir("elsewhere"), "p.txt")), ctx({ caller: { ...AGENT, isInAgent: false } })).reason
         ).toBe(generic);
+    });
+});
+
+describe("the SessionStart hook names the scratch folder tools rm uses", () => {
+    test("the hook's copy of the path builder names the same folder as asideRootFor", () => {
+        const sessionId = "aaaaaaaa-1111-4111-8111-111111111111";
+        const cases: Array<{ harness: "claude" | "codex" | "grok"; agent: string; project: string | null }> = [
+            { harness: "claude", agent: "claude-code", project: "shop" },
+            { harness: "codex", agent: "codex", project: "my shop!" },
+            { harness: "grok", agent: "grok", project: null },
+        ];
+
+        for (const { harness, agent, project } of cases) {
+            expect(sessionScratchPath({ harness, project, sessionId })).toBe(
+                dirname(asideRootFor({ agent, sessionId, isInAgent: true, project }))
+            );
+        }
     });
 });
