@@ -350,7 +350,7 @@ export function installVerified({
     try {
         plan.startDrainer();
     } catch (error) {
-        logger.warn({ error }, "the trash drainer did not start; the next tools rm run starts it");
+        logger.warn({ error }, `the trash drainer did not start; the next ${toolCommand("rm")} run starts it`);
     }
 
     return { status: "kept", output: input, reason: keptReason, trashBatch: batch };
