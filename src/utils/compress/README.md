@@ -48,7 +48,8 @@ uses `node:zlib`'s one-frame compressor, the only API that takes parameters (che
 
 Every `plan*` function only reads: it is the dry run. Every `apply*` function removes an original only after the
 output checked out (file: size and sha256 of the decompressed content; folder: every entry, size and file sha256),
-and a file only when its size and mtime did not change while it was read.
+and a file only when its name still holds the file that was read, unchanged (`sameSource`: device, inode, size, mtime
+and ctime, so a same-length copy renamed over it with the old mtime is not taken for it).
 
 ## Who uses it
 

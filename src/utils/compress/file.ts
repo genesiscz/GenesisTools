@@ -33,13 +33,36 @@ export interface ContentDigest {
     sha256: string;
 }
 
+/**
+ * The file a read began on, as its handle saw it. Another file renamed over the name has another inode (or device),
+ * even with the same length and a copied mtime, and any write or metadata change moves the ctime.
+ */
+export interface SourceStat {
+    dev: number;
+    ino: number;
+    size: number;
+    mtimeMs: number;
+    ctimeMs: number;
+}
+
+/** True when `now` is still the file of `before`, with no write or metadata change since. */
+export function sameSource(now: SourceStat, before: SourceStat): boolean {
+    return (
+        now.dev === before.dev &&
+        now.ino === before.ino &&
+        now.size === before.size &&
+        now.mtimeMs === before.mtimeMs &&
+        now.ctimeMs === before.ctimeMs
+    );
+}
+
 export interface CompressFileResult extends ContentDigest {
     source: string;
     target: string;
     compressedBytes: number;
     frames: number;
-    /** The source's size and mtime when the read began: a caller that removes the source re-checks them first. */
-    sourceStat: { size: number; mtimeMs: number };
+    /** The source when the read began: a caller that removes the source re-checks it first ({@link sameSource}). */
+    sourceStat: SourceStat;
 }
 
 export interface CompressFileOptions extends ZstdParams {
@@ -57,9 +80,9 @@ export interface CompressFileOptions extends ZstdParams {
 
 /**
  * Compresses a file into the zstd seekable format next to it (or at `target`), through a temp file and a rename, and
- * returns the digest of what it read. The source is read in 1 MiB chunks and never held whole. A source whose size or
- * mtime changed during the read throws and writes nothing. The source is left in place: removing it is the caller's
- * decision, after {@link verifyCompressedFile} and a re-stat.
+ * returns the digest of what it read. The source is read in 1 MiB chunks and never held whole. A source whose size,
+ * mtime or ctime changed during the read throws and writes nothing. The source is left in place: removing it is the
+ * caller's decision, after {@link verifyCompressedFile} and a re-stat that finds the same file ({@link sameSource}).
  */
 export async function compressFile(options: CompressFileOptions): Promise<CompressFileResult> {
     const { source, level, long, checksum, frameBytes, threads, lineAligned = true } = options;
@@ -99,11 +122,11 @@ export async function compressFile(options: CompressFileOptions): Promise<Compre
                     bytes += read;
                 }
 
-                // A source cut or extended during the read gives a digest of bytes the file never held at one
-                // moment; throwing here keeps that copy from replacing the target (a verified `.zst` included).
+                // A source cut, extended or rewritten during the read gives a digest of bytes the file never held at
+                // one moment; throwing here keeps that copy from replacing the target (a verified `.zst` included).
                 const end = fstatSync(fd);
 
-                if (bytes !== sourceStat.size || end.size !== sourceStat.size || end.mtimeMs !== sourceStat.mtimeMs) {
+                if (bytes !== sourceStat.size || !sameSource(end, sourceStat)) {
                     throw new Error(
                         `${source} changed while it was compressed (read ${bytes} of ${sourceStat.size} bytes, now ${end.size}); nothing written`
                     );
@@ -126,7 +149,13 @@ export async function compressFile(options: CompressFileOptions): Promise<Compre
         sha256: hasher.digest("hex"),
         compressedBytes,
         frames,
-        sourceStat: { size: sourceStat.size, mtimeMs: sourceStat.mtimeMs },
+        sourceStat: {
+            dev: sourceStat.dev,
+            ino: sourceStat.ino,
+            size: sourceStat.size,
+            mtimeMs: sourceStat.mtimeMs,
+            ctimeMs: sourceStat.ctimeMs,
+        },
     };
 }
 
@@ -154,11 +183,13 @@ export function verifyCompressedFile(path: string, expected: ContentDigest): boo
     }
 }
 
-/** True when the file still has the size and mtime it had when it was read: nothing appended or rewrote it since. */
-export function sourceUnchanged(path: string, before: { size: number; mtimeMs: number }): boolean {
+/**
+ * True when `path` still names the file that was read, as it was then: nothing appended to it or rewrote it, and no
+ * other file was renamed over the name (a same-length copy with the old mtime included).
+ */
+export function sourceUnchanged(path: string, before: SourceStat): boolean {
     try {
-        const now = statSync(path);
-        return now.size === before.size && now.mtimeMs === before.mtimeMs;
+        return sameSource(statSync(path), before);
     } catch (err) {
         logger.debug({ err, path }, "[compress] the source vanished or became unreadable after it was compressed");
         return false;

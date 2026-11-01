@@ -135,14 +135,29 @@ export function readWholeTextSync(path: string): string {
  * whose file is now `<path>.zst` reads the `.zst`.
  */
 export async function* readTextChunks(path: string): AsyncGenerator<Uint8Array> {
-    const stored = isZstdPath(path) ? path : (storedFilePath(path) ?? path);
-
-    if (isZstdPath(stored)) {
-        yield* readZstdFrames(stored);
+    if (isZstdPath(path)) {
+        yield* readZstdFrames(path);
         return;
     }
 
-    yield* Bun.file(stored).stream();
+    // The open itself decides, as in the sync readers. An existence check before it left a window in which the daily
+    // pass (another process) retires the plain file, and the open failed with ENOENT beside its verified `.zst`.
+    let yielded = false;
+
+    try {
+        for await (const chunk of Bun.file(path).stream()) {
+            yielded = true;
+            yield chunk;
+        }
+    } catch (err) {
+        const twin = yielded ? undefined : compressedTwin(path, err);
+
+        if (!twin) {
+            throw err;
+        }
+
+        yield* readZstdFrames(twin);
+    }
 }
 
 /**

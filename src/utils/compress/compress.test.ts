@@ -1,5 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import {
     chmodSync,
     closeSync,
@@ -51,7 +52,7 @@ import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import { dailyPassLockPath, planDailyCompression, runDailyCompression } from "./daily";
-import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
+import { compressFile, decompressFile, digestZstdContent, sourceUnchanged, verifyCompressedFile } from "./file";
 import { searchLedger } from "./ledger";
 import { compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
 import { PRESETS, resolvePreset, sniffSample } from "./presets";
@@ -741,6 +742,46 @@ describe("old day files", () => {
         expect(existsSync(dailyPassLockPath(locked))).toBe(false);
         expect([...readLinesSync(`${lockedPath}.zst`)].join("\n")).toBe(logText(2_000));
     });
+
+    it("keeps a file that another one replaced during the compression, a same-length copy with the old mtime too", async () => {
+        const now = new Date("2026-10-13T12:00:00");
+        const old = new Date("2026-10-10T12:00:00").getTime() / 1000;
+        const dayOf = (relative: string) => /^(\d{4}-\d{2}-\d{2})\.log$/.exec(relative)?.[1];
+        const dir = scratch("replaced");
+        const path = join(dir, "2026-10-10.log");
+        writeFileSync(path, logText(300));
+        utimesSync(path, old, old);
+        const before = statSync(path);
+        const swapped = logText(300).replaceAll("x", "y");
+        const fsync = atomicWriteIo.fsyncSync;
+        let replaced = false;
+        // The source is read when the `.zst` is synced; then another process renames its own copy over the name.
+        const probe = spyOn(atomicWriteIo, "fsyncSync").mockImplementation((fd) => {
+            if (!replaced) {
+                replaced = true;
+                const next = join(dir, "next.part");
+                writeFileSync(next, swapped);
+                utimesSync(next, old, old);
+                renameSync(next, path);
+            }
+
+            return fsync(fd);
+        });
+        const plan = planOldFileCompression({ root: dir, dayOf, firstPlainDay: "2026-10-12", now });
+
+        try {
+            const report = await applyOldFileCompression(plan, { caller: "test", releaseGraceMs: 0 });
+            expect(report.failed).toEqual([{ path, reason: "the file changed while it was compressed" }]);
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(replaced).toBe(true);
+        expect([statSync(path).size, statSync(path).mtimeMs]).toEqual([before.size, before.mtimeMs]);
+        expect(readFileSync(path, "utf8")).toBe(swapped);
+        expect(existsSync(`${path}.zst`)).toBe(false);
+        expect(sourceUnchanged(path, before)).toBe(false);
+    });
 });
 
 describe("day logs", () => {
@@ -832,6 +873,71 @@ describe("day logs", () => {
             });
             expect([run.code, run.stdout]).toEqual([0, `${lines[7]}\n`]);
         }
+    });
+
+    it("readTextChunks and ripgrepFiles read the .zst of a plain file the daily pass retires just after they looked", async () => {
+        const dir = scratch("twin-race");
+        const plain = join(dir, "2026-10-10.log");
+        const today = join(dir, "2026-10-13.log");
+        writeFileSync(today, `${logText(30)}\ntoday only\n`);
+        const lines = logText(50).split("\n");
+        const exists = fs.existsSync;
+        // The daily pass (another process) removes the plain file the moment after a reader found it.
+        const retiredAfterLookup = async <T>(read: () => Promise<T>): Promise<T> => {
+            writeFileSync(plain, logText(50));
+            await compressFile({ source: plain, frameBytes: 1024 });
+            const probe = spyOn(fs, "existsSync").mockImplementation((path) => {
+                const found = exists(path);
+
+                if (found && path === plain) {
+                    unlinkSync(plain);
+                }
+
+                return found;
+            });
+
+            try {
+                return await read();
+            } finally {
+                probe.mockRestore();
+            }
+        };
+
+        const text = await retiredAfterLookup(async () => {
+            const chunks: Buffer[] = [];
+
+            for await (const chunk of readTextChunks(plain)) {
+                chunks.push(Buffer.from(chunk));
+            }
+
+            return Buffer.concat(chunks).toString();
+        });
+        expect(text).toBe(logText(50));
+
+        const rg = ripgrepBinary();
+
+        if (!rg) {
+            return;
+        }
+
+        const search = (pattern: string, onLine?: (line: string) => void) =>
+            retiredAfterLookup(() =>
+                ripgrepFiles({
+                    rg,
+                    args: ["--no-config", "--no-filename", "-F", "-e", pattern],
+                    files: [plain, today],
+                    onLine,
+                })
+            );
+        const result = (run: { code: number; stdout: string; stderr: string }) => [run.code, run.stdout, run.stderr];
+
+        expect(result(await search('"n":42,'))).toEqual([0, `${lines[42]}\n`, ""]);
+        // Only the file that stayed matches: rg's exit 2 for the retired one must not hide that match.
+        expect(result(await search("today only"))).toEqual([0, "today only\n", ""]);
+        expect(result(await search("absent"))).toEqual([1, "", ""]);
+        const streamed: string[] = [];
+        expect(result(await search('"n":42,', (line) => streamed.push(line)))).toEqual([0, "", ""]);
+        expect(streamed).toEqual([lines[42]]);
     });
 
     it("the logger closes its day file when the day ends, and no program it execs inherits the file", async () => {

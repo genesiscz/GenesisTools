@@ -17,7 +17,7 @@ import type { FileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { logger } from "@genesiscz/utils/logger";
 import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
-import { compressFile, digestZstdContent, verifyCompressedFile } from "./file";
+import { compressFile, digestZstdContent, type SourceStat, sameSource, verifyCompressedFile } from "./file";
 import { recordCompression } from "./ledger";
 import { type CompressPreset, PRESETS } from "./presets";
 import { archiveBaseName, FOLDER_ARCHIVE_SUFFIX, packDirectory, verifyArchiveAgainstFolder } from "./tar";
@@ -409,16 +409,13 @@ type Retirement =
     | { status: "gone" };
 
 /**
- * Retires a plain file that its verified `.zst` replaced, when it is still the file that was compressed (same size
- * and mtime: no late write). The handle is opened before the name goes, because a process that still has the file
- * open keeps every block on disk after the unlink: on 2026-11-01 31 handles that launchers and idle loggers held kept
- * 1.2 GB of removed day logs.
+ * Retires a plain file that its verified `.zst` replaced, when it is still the file that was compressed: the same
+ * device and inode (no other file was renamed over the name, not even a same-length copy with the old mtime) and the
+ * same size, mtime and ctime (no late write). The handle is opened before the name goes, because a process that still
+ * has the file open keeps every block on disk after the unlink: on 2026-11-01 31 handles that launchers and idle
+ * loggers held kept 1.2 GB of removed day logs.
  */
-function retireReplaced(
-    path: string,
-    before: { size: number; mtimeMs: number },
-    retire: (path: string) => void
-): Retirement {
+function retireReplaced(path: string, before: SourceStat, retire: (path: string) => void): Retirement {
     let fd: number | null = null;
 
     try {
@@ -432,7 +429,7 @@ function retireReplaced(
         logger.debug({ err, path }, "[compress] the plain file did not open for the release; it is only removed");
     }
 
-    let now: { ino: number; size: number; mtimeMs: number; ctimeMs: number };
+    let now: SourceStat;
 
     try {
         now = fd === null ? lstatSync(path) : fstatSync(fd);
@@ -449,7 +446,7 @@ function retireReplaced(
         return { status: "changed" };
     }
 
-    if (now.size !== before.size || now.mtimeMs !== before.mtimeMs) {
+    if (!sameSource(now, before)) {
         if (fd !== null) {
             closeSync(fd);
         }
@@ -561,7 +558,7 @@ export async function applyOldFileCompression(
 
         for (const path of plan.finish) {
             const target = `${path}${ZSTD_SUFFIX}`;
-            let stat: { size: number; mtimeMs: number };
+            let stat: SourceStat;
 
             try {
                 stat = lstatSync(path);

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { type FileIdentity, FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { storedFilePath } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
-import { isZstdPath, readZstdFrames } from "./zstd";
+import { isZstdPath, readZstdFrames, ZSTD_SUFFIX } from "./zstd";
 
 /**
  * Frames decompressing ahead of the reader. On a 1 GB day log (2026-10-13): 1 ahead peaked at 83 MB RSS, 3 ahead at
@@ -124,11 +125,85 @@ async function runOne({
 }
 
 /**
+ * The plain files rg could not open because the daily pass retired each one after `storedFilePath` resolved it, so
+ * its verified `.zst` holds it now (rg reports `rg: <file>: … (os error 2)`), and the run's stderr without their lines.
+ */
+function replacedDuringRun(stderr: string, plain: string[]): { replaced: string[]; stderr: string } {
+    const replaced = new Set<string>();
+    const kept: string[] = [];
+
+    for (const line of stderr.split("\n")) {
+        const file = line.endsWith("(os error 2)") ? plain.find((name) => line.startsWith(`rg: ${name}: `)) : undefined;
+
+        if (file && existsSync(`${file}${ZSTD_SUFFIX}`)) {
+            replaced.add(file);
+        } else {
+            kept.push(line);
+        }
+    }
+
+    return { replaced: [...replaced], stderr: kept.join("\n") };
+}
+
+/**
+ * Settles the run over the plain files when the daily pass retired some of them between `storedFilePath` and rg's open.
+ * Each such file is searched as its `.zst` (rg read nothing of it, so no line comes twice) and its error leaves stderr.
+ * When those were the only errors, the exit code is asked again with `-q` over the files that stayed: rg answers 2
+ * for any error, so its code no longer says whether they matched. Returns the plain run, then the runs of the twins.
+ */
+async function searchReplacedTwins({
+    run,
+    plain,
+    rg,
+    args,
+    timeoutMs,
+    onLine,
+}: {
+    run: RipgrepRun;
+    plain: string[];
+    rg: string;
+    args: string[];
+    timeoutMs?: number;
+    onLine?: (line: string) => void;
+}): Promise<RipgrepRun[]> {
+    if (run.signal || run.code < 2) {
+        return [run];
+    }
+
+    const { replaced, stderr } = replacedDuringRun(run.stderr, plain);
+
+    if (replaced.length === 0) {
+        return [run];
+    }
+
+    logger.debug({ replaced }, "[compress] plain files were retired during the search; searching their .zst");
+    let settled: RipgrepRun = { ...run, stderr };
+
+    if (stderr.trim() === "") {
+        const rest = plain.filter((file) => !replaced.includes(file));
+        // `-q` stops at the first match and exits 0 for it; no output, so nothing reaches `onLine` twice.
+        const quiet = rest.length > 0 ? await runOne({ rg, args: [...args, "-q", "--", ...rest], timeoutMs }) : null;
+        settled = quiet
+            ? { ...settled, code: quiet.code, stderr: quiet.stderr, signal: quiet.signal }
+            : { ...settled, code: 1 };
+    }
+
+    const twins: RipgrepRun[] = [];
+
+    for (const file of replaced) {
+        twins.push(await runOne({ rg, args, timeoutMs, zst: `${file}${ZSTD_SUFFIX}`, onLine }));
+    }
+
+    return [settled, ...twins];
+}
+
+/**
  * Runs ripgrep with `args` over files that may be plain or `.zst`: one rg over all the plain files (they stay
  * arguments, so rg maps them as before) and, at the same time, one rg per `.zst` file fed its decompressed frames on
  * stdin. Needs no `zstd` CLI (unlike `rg -z`). Use `--no-filename` in `args`: stdin has no file name. The outputs are
  * joined, plain files first. With `onLine`, each output line goes there as it arrives (the runs interleave) and
- * `stdout` stays empty, so a caller that keeps only some lines never holds the whole output.
+ * `stdout` stays empty, so a caller that keeps only some lines never holds the whole output. A plain file the daily
+ * pass replaces by its `.zst`, before the search or during it, is searched as the `.zst`.
  */
 export async function ripgrepFiles({
     rg,
@@ -157,9 +232,11 @@ export async function ripgrepFiles({
 
         return results;
     })();
+    const plainRun = plain.length > 0 ? await runOne({ rg, args: [...args, "--", ...plain], timeoutMs, onLine }) : null;
+    const zstResults = await zstRuns;
     const runs = [
-        ...(plain.length > 0 ? [await runOne({ rg, args: [...args, "--", ...plain], timeoutMs, onLine })] : []),
-        ...(await zstRuns),
+        ...(plainRun ? await searchReplacedTwins({ run: plainRun, plain, rg, args, timeoutMs, onLine }) : []),
+        ...zstResults,
     ];
 
     const codes = runs.map((run) => run.code);
