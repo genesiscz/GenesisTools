@@ -1,7 +1,12 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { runWho } from "@app/ai/lib/accounts/run-who";
 import { registerWhoCommand } from "@app/claude/commands/who";
-import { CODEX_HELPER_KINDS, classifyCodexArgs, codexResumeIdFromArgs } from "@app/codex/lib/process-scan";
+import {
+    CODEX_HELPER_KINDS,
+    classifyCodexArgs,
+    codexResumeIdFromArgs,
+    isCodexHelper,
+} from "@app/codex/lib/process-scan";
 import { grokResumeIdFromArgs } from "@app/grok/lib/process-scan";
 import { chooseResume } from "@genesiscz/utils/agent-sessions/select-resume";
 import type { AgentSearchFilters, AgentSession } from "@genesiscz/utils/agent-sessions/types";
@@ -870,6 +875,7 @@ describe("helper processes cannot claim live sessions", () => {
                 alias: "codex" as const,
                 classify: classifyCodexArgs,
                 helperKinds: CODEX_HELPER_KINDS,
+                isHelper: isCodexHelper,
                 resumeIdFromArgs: codexResumeIdFromArgs,
                 activeSessions: async () => [{ sessionId, cwd: tui.cwd }],
             };

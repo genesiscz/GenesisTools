@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyCodexArgs, codexResumeIdFromArgs } from "./process-scan";
+import { classifyCodexArgs, codexResumeIdFromArgs, isCodexHelper } from "./process-scan";
 
 /**
  * `tools codex who` is only as honest as this classifier. Too wide and the machinery is
@@ -34,5 +34,13 @@ describe("codexResumeIdFromArgs", () => {
         expect(codexResumeIdFromArgs("codex resume --model gpt-5.6")).toBeNull();
         expect(codexResumeIdFromArgs("codex resume --last")).toBeNull();
         expect(codexResumeIdFromArgs('codex "fix the resume page"')).toBeNull();
+    });
+});
+
+describe("isCodexHelper", () => {
+    test("a TUI's app-server is machinery; an app-server a host app runs is the session", () => {
+        expect(isCodexHelper({ kind: "app-server", host: null })).toBe(true);
+        expect(isCodexHelper({ kind: "app-server", host: { kind: "t3" } })).toBe(false);
+        expect(isCodexHelper({ kind: "tui", host: null })).toBe(false);
     });
 });
