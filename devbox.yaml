@@ -1,0 +1,9 @@
+project: genesistools
+apps:
+  apify:
+    source_only: true
+    sync: .
+    sync_ignores: [".env", ".env.*", "node_modules", "/.claude", "/.agents"]
+    deps:
+      key: [bun.lock, package.json, bunfig.toml]
+      cmd: bun install --frozen-lockfile
