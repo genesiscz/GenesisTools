@@ -35,8 +35,35 @@ import type { ShellMatch, ShellRule } from "./types";
 const RUNNERS = new Set(["bunx", "npx", "pnpx", "pnpm", "yarn"]);
 const EXEC_RUNNERS = new Set(["yarn", "pnpm", "npm"]);
 // Runners whose folder the rule does not read targets against: `yarn biome` (1.x) starts biome in the
-// package root, and where pnpm starts it was not verified. `yarn exec` keeps the current folder.
+// package root, `pnpm biome` runs a package script named biome first, and `pnpx biome` downloads the
+// npm package `biome`, which is not Biome. `yarn exec` and `pnpm exec` (pnpm 12.3.4) keep the folder.
 const ROOT_RUNNERS = new Set(["pnpm", "pnpx", "yarn"]);
+// Runner options before `exec` or `biome`; the value flags take the next word. The folder flags start
+// biome somewhere else (`pnpm -C dir`, `--filter`, `-r`, `yarn --cwd`, `npm --prefix`).
+const RUNNER_VALUE_FLAGS = new Set([
+    "-C",
+    "--dir",
+    "--filter",
+    "-F",
+    "--cwd",
+    "--prefix",
+    "-w",
+    "--workspace",
+    "-p",
+    "--package",
+]);
+const FOLDER_FLAGS = new Set([
+    "-C",
+    "--dir",
+    "--filter",
+    "-F",
+    "--cwd",
+    "--prefix",
+    "-w",
+    "--workspace",
+    "-r",
+    "--recursive",
+]);
 const BIOME = new Set(["biome", "@biomejs/biome"]);
 const UNSAFE = new Set(["--unsafe", "--apply-unsafe"]);
 // The --only / --skip spellings that select noUnusedImports: the rule itself, and the groups that hold it.
@@ -78,12 +105,18 @@ function biomeIndex(word: string, args: string[]): number {
         return -1;
     }
 
-    if (RUNNERS.has(word) && BIOME.has(commandWord(args[0] ?? ""))) {
-        return 0;
+    let at = 0;
+
+    while ((RUNNERS.has(word) || EXEC_RUNNERS.has(word)) && args[at]?.startsWith("-")) {
+        at += RUNNER_VALUE_FLAGS.has(args[at] ?? "") ? 2 : 1;
     }
 
-    if (EXEC_RUNNERS.has(word) && args[0] === "exec") {
-        const index = args[1] === "--" ? 2 : 1;
+    if (RUNNERS.has(word) && BIOME.has(commandWord(args[at] ?? ""))) {
+        return at;
+    }
+
+    if (EXEC_RUNNERS.has(word) && args[at] === "exec") {
+        const index = args[at + 1] === "--" ? at + 2 : at + 1;
         if (BIOME.has(commandWord(args[index] ?? ""))) {
             return index;
         }
@@ -339,7 +372,10 @@ export const biomeUnsafeDeletesComments: ShellRule = {
 
                     const fix = correction(scan, flags);
                     const biome = tokens[cmd + 1 + index];
-                    const inPlace = !ROOT_RUNNERS.has(word) || (word === "yarn" && index > 0);
+                    const before = args.slice(0, Math.max(index, 0));
+                    const inPlace =
+                        !before.some((arg) => FOLDER_FLAGS.has(arg.split("=")[0] ?? "")) &&
+                        (!ROOT_RUNNERS.has(word) || (EXEC_RUNNERS.has(word) && before.includes("exec")));
 
                     if (
                         !fix ||
