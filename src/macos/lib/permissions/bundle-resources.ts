@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { type Dirent, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readlinkSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { dedupeFile, fileAllocatedSize } from "@genesiscz/utils/fs/disk-usage";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
-import { CloneUnsupportedError, cloneFile, getCloneId, getPrivateSize } from "@genesiscz/utils/macos/apfs";
+import { CloneUnsupportedError, cloneFile, getCloneId, getPrivateSize, swapPaths } from "@genesiscz/utils/macos/apfs";
 
 /**
  * The only folder of a bundle this module changes. A running launcher maps nothing of its bundle but
@@ -29,16 +29,33 @@ export interface ShareBundleResourcesReport {
     ms: number;
 }
 
-/** A file or folder under `Contents/Resources`; what a comparison needs is read the first time it is asked for. */
+type Errors = ShareBundleResourcesReport["errors"];
+
+/** A file, folder or symlink under `Contents/Resources`; what a comparison needs is read the first time it is asked for. */
 interface Entry {
     path: string;
-    kind: "file" | "dir";
-    /** Bytes of a file; 0 for a folder. */
+    kind: "file" | "dir" | "link";
+    /** Bytes of a file; 0 for a folder or a link. */
     size: number;
+    /** Where a link points. */
+    target?: string;
+    /**
+     * A folder whose listing, or an entry in it, could not be read, or that holds an entry of another kind (a pipe, a
+     * socket). Such a folder is never compared, replaced or counted as a whole; only its readable entries are.
+     */
+    incomplete?: boolean;
     cloneId?: bigint | null;
-    digest?: string;
+    /** null: a folder with an incomplete part, which equals no other folder. */
+    digest?: string | null;
     children?: Entry[];
 }
+
+/**
+ * A copy an interrupted folder swap leaves beside `<name>`: `<name>.gtshare-<pid>-<ms>`, the fresh clone or the replaced
+ * copy (the swap is atomic, so `<name>` itself is intact). Before the swap was atomic, two renames could also leave
+ * `<name>.gtshare-old-<pid>-<ms>` as the only copy, with `<name>` missing.
+ */
+const LEFTOVER = /^(.+)\.gtshare-(old-)?\d+-\d+$/;
 
 interface Pass {
     apply: boolean;
@@ -53,9 +70,12 @@ interface Pass {
  * reference and is only read. With `apply: false` nothing changes and the report says what would be shared.
  *
  * It works on the largest equal unit. A folder equal as a whole (the 4,646 Clicky sounds) is cloned with one
- * clonefile(2) and swapped in: 64 ms plus 0.4 s to remove the old copy, against 7 s for the same files one by one
- * (1.5 ms per `dedupeFile`, measured 2026-11-01). A folder that differs is entered, and its equal files are shared one
- * by one (`dedupeFile`: verified byte for byte, then an atomic rename). Each file is read at most once per pass.
+ * clonefile(2) and exchanged with the old copy in one atomic step: 64 ms plus 0.4 s to remove the old copy, against 7 s
+ * for the same files one by one (1.5 ms per `dedupeFile`, measured 2026-11-01). Equal means every name, kind, file
+ * content and link target, and a folder only part of which could be read is never equal. A folder that differs is
+ * entered, and its equal files are shared one by one (`dedupeFile`: verified byte for byte, then an atomic rename).
+ * Each file is read at most once per pass. With `apply`, what an interrupted earlier pass left in a later bundle is put
+ * right first ({@link recoverInterruptedSwaps}).
  *
  * Every retired bundle a running launcher pins used to keep its own 65 MB copy of the same Clicky sounds, web viewers
  * and icon (2026-11-01: 22 pinned folders, 3.1% of their blocks shared).
@@ -80,8 +100,13 @@ export function shareBundleResources({
     const pass: Pass = { apply, report, keepers: new Map() };
 
     try {
-        for (const bundle of bundles) {
+        for (const [index, bundle] of bundles.entries()) {
             const root: Entry = { path: join(bundle, SHARED_FOLDER), kind: "dir", size: 0 };
+
+            // The first bundle is only read, so only a later one can hold what an interrupted pass left.
+            if (apply && index > 0) {
+                recoverInterruptedSwaps(root.path, report.errors);
+            }
 
             for (const child of childrenOf(root, report.errors)) {
                 visit(child, nameOf(child), pass);
@@ -106,6 +131,11 @@ export function shareBundleResources({
 }
 
 function visit(entry: Entry, rel: string, pass: Pass): void {
+    // A link holds no blocks; it counts only as part of its folder's content.
+    if (entry.kind === "link") {
+        return;
+    }
+
     const { report } = pass;
     const known = pass.keepers.get(rel) ?? [];
     const candidates = known.filter(
@@ -127,9 +157,9 @@ function visit(entry: Entry, rel: string, pass: Pass): void {
                 return;
             }
 
-            const match = candidates.find(
-                (keeper) => digestOf(keeper, report.errors) === digestOf(entry, report.errors)
-            );
+            const digest = digestOf(entry, report.errors);
+            const match =
+                digest === null ? undefined : candidates.find((keeper) => digestOf(keeper, report.errors) === digest);
 
             if (match) {
                 const files = filesUnder(entry, report.errors);
@@ -140,7 +170,7 @@ function visit(entry: Entry, rel: string, pass: Pass): void {
                     0
                 );
 
-                if (!pass.apply || replaceWithClone(match, entry)) {
+                if (!pass.apply || replaceWithClone(match, entry, report.errors)) {
                     report.files += files.length;
                     report.shared += files.length;
                     report.sharedBytes += bytes;
@@ -152,7 +182,7 @@ function visit(entry: Entry, rel: string, pass: Pass): void {
                 throw error;
             }
 
-            report.errors.push({ path: entry.path, message: error instanceof Error ? error.message : String(error) });
+            report.errors.push({ path: entry.path, message: messageOf(error) });
         }
     }
 
@@ -168,10 +198,17 @@ function visit(entry: Entry, rel: string, pass: Pass): void {
     }
 }
 
-/** Both are clones of one another already: a file by its APFS clone id, a folder when every entry below is. */
-function alreadyShared(keeper: Entry, entry: Entry, errors: ShareBundleResourcesReport["errors"]): boolean {
+/**
+ * Both are clones of one another already: a file by its APFS clone id, a link by its target, a folder when every entry
+ * below is. A folder read only in part proves nothing about the part it could not read, so it never is.
+ */
+function alreadyShared(keeper: Entry, entry: Entry, errors: Errors): boolean {
     if (keeper.kind !== entry.kind) {
         return false;
+    }
+
+    if (entry.kind === "link") {
+        return keeper.target === entry.target;
     }
 
     if (entry.kind === "file") {
@@ -183,6 +220,8 @@ function alreadyShared(keeper: Entry, entry: Entry, errors: ShareBundleResources
     const theirs = childrenOf(keeper, errors);
 
     return (
+        !entry.incomplete &&
+        !keeper.incomplete &&
         mine.length === theirs.length &&
         mine.every((child, index) => {
             const other = theirs[index];
@@ -192,39 +231,82 @@ function alreadyShared(keeper: Entry, entry: Entry, errors: ShareBundleResources
 }
 
 /** True when `entry` now is a clone of `keeper`; false when the file changed since it was read (it stays). */
-function replaceWithClone(keeper: Entry, entry: Entry): boolean {
+function replaceWithClone(keeper: Entry, entry: Entry, errors: Errors): boolean {
     if (entry.kind === "file") {
         // dedupeFile checks the bytes once more right before the clone.
         const status = dedupeFile({ keep: keeper.path, replace: entry.path }).status;
         return status === "cloned" || status === "already-cloned";
     }
 
-    const stamp = `${process.pid}-${Date.now()}`;
-    const fresh = `${entry.path}.gtshare-${stamp}`;
-    const old = `${entry.path}.gtshare-old-${stamp}`;
+    // The name LEFTOVER matches, so a pass that dies before removing it has the next pass remove it.
+    const aside = `${entry.path}.gtshare-${process.pid}-${Date.now()}`;
 
     if (statSync(dirname(keeper.path)).dev !== statSync(dirname(entry.path)).dev) {
         throw new CloneUnsupportedError(`${keeper.path} and ${entry.path} are on different volumes`);
     }
 
-    cloneFile(keeper.path, fresh);
-    renameSync(entry.path, old);
+    cloneFile(keeper.path, aside);
 
     try {
-        renameSync(fresh, entry.path);
+        // One atomic exchange: the folder's path holds its own copy or the clone at every moment, also when this
+        // process dies here, so a running session never finds the folder missing. `aside` then holds the old copy.
+        swapPaths(aside, entry.path);
     } catch (error) {
-        renameSync(old, entry.path);
-        rmSync(fresh, { recursive: true, force: true });
+        rmSync(aside, { recursive: true, force: true });
         throw error;
     }
 
     try {
-        rmSync(old, { recursive: true, force: true });
+        rmSync(aside, { recursive: true, force: true });
     } catch (error) {
-        logger.warn({ error, old }, "the replaced copy of a shared resource folder was not removed");
+        // Reported, so the bundle is not marked done and the next pass removes the old copy.
+        errors.push({ path: aside, message: `the replaced copy was not removed: ${messageOf(error)}` });
     }
 
     return true;
+}
+
+/**
+ * Puts right what an interrupted pass left under `dir` (a later bundle's `Contents/Resources`), before it is compared:
+ * a replaced copy whose name is missing goes back to it, and any other {@link LEFTOVER} is removed. Apply passes run
+ * one at a time (under the build lock), so no leftover belongs to a pass still running.
+ */
+function recoverInterruptedSwaps(dir: string, errors: Errors): void {
+    let items: Dirent[];
+
+    try {
+        items = readdirSync(dir, { withFileTypes: true });
+    } catch {
+        // The walk lists the same folder next and reports what failed.
+        return;
+    }
+
+    for (const item of items) {
+        const path = join(dir, item.name);
+        const leftover = LEFTOVER.exec(item.name);
+
+        if (!leftover) {
+            if (item.isDirectory()) {
+                recoverInterruptedSwaps(path, errors);
+            }
+
+            continue;
+        }
+
+        const original = join(dir, leftover[1]);
+
+        try {
+            if (leftover[2] !== undefined && !existsSync(original)) {
+                renameSync(path, original);
+                logger.warn({ path: original }, "a resource folder an interrupted pass moved aside is back in place");
+                recoverInterruptedSwaps(original, errors);
+            } else {
+                rmSync(path, { recursive: true, force: true });
+            }
+        } catch (error) {
+            errors.push({ path, message: `an interrupted pass's copy was not cleaned up: ${messageOf(error)}` });
+        }
+    }
 }
 
 function nameOf(entry: Entry): string {
@@ -239,8 +321,11 @@ function cloneIdOf(entry: Entry): bigint | null {
     return entry.cloneId;
 }
 
-/** A file's sha256; a folder's digest covers every name, kind and content below it. */
-function digestOf(entry: Entry, errors: ShareBundleResourcesReport["errors"]): string {
+/**
+ * A file's sha256, a link's target; a folder's digest covers every name, kind and content below it, and is null when
+ * any part of that tree is incomplete, so a folder read only in part never equals another.
+ */
+function digestOf(entry: Entry, errors: Errors): string | null {
     if (entry.digest !== undefined) {
         return entry.digest;
     }
@@ -250,26 +335,55 @@ function digestOf(entry: Entry, errors: ShareBundleResourcesReport["errors"]): s
         return entry.digest;
     }
 
+    if (entry.kind === "link") {
+        entry.digest = createHash("sha256")
+            .update(entry.target ?? "")
+            .digest("hex");
+        return entry.digest;
+    }
+
+    const children = childrenOf(entry, errors);
+    // Stays null when a part of the tree turns out incomplete.
+    entry.digest = null;
+
+    if (entry.incomplete) {
+        return null;
+    }
+
     const hash = createHash("sha256");
 
-    for (const child of childrenOf(entry, errors)) {
-        hash.update(`${nameOf(child)}\0${child.kind}\0${digestOf(child, errors)}\n`);
+    for (const child of children) {
+        const digest = digestOf(child, errors);
+
+        if (digest === null) {
+            return null;
+        }
+
+        hash.update(`${nameOf(child)}\0${child.kind}\0${digest}\n`);
     }
 
     entry.digest = hash.digest("hex");
     return entry.digest;
 }
 
-function filesUnder(entry: Entry, errors: ShareBundleResourcesReport["errors"]): Entry[] {
+/** The regular files below `entry` (a link holds no blocks). */
+function filesUnder(entry: Entry, errors: Errors): Entry[] {
     if (entry.kind === "file") {
         return [entry];
+    }
+
+    if (entry.kind === "link") {
+        return [];
     }
 
     return childrenOf(entry, errors).flatMap((child) => filesUnder(child, errors));
 }
 
-/** The files and folders in `dir`, sorted by name, read once; symlinks and other kinds are skipped. */
-function childrenOf(dir: Entry, errors: ShareBundleResourcesReport["errors"]): Entry[] {
+/**
+ * The files, folders and links in `dir`, sorted by name, read once. A listing, a size or a link target that cannot be
+ * read is reported and marks `dir` incomplete, and so does an entry of another kind; such an entry is left out.
+ */
+function childrenOf(dir: Entry, errors: Errors): Entry[] {
     if (dir.children !== undefined) {
         return dir.children;
     }
@@ -279,8 +393,11 @@ function childrenOf(dir: Entry, errors: ShareBundleResourcesReport["errors"]): E
     try {
         entries = readdirSync(dir.path, { withFileTypes: true });
     } catch (error) {
+        // A missing folder (a bundle without Resources) is no error, but it is no listing to compare either.
+        dir.incomplete = true;
+
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-            errors.push({ path: dir.path, message: error instanceof Error ? error.message : String(error) });
+            errors.push({ path: dir.path, message: messageOf(error) });
         }
     }
 
@@ -289,21 +406,29 @@ function childrenOf(dir: Entry, errors: ShareBundleResourcesReport["errors"]): E
         .flatMap((item): Entry[] => {
             const path = join(dir.path, item.name);
 
-            if (item.isDirectory()) {
-                return [{ path, kind: "dir", size: 0 }];
-            }
-
-            if (!item.isFile()) {
-                return [];
-            }
-
             try {
-                return [{ path, kind: "file", size: statSync(path).size }];
+                if (item.isDirectory()) {
+                    return [{ path, kind: "dir", size: 0 }];
+                }
+
+                if (item.isSymbolicLink()) {
+                    return [{ path, kind: "link", size: 0, target: readlinkSync(path) }];
+                }
+
+                if (item.isFile()) {
+                    return [{ path, kind: "file", size: statSync(path).size }];
+                }
             } catch (error) {
-                errors.push({ path, message: error instanceof Error ? error.message : String(error) });
-                return [];
+                errors.push({ path, message: messageOf(error) });
             }
+
+            dir.incomplete = true;
+            return [];
         });
 
     return dir.children;
+}
+
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }

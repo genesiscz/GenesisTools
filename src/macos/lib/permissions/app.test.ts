@@ -1,18 +1,23 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+    chmodSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
     readFileSync,
+    readlinkSync,
+    renameSync,
     rmSync,
     statSync,
+    symlinkSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as apfs from "@genesiscz/utils/macos/apfs";
 import { getCloneId } from "@genesiscz/utils/macos/apfs";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
@@ -1432,6 +1437,154 @@ describe.skipIf(skip.unlessMac)("shareBundleResources", () => {
             const next = shareRetiredResources({ retiredRoot, installedBundle: installed, apply: true });
             expect(next).toMatchObject({ bundles: 2, files: 2, shared: 1 });
         } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("a folder whose links differ is entered and keeps its own links; equal links still allow a whole-folder share", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+        const res = (bundle: string, rel: string) => join(bundle, "Contents/Resources", rel);
+
+        try {
+            const files = {
+                "Resources/web/a.js": bytes(1),
+                "Resources/docs/b.md": bytes(2),
+                "Resources/same/c.js": bytes(3),
+            };
+            const installed = bundleIn(root, "installed", files);
+            const retired = bundleIn(root, "100", files);
+            symlinkSync("a.js", res(installed, "web/current"));
+            symlinkSync("b.js", res(retired, "web/current"));
+            symlinkSync("b.md", res(retired, "docs/latest"));
+            symlinkSync("c.js", res(installed, "same/link"));
+            symlinkSync("c.js", res(retired, "same/link"));
+            const webBefore = inode(res(retired, "web"));
+            const sameBefore = inode(res(retired, "same"));
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(report).toMatchObject({ files: 6, shared: 3, errors: [] });
+            // A link that points elsewhere, or exists only here, makes its folder differ: the folder is entered.
+            expect(readlinkSync(res(retired, "web/current"))).toBe("b.js");
+            expect(readlinkSync(res(retired, "docs/latest"))).toBe("b.md");
+            expect(inode(res(retired, "web"))).toBe(webBefore);
+            expect(sameClone(res(installed, "web/a.js"), res(retired, "web/a.js"))).toBe(true);
+            expect(sameClone(res(installed, "docs/b.md"), res(retired, "docs/b.md"))).toBe(true);
+            expect(inode(res(retired, "same"))).not.toBe(sameBefore);
+            expect(readlinkSync(res(retired, "same/link"))).toBe("c.js");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+        "a folder with a part it cannot read is never replaced as a whole, and what it holds stays",
+        () => {
+            const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+            const res = (bundle: string, rel: string) => join(bundle, "Contents/Resources", rel);
+            const locked: string[] = [];
+
+            try {
+                const installed = bundleIn(root, "installed", { "Resources/lib/a.wav": bytes(1) });
+                mkdirSync(res(installed, "lib/unlisted"));
+                mkdirSync(res(installed, "lib/unsized"));
+                const retired = bundleIn(root, "100", {
+                    "Resources/lib/a.wav": bytes(1),
+                    "Resources/lib/unlisted/x.wav": bytes(2),
+                    "Resources/lib/unsized/y.wav": bytes(3),
+                });
+                const unlisted = res(retired, "lib/unlisted");
+                const unsized = res(retired, "lib/unsized");
+                // No read bit: listing it fails. Read without search: it lists, but no entry in it can be stat'ed.
+                // Read in part, each looks like the installed bundle's empty folder.
+                chmodSync(unlisted, 0o000);
+                chmodSync(unsized, 0o444);
+                locked.push(unlisted, unsized);
+                const libBefore = inode(res(retired, "lib"));
+
+                const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+                for (const dir of locked.splice(0)) {
+                    chmodSync(dir, 0o755);
+                }
+
+                expect(report.errors.map((error) => error.path).sort()).toEqual([unlisted, join(unsized, "y.wav")]);
+                expect(inode(res(retired, "lib"))).toBe(libBefore);
+                expect(readdirSync(res(retired, "lib")).sort()).toEqual(["a.wav", "unlisted", "unsized"]);
+                expect(readFileSync(join(unlisted, "x.wav"))).toEqual(bytes(2));
+                expect(readFileSync(join(unsized, "y.wav"))).toEqual(bytes(3));
+                // What it could read is still shared, one file at a time.
+                expect(report.shared).toBe(1);
+                expect(sameClone(res(installed, "lib/a.wav"), res(retired, "lib/a.wav"))).toBe(true);
+            } finally {
+                for (const dir of locked) {
+                    chmodSync(dir, 0o755);
+                }
+
+                rmSync(root, { recursive: true, force: true });
+            }
+        }
+    );
+
+    it("an apply pass first puts right what an interrupted pass left; a dry run leaves it", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+
+        try {
+            const files = { "Resources/ClickyLibrary/a.wav": bytes(1), "Resources/web/b.js": bytes(2) };
+            const installed = bundleIn(root, "installed", files);
+            const retired = bundleIn(root, "100", files);
+            const resources = join(retired, "Contents/Resources");
+            // The two-rename swap died between its renames: the folder exists only under its set-aside name.
+            renameSync(join(resources, "ClickyLibrary"), join(resources, "ClickyLibrary.gtshare-old-1-2"));
+            // A swap died before it removed the copy it set aside; the folder itself is intact.
+            mkdirSync(join(resources, "web.gtshare-1-2"));
+            writeFileSync(join(resources, "web.gtshare-1-2/b.js"), bytes(2));
+            const leftovers = ["ClickyLibrary.gtshare-old-1-2", "web", "web.gtshare-1-2"];
+
+            shareBundleResources({ bundles: [installed, retired], apply: false });
+            expect(readdirSync(resources).sort()).toEqual(leftovers);
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(report).toMatchObject({ shared: 2, errors: [] });
+            expect(readdirSync(resources).sort()).toEqual(["ClickyLibrary", "web"]);
+            expect(readFileSync(join(resources, "ClickyLibrary/a.wav"))).toEqual(bytes(1));
+            expect(
+                sameClone(
+                    join(installed, "Contents/Resources/ClickyLibrary/a.wav"),
+                    join(resources, "ClickyLibrary/a.wav")
+                )
+            ).toBe(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("a folder swap that fails leaves the folder in place with no copy beside it, and shares its files one by one", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+        const swap = spyOn(apfs, "swapPaths").mockImplementation(() => {
+            throw new Error("swap refused");
+        });
+
+        try {
+            const files = { "Resources/ClickyLibrary/a.wav": bytes(1) };
+            const installed = bundleIn(root, "installed", files);
+            const retired = bundleIn(root, "100", files);
+            const library = join(retired, "Contents/Resources/ClickyLibrary");
+            const before = inode(library);
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(swap).toHaveBeenCalledTimes(1);
+            expect(report.errors).toEqual([{ path: library, message: "swap refused" }]);
+            expect(inode(library)).toBe(before);
+            expect(readdirSync(join(retired, "Contents/Resources"))).toEqual(["ClickyLibrary"]);
+            expect(report.shared).toBe(1);
+            expect(sameClone(join(installed, "Contents/Resources/ClickyLibrary/a.wav"), join(library, "a.wav"))).toBe(
+                true
+            );
+        } finally {
+            swap.mockRestore();
             rmSync(root, { recursive: true, force: true });
         }
     });

@@ -27,6 +27,9 @@ const EF_MAY_SHARE_BLOCKS = 0x00000001;
 // apple/darwin-xnu bsd/sys/clonefile.h:32  #define CLONE_NOFOLLOW 0x0001
 const CLONE_NOFOLLOW = 0x0001;
 
+// MacOSX.sdk usr/include/sys/stdio.h:36  #define RENAME_SWAP 0x00000002 (renamex_np, macOS 10.12+)
+const RENAME_SWAP = 0x00000002;
+
 // apple/darwin-xnu bsd/sys/mount.h: struct statfs (64-bit-inode layout).
 // Field offsets computed from bsd/man/man2/statfs.2 (natural alignment):
 // f_bsize@0 f_iosize@4 f_blocks@8 f_bfree@16 f_bavail@24 f_files@32
@@ -239,5 +242,54 @@ export function cloneFile(src: string, dst: string): void {
             `clonefile("${src}" -> "${dst}") failed (rc=${rc}); ` +
                 "volume likely not APFS or src/dst on different volumes"
         );
+    }
+}
+
+const RENAMEX_SYMBOLS = {
+    renamex_np: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+} as const;
+
+function bindRenamex(candidate: string) {
+    return dlopen(candidate, RENAMEX_SYMBOLS).symbols.renamex_np;
+}
+
+let renamex: ReturnType<typeof bindRenamex> | null = null;
+let renamexTried = false;
+
+function getRenamex(): ReturnType<typeof bindRenamex> | null {
+    if (renamexTried) {
+        return renamex;
+    }
+
+    renamexTried = true;
+
+    if (!IS_DARWIN) {
+        return null;
+    }
+
+    for (const candidate of ["libSystem.dylib", "/usr/lib/libSystem.B.dylib"]) {
+        try {
+            renamex = bindRenamex(candidate);
+            return renamex;
+        } catch (err) {
+            logger.debug({ err, candidate }, "apfs: renamex_np bind failed");
+        }
+    }
+
+    return renamex;
+}
+
+/** renamex_np(2) with RENAME_SWAP: exchanges the names `a` and `b` (files or folders, both existing, on one volume) in
+ *  one atomic step, so neither path is ever missing, not to a reader and not after a crash. Throws off-darwin, or when
+ *  the volume or the paths refuse the exchange. */
+export function swapPaths(a: string, b: string): void {
+    const fn = getRenamex();
+    if (!fn) {
+        throw new Error("renamex_np unavailable (not macOS)");
+    }
+
+    const rc = fn(ptr(Buffer.from(`${a}\0`, "utf8")), ptr(Buffer.from(`${b}\0`, "utf8")), RENAME_SWAP);
+    if (rc !== 0) {
+        throw new Error(`renamex_np("${a}" <-> "${b}", RENAME_SWAP) failed (rc=${rc})`);
     }
 }
