@@ -45,6 +45,7 @@ import {
     isRootActive,
     isTrashRootName,
     itemGitState,
+    ledgerAgent,
     listBatches,
     listRmRequests,
     loadRmConfig,
@@ -2065,5 +2066,23 @@ describe("the macOS dialog never hides a path", () => {
 
         expect(outcome).toMatchObject({ approved: true, via: "dialog" });
         expect(calls).toEqual(["dialog"]);
+    });
+});
+
+describe("the ledger names a person's check apart from the shell that ran it", () => {
+    test("an approve a person confirmed from an agent's shell counts under person", () => {
+        const at = "2026-11-01T12:00:00.000Z";
+        const entries: RmLedgerEntry[] = [
+            { at, action: "approve", requestId: "dvzu7k", caller: AGENT, via: "touch-id", person: { via: "touch-id" } },
+            { at, action: "move", caller: AGENT, bytes: 10, path: "/work/shop/dist" },
+        ];
+
+        expect(entries.map(ledgerAgent)).toEqual(["person", "claude-code"]);
+        expect(
+            totalRmLedger(entries, "agent")
+                .map((total) => total.key)
+                .sort()
+        ).toEqual(["claude-code", "person"]);
+        expect(filterRmLedger(entries, { agent: "person" }).map((entry) => entry.action)).toEqual(["approve"]);
     });
 });
