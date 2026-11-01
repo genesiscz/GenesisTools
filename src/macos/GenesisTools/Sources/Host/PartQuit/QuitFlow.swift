@@ -112,14 +112,19 @@ struct DefaultsQuitBehaviorStore: QuitBehaviorStoring {
 struct AlertQuitDialog: QuitDialogPresenting {
     func ask(_ question: QuitQuestion) -> QuitReply {
         let alert = Self.alert(for: question)
-        // An accessory face (the widget) may hold the keyboard through a panel without being the active app.
-        NSApp.activate()
+        let focus = QuitFocus.capture()
+        // An accessory face (the widget) may hold the keyboard through a non-activating panel while another app stays
+        // active; the alert is key only once this app is. The call the widget's other modal paths use (WidgetModel's
+        // file picker), so the system never declines it as it may decline the cooperative `activate()`.
+        NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
         let dontAskAgain = alert.suppressionButton?.state == .on
         switch response {
         case .alertFirstButtonReturn: return QuitReply(answer: .quitThis, dontAskAgain: dontAskAgain)
         case .alertSecondButtonReturn: return QuitReply(answer: .quitAll, dontAskAgain: dontAskAgain)
-        default: return QuitReply(answer: .cancel, dontAskAgain: false)
+        default:
+            focus.restore()
+            return QuitReply(answer: .cancel, dontAskAgain: false)
         }
     }
 
@@ -141,6 +146,68 @@ struct AlertQuitDialog: QuitDialogPresenting {
         // A logout or a shutdown while the question is open still quits.
         alert.window.preventsApplicationTerminationWhenModal = false
         return alert
+    }
+}
+
+/// Where the keyboard was before the quit question took it: the app in front and this app's key window. The widget's
+/// edge panel is a non-activating panel, so it holds the keyboard while a terminal or an editor stays the active app.
+/// Cancel puts both back, so the person types on where they were.
+@MainActor
+struct QuitFocus {
+    let app: NSRunningApplication?
+    weak var window: NSWindow?
+
+    static func capture() -> QuitFocus {
+        QuitFocus(app: NSWorkspace.shared.frontmostApplication, window: NSApp.keyWindow)
+    }
+
+    func restore() {
+        let window = self.window?.isVisible == true ? self.window : nil
+        guard let app, app != NSRunningApplication.current, !app.isTerminated else {
+            window?.makeKey()
+            return
+        }
+        NSApp.yieldActivation(to: app)
+        app.activate()
+        guard let panel = window, panel.styleMask.contains(.nonactivatingPanel) else { return }
+        // Now, for an activation the system declines, and again once the other app is active: its activation lands
+        // later and takes the keyboard with it.
+        panel.makeKey()
+        PanelKeyReturn.makeKey(panel, once: app)
+    }
+}
+
+/// Makes a panel key once `app` has become active, then stops listening: a listener left behind would take the
+/// keyboard on some later switch to that app.
+@MainActor
+private final class PanelKeyReturn {
+    private static var pending: PanelKeyReturn?
+    private var observer: NSObjectProtocol?
+
+    static func makeKey(_ panel: NSWindow, once app: NSRunningApplication, within seconds: Double = 1) {
+        pending?.finish()
+        let waiter = PanelKeyReturn()
+        pending = waiter
+        let pid = app.processIdentifier
+        waiter.observer = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak panel, weak waiter] note in
+            let activated = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard activated?.processIdentifier == pid else { return }
+            MainActor.assumeIsolated {
+                waiter?.finish()
+                if panel?.isVisible == true { panel?.makeKey() }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak waiter] in
+            MainActor.assumeIsolated { waiter?.finish() }
+        }
+    }
+
+    private func finish() {
+        if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        observer = nil
+        if Self.pending === self { Self.pending = nil }
     }
 }
 
