@@ -374,6 +374,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var inboxFilter: String?
     /// The filter the inbox of every session opens with: "all" (default), "needs" or "unread".
     public var overviewFilter: String?
+    /// An open decision in the inbox of every session shows its question's description above its options, as the
+    /// alert popup does. Default on (nil from an older hub).
+    public var overviewSummary: Bool?
     /// The composer's microphone: "note" (default, a voice note whose transcript fills the field) or "live".
     public var composerVoice: String?
     /// Seconds the alert popup stays when the pointer is not on it; 0 keeps it until it is closed. Default 7.

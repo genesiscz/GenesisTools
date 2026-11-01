@@ -294,8 +294,19 @@ struct WidgetInboxOverview: View {
         }
     }
 
+    /// An open decision's question under its title, drawn as the alert popup draws it (`WidgetPeekSummary`), so a pick
+    /// here is not made blind: the entry showed only "a", "b", "c" for a decision whose words were in its prompt
+    /// (Martin, 2026-11-01). Widgets → General, "Show the question in the inbox of every session".
+    @ViewBuilder private func summary(_ item: WidgetInboxItem) -> some View {
+        if model.snapshot?.state.preferences.overviewSummary ?? true, item.needsAnswer,
+           let summary = item.summary, !summary.isEmpty {
+            WidgetPeekSummary(summary: summary, identifier: "widget.overview.summary").equatable()
+        }
+    }
+
     private func detail(_ item: WidgetInboxItem, session: WidgetSession?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            summary(item)
             choices(item)
             if let session {
                 HStack(spacing: 8) {
