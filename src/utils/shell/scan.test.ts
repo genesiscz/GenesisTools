@@ -474,7 +474,7 @@ describe("scanShell", () => {
         expect(suggestions.length).toBeGreaterThanOrEqual(commands.length);
         // One zsh for all of them: each in a function of its own, so the first error names its line.
         const script = suggestions.map((suggestion, k) => `f${k}() {\n${suggestion}\n}`).join("\n");
-        const result = Bun.spawnSync(["zsh", "-n", "-c", script]);
+        const result = Bun.spawnSync(["zsh", "-n", "-c", script], { env: process.env });
 
         expect([result.exitCode, result.stderr.toString()]).toEqual([0, ""]);
     });
