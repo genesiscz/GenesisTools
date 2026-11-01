@@ -1,5 +1,6 @@
 import { readdirSync, renameSync, rmSync, statSync, utimesSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
@@ -35,7 +36,7 @@ export interface EncodeRow {
     kept: boolean;
     status: EncodeStatus;
     reason: string;
-    /** The trash batch holding the original after `--replace`; `tools rm restore <id>` undoes it. */
+    /** The trash batch holding the original after `--replace`; the rm tool's restore verb undoes it. */
     trashBatch: string | null;
     seconds: number;
 }
@@ -384,7 +385,7 @@ export function renderRows({
         if (row.trashBatch) {
             out.println(
                 `undo ${basename(row.input)}: mv ${shellQuote(row.input)} ${shellQuote(siblingOutput({ input: row.input, encoder }))}` +
-                    ` && tools rm restore ${row.trashBatch}`
+                    ` && ${toolCommand("rm", "restore", row.trashBatch)}`
             );
         }
     }
@@ -394,7 +395,7 @@ export function renderRows({
     if (beside.length > 0) {
         out.println(
             `${beside.length} original(s) stay because an agent may not remove them. A person finishes at a terminal: ` +
-                `tools rm ${beside.map((row) => shellQuote(row.input)).join(" ")}`
+                toolCommand("rm", ...beside.map((row) => row.input))
         );
     }
 
