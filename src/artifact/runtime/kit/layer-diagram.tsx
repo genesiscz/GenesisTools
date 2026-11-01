@@ -97,6 +97,10 @@ export interface PlacedBand {
 }
 
 export interface PlacedEdge {
+    edge: DiagramEdge;
+    /** The box the arrow leaves; none for an arrow off the band above (a bus). */
+    source?: PlacedNode;
+    target: PlacedNode;
     d: string;
     label?: { text: string; x: number; y: number };
 }
@@ -242,6 +246,9 @@ export function layoutLayerDiagram({
         const d = inside ? `M${x0} ${y0} V ${y1}` : `M${x0} ${y0} C ${x0} ${mid}, ${x1} ${mid}, ${x1} ${y1}`;
 
         placedEdges.push({
+            edge,
+            source,
+            target,
             d,
             label: edge.label ? { text: edge.label, x: x0 + 15, y: mid + 5 } : undefined,
         });
@@ -274,7 +281,14 @@ function NodeBox({ placed }: { placed: PlacedNode }) {
                 {node.title}
             </text>
             {lines.map((line, i) => (
-                <text key={line} x={x + 14} y={y + 48 + i * 23} fill="var(--text-2)" fontSize={14} style={TEXT_FONT}>
+                <text
+                    key={`${i}-${line}`}
+                    x={x + 14}
+                    y={y + 48 + i * 23}
+                    fill="var(--text-2)"
+                    fontSize={14}
+                    style={TEXT_FONT}
+                >
                     {line}
                 </text>
             ))}
@@ -300,7 +314,14 @@ function BandLabel({ band, x }: { band: PlacedBand; x: number }) {
                 {band.layer.label}
             </text>
             {subs.map((sub, i) => (
-                <text key={sub} x={x} y={top + 22 * (i + 1)} fill="var(--dim)" fontSize={14} style={TEXT_FONT}>
+                <text
+                    key={`${i}-${sub}`}
+                    x={x}
+                    y={top + 22 * (i + 1)}
+                    fill="var(--dim)"
+                    fontSize={14}
+                    style={TEXT_FONT}
+                >
                     {sub}
                 </text>
             ))}
@@ -308,13 +329,30 @@ function BandLabel({ band, x }: { band: PlacedBand; x: number }) {
     );
 }
 
-/** Words for a screen reader: each band with its boxes, then the arrows. */
-function describe(layers: DiagramLayer[], edges: DiagramEdge[]): string {
-    const titles = new Map(layers.flatMap((layer) => layer.nodes.map((node) => [node.id, node.title] as const)));
-    const bands = layers.map((layer) => `${layer.label}: ${layer.nodes.map((node) => node.title).join(", ")}.`);
-    const arrows = edges
-        .filter((edge) => edge.from)
-        .map((edge) => `${titles.get(edge.from ?? "") ?? edge.from} to ${titles.get(edge.to) ?? edge.to}`);
+/**
+ * Words for a screen reader, from what is drawn: each band with its boxes and their lines, then every arrow,
+ * those off a bus included. A box that found no slot and an arrow to a missing box are not drawn, so not said.
+ */
+function describe(layout: LayerDiagramLayout): string {
+    const bands = layout.bands.map((band, li) => {
+        const boxes = layout.nodes
+            .filter((placed) => placed.layer === li)
+            .map(({ node }) => (node.lines?.length ? `${node.title} (${node.lines.join(", ")})` : node.title));
+
+        return `${band.layer.label}: ${boxes.join(", ")}.`;
+    });
+    const arrows = layout.edges.map(({ edge, source, target }) => {
+        const band = layout.bands[target.layer];
+        const above = layout.bands[target.layer - 1];
+        const start = source
+            ? source.node.title
+            : above && band.layer.bus
+              ? `the bus above ${band.layer.label}`
+              : above?.layer.label;
+        const words = start ? `${start} to ${target.node.title}` : `into ${target.node.title}`;
+
+        return edge.label ? `${words} (${edge.label})` : words;
+    });
 
     return [...bands, arrows.length ? `Arrows: ${arrows.join("; ")}.` : ""].join(" ").trim();
 }
@@ -348,7 +386,7 @@ export function LayerDiagram({
                 style={{ minWidth }}
             >
                 <title id={`${uid}-title`}>{title}</title>
-                <desc id={`${uid}-desc`}>{describe(layers, edges)}</desc>
+                <desc id={`${uid}-desc`}>{describe(layout)}</desc>
                 <defs>
                     <marker
                         id={arrow}
