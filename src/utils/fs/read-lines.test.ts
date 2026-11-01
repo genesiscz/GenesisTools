@@ -1,9 +1,20 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, createReadStream, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
-import { readFirstLines, readLastLines, readLinesBackwardSync, readWholeTextSync } from "./read-lines";
+import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    readFirstLines,
+    readLastLines,
+    readLines,
+    readLinesBackwardSync,
+    readLinesSync,
+    readWholeTextSync,
+    splitLines,
+    splitLinesSync,
+} from "./read-lines";
 
 const dir = mkdtempSync(join(tmpdir(), "read-lines-"));
 
@@ -239,5 +250,87 @@ describe("compressed files (Codex 0.164 compresses its old rollouts to .jsonl.zs
         expect(readWholeTextSync(plain)).toBe(text);
         expect(readWholeTextSync(single)).toBe(text);
         expect(readWholeTextSync(multi)).toBe(text);
+    });
+});
+
+async function collect(lines: AsyncIterable<string>): Promise<string[]> {
+    const out: string[] = [];
+
+    for await (const line of lines) {
+        out.push(line);
+    }
+
+    return out;
+}
+
+/** The same content as a plain file, a one-frame `.zst`, and a `.zst` of 3-byte frames (lines and characters cut). */
+function threeForms(name: string, content: string): string[] {
+    const bytes = Buffer.from(content);
+    const pieces: Buffer[] = [];
+
+    for (let at = 0; at < bytes.length; at += 3) {
+        pieces.push(Buffer.from(compressBytes(bytes.subarray(at, at + 3))));
+    }
+
+    const single = file(`${name}-single.zst`, "");
+    writeFileSync(single, compressBytes(bytes));
+    const multi = file(`${name}-multi.zst`, "");
+    writeFileSync(multi, Buffer.concat(pieces));
+    return [file(name, content), single, multi];
+}
+
+describe("lines are cut at \\n only (readLines, readLinesSync, splitLines)", () => {
+    it("keeps a JSON string with raw U+2028 and U+2029 on one line, plain and .zst, where node:readline cuts it", async () => {
+        const record = SafeJSON.stringify({ text: "before between after" }, { strict: true });
+        // JSON.stringify leaves both characters raw, which is what made readline cut 144 hook-log records in two.
+        expect(record).toContain(" ");
+        const content = `${record}\n${record}\n`;
+        const expected = [record, record, ""];
+
+        for (const path of threeForms("separators.jsonl", content)) {
+            expect([...readLinesSync(path)]).toEqual(expected);
+            expect(await collect(readLines(path))).toEqual(expected);
+        }
+
+        const plain = join(dir, "separators.jsonl");
+        expect(await collect(splitLines(createReadStream(plain, { highWaterMark: 5 })))).toEqual(expected);
+        // The regression anchor: readline also ends a line at U+2028 and U+2029, so no reader here may use it.
+        const viaReadline = await collect(createInterface({ input: createReadStream(plain), crlfDelay: Infinity }));
+        const pieces = ['{"text":"before', "between", 'after"}'];
+        expect(viaReadline).toEqual([...pieces, ...pieces]);
+    });
+
+    it('gives a .zst and its plain file the same lines as text.split("\\n"), sync and async, at every chunk size', async () => {
+        const cases: Record<string, string> = {
+            trailingNewline: "a\nb\n",
+            noTrailingNewline: "a\nb",
+            emptyLastLines: "a\n\n\n",
+            empty: "",
+            crlf: "a\r\nb\r\n\r\nc",
+            multiByte: "žluťoučký\nkůň\n🙂 end",
+        };
+
+        for (const [name, content] of Object.entries(cases)) {
+            const expected = content.split("\n");
+
+            for (const path of threeForms(`${name}.txt`, content)) {
+                expect([...readLinesSync(path)]).toEqual(expected);
+                expect(await collect(readLines(path))).toEqual(expected);
+            }
+
+            const plain = join(dir, `${name}.txt`);
+
+            for (const chunkBytes of [1, 2, 5]) {
+                expect([...readLinesSync(plain, { chunkBytes })]).toEqual(expected);
+                const stream = createReadStream(plain, { highWaterMark: chunkBytes });
+                expect(await collect(splitLines(stream))).toEqual(expected);
+            }
+
+            expect([...splitLinesSync(content.match(/[\s\S]{1,2}/gu) ?? [])]).toEqual(expected);
+        }
+    });
+
+    it("readLines throws for a missing file", async () => {
+        await expect(collect(readLines(join(dir, "missing.txt")))).rejects.toThrow();
     });
 });
