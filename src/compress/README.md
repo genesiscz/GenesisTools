@@ -44,6 +44,11 @@ tools compress daily --dry-run                # what the once-a-day pass would c
   long mode, frame size, threads, sha256 in and out, start and end time, host, Bun and zstd versions. The automatic
   passes (day logs, profiling logs, failure logs, ai-proxy transcripts, hang captures, migrate-home backups, retired
   app bundles) record there too.
+  `inputSha256` is the sha256 of what the zstd writer took in, so `zstd -dc --long=31 <target> | shasum -a 256`
+  prints it: the file for a compress, the tar stream for a pack (hashed while it is written; packs before 2026-11-01
+  carry none). `outputSha256` is the `.zst` file itself. `unpack` and a file restore check the restored stream
+  against the newest record that wrote the archive and remove the output when it differs; a record without
+  `inputSha256` is not checked.
 - **Reading compressed files.** Of the day files in `~/.genesis-tools/logs/` (`<date>.log`, `<date>-profiling.log`,
   `<date>-failures.jsonl`) only today and yesterday stay plain. `tools compress cat` needs nothing and also takes the
   plain name of a file the daily pass replaced (`tools compress cat ~/.genesis-tools/logs/2026-10-20.log | rg <pattern>`);

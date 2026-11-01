@@ -365,6 +365,7 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
             ratio: packed.tarBytes / Math.max(packed.compressedBytes, 1),
             preset: preset.name,
             ...params,
+            inputSha256: packed.sha256,
             outputSha256: sha256File(target),
             removedOriginal: options.removeOriginal === true,
             files: files?.length,
@@ -412,6 +413,17 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
             ? `saved only ${(saving * 100).toFixed(2)}% in the trial`
             : undefined;
     return { record, warning };
+}
+
+/**
+ * The sha256 of what `archive` decompresses to, from the newest ledger record that wrote it: a path written again
+ * holds the newer content. Undefined when that record carries none (a pack recorded before 2026-11-01, or one written
+ * by an older checkout), so such an archive is not checked.
+ */
+function recordedInputSha256(archive: string): string | undefined {
+    return searchLedger({ path: archive })
+        .filter((record) => record.target === archive)
+        .at(-1)?.inputSha256;
 }
 
 export interface ExpandOptions {
@@ -468,21 +480,30 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
 
         restoredBytes = knownBytes ?? entries.reduce((sum, entry) => sum + entry.size, 0);
         assertRoomFor({ outputDir: into, inputBytes: restoredBytes, keptShare: 1 });
-        await unpackArchive({ archive, destination: into });
+        const stream = await unpackArchive({ archive, destination: into });
 
         if (!existsSync(target)) {
             throw new Error(`${archive} did not restore ${target}: its top folder has another name`);
         }
+
+        const recorded = recordedInputSha256(archive);
+
+        if (recorded && recorded !== stream.sha256) {
+            removePath(target);
+            throw new Error(
+                `${archive} unpacked a tar stream with another sha256 than the pack the ledger recorded; ${target} removed`
+            );
+        }
+
+        outputSha256 = stream.sha256;
     } else {
         assertRoomFor({ outputDir: into, inputBytes: knownBytes ?? digestZstdContent(archive).bytes, keptShare: 1 });
         const written = await decompressFile({ source: archive, target });
         restoredBytes = written.bytes;
         // The ledger knows the original's sha256 when this tool wrote the archive.
-        const original = searchLedger({ path: archive }).find(
-            (record) => record.target === archive && record.inputSha256
-        );
+        const recorded = recordedInputSha256(archive);
 
-        if (original?.inputSha256 && original.inputSha256 !== written.sha256) {
+        if (recorded && recorded !== written.sha256) {
             removePath(target);
             throw new Error(
                 `${archive} decompressed to other bytes than the original the ledger recorded; output removed`
