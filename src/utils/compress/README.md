@@ -104,6 +104,10 @@ try {
   with `node:readline`: it ends lines at U+2028 and U+2029, which `JSON.stringify` leaves raw inside strings, and it
   cut 144 records of a hook log in two (2026-11-01). `splitLines(stream)` does the same for stdin or a byte range.
 
+After the compression targets, the pass runs its `agents-objects` step (`runObjectStoreStep`): it packs the agents
+change-log object store and drops the blobs no change-log row of the last 30 days names, and it writes one
+before/after log line (`src/utils/agents/objects/maintain.ts`; the store's rules are in `src/agents/README.md`).
+
 ## Presets
 
 | Preset | Level | Frames | Written by | Read |

@@ -993,7 +993,8 @@ describe("old day files", () => {
         const runs = await Promise.all([pass(), pass()]);
         expect(runs.filter((run) => run === null)).toHaveLength(1);
         expect(
-            runs.find((run) => run !== null)?.find(({ target }) => target.name === "logs")?.report.compressed
+            runs.find((run) => run !== null)?.compression.find(({ target }) => target.name === "logs")?.report
+                .compressed
         ).toEqual([expect.objectContaining({ path: lockedPath })]);
         expect(existsSync(dailyPassLockPath(locked))).toBe(false);
         expect([...readLinesSync(`${lockedPath}.zst`)].join("\n")).toBe(logText(2_000));

@@ -15,7 +15,7 @@ tools compress cat 2026-10-11.log.zst | rg '"pid":4242'
 tools compress try some/folder --goal ratio   # several presets on a sample: saving and speed
 tools compress presets
 tools compress ledger --path migrate-home --since 2026-10-01
-tools compress daily --dry-run                # what the once-a-day pass would compress now
+tools compress daily --dry-run                # what the once-a-day pass would compress, keep and drop now
 ```
 
 - **Safety.** Output goes to a temp file and is renamed into place. A file's output is decompressed and hashed, a
