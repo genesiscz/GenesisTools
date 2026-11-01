@@ -752,7 +752,7 @@ describe("sizes measured with the request", () => {
             },
         });
 
-        expect(rows.items[0]).toMatchObject({ measuring: true });
+        expect(rows.items[0]).toMatchObject({ measuring: true, rule: request.targets[0]?.rule });
         expect(rows.items[0]?.bytes).toBeUndefined();
         expect(await collect(rows)).toEqual([{ path: request.targets[0]?.path, bytes: 4096, measuring: false }]);
         expect(walks).toBe(1);
