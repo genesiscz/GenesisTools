@@ -1,4 +1,4 @@
-import { readdirSync, rmdirSync, rmSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hookDiag } from "./log";
 import { claimsRoot, hookDataRoot, mentionsRoot, unpushedRoot } from "./paths";
@@ -22,8 +22,9 @@ function dirBytes(path: string): number {
     for (const entry of readdirSync(path, { withFileTypes: true })) {
         const child = join(path, entry.name);
 
+        // `lstat`: a capture stores a repository's symlinks as links, and its target is not the capture's size.
         try {
-            total += entry.isDirectory() ? dirBytes(child) : statSync(child).size;
+            total += entry.isDirectory() ? dirBytes(child) : lstatSync(child).size;
         } catch (err) {
             hookDiag("Could not size a capture entry", { err, child });
         }

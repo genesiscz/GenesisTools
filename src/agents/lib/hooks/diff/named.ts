@@ -1,5 +1,6 @@
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, type Stats, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, type Stats, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type CopyFile, cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { cloudReadRisk } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type DiffConfig, megabytes } from "../config";
@@ -45,16 +46,25 @@ export interface NamedCapture {
 
 /**
  * Copies of files the command named, so the post phase has a before-state. They can hold
- * secrets exactly like the root tars, so the tree is 0700 and every copy 0600.
+ * secrets exactly like the root clones, so the tree is 0700 and every copy 0600. Each copy is a
+ * clone where the volume makes one, which moves no bytes (`cloneOrCopy`).
+ *
+ * `takeCopies: false` is for a command that only reads: its post phase gives every change to
+ * another writer and never opens a copy. It keeps the same entries, because its `others` list is
+ * built from them, and takes no copies. A `tail` of a 1.6 MB log was copied on every call (2026-11-01).
  */
 export function captureNamed({
     dir,
     paths,
     config,
+    takeCopies = true,
+    copyFile,
 }: {
     dir: string;
     paths: string[];
     config: DiffConfig;
+    takeCopies?: boolean;
+    copyFile?: CopyFile;
 }): NamedCapture {
     const entries: NamedEntry[] = [];
     const skipped: string[] = [];
@@ -99,14 +109,18 @@ export function captureNamed({
             continue;
         }
 
+        if (!takeCopies) {
+            entries.push({ path, mtimeMs: stat.mtimeMs });
+            continue;
+        }
+
         copies += 1;
 
         const copy = join(COPY_DIR, String(copies));
 
         try {
             mkdirSync(join(dir, COPY_DIR), { recursive: true, mode: DIR_MODE });
-            copyFileSync(path, join(dir, copy));
-            chmodSync(join(dir, copy), FILE_MODE);
+            cloneOrCopy({ source: path, destination: join(dir, copy), mode: FILE_MODE, mayCopy: true, copyFile });
         } catch (err) {
             hookDiag("Could not copy a named path, so it has no before-state", { err, path });
             continue;
