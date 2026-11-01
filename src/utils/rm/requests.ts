@@ -94,8 +94,13 @@ export function reserveRmRequestId(dir = rmRequestsDir()): string {
     return id;
 }
 
-function requestFile(dir: string, id: string): string {
+/** Where request `id` is saved. */
+export function rmRequestFile(id: string, dir = rmRequestsDir()): string {
     return join(dir, `${id}.json`);
+}
+
+function requestFile(dir: string, id: string): string {
+    return rmRequestFile(id, dir);
 }
 
 export function saveRmRequest(request: RmRequest, dir = rmRequestsDir()): void {

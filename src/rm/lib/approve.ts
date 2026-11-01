@@ -43,6 +43,7 @@ import {
     saveRmRequest,
     stillAside,
     type TrashBatch,
+    updateRmRequest,
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
 import type { RunContext } from "./run";
@@ -477,34 +478,59 @@ function sharedRequests(request: RmRequest, approved: readonly ApproveEntry[]): 
 function settleShared(shared: readonly SharedRequest[], decidedBy: RmRequest, batchId: string | undefined): void {
     const decidedAt = new Date().toISOString();
 
-    for (const { request, shared: targets, rest } of shared) {
-        const paths = targets.map((target) => target.path);
-        appendRmLedger({
-            action: "approve",
-            requestId: request.id,
-            via: `request:${decidedBy.id}`,
-            path: paths.join(", "),
-            batchId,
+    for (const candidate of shared) {
+        const paths = new Set(candidate.shared.map((target) => target.path));
+        // Read again under the other request's lock: the copy listRmRequests() gave may be minutes old.
+        const update = updateRmRequest(candidate.request.id, (fresh) => {
+            if (fresh.status !== "pending") {
+                return null;
+            }
+
+            const rest = fresh.targets.filter((target) => target.stored || !paths.has(target.path));
+
+            if (rest.length === fresh.targets.length) {
+                return null;
+            }
+
+            return rest.length > 0
+                ? { ...fresh, targets: rest }
+                : {
+                      ...fresh,
+                      status: "approved",
+                      decidedAt,
+                      decidedVia: `request:${decidedBy.id}`,
+                      decided: { approved: [...paths], denied: [] },
+                      batchId,
+                  };
         });
 
-        if (rest.length > 0) {
-            saveRmRequest({ ...request, targets: rest });
+        if (update.kind === "busy") {
             out.println(
-                pc.dim(`  request ${request.id}: ${paths.length} shared path(s) decided, the rest still waits`)
+                pc.dim(`  request ${candidate.request.id} is open in another window; it keeps its shared path(s)`)
             );
             continue;
         }
 
-        saveRmRequest({
-            ...request,
-            status: "approved",
-            decidedAt,
-            decidedVia: `request:${decidedBy.id}`,
-            decided: { approved: paths, denied: [] },
+        if (update.kind !== "saved") {
+            continue;
+        }
+
+        appendRmLedger({
+            action: "approve",
+            requestId: candidate.request.id,
+            via: `request:${decidedBy.id}`,
+            path: [...paths].join(", "),
             batchId,
         });
-        removeEmptyAsideDir(request.asideDir);
-        out.println(pc.dim(`  request ${request.id} is approved with it`));
+
+        if (update.request.status === "approved") {
+            removeEmptyAsideDir(update.request.asideDir);
+            out.println(pc.dim(`  request ${candidate.request.id} is approved with it`));
+        } else {
+            out.println(
+                pc.dim(`  request ${candidate.request.id}: ${paths.size} shared path(s) decided, the rest still waits`)
+            );
+        }
     }
 }
 
