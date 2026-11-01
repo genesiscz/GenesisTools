@@ -1,6 +1,15 @@
-import { spawnSync } from "node:child_process";
-import { chmodSync, type Dirent, lstatSync, readdirSync, type Stats, writeFileSync } from "node:fs";
+import {
+    type Dirent,
+    lstatSync,
+    mkdirSync,
+    readdirSync,
+    readlinkSync,
+    type Stats,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
+import { type CopyFile, cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
 import { isDatalessFile, underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -10,7 +19,7 @@ import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untra
 import { hookDiag } from "../log";
 import { callDir, hookDataRoot, safeSegment } from "../paths";
 import { HARNESS_HOOK_FACTS, type HookPayload } from "../payload";
-import { actorOf } from "./attribution";
+import { actorOf, readOnlyCommand } from "./attribution";
 import { commandDirs, namedArguments } from "./command-paths";
 import { canonical, coverage, mentionsOf, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
@@ -68,17 +77,98 @@ export interface CaptureResult {
  * cannot be relied on for this.
  */
 const FILE_MODE = 0o600;
+const DIR_MODE = 0o700;
 
 function writePrivateFile(path: string, contents: string): void {
     writeFileSync(path, contents, { mode: FILE_MODE });
 }
 
-function tighten(path: string): void {
-    try {
-        chmodSync(path, FILE_MODE);
-    } catch (err) {
-        hookDiag("Could not tighten a capture file mode", { err, path });
-    }
+/** How one dirty entry went into the clone tree; `failed` was logged and has no before-state. */
+type Stored = Placement | "failed";
+
+interface CloneTree {
+    /** Puts `file` (repo-relative) into the tree. `mayCopy`: the byte budget still has room for a real copy. */
+    put: (file: string, mayCopy: boolean) => Stored;
+    /** Makes the symlinks `put` deferred and returns the entries whose link could not be made. */
+    finish: () => string[];
+}
+
+/**
+ * Root N's before-state: `<call>/<n>/` holds every captured dirty file at its repo-relative path, each an APFS
+ * clone where the volume makes one (`cloneOrCopy`), which reads and writes no data. It replaced a `tar` of the
+ * same files, about 770 KB written per call in this checkout (2026-11-01), and the post phase reads a clone by
+ * path (`beforeCopy`).
+ *
+ * A symlink is stored as a link, as `tar` stored it: following one could copy a file from outside the
+ * repository. Links are made after every file, so no file is ever written through a link the capture made, and
+ * only regular files are read: a FIFO would block the hook forever.
+ */
+function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyFile?: CopyFile }): CloneTree {
+    const links: Array<{ path: string; target: string; file?: string }> = [];
+
+    const place = (source: string, destination: string, mayCopy: boolean, file?: string): Placement => {
+        const stat = lstatSync(source);
+
+        if (stat.isSymbolicLink()) {
+            links.push({ path: destination, target: readlinkSync(source), file });
+            return "cloned";
+        }
+
+        if (stat.isDirectory()) {
+            // An untracked nested repository is listed as one `nested/` entry; `tar` archived all of it.
+            mkdirSync(destination, { recursive: true, mode: DIR_MODE });
+
+            let placed: Placement = "cloned";
+
+            for (const item of readdirSync(source)) {
+                const inner = place(join(source, item), join(destination, item), mayCopy);
+
+                if (inner === "declined") {
+                    return "declined";
+                }
+
+                placed = inner === "copied" ? "copied" : placed;
+            }
+
+            return placed;
+        }
+
+        if (!stat.isFile()) {
+            return "cloned";
+        }
+
+        mkdirSync(dirname(destination), { recursive: true, mode: DIR_MODE });
+        return cloneOrCopy({ source, destination, mode: FILE_MODE, mayCopy, copyFile });
+    };
+
+    return {
+        put: (file, mayCopy) => {
+            try {
+                return place(join(root, file), join(tree, file), mayCopy, file);
+            } catch (err) {
+                hookDiag("Could not clone or copy a dirty file, so it has no before-state", { err, root, file });
+                return "failed";
+            }
+        },
+        finish: () => {
+            const failed: string[] = [];
+
+            for (const link of links) {
+                try {
+                    mkdirSync(dirname(link.path), { recursive: true, mode: DIR_MODE });
+                    symlinkSync(link.target, link.path);
+                } catch (err) {
+                    hookDiag("Could not store a symlink, so it has no before-state", { err, path: link.path });
+
+                    if (link.file) {
+                        failed.push(link.file);
+                    }
+                }
+            }
+
+            return failed;
+        },
+    };
 }
 
 /**
@@ -114,7 +204,7 @@ function rootsOf(dirs: string[], config: DiffConfig, skipped: string[] = []): Ca
             break;
         }
 
-        // A repository inside a cloud storage folder is never a root: its `git status` and the `tar` of its dirty
+        // A repository inside a cloud storage folder is never a root: its `git status` and the copies of its dirty
         // files would read placeholders, and every read downloads one (see cloud-placeholder.ts).
         if (underCloudRoot(dir)) {
             skipped.push(`${dir}: under a cloud storage folder, not captured`);
@@ -149,14 +239,14 @@ interface CapturePlan {
 }
 
 /**
- * The files to size and archive for one root.
+ * The files to size and capture for one root.
  *
- * 🛑 git collapses a wholly-untracked directory into one `scratch/` entry, and `tar` handed that
- * entry archives EVERYTHING below it, gitignored credentials, databases and build output
+ * 🛑 git collapses a wholly-untracked directory into one `scratch/` entry, and a capture handed
+ * that entry takes EVERYTHING below it, gitignored credentials, databases and build output
  * included, into the hook's capture area. So such a directory is expanded through
  * `git ls-files --others --exclude-standard`, which lists only what git would report. One that
  * holds more files than the whole capture may take is left out as a unit rather than expanded
- * without bound, and deletions are skipped because `tar` cannot stat them.
+ * without bound, and deletions are skipped because there is nothing on disk to copy.
  */
 function captureList({
     root,
@@ -178,7 +268,7 @@ function captureList({
             continue;
         }
 
-        // A dirty submodule is reported as its DIRECTORY. Handed to `tar` it archived the whole
+        // A dirty submodule is reported as its DIRECTORY. Handed to the capture it took the whole
         // checkout (its own ignored files included). Its before-state is the recorded commit,
         // which the post phase already diffs against HEAD as a `Subproject commit` change.
         if (entry.submodule?.startsWith("S")) {
@@ -241,17 +331,24 @@ const MAX_RECORDED_NAMES = 5_000;
  * Smallest first is what makes the common file survive a rare huge one. The paths that did
  * not fit are written out, because a file that EXISTED but has no copy must never be reported
  * as one the command created.
+ *
+ * Each file goes into the clone tree as it is taken. The per-entry and entry caps hold for a
+ * clone too: they bound what the post phase diffs, and the space a clone takes once its source
+ * is rewritten. The total cap bounds the bytes the pre phase WRITES, so only a real copy (a
+ * volume that cannot clone) spends it, and on such a volume the result is the old plan.
  */
-function planCapture({
+function fillCapture({
     root,
     files,
     config,
     mentioned,
+    tree,
 }: {
     root: string;
     files: string[];
     config: DiffConfig;
     mentioned: (relativePath: string) => boolean;
+    tree: CloneTree;
 }): CapturePlan {
     const fileCap = megabytes(config.maxCaptureFileMB);
     const totalCap = megabytes(config.maxCaptureMB);
@@ -269,39 +366,58 @@ function planCapture({
 
     const take: string[] = [];
     const left: string[] = [];
-    let bytes = 0;
+    let copied = 0;
     let placeholders = 0;
+    let failed = 0;
 
     for (const entry of sized) {
-        // `tar` reads the bytes, and reading a cloud placeholder downloads it.
+        // A clone of a dataless file makes no sense and a copy reads it, which downloads it.
         if (entry.placeholder) {
             left.push(entry.file);
             placeholders += 1;
             continue;
         }
 
-        const overFile = entry.size > fileCap;
-        const overTotal = bytes + entry.size > totalCap;
-
-        if (overFile || overTotal || take.length >= config.maxCaptureFiles) {
+        if (entry.size > fileCap || take.length >= config.maxCaptureFiles) {
             left.push(entry.file);
             continue;
         }
 
-        bytes += entry.size;
+        const stored = tree.put(entry.file, copied + entry.size <= totalCap);
+
+        if (stored === "failed") {
+            failed += 1;
+        }
+
+        if (stored === "failed" || stored === "declined") {
+            left.push(entry.file);
+            continue;
+        }
+
+        copied += stored === "copied" ? entry.size : 0;
         take.push(entry.file);
+    }
+
+    for (const file of tree.finish()) {
+        take.splice(take.indexOf(file), 1);
+        left.push(file);
+        failed += 1;
     }
 
     const why: string[] = [];
 
-    if (left.length > placeholders) {
+    if (left.length > placeholders + failed) {
         why.push(
-            `over the ${config.maxCaptureFileMB} MB per-entry / ${config.maxCaptureMB} MB total / ${config.maxCaptureFiles} entry cap`
+            `over the ${config.maxCaptureFileMB} MB per-entry / ${config.maxCaptureMB} MB total copied / ${config.maxCaptureFiles} entry cap`
         );
     }
 
     if (placeholders > 0) {
         why.push(`${placeholders} hold cloud placeholders a read would download`);
+    }
+
+    if (failed > 0) {
+        why.push(`${failed} could not be cloned or copied`);
     }
 
     const reason =
@@ -320,7 +436,7 @@ function planCapture({
  * megabytes per command.
  *
  * The walk stops as soon as it is over `limit`, so a huge tree costs a few `readdir` calls
- * rather than a full traversal, and a symlink is never followed: `tar` stores the link, and
+ * rather than a full traversal, and a symlink is never followed: the capture stores the link, and
  * following one could count a target outside the repository or loop.
  */
 function entryBytes(path: string, limit: number, found: { placeholder: boolean }): number {
@@ -399,9 +515,15 @@ function entryBytes(path: string, limit: number, found: { placeholder: boolean }
 /**
  * Only DIRTY files are captured: git already holds the before-state of every clean file,
  * so "what did this command change" needs nothing more. Measured on GenesisTools: 14 dirty
- * files, 54 ms, one `git status` and one `tar`.
+ * files, 54 ms, one `git status` and one `tar` (a clone tree since 2026-11-01).
+ *
+ * `copyFile` is the clone primitive, a parameter so a test can see its flags or make it fail.
  */
-export function capturePre(payload: HookPayload, config: DiffConfig): CaptureResult {
+export function capturePre(
+    payload: HookPayload,
+    config: DiffConfig,
+    { copyFile }: { copyFile?: CopyFile } = {}
+): CaptureResult {
     const dirs = commandDirs(payload.command, payload.cwd);
     const skipped: string[] = [];
     const captured_roots = rootsOf(dirs, config, skipped);
@@ -451,10 +573,17 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         return { roots, captured, named: 0, skipped };
     }
 
+    // A command that only reads gets no before-state. Its post phase gives every change in the call
+    // to another writer (`attribute`) and never opens a copy, so a copy bought nothing: 12,409 calls
+    // on 2026-11-01 each put the dirty files into a tar, `ls` and `tail` included. Every file the
+    // post phase reads stays, so its answer (silent, the other writers' files, a stale deletion) is
+    // the same.
+    const readOnly = readOnlyCommand(payload.command);
+
     // The named-path pass runs FIRST so a capture with no git root still produces a call
     // directory. The post phase gates on `roots.txt`, and returning early when `roots` was
     // empty is exactly what made an edit outside every repository unreportable.
-    const named = captureNamed({ dir, paths: wanted, config });
+    const named = captureNamed({ dir, paths: wanted, config, takeCopies: !readOnly, copyFile });
 
     skipped.push(...named.skipped);
     writePrivateFile(join(dir, "stamp"), String(Math.floor(Date.now() / 1000)));
@@ -485,28 +614,33 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
 
     roots.forEach((root, index) => {
         const entries = statusEntries(root);
-        // A DELETED path is excluded: it is gone from disk, so `tar` cannot stat it and
-        // exits 1, and one such entry discards the whole archive — the root then loses its
-        // before-state for every file. Observed on 2026-09-20 during a `git rm`. The post
-        // phase renders a deletion from `git diff HEAD` and needs no captured copy.
-        const named = coverage({ mentions: mentions.current, root, reach: "deep" });
-        const earlier = coverage({ mentions: mentions.index, root, reach: "shallow" });
-        const mentioned = (name: string) => named(join(root, name)) || earlier(join(root, name));
-        const { files, namesOnly, tooWide } = captureList({ root, entries, config, mentioned });
-        // Excluding them from the archive also leaves the post phase unable to tell a
-        // deletion this command MADE from one that was already sitting in `git status`.
-        // Writing the names down is what closes that. See `alreadyGone` for the measurement.
+        // A DELETED path is excluded: it is gone from disk, so there is nothing to copy (one
+        // such entry used to make `tar` exit 1 and discard the whole archive, 2026-09-20). The
+        // post phase renders a deletion from `git diff HEAD` and needs no captured copy.
+        // Excluding them also leaves the post phase unable to tell a deletion this command
+        // MADE from one that was already sitting in `git status`. Writing the names down is
+        // what closes that, for a reading command too. See `alreadyGone` for the measurement.
         const gone = entries.filter(isDeleted).map((entry) => entry.path);
 
         if (gone.length > 0) {
             writePrivateFile(join(dir, `${index + 1}.gone`), `${gone.join("\n")}\n`);
         }
 
+        if (readOnly) {
+            return;
+        }
+
+        const named = coverage({ mentions: mentions.current, root, reach: "deep" });
+        const earlier = coverage({ mentions: mentions.index, root, reach: "shallow" });
+        const mentioned = (name: string) => named(join(root, name)) || earlier(join(root, name));
+        const { files, namesOnly, tooWide } = captureList({ root, entries, config, mentioned });
+
         if (files.length === 0 && namesOnly.length === 0 && tooWide.length === 0) {
             return;
         }
 
-        const plan = planCapture({ root, files, config, mentioned });
+        const tree = cloneTree({ root, tree: join(dir, String(index + 1)), copyFile });
+        const plan = fillCapture({ root, files, config, mentioned, tree });
         const left = [...plan.left, ...namesOnly, ...tooWide];
 
         // The refusal is RECORDED rather than silent, so the post phase can tell a file it
@@ -519,27 +653,7 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
             writePrivateFile(join(dir, `${index + 1}.left`), `${left.join("\n")}\n`);
         }
 
-        if (plan.take.length === 0) {
-            return;
-        }
-
-        const tar = join(dir, `${index + 1}.tar`);
-        // `--` before the file list: a repository file literally named `-C` or `--exclude=…`
-        // would otherwise be read by tar as an option, and `-C /` re-roots the archive. Any
-        // writer of the repository can create such a name.
-        const run = spawnSync("tar", ["-C", root, "-cf", tar, "--", ...plan.take], { encoding: "utf8" });
-
-        if (run.status === 0) {
-            tighten(tar);
-            captured += plan.take.length;
-            return;
-        }
-
-        hookDiag("tar failed, so this root has no before-state", {
-            root,
-            status: run.status,
-            stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
-        });
+        captured += plan.take.length;
     });
 
     return { roots, captured, named: named.entries.length, skipped };

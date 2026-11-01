@@ -1,16 +1,69 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { hookDiag } from "../log";
 
 /** The extracted copy can hold secrets, exactly like the tar it came from. */
 const FILE_MODE = 0o600;
 
 /**
- * Writes the captured copy out so `git diff --no-index` can read it.
+ * Where the pre phase put this root's before-state: the clone tree `<n>/` (`cloneTree` in capture.ts), or
+ * `<n>.tar` from a hook older than 2026-11-01. A background call captured before an upgrade is diffed after it,
+ * when its task ends, so the archive is still read; no other code writes one.
+ */
+type Capture = { tree: string } | { tar: string } | null;
+
+function captureOf(dir: string, root: string): Capture {
+    const index = rootIndex(dir, root);
+
+    if (index < 0) {
+        return null;
+    }
+
+    const tree = join(dir, String(index + 1));
+
+    if (existsSync(tree)) {
+        return { tree };
+    }
+
+    const tar = join(dir, `${index + 1}.tar`);
+
+    return existsSync(tar) ? { tar } : null;
+}
+
+/**
+ * The clone of `member` (a file, or a link stored as a link), or `null` when the file was clean when the command
+ * began. Read where the capture put it: the clone is the before-state, so nothing is extracted or written.
+ *
+ * Its folder must be a real folder of the tree: a stored link that `member` reaches THROUGH (`link/passwd`) would
+ * hand the post phase a file outside the repository, which the archive, holding the link as an entry, never did.
+ */
+function inTree(tree: string, member: string): string | null {
+    const path = join(tree, member);
+
+    try {
+        lstatSync(path);
+    } catch {
+        // Absent is the normal case: the file was clean when the command began.
+        return null;
+    }
+
+    try {
+        const folder = realpathSync(dirname(path));
+        const top = realpathSync(tree);
+
+        return folder === top || folder.startsWith(`${top}/`) || folder.startsWith(`${top}\\`) ? path : null;
+    } catch (err) {
+        hookDiag("Could not resolve a clone in the capture tree, so it has no before-state", { err, path });
+        return null;
+    }
+}
+
+/**
+ * The captured copy as a path `git diff --no-index` can read: the clone itself, or one written out of an archive.
  *
  * `null` is a meaningful answer, not a failure: it means the file was CLEAN when the command
- * began, so it is absent from the tar and git itself holds the before-state. The caller falls
+ * began, so it is absent from the capture and git itself holds the before-state. The caller falls
  * back to `git diff HEAD` rather than passing a path that does not exist, which would make
  * `--no-index` exit 128 with an empty patch that reads exactly like "nothing changed".
  */
@@ -98,18 +151,31 @@ export function leftOutOfCapture({ dir, root, absolute }: { dir: string; root: s
 }
 
 export function beforeCopy({ dir, root, absolute }: { dir: string; root: string; absolute: string }): string | null {
-    const index = rootIndex(dir, root);
+    const capture = captureOf(dir, root);
 
-    if (index < 0) {
+    if (capture === null) {
         return null;
     }
 
-    const tar = join(dir, `${index + 1}.tar`);
-
-    if (!existsSync(tar)) {
-        return null;
+    if ("tree" in capture) {
+        return inTree(capture.tree, relative(root, absolute));
     }
 
+    return fromArchive({ dir, tar: capture.tar, root, absolute });
+}
+
+/** The before-copy out of an archive an older hook wrote, written next to it for `git diff --no-index`. */
+function fromArchive({
+    dir,
+    tar,
+    root,
+    absolute,
+}: {
+    dir: string;
+    tar: string;
+    root: string;
+    absolute: string;
+}): string | null {
     // A directory captured as `scratch/` stores its members as `scratch/a.ts`, so the
     // repo-relative path is the member name for both a plain file and one inside a wholly
     // untracked directory. Verified against bsdtar on 2026-09-20.
@@ -131,10 +197,10 @@ export function beforeCopy({ dir, root, absolute }: { dir: string; root: string;
 }
 
 /**
- * `beforeCopy` for many files of one root, with the archive listed once: a file the listing lacks was clean when
- * the command began, so it gets `null` without a `tar` spawn of its own. `renamesIn` asks for every deleted file,
- * and each one cost a `tar -xOf` even when absent (up to `RENAME_SCAN_LIMIT` of them). `copy` is the extraction,
- * a parameter so a test can count it.
+ * `beforeCopy` for many files of one root: a file the capture lacks was clean when the command began, so it gets
+ * `null` without calling `copy`. For a clone tree that costs one `lstat`; an older archive is listed once instead
+ * of a `tar` spawn per file. `renamesIn` asks for every deleted file, and each one cost a `tar -xOf` even when
+ * absent (up to `RENAME_SCAN_LIMIT` of them). `copy` is the read, a parameter so a test can count it.
  */
 export function beforeCopier({
     dir,
@@ -145,15 +211,30 @@ export function beforeCopier({
     root: string;
     copy?: typeof beforeCopy;
 }): (absolute: string) => string | null {
+    let capture: Capture | undefined;
     let members: Set<string> | null | undefined;
 
     return (absolute) => {
+        if (capture === undefined) {
+            capture = captureOf(dir, root);
+        }
+
+        if (capture === null) {
+            return null;
+        }
+
+        const member = relative(root, absolute);
+
+        if ("tree" in capture) {
+            return inTree(capture.tree, member) === null ? null : copy({ dir, root, absolute });
+        }
+
         if (members === undefined) {
-            members = archiveMembers(dir, root);
+            members = archiveMembers(capture.tar);
         }
 
         // An archive that could not be listed falls back to one extraction per file.
-        if (members !== null && !members.has(relative(root, absolute).normalize("NFC"))) {
+        if (members !== null && !members.has(member.normalize("NFC"))) {
             return null;
         }
 
@@ -161,15 +242,8 @@ export function beforeCopier({
     };
 }
 
-/** The archive's member names in NFC (bsdtar stores NFD, see `extract`), empty with no archive, `null` when `tar -tf` failed. */
-function archiveMembers(dir: string, root: string): Set<string> | null {
-    const index = rootIndex(dir, root);
-    const tar = join(dir, `${index + 1}.tar`);
-
-    if (index < 0 || !existsSync(tar)) {
-        return new Set();
-    }
-
+/** The archive's member names in NFC (bsdtar stores NFD, see `extract`), `null` when `tar -tf` failed. */
+function archiveMembers(tar: string): Set<string> | null {
     const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", maxBuffer: 16_000_000 });
 
     if (listed.status !== 0 || typeof listed.stdout !== "string") {
