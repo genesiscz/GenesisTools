@@ -1,9 +1,21 @@
-import { existsSync, lstatSync, readdirSync, rmSync, statfsSync, unlinkSync, utimesSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    fstatSync,
+    ftruncateSync,
+    lstatSync,
+    openSync,
+    readdirSync,
+    rmSync,
+    statfsSync,
+    unlinkSync,
+    utimesSync,
+} from "node:fs";
 import { join } from "node:path";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
-import { compressFile, digestZstdContent, sourceUnchanged, verifyCompressedFile } from "./file";
+import { compressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { recordCompression } from "./ledger";
 import { type CompressPreset, PRESETS } from "./presets";
 import { archiveBaseName, FOLDER_ARCHIVE_SUFFIX, packDirectory, verifyArchiveAgainstFolder } from "./tar";
@@ -455,6 +467,97 @@ export interface OldFileReport {
     failed: Array<{ path: string; reason: string }>;
 }
 
+/**
+ * How long a retired file keeps its blocks after its name is gone, so a reader that opened it just before (an rg that
+ * maps it, which a cut file would kill with SIGBUS) finishes first. New readers find the `.zst` from the start.
+ */
+const RELEASE_GRACE_MS = 10_000;
+
+/**
+ * Retires a plain file that its verified `.zst` replaced, when it is still the file that was compressed (same size
+ * and mtime: no late write). Returns the open handle for {@link releaseBlocks}, `null` when the file was retired
+ * without one, or `false` when it changed and stays. The handle is opened before the name goes, because a process
+ * that still has the file open keeps every block on disk after the unlink: on 2026-11-01 31 handles that launchers
+ * and idle loggers held kept 1.2 GB of removed day logs.
+ */
+function retireReplaced(
+    path: string,
+    before: { size: number; mtimeMs: number },
+    retire: (path: string) => void
+): number | null | false {
+    let fd: number | null = null;
+
+    try {
+        // Windows cannot remove an open file; there only the name goes.
+        fd = process.platform === "win32" ? null : openSync(path, "r+");
+    } catch (err) {
+        logger.debug({ err, path }, "[compress] the plain file did not open for the release; it is only removed");
+    }
+
+    let now: { size: number; mtimeMs: number };
+
+    try {
+        now = fd === null ? lstatSync(path) : fstatSync(fd);
+    } catch (err) {
+        logger.debug({ err, path }, "[compress] the source vanished or became unreadable after it was compressed");
+        return false;
+    }
+
+    if (now.size !== before.size || now.mtimeMs !== before.mtimeMs) {
+        if (fd !== null) {
+            closeSync(fd);
+        }
+
+        return false;
+    }
+
+    try {
+        retire(path);
+    } catch (err) {
+        if (fd !== null) {
+            closeSync(fd);
+        }
+
+        throw err;
+    }
+
+    return fd;
+}
+
+/**
+ * After the grace, cuts every retired file that no folder names any more (`nlink` 0) to zero bytes through its handle,
+ * which frees its blocks even while another process still holds it open, and closes the handles. A retire that only
+ * moved the file (a trash) leaves a name, and that file is not touched.
+ */
+async function releaseBlocks(fds: number[], graceMs: number): Promise<number> {
+    if (fds.length === 0) {
+        return 0;
+    }
+
+    if (graceMs > 0) {
+        await Bun.sleep(graceMs);
+    }
+
+    let freed = 0;
+
+    for (const fd of fds) {
+        try {
+            const stat = fstatSync(fd);
+
+            if (stat.nlink === 0) {
+                ftruncateSync(fd, 0);
+                freed += stat.size;
+            }
+        } catch (err) {
+            logger.debug({ err, fd }, "[compress] a retired file's blocks were not released");
+        } finally {
+            closeSync(fd);
+        }
+    }
+
+    return freed;
+}
+
 /** True when an existing `.zst` holds exactly the plain file's bytes; a `.zst` that does not decode is not the same. */
 function sameContent(target: string, plain: { bytes: number; path: string }): boolean {
     try {
@@ -470,14 +573,28 @@ function sameContent(target: string, plain: { bytes: number; path: string }): bo
  * Carries out a plan from {@link planOldFileCompression}: each file becomes `<file>.zst` (seekable frames, its mode and
  * mtime kept), the result is decompressed and compared by size and sha256, the source is re-checked for a late write,
  * and only then is the plain file retired. Anything that does not check out keeps the plain file and drops the `.zst`.
+ * A removed file is then cut to zero bytes after `releaseGraceMs`, so a process that still holds it open (an idle
+ * logger, a launcher that inherited the handle) no longer keeps its blocks on disk.
  */
 export async function applyOldFileCompression(
     plan: OldFilePlan,
-    options: { caller: string; preset?: CompressPreset; retire?: (path: string) => void }
+    options: {
+        caller: string;
+        preset?: CompressPreset;
+        retire?: (path: string) => void;
+        /** How long a retired file keeps its blocks for a reader that opened it just before; default 10 s. */
+        releaseGraceMs?: number;
+    }
 ): Promise<OldFileReport> {
     const retire = options.retire ?? removePath;
     const preset = options.preset ?? PRESETS.text;
     const report: OldFileReport = { plan, compressed: [], failed: [] };
+    const held: number[] = [];
+    const keep = (fd: number | null) => {
+        if (fd !== null) {
+            held.push(fd);
+        }
+    };
 
     for (const temp of plan.staleTemps) {
         retire(temp);
@@ -486,9 +603,10 @@ export async function applyOldFileCompression(
     for (const path of plan.finish) {
         const target = `${path}${ZSTD_SUFFIX}`;
         const stat = lstatSync(path);
+        const retired = sameContent(target, { bytes: stat.size, path }) ? retireReplaced(path, stat, retire) : false;
 
-        if (sameContent(target, { bytes: stat.size, path })) {
-            retire(path);
+        if (retired !== false) {
+            keep(retired);
             report.compressed.push({ path, bytes: stat.size, compressedBytes: lstatSync(target).size });
         } else {
             plan.compress.push({ path, bytes: stat.size });
@@ -519,13 +637,15 @@ export async function applyOldFileCompression(
                 continue;
             }
 
-            if (!sourceUnchanged(path, result.sourceStat)) {
+            const retired = retireReplaced(path, result.sourceStat, retire);
+
+            if (retired === false) {
                 unlinkSync(target);
                 report.failed.push({ path, reason: "the file changed while it was compressed" });
                 continue;
             }
 
-            retire(path);
+            keep(retired);
             recordCompression({
                 op: "compress",
                 caller: options.caller,
@@ -551,6 +671,8 @@ export async function applyOldFileCompression(
         }
     }
 
+    const releasedBytes = await releaseBlocks(held, options.releaseGraceMs ?? RELEASE_GRACE_MS);
+
     if (report.compressed.length > 0 || report.failed.length > 0) {
         logger.info(
             {
@@ -558,6 +680,7 @@ export async function applyOldFileCompression(
                 compressed: report.compressed.length,
                 bytes: report.compressed.reduce((sum, item) => sum + item.bytes, 0),
                 compressedBytes: report.compressed.reduce((sum, item) => sum + item.compressedBytes, 0),
+                releasedBytes,
                 failed: report.failed.length,
             },
             "[compress] compressed old day files"
