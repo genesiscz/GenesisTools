@@ -1,5 +1,11 @@
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import {
+    type MaintainOptions,
+    type MaintenanceReport,
+    maintainObjectStore,
+    summaryLine,
+} from "@genesiscz/utils/agents/objects/maintain";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { carrySavedEntries } from "@genesiscz/utils/fs/identity-cache";
 import { logger } from "@genesiscz/utils/logger";
@@ -140,15 +146,47 @@ export function dailyPassLockPath(logsDir: string): string {
 
 export type DailyPassReports = Array<{ target: DailyTarget; report: OldFileReport }>;
 
+export interface DailyPassReport {
+    compression: DailyPassReports;
+    /** The `agents-objects` step; null when it failed (the error is in the day log). */
+    objectStore: MaintenanceReport | null;
+}
+
 /**
- * The daily pass: compresses every old file of every target, recording each one in the ledger. Only one pass runs per
- * logs folder: `tools compress daily` opens the logger, which may start the detached pass of the day beside it, and two
- * passes over one file once deleted its only copy (each retired what the other had compressed). The second caller
- * returns `null` at once and leaves the work to the pass that holds the lock; a lock whose holder died is taken over.
+ * The daily pass's `agents-objects` step: packs the agents change-log object store and drops what no change-log row
+ * of the retention window names (`maintainObjectStore`). It writes the pass's one before/after line for the store.
+ * Never throws, so a failure here leaves the logs' compression standing.
+ */
+export async function runObjectStoreStep(options: MaintainOptions = {}): Promise<MaintenanceReport | null> {
+    try {
+        const report = await maintainObjectStore(options);
+        logger.info(
+            { before: report.before, after: report.after, dropped: report.dropped, restored: report.restored },
+            `[compress] daily pass, agents-objects: ${summaryLine(report)}`
+        );
+        return report;
+    } catch (err) {
+        logger.error({ err }, "[compress] daily pass, agents-objects failed; it removes nothing before it is verified");
+        return null;
+    }
+}
+
+/**
+ * The daily pass: compresses every old file of every target, recording each one in the ledger, then runs the
+ * `agents-objects` step. Only one pass runs per logs folder: `tools compress daily` opens the logger, which may start
+ * the detached pass of the day beside it, and two passes over one file once deleted its only copy (each retired what
+ * the other had compressed). The second caller returns `null` at once and leaves the work to the pass that holds the
+ * lock; a lock whose holder died is taken over.
  */
 export async function runDailyCompression(
-    options: { now?: Date; logsDir?: string; retire?: (path: string) => void; releaseGraceMs?: number } = {}
-): Promise<DailyPassReports | null> {
+    options: {
+        now?: Date;
+        logsDir?: string;
+        retire?: (path: string) => void;
+        releaseGraceMs?: number;
+        objects?: MaintainOptions;
+    } = {}
+): Promise<DailyPassReport | null> {
     const now = options.now ?? new Date();
     const logsDir = options.logsDir ?? genesisToolsDir("logs");
     const lock = dailyPassLockPath(logsDir);
@@ -178,7 +216,8 @@ async function compressDailyTargets(options: {
     logsDir: string;
     retire?: (path: string) => void;
     releaseGraceMs?: number;
-}): Promise<DailyPassReports> {
+    objects?: MaintainOptions;
+}): Promise<DailyPassReport> {
     const { now, logsDir } = options;
     const reports: DailyPassReports = [];
 
@@ -204,5 +243,6 @@ async function compressDailyTargets(options: {
         },
         "[compress] daily pass finished"
     );
-    return reports;
+    const objectStore = await runObjectStoreStep({ now, ...options.objects });
+    return { compression: reports, objectStore };
 }

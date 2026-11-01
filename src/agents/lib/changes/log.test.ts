@@ -1,10 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { countObjects, maintainObjectStore } from "@genesiscz/utils/agents/objects/maintain";
+import { writeBlobs } from "@genesiscz/utils/agents/objects/store";
+import { runDailyCompression } from "@genesiscz/utils/compress/daily";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
+import { claimDailyPass } from "@genesiscz/utils/logger/daily-trigger";
 import { computeSessionChanges, gitBlobOid } from "@genesiscz/utils/session-changes";
 import { rawLogFiles, rawTransition, resolveSessionArgument } from "../../commands/changes";
 import { fileDiff, readBlobs } from "./diff";
@@ -748,5 +762,193 @@ describe("per-call rows and diffs", () => {
 
         expect(found.size).toBe(70);
         expect(found.get(oids[69] ?? "")?.toString()).toBe("blob 69\n");
+    });
+});
+
+describe("the change-log object store maintenance", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    /** A scratch agents folder: the store at `_objects`, change logs at `<session>/changes.jsonl`. */
+    function scratchStore() {
+        const agents = join(mkdtempSync(join(tmpdir(), "changes-maintain-")), "agents");
+        const store = join(agents, "_objects");
+        const write = (...texts: string[]) =>
+            writeBlobs(
+                store,
+                texts.map((text) => Buffer.from(text))
+            );
+        const loosePath = (oid: string) => join(store, "objects", oid.slice(0, 2), oid.slice(2));
+        const age = (oid: string, at: Date) => utimesSync(loosePath(oid), at, at);
+        const row = (session: string, path: string, oid: string, at: Date) => {
+            mkdirSync(join(agents, session), { recursive: true });
+            const event = { ts: at.toISOString(), session, turn: "t", tool: "Edit", cwd: "/repo", path };
+            appendFileSync(
+                join(agents, session, "changes.jsonl"),
+                `${SafeJSON.stringify({ ...event, provider: "claude", beforeOid: null, afterOid: oid, source: "edit" })}\n`
+            );
+        };
+        const readable = (oids: string[]) => [...readBlobs(oids, store).keys()].sort();
+        const count = () => countObjects(store);
+        return { agents, store, write, loosePath, age, row, readable, count };
+    }
+
+    const noSettle = async () => undefined;
+
+    test("every blob a recent row names ends in one pack and still reads back, where a plain gc would drop them", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const named = s.write("v1\n", "v2\n", "v3\n");
+        for (const [index, oid] of named.entries()) {
+            s.row("s-1", `/repo/file-${index}.ts`, oid, new Date(now.getTime() - DAY));
+        }
+
+        const git = (...args: string[]) =>
+            spawnSync("git", ["--git-dir", s.store, ...args], { encoding: "utf8", env: process.env }).stdout.trim();
+        // No refs: to git all three are unreachable, so `git gc --prune=now` or a plain prune would delete them.
+        expect(git("for-each-ref")).toBe("");
+        // A store made before the gc guard existed, as the live one was.
+        git("config", "--unset", "gc.auto");
+        git("config", "--unset", "gc.pruneExpire");
+
+        const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+
+        expect(report.packed).toBe(3);
+        expect(s.count()).toMatchObject({ loose: 0, packs: 1, packed: 3 });
+        expect(s.readable(named)).toEqual([...named].sort());
+        expect([git("config", "--get", "gc.auto"), git("config", "--get", "gc.pruneExpire")]).toEqual(["0", "never"]);
+
+        const again = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+        expect(again.packsRetired).toBe(0);
+        expect(s.readable(named)).toEqual([...named].sort());
+    });
+
+    test("retention drops only objects older than the window that no row of the window names", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const [packedOld = ""] = s.write("packed, named 35 days ago\n");
+        s.row("s-old", "/repo/old.ts", packedOld, new Date(now.getTime() - 35 * DAY));
+        // A pass 10 days ago: the 35-day-old row was inside its window, so the blob went into the pack.
+        await maintainObjectStore({
+            now: new Date(now.getTime() - 10 * DAY),
+            root: s.store,
+            logsDir: s.agents,
+            settle: noSettle,
+        });
+        expect(s.count()).toMatchObject({ loose: 0, packs: 1 });
+
+        const [renamed = "", stale = "", young = "", orphan = ""] = s.write(
+            "old bytes a row named yesterday\n",
+            "named only 40 days ago\n",
+            "no row yet, written an hour ago\n",
+            "no row, written 40 days ago\n"
+        );
+        s.row("s-1", "/repo/a.ts", renamed, new Date(now.getTime() - DAY));
+        s.row("s-1", "/repo/b.ts", stale, new Date(now.getTime() - 40 * DAY));
+        s.age(renamed, new Date(now.getTime() - 40 * DAY));
+        s.age(stale, new Date(now.getTime() - 40 * DAY));
+        s.age(young, new Date(now.getTime() - 60 * 60 * 1000));
+        s.age(orphan, new Date(now.getTime() - 40 * DAY));
+
+        const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+
+        expect(report).toMatchObject({ packed: 1, keptLoose: 1, dropped: { loose: 2, packed: 1 }, restored: 0 });
+        expect(s.readable([renamed, stale, young, orphan, packedOld])).toEqual([renamed, young].sort());
+        expect(s.count()).toMatchObject({ loose: 1, packs: 1, packed: 1 });
+        expect(existsSync(s.loosePath(young))).toBe(true);
+    });
+
+    test("a row written during the pass that names a dropped blob gets the blob back", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const [stale = "", kept = ""] = s.write("named only 40 days ago\n", "named today\n");
+        s.row("s-1", "/repo/a.ts", stale, new Date(now.getTime() - 40 * DAY));
+        s.row("s-1", "/repo/b.ts", kept, now);
+        s.age(stale, new Date(now.getTime() - 40 * DAY));
+
+        // A hook found the blob present just before the pass moved it, so it wrote no copy, then wrote its row.
+        const report = await maintainObjectStore({
+            now,
+            root: s.store,
+            logsDir: s.agents,
+            settle: async () => s.row("s-2", "/repo/a.ts", stale, new Date()),
+        });
+
+        expect(report.restored).toBe(1);
+        expect(s.readable([stale, kept])).toEqual([stale, kept].sort());
+        expect(readdirSync(join(s.store, "gt-maintenance")).filter((name) => name.startsWith("retired-"))).toEqual([]);
+    });
+
+    test("two passes at once: the second skips on the lock, and the store still answers every read", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const named = s.write("one\n", "two\n");
+        for (const oid of named) {
+            s.row("s-1", "/repo/a.ts", oid, now);
+        }
+
+        const [orphan = ""] = s.write("no row, 40 days old\n");
+        s.age(orphan, new Date(now.getTime() - 40 * DAY));
+        let second: Awaited<ReturnType<typeof maintainObjectStore>> | undefined;
+
+        const first = await maintainObjectStore({
+            now,
+            root: s.store,
+            logsDir: s.agents,
+            settle: async () => {
+                second = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+            },
+        });
+
+        expect(second?.skipped).toBe("locked");
+        expect(first.skipped).toBeUndefined();
+        expect(s.readable(named)).toEqual([...named].sort());
+        expect(s.count()).toMatchObject({ loose: 0, packs: 1, packed: 2 });
+        const fsck = spawnSync("git", ["--git-dir", s.store, "fsck", "--no-dangling"], {
+            encoding: "utf8",
+            env: process.env,
+        });
+        expect(fsck.status).toBe(0);
+    });
+
+    test("a dry run reports what a pass would drop and changes nothing", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const [named = "", orphan = ""] = s.write("named\n", "no row, 40 days old\n");
+        s.row("s-1", "/repo/a.ts", named, now);
+        s.age(orphan, new Date(now.getTime() - 40 * DAY));
+        const files = (dir: string): string[] =>
+            readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+                const path = join(dir, entry.name);
+                const stat = statSync(path);
+                return entry.isDirectory() ? [path, ...files(path)] : [`${path} ${stat.size} ${stat.mtimeMs}`];
+            });
+        const before = files(s.store);
+
+        const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, dryRun: true });
+
+        expect(report).toMatchObject({ dryRun: true, packed: 1, dropped: { loose: 1, packed: 0 }, after: null });
+        expect(files(s.store)).toEqual(before);
+    });
+
+    test("the daily pass runs the agents-objects step, and its claim starts one pass a day", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const [named = ""] = s.write("named\n");
+        s.row("s-1", "/repo/a.ts", named, now);
+        const logs = mkdtempSync(join(tmpdir(), "changes-daily-logs-"));
+
+        expect(claimDailyPass(logs, "2026-11-01")).toBe(true);
+        expect(claimDailyPass(logs, "2026-11-01")).toBe(false);
+        expect(claimDailyPass(logs, "2026-11-02")).toBe(true);
+
+        const pass = await runDailyCompression({
+            now,
+            logsDir: logs,
+            objects: { root: s.store, logsDir: s.agents, settle: noSettle },
+        });
+
+        expect(pass.objectStore).toMatchObject({ packed: 1, dryRun: false });
+        expect(s.count()).toMatchObject({ loose: 0, packs: 1, packed: 1 });
+        expect(s.readable([named])).toEqual([named]);
     });
 });

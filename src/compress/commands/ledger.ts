@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import { maintainObjectStore, summaryLine } from "@genesiscz/utils/agents/objects/maintain";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { dailyPassLockPath, planDailyCompression, runDailyCompression } from "@genesiscz/utils/compress/daily";
@@ -162,8 +163,10 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
             finish: plan.finish.length,
         }));
 
+        const objectStore = await maintainObjectStore({ dryRun: true });
+
         if (options.json) {
-            out.result(plans);
+            out.result({ targets: plans, objectStore });
             return;
         }
 
@@ -173,13 +176,14 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
             );
         }
 
+        out.println(`${pc.bold("agents-objects")}: ${summaryLine(objectStore)}`);
         out.println(pc.dim("dry run, nothing written"));
         return;
     }
 
-    const reports = await runDailyCompression();
+    const pass = await runDailyCompression();
 
-    if (!reports) {
+    if (!pass) {
         const busy = `another daily pass is running and holds ${dailyPassLockPath(genesisToolsDir("logs"))}; it compresses the old days`;
 
         if (options.json) {
@@ -191,7 +195,8 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
         return;
     }
 
-    const summary = reports.map(({ target, report }) => ({
+    const { compression, objectStore } = pass;
+    const summary = compression.map(({ target, report }) => ({
         target: target.name,
         compressed: report.compressed.length,
         bytes: report.compressed.reduce((sum, item) => sum + item.bytes, 0),
@@ -200,7 +205,7 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
     }));
 
     if (options.json) {
-        out.result(summary);
+        out.result({ targets: summary, objectStore });
         return;
     }
 
@@ -208,6 +213,12 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
         out.println(
             `${pc.bold(item.target)}: ${item.compressed} file(s), ${formatBytes(item.bytes)} → ${formatBytes(item.compressedBytes)}, ${item.failed.length} failed`
         );
+    }
+
+    out.println(`${pc.bold("agents-objects")}: ${objectStore ? summaryLine(objectStore) : "failed, see the day log"}`);
+
+    if (!objectStore || objectStore.skipped === "locked") {
+        process.exitCode = 1;
     }
 }
 
@@ -242,8 +253,11 @@ export function registerLedgerCommands(program: Command): void {
 
     program
         .command("daily")
-        .description("Run the daily pass now: day logs and ai-proxy transcripts older than yesterday become .zst")
-        .option("--dry-run", "list what it would compress; write nothing")
+        .description(
+            "Run the daily pass now: day logs and ai-proxy transcripts older than yesterday become .zst, then the " +
+                "agents-objects step packs the agents change-log object store and drops blobs no row of 30 days names"
+        )
+        .option("--dry-run", "list what it would compress and keep or drop; write nothing")
         .option("--json", "machine-readable result")
         .action(runDaily);
 }
