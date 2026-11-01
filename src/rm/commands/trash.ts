@@ -1,5 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli";
-import { createStopwatch, formatBytes } from "@genesiscz/utils/format";
+import { createStopwatch, formatBytes, formatCount } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
     type DrainProgress,
@@ -174,10 +174,10 @@ export function registerTrashCommands(program: Command): void {
             }
 
             const leftNote = agentOnly
-                ? ` ${left} batch(es) of other sessions or approved by the user keep their grace period (only the user drains them early).`
-                : ` ${left} batch(es) still in their grace period (--now drains them).`;
+                ? ` ${formatCount(left, "batch", "batches")} of other sessions or approved by the user keep their grace period (only the user drains them early).`
+                : ` ${formatCount(left, "batch", "batches")} still in their grace period (--now drains them).`;
             out.println(
-                `Drained ${drained.batches + swept.batches} batch(es), ${formatBytes(drained.bytes + swept.bytes)} freed in ${elapsed()}.` +
+                `Drained ${formatCount(drained.batches + swept.batches, "batch", "batches")}, ${formatBytes(drained.bytes + swept.bytes)} freed in ${elapsed()}.` +
                     (left > 0 ? pc.dim(leftNote) : "")
             );
         });

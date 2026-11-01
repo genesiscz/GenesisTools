@@ -421,14 +421,15 @@ export function approvalItemReason(rule: string, reason: string, home = homedir(
         return "A repository's .git folder: its history and unpushed commits go with it";
     }
 
-    const untracked = /^(\d+) untracked file\(s\) git does not ignore in (.+): may be new work$/.exec(reason);
+    // A request saved before the counts were worded reads "file(s)".
+    const untracked = /^(\d+) untracked files? ?(?:\(s\))? git does not ignore in (.+): may be new work$/.exec(reason);
 
     if (rule === "git-untracked" && untracked) {
         const [, count = "0", tree = ""] = untracked;
         return `Holds ${countOf(count, "file", "files")} git does not track in ${tildePath(tree, home)}, which may be new work`;
     }
 
-    const tracked = /^(\d+) file\(s\) tracked by git in (.+?):/.exec(reason);
+    const tracked = /^(\d+) files? ?(?:\(s\))? tracked by git in (.+?):/.exec(reason);
 
     if (rule === "git-tracked" && tracked) {
         const [, count = "0", tree = ""] = tracked;

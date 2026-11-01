@@ -728,6 +728,21 @@ describe("requests and approval", () => {
                     home
                 )
             ).toBe("Holds 1 file tracked by git in /srv/app");
+            // The rule words a count for a person: "1 file", "3 untracked files"; a request saved before reads too.
+            expect(
+                approvalItemReason(
+                    "git-tracked",
+                    "1 file tracked by git in /srv/app: use git rm, or ask the user",
+                    home
+                )
+            ).toBe("Holds 1 file tracked by git in /srv/app");
+            expect(
+                approvalItemReason(
+                    "git-untracked",
+                    "3 untracked files git does not ignore in /Users/someone/Notes: may be new work",
+                    home
+                )
+            ).toBe("Holds 3 files git does not track in ~/Notes, which may be new work");
             expect(
                 approvalItemReason("nested-repos", "holds 2 git repositories, e.g. /Users/someone/x/.git", home)
             ).toBe("Holds 2 git repositories, such as ~/x/.git");
@@ -1423,7 +1438,7 @@ describe("changing the trash root", () => {
         const claim = join(paths.batchesDir, `${batch?.id ?? "x"}-next.json.restoring-${process.pid}`);
         writeFileSync(claim, "{}");
 
-        expect(trashRootChangeBlocker(own, next, paths)).toContain("1 batch(es)");
+        expect(trashRootChangeBlocker(own, next, paths)).toContain("still holds 1 batch or leftover folders");
     });
 });
 

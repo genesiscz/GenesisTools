@@ -440,6 +440,41 @@ describe("approve in the window", () => {
         expect(Date.parse(batch?.drainAfter ?? "")).toBeLessThanOrEqual(Date.now());
     });
 
+    test("a permanent delete says it runs in the background and names its batch; the trash says its count", () => {
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            lines.push(stripAnsi(String(raw ?? "")));
+        });
+        let permanent: string | undefined;
+        let trashed: string | undefined;
+
+        try {
+            const first = asideRequest("permanent-words");
+            permanent = approveDelete({
+                ctx: context(),
+                request: first,
+                approved: entriesOf(first),
+                denied: [],
+                choices: { selected: null, disposal: "permanent", remember: "once", note: null },
+            }).batch?.id;
+            const second = asideRequest("trash-words");
+            trashed = approveDelete({
+                ctx: context(),
+                request: second,
+                approved: entriesOf(second).slice(0, 1),
+                denied: entriesOf(second).slice(1),
+                choices: { selected: null, disposal: "trash", remember: "once", note: null },
+            }).batch?.id;
+        } finally {
+            println.mockRestore();
+        }
+
+        expect(lines).toContain(`Deleting 2 items for good in the background (batch ${permanent}).`);
+        expect(lines.some((line) => line.startsWith("Moved 1 item to the trash;"))).toBe(true);
+        expect(lines.join("\n")).not.toContain("(s)");
+        expect(trashed).toBeDefined();
+    });
+
     test("a deny with a note puts everything back and the agent reads the note on its next ask", () => {
         const request = asideRequest("kept");
         denyRequest(request, { caller: PERSON, via: "touch-id", note: "these are fixtures" });
@@ -2005,7 +2040,7 @@ describe("a person denies from the picker", () => {
             process.exitCode = exitCode;
         }
 
-        expect(asked).toEqual(["Deny 2 request(s) from other sessions?"]);
+        expect(asked).toEqual(["Deny 2 requests from other sessions?"]);
         expect(requests.map((request) => loadRmRequest(request.id))).toMatchObject([
             { status: "denied", decidedVia: "touch-id", deniedNote: "these are fixtures, keep them" },
             { status: "denied", decidedVia: "touch-id", deniedNote: "these are fixtures, keep them" },
@@ -2032,7 +2067,7 @@ describe("the request hint an agent reads", () => {
         }
 
         const last = stripAnsi(lines.at(-1) ?? "");
-        expect(last).toContain("rm request k7m2qd: 2 path(s) wait for the user.");
+        expect(last).toContain("rm request k7m2qd: 2 paths wait for the user.");
         expect(last).toContain("Do not run approve yourself.");
         expect(last).toContain(`! ${toolCommand("rm")} approve k7m2qd`);
         expect(last).toContain(`${toolCommand("rm")} deny k7m2qd`);

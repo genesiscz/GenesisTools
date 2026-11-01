@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import {
     formatBytes,
     formatCost,
+    formatCount,
     formatCountdown,
     formatDuration,
     formatList,
@@ -311,6 +312,20 @@ describe("formatList", () => {
 
     it("handles empty array", () => {
         expect(formatList([])).toBe("");
+    });
+});
+
+describe("formatCount", () => {
+    it("names one thing in the singular and any other count in the plural", () => {
+        expect(formatCount(1, "item")).toBe("1 item");
+        expect(formatCount(5, "item")).toBe("5 items");
+        expect(formatCount(0, "path")).toBe("0 paths");
+    });
+
+    it("takes an irregular plural", () => {
+        expect(formatCount(2, "batch", "batches")).toBe("2 batches");
+        expect(formatCount(1, "copy", "copies")).toBe("1 copy");
+        expect(formatCount(3, "repository", "repositories")).toBe("3 repositories");
     });
 });
 

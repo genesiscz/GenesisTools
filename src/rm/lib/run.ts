@@ -1,6 +1,6 @@
 import { relative } from "node:path";
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
-import { createStopwatch, formatBytes } from "@genesiscz/utils/format";
+import { createStopwatch, formatBytes, formatCount } from "@genesiscz/utils/format";
 import { rmEnablePresetCommand, rmRequestHintLine } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
@@ -229,7 +229,11 @@ export async function executePlan(
                         minutes === 0
                             ? "the drain deletes it now, in the background"
                             : `the drain deletes it in ${minutes} min`;
-                    out.println(pc.green(`Moved ${batch.items.length} item(s) to the trash in ${elapsed()}; ${when}.`));
+                    out.println(
+                        pc.green(
+                            `Moved ${formatCount(batch.items.length, "item")} to the trash in ${elapsed()}; ${when}.`
+                        )
+                    );
                     out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
                 }
             }
@@ -314,7 +318,7 @@ async function confirmAtTerminal(
     const confirmed = new Map<RmPlanItem, number>();
 
     if (!outcome.approved) {
-        out.println(pc.yellow(`Kept ${asked.length} path(s): ${outcome.detail}.`));
+        out.println(pc.yellow(`Kept ${formatCount(asked.length, "path")}: ${outcome.detail}.`));
         return confirmed;
     }
 
@@ -327,7 +331,7 @@ async function confirmAtTerminal(
     }
 
     if (picked.length < asked.length) {
-        out.println(pc.yellow(`Kept ${asked.length - picked.length} path(s) the person did not tick.`));
+        out.println(pc.yellow(`Kept ${formatCount(asked.length - picked.length, "path")} the person did not tick.`));
     }
 
     return confirmed;
@@ -416,7 +420,7 @@ function requestForAsked(
 
     if (!options.json) {
         if (aside && aside.moved.length > 0) {
-            out.println(pc.yellow(`Moved ${aside.moved.length} path(s) aside to ${aside.dir}.`));
+            out.println(pc.yellow(`Moved ${formatCount(aside.moved.length, "path")} aside to ${aside.dir}.`));
             out.println(pc.dim("  They wait there for the user: approve deletes them, deny puts them back."));
         }
 
@@ -565,7 +569,11 @@ function summary(item: RmPlanItem): Record<string, string | undefined> {
 
 export function printRequestHint(id: string, count: number): void {
     const rm = toolCommand("rm");
-    out.println(pc.yellow(`${count} path(s) need the user's confirmation (request ${id}).`));
+    out.println(
+        pc.yellow(
+            `${formatCount(count, "path")} ${count === 1 ? "needs" : "need"} the user's confirmation (request ${id}).`
+        )
+    );
     out.println(
         pc.dim(`  In Claude Code the user types: ! ${rm} approve ${id}. It lists the paths and asks them to confirm.`)
     );
