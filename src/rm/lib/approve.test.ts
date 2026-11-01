@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
 import {
     type ApprovalItemUpdate,
     type ApprovalPrompt,
@@ -62,7 +63,7 @@ import {
 import { shortRmPath } from "./display";
 import { notifyNewRequest, type RequestNotice } from "./notify";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
-import { type ExecuteDeps, executePlan, type PersonAnswer, type RunContext } from "./run";
+import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
 const PERSON: RmCaller = { agent: "person", sessionId: null, isInAgent: false };
@@ -1451,5 +1452,26 @@ describe("a person denies from the picker", () => {
             "these are fixtures, keep them",
             "these are fixtures, keep them",
         ]);
+    });
+});
+
+describe("the request hint an agent reads", () => {
+    test("its last line stands alone: the id, that the agent must not approve, and how to cancel", () => {
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown, ...rest: unknown[]) => {
+            lines.push([raw, ...rest].map(String).join(" "));
+        });
+
+        try {
+            printRequestHint("k7m2qd", 2);
+        } finally {
+            println.mockRestore();
+        }
+
+        const last = stripAnsi(lines.at(-1) ?? "");
+        expect(last).toContain("rm request k7m2qd: 2 path(s) wait for the user.");
+        expect(last).toContain("Do not run approve yourself.");
+        expect(last).toContain(`! ${toolCommand("rm")} approve k7m2qd`);
+        expect(last).toContain(`${toolCommand("rm")} deny k7m2qd`);
     });
 });
