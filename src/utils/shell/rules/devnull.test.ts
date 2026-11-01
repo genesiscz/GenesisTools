@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 
+import { scanShell } from "../scan";
+import { stderrDiscardedThenCounted } from "./devnull";
 import { detectShellViolations, renderViolation, type ShellViolation } from "./index";
 
 // Ported from the deleted exitCodeGuard.test.ts (e98cae4), whole registry, ids
@@ -628,6 +630,129 @@ describe("stderr-discarded-then-counted: tsc and tsgo print their errors on stdo
         );
     });
 
+    it("the value of -p or --package names the package, so the program after it is the compiler", () => {
+        const wraps: Array<[string, string]> = [
+            ["npx -p typescript tsc --noEmit", "tsc"],
+            ["npx --package typescript tsc", "tsc"],
+            ["npx --package=typescript tsc", "tsc"],
+            ["bunx -p typescript tsc", "tsc"],
+            ["bun x --package @typescript/native-preview tsgo", "tsgo"],
+            ["pnpm dlx --package typescript tsc", "tsc"],
+            ["yarn dlx -p typescript tsc", "tsc"],
+            ["npm exec -- tsc", "tsc"],
+            ["npm exec tsc --noEmit", "tsc"],
+            ["npm exec --package=typescript -- tsc", "tsc"],
+        ];
+
+        for (const [producer, word] of wraps) {
+            expect(violation(`${producer} 2>/dev/null | wc -l`, COUNT)?.suggestion).toBe(
+                `{ ${producer}; echo "${word} rc=$?" >&2; } | wc -l`
+            );
+        }
+    });
+
+    it("a runner whose program is not a compiler only loses its redirect", () => {
+        expect(violation("npx -p tsc eslint . 2>/dev/null | wc -l", COUNT)?.suggestion).toBe(
+            "npx -p tsc eslint . | wc -l"
+        );
+        expect(violation("npm exec eslint 2>/dev/null | wc -l", COUNT)?.suggestion).toBe("npm exec eslint | wc -l");
+        expect(violation("pnpm dlx -p tsc 2>/dev/null | wc -l", COUNT)?.suggestion).toBe("pnpm dlx -p tsc | wc -l");
+    });
+
+    it("in an unquoted heredoc a shell reads, the status line escapes $? once", () => {
+        expect(violation("bash <<EOF\ntsgo --noEmit 2>/dev/null | wc -l\nEOF", COUNT)?.suggestion).toBe(
+            'bash <<EOF\n{ tsgo --noEmit; echo "tsgo rc=\\$?" >&2; } | wc -l\nEOF'
+        );
+        expect(violation("sudo zsh -s <<-EOF\n\tbunx tsc 2>/dev/null | wc -l\n\tEOF", COUNT)?.suggestion).toBe(
+            'sudo zsh -s <<-EOF\n\t{ bunx tsc; echo "tsc rc=\\$?" >&2; } | wc -l\n\tEOF'
+        );
+        expect(violation("bash -c 'bash <<EOF\ntsgo 2>/dev/null | wc -l\nEOF'", COUNT)?.suggestion).toBe(
+            "bash -c 'bash <<EOF\n{ tsgo; echo \"tsgo rc=\\$?\" >&2; } | wc -l\nEOF'"
+        );
+    });
+
+    it("a quoted heredoc, or a compiler after the heredoc, keeps $? as it is", () => {
+        expect(violation("bash <<'EOF'\ntsgo 2>/dev/null | wc -l\nEOF", COUNT)?.suggestion).toBe(
+            "bash <<'EOF'\n{ tsgo; echo \"tsgo rc=$?\" >&2; } | wc -l\nEOF"
+        );
+        expect(violation("bash <<EOF\necho hi\nEOF\ntsgo 2>/dev/null | wc -l", COUNT)?.suggestion).toBe(
+            'bash <<EOF\necho hi\nEOF\n{ tsgo; echo "tsgo rc=$?" >&2; } | wc -l'
+        );
+    });
+
+    it("a heredoc the scan marks as not fed, or whose command is not a shell, escapes nothing", () => {
+        const scan = scanShell("bash <<EOF\ntsgo 2>/dev/null | wc -l\nEOF");
+        const notFed = { ...scan, heredocs: scan.heredocs.map((h) => ({ ...h, fed: false })) };
+
+        expect(stderrDiscardedThenCounted.detect(notFed)?.suggestion).toBe(
+            'bash <<EOF\n{ tsgo; echo "tsgo rc=$?" >&2; } | wc -l\nEOF'
+        );
+    });
+
+    it("an unquoted heredoc whose command is not a shell only loses the redirect: the local shell expands its $?", () => {
+        // The scan may read these bodies as code, but echo, ssh and docker are the commands.
+        for (const opener of ["echo sh <<EOF", "ssh host bash <<EOF", "docker exec -i c sh <<EOF"]) {
+            expect(violation(`${opener}\ntsgo 2>/dev/null | wc -l\nEOF`, COUNT)?.suggestion).toBe(
+                `${opener}\ntsgo | wc -l\nEOF`
+            );
+        }
+    });
+
+    it("a compiler in an unescaped $(…) inside the heredoc keeps $?: the shell around the heredoc runs it", () => {
+        expect(violation('bash <<EOF\necho "n=$(tsgo 2>/dev/null | wc -l)"\nEOF', COUNT)?.suggestion).toBe(
+            'bash <<EOF\necho "n=$({ tsgo; echo "tsgo rc=$?" >&2; } | wc -l)"\nEOF'
+        );
+        expect(
+            violation('sh <<EOF\nfor f in a; do echo "$(tsgo 2>/dev/null | wc -l)"; done\nEOF', COUNT)?.suggestion
+        ).toBe('sh <<EOF\nfor f in a; do echo "$({ tsgo; echo "tsgo rc=$?" >&2; } | wc -l)"; done\nEOF');
+        // `\\$(` is an escaped backslash, so the shell around the heredoc still runs the substitution.
+        expect(violation("bash <<EOF\nn=\\\\$(tsgo 2>/dev/null | wc -l)\nEOF", COUNT)?.suggestion).toBe(
+            'bash <<EOF\nn=\\\\$({ tsgo; echo "tsgo rc=$?" >&2; } | wc -l)\nEOF'
+        );
+    });
+
+    it("a compiler in an escaped \\$(…) inside the heredoc escapes $? once: the shell it feeds runs it", () => {
+        expect(violation("bash <<EOF\nn=\\$(tsgo 2>/dev/null | wc -l); echo \\$n\nEOF", COUNT)?.suggestion).toBe(
+            'bash <<EOF\nn=\\$({ tsgo; echo "tsgo rc=\\$?" >&2; } | wc -l); echo \\$n\nEOF'
+        );
+    });
+
+    it("a $(…) in a double-quoted body runs in the shell around it, so its $? stays and \\$(…) escapes once", () => {
+        expect(violation('sh -c "n=$(tsgo 2>/dev/null | wc -l); echo n=\\$n"', COUNT)?.suggestion).toBe(
+            'sh -c "n=$({ tsgo; echo "tsgo rc=$?" >&2; } | wc -l); echo n=\\$n"'
+        );
+        expect(violation('sh -c "n=\\$(tsgo 2>/dev/null | wc -l); echo n=\\$n"', COUNT)?.suggestion).toBe(
+            'sh -c "n=\\$({ tsgo; echo \\"tsgo rc=\\$?\\" >&2; } | wc -l); echo n=\\$n"'
+        );
+    });
+
+    it("the shell before << is found past a $(…) on its line, a continuation line, or a heredoc in a $(…)", () => {
+        const body = "\ntsgo 2>/dev/null | wc -l\nEOF";
+        const escaped = '\n{ tsgo; echo "tsgo rc=\\$?" >&2; } | wc -l\nEOF';
+
+        for (const [opener, after] of [
+            ["X=$(pwd) bash <<EOF", ""],
+            ['bash -s -- "$(date +%s)" <<EOF', ""],
+            ["env \\\n  bash <<EOF", ""],
+            ["sudo \\\n  bash <<EOF", ""],
+            ["{ bash <<EOF", "\n}"],
+            ["if true; then bash <<EOF", "\nfi"],
+            ["true && nice bash <<EOF", ""],
+            ["out=$(bash <<EOF", "\n); echo $out"],
+        ]) {
+            expect(violation(`${opener}${body}${after}`, COUNT)?.suggestion).toBe(`${opener}${escaped}${after}`);
+        }
+    });
+
+    it("a heredoc inside a double-quoted body, or two unquoted heredocs, only lose the redirect", () => {
+        expect(violation('zsh -c "bash <<EOF\ntsgo 2>/dev/null | wc -l\nEOF"', COUNT)?.suggestion).toBe(
+            'zsh -c "bash <<EOF\ntsgo | wc -l\nEOF"'
+        );
+        expect(violation("bash <<A\nbash <<B\ntsgo 2>/dev/null | wc -l\nB\nA", COUNT)?.suggestion).toBe(
+            "bash <<A\nbash <<B\ntsgo | wc -l\nB\nA"
+        );
+    });
+
     it("other hits of the same call only lose their redirect", () => {
         expect(violation("ls a 2>/dev/null | wc -l; bunx tsgo 2>/dev/null | rg -c x", COUNT)?.suggestion).toBe(
             'ls a | wc -l; { bunx tsgo; echo "tsgo rc=$?" >&2; } | rg -c x'
@@ -719,6 +844,143 @@ describe("stderr-discarded-then-counted-scratch: a literal path under /tmp", () 
         expect(tags("ls --colr /tmp/cc/x 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
         expect(tags("du -d x /tmp/cc/x 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
         expect(tags("ls -la /tmp/cc/x 2>/dev/null | wc -l")).toEqual([`${SCRATCH}:context`]);
+    });
+
+    it("find primaries and fd flags that read no other path and run nothing keep the note", () => {
+        for (const command of [
+            "find /tmp/cc/x -name '*.log' -type f 2>/dev/null | wc -l",
+            "find -L /tmp/x -maxdepth 2 \\( -name a -o -iname 'b*' \\) ! -empty -print 2>/dev/null | wc -l",
+            "find /tmp/x -mindepth 1 -mtime -1 -mmin +5 -size +1k -newermt 2026-01-01 2>/dev/null | wc -l",
+            "find /tmp/x -path '*/node_modules' -prune -o -not -type d,l -print0 2>/dev/null | wc -l",
+            "find -s /tmp/x -depth -newermt '2026-01-01 10:00' -a -ipath '*/A/*' -or -true 2>/dev/null | wc -l",
+            "fd -H -I -t f -e log -d 3 -g '*.log' /tmp/x 2>/dev/null | wc -l",
+            "fd -a -0 -1 -L -E '*.tmp' '\\.log$' /tmp/x 2>/dev/null | wc -l",
+            "fd --type=file --max-depth=2 --hidden -S +1k '.*' /tmp/x 2>/dev/null | wc -l",
+            "fd -uu -F 'a(b' /tmp/x 2>/dev/null | wc -l",
+            "fd -p 'cc/x' /tmp/cc 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${SCRATCH}:context`]);
+        }
+    });
+
+    it("a misspelled or unknown find primary, a bad value or a broken expression keeps the block", () => {
+        for (const command of [
+            "find /tmp/cc/x -nmae '*.log' 2>/dev/null | wc -l",
+            "find /tmp/x -name 2>/dev/null | wc -l",
+            "find /tmp/x -name a -o 2>/dev/null | wc -l",
+            "find /tmp/x \\( -name a 2>/dev/null | wc -l",
+            "find /tmp/x \\( \\) 2>/dev/null | wc -l",
+            "find /tmp/x -name a extra 2>/dev/null | wc -l",
+            "find /tmp/x -maxdepth x 2>/dev/null | wc -l",
+            "find /tmp/x -type x 2>/dev/null | wc -l",
+            "find /tmp/x -size 1m 2>/dev/null | wc -l",
+            "find /tmp/x -mmin 1h 2>/dev/null | wc -l",
+            "find /tmp/x -newermt yesterday 2>/dev/null | wc -l",
+            "find /tmp/x -newermt 2026-02-30 2>/dev/null | wc -l",
+            "find /tmp/x -regex '[' 2>/dev/null | wc -l",
+            "find /tmp/x -user nobody2 2>/dev/null | wc -l",
+            "find -X /tmp/x 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${COUNT}:block`]);
+        }
+    });
+
+    it("a find primary that names another path or runs a command keeps the block", () => {
+        for (const command of [
+            "find /tmp/x -newer ~/Library/Preferences/a.plist 2>/dev/null | wc -l",
+            "find /tmp/x -newer /tmp/y 2>/dev/null | wc -l",
+            "find /tmp/x -anewer /tmp/y 2>/dev/null | wc -l",
+            "find /tmp/x -neweram /tmp/y 2>/dev/null | wc -l",
+            "find /tmp/x -samefile ~/a 2>/dev/null | wc -l",
+            "find /tmp/x -fprint /tmp/out 2>/dev/null | wc -l",
+            "find /tmp/x -exec cat {} \\; 2>/dev/null | wc -l",
+            "find /tmp/x -execdir ls {} + 2>/dev/null | wc -l",
+            "find /tmp/x -ok rm {} \\; 2>/dev/null | wc -l",
+            "find /tmp/x -name a -delete 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${COUNT}:block`]);
+        }
+    });
+
+    it("an fd flag that names another path, runs a command or takes a bad value, or a bad pattern, keeps the block", () => {
+        for (const command of [
+            "fd --base-directory ~/Library x /tmp/x 2>/dev/null | wc -l",
+            "fd -C ~/Library x /tmp/x 2>/dev/null | wc -l",
+            "fd --search-path ~/x . /tmp/x 2>/dev/null | wc -l",
+            "fd --ignore-file ~/.ignore . /tmp/x 2>/dev/null | wc -l",
+            "fd -x cat . /tmp/x 2>/dev/null | wc -l",
+            "fd -X ls . /tmp/x 2>/dev/null | wc -l",
+            "fd --exec cat . /tmp/x 2>/dev/null | wc -l",
+            "fd -l . /tmp/x 2>/dev/null | wc -l",
+            "fd -t foo . /tmp/x 2>/dev/null | wc -l",
+            "fd -S 500 . /tmp/x 2>/dev/null | wc -l",
+            "fd -j 0 . /tmp/x 2>/dev/null | wc -l",
+            "fd --hidn . /tmp/x 2>/dev/null | wc -l",
+            "fd '*.log' /tmp/x 2>/dev/null | wc -l",
+            "fd -g '[' /tmp/x 2>/dev/null | wc -l",
+            "fd -E '[' . /tmp/x 2>/dev/null | wc -l",
+            "fd 'a/b' /tmp/x 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${COUNT}:block`]);
+        }
+    });
+
+    it("fd flags that fd refuses together, or -g with --regex, keep the block", () => {
+        for (const command of [
+            "fd -F -g x /tmp/x 2>/dev/null | wc -l",
+            "fd --glob --fixed-strings x /tmp/x 2>/dev/null | wc -l",
+            "fd --exact-depth 1 -d 2 . /tmp/x 2>/dev/null | wc -l",
+            "fd --exact-depth 1 --min-depth 1 . /tmp/x 2>/dev/null | wc -l",
+            "fd --exact-depth=1 --prune . /tmp/x 2>/dev/null | wc -l",
+            "fd --prune -S +1k . /tmp/x 2>/dev/null | wc -l",
+            "fd -g --regex '*.log' /tmp/x 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${COUNT}:block`]);
+        }
+    });
+
+    it("a find option cluster of d, s and x alone, which bfs refuses, keeps the block", () => {
+        for (const command of [
+            "find -dx /tmp/x -name a 2>/dev/null | wc -l",
+            "find -xs /tmp/x -name a 2>/dev/null | wc -l",
+            "find -dd /tmp/x -name a 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${COUNT}:block`]);
+        }
+
+        for (const command of [
+            "find -x /tmp/x -name a 2>/dev/null | wc -l",
+            "find -Hsx /tmp/x -name a 2>/dev/null | wc -l",
+            "find -dL /tmp/x -name a 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${SCRATCH}:context`]);
+        }
+    });
+
+    it("a number or a date that find or fd cannot hold keeps the block", () => {
+        for (const command of [
+            "find /tmp/x -maxdepth 99999999999999999999 2>/dev/null | wc -l",
+            "find /tmp/x -mmin 99999999999999999999 2>/dev/null | wc -l",
+            "find /tmp/x -size 99999999999999999999 2>/dev/null | wc -l",
+            "find /tmp/x -size 9999999T 2>/dev/null | wc -l",
+            "find /tmp/x -size +9999P 2>/dev/null | wc -l",
+            "find /tmp/x -newermt 0001-01-01 2>/dev/null | wc -l",
+            "find /tmp/x -newermt 1970-01-01 2>/dev/null | wc -l",
+            "find /tmp/x -newermt 2039-01-01 2>/dev/null | wc -l",
+            "fd -j 99999999999999999999 . /tmp/x 2>/dev/null | wc -l",
+            "fd -d 99999999999999999999 . /tmp/x 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${COUNT}:block`]);
+        }
+
+        for (const command of [
+            "find /tmp/x -maxdepth 999999999 -size 999999T 2>/dev/null | wc -l",
+            "find /tmp/x -size -999P -newermt 1971-01-01 2>/dev/null | wc -l",
+            "find /tmp/x -newermt '2038-12-31 23:59:59' 2>/dev/null | wc -l",
+            "fd -j 8 -d 999999999 . /tmp/x 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${SCRATCH}:context`]);
+        }
     });
 
     it("a sibling that covers the path still wins, and the block never fires with it", () => {
