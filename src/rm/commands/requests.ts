@@ -8,6 +8,7 @@ import {
     hardDenyReason,
     kickDrainer,
     listRmRequests,
+    loadRmMeasurementOf,
     loadRmRequest,
     mayDenyRmRequest,
     measureRmRequest,
@@ -32,24 +33,16 @@ import {
     savedSizes,
     splitBySelection,
 } from "../lib/approve";
-import { type PersonAnswer, printRequestHint, type RunContext, requirePerson, runContext, shown } from "../lib/run";
-
-/** The decision lines under a request in `tools rm requests`. */
-function printDecision(request: RmRequest): void {
-    if (request.decided && request.decided.denied.length > 0) {
-        out.println(
-            pc.dim(`  decided: ${request.decided.approved.length} approved, ${request.decided.denied.length} denied`)
-        );
-    }
-
-    if (request.batchId) {
-        out.println(pc.dim(`  batch: ${request.batchId}`));
-    }
-
-    if (request.deniedNote) {
-        out.println(`  denied: ${request.deniedNote}`);
-    }
-}
+import { buildRequestViews, renderRequestDetail, renderRequestList } from "../lib/requests-view";
+import {
+    minutesOption,
+    type PersonAnswer,
+    printRequestHint,
+    type RunContext,
+    requirePerson,
+    runContext,
+    shown,
+} from "../lib/run";
 
 function approvalLines(
     request: RmRequest,
@@ -115,14 +108,83 @@ function exitPendingFor(id: string, pending: readonly RmRequestTarget[]): void {
     process.exitCode = 1;
 }
 
+interface RequestsFlags {
+    all?: boolean;
+    json?: boolean;
+    long?: boolean;
+    paths?: boolean;
+    session?: string;
+    agent?: string;
+    project?: string;
+    older?: number;
+    sort?: "age" | "size";
+}
+
+function sortOption(value: string): "age" | "size" {
+    if (value === "age" || value === "size") {
+        return value;
+    }
+
+    throw new Error(`--sort takes age or size, not ${value}`);
+}
+
+/** The requests the flags pick: the same filters as `tools rm log`, plus an age floor. */
+function pickRequests(flags: RequestsFlags, now: Date): RmRequest[] {
+    return listRmRequests({ all: flags.all, now }).filter((request) => {
+        const caller = request.caller;
+        const ageMinutes = (now.getTime() - Date.parse(request.createdAt)) / 60_000;
+        return (
+            (!flags.session || (caller?.sessionId ?? "").startsWith(flags.session)) &&
+            (!flags.agent || (caller?.agent ?? "person") === flags.agent) &&
+            (!flags.project || caller?.project === flags.project) &&
+            (flags.older === undefined || ageMinutes >= flags.older)
+        );
+    });
+}
+
+/** The size a listing shows for a path: the measurement pass's number, else the one an older aside move recorded. */
+function listedSize(request: RmRequest, target: RmRequestTarget): number | undefined {
+    return loadRmMeasurementOf(request.id, target)?.bytes ?? target.bytes;
+}
+
 export function registerRequestCommands(program: Command): void {
     program
         .command("requests")
         .description("the requests agents made for the user to confirm")
-        .option("--all", "also approved, denied and expired ones")
-        .option("--json", "print as JSON")
-        .action((flags: { all?: boolean; json?: boolean }) => {
-            const requests = listRmRequests({ all: flags.all });
+        .argument("[id]", "one request in full: every path, its stored copy, its reason and the decision so far")
+        .option("--all", "also approved, denied, expired and gone ones")
+        .option("--json", "print the saved requests as JSON")
+        .option("--long", "the full form of every listed request")
+        .option("--paths", "one row per path")
+        .option("--session <id>", "a session id or its prefix")
+        .option("--agent <name>", "claude-code, codex, grok, copilot, or person")
+        .option("--project <name>", "the project folder name")
+        .option("--older <duration>", "only requests older than 30m, 2h, 1d, ...", minutesOption)
+        .option("--sort <key>", "a flat list by age or size instead of groups per session", sortOption)
+        .action((id: string | undefined, flags: RequestsFlags) => {
+            const ctx = runContext();
+            const now = new Date();
+
+            if (id) {
+                const request = loadRmRequest(id);
+
+                if (!request) {
+                    out.println(pc.red(`No request ${id}.`));
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (flags.json) {
+                    out.result(request);
+                    return;
+                }
+
+                const [view] = buildRequestViews([request], { sizeOf: listedSize });
+                out.println(view ? renderRequestDetail(view, now).join("\n") : "");
+                return;
+            }
+
+            const requests = pickRequests(flags, now);
 
             if (flags.json) {
                 out.result(requests);
@@ -134,29 +196,16 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            for (const request of requests) {
-                const who = request.caller
-                    ? `${request.caller.agent} ${request.caller.sessionId?.slice(0, 8) ?? ""}`
-                    : "?";
-                out.println(
-                    `${pc.bold(request.id)} ${request.kind} ${request.status} ${pc.dim(`${request.createdAt} ${who}`)}`
-                );
+            const views = buildRequestViews(requests, { sizeOf: listedSize });
 
-                if (request.reason) {
-                    out.println(`  why: ${request.reason}`);
-                }
-
-                for (const target of request.targets) {
-                    out.println(`  ${target.path} ${pc.dim(`(${target.rule}: ${target.reason})`)}`);
-
-                    if (target.stored) {
-                        const size = target.bytes === undefined ? "" : `, ${formatBytes(target.bytes)}`;
-                        out.println(pc.dim(`    waits aside at ${target.stored}${size}`));
-                    }
-                }
-
-                printDecision(request);
+            if (flags.long) {
+                out.println(views.map((view) => renderRequestDetail(view, now).join("\n")).join("\n\n"));
+                return;
             }
+
+            out.println(
+                renderRequestList(views, { now, caller: ctx.caller, sort: flags.sort, paths: flags.paths }).join("\n")
+            );
         });
 
     program
