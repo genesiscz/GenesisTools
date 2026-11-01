@@ -2,11 +2,11 @@
 
 Probe a local video or prepare PNG contact sheets with full-resolution source frames:
 
-~~~sh
+```sh
 tools video probe ./demo.mp4 --json
 tools video frames ./demo.mp4 --fps 2 --frames-per-image 16 --difference 0 --out ./evidence --json
 tools video frames ./demo.mp4 --start 2.1 --end 5.4 --fps 4 --frames-per-image 8 --json
-~~~
+```
 
 Requires ffmpeg and ffprobe. Silent videos work. FPS choices are 1–4; frames per image are 1, 4, 8, 16 or 32.
 Each run publishes a new immutable generation directory with a manifest, sampled PNGs and sheets.
@@ -36,10 +36,10 @@ durable storage before starting preparation.
 
 ## Hardware re-encode
 
-~~~sh
+```sh
 tools video encode ./clips --dry-run
 tools video encode ./a.mp4 ./b.mov --replace --json
-~~~
+```
 
 `tools video encode <paths...>` shrinks videos with the hardware encoder (HEVC through VideoToolbox, macOS only),
 which keeps the CPU free: three jobs use about 28% of one core in total, against about 550% for libx265.
@@ -82,7 +82,7 @@ The command exits 1 when any file failed (ffmpeg, a probe or the replace); skipp
 `tools rm restore <batch>` alone refuses, because the new file sits at the original path. Two commands undo it; the
 summary prints both after every replace:
 
-~~~sh
+```sh
 mv ./a.mp4 ./a.hevc.mp4
 tools rm restore <batch>
-~~~
+```

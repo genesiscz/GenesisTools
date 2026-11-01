@@ -3,11 +3,11 @@
 A reusable transcription session over the toolkit's existing signed microphone capture and live STT providers.
 It has no Eve or computer-control dependency.
 
-~~~sh
+```sh
 tools voice listen --input mic --provider xai --language cs,en --json
 tools voice listen --input recording.s16le --provider deepgram --json
 tools voice listen --input none --provider fixture --events-file events.json --json
-~~~
+```
 
 Input files are signed 16-bit little-endian mono PCM at 16 kHz. Use tools transcribe for encoded audio files.
 Provider/account/model options use the existing AI account configuration. The grok-live alias means xAI

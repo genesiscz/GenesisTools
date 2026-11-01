@@ -107,14 +107,14 @@ tools question config --notify on --sound synth:soft
 
 The question_answer MCP tool accepts an optional attachments array, or plain paths in `images`. The CLI takes `--image <path>` (repeatable), or the full array from a JSON file:
 
-~~~bash
+```bash
 tools question record --q "Did the layout fix work?" --a-file answer.md --image /abs/after.png
 tools question record --q "Did the layout fix work?" \
     --a-file answer.md --attachments-file screenshots.json --json
 tools question log --session SESSION_ID --format json
-~~~
+```
 
-~~~json
+```json
 [
   {
     "type": "image",
@@ -129,7 +129,7 @@ tools question log --session SESSION_ID --format json
     "comparison": { "group": "layout", "role": "after" }
   }
 ]
-~~~
+```
 
 Only type and path are required. V1 accepts actual still PNG, JPEG and WebP files, not URLs or base64. Header dimensions are checked before full decoding; animated PNG/WebP files are rejected. Label and comparison roles are optional; each group can contain one before and one after image. Duplicate roles are rejected.
 
@@ -174,10 +174,10 @@ The opt-in only decides whether `question_post` REPLACES the agent's native ques
 
 ### Messages and screenshots to the inbox
 
-~~~bash
+```bash
 tools question message "Build is green, the hub after the fix:" --image /tmp/hub-after.png
 tools question message --title "Blocked" --file notes.md
-~~~
+```
 
 A message is a Q→A entry tagged `message`; the widget shows it as an unread, expandable card under the posting session (status "Message"). The session is the same stamp handoffs use: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` or `GROK_SESSION_ID` in a harness child, or the resolved caller of the MCP gateway. `question_post` items (and `ask --json` items) accept `attachments` too: the screenshots are copied into the question store and embedded in the item's prompt, and the widget lifts every markdown image, `{{image}}` token and bare absolute image path of a card into its preview strip.
 
