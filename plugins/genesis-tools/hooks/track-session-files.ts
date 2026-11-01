@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { HARNESS_FACTS } from "../lib/Generated/harness-facts";
 import { EDIT_TOOLS, filePathsOf, type HookInput, normalize, writeFailed } from "./edit-payload";
 import { harnessOf } from "./harness";
+import { projectOf, sessionScratchPath } from "./session-scratch";
 
 const SafeJSON = JSON;
 
@@ -105,11 +106,23 @@ function recordUnknownTool(harness: string, toolName: string): void {
  * still takes `additionalContext` as developer context. Claude does too.
  */
 function sessionStartOutput(input: HookInput): { hookEventName: string; additionalContext: string } {
-    const tracked = HARNESS_FACTS[harnessOf(input)].promisesFileTracking
-        ? `\n\n**Modified files tracking:** All files you modify are tracked in ~/.genesis-tools/claude-code/sessions/${input.session_id}.json`
+    const harness = harnessOf(input);
+    const tracked = HARNESS_FACTS[harness].promisesFileTracking
+        ? `\n\n**Modified files tracking:** Files you write with the Write, Edit or NotebookEdit tool are tracked in ~/.genesis-tools/claude-code/sessions/${input.session_id}.json; files a shell command makes are not.`
         : "";
+    // `tools rm` deletes inside this folder without asking only when it is named with the FULL session id: four of 24
+    // requests on 2026-11-01 (395 MB) came from scratch folders named with the 8-character prefix.
+    const scratch = sessionScratchPath({
+        harness,
+        project: projectOf(input.cwd ?? process.cwd()),
+        sessionId: input.session_id ?? "",
+    });
+    const scratchLine = `\n\n**Scratch:** ${scratch}/ (tools rm deletes inside it without asking; use this full id, never a short one).`;
 
-    return { hookEventName: "SessionStart", additionalContext: `📌 Session ID: ${input.session_id}${tracked}` };
+    return {
+        hookEventName: "SessionStart",
+        additionalContext: `📌 Session ID: ${input.session_id}${scratchLine}${tracked}`,
+    };
 }
 
 interface SessionData {
