@@ -313,6 +313,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     control: (name) => name.startsWith("control_"),
     fetch: (name) => name.startsWith("fetch_"),
     alza: (name) => name.startsWith("alza_"),
+    waze: (name) => name.startsWith("waze_"),
 };
 
 /**
@@ -341,6 +342,7 @@ let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
 let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
 let fetchModule: Promise<typeof import("@app/fetch/mcp/genesis-tools")> | undefined;
 let alzaModule: Promise<typeof import("@app/alza/mcp/genesis-tools")> | undefined;
+let wazeModule: Promise<typeof import("@app/waze/mcp/genesis-tools")> | undefined;
 
 /**
  * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
@@ -378,7 +380,19 @@ function loadAlzaEntries(): Promise<Record<string, ToolEntry>> {
     return alzaModule.then((module) => module.alzaToolEntries());
 }
 
-/** Ends what a loaded group holds open (the fetch and Alza groups' Chrome sidecars). A group that never loaded holds nothing. */
+/**
+ * The Waze tools (live Waze reports read through a live-map tab in the user's Brave over CDP) are opt-in: they load only
+ * when the capability list names `waze`, never for an unset list, because they drive the user's real browser.
+ */
+function loadWazeEntries(): Promise<Record<string, ToolEntry>> {
+    wazeModule ??= import("@app/waze/mcp/genesis-tools");
+    return wazeModule.then((module) => module.wazeToolEntries());
+}
+
+/**
+ * Ends what a loaded group holds open (the fetch and Alza groups' Chrome sidecars, the Waze group's live-map tab). A
+ * group that never loaded holds nothing.
+ */
 async function closeLoadedGroups(): Promise<void> {
     if (fetchModule) {
         await (await fetchModule).closeFetchTools();
@@ -386,6 +400,10 @@ async function closeLoadedGroups(): Promise<void> {
 
     if (alzaModule) {
         await (await alzaModule).closeAlzaTools();
+    }
+
+    if (wazeModule) {
+        await (await wazeModule).closeWazeTools();
     }
 }
 
@@ -398,7 +416,8 @@ async function toolRegistry(
     const withControl = capabilities === undefined || capabilities.includes("control");
     const withFetch = capabilities === undefined || capabilities.includes("fetch");
     const withAlza = capabilities?.includes("alza") ?? false;
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}:${withAlza}`;
+    const withWaze = capabilities?.includes("waze") ?? false;
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}:${withAlza}:${withWaze}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
@@ -406,6 +425,7 @@ async function toolRegistry(
             ...(withControl ? await loadControlEntries() : {}),
             ...(withFetch ? await loadFetchEntries() : {}),
             ...(withAlza ? await loadAlzaEntries() : {}),
+            ...(withWaze ? await loadWazeEntries() : {}),
             ...buildToolRegistry(context),
         };
         registries.set(key, registry);

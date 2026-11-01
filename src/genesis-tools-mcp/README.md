@@ -16,13 +16,14 @@ New `jev_*` tools will join this registry. The MCP server name is `genesis-tools
 | `jev` | `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates` | Read-only Jev tools (`src/jev/mcp/genesis-tools.ts` adapts the registry `tools jev mcp` serves alone). |
 | `fetch` | `fetch_markdown`, `fetch_raw`, `fetch_jsonld` | Read a web page as Markdown, raw HTML or schema.org JSON-LD, with transport `plain`, `chrome` (a real Chrome fingerprint for Cloudflare-walled sites) or `auto`. `src/fetch/mcp/genesis-tools.ts` adapts the tools `tools fetch mcp` serves alone; the group loads only when the capability list can expose it, and its Chrome sidecar ends when stdin ends. See `src/fetch/README.md`. |
 | `alza` | `alza_*` (43 tools: catalog, reviews, price history, basket, orders, watchdogs, PC builder) | Opt-in: loads only when `GENESIS_TOOLS_MCP_CAPABILITIES` names `alza`, never for an unset list. The same tools `tools alza mcp` serves, prefixed `alza_`, adapted in `src/alza/mcp/genesis-tools.ts`. Nothing places an order or pays. See `src/alza/README.md`. |
+| `waze` | `waze_*` (15 tools: police and every report along a trip, route, jams, departure times, exports, history, hotspots, doctor) | Opt-in: loads only when `GENESIS_TOOLS_MCP_CAPABILITIES` names `waze`, never for an unset list, because it drives the user's real Brave over CDP (one background live-map tab, closed when stdin ends). The same tools `tools waze mcp` serves, prefixed `waze_`, adapted in `src/waze/mcp/genesis-tools.ts`. See `src/waze/README.md`. |
 
 `question_ask` is an explicit set, not a `question_` prefix, so it never includes `question_answer`.
 
 ## Capability filter
 
 `GENESIS_TOOLS_MCP_CAPABILITIES` is a comma-delimited list of capability names.
-Unset or empty enables every capability except the opt-in `alza`. Unknown names enable nothing.
+Unset or empty enables every capability except the opt-in `alza` and `waze`. Unknown names enable nothing.
 
 ```bash
 GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,handoff,annotate
