@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
@@ -202,11 +203,15 @@ export interface ApprovalDeps {
     interactive: () => boolean;
     platform: NodeJS.Platform;
     typed: (prompt: ApprovalPrompt) => Promise<boolean>;
-    dialog: (prompt: ApprovalPrompt) => boolean;
+    /** The platform's dialog (`PERSON_DIALOGS`): true for Approve, null when no program on this system shows one. */
+    dialog: (prompt: ApprovalPrompt) => boolean | null;
     app: (prompt: ApprovalPrompt) => Promise<AppApproval>;
 }
 
 const MAX_DIALOG_LINES = 15;
+
+/** The dialog programs `PERSON_DIALOGS` looks for, for the line that says none was found. */
+const DIALOG_PROGRAMS = "osascript on macOS, zenity or kdialog on Linux, PowerShell on Windows";
 
 /** How long the typed code waits for the sizes before it asks without the rest. */
 export const TYPED_SIZES_WAIT_MS = 30_000;
@@ -268,20 +273,156 @@ async function askTyped(prompt: ApprovalPrompt): Promise<boolean> {
     }
 }
 
+/** The title of the dialog on every platform. */
+const DIALOG_TITLE = "Confirm deletion";
+
+/** A dialog gives up after this long; the process is killed 10 s later if its program does not. */
+const DIALOG_GIVE_UP_S = 600;
+
+export interface DialogResult {
+    exitCode: number | null;
+    stdout: string;
+}
+
+/** What a person dialog needs from the system. Tests pass a fake, so no dialog opens in a test. */
+export interface DialogSystem {
+    /** The program's path on PATH, or null. */
+    which: (program: string) => string | null;
+    /** Runs `argv` until it exits; its exit code and stdout. */
+    run: (argv: string[]) => DialogResult;
+    /** A graphical session a window can open on (Linux: DISPLAY or WAYLAND_DISPLAY is set). */
+    hasDisplay: () => boolean;
+}
+
+/** One platform's dialog, with Approve and Cancel and Cancel as the default button. */
+export interface PersonDialog {
+    /** The argv that shows `body`, or null when no program for it is installed. */
+    command: (body: string, system: DialogSystem) => string[] | null;
+    /** Only an explicit Approve: a cancel, a timeout or a failed program is a no. */
+    approved: (result: DialogResult) => boolean;
+}
+
 function appleScriptString(text: string): string {
     return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
-/** Shows every line of `prompt`; `confirmByPerson` never sends one longer than MAX_DIALOG_LINES. */
-function showDialog(prompt: ApprovalPrompt): boolean {
-    const body = `${prompt.title}\n\n${prompt.lines.join("\n")}`;
-    const script =
-        `display dialog ${appleScriptString(body)} with title "Confirm deletion" ` +
-        `buttons {"Cancel", "Approve"} default button "Cancel" cancel button "Cancel" with icon caution giving up after 600`;
-    const proc = Bun.spawnSync(["osascript", "-e", script], { stdout: "pipe", stderr: "pipe" });
-    const answer = new TextDecoder().decode(proc.stdout);
-    logger.debug({ exitCode: proc.exitCode, answer: answer.trim() }, "rm: approval dialog answered");
-    return proc.exitCode === 0 && answer.includes("button returned:Approve") && !answer.includes("gave up:true");
+const MAC_DIALOG: PersonDialog = {
+    command: (body, system) => {
+        const osascript = system.which("osascript");
+        const script =
+            `display dialog ${appleScriptString(body)} with title "${DIALOG_TITLE}" ` +
+            `buttons {"Cancel", "Approve"} default button "Cancel" cancel button "Cancel" with icon caution giving up after ${DIALOG_GIVE_UP_S}`;
+        return osascript ? [osascript, "-e", script] : null;
+    },
+    approved: ({ exitCode, stdout }) =>
+        exitCode === 0 && stdout.includes("button returned:Approve") && !stdout.includes("gave up:true"),
+};
+
+/** zenity (GNOME and most desktops), else kdialog (KDE). Both exit 0 only for Approve. */
+const LINUX_DIALOG: PersonDialog = {
+    command: (body, system) => {
+        if (!system.hasDisplay()) {
+            return null;
+        }
+
+        const zenity = system.which("zenity");
+
+        if (zenity) {
+            // --no-markup: a path with < or & is shown as it is, not read as Pango markup.
+            return [
+                zenity,
+                "--question",
+                `--title=${DIALOG_TITLE}`,
+                `--text=${body}`,
+                "--no-markup",
+                "--ok-label=Approve",
+                "--cancel-label=Cancel",
+                "--default-cancel",
+                `--timeout=${DIALOG_GIVE_UP_S}`,
+                "--width=640",
+            ];
+        }
+
+        const kdialog = system.which("kdialog");
+        return kdialog
+            ? [
+                  kdialog,
+                  "--title",
+                  DIALOG_TITLE,
+                  "--warningyesno",
+                  body,
+                  "--yes-label",
+                  "Approve",
+                  "--no-label",
+                  "Cancel",
+              ]
+            : null;
+    },
+    approved: ({ exitCode }) => exitCode === 0,
+};
+
+/**
+ * A Windows Forms message box through PowerShell, No as the default button. The text goes in as base64, so a path
+ * with quotes or `$` is never read as PowerShell.
+ */
+const WINDOWS_DIALOG: PersonDialog = {
+    command: (body, system) => {
+        const powershell = system.which("powershell") ?? system.which("pwsh");
+
+        if (!powershell) {
+            return null;
+        }
+
+        const text = Buffer.from(`${body}\n\nYes approves.`, "utf8").toString("base64");
+        const script = [
+            "Add-Type -AssemblyName System.Windows.Forms",
+            `$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${text}'))`,
+            `[System.Windows.Forms.MessageBox]::Show($text, '${DIALOG_TITLE}', 'YesNo', 'Warning', 'Button2', 'DefaultDesktopOnly')`,
+        ].join("; ");
+        return [powershell, "-NoProfile", "-Command", script];
+    },
+    approved: ({ exitCode, stdout }) => exitCode === 0 && stdout.trim() === "Yes",
+};
+
+/** The dialog each platform asks a person with; a platform missing here has none, and `confirmByPerson` refuses. */
+export const PERSON_DIALOGS: Partial<Record<NodeJS.Platform, PersonDialog>> = {
+    darwin: MAC_DIALOG,
+    linux: LINUX_DIALOG,
+    win32: WINDOWS_DIALOG,
+};
+
+const DIALOG_SYSTEM: DialogSystem = {
+    which: (program) => Bun.which(program),
+    run: (argv) => {
+        const proc = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: (DIALOG_GIVE_UP_S + 10) * 1000 });
+        return { exitCode: proc.exitCode, stdout: new TextDecoder().decode(proc.stdout) };
+    },
+    hasDisplay: () => env.device.hasGraphicalDisplay(),
+};
+
+/**
+ * Shows every line of `prompt` in the platform's dialog (`confirmByPerson` never sends more than MAX_DIALOG_LINES):
+ * true for Approve, false for anything else, null when the platform has no dialog program.
+ */
+export function showPersonDialog(
+    prompt: ApprovalPrompt,
+    platform: NodeJS.Platform = process.platform,
+    system: DialogSystem = DIALOG_SYSTEM
+): boolean | null {
+    const dialog = PERSON_DIALOGS[platform];
+    const argv = dialog?.command(`${prompt.title}\n\n${prompt.lines.join("\n")}`, system) ?? null;
+
+    if (!dialog || !argv) {
+        logger.debug({ platform }, "rm: no dialog program to ask a person with");
+        return null;
+    }
+
+    const result = system.run(argv);
+    logger.debug(
+        { program: argv[0], exitCode: result.exitCode, answer: result.stdout.trim() },
+        "rm: approval dialog answered"
+    );
+    return dialog.approved(result);
 }
 
 /** A person reads the window and touches the sensor; the app gives up at 170 s and says why. */
@@ -546,17 +687,18 @@ export const DEFAULT_APPROVAL_DEPS: ApprovalDeps = {
     interactive: isInteractive,
     platform: process.platform,
     typed: askTyped,
-    dialog: showDialog,
+    dialog: (prompt) => showPersonDialog(prompt),
     app: askApp,
 };
 
 /**
  * Asks a person, never an agent. With Touch ID allowed (`approval` `auto` or `touch-id`) GenesisTools.app shows the
  * request and confirms with Touch ID: an agent can open the window but cannot touch the sensor. Without the app,
- * `auto` asks with the macOS dialog, never the typed code: "not in an agent" is read from environment variables an
- * agent can clear, and a terminal an agent fakes (`script`, a pty) types a code as well as a person. On a platform
- * without the app or the dialog, `auto` refuses, since nothing there proves a person answered. Only `code`, which
- * the person writes into the config file, accepts the typed code on a terminal outside an agent.
+ * `auto` asks with the platform's dialog (`PERSON_DIALOGS`: osascript, zenity or kdialog, a PowerShell message box),
+ * never the typed code: "not in an agent" is read from environment variables an agent can clear, and a terminal an
+ * agent fakes (`script`, a pty) types a code as well as a person. Without the app and a dialog program, `auto`
+ * refuses, since nothing there proves a person answered. Only `code`, which the person writes into the config
+ * file, accepts the typed code on a terminal outside an agent.
  */
 export async function confirmByPerson(
     prompt: ApprovalPrompt,
@@ -594,17 +736,18 @@ export async function confirmByPerson(
         return { approved, via: "tty", detail: approved ? "typed the code" : "the code was not typed" };
     }
 
-    if (deps.platform === "darwin") {
-        // The dialog shows MAX_DIALOG_LINES lines; a longer prompt would let a person approve paths it never showed.
-        if (prompt.lines.length > MAX_DIALOG_LINES) {
-            return {
-                approved: false,
-                via: "none",
-                detail: `the macOS dialog shows ${MAX_DIALOG_LINES} lines and this needs ${prompt.lines.length}: open GenesisTools.app for the approval window, or type the code on a terminal (the approval setting code)`,
-            };
-        }
+    // The dialog shows MAX_DIALOG_LINES lines; a longer prompt would let a person approve paths it never showed.
+    if (prompt.lines.length > MAX_DIALOG_LINES) {
+        return {
+            approved: false,
+            via: "none",
+            detail: `the dialog shows ${MAX_DIALOG_LINES} lines and this needs ${prompt.lines.length}: approve in the GenesisTools.app window on macOS, or type the code on a terminal (the approval setting code)`,
+        };
+    }
 
-        const approved = deps.dialog(prompt);
+    const approved = deps.dialog(prompt);
+
+    if (approved !== null) {
         return {
             approved,
             via: "dialog",
@@ -616,7 +759,7 @@ export async function confirmByPerson(
         return {
             approved: false,
             via: "none",
-            detail: `nothing on ${deps.platform} proves a person answered; to accept a typed code on a terminal, set "approval": "code" in ${rmConfigPath()} yourself`,
+            detail: `no dialog program on ${deps.platform} can ask a person (${DIALOG_PROGRAMS}), and nothing else proves a person answered; to accept a typed code on a terminal, set "approval": "code" in ${rmConfigPath()} yourself`,
         };
     }
 

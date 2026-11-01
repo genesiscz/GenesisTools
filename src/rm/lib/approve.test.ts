@@ -1806,21 +1806,35 @@ describe("a rule that covers a request now", () => {
 });
 
 describe("tools rm ask: an agent opens the person's window", () => {
-    /** Runs `ask` for `id` with a person who answers `approved`, recording every prompt the window got. */
-    /** No app on this platform when `approved` is false; else the window answers Touch ID. `typed` must never run. */
-    async function ask(id: string, ctx: RunContext, approved = true) {
+    /**
+     * Runs `ask` for `id`. `window`: the app's window answers Touch ID. `dialog`: GenesisTools.app is missing, and the
+     * platform's dialog (osascript on macOS) answers Approve. `none`: a platform with no app and no dialog program.
+     * The typed code throws: `ask` must never take it, since an agent can type into a terminal it fakes.
+     */
+    async function ask(id: string, ctx: RunContext, person: "window" | "dialog" | "none" = "window") {
         const prompts: ApprovalPrompt[] = [];
-        const typed: string[] = [];
+        const dialogs: string[] = [];
         const confirm: ApprovalDeps = {
             interactive: () => true,
-            platform: approved ? "darwin" : "linux",
+            platform: person === "none" ? "linux" : "darwin",
             typed: async () => {
-                typed.push("typed");
-                return true;
+                throw new Error("tools rm ask reached the typed code");
             },
-            dialog: () => false,
+            dialog: (prompt) => {
+                if (person === "none") {
+                    return null;
+                }
+
+                dialogs.push(prompt.title);
+                return person === "dialog";
+            },
             app: async (prompt) => {
                 prompts.push(prompt);
+
+                if (person !== "window") {
+                    return { kind: "missing", detail: "GenesisTools.app is not installed, or routing is switched off" };
+                }
+
                 return {
                     kind: "answered",
                     outcome: {
@@ -1848,7 +1862,7 @@ describe("tools rm ask: an agent opens the person's window", () => {
             process.exitCode = exitCode;
         }
 
-        return { prompts, typed, lines, code };
+        return { prompts, dialogs, lines, code };
     }
 
     function agentCtx(askMinMB: number): RunContext {
@@ -1858,9 +1872,10 @@ describe("tools rm ask: an agent opens the person's window", () => {
 
     test("under the size set for agents no window opens: the agent hands the user approve", async () => {
         const request = asideRequest("ask-small");
-        const { prompts, lines, code } = await ask(request.id, agentCtx(10));
+        const { prompts, dialogs, lines, code } = await ask(request.id, agentCtx(10));
 
         expect(prompts).toEqual([]);
+        expect(dialogs).toEqual([]);
         expect(code).toBe(1);
         expect(lines.at(-1)).toMatch(
             new RegExp(
@@ -1883,16 +1898,14 @@ describe("tools rm ask: an agent opens the person's window", () => {
         expect(lines.at(-1)).toContain("1 size not measured yet counts as 0");
     });
 
-    test("at or over the size the window opens with the dialog only, Touch ID waits for a click, the ledger says ask", async () => {
+    test("at or over the size the window opens, Touch ID waits for a click, the ledger says ask", async () => {
         const request = asideRequest("ask-big");
-        const { prompts, typed, code } = await ask(request.id, {
-            ...agentCtx(0),
-            base: { ...agentCtx(0).base, approval: "code" },
-        });
+        const coded = await ask(request.id, { ...agentCtx(0), base: { ...agentCtx(0).base, approval: "code" } });
 
-        expect(prompts).toHaveLength(0);
-        expect(typed).toEqual([]);
-        expect(code).toBe(1);
+        // approval code skips the window; ask never takes the typed code, so only the dialog is left, and it cancels.
+        expect(coded.prompts).toHaveLength(0);
+        expect(coded.dialogs).toHaveLength(1);
+        expect(coded.code).toBe(1);
 
         const again = asideRequest("ask-big-window");
         const window = await ask(again.id, agentCtx(0));
@@ -1902,22 +1915,33 @@ describe("tools rm ask: an agent opens the person's window", () => {
         expect(appApproveParams(window.prompts[0] ?? { title: "", lines: [], code: "", caller: AGENT }).arm).toBe(
             "click"
         );
-        expect(window.typed).toEqual([]);
-        const code2 = window.code;
-        expect(code2).toBe(0);
+        expect(window.dialogs).toEqual([]);
+        expect(window.code).toBe(0);
         expect(loadRmRequest(again.id)?.status).toBe("approved");
         const approved = readRmLedger().filter((entry) => entry.action === "approve" && entry.requestId === again.id);
         expect(approved.map((entry) => entry.person)).toEqual([{ via: "touch-id", opened: "ask" }]);
     });
 
-    test("without a way to ask a person, it prints why and the hand-over line, and exits 1", async () => {
-        const request = asideRequest("ask-no-app");
-        const { lines, code } = await ask(request.id, agentCtx(0), false);
+    test("without GenesisTools.app the platform's dialog asks, and the ledger says ask", async () => {
+        const request = asideRequest("ask-dialog");
+        const { prompts, dialogs, code } = await ask(request.id, agentCtx(0), "dialog");
+
+        expect(prompts).toHaveLength(1);
+        expect(dialogs).toHaveLength(1);
+        expect(code).toBe(0);
+        expect(loadRmRequest(request.id)?.status).toBe("approved");
+        const approved = readRmLedger().filter((entry) => entry.action === "approve" && entry.requestId === request.id);
+        expect(approved.map((entry) => entry.person)).toEqual([{ via: "dialog", opened: "ask" }]);
+    });
+
+    test("with no window and no dialog program, it prints why and the hand-over line, and exits 1", async () => {
+        const request = asideRequest("ask-no-dialog");
+        const { lines, code } = await ask(request.id, agentCtx(0), "none");
 
         expect(code).toBe(1);
-        expect(lines.some((line) => line.startsWith("Not confirmed: nothing on linux proves a person answered"))).toBe(
-            true
-        );
+        expect(
+            lines.some((line) => line.startsWith("Not confirmed: no dialog program on linux can ask a person"))
+        ).toBe(true);
         expect(lines.at(-1)).toBe(`Hand the user: ! ${toolCommand("rm")} approve ${request.id}`);
         expect(loadRmRequest(request.id)?.status).toBe("pending");
     });
