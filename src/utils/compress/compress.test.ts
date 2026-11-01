@@ -16,6 +16,7 @@ import {
     rmSync,
     statSync,
     symlinkSync,
+    truncateSync,
     unlinkSync,
     utimesSync,
     writeFileSync,
@@ -48,7 +49,7 @@ import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
-import { planDailyCompression, runDailyCompression } from "./daily";
+import { dailyPassLockPath, planDailyCompression, runDailyCompression } from "./daily";
 import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { searchLedger } from "./ledger";
 import { compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
@@ -190,6 +191,37 @@ describe("compressFile", () => {
         bytes[Math.floor(bytes.length / 2)]! ^= 0xff;
         writeFileSync(result.target, bytes);
         expect(verifyCompressedFile(result.target, result)).toBe(false);
+    });
+
+    it("throws and leaves the target as it was when the source is cut while it is read", async () => {
+        const dir = scratch("cut");
+        const source = join(dir, "2026-10-10.log");
+        // Over one 1 MiB read, so a read follows the cut.
+        writeFileSync(source, logText(60_000));
+        const target = `${source}.zst`;
+        writeFileSync(target, "the verified copy");
+        const write = atomicWriteIo.writeSync;
+        let cut = false;
+        // The first frame written is the moment another pass would cut the retired file to zero.
+        const probe = spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            if (!cut) {
+                cut = true;
+                truncateSync(source, 0);
+            }
+
+            return write(fd, bytes, offset, length);
+        });
+
+        try {
+            await expect(compressFile({ source, target, frameBytes: 64 * 1024 })).rejects.toThrow(
+                "changed while it was compressed"
+            );
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(cut).toBe(true);
+        expect(readFileSync(target, "utf8")).toBe("the verified copy");
     });
 });
 
@@ -636,6 +668,76 @@ describe("old day files", () => {
         const moved = await run((path) => renameSync(path, trash));
         expect([moved.held.nlink, moved.held.size]).toEqual([1, Buffer.byteLength(logText(300))]);
         expect(readFileSync(trash, "utf8")).toBe(logText(300));
+    });
+
+    it("frees each removed file's blocks after its own grace, while the later files still compress", async () => {
+        const now = new Date("2026-10-13T12:00:00");
+        const old = new Date("2026-10-10T12:00:00").getTime() / 1000;
+        const dayOf = (relative: string) => /^(\d{4}-\d{2}-\d{2})\.log$/.exec(relative)?.[1];
+        const dir = scratch("release-each");
+        const holders = new Map<string, number>();
+
+        for (const name of ["2026-10-09.log", "2026-10-10.log", "2026-10-11.log"]) {
+            const path = join(dir, name);
+            writeFileSync(path, logText(300));
+            utimesSync(path, old, old);
+            holders.set(path, openSync(path, "r"));
+        }
+
+        const retired: string[] = [];
+        const earlierSizes: number[] = [];
+        const retire = (path: string) => {
+            earlierSizes.push(...retired.map((earlier) => fstatSync(holders.get(earlier)!).size));
+            retired.push(path);
+            unlinkSync(path);
+        };
+        const plan = planOldFileCompression({ root: dir, dayOf, firstPlainDay: "2026-10-12", now });
+
+        try {
+            const report = await applyOldFileCompression(plan, { caller: "test", retire, releaseGraceMs: 0 });
+            expect(report.compressed).toHaveLength(3);
+        } finally {
+            for (const fd of holders.values()) {
+                closeSync(fd);
+            }
+        }
+
+        // The first file is already cut when the second is removed, and both when the third is.
+        expect(earlierSizes).toEqual([0, 0, 0]);
+    });
+
+    it("two passes over one file keep its verified .zst, and only one daily pass runs per logs folder", async () => {
+        const now = new Date("2026-10-13T12:00:00");
+        const old = new Date("2026-10-10T12:00:00").getTime() / 1000;
+        const dayOf = (relative: string) => /^(\d{4}-\d{2}-\d{2})\.log$/.exec(relative)?.[1];
+        const day = (dir: string) => {
+            const path = join(dir, "2026-10-10.log");
+            writeFileSync(path, logText(20_000));
+            utimesSync(path, old, old);
+            return path;
+        };
+
+        // Both plans are made before either pass retires the file, as two passes started together would.
+        const raced = scratch("race");
+        const racedPath = day(raced);
+        const plans = [0, 1].map(() =>
+            planOldFileCompression({ root: raced, dayOf, firstPlainDay: "2026-10-12", now })
+        );
+        await Promise.all(plans.map((plan) => applyOldFileCompression(plan, { caller: "test", releaseGraceMs: 0 })));
+        expect(existsSync(racedPath)).toBe(false);
+        expect([...readLinesSync(`${racedPath}.zst`)].join("\n")).toBe(logText(20_000));
+
+        const locked = scratch("daily-lock");
+        const lockedPath = day(locked);
+        const pass = () =>
+            runDailyCompression({ now: new Date("2026-10-20T12:00:00"), logsDir: locked, releaseGraceMs: 0 });
+        const runs = await Promise.all([pass(), pass()]);
+        expect(runs.filter((run) => run === null)).toHaveLength(1);
+        expect(
+            runs.find((run) => run !== null)?.find(({ target }) => target.name === "logs")?.report.compressed
+        ).toEqual([expect.objectContaining({ path: lockedPath })]);
+        expect(existsSync(dailyPassLockPath(locked))).toBe(false);
+        expect([...readLinesSync(`${lockedPath}.zst`)].join("\n")).toBe(logText(20_000));
     });
 });
 
