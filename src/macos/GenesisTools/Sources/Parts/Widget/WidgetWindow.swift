@@ -60,6 +60,9 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         coordinator?.settingsPresenter = { FeatureSettingsLaunch.open(pageID: $0) }
         // The widget face is the one process that owns the global "open the widget" shortcut.
         coordinator?.registersOpenShortcut = true
+        // Another face's ⌘Q question names the widget only while its panels are on screen (Host/PartQuit): with
+        // "Show the widget" off this process runs with nothing to see.
+        coordinator?.panelsShownChanged = { PartPresence.set(PartPresence.widget, up: $0) }
         coordinator?.model.openDestination = { session, mode, file in
             var args = [
                 "--hub", "--mode", "sessions", "--session", session.target.sessionId,

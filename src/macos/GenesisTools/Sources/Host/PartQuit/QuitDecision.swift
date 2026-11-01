@@ -53,7 +53,8 @@ enum QuitPlan: Equatable, Sendable {
 }
 
 /// ⌘Q in a face that may have other GenesisTools parts running beside it. The tables here name every face the
-/// question can list; a new face adds one row to `faceNames` and one to `faceOrder`.
+/// question can list; a new face adds one row to `faceNames` and one to `faceOrder`, plus one row to `presences` for
+/// each part it shows only while that part is up.
 package enum PartQuit {
     /// The name each face has in the question. The bare launch is the permissions window (`--window`).
     static let faceNames: [String: String] = [
@@ -67,14 +68,21 @@ package enum PartQuit {
     /// The order the question lists the faces in.
     static let faceOrder = ["--widget", "--features", "--hub", "--review", "--markdown", "--window"]
 
-    /// A part that runs inside another face's process. While it is up (PartPresence) and the build links it, that
-    /// face is called by the part's name: the feature settings face with Clicky's status item is "Clicky".
-    struct HostedPart: Equatable, Sendable {
+    /// A part a face shows only while it is up (PartPresence). A face with rows here is named by its rows that are up,
+    /// in this order ("Clicky and Settings"), because its quit ends all of them. With none up it is a background
+    /// process (the widget with "Show the widget" off, the settings face with no window and Clicky off): the question
+    /// never names it, it never makes ⌘Q ask, and Quit All leaves it running. A face with no rows is a window and is
+    /// named while its process runs.
+    struct FacePresence: Equatable, Sendable {
         let id: String
         let face: String
         let name: String
     }
-    static let hostedParts = [HostedPart(id: "clicky", face: "--features", name: "Clicky")]
+    static let presences = [
+        FacePresence(id: PartPresence.widget, face: "--widget", name: "Widget"),
+        FacePresence(id: PartPresence.clicky, face: "--features", name: "Clicky"),
+        FacePresence(id: PartPresence.settingsWindow, face: "--features", name: "Settings"),
+    ]
 
     /// The face of a process from its arguments after the executable, or nil for a process the question never names:
     /// the launcher (`GenesisTools <program> ...`), the link relay, `--rpc`, `--mic`, and the scripted runs
@@ -92,24 +100,28 @@ package enum PartQuit {
         return faceNames[first] == nil ? nil : first
     }
 
-    /// The name of `face`: its hosted parts that are up, or its own name.
-    static func name(of face: String, linkedParts: Set<String>, liveHostedParts: Set<String>) -> String? {
-        let hosted = hostedParts.filter {
-            $0.face == face && linkedParts.contains($0.id) && liveHostedParts.contains($0.id)
-        }
-        return hosted.isEmpty ? faceNames[face] : list(hosted.map(\.name))
+    /// The name of another face in the question: the parts it shows that are up, its own name when it is a window, or
+    /// nil while it shows nothing.
+    static func name(of face: String, livePresences: Set<String>) -> String? {
+        let rows = presences.filter { $0.face == face }
+        guard !rows.isEmpty else { return faceNames[face] }
+        let up = rows.filter { livePresences.contains($0.id) }
+        return up.isEmpty ? nil : list(up.map(\.name))
     }
 
     static func name(of face: String, in snapshot: RunningPartsSnapshot) -> String? {
-        name(of: face, linkedParts: snapshot.linkedParts, liveHostedParts: snapshot.liveHostedParts)
+        name(of: face, livePresences: snapshot.livePresences)
     }
 
-    /// This process's own name for its quit menu item: no process scan, only its own hosted parts.
+    /// The name of the face ⌘Q was pressed in. It always has one: with nothing up, its own name.
+    static func ownName(of face: String, livePresences: Set<String>) -> String {
+        name(of: face, livePresences: livePresences) ?? faceNames[face] ?? "GenesisTools"
+    }
+
+    /// This process's own name for its quit menu item: no process scan, only the locks.
     @MainActor
     package static func ownName(face: String) -> String {
-        name(
-            of: face, linkedParts: Set(AppParts.linked),
-            liveHostedParts: Set(hostedParts.map(\.id).filter { PartPresence.isUp($0) })) ?? "GenesisTools"
+        ownName(of: face, livePresences: PartPresence.live())
     }
 
     /// Every named face but this process, in the question's order.
@@ -137,7 +149,8 @@ package enum PartQuit {
             for other in others {
                 if let name = name(of: other.face, in: snapshot), !names.contains(name) { names.append(name) }
             }
-            return .ask(QuitQuestion(thisName: name(of: face, in: snapshot) ?? "GenesisTools", otherNames: names))
+            return .ask(
+                QuitQuestion(thisName: ownName(of: face, livePresences: snapshot.livePresences), otherNames: names))
         }
     }
 
