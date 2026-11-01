@@ -181,6 +181,29 @@ describe("decision option labels", () => {
         });
     });
 
+    test("prose after the options ends their list: a later example line is not an option, and it stays", () => {
+        const prompt = "Pick one:\na) Keep\nb) Drop\n\nExample output:\nc) unrelated example";
+        const options = ["a", "b", "c"];
+
+        expect(decisionOptionLabels(prompt, options)).toEqual(["Keep", "Drop", "c"]);
+        expect(shownDecisionText({ prompt, options })).toEqual({
+            prompt: "Pick one:\n\nExample output:\nc) unrelated example",
+            options: ["Keep", "Drop", "c"],
+        });
+        // Blank lines and an indented line between the options keep the list going.
+        expect(decisionOptionLabels("Which one?\n\na) Keep\n\nb) Drop\n   and log why", ["a", "b"])).toEqual([
+            "Keep",
+            "Drop\nand log why",
+        ]);
+    });
+
+    test("a line that differs from its button only in case stays in the prompt", () => {
+        const prompt = "Choose:\na) Run `make CLEAN`\nb) Keep";
+        const options = ["Run `make clean`", "Keep"];
+
+        expect(shownDecisionText({ prompt, options })).toEqual({ prompt, options });
+    });
+
     test("Context is the reply's context only; the reasoning is the agent's pick line, after the proposal", () => {
         // Decision 31 has reasoning and no proposal: its pick line is the reasoning, and it has no Context.
         const reasoningOnly = fromRecord(storedRow());

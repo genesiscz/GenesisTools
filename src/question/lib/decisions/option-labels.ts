@@ -49,6 +49,8 @@ function optionLine(line: string): { letter: string; text: string } | null {
 /**
  * The last list in the prompt that starts at "a)", each letter at its line. An earlier list (findings numbered a, b, c
  * above the question) gives way to the later one, because the options close the question in every posted prompt.
+ * A line of prose after an option ends its list, so a later "c) …" (an example under the options) is never option c;
+ * blank lines and indented lines between the options keep the list going.
  */
 function lastOptionList(lines: string[]): Map<string, OptionLine> {
     let current: Map<string, OptionLine> | null = null;
@@ -60,9 +62,14 @@ function lastOptionList(lines: string[]): Map<string, OptionLine> {
         const found = optionLine(line);
 
         if (!found) {
-            if (previous && previous.end === index && CONTINUATION.test(line)) {
+            const indented = CONTINUATION.test(line);
+
+            if (previous && previous.end === index && indented) {
                 previous.text = `${previous.text}\n${line.trim()}`;
                 previous.end = index + 1;
+            } else if (!indented && line.trim()) {
+                current = null;
+                previous = null;
             }
 
             continue;
@@ -106,8 +113,9 @@ export function isBareOptionLabel(label: string, letter: string): boolean {
     return plain === "" || plain === letter || withoutLetter(plain, letter) === "";
 }
 
+/** Whether two texts are the same up to spacing. Case counts: `make CLEAN` and `make clean` name different targets. */
 function sameText(a: string, b: string): boolean {
-    const plain = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+    const plain = (text: string) => text.replace(/\s+/g, " ").trim();
     return plain(a) === plain(b);
 }
 
