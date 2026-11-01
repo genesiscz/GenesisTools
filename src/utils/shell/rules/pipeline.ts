@@ -5,16 +5,17 @@
 // bash's ${PIPESTATUS[0]} expands to nothing; zsh spells it $pipestatus[1].
 
 import {
+    cleanedBody,
     commandTokenIndex,
     commandWord,
     nextRawArgument,
     originalSlice,
+    RESERVED_PREFIX,
     type ShellScan,
     type Span,
     simpleCommandWord,
     splitPipeline,
     splitStatements,
-    stripShellNoise,
     tokenize,
 } from "../scan";
 import type { ShellMatch, ShellRule } from "./types";
@@ -47,6 +48,30 @@ const STATUS_AMBIGUOUS = new Set(["grep", "egrep", "fgrep", "rg", "jq", "sed", "
 
 const EXIT_STATUS_REF = /\$\?|\$\{\?\}/;
 const PIPESTATUS_REF = /pipestatus/i;
+// One element's status, with a literal index: `$pipestatus[2]`, `${pipestatus[2]}`.
+const PIPESTATUS_INDEX = /\$\{pipestatus\[(\d+)\]\}?|\$pipestatus\[(\d+)\]/g;
+// The label in front of a read, in the raw text: `biome=`, `"tsgo=`.
+const READ_LABEL = /([A-Za-z_][\w-]*)="?$/;
+// Commands that test a path exists, given -e, -d or -f.
+const EXISTENCE_TESTS = new Set(["[", "[[", "test"]);
+// Words that create, move or remove the path after them, so a later existence check shows whether they worked.
+const CHANGES_PATH = new Set([
+    "remove",
+    "release",
+    "add",
+    "move",
+    "prune",
+    "rm",
+    "rmdir",
+    "mv",
+    "cp",
+    "mkdir",
+    "ln",
+    "touch",
+]);
+const REDIRECT = /^\d*&?[<>]/;
+// A word as typed: quoted parts and a `$( … )` without nested parens stay inside it.
+const TYPED_WORD = /(?:'[^']*'|"(?:[^"\\]|\\.)*"|\$\([^()]*\)|\\.|[^\s'"\\])+/g;
 const BASH_WORD = /(^|[\s;&|(])(bash|sh)(\s|$)/;
 
 // A label in front of the `$?` that names the filter or a match: `grep_exit=`, `count-rc=`, `match-exit=`.
@@ -58,8 +83,6 @@ const STDERR_REDIRECT = /2>|&>|>&/;
 // The Bash tool runs zsh. A `-c` argument or a heredoc names its own shell.
 const OUTER_SHELL = "zsh";
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
-// The scanner's heredoc operator: `<<EOF`, `<<-'EOF'`, `<< "EOF"`.
-const HEREDOC_OP = /<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g;
 // The first pipeline element's status in each shell. dash and ksh93 keep none.
 const LEFT_STATUS: ReadonlyMap<string, string> = new Map([
     ["zsh", "${pipestatus[1]}"],
@@ -67,11 +90,12 @@ const LEFT_STATUS: ReadonlyMap<string, string> = new Map([
     ["sh", "${PIPESTATUS[0]}"],
 ]);
 
-// A pipeline, its elements, and the next statement, which reads `$?`.
+// A pipeline, its elements, the next statement, which reads `$?`, and the statements after that.
 interface PipelineRead {
     pipeline: Span;
     elements: Span[];
     consumer: Span;
+    later: Span[];
 }
 
 // A part of the command that a shell of its own runs (a `-c` argument, a heredoc fed to a shell),
@@ -119,9 +143,9 @@ function optionsPipefail(args: string[], long: boolean): boolean | null {
 
 // What one statement does to pipefail: `set` with the options above, `setopt pipefail` and
 // `unsetopt pipefail`.
-function pipefailChange(statement: string): boolean | null {
-    const tokens = tokenize({ text: statement, start: 0 });
-    const index = commandTokenIndex(tokens);
+function pipefailChange(command: string, statement: Span): boolean | null {
+    const tokens = tokenize(statement);
+    const index = commandTokenIndex(tokens, command);
 
     if (index === -1) {
         return null;
@@ -155,75 +179,19 @@ function innermost<T extends { start: number; end: number }>(spans: T[], positio
 
 // The shell command whose body opens at `at`: the last pipeline element on that line of the cleaned
 // text around it, when its command word is a shell. `args` are its tokens before the body.
-function invocationBefore(text: string, base: number, at: number): { shell: string; args: string[] } | null {
+function invocationBefore(
+    command: string,
+    text: string,
+    base: number,
+    at: number
+): { shell: string; args: string[] } | null {
     const lineStart = text.lastIndexOf("\n", at - base - 1) + 1;
     const statement = splitStatements({ text: text.slice(lineStart, at - base), start: base + lineStart }).pop();
     const element = statement ? splitPipeline(statement).pop() : undefined;
     const tokens = element ? tokenize(element) : [];
-    const index = commandTokenIndex(tokens);
+    const index = commandTokenIndex(tokens, command);
     const shell = index === -1 ? "" : commandWord(tokens[index].text);
     return SHELLS.has(shell) ? { shell, args: tokens.slice(index + 1).map((token) => token.text) } : null;
-}
-
-// The heredocs fed to a shell in one shell's cleaned text. The scanner keeps such a body as code and
-// blanks the operator and the terminator line, so an operator counts when it is blank right after
-// code and its terminator line is blank too.
-function heredocBodies(command: string, cleaned: string, base: number): ShellBody[] {
-    const raw = command.slice(base, base + cleaned.length);
-    const bodies: ShellBody[] = [];
-
-    if (!raw.includes("<<")) {
-        return bodies;
-    }
-
-    const op = new RegExp(HEREDOC_OP.source, "g");
-
-    for (let m = op.exec(raw); m; m = op.exec(raw)) {
-        const code = raw.slice(0, m.index).trimEnd().length - 1;
-        const lineEnd = cleaned.indexOf("\n", m.index);
-        const invocation = invocationBefore(cleaned, base, base + m.index);
-
-        if (
-            raw[m.index - 1] === "<" ||
-            cleaned[m.index] !== " " ||
-            code < 0 ||
-            cleaned[code] !== raw[code] ||
-            lineEnd === -1 ||
-            !invocation
-        ) {
-            continue;
-        }
-
-        // The body runs to the line that holds only the delimiter (`<<-` strips leading tabs), or to the end.
-        let end = raw.length;
-        let terminatorEnd = raw.length;
-
-        for (let line = lineEnd + 1; line < raw.length; line = terminatorEnd + 1) {
-            const next = raw.indexOf("\n", line);
-            terminatorEnd = next === -1 ? raw.length : next;
-            const text = raw.slice(line, terminatorEnd);
-
-            if ((m[1] === "-" ? text.replace(/^\t+/, "") : text) === m[3]) {
-                end = line;
-                break;
-            }
-        }
-
-        if (cleaned.slice(end, terminatorEnd).trim() !== "") {
-            continue;
-        }
-
-        bodies.push({
-            start: base + lineEnd + 1,
-            end: base + end,
-            shell: invocation.shell,
-            pipefail: optionsPipefail(invocation.args, true) ?? false,
-            expandedOutside: m[2] === "",
-        });
-        op.lastIndex = end;
-    }
-
-    return bodies;
 }
 
 const bodiesByScan = new WeakMap<ShellScan, ShellBody[]>();
@@ -238,12 +206,34 @@ function shellBodies(scan: ShellScan): ShellBody[] {
     }
 
     const ranges = scan.executableRanges;
-    const bodies = heredocBodies(scan.command, scan.cleaned, 0);
+    // The cleaned text of the smallest body that `holds` accepts, or of the command, and its offset.
+    const around = (holds: (range: { start: number; end: number }) => boolean) => {
+        const parent = ranges.filter(holds).sort((a, b) => a.end - a.start - (b.end - b.start))[0];
+        return parent
+            ? { text: cleanedBody(scan.command, parent), base: parent.start }
+            : { text: scan.cleaned, base: 0 };
+    };
+    const bodies: ShellBody[] = [];
+
+    // The scanner keeps a heredoc as code when a shell word stands on its line; it counts here when the
+    // command the operator belongs to is that shell.
+    for (const heredoc of scan.heredocs) {
+        const { text, base } = around((range) => range.start <= heredoc.opener && heredoc.opener < range.end);
+        const invocation = invocationBefore(scan.command, text, base, heredoc.opener);
+
+        if (invocation) {
+            bodies.push({
+                start: heredoc.start,
+                end: heredoc.end,
+                shell: invocation.shell,
+                pipefail: optionsPipefail(invocation.args, true) ?? false,
+                expandedOutside: !heredoc.quoted,
+            });
+        }
+    }
 
     for (const range of ranges) {
         const quote = scan.command[range.start - 1];
-        const cleaned = stripShellNoise(scan.command.slice(range.start, range.end));
-        bodies.push(...heredocBodies(scan.command, cleaned, range.start));
 
         if (quote === "`") {
             bodies.push({ ...range, shell: null, pipefail: false, expandedOutside: false });
@@ -251,11 +241,10 @@ function shellBodies(scan: ShellScan): ShellBody[] {
         }
 
         // A `-c` argument: the cleaned text of the shell around it holds the invocation.
-        const parent = ranges
-            .filter((other) => other !== range && other.start <= range.start && range.end <= other.end)
-            .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-        const around = parent ? stripShellNoise(scan.command.slice(parent.start, parent.end)) : scan.cleaned;
-        const invocation = invocationBefore(around, parent?.start ?? 0, range.start);
+        const { text, base } = around(
+            (other) => other !== range && other.start <= range.start && range.end <= other.end
+        );
+        const invocation = invocationBefore(scan.command, text, base, range.start);
         bodies.push({
             ...range,
             shell: invocation?.shell ?? "",
@@ -268,8 +257,24 @@ function shellBodies(scan: ShellScan): ShellBody[] {
     return bodies;
 }
 
-// The shell that expands a `$` at `position`, or "" when none can be named: the shell around a
-// double-quoted `-c` argument or an unquoted heredoc expands it first.
+// Whether the shell around a double-quoted `-c` argument or an unquoted heredoc expands the `$` at
+// `position` before the body's own shell starts. `\$` reaches the body's shell; `\\$` is a backslash and a live `$`.
+function expandedOutsideAt(scan: ShellScan, position: number): boolean {
+    if (!innermost(shellBodies(scan), position)?.expandedOutside) {
+        return false;
+    }
+
+    let k = position;
+
+    while (scan.command[k - 1] === "\\") {
+        k--;
+    }
+
+    return (position - k) % 2 === 0;
+}
+
+// The shell that expands a `$` at `position`, or "" when none can be named, such as the shell around
+// the body that expands it first.
 function shellAt(scan: ShellScan, position: number): string {
     const body = innermost(shellBodies(scan), position);
 
@@ -277,11 +282,17 @@ function shellAt(scan: ShellScan, position: number): string {
         return OUTER_SHELL;
     }
 
-    if (body.expandedOutside) {
+    if (expandedOutsideAt(scan, position)) {
         return "";
     }
 
     return body.shell ?? shellAt(scan, body.start - 1);
+}
+
+// Whether the `$?` the consumer reads is the outer shell's, expanded before the body's pipeline ran.
+function readOutside(scan: ShellScan, read: PipelineRead): boolean {
+    const ref = EXIT_STATUS_REF.exec(read.consumer.text);
+    return ref !== null && expandedOutsideAt(scan, read.consumer.start + ref.index);
 }
 
 // Whether pipefail is on at `position` in one shell's cleaned text. A statement before it turns
@@ -290,6 +301,7 @@ function shellAt(scan: ShellScan, position: number): string {
 // cuts on parens, so they all sit in the gaps between statements. Statements and parens inside a
 // `nested` body belong to another shell.
 function pipefailInShell(
+    command: string,
     text: string,
     base: number,
     position: number,
@@ -322,7 +334,7 @@ function pipefailInShell(
         walkTo(statement.start - base);
 
         if (!elsewhere(statement.start)) {
-            on = pipefailChange(statement.text) ?? on;
+            on = pipefailChange(command, statement) ?? on;
         }
 
         cursor = statement.start - base + statement.text.length;
@@ -339,7 +351,7 @@ function pipefailOnAt(scan: ShellScan, position: number): boolean {
     const bodies = shellBodies(scan);
     const body = innermost(bodies, position);
     const start = body?.start ?? 0;
-    const text = body ? stripShellNoise(scan.command.slice(body.start, body.end)) : scan.cleaned;
+    const text = body ? cleanedBody(scan.command, body) : scan.cleaned;
     let inherited = false;
 
     if (body) {
@@ -349,7 +361,7 @@ function pipefailOnAt(scan: ShellScan, position: number): boolean {
     const nested = bodies.filter(
         (other) => other !== body && other.shell !== null && other.start >= start && other.end <= start + text.length
     );
-    return pipefailInShell(text, start, position, inherited, nested);
+    return pipefailInShell(scan.command, text, start, position, inherited, nested);
 }
 
 // The first pipeline whose NEXT statement consumes `$?`, restricted to the given set of
@@ -374,7 +386,7 @@ function pipelineFollowedByExitStatus(
                 continue;
             }
 
-            const read = { pipeline: statements[i], elements, consumer };
+            const read = { pipeline: statements[i], elements, consumer, later: statements.slice(i + 2) };
 
             if (!pipefailOnAt(scan, statements[i].start) && !intended(read)) {
                 return read;
@@ -387,17 +399,112 @@ function pipelineFollowedByExitStatus(
 
 function pipefailMatch(scan: ShellScan, read: PipelineRead): ShellMatch {
     const { pipeline } = read;
-    const matched = originalSlice(scan, pipeline.start, pipeline.start + pipeline.text.length);
-    const end = pipeline.start + matched.length;
+    // `then false | tail -1` is one statement, and `(set -o pipefail; then …)` does not parse, so the
+    // reserved words stay in front of the subshell.
+    const start = tokenize(pipeline).find((t) => !RESERVED_PREFIX.has(t.text))?.start ?? pipeline.start;
+    const matched = originalSlice(scan, start, pipeline.start + pipeline.text.length);
+    const end = start + matched.length;
     return {
         matched,
-        index: pipeline.start,
+        index: start,
         // A subshell, not a bare `set -o pipefail;`: the statement can sit inside an `&&` list, and
         // an inserted `;` ended that list, so `cd wt && grep … | head` ran grep even when cd
         // failed. The subshell keeps the list intact, scopes pipefail, and its `$?` is the
         // pipeline's status.
-        suggestion: `${scan.command.slice(0, pipeline.start)}(set -o pipefail; ${matched})${scan.command.slice(end)}`,
+        suggestion: `${scan.command.slice(0, start)}(set -o pipefail; ${matched})${scan.command.slice(end)}`,
     };
+}
+
+// An element's command word, also past a wrapper's quoted option value (`env -u 'X' tail`).
+function elementWord(scan: ShellScan, element: Span): string {
+    const tokens = tokenize(element);
+    return commandWord(tokens[commandTokenIndex(tokens, scan.command)]?.text ?? "");
+}
+
+// An element's command word and the words after it as typed, quotes removed: a quoted word is blank in
+// the cleaned text. An env-assignment prefix sits before the command word.
+function typedArguments(scan: ShellScan, element: Span): { word: string; args: string[] } {
+    const tokens = tokenize(element);
+    const token = tokens[commandTokenIndex(tokens, scan.command)];
+
+    if (!token) {
+        return { word: "", args: [] };
+    }
+
+    const typed = originalSlice(scan, element.start, element.start + element.text.length);
+    const args = [...typed.matchAll(TYPED_WORD)]
+        .filter((m) => element.start + m.index > token.start)
+        .map((m) => m[0].replace(/["']/g, ""));
+    return { word: commandWord(token.text), args };
+}
+
+// The basenames of the paths an element creates, moves or removes: words with a `/` after a verb such as
+// `remove` or `rm`, which are no option, no redirect or its target, and no `-e` or `-c` code string. A
+// value such as `git -C dir` sits before the verb, and after it a one-letter option is a flag (`rm -f`).
+function changedPaths(scan: ShellScan, element: Span): string[] {
+    const { word, args } = typedArguments(scan, element);
+    let changes = CHANGES_PATH.has(word);
+    const names: string[] = [];
+
+    for (let k = 0; k < args.length; k++) {
+        const arg = args[k];
+
+        if (REDIRECT.test(arg)) {
+            k += /[<>]$/.test(arg) ? 1 : 0;
+        } else if (arg === "-e" || arg === "-c") {
+            k++;
+        } else if (CHANGES_PATH.has(arg)) {
+            changes = true;
+        } else if (changes && !arg.startsWith("-") && arg.includes("/")) {
+            const name = arg.replace(/\/+$/, "").split("/").pop() ?? "";
+
+            if (/[A-Za-z0-9]/.test(name)) {
+                names.push(name);
+            }
+        }
+    }
+
+    return names;
+}
+
+// Whether a statement checks that a path named one of `names` exists: `git worktree list | rg|grep <x>`,
+// `[ -e|-d|-f <x> ]`, `test -e|-d|-f <x>` or `ls <x>`. A whole path component of <x> must be the name.
+function checksExistence(scan: ShellScan, statement: Span, names: string[]): boolean {
+    const [first, second] = splitPipeline(statement);
+    const { word, args } = typedArguments(scan, first);
+    let checked: string[] = [];
+
+    if (word === "ls" || (EXISTENCE_TESTS.has(word) && args.some((arg) => /^-[edf]$/.test(arg)))) {
+        checked = args;
+    } else if (word === "git" && /\bworktree\s+list\b/.test(first.text) && second) {
+        const filter = typedArguments(scan, second);
+        checked = ["rg", "grep"].includes(filter.word) ? filter.args : [];
+    }
+
+    return checked.some(
+        (arg, k) =>
+            !arg.startsWith("-") &&
+            !REDIRECT.test(arg) &&
+            !(REDIRECT.test(checked[k - 1] ?? "") && /[<>]$/.test(checked[k - 1])) &&
+            arg
+                .replace(/\$$/, "")
+                .split("/")
+                .some((part) => names.includes(part))
+    );
+}
+
+// Whether a statement after the `$?` read checks that a path the pipeline's first element changed exists,
+// so the real outcome shows whatever the read prints.
+function checkedLater(scan: ShellScan, read: PipelineRead): boolean {
+    const names = changedPaths(scan, read.elements[0]);
+    return names.length > 0 && read.later.some((statement) => checksExistence(scan, statement, names));
+}
+
+// The words a label can name in an element: each token, and a command path's basename.
+function elementWords(element: Span): Set<string> {
+    return new Set(
+        tokenize(element).flatMap((token) => [token.text.toLowerCase(), commandWord(token.text).toLowerCase()])
+    );
 }
 
 // curl -s fails without a word on stderr unless -S / --show-error brings the error back.
@@ -412,9 +519,9 @@ function silentCurl(element: string): boolean {
 }
 
 // The words that name what an element runs: its command word, and a git subcommand (`git grep`).
-function runWords(element: string): string[] {
-    const tokens = tokenize({ text: element, start: 0 });
-    const index = commandTokenIndex(tokens);
+function runWords(command: string, element: Span): string[] {
+    const tokens = tokenize(element);
+    const index = commandTokenIndex(tokens, command);
 
     if (index === -1) {
         return [];
@@ -449,7 +556,7 @@ function deliberateMatchTest(scan: ShellScan, read: PipelineRead): boolean {
     const label = scan.command.slice(read.consumer.start, read.consumer.start + (ref?.index ?? 0));
     const left = read.elements.slice(0, -1);
     const filter = simpleCommandWord(read.elements[read.elements.length - 1].text);
-    const leftWords = new Set(left.flatMap((element) => runWords(element.text)));
+    const leftWords = new Set(left.flatMap((element) => runWords(scan.command, element)));
     const words = [...label.matchAll(MATCH_LABEL)].map((m) => m[2].toLowerCase());
     return (
         words.length > 0 &&
@@ -479,7 +586,7 @@ function insideArithmetic(text: string): boolean {
 // Whether the `$?` at `ref` sits inside printf's format argument, the first one after `-v NAME` and `--`.
 function inPrintfFormat(command: string, consumer: Span, ref: number): boolean {
     const tokens = tokenize(consumer);
-    const word = tokens[commandTokenIndex(tokens)];
+    const word = tokens[commandTokenIndex(tokens, command)];
     let from = word.start + word.text.length;
     let isName = false;
 
@@ -507,13 +614,15 @@ function inPrintfFormat(command: string, consumer: Span, ref: number): boolean {
 // consumer, and a shell with no such array get none.
 function leftStatusSuggestion(scan: ShellScan, consumer: Span): string | undefined {
     const ref = EXIT_STATUS_REF.exec(consumer.text);
-    const left = LEFT_STATUS.get(shellAt(scan, consumer.start));
+    const refStart = consumer.start + (ref?.index ?? 0);
+    const status = LEFT_STATUS.get(shellAt(scan, refStart));
 
-    if (!ref || !left) {
+    if (!ref || !status) {
         return undefined;
     }
 
-    const refStart = consumer.start + ref.index;
+    // The `$?` is `\$?` in a body the shell around it expands, and the inserted `$` needs the same backslash.
+    const left = innermost(shellBodies(scan), refStart)?.expandedOutside ? `\\${status}` : status;
     const word = simpleCommandWord(consumer.text);
     let at = refStart + ref[0].length;
     let insert = ` left_exit=${left}`;
@@ -526,7 +635,9 @@ function leftStatusSuggestion(scan: ShellScan, consumer: Span): string | undefin
             return undefined;
         }
     } else {
-        const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=("?)(?:\$\?|\$\{\?\})\2/.exec(scan.command.slice(consumer.start));
+        const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(\\?"?)\\?(?:\$\?|\$\{\?\})\2/.exec(
+            scan.command.slice(consumer.start)
+        );
 
         if (!assignment || consumer.text.slice(assignment[0].length).trim() !== "") {
             return undefined;
@@ -556,8 +667,125 @@ export const exitCodeAfterPipeline: ShellRule = {
         "1,629 calls in 90 days of Claude Code transcripts, 45 sampled, none legitimate. CLAUDE.md: " +
         'a false "the CLI exits 0 on bad arguments" claim on 2026-08-13 came from `mytool … | head; $?`.',
     detect(scan) {
-        const read = pipelineFollowedByExitStatus(scan, STATUS_MEANINGLESS);
+        // pipefail changes nothing for a `$?` that the shell around the body expanded first.
+        const read = pipelineFollowedByExitStatus(
+            scan,
+            STATUS_MEANINGLESS,
+            (candidate) => checkedLater(scan, candidate) || readOutside(scan, candidate)
+        );
         return read ? pipefailMatch(scan, read) : null;
+    },
+};
+
+export const exitCodeAfterPipelineChecked: ShellRule = {
+    id: "exit-code-after-pipeline-checked",
+    kind: "misread",
+    title: "$? read right after a pipeline is the last filter's status; a later statement re-checks the outcome",
+    severity: "context",
+    why:
+        "The number is still the LAST element's status (tail, head, wc and friends exit 0), so it does not " +
+        "say whether the command on the left worked. A later statement of the same command checks whether " +
+        "the path that command created, moved or removed exists, and that shows the real outcome, so the call runs.",
+    wrong: 'git worktree remove /tmp/wt/pr-1 2>&1 | tail -2; echo "exit=$?"; git worktree list | rg pr-1',
+    right: 'git worktree remove /tmp/wt/pr-1 > /tmp/rm.log 2>&1; echo "exit=$?"; tail -2 /tmp/rm.log; git worktree list | rg pr-1',
+    evidence:
+        "Audit of 71 logged exit-code-after-pipeline blocks (2026-11-01): 2 re-checked the removal right " +
+        "after with `git worktree list | rg`, so the block cost a retry for a number nothing relied on.",
+    detect(scan) {
+        // A read that nothing re-checks blocks the whole call, and this note would add nothing to it.
+        if (exitCodeAfterPipeline.detect(scan)) {
+            return null;
+        }
+
+        const read = pipelineFollowedByExitStatus(scan, STATUS_MEANINGLESS, (candidate) =>
+            readOutside(scan, candidate)
+        );
+        return read ? pipefailMatch(scan, read) : null;
+    },
+};
+
+export const pipestatusIndexMismatch: ShellRule = {
+    id: "pipestatus-index-mismatch",
+    kind: "misread",
+    title: "$pipestatus[N] right after a pipeline reads another element than the one it names",
+    severity: "context",
+    why:
+        "zsh numbers the elements of the last pipeline from 1: in `a | b | c`, $pipestatus[2] is b's status. " +
+        "An index past the last element, or 0, expands to nothing. An index on head, tail, wc and friends " +
+        "reads a filter that exits 0. A label such as `biome=` names the command meant, so an index on " +
+        "another element prints that element's status under the wrong name.",
+    wrong: "git diff --name-only | rg '\\.ts$' | xargs bunx biome check 2>&1 | tail -3; echo biome=$pipestatus[2]",
+    right: "git diff --name-only | rg '\\.ts$' | xargs bunx biome check 2>&1 | tail -3; echo biome=$pipestatus[3]",
+    evidence:
+        "Audit of logged guard firings (2026-11-01): `… | rg … | xargs bunx biome check 2>&1 | tail -3; " +
+        "echo biome=$pipestatus[2]` printed rg's status as biome's, and no rule saw it.",
+    detect(scan) {
+        for (const statements of scan.units) {
+            for (let i = 0; i + 1 < statements.length; i++) {
+                const [pipeline, consumer] = [statements[i], statements[i + 1]];
+                const elements = consumer.text.includes("pipestatus[") ? splitPipeline(pipeline) : [];
+
+                if (elements.length < 2) {
+                    continue;
+                }
+
+                // After a `)` or `}`, $pipestatus is the status of the pipeline the group sits in, and the
+                // group can be one of its elements (`false | (exit 5 | true)` has two). Read in the raw text (a
+                // quoted `-c` body is blank in the cleaned one), minus quoted or substituted words at the pipeline's end.
+                const gap = scan.command
+                    .slice(pipeline.start + pipeline.text.length, consumer.start)
+                    .replace(/'[^']*'|"(?:[^"\\]|\\.)*"|\$\([^()]*\)/g, "");
+
+                if (/[)}]/.test(gap)) {
+                    continue;
+                }
+
+                const words = elements.map(elementWords);
+                const reads = [...consumer.text.matchAll(PIPESTATUS_INDEX)].map((ref) => ({
+                    ref,
+                    at: consumer.start + ref.index,
+                    digits: ref[1] ?? ref[2],
+                    n: Number(ref[1] ?? ref[2]),
+                }));
+                const wrong = reads.flatMap((read) => {
+                    const { at, n } = read;
+                    const label = READ_LABEL.exec(scan.command.slice(consumer.start, at))?.[1].toLowerCase();
+                    // The elements the label names, 1-based.
+                    const named = label ? words.flatMap((own, k) => (own.has(label) ? [k + 1] : [])) : [];
+                    const outside = n < 1 || n > elements.length;
+                    // A filter's status, unless the statement prints an element before it as well.
+                    const meaningless =
+                        n > 1 &&
+                        !outside &&
+                        STATUS_MEANINGLESS.has(elementWord(scan, elements[n - 1])) &&
+                        !reads.some((other) => other.n >= 1 && other.n < n);
+                    const right = !outside && (named.includes(n) || (named.length === 0 && !meaningless));
+                    return right || shellAt(scan, at) !== OUTER_SHELL
+                        ? []
+                        : [{ ...read, to: named.length === 1 ? named[0] : 0 }];
+                });
+                const last = wrong.at(-1);
+
+                if (!last) {
+                    continue;
+                }
+
+                // One corrected command for every wrong read, changed from the right so offsets hold.
+                const suggestion = wrong.every((read) => read.to > 0)
+                    ? wrong.reduceRight((text, { ref, at, digits, to }) => {
+                          const digitsAt = at + ref[0].indexOf("[") + 1;
+                          return text.slice(0, digitsAt) + String(to) + text.slice(digitsAt + digits.length);
+                      }, scan.command)
+                    : undefined;
+                return {
+                    matched: scan.command.slice(pipeline.start, last.at + last.ref[0].length),
+                    index: pipeline.start,
+                    ...(suggestion ? { suggestion } : {}),
+                };
+            }
+        }
+
+        return null;
     },
 };
 
@@ -633,4 +861,10 @@ export const pipestatusUnderZsh: ShellRule = {
     },
 };
 
-export const pipelineRules: readonly ShellRule[] = [exitCodeAfterPipeline, exitCodeAfterGrep, pipestatusUnderZsh];
+export const pipelineRules: readonly ShellRule[] = [
+    exitCodeAfterPipeline,
+    exitCodeAfterPipelineChecked,
+    pipestatusIndexMismatch,
+    exitCodeAfterGrep,
+    pipestatusUnderZsh,
+];

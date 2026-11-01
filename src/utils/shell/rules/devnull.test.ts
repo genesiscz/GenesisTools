@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { homedir } from "node:os";
 
 import { detectShellViolations, renderViolation, type ShellViolation } from "./index";
 
@@ -28,7 +29,14 @@ function violation(command: string, ruleId: string): ShellViolation | undefined 
 
 const COUNT = "stderr-discarded-then-counted";
 const COVERED = "stderr-discarded-then-counted-covered";
+const SCRATCH = "stderr-discarded-then-counted-scratch";
+const DD = "dd-skip-silent-short-read";
 const READ = "stderr-discarded-then-read";
+
+// The ids that fire with the command run in `cwd`.
+function tagsIn(cwd: string, command: string): string[] {
+    return detectShellViolations(command, undefined, { cwd }).map((v) => `${v.ruleId}:${v.severity}`);
+}
 
 // The corrected command, scanned again, must not trip the rule that offered it.
 function expectSuggestionClean(command: string, ruleId: string): string {
@@ -339,7 +347,7 @@ describe("stderr-discarded-then-counted-covered: the block stays", () => {
     });
 
     it("when the match is not at a / boundary", () => {
-        expect(tags("ls /tmp/ab 2>&1 | head; ls /tmp/a 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tags("ls ~/ab 2>&1 | head; ls ~/a 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
     });
 
     it(". / ~ and $HOME match only themselves, never as a parent", () => {
@@ -564,6 +572,208 @@ describe("stderr-discarded-then-counted-covered: operands the reader used to mis
 });
 
 // ---------------------------------------------------------------------------
+// awk END aggregates, tsc and tsgo, scratch paths, dd short reads
+// ---------------------------------------------------------------------------
+
+describe("stderr-discarded-then-counted: an awk END aggregate is a counter", () => {
+    it("blocks an awk that prints only in END, and the read note stays quiet", () => {
+        expect(
+            tags(
+                "find . -type f -print0 2>/dev/null | xargs -0 stat -f '%z' | awk '{s+=$1} END {printf \"%.1f MB\\n\", s/1048576}'"
+            )
+        ).toEqual([`${COUNT}:block`]);
+        expect(tags("cmd 2>/dev/null | awk 'END {print NR}'")).toEqual([`${COUNT}:block`]);
+        expect(tags("cmd 2>/dev/null | awk -F, '{s+=$2} END {print s}'")).toEqual([`${COUNT}:block`]);
+        expect(tags("cmd 2>/dev/null | gawk -v n=0 '{n++} END {print n}'")).toEqual([`${COUNT}:block`]);
+        expect(tags("cmd 2>/dev/null | awk 'BEGIN {print \"n\"} {n++} END {print n}'")).toEqual([`${COUNT}:block`]);
+    });
+
+    it("an awk that prints a line outside END, or reads its program from a file, stays a reader", () => {
+        expect(tags("cmd 2>/dev/null | awk '{print} END{print \"done\"}'")).toEqual([`${READ}:context`]);
+        expect(tags("cmd 2>/dev/null | awk '{printf \"%s\\n\", $1} END {print NR}'")).toEqual([`${READ}:context`]);
+        expect(tags("cmd 2>/dev/null | awk '{print \"END {\"}'")).toEqual([`${READ}:context`]);
+        expect(tags("cmd 2>/dev/null | awk -f sum.awk")).toEqual([`${READ}:context`]);
+        expect(tags("cmd 2>/dev/null | awk '{s+=$1}'")).toEqual([`${READ}:context`]);
+    });
+
+    it("a pattern with no action prints each line it matches, so the awk stays a reader", () => {
+        expect(tags("cmd 2>/dev/null | awk '/x/; END {print NR}'")).toEqual([`${READ}:context`]);
+        expect(tags("cmd 2>/dev/null | awk 'NR<5 END {print NR}'")).toEqual([`${READ}:context`]);
+        expect(tags("cmd 2>/dev/null | awk '1; END{print \"total\", NR}'")).toEqual([`${READ}:context`]);
+        expect(tags("cmd 2>/dev/null | awk '/print/ {n++} END {print n+0}'")).toEqual([`${COUNT}:block`]);
+    });
+});
+
+describe("stderr-discarded-then-counted: tsc and tsgo print their errors on stdout", () => {
+    it("the corrected command keeps the compiler's exit status visible", () => {
+        const command =
+            'sed -n 1,25p tsconfig.json; bunx tsgo --noEmit -p tsconfig.json --listFilesOnly 2>/dev/null | rg -c "probe-models.ts"';
+
+        expect(tags(command)).toEqual([`${COUNT}:block`]);
+        expect(violation(command, COUNT)?.suggestion).toBe(
+            'sed -n 1,25p tsconfig.json; { bunx tsgo --noEmit -p tsconfig.json --listFilesOnly; echo "tsgo rc=$?" >&2; } | rg -c "probe-models.ts"'
+        );
+        expect(expectSuggestionClean(command, COUNT)).toContain('echo "tsgo rc=$?" >&2; }');
+    });
+
+    it("tsc and tsgo, directly or through npx and bun x", () => {
+        expect(violation("tsc --noEmit 2>/dev/null | grep -c error", COUNT)?.suggestion).toBe(
+            '{ tsc --noEmit; echo "tsc rc=$?" >&2; } | grep -c error'
+        );
+        expect(violation("npx tsc -p . 2>/dev/null | wc -l", COUNT)?.suggestion).toBe(
+            '{ npx tsc -p .; echo "tsc rc=$?" >&2; } | wc -l'
+        );
+        expect(violation("bun x tsgo 2>/dev/null | wc -l", COUNT)?.suggestion).toBe(
+            '{ bun x tsgo; echo "tsgo rc=$?" >&2; } | wc -l'
+        );
+    });
+
+    it("other hits of the same call only lose their redirect", () => {
+        expect(violation("ls a 2>/dev/null | wc -l; bunx tsgo 2>/dev/null | rg -c x", COUNT)?.suggestion).toBe(
+            'ls a | wc -l; { bunx tsgo; echo "tsgo rc=$?" >&2; } | rg -c x'
+        );
+    });
+
+    it("a do, then or else in front stays outside the braces", () => {
+        expect(violation("for p in a b; do tsgo -p $p 2>/dev/null | wc -l; done", COUNT)?.suggestion).toBe(
+            'for p in a b; do { tsgo -p $p; echo "tsgo rc=$?" >&2; } | wc -l; done'
+        );
+        expect(violation("while read p; do tsc -p $p 2>/dev/null | wc -l; done < list", COUNT)?.suggestion).toBe(
+            'while read p; do { tsc -p $p; echo "tsc rc=$?" >&2; } | wc -l; done < list'
+        );
+        expect(
+            violation("if true; then tsgo 2>/dev/null | wc -l; else tsc 2>/dev/null | wc -l; fi", COUNT)?.suggestion
+        ).toBe(
+            'if true; then { tsgo; echo "tsgo rc=$?" >&2; } | wc -l; else { tsc; echo "tsc rc=$?" >&2; } | wc -l; fi'
+        );
+    });
+
+    it("inside a double-quoted body the status line is escaped once; in a backtick only the redirect goes", () => {
+        expect(violation('zsh -c "bunx tsgo --noEmit 2>/dev/null | rg -c error"', COUNT)?.suggestion).toBe(
+            'zsh -c "{ bunx tsgo --noEmit; echo \\"tsgo rc=\\$?\\" >&2; } | rg -c error"'
+        );
+        expect(violation("zsh -c 'bunx tsgo 2>/dev/null | rg -c error'", COUNT)?.suggestion).toBe(
+            "zsh -c '{ bunx tsgo; echo \"tsgo rc=$?\" >&2; } | rg -c error'"
+        );
+        expect(violation("n=`tsgo 2>/dev/null | wc -l`", COUNT)?.suggestion).toBe("n=`tsgo | wc -l`");
+    });
+
+    it("a |& after the compiler becomes |, so the status line is not counted", () => {
+        expect(violation("bunx tsgo --noEmit 2>/dev/null |& rg -c error", COUNT)?.suggestion).toBe(
+            '{ bunx tsgo --noEmit; echo "tsgo rc=$?" >&2; } | rg -c error'
+        );
+    });
+
+    it("a compiler that feeds a reader, not a counter, only loses its redirect", () => {
+        expect(violation("tsgo --noEmit 2>/dev/null | head", READ)?.suggestion).toBe("tsgo --noEmit | head");
+    });
+
+    it("the right text says why", () => {
+        const text = renderViolation(violation("tsc 2>/dev/null | wc -l", COUNT) as ShellViolation);
+
+        expect(text).toContain("tsc and tsgo print their errors on stdout");
+    });
+});
+
+describe("stderr-discarded-then-counted-scratch: a literal path under /tmp", () => {
+    it("context instead of the block for ls, find, fd, du and stat", () => {
+        for (const command of [
+            "ls /tmp/cc/x/out 2>/dev/null | wc -l",
+            "find /private/tmp/x -type f 2>/dev/null | wc -l",
+            "fd -t f . /tmp/x 2>/dev/null | wc -l",
+            "du -a /tmp/x 2>/dev/null | wc -l",
+            "stat -f %z /tmp/x/a 2>/dev/null | wc -l",
+            "ls /tmp/a 2>/dev/null | wc -l; echo \"n=$(find '/tmp/b c' 2>/dev/null | wc -l)\"",
+        ]) {
+            expect(tags(command)).toEqual([`${SCRATCH}:context`]);
+        }
+    });
+
+    it("the corrected command drops the redirect, and the note says why", () => {
+        const command = "ls /tmp/cc/x/out 2>/dev/null | wc -l";
+
+        expect(expectSuggestionClean(command, SCRATCH)).toBe("ls /tmp/cc/x/out | wc -l");
+        expect(renderViolation(violation(command, SCRATCH) as ShellViolation)).toContain(
+            "missing path is the honest 0"
+        );
+    });
+
+    it("the block stays for a variable, a glob, a relative path, a path outside /tmp or another producer", () => {
+        for (const command of [
+            "ls $S/out 2>/dev/null | wc -l",
+            "ls /tmp/x/*.log 2>/dev/null | wc -l",
+            "ls /tmp/../Users/x 2>/dev/null | wc -l",
+            "ls ~/x 2>/dev/null | wc -l",
+            "ls /tmp/a 2>/dev/null | wc -l; ls ~/b 2>/dev/null | wc -l",
+            "rg -l x /tmp/x 2>/dev/null | wc -l",
+            "cat /tmp/x 2>/dev/null | wc -l",
+            "fd foo 2>/dev/null | wc -l",
+        ]) {
+            expect(tags(command)).toEqual([`${COUNT}:block`]);
+        }
+
+        expect(tagsIn("/tmp/x", "ls out 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+    });
+
+    it("an unknown ls, du or stat flag also prints 0, so the block stays", () => {
+        expect(tags("ls --colr /tmp/cc/x 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tags("du -d x /tmp/cc/x 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
+        expect(tags("ls -la /tmp/cc/x 2>/dev/null | wc -l")).toEqual([`${SCRATCH}:context`]);
+    });
+
+    it("a sibling that covers the path still wins, and the block never fires with it", () => {
+        expect(tags("ls /tmp/a/ | head; ls /tmp/a 2>/dev/null | wc -l")).toEqual([`${COVERED}:context`]);
+
+        for (const command of [
+            "ls /tmp/a 2>/dev/null | wc -l",
+            "ls /tmp/a 2>/dev/null | wc -l; ls ~/b 2>/dev/null | wc -l",
+        ]) {
+            const ids = detectShellViolations(command).map((v) => v.ruleId);
+            expect(ids.includes(COUNT) && ids.includes(SCRATCH)).toBe(false);
+        }
+    });
+});
+
+describe("dd-skip-silent-short-read: dd skip= with status=none, then a count", () => {
+    it("context for skip= or iseek= with status=none", () => {
+        expect(tags("dd if=f.log bs=1048576 skip=2700 count=1 status=none | LC_ALL=C tr -d '\\000' | wc -c")).toEqual([
+            `${DD}:context`,
+        ]);
+        expect(tags("dd if=f.log bs=1m iseek=5 count=1 status=none | wc -c")).toEqual([`${DD}:context`]);
+        expect(
+            tags(
+                "for off in 2560 2700; do dd if=\"$F\" bs=1048576 skip=$off count=1 status=none | LC_ALL=C tr -d '\\000' | wc -c; done"
+            )
+        ).toEqual([`${DD}:context`]);
+    });
+
+    it("next to the counted block when stderr is discarded too", () => {
+        expect(tags("dd if=f bs=1 skip=5 status=none 2>/dev/null | wc -c")).toEqual([
+            `${COUNT}:block`,
+            `${DD}:context`,
+        ]);
+    });
+
+    it("does not fire without status=none, without an offset or without a counter", () => {
+        expect(tags("dd if=f.log bs=1m skip=5 count=1 | wc -c")).toEqual([]);
+        expect(tags("dd if=f.log bs=1m skip=5 count=1 status=noxfer | wc -c")).toEqual([]);
+        expect(tags("dd if=f.log bs=1m count=1 status=none | wc -c")).toEqual([]);
+        expect(tags("dd if=f.log bs=1m skip=5 count=1 status=none | xxd | head")).toEqual([]);
+        expect(tags("dd if=f.log bs=1m skip=5 count=1 status=none > out.bin")).toEqual([]);
+    });
+
+    it("the note names the hidden records line", () => {
+        const text = renderViolation(
+            violation("dd if=f.log bs=1m skip=5 count=1 status=none | wc -c", DD) as ShellViolation
+        );
+
+        expect(text).toContain("[context]");
+        expect(text).toContain("0+0 records in");
+        expect(text).toContain("compare skip x bs with the file size first");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // stderr-discarded-then-read: `2>/dev/null` then a reader
 // ---------------------------------------------------------------------------
 
@@ -732,6 +942,294 @@ describe("stderr-discarded-then-read: does not fire", () => {
 
     it("when a counter sits downstream: that pipeline belongs to the counted rule", () => {
         expect(tags("cmd 2>/dev/null | head -100 | wc -l")).toEqual([`${COUNT}:block`]);
+    });
+});
+
+describe("stderr-discarded-then-read: an operand the call already established", () => {
+    it("made by mkdir, used by a sibling with stderr visible, or gated by a test", () => {
+        for (const command of [
+            "mkdir -p /tmp/x/out; ls -R /tmp/x/out 2>/dev/null | head",
+            'ls docs | head -40; rg -l -i "agentSessions|welcome" docs apps/web/src --glob \'!*.test.*\' 2>/dev/null | head -15; rg -n "x" apps/web/src | head -5',
+            'C=$(readlink -f "$(command -v claude)"); ls -la "$C" | head -2; strings -n 8 "$C" 2>/dev/null | rg -n -o entry | head -8',
+            'nm -gU *.dylib 2>/dev/null | rg "impersonate"; codesign -dv *.dylib 2>&1 | tail -2',
+            'grep -rniE "postMessage|iframe|widget" --include=*.ts -l apps libs 2>/dev/null | grep -v spec | head -50; grep -rn "x" --include=*.ts -l apps libs | head',
+            "ls docs/ 2>&1 | head; rg -l foo docs 2>/dev/null | head",
+            "ls ~/Downloads | head; ls ~/Downloads 2>/dev/null | head",
+            "ls docs 2>&1 | head; ls -R docs 2>/dev/null | head",
+        ]) {
+            expect(tags(command)).toEqual([]);
+        }
+
+        for (const command of [
+            "[ -d out ] && ls -R out 2>/dev/null | head",
+            "if [ -d out ]; then ls -R out 2>/dev/null | head; fi",
+            "for w in a b; do [ -d $w ] || continue; du -sh $w 2>/dev/null | cut -f1; done",
+        ]) {
+            expect(tagsIn("/Users/alice/app", command)).toEqual([]);
+        }
+    });
+
+    it("a test, cd, stat or mkdir does not show a refused listing, so for a listing it counts only in a known folder", () => {
+        for (const command of [
+            "[ -d ~/Downloads ] && ls ~/Downloads 2>/dev/null | head",
+            "cd ~/Downloads; ls ~/Downloads 2>/dev/null | head",
+            "stat ~/Downloads; ls ~/Downloads 2>/dev/null | head",
+            "mkdir -p ~/Downloads; ls ~/Downloads 2>/dev/null | head",
+            "[ -d ~/Library/Mail ] && du -sh ~/Library/Mail 2>/dev/null | cut -f1",
+        ]) {
+            expect(tagsIn("/Users/alice/app", command)).toEqual([`${READ}:context`]);
+        }
+
+        // Case 34's shape: the gated folder is a variable, so where it points is unknown.
+        expect(
+            tags(
+                'for w in a b; do p=/tmp/w/$w; [ -d "$p" ] || continue; echo "size=$(du -sh "$p" 2>/dev/null | cut -f1)"; done'
+            )
+        ).toEqual([`${READ}:context`]);
+        expect(tags("[ -d out ] && ls -R out 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tags("mkdir -p $S/out; ls -R $S/out 2>/dev/null | head")).toEqual([`${READ}:context`]);
+    });
+
+    it("a sibling whose stderr goes into a filter or a capture shows nothing", () => {
+        for (const command of [
+            "ls docs 2>&1 | grep -q x; ls docs 2>/dev/null | head",
+            "x=$(ls docs 2>&1); ls docs 2>/dev/null | head",
+            "ls docs 2>&1 | wc -l; ls -R docs 2>/dev/null | head",
+        ]) {
+            expect(tagsIn("/Users/alice/app", command)).toContain(`${READ}:context`);
+        }
+    });
+
+    it("`.` counts only in a known folder outside the protected roots", () => {
+        expect(
+            tags("cd /tmp/w && rg -rn 'features.test' --glob '!node_modules' . 2>/dev/null | head -5")
+        ).not.toContain(`${READ}:context`);
+        expect(tags("cd /tmp/w && rg -n 'features.test' --glob '!node_modules' . 2>/dev/null | head -5")).toEqual([]);
+        expect(tagsIn("/Users/alice/app", "ls -la . 2>/dev/null | head")).toEqual([]);
+        expect(tags("ls -la . 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tags("cd /System/Library/AssetsV2/persisted; rg -l -a 'UAF' . 2>/dev/null | head -5")).toEqual([
+            `${READ}:context`,
+        ]);
+    });
+
+    it("the note stays when the pattern can fail, a flag is unknown, or an operand is not established", () => {
+        for (const command of [
+            "ls -R /tmp/x/out 2>/dev/null | head",
+            "ls docs; rg 'foo(' docs 2>/dev/null | head",
+            "rg -n foo src/a.ts 2>/dev/null | head; rg -n foo src | head",
+            "tools x list --json 2>/dev/null | rg y",
+            "ls docs | head; rg --hiden foo docs 2>/dev/null | head",
+            "ls docs | head; rg -t rust foo docs 2>/dev/null | head",
+            "ls docs | head; rg -e foo docs 2>/dev/null | head",
+            "ls docs 2>/dev/null; rg -l foo docs 2>/dev/null | head",
+            "out=$(ls docs 2>/dev/null); rg -l foo docs 2>/dev/null | head",
+            "echo docs; rg -l foo docs 2>/dev/null | head",
+            "[ -d out ] || echo none; ls -R out 2>/dev/null | head",
+            "[ ! -d out ] || continue; ls -R out 2>/dev/null | head",
+            "ls -R out 2>/dev/null | head; [ -d out ] && echo y",
+            "[ -d out ] && echo y; ls -R out 2>/dev/null | head",
+            "git log a 2>/dev/null | head; git show a",
+            "fd foo | xargs ls docs; ls -R docs 2>/dev/null | head",
+        ]) {
+            expect(tags(command)).toEqual([`${READ}:context`]);
+        }
+    });
+});
+
+describe("stderr-discarded-then-read: ls -d or several operands, in a known folder", () => {
+    it("the listing already tells missing from present", () => {
+        expect(tags("cd /Users/alice/Projects/app/src && ls -d */mcp* */*mcp* 2>/dev/null | head -50")).toEqual([]);
+        expect(
+            tags(
+                "cd /Users/alice/app/src && for d in telegram voice-memos; do ls $d/commands $d/lib 2>/dev/null | tr '\\n' ' '; done"
+            )
+        ).toEqual([]);
+        expect(tagsIn("/Users/alice/app", "ls -d a b 2>/dev/null | head")).toEqual([]);
+        expect(tagsIn("/Users/alice/app", "ls -1 a b 2>/dev/null | head")).toEqual([]);
+    });
+
+    it("the note stays for a protected or unknown folder, an operand that leaves it, or a single folder", () => {
+        const home = homedir();
+
+        expect(tags("cd ~/Library/Containers/x && ls -d *.har 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tags("ls -d a b 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tags("cd $X && ls -d a b 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tags("cd ~ && ls -d .* 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tagsIn("/Users/alice/app", "ls ../docs 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tagsIn("/Users/alice/app", "ls -d ~/Documents/a ~/b 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tagsIn("/Users/alice/app", "ls -d ../../../../Library/x a 2>/dev/null | head")).toEqual([
+            `${READ}:context`,
+        ]);
+        expect(tagsIn(`${home}/x`, "ls -d ../* 2>/dev/null | head")).toEqual([`${READ}:context`]);
+        expect(tagsIn("/Users/alice/app", "for d in a /System; do ls $d/x $d/y 2>/dev/null | head; done")).toEqual([
+            `${READ}:context`,
+        ]);
+        expect(tagsIn("/Users/alice/app", "x=$(cd ~/Library && ls -d a b 2>/dev/null | head)")).toEqual([
+            `${READ}:context`,
+        ]);
+        expect(tagsIn("/Users/alice/app", "cd ~/Library; y=$(ls -d a b 2>/dev/null | head)")).toEqual([
+            `${READ}:context`,
+        ]);
+    });
+
+    it("a loop variable counts only inside its loop, and only until it is assigned", () => {
+        expect(tagsIn("/Users/alice/app", "for d in a b; do ls $d/x $d/y 2>/dev/null | head; done")).toEqual([]);
+        expect(
+            tagsIn("/Users/alice/app", "for d in a b; do for e in c; do :; done; ls $d/x $d/y 2>/dev/null | head; done")
+        ).toEqual([]);
+
+        for (const command of [
+            "for d in a b; do :; done; d=~/Library/Mail; ls $d/x $d/y 2>/dev/null | head",
+            "for d in a b; do d=~/Library; ls $d/x $d/y 2>/dev/null | head; done",
+        ]) {
+            expect(tagsIn("/Users/alice/app", command)).toEqual([`${READ}:context`]);
+        }
+    });
+});
+
+describe("stderr-discarded-then-read: the folder the command runs in", () => {
+    it("a cd in a ( … ) that closed before the hit changes nothing", () => {
+        expect(
+            tags("cd /System/Library/AssetsV2/persisted; (cd /tmp && ls); rg -l -a 'UAF' . 2>/dev/null | head -5")
+        ).toEqual([`${READ}:context`]);
+        expect(
+            tagsIn(homedir(), "(cd /Users/alice/app && git status --short); rg -n foo . 2>/dev/null | head")
+        ).toEqual([`${READ}:context`]);
+        expect(tagsIn("/Users/alice/app", "(cd ~/Library/Mail && ls); rg -n foo . 2>/dev/null | head")).toEqual([]);
+        expect(tagsIn("/System/x", "(cd /Users/alice/app && rg -n foo . 2>/dev/null | head)")).toEqual([]);
+        expect(tagsIn("/System/x", "{ cd /Users/alice/app; }; rg -n foo . 2>/dev/null | head")).toEqual([]);
+    });
+
+    it("pushd, popd, and a cd that may not run make the folder unknown", () => {
+        for (const command of [
+            "pushd /tmp/w >/dev/null; rg -n foo . 2>/dev/null | head",
+            "popd; rg -n foo . 2>/dev/null | head",
+            'if [ -n "$X" ]; then cd /tmp/w; fi; rg -n foo . 2>/dev/null | head',
+            "[ -d /tmp/w ] && cd /tmp/w; rg -n foo . 2>/dev/null | head",
+            "f() { cd /tmp/w; }; f; rg -n foo . 2>/dev/null | head",
+            "echo | cd /tmp/w; rg -n foo . 2>/dev/null | head",
+        ]) {
+            expect(tagsIn("/System/x", command)).toEqual([`${READ}:context`]);
+        }
+
+        expect(tagsIn("/System/x", "cd /tmp/w || exit 1; rg -n foo . 2>/dev/null | head")).toEqual([]);
+        expect(tagsIn("/System/x", "cd /tmp/w && rg -n foo . 2>/dev/null | head")).toEqual([]);
+    });
+
+    it("a pipeline of groups before the hit does not switch the rule off", () => {
+        for (const command of [
+            "(cd src && git ls-files) | (cd /tmp/x && cat); ls ~/Downloads 2>/dev/null | head",
+            "{ echo a; } | { cat; }; ls ~/Downloads 2>/dev/null | head",
+        ]) {
+            expect(tags(command)).toEqual([`${READ}:context`]);
+            expect(tagsIn("/Users/alice/app", command)).toEqual([`${READ}:context`]);
+        }
+    });
+});
+
+describe("stderr-discarded-then-read: a search over the folder with a fixed pattern", () => {
+    it("rg over . or no path, grep -r over ., or over a lister's output", () => {
+        expect(tags('cd /Users/alice/Projects/app && rg -n "enum Foo" . 2>/dev/null | head -20')).toEqual([]);
+        expect(
+            tags(
+                'cd /Users/alice/app && grep -rl "McpServer\\|@modelcontextprotocol" --include=*.ts -l . 2>/dev/null | grep -v node_modules | head -40'
+            )
+        ).toEqual([]);
+        expect(
+            tags(
+                'cd /Users/alice/app && rg -n "onNewIntent|session_secret" $(rg -l "class AuthActivity" . 2>/dev/null) 2>/dev/null | head -12'
+            )
+        ).toEqual([]);
+        expect(tagsIn("/Users/alice/app", "rg -n Foo 2>/dev/null | head")).toEqual([]);
+        expect(tagsIn("/Users/alice/app", "timeout 60 rg -l -F 'a(b' . 2>/dev/null | head")).toEqual([]);
+    });
+
+    it("the note stays for a protected folder, a pattern that can fail, a type flag or a named root", () => {
+        for (const command of [
+            "cd /System/Library/AssetsV2/persisted; timeout 60 rg -l -a 'UAF' . 2>/dev/null | head -5",
+            'cd /Users/alice/app && rg -n "enum (Foo|Bar)" . 2>/dev/null | head',
+            "cd /Users/alice/app && rg -n 'a\\y' . 2>/dev/null | head",
+            "cd /Users/alice/app && rg -n foo -t rust . 2>/dev/null | head",
+            "cd /Users/alice/app && rg -n foo src 2>/dev/null | head",
+            "cd /Users/alice/app && grep -l foo . 2>/dev/null | head",
+            "cd /Users/alice/app && grep -rl foo 2>/dev/null | head",
+            "cd /Users/alice/app && rg -n foo $(git ls-files) 2>/dev/null | head",
+            "rg -n foo . 2>/dev/null | head",
+        ]) {
+            expect(tags(command)).toEqual([`${READ}:context`]);
+        }
+    });
+
+    it("a flag value that can be invalid keeps the note", () => {
+        for (const command of [
+            "rg -n foo -g '*.{ts' . 2>/dev/null | head",
+            "rg -n foo --glob='[a' . 2>/dev/null | head",
+            "rg -n foo --sort bogus . 2>/dev/null | head",
+            "rg -n -A x foo . 2>/dev/null | head",
+            "rg -n -m1x foo . 2>/dev/null | head",
+            "rg -n --encoding utf8 foo . 2>/dev/null | head",
+            "grep -rn -m x foo . 2>/dev/null | head",
+            "grep -rn -d bogus foo . 2>/dev/null | head",
+        ]) {
+            expect(tagsIn("/Users/alice/app", command)).toEqual([`${READ}:context`]);
+        }
+    });
+
+    it("a number, a plain glob or a known choice clears", () => {
+        for (const command of [
+            "rg -n -A 3 -m5 -g '!*.test.*' --glob=*.ts --sort path foo . 2>/dev/null | head",
+            "grep -rn -m 5 --include=*.ts --exclude-dir=node_modules foo . 2>/dev/null | head",
+        ]) {
+            expect(tagsIn("/Users/alice/app", command)).toEqual([]);
+        }
+    });
+});
+
+describe("stderr-discarded-then-read: a strict JSON parser downstream shows the failure", () => {
+    it("bun -e, node -e, deno eval or python3 -c that parses all of stdin", () => {
+        for (const command of [
+            "tools x list --json 2>/dev/null | bun -e 'const a=JSON.parse(await Bun.stdin.text()); console.log(a.length)' | head -20",
+            "tools x list --json 2>/dev/null | bun -e 'const a=JSON.parse(await Bun.stdin.text()); console.log(a)' 2>&1 | head -20",
+            'tools x 2>/dev/null | node -e \'const a=JSON.parse(require("fs").readFileSync(0, "utf8")); console.log(a)\' | head',
+            "tools x 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' | head",
+        ]) {
+            expect(tags(command)).toEqual([]);
+        }
+    });
+
+    it("the note stays for jq, for a parser that hides its own stderr, and for code that parses nothing", () => {
+        for (const command of [
+            "tools x list --json 2>/dev/null | jq '.[]' | head",
+            "tools x list --json 2>/dev/null | bun -e 'JSON.parse(await Bun.stdin.text())' 2>/dev/null | head",
+            "cmd 2>/dev/null | bun -e 'console.log(await Bun.stdin.text())' | head",
+        ]) {
+            expect(tags(command)).toEqual([`${READ}:context`]);
+        }
+    });
+
+    it("the note stays for a parse that can be caught, has a fallback, or does not read stdin", () => {
+        for (const command of [
+            "tools x 2>/dev/null | bun -e 'let a=[]; try { a=JSON.parse(await Bun.stdin.text()) } catch {} console.log(a.length)' | head",
+            "tools x 2>/dev/null | bun -e 'const a=JSON.parse(await Bun.stdin.text() || \"[]\"); console.log(a)' | head",
+            "tools x 2>/dev/null | bun -e 'const c=JSON.parse(process.env.CFG||\"{}\"); process.stdout.write(await Bun.stdin.text())' | head",
+            "tools x 2>/dev/null | python3 -c 'import json,sys\nfor l in sys.stdin:\n  try: print(json.loads(l))\n  except Exception: pass' | head",
+        ]) {
+            expect(tags(command)).toEqual([`${READ}:context`]);
+        }
+    });
+
+    it("the parse error must reach the terminal", () => {
+        expect(
+            tags(
+                "tools x 2>/dev/null | bun -e 'console.log(JSON.parse(await Bun.stdin.text()).length)' 2>&1 | grep -E '^[0-9]+$' | head"
+            )
+        ).toEqual([`${READ}:context`]);
+        expect(
+            tags("tools x 2>/dev/null | bun -e 'console.log(JSON.parse(await Bun.stdin.text()).length)' 2>&1 | head")
+        ).toEqual([]);
+        expect(
+            tags("tools x 2>/dev/null | bun -e 'console.log(JSON.parse(await Bun.stdin.text()).length)' |& head")
+        ).toEqual([]);
     });
 });
 

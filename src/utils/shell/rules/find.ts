@@ -15,6 +15,7 @@ import {
     type Span,
     splitPipeline,
     tokenize,
+    wordsFrom,
 } from "../scan";
 import { RG_LONG_VALUE_FLAGS } from "./rg";
 import type { ShellMatch, ShellRule } from "./types";
@@ -64,85 +65,13 @@ const FD_DEPTH_FLAGS = new Set(["--max-depth", "--maxdepth", "--exact-depth"]);
 const FD_SHORT_VALUE_LETTERS = "cCdEejoStxX";
 
 /**
- * The words of the simple command from `start` on, as the shell splits them: quotes and backslashes
- * removed, a glued redirection split off, cut at an unquoted `;`, `|`, `&`, `(`, `)`, newline or comment,
- * and at the end of the `-c` or backtick body that holds `start`. A scanned token blanks a quoted
- * value, and the raw text runs into a glued operator (`-maxdepth 1)`) or the quote that closes a body
- * (`-c '… -d 1'`). `$` and backticks stay in the word, so a caller can tell a value only the shell knows.
- */
-export function wordsFrom(
-    scan: Pick<ShellScan, "command" | "executableRanges">,
-    start: number,
-    max = Number.POSITIVE_INFINITY
-): string[] {
-    const { command } = scan;
-    const body = scan.executableRanges
-        .filter((range) => start >= range.start && start <= range.end)
-        .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-    const end = body?.end ?? command.length;
-    const words: string[] = [];
-    let word: string | null = null;
-    let i = start;
-
-    while (i < end && words.length < max) {
-        const ch = command[i];
-
-        if (ch === "\\") {
-            word = (word ?? "") + (command[i + 1] === "\n" ? "" : (command[i + 1] ?? ""));
-            i += 2;
-        } else if (ch === "'" || ch === '"') {
-            let close = i + 1;
-
-            while (close < end && command[close] !== ch) {
-                close += ch === '"' && command[close] === "\\" ? 2 : 1;
-            }
-
-            word = (word ?? "") + command.slice(i + 1, Math.min(close, end));
-            i = close + 1;
-        } else if (ch === " " || ch === "\t") {
-            if (word !== null) {
-                words.push(word);
-                word = null;
-            }
-
-            i++;
-        } else if (
-            "\n;|)".includes(ch) ||
-            (ch === "(" && !/[$<>]$/.test(word ?? "")) ||
-            (ch === "#" && word === null) ||
-            (ch === "&" && !/[<>]$/.test(word ?? "") && command[i + 1] !== ">")
-        ) {
-            break;
-        } else if (
-            (ch === "<" || ch === ">") &&
-            word !== null &&
-            !/^(?:\d+|&)$|[<>&]$/.test(word) &&
-            command[i + 1] !== "("
-        ) {
-            // `--only=x>log` is the word `--only=x` and a redirection; `2>&1` is one redirection.
-            words.push(word);
-            word = null;
-        } else {
-            word = (word ?? "") + ch;
-            i++;
-        }
-    }
-
-    if (word !== null && words.length < max) {
-        words.push(word);
-    }
-
-    return words;
-}
-
-/**
  * Whether every depth limit is a literal 0 or 1 and nothing acts per entry: one readdir, not a walk.
  * find reads `-maxdepth N`; fd reads `-d N`, `-dN` (also inside a cluster such as `-Hd1`),
  * `--max-depth`, `--maxdepth` and `--exact-depth`. BSD `-depth N` is a filter, not a limit:
  * `find ~ -depth 3` still visits every level.
  */
 function readsOneLevel(scan: ShellScan, word: "find" | "fd", start: number): boolean {
-    const argv = wordsFrom(scan, start);
+    const argv = wordsFrom(scan, start).words;
     const limits: string[] = [];
 
     for (let i = 0; i < argv.length; i++) {
@@ -199,11 +128,23 @@ function readsOneLevel(scan: ShellScan, word: "find" | "fd", start: number): boo
 
 // The value after -name / -iname, read from the original command because a
 // quoted pattern (`-iname 'report.har'`) is blank in the cleaned text.
-function firstNameArgument(command: string, tokens: Span[]): string | null {
+function firstNameArgument(scan: ShellScan, tokens: Span[]): string | null {
     for (const token of tokens) {
-        if (token.text === "-name" || token.text === "-iname") {
-            return nextRawArgument(command, token.start + token.text.length);
+        if (token.text !== "-name" && token.text !== "-iname") {
+            continue;
         }
+
+        const after = token.start + token.text.length;
+
+        if (!scan.executableRanges.some((range) => range.start <= token.start && after <= range.end)) {
+            return nextRawArgument(scan.command, after);
+        }
+
+        // Inside a `-c` body the typed text carries the body's escapes (`\"*.ts\""`), and mdfind runs in
+        // the outer shell, so the value is read as the inner shell sees it and quoted again. A value with `$`
+        // or a backtick gives no suggestion: which shell expands it depends on the body's quotes.
+        const value = wordsFrom(scan, after, 1).words[0];
+        return value !== undefined && !/[$`]/.test(value) ? `'${value.replaceAll("'", "'\\''")}'` : null;
     }
 
     return null;
@@ -315,7 +256,7 @@ export const findFromRoot: ShellRule = {
                     }
 
                     const matched = originalSlice(scan, tokens[cmd].start, element.start + element.text.length);
-                    const name = word === "find" ? firstNameArgument(scan.command, tokens.slice(cmd + 1)) : null;
+                    const name = word === "find" ? firstNameArgument(scan, tokens.slice(cmd + 1)) : null;
                     const suggestion = name ? `mdfind -name ${name}` : undefined;
 
                     return { matched, index: tokens[cmd].start, ...(suggestion ? { suggestion } : {}) };

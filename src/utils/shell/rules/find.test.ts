@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { scanShell } from "../scan";
-import { findRules, wordsFrom } from "./find";
+import { findRules } from "./find";
 import { detectShellViolations, type ShellViolation } from "./index";
 
 function only(command: string): ShellViolation | undefined {
@@ -123,6 +122,12 @@ describe("find-from-root: does not fire", () => {
         expect(only("find ~ -name x")?.suggestion).toBe("mdfind -name x");
     });
 
+    it("inside a zsh -c body the -name value loses the body's escapes, and a value the inner shell expands gives none", () => {
+        expect(only('zsh -c "find ~ -name \\"*.ts\\""')?.suggestion).toBe("mdfind -name '*.ts'");
+        expect(only("bash -c 'find / -iname \"a b.txt\"'")?.suggestion).toBe("mdfind -name 'a b.txt'");
+        expect(only('zsh -c "find ~ -name \\"$P\\""')?.suggestion).toBeUndefined();
+    });
+
     it("find with an expression and no path is the cwd", () => {
         expect(fires("find -name x")).toBe(false);
     });
@@ -239,30 +244,6 @@ describe("find-from-root: the limit as the shell passes it", () => {
         "find ~ -maxdepth 1 '-exec' du {} +",
     ])("still fires on %j: x inside a cluster runs per entry, and the last depth flag wins", (command) => {
         expect(fires(command)).toBe(true);
-    });
-});
-
-describe("wordsFrom", () => {
-    const words = (command: string, after: string, max?: number) => {
-        const scan = scanShell(command);
-        return wordsFrom(scan, command.indexOf(after) + after.length, max);
-    };
-
-    it("cuts at an unquoted operator and at the end of the body that holds the start", () => {
-        expect(words("find ~ -maxdepth 1;echo", "-maxdepth")).toEqual(["1"]);
-        expect(words("(find ~ -maxdepth 1) && ls", "-maxdepth")).toEqual(["1"]);
-        expect(words("bash -c 'tools rm approve --help' && ls x", "approve")).toEqual(["--help"]);
-        expect(words('zsh -c "biome --only \\"$R\\""', "--only")).toEqual(['"$R"']);
-        expect(words("x --only a|tail", "--only")).toEqual(["a"]);
-        expect(words("x --only a # note", "--only")).toEqual(["a"]);
-    });
-
-    it("removes quotes, keeps $ and backticks, and splits a word from a glued redirection", () => {
-        expect(words("x --only 'a b' \"c\"d e", "--only")).toEqual(["a b", "cd", "e"]);
-        expect(words("x --only $R `r` $(cat f)", "--only")).toEqual(["$R", "`r`", "$(cat", "f"]);
-        expect(words("x approve 2>&1 &>/dev/null >log abc", "approve")).toEqual(["2>&1", "&>/dev/null", ">log", "abc"]);
-        expect(words("x --only=a>/tmp/log b", "x")).toEqual(["--only=a", ">/tmp/log", "b"]);
-        expect(words("x --only a b c", "--only", 1)).toEqual(["a"]);
     });
 });
 

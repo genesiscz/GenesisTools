@@ -23,6 +23,8 @@ function violation(command: string, ruleId: string): ShellViolation | undefined 
 }
 
 const PIPE = "exit-code-after-pipeline";
+const CHECKED = "exit-code-after-pipeline-checked";
+const INDEX = "pipestatus-index-mismatch";
 const GREP = "exit-code-after-grep";
 const ZSH = "pipestatus-under-zsh";
 
@@ -120,6 +122,18 @@ describe("exit-code-after-pipeline: blocks when the last element's status is mea
         const v = violation('cd wt && grep -rn x . | head -30; echo "exit $?"', PIPE);
 
         expect(v?.suggestion).toBe('cd wt && (set -o pipefail; grep -rn x . | head -30); echo "exit $?"');
+    });
+
+    it("keeps then, do and ! in front of the subshell, where the correction still parses", () => {
+        expect(violation("if true; then false | tail -1; echo $?; fi", PIPE)?.suggestion).toBe(
+            "if true; then (set -o pipefail; false | tail -1); echo $?; fi"
+        );
+        expect(violation("for f in a b; do cmd $f | head -3; echo $?; done", PIPE)?.suggestion).toBe(
+            "for f in a b; do (set -o pipefail; cmd $f | head -3); echo $?; done"
+        );
+        expect(violation("! cmd | tail -1; echo $?", PIPE)?.suggestion).toBe(
+            "! (set -o pipefail; cmd | tail -1); echo $?"
+        );
     });
 });
 
@@ -529,6 +543,235 @@ console.log(out);
 '; echo $?`;
 
         expect(tags(command)).toEqual([]);
+    });
+});
+
+describe("exit-code-after-pipeline-checked: a later existence check of the same path turns the block into context", () => {
+    const remove = 'git worktree remove /tmp/wt/pr-1 2>&1 | tail -2; echo "remove exit=$?"';
+
+    it("notes, without blocking, a read that a later git worktree list | rg re-checks", () => {
+        const command = `${remove}; git worktree list | rg pr-1 || echo gone`;
+        const v = violation(command, CHECKED);
+
+        expect(tags(command)).toEqual([`${CHECKED}:context`]);
+        expect(v?.matched).toBe("git worktree remove /tmp/wt/pr-1 2>&1 | tail -2");
+        expect(v?.suggestion).toBe(
+            '(set -o pipefail; git worktree remove /tmp/wt/pr-1 2>&1 | tail -2); echo "remove exit=$?"; git worktree list | rg pr-1 || echo gone'
+        );
+        expect(tags(v?.suggestion as string)).toEqual([]);
+    });
+
+    it("accepts every existence check, with the checked name quoted or not", () => {
+        for (const check of [
+            "git worktree list | grep -c pr-1",
+            "git -C /repo worktree list | rg 'pr-1'",
+            "git worktree list | rg 'wt/pr-1$'",
+            "[ -d /tmp/wt/pr-1 ] && echo still there",
+            "[ -e /tmp/wt/pr-1 ]",
+            "test -f /tmp/wt/pr-1/.git",
+            "ls -d /tmp/wt/pr-1",
+        ]) {
+            expect(tags(`${remove}; ${check}`)).toEqual([`${CHECKED}:context`]);
+        }
+    });
+
+    it("reads a quoted path on the pipeline side, and a command word that changes the path", () => {
+        for (const command of [
+            'git worktree remove "/tmp/wt/pr-1" 2>&1 | tail -2; echo "exit=$?"; git worktree list | rg pr-1',
+            "git worktree remove '/tmp/wt/pr-1' 2>&1 | tail -2; echo \"exit=$?\"; [ -d /tmp/wt/pr-1 ]",
+            "rm -rf /tmp/wt/pr-1 2>&1 | tail -1; echo $?; ls /tmp/wt/pr-1",
+            // A one-letter option after the verb is a flag.
+            "git worktree remove -f /tmp/wt/pr-1 2>&1 | tail -2; echo $?; git worktree list | rg pr-1",
+            "mkdir -p /tmp/x/out 2>&1 | head -1; echo $?; [ -d /tmp/x/out ]",
+        ]) {
+            expect(tags(command)).toEqual([`${CHECKED}:context`]);
+        }
+    });
+
+    it("still blocks when the first element only reads the path, or the check names another path", () => {
+        for (const command of [
+            // Logged: the diff reads the folder, and ls shows the folder, not whether the diff worked.
+            'git diff --stat daab7a248..HEAD -- database/migrations database/schema | cat; echo "rc=$?"; ls database/schema 2>&1 | head',
+            'bun test src/utils/shell 2>&1 | tail -5; echo "exit=$?"; ls src/utils/shell',
+            "git rebase origin/master 2>&1 | tail -3; echo rc=$?; git worktree list | rg master",
+            // A whole name, not a part of one.
+            'git worktree remove /tmp/wt/pr-6 2>&1 | tail -2; echo "exit=$?"; git worktree list | rg pr-629',
+            "git worktree remove /tmp/wt/a 2>&1 | tail -2; echo rc=$?; git worktree list | rg main",
+            // The name sits only in a redirect target of the check.
+            "git worktree remove /tmp/wt/pr-1 2>&1 | tail -2; echo $?; ls /tmp 2>/tmp/pr-1.err",
+            "git worktree remove /tmp/wt/pr-1 2>&1 | tail -2; echo $?; ls /tmp 2> /tmp/wt/pr-1",
+        ]) {
+            expect(violation(command, CHECKED)).toBeUndefined();
+            expect(blocks(command)).toContain(PIPE);
+        }
+    });
+
+    it("the logged shapes: a removal and a lock release, each re-checked by git worktree list", () => {
+        expect(
+            tags(
+                'git -C /tmp/wt/pr-9 status --short | head -3; git worktree remove /tmp/wt/pr-9 2>&1 | tail -2; echo "remove exit=$?"; git worktree list | rg \'pr-9\' || echo "pr-9 worktree gone"'
+            )
+        ).toEqual([`${CHECKED}:context`]);
+        expect(
+            tags(
+                "bun hooks/worktree-lock.ts release /tmp/wt/pr-7 --session 0000-test 2>&1 | tail -3; echo rc=$?; git worktree list | rg -c pr-7; date '+%H:%M'"
+            )
+        ).toEqual([`${CHECKED}:context`]);
+    });
+
+    it("still blocks without a later check, or with a check that comes before the read", () => {
+        expect(tags(remove)).toEqual([`${PIPE}:block`]);
+        expect(tags(`ls /tmp/wt/pr-1; ${remove}`)).toEqual([`${PIPE}:block`]);
+        expect(tags(`${remove}; git worktree list | rg pr-2`)).toEqual([`${PIPE}:block`]);
+        expect(tags(`${remove}; [ -n /tmp/wt/pr-1 ]`)).toEqual([`${PIPE}:block`]);
+        expect(tags(`${remove}; git branch | rg pr-1`)).toEqual([`${PIPE}:block`]);
+    });
+
+    it("still blocks when the path is no positional path argument of the first element", () => {
+        // An env-assignment prefix (the logged crash-fixture shape): ls checks the crash log, not the status.
+        expect(
+            blocks(
+                'S=/tmp/s; GENESIS_TOOLS_HOME=$S/crash-home bun -e "throw new Error(1)" 2>&1 | head -15; echo rc=$?; ls -R $S/crash-home'
+            )
+        ).toContain(PIPE);
+        // A flag value, text inside a -e or -c code string, a redirect target, a word without a slash.
+        for (const command of [
+            "git -C /tmp/wt/pr-1 worktree prune | head -3; echo $?; ls /tmp/wt/pr-1",
+            "bun x.ts remove -e \"rm('/tmp/wt/pr-1')\" | tail -1; echo $?; ls /tmp/wt/pr-1",
+            "sh -c 'rm -rf /tmp/wt/pr-1' | tail -1; echo $?; [ -e /tmp/wt/pr-1 ]",
+            "cmd remove > /tmp/wt/pr-1 | tail -1; echo $?; ls /tmp/wt/pr-1",
+            "tools x release pr-1 2>&1 | tail -2; echo $?; git worktree list | rg pr-1",
+        ]) {
+            expect(violation(command, CHECKED)).toBeUndefined();
+            expect(blocks(command)).toContain(PIPE);
+        }
+    });
+
+    it("a re-checked read does not hide a later unchecked misread, which blocks alone", () => {
+        const command = `${remove}; git worktree list | rg pr-1; bun test 2>&1 | tail -3; echo $?`;
+
+        expect(tags(command)).toEqual([`${PIPE}:block`]);
+        expect(violation(command, PIPE)?.matched).toBe("bun test 2>&1 | tail -3");
+    });
+});
+
+describe("pipestatus-index-mismatch: $pipestatus[N] right after a pipeline points at another element", () => {
+    const biome = "git diff --name-only | rg '\\.ts$' | xargs bunx biome check 2>&1 | tail -3";
+
+    it("notes a label that names another element, and corrects the index to that element", () => {
+        const command = `${biome}; echo biome=$pipestatus[2]`;
+        const v = violation(command, INDEX);
+
+        expect(tags(command)).toEqual([`${INDEX}:context`]);
+        expect(v?.index).toBe(0);
+        expect(v?.matched).toBe(`${biome}; echo biome=$pipestatus[2]`);
+        expect(v?.suggestion).toBe(`${biome}; echo biome=$pipestatus[3]`);
+        expect(tags(v?.suggestion as string)).toEqual([]);
+    });
+
+    it("reads the label inside double quotes, in an assignment, and in the brace spelling", () => {
+        expect(violation('tsgo --noEmit 2>&1 | rg error | head; echo "tsgo=$pipestatus[2]"', INDEX)?.suggestion).toBe(
+            'tsgo --noEmit 2>&1 | rg error | head; echo "tsgo=$pipestatus[1]"'
+        );
+        expect(violation("cmd | xargs biome check | tail; biome=${pipestatus[1]}", INDEX)?.suggestion).toBe(
+            "cmd | xargs biome check | tail; biome=${pipestatus[2]}"
+        );
+        expect(violation('a | b; echo "a=$pipestatus[1] b=$pipestatus[1]"', INDEX)?.suggestion).toBe(
+            'a | b; echo "a=$pipestatus[1] b=$pipestatus[2]"'
+        );
+    });
+
+    it("corrects every wrong read of one statement in one corrected command", () => {
+        const command = 'a | xargs b | tail; echo "a=$pipestatus[2] b=$pipestatus[1]"';
+        const v = violation(command, INDEX);
+
+        expect(v?.matched).toBe('a | xargs b | tail; echo "a=$pipestatus[2] b=$pipestatus[1]');
+        expect(v?.suggestion).toBe('a | xargs b | tail; echo "a=$pipestatus[1] b=$pipestatus[2]"');
+        expect(tags(v?.suggestion as string)).toEqual([]);
+        // One read has no single element to point at, so no corrected command at all.
+        expect(tags('a | xargs b | tail; echo "b=$pipestatus[1] rc=$pipestatus[5]"')).toEqual([`${INDEX}:context`]);
+        expect(violation('a | xargs b | tail; echo "b=$pipestatus[1] rc=$pipestatus[5]"', INDEX)?.suggestion).toBe(
+            undefined
+        );
+    });
+
+    it("sees the command word past a wrapper's quoted option value", () => {
+        for (const command of [
+            "a | env -u 'X' tail -3; echo $pipestatus[2]",
+            "a | xargs -I '{}' tail -1 {}; echo $pipestatus[2]",
+        ]) {
+            expect(tags(command)).toEqual([`${INDEX}:context`]);
+        }
+    });
+
+    it("reads a pipeline inside a subshell or a brace group as nothing it can count", () => {
+        // After a group, $pipestatus holds the group's status, and the group can itself be an element:
+        // `false | (exit 5 | true)` has two.
+        for (const command of [
+            "(rg x src | xargs biome check | tail -3); echo biome=$pipestatus[1]",
+            "{ rg x src | xargs biome check | tail -3; }; echo biome=$pipestatus[1]",
+            "cd wt && (rg x src | xargs biome check | tail -3); echo biome=$pipestatus[1]",
+            "(a | b | c); echo $pipestatus[3]",
+            "false | (exit 5 | true); echo $pipestatus[2]",
+            "zsh -c '(a | b | c); echo $pipestatus[3]'",
+        ]) {
+            expect(violation(command, INDEX)).toBeUndefined();
+        }
+
+        // A subshell that opens before the read inherits the pipeline's statuses.
+        expect(violation("a | xargs biome check | tail; (echo biome=$pipestatus[1])", INDEX)?.suggestion).toBe(
+            "a | xargs biome check | tail; (echo biome=$pipestatus[2])"
+        );
+        // A paren in a quoted or substituted last argument closes no group.
+        expect(tags("a | rg 'x)'; echo $pipestatus[3]")).toEqual([`${INDEX}:context`]);
+        expect(tags("a | rg $(cat p); echo $pipestatus[3]")).toEqual([`${INDEX}:context`]);
+    });
+
+    it("notes an index past the last element or below 1, which expands to nothing", () => {
+        for (const command of [
+            'a | b; echo "rc=$pipestatus[3]"',
+            "a | b; echo ${pipestatus[3]}",
+            "a | b; echo $pipestatus[0]",
+        ]) {
+            expect(tags(command)).toEqual([`${INDEX}:context`]);
+            expect(violation(command, INDEX)?.suggestion).toBeUndefined();
+        }
+    });
+
+    it("notes an index that points at a filter that exits 0", () => {
+        expect(tags("cmd | tail -3; echo $pipestatus[2]")).toEqual([`${INDEX}:context`]);
+        expect(tags("a | sort | rg x; echo rc=$pipestatus[2]")).toEqual([`${INDEX}:context`]);
+    });
+
+    it("stays silent for the right element, a whole-array read, or a label that names no element", () => {
+        for (const command of [
+            "cmd | tail; echo $pipestatus[1]",
+            "cat x.log | rg err; echo $pipestatus[1]",
+            "a | b | c; echo ${pipestatus[*]}",
+            'a | b | c; echo "$pipestatus[@]"',
+            "cmd | tail; echo $pipestatus[-1]",
+            "bun test 2>&1 | tail -5; echo test=$pipestatus[1]",
+            "git log | rg x | head; echo rg=$pipestatus[2]",
+            "rg x a | rg y; echo rg=$pipestatus[2]",
+            "a | rg x | tail; echo rc=$pipestatus[2]",
+            // The label names element N itself, so the filter's status is what was asked for.
+            "cmd | tee out.log | rg x; echo tee=$pipestatus[2]",
+            // Element 1 is the source, and cat or head reading a file fails when it cannot read it.
+            "cat build.log | rg error; echo rc=$pipestatus[1]",
+            // Every status printed together reads nothing under a wrong name.
+            'cmd | tail -3; echo "rc=$pipestatus[1] $pipestatus[2]"',
+            "cmd | tail -3; echo $pipestatus[1] $pipestatus[2]",
+        ]) {
+            expect(tags(command)).toEqual([]);
+        }
+    });
+
+    it("reads only the statement right after the pipeline, and only where zsh runs it", () => {
+        expect(tags("a | b | tail; echo ok; echo $pipestatus[3]")).toEqual([]);
+        expect(tags("bash -c 'a | b; echo $pipestatus[3]'")).toEqual([]);
+        // The outer zsh expands a double-quoted body first, so the read is the outer shell's.
+        expect(tags('zsh -c "a | b; echo $pipestatus[3]"')).toEqual([]);
+        expect(tags("zsh -c 'a | b; echo $pipestatus[3]'")).toEqual([`${INDEX}:context`]);
     });
 });
 
