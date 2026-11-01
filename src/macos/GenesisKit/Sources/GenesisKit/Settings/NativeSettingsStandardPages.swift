@@ -5,7 +5,11 @@ import SwiftUI
 public struct NativeSettingsGeneralPage: View {
     @EnvironmentObject private var appearance: NativeSettingsAppearance
     @Environment(\.accessibilityReduceTransparency) private var systemOpaque
-    public init() {}
+    /// The app's own cards, under the shared ones and above the footnote.
+    private let extra: AnyView?
+    public init(extra: AnyView? = nil) {
+        self.extra = extra
+    }
 
     public var body: some View {
         VStack(spacing: 18) {
@@ -37,6 +41,7 @@ public struct NativeSettingsGeneralPage: View {
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
+            if let extra { extra }
             Text("Changes are shared with other running native feature windows for this app.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
