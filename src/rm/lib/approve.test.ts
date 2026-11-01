@@ -37,8 +37,10 @@ import {
     saveRmConfig,
     stillAside,
 } from "@genesiscz/utils/rm";
+import { type Command, CommanderError } from "commander";
 import { saveApproved } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
+import { createRmProgram } from "../program";
 import {
     type ApprovalRowDeps,
     type ApproveEntry,
@@ -760,5 +762,65 @@ describe("a run that asks", () => {
         } finally {
             process.exitCode = exitCode;
         }
+    });
+});
+
+interface Seen {
+    path: string;
+    opts: Record<string, unknown>;
+}
+
+/** The real tools rm program with every action replaced by one that records which command got which flags. */
+function recordingProgram(seen: Seen[]): Command {
+    const program = createRmProgram();
+    const stub = (command: Command, path: string): void => {
+        command.exitOverride();
+        command.configureOutput({ writeErr: () => {}, writeOut: () => {} });
+
+        if (command.commands.length === 0 || path === "") {
+            command.action(function (this: Command) {
+                seen.push({ path, opts: this.opts() });
+            });
+        }
+
+        for (const sub of command.commands) {
+            stub(sub, path === "" ? sub.name() : `${path} ${sub.name()}`);
+        }
+    };
+    stub(program, "");
+    return program;
+}
+
+async function parsed(argv: string[]): Promise<Seen> {
+    const seen: Seen[] = [];
+    await recordingProgram(seen).parseAsync(argv, { from: "user" });
+    const last = seen.at(-1);
+
+    if (!last) {
+        throw new Error(`no action ran for ${argv.join(" ")}`);
+    }
+
+    return last;
+}
+
+describe("flag ownership", () => {
+    test("a subcommand's own flags reach it, not the root", async () => {
+        expect(await parsed(["preset", "node_modules", "-n", "--keep", "1d"])).toMatchObject({
+            path: "preset",
+            opts: { dryRun: true, keep: 1440, depth: 8 },
+        });
+        expect(await parsed(["requests", "--json"])).toMatchObject({ path: "requests", opts: { json: true } });
+        expect(await parsed(["drain", "--now"])).toMatchObject({ path: "drain", opts: { now: true } });
+        expect(await parsed(["roots", "list", "--json"])).toMatchObject({ path: "roots list", opts: { json: true } });
+    });
+
+    test("the root still takes its flags for tools rm [flags] <paths>", async () => {
+        expect(await parsed(["-n", "a", "b"])).toMatchObject({ path: "", opts: { dryRun: true } });
+    });
+
+    test("a remove flag before a subcommand name is refused, never dropped", async () => {
+        const error = await parsed(["-n", "preset", "node_modules"]).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(CommanderError);
+        expect(error instanceof CommanderError ? error.exitCode : null).toBe(2);
     });
 });
