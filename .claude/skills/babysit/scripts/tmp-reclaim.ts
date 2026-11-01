@@ -66,6 +66,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { nativeSessionRoots, nativeTranscriptMaxDepth } from "@genesiscz/utils/providers/session-paths";
+import { type PendingAside, pendingAsideDirs, pendingAsideFor } from "@genesiscz/utils/rm/pending-aside";
 import { appendEvent } from "./ledger";
 import { flag, has } from "./run";
 
@@ -116,7 +117,8 @@ const SWIFTPM_SCRATCH_MARKERS = ["workspace-state.json", "build.db", "debug.yaml
 const MODULE_CACHE_FILES = [".pcm", ".swiftmodule", ".timestamp", ".modulevalidation", ".lock"];
 const MODULE_CACHE_MARKERS = [".pcm", ".swiftmodule", "modules.timestamp"];
 /** Never walked in an own-session scan: dependency trees, repositories and moved-aside files a user may restore. */
-const OWN_SESSION_SKIP = new Set(["node_modules", ".git", "removals"]);
+/** `rm-aside` holds what `tools rm` set aside for a person: the build output an agent moved there is not its own. */
+const OWN_SESSION_SKIP = new Set(["node_modules", ".git", "removals", "rm-aside"]);
 const OWN_SESSION_MAX_DEPTH = 12;
 const SESSION_UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
@@ -475,7 +477,16 @@ function scan(
     return { newest, bytes };
 }
 
-function judge(path: string, protection: Protection, open: string[]): Candidate | string {
+/**
+ * A candidate, or why `path` is not one. `pending` holds the aside folders of the `tools rm` requests that still wait
+ * for a person: a folder that is one, holds one or sits in one is never listed, since its copy is the only one left.
+ */
+export function judge(
+    path: string,
+    protection: Protection,
+    open: string[],
+    pending: readonly PendingAside[] = pendingAsideDirs()
+): Candidate | string {
     const name = basename(path);
     let st: ReturnType<typeof lstatSync>;
 
@@ -512,6 +523,20 @@ function judge(path: string, protection: Protection, open: string[]): Candidate 
         (run && (run === path || run.startsWith(`${path}/`)))
     ) {
         return "live-session";
+    }
+
+    // b9gbg4 (2026-11-01): a reclaim plan named a session folder that held a pending aside copy, and the copy was
+    // deleted without a person. Only `tools rm` checked that guard before.
+    let real: string;
+
+    try {
+        real = realpathSync(path);
+    } catch {
+        return "gone";
+    }
+
+    if (pendingAsideFor(real, pending) || pendingAsideFor(path, pending)) {
+        return "aside-pending";
     }
 
     if (open.some((o) => o === path || o.startsWith(`${path}/`))) {
@@ -912,11 +937,12 @@ function main(): void {
     if (!has("--apply")) {
         const protection = protectedEntries();
         const open = openPaths();
+        const pending = pendingAsideDirs();
         const candidates: Candidate[] = [];
         const skipped: Record<string, number> = {};
 
         for (const path of entries()) {
-            const verdict = judge(path, protection, open);
+            const verdict = judge(path, protection, open, pending);
 
             if (typeof verdict === "string") {
                 skipped[verdict] = (skipped[verdict] ?? 0) + 1;

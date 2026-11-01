@@ -1,24 +1,16 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { appendRmLedger } from "./ledger";
-import {
-    DESTINATION_TAKEN,
-    ensurePrivateDir,
-    isSameOrInside,
-    realOrSelf,
-    renameNoReplace,
-    sharedTempRoot,
-} from "./paths";
+import { DESTINATION_TAKEN, ensurePrivateDir, renameNoReplace, sharedTempRoot } from "./paths";
+import { asideJournals } from "./pending-aside";
 import {
     createRmRequest,
-    listRmRequests,
     type RmRequest,
     type RmRequestTarget,
-    readRmRequestFile,
     reserveRmRequestId,
     rmRequestsDir,
     saveRmRequest,
@@ -161,9 +153,6 @@ export interface AsideRequestResult {
     aside: AsideResult | null;
 }
 
-/** `<id>.json.moving-<pid>`: a request drafted by a run that moves its paths aside, before it is saved. */
-const JOURNAL_NAME = /^([a-z0-9]{4,12})\.json\.moving-(\d+)$/;
-
 /**
  * Moves `aside` into the session's aside folder and opens one request for those and the `inPlace` paths. The
  * request is drafted first, as a journal this process holds (`<id>.json.moving-<pid>` beside the requests), with
@@ -216,30 +205,6 @@ export function createAsideRequest(input: AsideRequestInput): AsideRequestResult
     }
 
     return { request, aside };
-}
-
-interface AsideJournal {
-    id: string;
-    pid: number;
-    file: string;
-    draft: RmRequest | null;
-}
-
-function asideJournals(dir: string): AsideJournal[] {
-    if (!existsSync(dir)) {
-        return [];
-    }
-
-    return readdirSync(dir).flatMap((name) => {
-        const match = JOURNAL_NAME.exec(name);
-
-        if (!match) {
-            return [];
-        }
-
-        const file = join(dir, name);
-        return [{ id: match[1], pid: Number(match[2]), file, draft: readRmRequestFile(file) }];
-    });
 }
 
 /**
@@ -419,24 +384,4 @@ function isLink(path: string): boolean {
     }
 }
 
-export interface PendingAside {
-    dir: string;
-    requestId: string;
-}
-
-/** Aside folders whose request still waits for the user, or whose run moves (or died moving) paths into them. */
-export function pendingAsideDirs(requestsDir = rmRequestsDir()): PendingAside[] {
-    const requests = listRmRequests({ dir: requestsDir })
-        .filter((request) => request.asideDir)
-        .map((request) => ({ dir: realOrSelf(request.asideDir ?? ""), requestId: request.id }));
-    const journals = asideJournals(requestsDir).flatMap((journal) =>
-        journal.draft?.asideDir ? [{ dir: realOrSelf(journal.draft.asideDir), requestId: journal.id }] : []
-    );
-    return [...requests, ...journals];
-}
-
-/** The pending request whose aside folder `path` is, holds, or sits in; null when none. */
-export function pendingAsideFor(path: string, pending: readonly PendingAside[]): string | null {
-    const hit = pending.find((entry) => isSameOrInside(path, entry.dir) || isSameOrInside(entry.dir, path));
-    return hit?.requestId ?? null;
-}
+export { type PendingAside, pendingAsideDirs, pendingAsideFor } from "./pending-aside";
