@@ -296,7 +296,7 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
         if (!check.ok) {
             removePath(target);
             throw new Error(
-                `the archive did not match ${source} (${check.missing.length} missing, ${check.mismatched.length} different); archive removed, folder kept`
+                `the archive did not match ${source} (${check.missing.length} missing, ${check.mismatched.length} different, ${check.extra.length} extra); archive removed, folder kept`
             );
         }
 
