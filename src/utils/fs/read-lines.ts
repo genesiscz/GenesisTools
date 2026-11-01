@@ -1,5 +1,11 @@
-import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
-import { isZstdPath, readZstdFrames, readZstdFramesSync, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import {
+    isZstdPath,
+    readZstdFrames,
+    readZstdFramesSync,
+    ZSTD_SUFFIX,
+    zstdContentBytes,
+} from "@genesiscz/utils/compress/zstd";
 import {
     cPath,
     errnoError,
@@ -13,6 +19,20 @@ import {
 
 /** How much of the file is held at once. */
 const CHUNK_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The file that holds `path` now: `path` itself while it exists, else `<path>.zst` once a compression pass stored it
+ * (the daily pass keeps only today and yesterday of the day logs plain), else undefined. Every reader below opens
+ * either form, so a caller that was given a plain name resolves it here and reads the result as it is.
+ */
+export function storedFilePath(path: string): string | undefined {
+    if (existsSync(path)) {
+        return path;
+    }
+
+    const compressed = `${path}${ZSTD_SUFFIX}`;
+    return !isZstdPath(path) && existsSync(compressed) ? compressed : undefined;
+}
 
 /** A plain file in chunks of `chunkBytes`; the yielded view is reused by the next read. */
 function* plainChunksSync(path: string, chunkBytes: number): Generator<Buffer> {

@@ -16,6 +16,7 @@ import {
     statSync,
     symlinkSync,
     truncateSync,
+    unlinkSync,
     utimesSync,
     writeFileSync,
     writeSync,
@@ -31,9 +32,16 @@ import {
     readLines,
     readLinesSync,
     readTextChunks,
+    storedFilePath,
 } from "@genesiscz/utils/fs/read-lines";
 import { startDailyCompressionOnce } from "@genesiscz/utils/logger/daily-trigger";
-import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
+import {
+    dayLogName,
+    dayLogPath,
+    dayOfPlainDayLog,
+    listDayLogs,
+    parseDayLogName,
+} from "@genesiscz/utils/logger/day-logs";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { planDailyCompression } from "./daily";
@@ -1540,6 +1548,35 @@ describe("day logs", () => {
         }
 
         expect(chunks.join("")).toBe("c\n");
+    });
+
+    it("finds every kind of day file, failures included, in either form through one table", async () => {
+        const dir = scratch("daykinds");
+        writeFileSync(join(dir, "2026-10-12-failures.jsonl"), '{"v":1}\n');
+        writeFileSync(join(dir, "2026-10-11-failures.jsonl"), '{"v":1}\n');
+        await compressFile({ source: join(dir, "2026-10-11-failures.jsonl") });
+        unlinkSync(join(dir, "2026-10-11-failures.jsonl"));
+        writeFileSync(join(dir, "2026-10-11.log"), "a\n");
+        writeFileSync(join(dir, "2026-10-11-profiling.log.zst"), Bun.zstdCompressSync(Buffer.from("p\n")));
+
+        expect(listDayLogs({ dir, kind: "failures" }).map((file) => [file.day, file.compressed, file.kind])).toEqual([
+            ["2026-10-12", false, "failures"],
+            ["2026-10-11", true, "failures"],
+        ]);
+        expect(listDayLogs({ dir }).map((file) => file.day)).toEqual(["2026-10-11"]);
+        expect(listDayLogs({ dir, kind: "profiling" }).map((file) => file.path)).toEqual(
+            listDayLogs({ dir, profiling: true }).map((file) => file.path)
+        );
+        expect(dayLogPath("2026-10-11", { dir, kind: "failures" })).toBe(join(dir, "2026-10-11-failures.jsonl.zst"));
+        expect(dayLogName("2026-10-11", "failures")).toBe("2026-10-11-failures.jsonl");
+        expect(
+            ["2026-10-11-failures.jsonl", "2026-10-11-profiling.log", "2026-10-11.log", "2026-10-11.log.zst"].map(
+                dayOfPlainDayLog
+            )
+        ).toEqual(["2026-10-11", "2026-10-11", "2026-10-11", undefined]);
+        expect(parseDayLogName("app-perf.log")).toBeUndefined();
+        expect(storedFilePath(join(dir, "2026-10-11-failures.jsonl"))).toBe(join(dir, "2026-10-11-failures.jsonl.zst"));
+        expect(storedFilePath(join(dir, "2026-10-09.log"))).toBeUndefined();
     });
 
     it("the daily pass keeps a week of day logs and two days of transcripts plain, and never starts from a test process", () => {
