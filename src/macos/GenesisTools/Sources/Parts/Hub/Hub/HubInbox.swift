@@ -2508,7 +2508,10 @@ struct InboxDecisionCard: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             Text("Code").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
             ForEach(Array(item.excerptRefs.enumerated()), id: \.offset) { index, ref in
+                // Each excerpt's Open in Cursor link rests and wakes with the card: under the pointer, the key card or
+                // an open note (`live`), the value the card sets on its content.
                 InboxExcerptCard(ref: ref, cwd: session.cwd, field: "ref:\(index)")
+                    .rowLive(live)
             }
         }
     }

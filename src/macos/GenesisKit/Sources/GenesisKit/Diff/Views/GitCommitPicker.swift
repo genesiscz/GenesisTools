@@ -611,7 +611,8 @@ struct GitCommitPickerList: View {
 }
 
 /// One commit: subject and counts on the first line; id, author, age and date on the second. The copy button exists
-/// only on the highlighted row, so a long list carries one button per row, not two.
+/// only on the highlighted row, and the row's own button only while the row is live (highlighted or under the pointer,
+/// `liveRow`): at rest a row is its labels, which VoiceOver still picks.
 struct GitCommitPickerRow: View {
     let choice: GitCommitChoice
     let current: Bool
@@ -621,10 +622,9 @@ struct GitCommitPickerRow: View {
     var body: some View {
         let _ = RenderProbe.hit("git.commitPicker.row")
         HStack(spacing: 2) {
-            Button(action: pick) {
+            GitCommitPickButton(action: pick) {
                 content
             }
-            .buttonStyle(GitChooserRowStyle())
             .accessibilityLabel(Text(verbatim: spoken))
             .accessibilityAddTraits(current ? .isSelected : [])
             // The copy button shows only on the highlighted row; VoiceOver reaches it on every row.
@@ -641,6 +641,7 @@ struct GitCommitPickerRow: View {
         }
         .padding(.trailing, 2)
         .background(GitChooserRowBackground(highlighted: highlighted))
+        .liveRow(selected: highlighted)
     }
 
     private var content: some View {
@@ -728,13 +729,36 @@ struct GitCommitPickerRow: View {
         return (thisYear ? dayFormat : yearFormat).string(from: date)
     }
 
-    private static let dayFormat = format("d MMM, HH:mm")
-    private static let yearFormat = format("d MMM yyyy, HH:mm")
-
-    private static func format(_ pattern: String) -> DateFormatter {
+    private static let dayFormat: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = pattern
+        formatter.dateFormat = "d MMM, HH:mm"
         return formatter
+    }()
+
+    private static let yearFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "d MMM yyyy, HH:mm"
+        return formatter
+    }()
+}
+
+/// A commit row's button (`GitChooserRowStyle`) while its row is live; at rest the bare content, which VoiceOver still
+/// presses. A view of its own because the row's body cannot read `rowLive`, and `LiveButton`'s plain style would add a
+/// hover brightening and a press shrink the chooser rows do not have.
+private struct GitCommitPickButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        if live {
+            Button(action: action, label: label)
+                .buttonStyle(GitChooserRowStyle())
+        } else {
+            label()
+                .restingButton(action: action)
+        }
     }
 }

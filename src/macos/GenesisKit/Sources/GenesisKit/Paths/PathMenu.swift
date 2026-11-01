@@ -330,6 +330,8 @@ public struct PathActionsMenu: View {
     }
 }
 
+/// The content of a context menu or a submenu: AppKit menu items, which exist only while the menu is open. So they
+/// are always live (`rowLive(true)`), even when the menu hangs from a resting row of a dense list.
 struct PathMenuEntriesView: View {
     let entries: [PathMenuEntry]
 
@@ -356,6 +358,7 @@ struct PathMenuEntriesView: View {
                 Divider()
             }
         }
+        .rowLive(true)
     }
 }
 

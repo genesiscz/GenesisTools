@@ -409,6 +409,9 @@ struct MarkdownBlockView: View {
                             .instantTooltip(keys.dropFirst(8).joined(separator: ", "))
                     }
                 }
+                // The tooltip's hover sensor exists only while the pointer is on the line (`liveRow`): a block of a
+                // long document rests like a row of a dense list.
+                .liveRow()
             }
         case .table(let header, let aligns, let rows, _):
             tableView(header: header, aligns: aligns, rows: rows)

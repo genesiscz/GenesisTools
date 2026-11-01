@@ -342,16 +342,12 @@ struct LocalNetworkPromptRow: View {
             }
             label("runs on", build)
             label("pid", "\(prompt.pid)")
-            Button(action: copy) {
-                Label("Copy details", systemImage: "doc.on.doc")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentColor)
-            }
-            .buttonStyle(.plain)
+            LocalNetworkCopyButton(action: copy)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
+        .liveRow()
     }
 
     private func label(_ name: String, _ value: String) -> some View {
@@ -395,10 +391,38 @@ struct LocalNetworkPromptRow: View {
         return formatter
     }()
 
-    private static func parse(_ iso: String) -> Date? {
+    private static let isoFractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+        return formatter
+    }()
+
+    private static let isoWhole = ISO8601DateFormatter()
+
+    private static func parse(_ iso: String) -> Date? {
+        isoFractional.date(from: iso) ?? isoWhole.date(from: iso)
+    }
+}
+
+/// The row's "Copy details": a plain button while its row is live (`liveRow`), the same label at rest, which VoiceOver
+/// still presses (`restingButton`). The host links only GenesisKitBase, which has no `LiveButton`.
+private struct LocalNetworkCopyButton: View {
+    let action: () -> Void
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        if live {
+            Button(action: action) { label }
+                .buttonStyle(.plain)
+        } else {
+            label.restingButton(action: action)
+        }
+    }
+
+    private var label: some View {
+        Label("Copy details", systemImage: "doc.on.doc")
+            .font(.system(size: 11))
+            .foregroundStyle(Color.accentColor)
     }
 }
 

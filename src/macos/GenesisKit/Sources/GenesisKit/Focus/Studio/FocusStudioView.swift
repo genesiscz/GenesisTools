@@ -670,19 +670,8 @@ public struct FocusSessionsView: View {
         ScrollView {
             LazyVStack(spacing: GenSpacing.sm) {
                 ForEach(model.sessionCards) { card in
-                    // A card is a button: clicking it opens the full breakdown of that one
-                    // pomodoro in its own window. The plain-style button keeps the card's own
-                    // background instead of drawing a second one around it.
-                    Button { model.onOpenSession?(card.id) } label: {
-                        FocusSessionCardView(card: card)
-                    }
-                    .buttonStyle(.genHover(cornerRadius: GenRadius.md,
-                                           padding: EdgeInsets(),
-                                           drawsBackground: false,
-                                           scale: 1.008))
-                    .accessibilityIdentifier("focus-session-card-\(card.id)")
-                    .accessibilityHint("Opens the full breakdown of this session")
-                    .instantTooltip("Open the full breakdown of this session")
+                    FocusSessionCardView(card: card, open: { model.onOpenSession?(card.id) })
+                        .equatable()
                 }
             }
             .padding(GenSpacing.md)
@@ -691,8 +680,16 @@ public struct FocusSessionsView: View {
     }
 }
 
-public struct FocusSessionCardView: View {
+/// One pomodoro, from values: the list reads the model, so a publish of it redraws only a card that changed. A card is a
+/// button: clicking it opens the full breakdown of that one pomodoro in its own window. The button and the tooltips
+/// exist while the pointer is on the card (`liveRow`); at rest the same card, which VoiceOver still opens.
+public struct FocusSessionCardView: View, Equatable {
     public let card: FocusStudioModel.SessionCard
+    let open: () -> Void
+
+    public static func == (a: FocusSessionCardView, b: FocusSessionCardView) -> Bool {
+        a.card == b.card
+    }
 
     private var accent: Color {
         switch card.kind {
@@ -703,6 +700,14 @@ public struct FocusSessionCardView: View {
     }
 
     public var body: some View {
+        FocusSessionCardButton(action: open) { content }
+            .accessibilityIdentifier("focus-session-card-\(card.id)")
+            .accessibilityHint("Opens the full breakdown of this session")
+            .instantTooltip("Open the full breakdown of this session")
+            .liveRow()
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: GenSpacing.sm) {
             HStack(spacing: GenSpacing.sm) {
                 Text(FocusFormat.clockTime(card.startedMs))
@@ -782,6 +787,28 @@ public struct FocusSessionCardView: View {
     private var plannedShare: Double {
         guard card.plannedMs > 0 else { return 1 }
         return min(1, Double(card.actualMs) / Double(card.plannedMs))
+    }
+}
+
+/// The card's button while its card is live; the plain-style button keeps the card's own background instead of
+/// drawing a second one around it. At rest the bare card, which VoiceOver still presses. A view of its own because the
+/// card's body cannot read `rowLive`, and `LiveButton`'s plain style would swap the card's small lift for a brightening.
+private struct FocusSessionCardButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        if live {
+            Button(action: action, label: label)
+                .buttonStyle(.genHover(cornerRadius: GenRadius.md,
+                                       padding: EdgeInsets(),
+                                       drawsBackground: false,
+                                       scale: 1.008))
+        } else {
+            label()
+                .restingButton(action: action)
+        }
     }
 }
 

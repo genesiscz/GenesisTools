@@ -355,7 +355,18 @@ struct DaemonSettingsView: View {
             }
             if let status = store.status {
                 ForEach(status.tasks) { task in
-                    DaemonTaskCard(task: task, stats: store.stats(for: task.name), store: store)
+                    let stats = store.stats(for: task.name)
+                    DaemonTaskCard(
+                        task: task,
+                        stats: stats,
+                        running: store.runningNow.contains(task.name),
+                        lastRunInFlight: DaemonTaskCard.lastRunInFlight(task, stats),
+                        saving: store.savingTasks.contains(task.name),
+                        store: store,
+                        runNow: { store.runNow(task) },
+                        setEnabled: { on in store.set(task, ["--enabled", on ? "on" : "off"]) { $0 = $0.with(enabled: on) } }
+                    )
+                    .equatable()
                 }
             } else {
                 NativeSettingsCard {
@@ -403,22 +414,41 @@ struct DaemonSettingsView: View {
     }
 }
 
+/// One task, from values: the page reads the store once and passes what the card shows, so a publish (a run
+/// finishing, another task saving) re-renders only the cards whose values changed. The store goes on to the editor and
+/// the run list, which observe it themselves; the card does not. Its tooltips, the run rows and the output's path
+/// exist only while the pointer is on it (`liveRow`). The Run now button, the Enabled switch and the two disclosure
+/// headers stay platform controls at rest: the kit has no resting form of a bordered button, a switch or a disclosure
+/// header, and a drawn copy would change shape under the pointer. A settings page, one card per configured task.
 @MainActor
-private struct DaemonTaskCard: View {
+private struct DaemonTaskCard: View, Equatable {
     let task: DaemonTaskConfig
     let stats: DaemonTaskStats?
-    @ObservedObject var store: DaemonSettingsStore
+    /// Started from here and not finished yet.
+    let running: Bool
+    /// `DaemonTaskCard.lastRunInFlight(task, stats)` at the page's render.
+    let lastRunInFlight: Bool
+    /// A settings write for this task is in flight.
+    let saving: Bool
+    let store: DaemonSettingsStore
+    let runNow: () -> Void
+    let setEnabled: (Bool) -> Void
     @State private var settingsOpen = false
     @State private var runsOpen = false
+
+    nonisolated static func == (a: DaemonTaskCard, b: DaemonTaskCard) -> Bool {
+        a.task == b.task && a.stats == b.stats && a.running == b.running && a.lastRunInFlight == b.lastRunInFlight
+            && a.saving == b.saving
+    }
 
     var body: some View {
         NativeSettingsCard(task.name, subtitle: task.description) {
             NativeSettingsRow(stateTitle, detail: scheduleLine) {
                 HStack(spacing: 10) {
-                    Button(store.runningNow.contains(task.name) ? "Running…" : "Run now") { store.runNow(task) }
+                    Button(running ? "Running…" : "Run now") { runNow() }
                         .buttonStyle(.bordered)
                         .nativeSettingsPointer()
-                        .disabled(store.runningNow.contains(task.name))
+                        .disabled(running)
                         .instantTooltip("Run this task once now, with its timeout and priority")
                         // The command for a terminal stays one right-click away.
                         .contextMenu {
@@ -427,15 +457,15 @@ private struct DaemonTaskCard: View {
                         .accessibilityIdentifier("daemon.\(task.name).run")
                     Toggle("Enabled", isOn: Binding(
                         get: { task.enabled },
-                        set: { on in store.set(task, ["--enabled", on ? "on" : "off"]) { $0 = $0.with(enabled: on) } }
+                        set: { setEnabled($0) }
                     ))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .nativeSettingsDisabledLook()
-                    .disabled(store.savingTasks.contains(task.name))
+                    .disabled(saving)
                     .accessibilityIdentifier("daemon.\(task.name).enabled")
                 }
             }
-            if store.savingTasks.contains(task.name) {
+            if saving {
                 Text("Saving settings. Switches and pickers are available when this finishes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -450,6 +480,7 @@ private struct DaemonTaskCard: View {
                 DaemonRunList(runs: stats?.recentRuns ?? [], store: store)
             }
         }
+        .liveRow()
     }
 
     private var runsTitle: String {
@@ -457,16 +488,20 @@ private struct DaemonTaskCard: View {
         return count == 0 ? "Recent runs" : "Recent runs (\(count))"
     }
 
+    /// The last run has no exit record yet and is still inside the task's timeout. It reads the clock, so the page works
+    /// it out on each of its renders and passes it (`lastRunInFlight`), as the card's own body did on every publish.
+    static func lastRunInFlight(_ task: DaemonTaskConfig, _ stats: DaemonTaskStats?) -> Bool {
+        guard let last = stats?.lastRun, last.status == "unfinished",
+              let started = SessionFormat.parseISO(last.startedAt)
+        else { return false }
+        return Date().timeIntervalSince(started) * 1000 < Double(task.timeoutMs)
+    }
+
     /// Idle, running now, or the last result.
     private var stateTitle: String {
-        if store.runningNow.contains(task.name) { return "Running now" }
+        if running { return "Running now" }
         guard let last = stats?.lastRun else { return task.enabled ? "No run in the last 24 hours" : "Off" }
-        if last.status == "unfinished",
-            let started = SessionFormat.parseISO(last.startedAt),
-            Date().timeIntervalSince(started) * 1000 < Double(task.timeoutMs)
-        {
-            return "Running now"
-        }
+        if lastRunInFlight { return "Running now" }
         let state = DaemonFormat.status(last.status).label
         return task.enabled ? "Last run \(state)" : "Off · last run \(state)"
     }

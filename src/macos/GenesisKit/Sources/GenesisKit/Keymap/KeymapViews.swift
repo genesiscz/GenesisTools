@@ -64,7 +64,8 @@ public struct KeymapListView: View {
     private let pages: [KeymapPage]
     private let editing: Bool
     @State private var query = ""
-    /// Bumps when any page's keys change, so a conflict line on another page redraws too.
+    /// Bumps when any page's keys change: the list then reads every row's keys and conflicts again (a conflict line can
+    /// belong to another page), and a row redraws only when its own values changed.
     @State private var revision = 0
 
     public init(keymap: Keymap, editing: Bool) {
@@ -88,8 +89,8 @@ public struct KeymapListView: View {
                         Section {
                             ForEach(section.commands) { command in
                                 KeymapCommandRow(command: command, page: section.page, others: section.others,
-                                                 editing: editing, revision: revision)
-                                    .padding(.horizontal, 16).padding(.vertical, 7)
+                                                 editing: editing)
+                                    .equatable()
                             }
                         } header: {
                             Text(section.title.uppercased())
@@ -148,6 +149,7 @@ public struct KeymapListView: View {
 
 /// Redraws the list when one page's keys change, including a conflict line that belongs to another page.
 private struct KeymapPageRefresh: View {
+    // lint-rules-ignore: one per page (1 or 2 rows, fixed while the window is open), observes on purpose: it only bumps the list's revision
     @ObservedObject var keymap: Keymap
     @Binding var revision: Int
 
@@ -166,25 +168,44 @@ private struct KeymapListedSection: Identifiable {
     var title: String { others.isEmpty ? group : "\(page.keymap.library.title) · \(group)" }
 }
 
-/// One row. It observes that page's keymap, so a key change redraws the caps and the conflict line.
-private struct KeymapCommandRow: View {
-    @ObservedObject var keymap: Keymap
+/// One row, from values: the list reads the page's keymap (its `revision` bumps on every key change) and hands the row
+/// its key labels and conflicts, so a key change redraws only the rows whose caps, badge or conflict line changed. Its
+/// buttons exist while the pointer is on it (`liveRow`); at rest the same glyphs, which VoiceOver still presses.
+private struct KeymapCommandRow: View, Equatable {
     private let command: KeymapCommand
-    private let others: [KeymapPage]
     private let editing: Bool
-    private let revision: Int
+    /// The keys in force, as labels ("⇧⌘Ú").
+    private let labels: [String]
+    private let customized: Bool
+    /// The commands that share one of its keys, on its page and where the scopes meet on the others.
+    private let conflictTitles: [String]
+    private let restoreTooltip: String
+    private let record: (KeyChord) -> Void
+    private let clear: () -> Void
+    private let reset: () -> Void
 
-    init(command: KeymapCommand, page: KeymapPage, others: [KeymapPage], editing: Bool, revision: Int) {
-        self.keymap = page.keymap
+    init(command: KeymapCommand, page: KeymapPage, others: [KeymapPage], editing: Bool) {
+        let keymap = page.keymap
+        let chords = keymap.chords(for: command.id)
+        let defaults = command.defaults.map(keymap.label).joined(separator: " or ")
         self.command = command
-        self.others = others
         self.editing = editing
-        self.revision = revision
+        labels = chords.map(keymap.label)
+        customized = keymap.isCustomized(command.id)
+        conflictTitles = Self.conflicts(command, chords: chords, keymap: keymap, others: others).map(\.title)
+        restoreTooltip = defaults.isEmpty ? "Restore: no key" : "Restore \(defaults)"
+        record = { chord in keymap.setChords([chord], for: command.id) }
+        clear = { keymap.setChords([], for: command.id) }
+        reset = { keymap.reset(command.id) }
+    }
+
+    static func == (a: KeymapCommandRow, b: KeymapCommandRow) -> Bool {
+        a.command == b.command && a.editing == b.editing && a.labels == b.labels && a.customized == b.customized
+            && a.conflictTitles == b.conflictTitles && a.restoreTooltip == b.restoreTooltip
     }
 
     var body: some View {
-        let _ = revision
-        row(command)
+        row
     }
 
     static func sections(page: KeymapPage, editing: Bool, query: String) -> [(group: String, commands: [KeymapCommand])] {
@@ -208,15 +229,12 @@ private struct KeymapCommandRow: View {
             || labels.contains { $0.localizedCaseInsensitiveContains(needle) }
     }
 
-    @ViewBuilder
-    private func row(_ command: KeymapCommand) -> some View {
-        let chords = keymap.chords(for: command.id)
-        let shared = conflicts(command, chords: chords)
+    private var row: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(command.title).font(.system(size: 12.5, weight: .medium))
-                    if keymap.isCustomized(command.id) {
+                    if customized {
                         Text("Changed").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(Color.accentColor)
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Color.accentColor.opacity(0.14), in: Capsule())
@@ -226,65 +244,58 @@ private struct KeymapCommandRow: View {
                     Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if !shared.isEmpty {
-                    Label("Also \(shared.map(\.title).joined(separator: ", "))", systemImage: "exclamationmark.triangle.fill")
+                if !conflictTitles.isEmpty {
+                    Label("Also \(conflictTitles.joined(separator: ", "))", systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 11)).foregroundStyle(.orange)
                         .accessibilityIdentifier("keymap-conflict-\(command.id)")
                 }
             }
             Spacer(minLength: 8)
             if editing {
-                editor(command, chords: chords)
+                editor
             } else {
-                keys(command, chords: chords)
+                keys
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("keymap-row-\(command.id)")
+        .padding(.horizontal, 16).padding(.vertical, 7)
+        .liveRow()
     }
 
     @ViewBuilder
-    private func keys(_ command: KeymapCommand, chords: [KeyChord]) -> some View {
-        if chords.isEmpty {
+    private var keys: some View {
+        if labels.isEmpty {
             Text("None").font(.system(size: 11)).foregroundStyle(.secondary)
         } else {
             HStack(spacing: 6) {
-                ForEach(Array(chords.enumerated()), id: \.offset) { index, chord in
+                ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
                     if index > 0 { Text("or").font(.system(size: 10)).foregroundStyle(.secondary) }
-                    KeyCaps(keymap.label(chord), dimmed: !command.configurable)
+                    KeyCaps(label, dimmed: !command.configurable)
                 }
             }
         }
     }
 
-    private func editor(_ command: KeymapCommand, chords: [KeyChord]) -> some View {
+    private var editor: some View {
         HStack(alignment: .top, spacing: 4) {
             KeyChordRecorder(
-                label: chords.isEmpty ? nil : chords.map(keymap.label).joined(separator: " or "),
-                identifier: "keymap-recorder-\(command.id)"
-            ) { chord in
-                keymap.setChords([chord], for: command.id)
+                label: labels.isEmpty ? nil : labels.joined(separator: " or "),
+                identifier: "keymap-recorder-\(command.id)",
+                onRecord: record
+            )
+            if !labels.isEmpty {
+                IconButton(systemName: "xmark", tooltip: "No key for \(command.title)", action: clear)
             }
-            if !chords.isEmpty {
-                IconButton(systemName: "xmark", tooltip: "No key for \(command.title)") {
-                    keymap.setChords([], for: command.id)
-                }
-            }
-            if keymap.isCustomized(command.id) {
-                IconButton(systemName: "arrow.counterclockwise", tooltip: restoreTooltip(command)) {
-                    keymap.reset(command.id)
-                }
+            if customized {
+                IconButton(systemName: "arrow.counterclockwise", tooltip: restoreTooltip, action: reset)
             }
         }
-    }
-
-    private func restoreTooltip(_ command: KeymapCommand) -> String {
-        let defaults = command.defaults.map(keymap.label).joined(separator: " or ")
-        return defaults.isEmpty ? "Restore: no key" : "Restore \(defaults)"
     }
 
     /// This page's other commands, then the same key on the other pages where the scopes meet.
-    private func conflicts(_ command: KeymapCommand, chords: [KeyChord]) -> [KeymapCommand] {
+    private static func conflicts(_ command: KeymapCommand, chords: [KeyChord], keymap: Keymap,
+                                  others: [KeymapPage]) -> [KeymapCommand] {
         chords.flatMap { chord in
             keymap.commands(using: chord, besides: command.id) + others.flatMap { other in
                 other.keymap.commands(meeting: command.scope, using: chord, ids: other.commandIDs)

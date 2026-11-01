@@ -435,7 +435,10 @@ private struct FlowHistoryPane: View {
                             Section {
                                 VStack(spacing: 1) {
                                     ForEach(group.entries) { entry in
-                                        FlowEntryRow(entry: entry, session: session)
+                                        FlowEntryRow(entry: entry,
+                                                     copy: { session.copyEntry(entry) },
+                                                     delete: { session.deleteEntry(entry.id) })
+                                            .equatable()
                                     }
                                 }
                                 .background(Color.settingsCard)
@@ -492,9 +495,12 @@ private struct FlowHistoryPane: View {
     }
 }
 
-private struct FlowEntryRow: View {
+/// One dictation, from values: the pane reads the session, so a publish of it redraws only an entry that changed. Its
+/// buttons exist while the pointer is on it (`liveRow`); at rest the same labels with no responder.
+private struct FlowEntryRow: View, Equatable {
     let entry: FlowEntry
-    @ObservedObject var session: FlowSession
+    let copy: () -> Void
+    let delete: () -> Void
     @State private var hovered = false
     @GenReduceMotion private var reduceMotion
     /// Show what the recogniser actually heard, before dictionary/snippets.
@@ -504,6 +510,10 @@ private struct FlowEntryRow: View {
     /// into something they did not say. The raw transcript is kept forever and
     /// is one click away.
     @State private var showingRaw = false
+
+    static func == (a: FlowEntryRow, b: FlowEntryRow) -> Bool {
+        a.entry == b.entry
+    }
 
     private var wasRewritten: Bool { entry.rawText != entry.text }
 
@@ -530,7 +540,7 @@ private struct FlowEntryRow: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if wasRewritten {
-                    Button {
+                    LiveButton(tooltip: nil, pressable: true) {
                         let raw = !showingRaw
                         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { showingRaw = raw }
                     } label: {
@@ -541,7 +551,6 @@ private struct FlowEntryRow: View {
                                 .font(GenTypography.caption(10))
                         }
                     }
-                    .buttonStyle(.genHoverPlain())
                     .foregroundStyle(Color.jarvisTeal)
                     .accessibilityIdentifier("flow-entry-toggle-raw")
                 }
@@ -563,16 +572,13 @@ private struct FlowEntryRow: View {
             // narrowed the text column, so the transcript rewrapped and the
             // row jumped under the pointer.
             HStack(spacing: GenSpacing.xs) {
-                Button { session.copyEntry(entry) } label: {
+                LiveButton(tooltip: "Copy", action: copy) {
                     Image(systemName: "doc.on.doc")
                 }
-                .instantTooltip("Copy")
-                Button { session.deleteEntry(entry.id) } label: {
+                LiveButton(tooltip: "Delete", action: delete) {
                     Image(systemName: "trash")
                 }
-                .instantTooltip("Delete")
             }
-            .buttonStyle(.genHoverPlain())
             .font(.system(size: 11))
             .foregroundStyle(Color.settingsTextSecondary)
             .opacity(hovered ? 1 : 0)
@@ -586,8 +592,9 @@ private struct FlowEntryRow: View {
         .background(hovered ? Color.settingsCardHover : Color.settingsCard)
         .onHover { hovered = $0 }
         .accessibilityElement(children: .contain)
-        .accessibilityAction(named: "Copy") { session.copyEntry(entry) }
-        .accessibilityAction(named: "Delete") { session.deleteEntry(entry.id) }
+        .accessibilityAction(named: "Copy") { copy() }
+        .accessibilityAction(named: "Delete") { delete() }
+        .liveRow()
     }
 }
 
@@ -625,7 +632,10 @@ private struct FlowInsightsPane: View {
                         .font(GenTypography.body(12))
                         .foregroundStyle(Color.settingsTextSecondary)
                     ForEach(session.suggestions) { suggestion in
-                        FlowSuggestionRow(suggestion: suggestion, session: session)
+                        FlowSuggestionRow(suggestion: suggestion,
+                                          accept: { session.acceptSuggestion(suggestion, replacement: $0) },
+                                          dismiss: { session.dismissSuggestion(suggestion) })
+                            .equatable()
                     }
                 }
             }
@@ -661,10 +671,18 @@ private struct FlowInsightsPane: View {
     }
 }
 
-private struct FlowSuggestionRow: View {
+/// One suggestion, from values: the pane reads the session, so a publish of it redraws only a suggestion that changed.
+/// Add and Dismiss are buttons while the pointer is on the row or a replacement is typed (`liveRow`), so the keyboard
+/// still reaches Add after typing; at rest the same labels, which VoiceOver still presses.
+private struct FlowSuggestionRow: View, Equatable {
     let suggestion: FlowSuggestion
-    @ObservedObject var session: FlowSession
+    let accept: (_ replacement: String) -> Void
+    let dismiss: () -> Void
     @State private var replacement: String = ""
+
+    static func == (a: FlowSuggestionRow, b: FlowSuggestionRow) -> Bool {
+        a.suggestion == b.suggestion
+    }
 
     var body: some View {
         HStack(spacing: GenSpacing.md) {
@@ -689,24 +707,25 @@ private struct FlowSuggestionRow: View {
 
             Spacer()
 
-            Button("Add") {
+            LiveButton(tooltip: "Add this replacement to the dictionary", pressable: true) {
                 let value = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
-                session.acceptSuggestion(suggestion, replacement: value.isEmpty ? suggestion.suggested : value)
+                accept(value.isEmpty ? suggestion.suggested : value)
+            } label: {
+                Text("Add")
             }
-            .buttonStyle(.genHoverPlain())
             .font(GenTypography.caption(11, weight: .semibold))
             .foregroundStyle(Color.jarvisTeal)
-            .instantTooltip("Add this replacement to the dictionary")
 
-            Button("Dismiss") { session.dismissSuggestion(suggestion) }
-                .buttonStyle(.genHoverPlain())
-                .font(GenTypography.caption(11))
-                .foregroundStyle(Color.settingsTextMuted)
-                .instantTooltip("Stop suggesting this word")
+            LiveButton(tooltip: "Stop suggesting this word", pressable: true, action: dismiss) {
+                Text("Dismiss")
+            }
+            .font(GenTypography.caption(11))
+            .foregroundStyle(Color.settingsTextMuted)
         }
         .padding(GenSpacing.md)
         .background(Color.settingsCard)
         .clipShape(RoundedRectangle(cornerRadius: GenRadius.sm))
+        .liveRow(selected: !replacement.isEmpty)
     }
 }
 

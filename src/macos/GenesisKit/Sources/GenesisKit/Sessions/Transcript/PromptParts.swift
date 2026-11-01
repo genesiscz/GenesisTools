@@ -168,12 +168,13 @@ public struct TeammatePartCard: View {
                 TranscriptMarkdown(text: expanded ? message : cut.text)
                     .padding(.leading, 15)
                 if cut.cut {
-                    Button(expanded ? "Show less" : (cut.lineCount > Self.collapsedLines ? "Show all \(cut.lineCount) lines" : "Show the full message")) { onToggle(id) }
-                        .buttonStyle(.genHoverPlain())
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(SessionPalette.blue)
-                        .padding(.leading, 15)
-                        .accessibilityIdentifier("transcript-teammate-expand")
+                    LiveButton(tooltip: nil, pressable: true, action: { onToggle(id) }) {
+                        Text(verbatim: expanded ? "Show less" : (cut.lineCount > Self.collapsedLines ? "Show all \(cut.lineCount) lines" : "Show the full message"))
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(SessionPalette.blue)
+                    .padding(.leading, 15)
+                    .accessibilityIdentifier("transcript-teammate-expand")
                 }
             }
         }
@@ -185,6 +186,7 @@ public struct TeammatePartCard: View {
         .padding(.top, 6)
         .padding(.bottom, 2)
         .accessibilityIdentifier("transcript-teammate-card")
+        .liveRow(selected: expanded)
     }
 }
 
@@ -219,6 +221,7 @@ public struct TaskPartLine: View {
         .padding(.leading, 24)
         .padding(.trailing, 12)
         .padding(.top, 4)
+        .liveRow(selected: expanded)
     }
 
     private func line(hasResult: Bool) -> some View {
@@ -344,6 +347,7 @@ public struct SystemPartLine: View {
         .padding(.leading, 24)
         .padding(.trailing, 12)
         .padding(.top, 2)
+        .liveRow(selected: expanded)
     }
 }
 
