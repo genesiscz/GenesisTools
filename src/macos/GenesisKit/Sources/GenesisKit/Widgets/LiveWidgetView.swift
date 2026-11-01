@@ -603,7 +603,7 @@ public struct LiveWidgetView: View {
             // The badge is the key that picks the option; the letter, which the agent and the hub name it by, leads
             // its text. Up and Down move through the options; the chosen one wears the focus ring.
             WidgetOptionLabel(badge: key ?? choice.id, letter: key == nil ? nil : choice.id, text: text, picked: picked,
-                              recommended: choice.recommended, focused: focused)
+                              recommended: choice.recommended, focused: focused, rationale: choice.rationale)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
@@ -614,7 +614,8 @@ public struct LiveWidgetView: View {
             choice.id, recommended: choice.recommended, stages: stages, picked: picked,
             swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true, key: index < 9 ? index + 1 : nil))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
-                                                                recommended: choice.recommended))
+                                                                recommended: choice.recommended)
+            + (choice.rationale.map { ". " + $0 } ?? ""))
         .accessibilityValue(picked ? "Staged" : "")
         // Selected is the staged pick; the keyboard's option shows by its focus ring and VoiceOver's own cursor.
         .accessibilityAddTraits(picked ? .isSelected : [])
@@ -635,11 +636,20 @@ public struct LiveWidgetView: View {
     }
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
+        let preferences = model.snapshot?.state.preferences
+        // The agent's pick sits under the option it recommends, else above the options (Decision cards → The agent's
+        // pick).
+        let pickUnder = WidgetProposal.placement(card, preferences: preferences)
         VStack(alignment: .leading, spacing: 10) {
             WidgetReceiptContextView(card: card, model: model)
                 .id(card.id + "|" + String(card.at))
             if !card.body.isEmpty {
                 WidgetMarkdown(text: card.body)
+            }
+            // The hub Inbox card's context: Context, Code, the notes, the pick (WidgetDecisionDetailsView).
+            if let details = card.decision {
+                WidgetDecisionDetailsView(card: card, details: details, preferences: preferences,
+                                          proposal: pickUnder == nil ? details.proposal : nil)
             }
             if !card.attachments.isEmpty {
                 WidgetCardAttachments(card: card, height: 110, maxWidth: 260, compare: true, showMedia: showMedia)
@@ -663,6 +673,12 @@ public struct LiveWidgetView: View {
                         let key = Self.choiceKey(index)
                         let focused = model.choiceFocus == WidgetChoiceFocus(cardID: card.id, choiceID: choice.id)
                         optionRow(card, choice: choice, index: index, key: key, picked: picked, focused: focused)
+                        if let pickUnder, pickUnder.letter == choice.id {
+                            // Under the option's text: the label's padding, its badge and the gap after it.
+                            WidgetProposalLine(text: pickUnder.text)
+                                .padding(.leading, WidgetOptionLabel.textInset)
+                                .padding(.trailing, 8)
+                        }
                     }
                     if card.kind == "decision" { ownAnswer(card) }
                 }
@@ -739,7 +755,8 @@ public struct LiveWidgetView: View {
                     .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
             }
             .buttonStyle(.genHover()).font(.caption)
-            ForEach(Array(card.refs.enumerated()), id: \.offset) { _, ref in
+            // A file the Code section already shows with its lines is not listed again under the buttons.
+            ForEach(Array(Self.listedRefs(card, preferences: preferences).enumerated()), id: \.offset) { _, ref in
                 if ref.value.hasPrefix("/") {
                     // A file is the shared path label (short, with reveal, copy and Cursor), never a raw absolute
                     // path. A transcript is named as such: its result is the text above, not raw JSON to open.
@@ -777,6 +794,14 @@ public struct LiveWidgetView: View {
                 model.ownAnswerFocusRequest = nil
                 ownAnswerFocused = true
             }
+    }
+
+    /// The refs listed under a card's buttons: all of them, less the files its Code section already shows with their
+    /// lines (by the path as written or the file it names).
+    static func listedRefs(_ card: WidgetCard, preferences: WidgetPreferences?) -> [WidgetReference] {
+        guard preferences?.decisionCode != "hide", let code = card.decision?.refs, !code.isEmpty else { return card.refs }
+        let shown = Set(code.filter(\.hasContent).flatMap { [$0.path, $0.absolute].compactMap { $0 } })
+        return card.refs.filter { !shown.contains($0.value) }
     }
 
     /// The cards `filter` shows (`WidgetModel.filteredOut`).
@@ -1494,10 +1519,19 @@ struct WidgetInboxCardRow: View, Equatable {
         labels
             .rowButton(cornerRadius: 11) { toggle() }
             .accessibilityLabel((staged ? "Staged" : LiveWidgetView.kindLabel(card)) + ": "
-                + WidgetWords.numbered(card.title, number: card.number))
+                + WidgetWords.numbered(card.title, number: card.number) + spokenFacts)
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("widget.inbox.row." + card.id)
             .liveRow(selected: selected)
+    }
+
+    /// The chips an open decision shows under its title, as VoiceOver reads them: ", blocking, high confidence".
+    private var spokenFacts: String {
+        guard open, let details = card.decision else { return "" }
+        var facts: [String] = []
+        if details.blocking == true { facts.append("blocking") }
+        if let confidence = details.confidence { facts.append(confidence + " confidence") }
+        return facts.map { ", " + $0 }.joined()
     }
 
     private var labels: some View {
@@ -1515,7 +1549,18 @@ struct WidgetInboxCardRow: View, Equatable {
                 (isPrompt ? Text(.init(card.title)) : Text(WidgetWords.numbered(card.title, number: card.number)))
                     .font(.system(size: 12.5, weight: open ? .semibold : .medium))
                     .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
-                if !open, let preview = LiveWidgetView.previewLine(card.body) {
+                // Open, the facts the hub's card shows beside its title: blocking, and how sure the agent is.
+                if open, let details = card.decision, details.blocking == true || details.confidence != nil {
+                    HStack(spacing: 6) {
+                        if details.blocking == true {
+                            Badge("Blocking", color: KitPalette.removed, look: .filled)
+                        }
+                        if let confidence = details.confidence {
+                            DecisionConfidenceBadge(confidence)
+                        }
+                    }
+                }
+                if !open, let preview = LiveWidgetView.previewLine(card.fullText) {
                     Text(preview).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 HStack(spacing: 4) {

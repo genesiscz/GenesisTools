@@ -972,8 +972,8 @@ struct AgentWidgetModuleView: View {
                     .lineLimit(2)
                 if let card = model.card {
                     Text(WidgetWords.numbered(card.title, number: card.number)).font(.system(size: 12)).lineLimit(3)
-                    if !card.body.isEmpty {
-                        Text(card.body).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
+                    if !card.fullText.isEmpty {
+                        Text(card.fullText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
                     }
                 } else {
                     Text("Questions, screenshots and finished work are collected here.")
