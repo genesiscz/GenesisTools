@@ -408,13 +408,16 @@ On 2026-10-18 the disk sat full three times while the lead waited for him, and t
 14 GB, most of it SwiftPM scratch builds.
 
 1. `bun .claude/skills/babysit/scripts/tmp-reclaim.ts --run <dir>` (dry run): lists the candidates in /tmp, $TMPDIR and
-   each `/tmp/cc/<project>/<session>` folder, writes a plan file, deletes nothing. It skips live sessions (any agent
-   transcript changed in the last 12 h, the run folder, `--protect`), system and daemon entries, anything holding a
+   each `/tmp/cc/<project>/<session>` folder, writes a plan file, deletes nothing. It skips live sessions (a Claude
+   session whose process still runs, by Claude Code's `~/.claude/sessions` registry; a Codex or Grok transcript
+   changed in the last 12 h; the run folder; `--protect`), system and daemon entries, anything holding a
    socket, a FIFO or a `.git`, open files (it stops if lsof gives no listing), anything changed in the last 6 h,
    symlinks, other users' and other devices' entries.
 2. Read the list. Then `--apply --plan <file>` within 30 minutes: only the planned entries, each re-checked (same
-   inode, still old, still closed), moved into a scratch folder in the same root and deleted there. The result is a
-   `note` in the run ledger.
+   inode, still old, still closed), moved into a scratch folder `.tmp-reclaim-<pid>-XXXXXX` in the same root and
+   deleted there. An apply that is killed first leaves that folder behind; the next dry run lists it once its pid is
+   gone. The apply also deletes the plan it ran and every expired plan in `/tmp/cc`. The result is a `note` in the
+   run ledger.
 
 Limits you must know:
 

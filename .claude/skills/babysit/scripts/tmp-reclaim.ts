@@ -7,12 +7,17 @@
  * Two phases. A dry run (the default) lists the candidates and writes a plan file. `--apply --plan <file>` removes
  * ONLY what that plan names, only when the plan is at most 30 minutes old, and re-checks every entry first: it must
  * still be the same inode, still old enough, and still not open. A removal is a rename into a scratch folder in the
- * same root, then a delete of that folder, so a half-deleted tree never sits at its old path.
+ * same root, then a delete of that folder, so a half-deleted tree never sits at its old path. That folder is
+ * `.tmp-reclaim-<pid>-XXXXXX`; an apply killed before its final delete leaves it behind, and a later run lists it as
+ * an ordinary candidate once its pid is gone (an older unnamed one once it is old enough). An apply then deletes the
+ * plan it ran and every plan in `/tmp/cc` older than the 30 minutes a plan may be applied for.
  *
  * Candidates are the top-level entries of /tmp and $TMPDIR, plus each `/tmp/cc/<project>/<session>` folder (agent
  * scratch). An entry is NEVER a candidate when:
- * - it names a live session: an agent transcript (~/.claude/projects, ~/.codex/sessions, ~/.grok) changed in the
- *   last --live-hours (default 12), the run card's session, or a `--protect <id>`;
+ * - it names a live session: a Claude session whose process runs (Claude Code's registry `~/.claude/sessions`), an
+ *   agent transcript changed in the last --live-hours (default 12; for ~/.claude/projects only while that registry
+ *   cannot be read, because a Claude session that exited is over however recent its transcript), the run card's
+ *   session, or a `--protect <id>`;
  * - it is, contains, or lies within a canonical `--protect <path>`;
  * - it is a system or service entry (com.apple.*, launchd, tmux-*, ssh-*, the Claude harness folders, sockets);
  * - anything inside it is a socket or a FIFO (a live service), or a `.git` (a repository or worktree: remove those
@@ -49,8 +54,10 @@ import {
     writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { claudeSessionsDir, liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { nativeSessionRoots, nativeTranscriptMaxDepth } from "@genesiscz/utils/providers/session-paths";
 import { appendEvent } from "./ledger";
 import { flag, has } from "./run";
@@ -108,17 +115,15 @@ const SESSION_UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 const PLAN_MAX_AGE_MS = 30 * 60_000;
 const SCAN_BUDGET_MS = 20_000;
-const SYSTEM_PREFIXES = [
-    "com.apple.",
-    "launchd",
-    "tmux-",
-    "ssh-",
-    "claude-",
-    "cc-socks",
-    "powerlog",
-    ".X",
-    ".tmp-reclaim-",
-];
+const SYSTEM_PREFIXES = ["com.apple.", "launchd", "tmux-", "ssh-", "claude-", "cc-socks", "powerlog", ".X"];
+/** An apply's scratch folder for the entries it removes: `.tmp-reclaim-<pid>-XXXXXX` (before 2026-11-01 without pid). */
+const QUARANTINE_PREFIX = ".tmp-reclaim-";
+
+/** True while the apply that made this quarantine still runs; an orphan, an old unnamed one or another name is false. */
+export function isLiveQuarantine(name: string, alive: (pid: number) => boolean = isProcessAlive): boolean {
+    const pid = /^\.tmp-reclaim-(\d+)-/.exec(name)?.[1];
+    return pid !== undefined && alive(Number(pid));
+}
 function validAge(value: unknown, label: string): number {
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
         throw new Error(`${label} must be a finite nonnegative number of hours`);
@@ -241,8 +246,15 @@ function protectedEntries(): Protection {
         }
     }
     const cutoff = Date.now() - liveHours * 3_600_000;
+    // A running Claude session is live however long it idles, and one that exited is over however recent its
+    // transcript: the registry answers for the projects folder beside it. Codex and Grok keep no such registry.
+    const runningClaude = liveClaudeSessionIds();
+    const registryProjects = runningClaude ? join(dirname(claudeSessionsDir()), "projects") : null;
+    ids.push(...(runningClaude ?? []));
     const transcriptDirs = (["claude", "codex", "grok"] as const).flatMap((kind) =>
-        nativeSessionRoots(kind).map((top) => ({ kind, top, depthLimit: nativeTranscriptMaxDepth(kind) }))
+        nativeSessionRoots(kind)
+            .filter((top) => resolve(top) !== registryProjects)
+            .map((top) => ({ kind, top, depthLimit: nativeTranscriptMaxDepth(kind) }))
     );
 
     for (const { kind, top, depthLimit } of transcriptDirs) {
@@ -372,6 +384,10 @@ function judge(path: string, protection: Protection, open: string[]): Candidate 
     // A per-user macOS daemon keeps its scratch in $TMPDIR under its own name (mobiletimerd, studentd).
     if (SYSTEM_PREFIXES.some((prefix) => name.startsWith(prefix)) || /^[a-z]+d$/.test(name)) {
         return "system";
+    }
+
+    if (isLiveQuarantine(name)) {
+        return "live-quarantine";
     }
 
     const run = runDir && existsSync(runDir) ? realpathSync(runDir) : null;
@@ -875,7 +891,7 @@ function main(): void {
 
             let trash = quarantines.get(root);
             if (!trash) {
-                trash = mkdtempSync(join(root, ".tmp-reclaim-"));
+                trash = mkdtempSync(join(root, `${QUARANTINE_PREFIX}${process.pid}-`));
                 quarantines.set(root, trash);
             }
 
@@ -895,9 +911,28 @@ function main(): void {
 
     const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}`;
     console.log(summary);
+    removeSpentPlans(planPath);
 
     if (runDir) {
         appendEvent(runDir, { kind: "note", text: `tmp-reclaim: ${summary} (plan ${planPath})` });
+    }
+}
+
+/**
+ * The plan just applied, and every plan in the default `/tmp/cc` folder past the 30 minutes an apply accepts: none of
+ * them can authorize anything any more. A plan under `--run <dir>/logs` stays, as part of that run's record.
+ */
+function removeSpentPlans(appliedPlan: string): void {
+    const planDir = join(roots[0] ?? "/tmp", "cc");
+    const isPlan = (name: string) => /^tmp-reclaim-plan-\d+\.json$/.test(name);
+
+    for (const name of childNames(planDir) ?? []) {
+        const path = join(planDir, name);
+        const st = isPlan(name) ? lstatSync(path, { throwIfNoEntry: false }) : undefined;
+
+        if (st?.isFile() && st.uid === uid && (path === appliedPlan || Date.now() - st.mtimeMs > PLAN_MAX_AGE_MS)) {
+            rmSync(path, { force: true });
+        }
     }
 }
 

@@ -32,7 +32,7 @@ import { reviewBrief, reviewSpawnCommand } from "./review-brief";
 import { loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
 import { parseSwiftTargets, typecheckPackage } from "./swift-typecheck";
-import { buildOutputKind, judgeOwn, openPaths, ownBuildOutput, ownSessionDirs } from "./tmp-reclaim";
+import { buildOutputKind, isLiveQuarantine, judgeOwn, openPaths, ownBuildOutput, ownSessionDirs } from "./tmp-reclaim";
 import {
     conflictedFiles,
     higherVersionSide,
@@ -2561,7 +2561,11 @@ describe("round 7 review regressions", () => {
                     SafeJSON.stringify(sessionModule) +
                     ", () => ({nativeSessionRoots: (kind) => kind === 'grok' ? " +
                     SafeJSON.stringify([native, managed]) +
-                    " : [], nativeTranscriptMaxDepth: () => 4}));",
+                    " : kind === 'claude' ? " +
+                    SafeJSON.stringify([join(home, ".claude", "projects")]) +
+                    " : [], nativeTranscriptMaxDepth: () => 4, nativeHomePath: (kind, ...segments) => " +
+                    SafeJSON.stringify(home) +
+                    " + '/.' + kind + (segments.length ? '/' + segments.join('/') : '')}));",
                 "const spawn = Bun.spawnSync; Bun.spawnSync = (args, opts) => {",
                 "if (args[0] !== 'lsof') throw new Error('unexpected command');",
                 "return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)}; };",
@@ -2605,6 +2609,79 @@ describe("round 7 review regressions", () => {
         const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
         expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([dead]);
         expect(result.stdout.toString()).toContain('"live-session":2');
+    });
+
+    test("a quarantine is live only while the apply that named it runs", () => {
+        expect(isLiveQuarantine(".tmp-reclaim-4242-Ab12Cd", () => true)).toBe(true);
+        expect(isLiveQuarantine(".tmp-reclaim-4242-Ab12Cd", () => false)).toBe(false);
+        // A folder from before the pid was in the name is judged by age like any other entry.
+        expect(isLiveQuarantine(".tmp-reclaim-Ab12Cd", () => true)).toBe(false);
+        expect(isLiveQuarantine("scratch-4242-x", () => true)).toBe(false);
+    });
+
+    test("reclaim lists an orphaned quarantine and spares the one a running apply holds", () => {
+        const s = reclaimFixture();
+        const orphan = join(s.root, ".tmp-reclaim-999999999-Ab12Cd");
+        const legacy = join(s.root, ".tmp-reclaim-Ef34Gh");
+        const live = join(s.root, `.tmp-reclaim-${process.pid}-Ij56Kl`);
+        for (const folder of [orphan, legacy, live]) {
+            fs.mkdirSync(folder, { mode: 0o700 });
+            fs.writeFileSync(join(folder, "0-moved-entry"), "fixture");
+        }
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path).sort()).toEqual(
+            [orphan, legacy].sort()
+        );
+        expect(result.stdout.toString()).toContain('"live-quarantine":1');
+    });
+
+    test("reclaim takes a Claude session's scratch once its process exits, however recent its transcript", () => {
+        const s = reclaimFixture();
+        const running = "77777777-7777-4777-8777-777777777777";
+        const exited = "88888888-8888-4888-8888-888888888888";
+        const sessions = join(s.dir, "home", ".claude", "sessions");
+        const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
+        fs.mkdirSync(sessions, { recursive: true });
+        fs.mkdirSync(projects, { recursive: true });
+        fs.writeFileSync(
+            join(sessions, `${process.pid}.json`),
+            SafeJSON.stringify({ pid: process.pid, sessionId: running })
+        );
+        for (const id of [running, exited]) {
+            fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
+            fs.mkdirSync(join(s.root, "cc", "fixture-project", id), { recursive: true });
+        }
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            join(s.root, "cc", "fixture-project", exited),
+        ]);
+        expect(result.stdout.toString()).toContain('"live-session":1');
+    });
+
+    test("an apply deletes the plan in /tmp/cc it ran and the expired ones, and keeps a fresh one", () => {
+        const s = reclaimFixture();
+        const plans = join(s.root, "cc");
+        fs.mkdirSync(plans);
+        const expired = join(plans, "tmp-reclaim-plan-1000.json");
+        const fresh = join(plans, "tmp-reclaim-plan-2000.json");
+        const other = join(plans, "notes.json");
+        for (const file of [expired, fresh, other]) {
+            fs.writeFileSync(file, "{}");
+        }
+        const hourAgo = new Date(Date.now() - 3_600_000);
+        fs.utimesSync(expired, hourAgo, hourAgo);
+        fs.utimesSync(other, hourAgo, hourAgo);
+        const applied = join(plans, "tmp-reclaim-plan-3000.json");
+        fs.writeFileSync(applied, SafeJSON.stringify({ createdAt: Date.now(), minAgeHours: 0, candidates: [] }));
+        const result = s.execute(["--apply", "--plan", applied]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        expect(fs.readdirSync(plans).sort()).toEqual(["notes.json", "tmp-reclaim-plan-2000.json"]);
     });
 
     test("reclaim --help and an unknown flag exit before any scan and write no plan", () => {
@@ -2931,7 +3008,7 @@ describe("round 8 review regressions", () => {
                         ",from+'\\n');return original.renameSync(from,to);}}));",
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
-                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                     "let reads=0; Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command'); reads++;",
                     "const failure=reads >= 3 && " + SafeJSON.stringify(mode) + " === 'failure';",
                     "const open=reads >= 3 ? " +
@@ -3056,7 +3133,7 @@ describe("round 10 review regressions", () => {
                         ":original.realpathSync(p)}));",
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
-                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                     "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)};};",
                 ].join("\n")
             );
@@ -3871,7 +3948,7 @@ describe("round 15 review regressions", () => {
                     ":original.realpathSync(p),renameSync:()=>{throw new Error('unsafe rename reached');}}));",
                 "mock.module(" +
                     SafeJSON.stringify(providers) +
-                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                 "Bun.spawnSync=()=>{original.writeFileSync(" +
                     SafeJSON.stringify(scanned) +
                     ",'scanned');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file\\n'),stderr:Buffer.alloc(0)};};",
@@ -4286,7 +4363,7 @@ describe("round 12 review regressions", () => {
                         " && code !== 'healthy') throw new Error('unsafe rename reached');return original.renameSync(from,to);}}));",
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
-                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                     "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file\\n'),stderr:Buffer.alloc(0)};};",
                 ].join("\n")
             );
@@ -4828,7 +4905,7 @@ describe("round 21 delivery and lifetime regressions", () => {
                     ":original.realpathSync(p),renameSync:()=>{throw new Error('deletion reached');}}));",
                 "mock.module(" +
                     SafeJSON.stringify(join(import.meta.dir, "../../../../src/utils/providers/session-paths.ts")) +
-                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));Bun.spawnSync=()=>{original.writeFileSync(" +
+                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));Bun.spawnSync=()=>{original.writeFileSync(" +
                     SafeJSON.stringify(scanned) +
                     ",'scan');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture\\n'),stderr:Buffer.alloc(0)};};",
             ].join("\n")
@@ -5692,7 +5769,7 @@ describe("round 31 exclusive reclaim quarantines", () => {
                 "mock.module('node:fs',()=>({...original,realpathSync:p=>p==='/tmp'?roots[0]:original.realpathSync(p),mkdtempSync:prefix=>{const path=original.mkdtempSync(prefix);created.push({path,mode:original.lstatSync(path).mode&511});save();return path;},renameSync:(from,to)=>{moves.push({from,to,mode:original.lstatSync(dirname(to)).mode&511});save();return original.renameSync(from,to);},rmSync:(path,opts)=>{cleanups.push(path);save();return original.rmSync(path,opts);}}));",
                 "mock.module(" +
                     SafeJSON.stringify(join(import.meta.dir, "../../../../src/utils/providers/session-paths.ts")) +
-                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                 "Bun.spawnSync=args=>{if(args[0]!=='lsof')throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture\\n'),stderr:Buffer.alloc(0)};};",
             ].join("\n")
         );
