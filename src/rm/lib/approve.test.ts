@@ -1350,6 +1350,7 @@ describe("the requests listing", () => {
     test("an agent reads the agent's footer", () => {
         const text = renderRequestList(views, { now: NOW, caller: ASKER }).map(stripAnsi).join("\n");
         expect(text).toContain(`The user approves: ! ${toolCommand("rm")} approve <id>`);
+        expect(text).toContain(`Open their window: ${toolCommand("rm")} ask <id> (background)`);
         expect(text).toContain(`Cancel your own: ${toolCommand("rm")} deny <id>`);
     });
 

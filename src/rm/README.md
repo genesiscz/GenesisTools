@@ -12,10 +12,11 @@ tools rm preset node_modules js-build [--in <dir>]   # find and delete preset fo
 tools rm presets                    # the folder kinds deleted without asking
 tools rm trash                      # what waits for the drain (--sizes measures it)
 tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a batch id tail such as fc7b; a request id: each of its batches)
-tools rm drain [--now]              # drain due batches now (--now, a person's: all of them)
+tools rm drain [--now]              # drain due batches and sweep the requests now (--now, a person's: all batches)
 tools rm requests [id]              # what agents asked the user to confirm (an id: that request in full)
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
 tools rm deny <id>                  # close a request and put its aside paths back (an agent may cancel its own)
+tools rm ask <id>                   # an agent opens the user's approval window for its request (run it in the background)
 tools rm prune [-n]                 # close the requests nobody can decide (every path gone, or in place past 24 h)
 tools rm measure <id>               # measure a request's paths and save the sizes (tools rm starts it in the background)
 tools rm log [--since 1d] [--agent codex] [--session <id>] [--each] [--by agent|session|day|rule|action]   # audit log
@@ -26,8 +27,9 @@ tools rm approve <id>
 tools rm approve <id> <id> ... [--session <id>] [--older 1d]   # several requests: one window, one person check
 tools rm approve                    # on a terminal: tick requests, then approve, deny or close the gone ones
 tools rm roots add <dir> [--note "<why>"]
-tools rm config set <key> <value>   # approval, notify-on-request, ask-action, aside-unsaved, session-scratch, own-files, grace-preset,
-                                    # grace-other, trash-root, disable-preset, enable-preset,
+tools rm config set <key> <value>   # approval, notify-on-request, notify-on-failure, ask-min-mb, ask-action, aside-unsaved,
+                                    # session-scratch, own-files, own-bash-files, tmp-small-mb, grace-preset, grace-other,
+                                    # grace-scratch, sweep-every, sweep-linger, trash-root, disable-preset, enable-preset,
                                     # disable-profile, enable-profile
 tools rm profile set <name> --agent codex --ask-action request [...]
 tools rm profile remove <name>
@@ -59,16 +61,28 @@ The first rule that answers decides.
 7. **unsaved-clone** (ask): a clone with uncommitted changes or commits on no remote.
 8. **session-scratch** (allow): inside the calling session's `/tmp/cc/<project>/<session id>/` (or the agent's own
    folder, such as `/tmp/codex/...`). A profile can turn it off (`allowSessionScratch`).
-9. **own-files** (allow): a file the calling Claude session wrote (its modified-file journal) that git does not track.
-   A profile can turn it off (`allowOwnFiles`).
+9. **own-files** (allow): a file the calling session wrote that git does not track: with the Write, Edit or
+   NotebookEdit tool (Claude's modified-file journal), or with a Bash command (the agents change log,
+   `~/.genesis-tools/agents/<session>/changes.jsonl`, any harness). A Bash file counts only when it was born inside
+   that command (up to 15 minutes before its log row), so a file a command only moved in (`mv ~/x ./y` keeps its
+   birthtime) never does. A profile can turn it off (`allowOwnFiles`), or only the Bash part (`ownFilesFromBash`,
+   `own-bash-files`).
 10. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
-11. **nested-repos** (ask): a folder that holds git repositories.
-12. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
+11. **tmp-small** (allow): a path in `/tmp` or the per-user temp folder (`getconf DARWIN_USER_TEMP_DIR`, never
+   `$TMPDIR`) of at most `tmpSmallMB` (default 10, `tmp-small-mb`; 0 turns it off), with no socket and no repository
+   with unsaved work anywhere inside. The rules above already asked for tracked and new work. A scratch root and a
+   project folder under it never match, nor the system's folders at the top of a temp root (`com.apple.*`, `tmux-*`,
+   `GenesisTools`, ...). Another session's `/tmp/<agent dir>/<project>/<session>` scratch matches only once that
+   session ended: the Claude session registry does not list it (an unreadable registry counts as live) and nothing
+   inside changed for 12 hours. The reason names the conditions: `/tmp path, 284 KB under 10 MB, not git-tracked,
+   no unsaved repo inside`.
+12. **nested-repos** (ask): a folder that holds git repositories.
+13. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
    `package.json`, `dist`/`build`/`.next`/`.turbo`/... next to `package.json`, `.build` next to `Package.swift`,
    `target` next to `Cargo.toml`, Gradle and CMake output, Python caches, Pods, Xcode DerivedData and more.
-13. **root** (allow): inside a folder the user trusts (`tools rm roots add`). A root the approval window remembered
+14. **root** (allow): inside a folder the user trusts (`tools rm roots add`). A root the approval window remembered
    for "this session, this folder" counts only for that session and for 8 hours (`session`, `expiresAt`).
-14. **default** (ask).
+15. **default** (ask).
 
 A person at a terminal (not inside an agent) is asked to confirm an ask at once (see below) instead of a request.
 
@@ -116,11 +130,29 @@ never as something to look at. `--json` prints the saved
 requests as before. A flag goes after the subcommand name (`tools rm requests --json`); a delete flag typed before a
 subcommand (`tools rm -n preset all`) is refused with exit 2.
 
-A request ends as `approved`, `denied`, `expired` or `gone`. An in-place request reads as `expired` 24 hours after it
+A request ends as `approved`, `denied`, `expired`, `gone` or `ruled`. An in-place request reads as `expired` 24 hours after it
 was made; an aside request never expires. `tools rm prune` writes the two end states nobody can decide: `gone` (no
 path and no aside copy is left) and `expired` (in place, past the 24 hours). It moves, restores and deletes no file,
 writes one `close` line per request to the audit log, and leaves a request alone while an approval window holds it.
 Any caller may run it; `-n` lists what would close. A `copy lost` or `came back` request stays open for a person.
+
+### A rule that covers a pending request
+
+A request never waits for a path a rule covers now (a tmp-small path, a file a Bash command of the session made, a
+folder the user trusted since). The sweep judges each pending delete request again as the session that asked (its
+profiles, its scratch, its own files): a path still in place as it is, a copy set aside as its original path with the
+copy's content, and only when the default rule asked for it. A covered path goes to the trash with that rule (and its
+grace and restore), and the request records it under `ruled` with the rule's words, for example
+`refused: rule tmp-small, /tmp path, 284 KB under 10 MB, not git-tracked, no unsaved repo inside; deleted without a
+request`. A request with nothing left for a person closes as `ruled` (`decidedVia: rule tmp-small`); one with paths
+left stays open with only those. The same sweep closes a request whose every path is gone as `gone`.
+
+The sweep runs in the background drainer, at its start and every `sweep.everyMinutes` (default 5, `sweep-every`).
+Every delete run (`tools rm <paths>`) and every approval starts the drainer while a request waits, and the drainer
+stays `sweep.lingerMinutes` (default 60, `sweep-linger`) after the trash emptied while requests wait, so a covered
+request closes within about 5 minutes of the last such run. `tools rm drain` runs it at once, and `approve` runs it for its requests before a window opens.
+`tools rm requests` only reads: it marks a covered request `<rule>: closes at the sweep` and names them in an
+`A rule covers:` line.
 
 ## Profiles: settings per agent, session or project
 
@@ -172,6 +204,26 @@ code by writing `"approval": "code"` into `~/.genesis-tools/rm/config.json` by h
 
 In Claude Code, run `! tools rm approve <id>` from the prompt.
 
+### `tools rm ask <id>`: an agent opens the window
+
+`approve` is the person's verb (the shell guard blocks it for an agent and offers `ask`). `tools rm ask <id>` is the
+agent's: it opens the same approval window for one of its delete requests, through the same steps as `approve` (the
+sweep, the refusals, the recheck after the wait, deny and the ledger), and never approves by itself:
+
+- The person check takes only the GenesisTools.app window or the macOS dialog, never a typed code. The window opens
+  with Touch ID off and arms it when the person clicks "Approve with Touch ID…", so a touch meant for another prompt
+  never approves it. The ledger's approve line says `person: { via, opened: "ask" }`.
+- A request under `notify.askMinMB` (default 10, `ask-min-mb`; the sizes `approve` would show, an unmeasured one
+  counted as 0) opens nothing: `ask` prints `Request <id> is <size>, under the 10 MB set for agents: hand the user
+  \`! tools rm approve <id>\`` and exits 1. A root request is the person's to open the same way.
+- With no way to ask (another platform, or `approval: touch-id` without the app), it prints why and the hand-over
+  line, and exits 1.
+- The window waits up to 180 s, so an agent runs `ask` in the background.
+
+Without GenesisTools.app on macOS, `approve` and `ask` fall back to the macOS dialog. The typed code (a clack prompt
+through the `p` facade) is used only when the person set `approval: code` and runs `approve` in a terminal outside an
+agent: a terminal an agent fakes types a code as well as a person.
+
 The window answers more than allow or deny, and `approve` does what it picked:
 
 - **rows**: only the ticked paths are approved; the unticked ones are put back from aside, and the request's `decided`
@@ -213,9 +265,21 @@ GenesisTools.app cannot ask) cannot change once it shows, so it lists only the s
   path on another volume goes to `<mount point>/.GenesisTools-rm/<batch>/`, so the move stays a rename.
 - Each batch is recorded in `~/.genesis-tools/rm/batches/<id>.json` after every move, so a run that dies halfway
   leaves a record. Every action is a line in `~/.genesis-tools/rm/ledger.jsonl`.
-- Grace: 0 minutes for preset folders, 60 for the rest (`grace-preset`, `grace-other`, or `--keep 2h` / `--now` per
-  run). Until then `tools rm restore <batch>` puts things back; `tools rm trash` prints each batch's id tail, which
-  `restore` takes when only one batch ends with it.
+- Grace: 0 minutes for preset folders, 5 for the calling session's own scratch, 60 for the rest (`grace-preset`,
+  `grace-scratch`, `grace-other`, or `--keep 2h` / `--now` per run). The scratch grace is short because a full disk hid
+  about 11 GB of session scratch in the trash for the hour of the other grace (2026-11-01). Until then
+  `tools rm restore <batch>` puts things back; `tools rm trash` prints each batch's id tail, which `restore` takes
+  when only one batch ends with it.
+- A permanent delete ("Delete permanently" in the window) runs in the background drainer and prints its batch id.
+- An item the drain cannot delete (a folder without write permission, such as a Go module cache) gets a `fail` line in
+  the ledger and stays in the trash, restorable; its batch is marked failed, and only `drain --now` tries it again, so
+  the drainer neither loops nor tells twice. The person hears of it once per batch, the way `notify.onFailure` says
+  (`inbox` default, `notification`, `none`; `notify-on-failure`).
+- A run that died while it moved leaves an incomplete batch. Once its process is gone, the sweep finishes it: the items
+  that reached the trash become a normal batch with the run's own grace (a `finish` ledger line), the planned items
+  that never moved stay where they are.
+- A claim, a lock or a journal names its process by pid; one whose pid now runs a process that started after the
+  claim was made (a recycled pid) holds nothing.
 - The drainer starts through a double fork, so it is a child of launchd before `tools rm` returns: an agent harness
   that kills its shell's process tree cannot stop it halfway. One drainer runs at a time. It deletes due batches in
   parallel, sleeps until the next one is due, and exits when the trash is empty. Every run also sweeps orphans: a
@@ -244,6 +308,10 @@ names the command that turns the preset on. Then `tools rm preset bun-cache --in
 ## Configuration
 
 `~/.genesis-tools/rm/config.json` holds `askAction`, `asideUnsaved`, `allowSessionScratch`, `allowOwnFiles`,
-`roots`, `protect`, `grace`, `trashRoot`, `disabledPresets`, `enabledPresets`, `profiles`, `disabledProfiles` and
-`customPresets` (`{ "id", "description", "names": ["*.cache"], "markers": ["package.json"] }`). Edit it with the
-commands above. A custom preset widens what agents may delete, so add one by hand only.
+`ownFilesFromBash`, `tmpSmallMB`, `roots`, `protect`, `grace` (`presetMinutes`, `otherMinutes`, `scratchMinutes`),
+`trashRoot`, `disabledPresets`, `enabledPresets`, `profiles`, `disabledProfiles`, `approval`, `notify` (`onRequest`,
+`onFailure`, `askMinMB`), `sweep` (`everyMinutes`, `lingerMinutes`) and `customPresets` (`{ "id", "description",
+"names": ["*.cache"], "markers": ["package.json"] }`). The rule settings (`ownFilesFromBash`, `tmpSmallMB`, `grace`)
+are profile settings too (`tools rm profile set ... --tmp-small-mb 0 --no-own-bash-files --grace-scratch 30m`); the
+person's own (`approval`, `notify`, `sweep`) are not. Edit it with the commands above. A custom preset widens what
+agents may delete, so add one by hand only.
