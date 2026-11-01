@@ -114,6 +114,16 @@ final class MarkdownTaskWebTests: XCTestCase {
         XCTAssertEqual(nestedText, "ordered", "the span stops at the nested list")
     }
 
+    /// Indented code, a paragraph's next line and nested items: the page draws a box on exactly the lines the Swift
+    /// scanner names, so a click never lands on a line the scanner reads as text, or the other way round.
+    func testThePageDrawsBoxesOnTheLinesTheScannerNames() async throws {
+        let note = MarkdownTaskListTests.indentNote
+        let (web, _) = try await page(view(note, tasks: Self.editable))
+        let lines = try await boxes(web).map { Int($0.split(separator: "|")[0]) ?? -1 }
+        XCTAssertEqual(lines, MarkdownTaskList.items(in: Array(note.utf8)).map(\.line))
+        XCTAssertEqual(lines, [0, 1, 2, 4, 10, 15, 16, 21])
+    }
+
     func testALockedPageShowsDisabledBoxesWithTheReasonAndCanBeUnlockedInPlace() async throws {
         let (web, coordinator) = try await page(view(Self.note, tasks: .locked("A past version of the note.")))
         let locked = try await boxes(web)
@@ -184,6 +194,24 @@ final class MarkdownTaskWebTests: XCTestCase {
         XCTAssertEqual(reverted, false)
     }
 
+    func testARefusalPutsBackOnlyItsOwnBoxWhileALaterClickWaits() async throws {
+        var answers: [(Bool) -> Void] = []
+        let tasks = MarkdownTaskBoxes(lock: nil) { _, answer in answers.append(answer) }
+        let (web, coordinator) = try await page(view(Self.note, tasks: tasks))
+        _ = try await js(web, """
+        document.querySelector('#gn-article input[data-task-line="2"]').click();
+        document.querySelector('#gn-article input[data-task-line="5"]').click();true
+        """, as: Bool.self)
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(answers.count, 2)
+        answers[0](false)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let drawn = try await boxes(web).filter { $0.hasPrefix("2|") || $0.hasPrefix("5|") }
+        XCTAssertEqual(drawn, ["2|false|false|Mark done: open item", "5|true|false|Mark done: ordered"])
+        XCTAssertEqual(coordinator.lastMarkdown, Self.note.replacingOccurrences(of: "1. [ ] ordered", with: "1. [x] ordered"),
+                       "the page's text loses the refused click and keeps the one still on its way")
+    }
+
     // MARK: From the click to the file
 
     /// The pane's own shape: a SwiftUI view that observes the document and hands its text to the page.
@@ -192,6 +220,22 @@ final class MarkdownTaskWebTests: XCTestCase {
         let tasks: MarkdownTaskBoxes
         var body: some View {
             MarkdownWebView(markdown: doc.displayText, scrollTarget: nil, highlightQuery: nil, highlightToken: 0,
+                            onWikilink: { _ in }, onActiveSection: { _ in }, pageExtras: MarkdownTaskWebTests.extras,
+                            tasks: tasks)
+        }
+    }
+
+    /// The text the host hands the page, observed, so a change goes through the view's real update.
+    private final class Shown: ObservableObject {
+        @Published var text: String
+        init(_ text: String) { self.text = text }
+    }
+
+    private struct ShownHost: View {
+        @ObservedObject var shown: Shown
+        let tasks: MarkdownTaskBoxes
+        var body: some View {
+            MarkdownWebView(markdown: shown.text, scrollTarget: nil, highlightQuery: nil, highlightToken: 0,
                             onWikilink: { _ in }, onActiveSection: { _ in }, pageExtras: MarkdownTaskWebTests.extras,
                             tasks: tasks)
         }
@@ -251,6 +295,44 @@ final class MarkdownTaskWebTests: XCTestCase {
         XCTAssertEqual(after?[1] as? Bool, true)
         XCTAssertEqual(after?[2] as? Double, top, "the reading position stays")
         XCTAssertEqual(after?[3] as? Bool, true)
+    }
+
+    /// The note reloads while a click's write is on its way, with a line added above, and then the click is refused.
+    /// The box now on the clicked line is another item, drawn from the new text: it stays as the new text says.
+    func testARefusalAfterTheNoteReloadedLeavesTheNewDrawingAlone() async throws {
+        var answers: [(Bool) -> Void] = []
+        let tasks = MarkdownTaskBoxes(lock: nil) { _, answer in answers.append(answer) }
+        let shown = Shown("# Tasks\n\n- [ ] open item\n- [x] done item\n")
+        let hosting = NSHostingView(rootView: ShownHost(shown: shown, tasks: tasks))
+        hosting.frame = NSRect(x: 0, y: 0, width: 900, height: 640)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = hosting
+        self.window = window
+        hosting.layoutSubtreeIfNeeded()
+        var page: WKWebView?
+        for _ in 0..<100 {
+            page = webView(in: hosting)
+            if let page, (try? await page.evaluateJavaScript("document.querySelectorAll('#gn-article input.gn-task').length") as? Int) == 2 { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let web = try XCTUnwrap(page)
+
+        _ = try await js(web, "document.querySelector('#gn-article input[data-task-line=\"2\"]').click();true", as: Bool.self)
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(answers.count, 1)
+        shown.text = "# Tasks\n\n- [x] inserted item\n- [ ] open item\n- [x] done item\n"
+        for _ in 0..<100 {
+            if try await boxes(web).count == 3 { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let reloaded = try await boxes(web)
+        XCTAssertEqual(reloaded.count, 3, "the new text is drawn: \(reloaded)")
+
+        answers[0](false)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let after = try await boxes(web)
+        XCTAssertEqual(after, ["2|true|false|Mark done: inserted item", "3|false|false|Mark done: open item",
+                               "4|true|false|Mark done: done item"])
     }
 
     // MARK: Pictures for review

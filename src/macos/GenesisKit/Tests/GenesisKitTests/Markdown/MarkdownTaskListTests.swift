@@ -93,6 +93,42 @@ final class MarkdownTaskListTests: XCTestCase {
         XCTAssertEqual(items.map(\.line), [4, 13])
     }
 
+    /// Four columns past the item a line sits in (or past the margin) is indented code or a paragraph's next line,
+    /// as CommonMark reads it; the same indent under a list item is a nested task.
+    func testIndentedCodeIsTextAndANestedItemUnderAListItemIsATask() {
+        let items = MarkdownTaskList.items(in: bytes(Self.indentNote))
+        XCTAssertEqual(items.map(\.text), ["parent", "four-space child", "tab child", "under a plain item", "ordered",
+                                           "quoted parent", "quoted child", "after"])
+        XCTAssertEqual(items.map(\.line), [0, 1, 2, 4, 10, 15, 16, 21])
+    }
+
+    /// Lines indented into list items, into code and into paragraphs. `MarkdownTaskWebTests` checks that the page
+    /// draws boxes on exactly the lines the scanner names.
+    static let indentNote = """
+    - [ ] parent
+        - [ ] four-space child
+    \t- [ ] tab child
+    - Group
+        - [ ] under a plain item
+    # Example
+
+        - [ ] indented code
+    A paragraph
+        - [ ] its next line
+    1. [ ] ordered
+
+           - [ ] code inside the item
+    -     [ ] code after the marker
+
+    > - [ ] quoted parent
+    >     - [ ] quoted child
+
+    > Quoted text
+    >
+    >     - [ ] quoted code
+    - [ ] after
+    """
+
     func testLineNumbersMatchThePageForCRLFAndABOM() {
         let note = "\u{FEFF}- [ ] first\r\n\r\n- [x] third\r\n"
         let items = MarkdownTaskList.items(in: bytes(note))
@@ -166,6 +202,27 @@ final class MarkdownTaskListTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["note.md"], "the temporary file is gone")
     }
 
+    /// The race the check alone left open: another program saves after the check and before the new bytes go in. Its
+    /// save is kept, whether it wrote into the file or renamed a new file over it, and the box is set on top of it by
+    /// the retry.
+    func testAWriteBetweenTheCheckAndThePlacementIsKept() throws {
+        for (name, options) in [("in-place.md", Data.WritingOptions()), ("renamed.md", .atomic)] {
+            let url = try file("- [ ] one\n", name: name)
+            let theirs = "- [ ] one\n- [ ] added by an agent\n"
+            XCTAssertThrowsError(try MarkdownAtomicWrite.replace(url, with: bytes("- [x] one\n"), expected: bytes("- [ ] one\n"),
+                                                                 beforePlacing: { try? Data(theirs.utf8).write(to: url, options: options) })) {
+                XCTAssertEqual($0 as? MarkdownAtomicWrite.Failure, .changed, name)
+            }
+            XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), theirs, "\(name): the other program's save stays")
+
+            let one = try target("- [ ] one\n", bodyLine: 0, item: "one", checked: true)
+            XCTAssertEqual(MarkdownTaskFile.apply(one, to: url), .saved(line: 0))
+            XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "- [x] one\n- [ ] added by an agent\n")
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), ["in-place.md", "renamed.md"],
+                       "no temporary file and no old file left behind")
+    }
+
     // MARK: The file changed underneath
 
     func testAnAgentAppendedOrInsertedAboveAndTheItemIsFoundByItsText() throws {
@@ -190,6 +247,14 @@ final class MarkdownTaskListTests: XCTestCase {
         let ambiguous = try file(twice, name: "twice.md")
         XCTAssertEqual(MarkdownTaskFile.apply(beta, to: ambiguous), .ambiguous(2))
         XCTAssertEqual(try String(contentsOf: ambiguous, encoding: .utf8), twice)
+
+        // The real item was deleted and only a code example with its text is left: the code is never written.
+        let drawnWithExample = "- [ ] beta\n\n# Example\n\n    - [ ] beta\n"
+        let realBeta = try target(drawnWithExample, bodyLine: 0, item: "beta", checked: true)
+        let onlyCode = "# Example\n\n    - [ ] beta\n"
+        let example = try file(onlyCode, name: "example.md")
+        XCTAssertEqual(MarkdownTaskFile.apply(realBeta, to: example), .notFound)
+        XCTAssertEqual(try String(contentsOf: example, encoding: .utf8), onlyCode)
 
         let checkedElsewhere = try file("Inserted.\n- [ ] alpha\n- [x] beta\n", name: "checked.md")
         XCTAssertEqual(MarkdownTaskFile.apply(beta, to: checkedElsewhere), .unchanged(line: 2),

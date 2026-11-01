@@ -312,9 +312,7 @@ struct MarkdownWebView: NSViewRepresentable {
             c.lastTaskMode = tasks.pageMode
             c.applyTaskMode()
         }
-        // The text from before a task click whose write is on its way: the page already shows the box as clicked,
-        // so drawing that text again would flip it back for a moment.
-        let shown = c.taskHolds.contains(markdown) ? (c.lastMarkdown ?? markdown) : markdown
+        let shown = c.shownText(for: markdown)
         if extrasNeedRender || c.lastMarkdown != shown || c.lastMediaContext != mediaContext || c.lastLineNumbers != lineNumbers {
             c.lastMarkdown = shown
             c.lastMediaContext = mediaContext
@@ -476,6 +474,19 @@ struct MarkdownWebView: NSViewRepresentable {
         /// The texts the page showed before a task click whose answer has not come back. An update that brings one of
         /// them is the document from before the click, not a change to draw.
         var taskHolds: [String] = []
+        /// Counts the texts the host handed the page (the note reloaded, another document), not the page's own clicks.
+        /// A refused click puts its box back only while this count is the one it saw: after a new text the page shows
+        /// that text's boxes, and the box on the clicked line can be another item.
+        var drawings = 0
+
+        /// The text to draw for the host's `markdown`. The text from before a task click whose write is on its way
+        /// keeps the drawn one: the page already shows the box as clicked, so drawing that text again would flip it
+        /// back for a moment. Any other new text counts as a new drawing.
+        func shownText(for markdown: String) -> String {
+            let shown = taskHolds.contains(markdown) ? (lastMarkdown ?? markdown) : markdown
+            if shown != lastMarkdown { drawings += 1 }
+            return shown
+        }
         /// The notice over the page (`MarkdownPageNotice`), and what it shows.
         var noticeHost: MarkdownPageNoticeHost?
         var currentNotice: MarkdownPageNotice?
@@ -572,12 +583,23 @@ struct MarkdownWebView: NSViewRepresentable {
             let after = MarkdownTaskList.applying(target, to: drawn) ?? drawn
             taskHolds.append(drawn)
             lastMarkdown = after
+            let drawing = drawings
+            let document = parent.documentURL
             set(target) { [weak self] applied in
                 guard let self else { return }
                 if let index = self.taskHolds.firstIndex(of: drawn) { self.taskHolds.remove(at: index) }
                 guard !applied else { return }
-                // The document did not take it: the next update draws whatever the note holds now.
-                if self.lastMarkdown == after { self.lastMarkdown = drawn }
+                // The document did not take it. Once the host handed the page another text (the note reloaded while the
+                // write was on its way, or this page shows another document), the page draws that text's own boxes,
+                // and the box on this line may be another item: nothing is put back.
+                guard self.drawings == drawing, self.parent.documentURL == document, let current = self.lastMarkdown else {
+                    return
+                }
+                // The page's text loses this click, and keeps a later click on another box that is still on its way.
+                if let undo = MarkdownTaskList.target(bodyLine: line, text: text, checked: !checked, in: current),
+                   let undone = MarkdownTaskList.applying(undo, to: current) {
+                    self.lastMarkdown = undone
+                }
                 self.eval("window.gnTaskRevert(\(line),\(!checked))")
             }
         }
@@ -2152,8 +2174,9 @@ var gnNav=0;
 // source line and where its top sits. After it, the same block goes back to the same place, so lines an agent added
 // or removed above it never move the words under the reader. A block that is gone gives its place to the block
 // nearest its line, then to the same share of the page. A reader at the very bottom stays at the bottom, so a growing
-// log follows. A render that had to fall back (a half-written file read on the way) keeps the anchor for the next
-// render, as long as the page has not moved since. The selection and a focused task box come back the same way.
+// log follows. A render that had to fall back (a half-written file read on the way, or one too short to scroll, which
+// has no bottom to stay at) keeps the anchor for the next render, as long as the page has not moved since. The
+// selection and a focused task box come back the same way.
 var gnAnchorHeld=null,gnAnchorTop=-1;
 function gnBlockText(el){return (el.textContent||'').replace(/\s+/g,' ').trim().slice(0,400);}
 function gnBlockKey(el){return {tag:el.localName,line:parseInt(el.getAttribute('data-line'),10)||0,text:gnBlockText(el)};}
@@ -2197,7 +2220,8 @@ function gnCaptureAnchor(){
 function gnRestoreAnchor(a){
   if(!a)return;
   var sc=document.scrollingElement||document.documentElement,view=sc.clientHeight,height=sc.scrollHeight,exact=true,top;
-  if(a.bottom){top=height-view;}
+  // A page too short to scroll (a writer that empties the file first) has no bottom: the wish waits for the next one.
+  if(a.bottom){top=height-view;exact=top>0;}
   else{
     var el=gnBlockFor(a.key);exact=!!el;
     if(!el&&a.key){
