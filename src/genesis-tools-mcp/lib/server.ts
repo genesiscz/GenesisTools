@@ -166,7 +166,11 @@ export function serverInstructions({ askViaQuestionTool, inboxState }: Instructi
         "read a running macOS app's elements without raising or focusing anything. `control_workflow_run` is the " +
         "preferred way to act: a versioned plan run against fresh observations, each step verified before the next. " +
         "`control_run` takes a `control run` plan object inline and returns per-step results; its type/set/hotkey " +
-        "steps refuse while another app is frontmost."
+        "steps refuse while another app is frontmost.\n\n" +
+        `FETCH (capability \`fetch\`, read-only, the same core as \`${toolCommand("fetch")}\`): \`fetch_markdown\`, ` +
+        "`fetch_raw` and `fetch_jsonld` read a web page as Markdown, raw HTML or schema.org JSON-LD (products, every " +
+        "offer with seller and price, breadcrumbs). transport `auto` (default) retries once through a real Chrome " +
+        "fingerprint when a Cloudflare or similar bot wall refuses plain fetch, and the result names the transport."
     );
 }
 
@@ -307,6 +311,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     annotate: (name) => name.startsWith("annotate_"),
     jev: (name) => name.startsWith("jev_"),
     control: (name) => name.startsWith("control_"),
+    fetch: (name) => name.startsWith("fetch_"),
 };
 
 /**
@@ -333,6 +338,7 @@ export function filterRegistryByCapabilities(
 const registries = new Map<string, Record<string, ToolEntry>>();
 let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
 let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
+let fetchModule: Promise<typeof import("@app/fetch/mcp/genesis-tools")> | undefined;
 
 /**
  * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
@@ -352,6 +358,22 @@ function loadControlEntries(): Promise<Record<string, ToolEntry>> {
     return controlEntries;
 }
 
+/**
+ * The fetch tools import the HTML converter and start a Python sidecar on their first chrome request, so they load
+ * only for a capability list that can expose them: unset (everything) or one naming `fetch`.
+ */
+function loadFetchEntries(): Promise<Record<string, ToolEntry>> {
+    fetchModule ??= import("@app/fetch/mcp/genesis-tools");
+    return fetchModule.then((module) => module.fetchToolEntries());
+}
+
+/** Ends what a loaded group holds open (the fetch group's Chrome sidecar). A group that never loaded holds nothing. */
+async function closeLoadedGroups(): Promise<void> {
+    if (fetchModule) {
+        await (await fetchModule).closeFetchTools();
+    }
+}
+
 /** One registry per instructions variant; a resident server builds it once, not per request. */
 async function toolRegistry(
     context: InstructionContext,
@@ -359,12 +381,14 @@ async function toolRegistry(
 ): Promise<Record<string, ToolEntry>> {
     const withJev = capabilities === undefined || capabilities.includes("jev");
     const withControl = capabilities === undefined || capabilities.includes("control");
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}`;
+    const withFetch = capabilities === undefined || capabilities.includes("fetch");
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
             ...(withJev ? await loadJevEntries() : {}),
             ...(withControl ? await loadControlEntries() : {}),
+            ...(withFetch ? await loadFetchEntries() : {}),
             ...buildToolRegistry(context),
         };
         registries.set(key, registry);
@@ -442,4 +466,11 @@ export async function startMcpServer(): Promise<void> {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     log.info("genesis-tools MCP server started (stdio)");
+
+    // The stdio transport does not close on EOF, and an open child (the fetch group's Chrome sidecar) would keep the
+    // process alive after the host has gone, so stdin's end releases the groups' children.
+    process.stdin.once("end", () => {
+        log.info("genesis-tools MCP server: stdin ended, closing loaded groups");
+        void closeLoadedGroups().finally(() => server.close());
+    });
 }

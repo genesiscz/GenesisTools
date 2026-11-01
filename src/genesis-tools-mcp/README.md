@@ -14,6 +14,7 @@ New `jev_*` tools will join this registry. The MCP server name is `genesis-tools
 | `annotate` | `annotate_image` | Annotate an image (arrows, boxes, labels). |
 
 | `jev` | `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates` | Read-only Jev tools (`src/jev/mcp/genesis-tools.ts` adapts the registry `tools jev mcp` serves alone). |
+| `fetch` | `fetch_markdown`, `fetch_raw`, `fetch_jsonld` | Read a web page as Markdown, raw HTML or schema.org JSON-LD, with transport `plain`, `chrome` (a real Chrome fingerprint for Cloudflare-walled sites) or `auto`. `src/fetch/mcp/genesis-tools.ts` adapts the tools `tools fetch mcp` serves alone; the group loads only when the capability list can expose it, and its Chrome sidecar ends when stdin ends. See `src/fetch/README.md`. |
 
 `question_ask` is an explicit set, not a `question_` prefix, so it never includes `question_answer`.
 
