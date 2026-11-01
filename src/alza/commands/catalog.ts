@@ -135,9 +135,14 @@ export function registerCatalogCommands(program: Command): void {
 
     program
         .command("categories")
-        .description("A category's path and subcategories")
-        .argument("<categoryId>", "Category id", parseIntArg)
-        .action(async (categoryId: number, _flags: unknown, command: Command) => {
+        .description("The top-level categories, or a category's path and subcategories")
+        .argument("[categoryId]", "Category id; omit for the top level", parseIntArg)
+        .action(async (categoryId: number | undefined, _flags: unknown, command: Command) => {
+            if (categoryId === undefined) {
+                await runOperation(command, "list_categories", {});
+                return;
+            }
+
             await runOperation(command, "get_category", { category_id: categoryId });
         });
 

@@ -8,6 +8,29 @@ import {
     productIdFromRef,
     toReview,
 } from "./catalog";
+import {
+    checkBuild,
+    checkCoolerClearance,
+    checkCpuSocket,
+    checkDisplayOutput,
+    checkGpuLength,
+    checkMotherboardFormFactor,
+    checkPsuFormFactor,
+    checkPsuWattage,
+    checkRamMotherboard,
+    detectRole,
+    estimatePower,
+    normalizeFormFactor,
+    normalizeSocket,
+    normalizeSpecs,
+    overallVerdict,
+    type PcRole,
+    type ProductParam,
+    parseCzechNumber,
+    type RulePart,
+} from "./pc-build";
+import { parsePcPart } from "./pc-build-format";
+import { PcBuilder, type PcCatalog } from "./pc-build-service";
 
 describe("parsePrice", () => {
     test("reads the storefront price formats", () => {
@@ -124,5 +147,194 @@ describe("listing cards", () => {
             inStock: true,
         });
         expect(parsed.items[1].inStock).toBe(false);
+    });
+});
+
+// ── PC builder rules (fixtures trimmed from lukabudik/alza-mcp-community (MIT) test/pc-build.test.ts) ──
+
+const P = (rows: Array<[string, string]>): ProductParam[] => rows.map(([name, value]) => ({ name, value }));
+const CPU_AM4 = P([
+    ["Řada procesoru", "AMD Ryzen 7"],
+    ["Socket", "AMD AM4"],
+    ["Počet jader procesoru", "8 ×"],
+    ["Podporovaný typ paměti", "DDR4"],
+    ["Typ integrované grafické karty", "Bez integrovaného grafického čipu"],
+    ["TDP", "105 W"],
+]);
+const CPU_AM5_IGPU = P([
+    ["Řada procesoru", "AMD Ryzen 7"],
+    ["Socket", "AMD AM5"],
+    ["Počet jader procesoru", "8 ×"],
+    ["Podporovaný typ paměti", "DDR5"],
+    ["Typ integrované grafické karty", "AMD Radeon Graphics"],
+    ["TDP", "120 W"],
+]);
+const MB_AM5_ATX = P([
+    ["Socket", "AMD AM5"],
+    ["Formát základní desky", "ATX"],
+    ["Typ paměti", "DDR5"],
+    ["Počet slotů RAM", "2 ×"],
+    ["Provedení", "DIMM"],
+]);
+const RAM_DDR5_KIT = P([
+    ["Určení", "Pro počítač"],
+    ["Provedení", "DIMM"],
+    ["Velikost operační paměti RAM", "32 GB"],
+    ["Frekvence paměti", "6 000 MHz"],
+    ["Typ paměti", "DDR5"],
+    ["Počet modulů v balení", "2 ks"],
+]);
+const RAM_SODIMM = P([
+    ["Provedení", "SO-DIMM"],
+    ["Typ paměti", "DDR5"],
+    ["Počet modulů v balení", "1 ks"],
+]);
+const GPU_RTX = P([
+    ["Šířka", "291,9 mm"],
+    ["Výška", "41,3 mm"],
+    ["TDP", "180 W"],
+]);
+const GPU_RADEON = P([
+    ["Šířka", "360 mm"],
+    ["Doporučený výkon zdroje", "800 W"],
+]);
+const CASE_H5 = P([
+    ["Formát základní desky", "ATX,mATX (Micro ATX),mITX (Mini ITX),eATX (Extended ATX)"],
+    ["Max. výška chladiče procesoru", "170 mm"],
+    ["Max. délka grafické karty", "410 mm"],
+    ["Podporovaný formát zdroje", "ATX"],
+    ["Podporovaná velikost radiátoru navrchu", "120mm,240mm,280mm"],
+]);
+const CASE_SMALL = P([
+    ["Formát základní desky", "mATX (Micro ATX),mITX (Mini ITX)"],
+    ["Max. výška chladiče procesoru", "150 mm"],
+    ["Max. délka grafické karty", "300 mm"],
+    ["Podporovaný formát zdroje", "SFX"],
+]);
+const COOLER_AIR = P([
+    ["Chlazení", "Vzduchem"],
+    ["AMD Socket", "AM4,AM5"],
+    ["Intel Socket", "1700,1851"],
+    ["Výška", "155 mm"],
+]);
+const PSU_850 = P([
+    ["Výkon", "850 W"],
+    ["Formát", "ATX"],
+    ["Certifikace", "80 PLUS Gold"],
+]);
+const PSU_450 = P([
+    ["Výkon", "450 W"],
+    ["Formát", "ATX"],
+]);
+const pcPart = (role: PcRole, code: string, rows: ProductParam[]): RulePart => ({
+    code,
+    specs: normalizeSpecs(role, rows),
+});
+
+describe("pc build: value parsers", () => {
+    test("Czech numbers, sockets and form factors", () => {
+        expect(parseCzechNumber("291,9 mm")).toBe(291.9);
+        expect(parseCzechNumber("1 810 g")).toBe(1810);
+        expect(normalizeSocket("Intel 1700")).toBe("LGA1700");
+        expect(normalizeSocket("AMD AM5")).toBe("AM5");
+        expect(normalizeFormFactor("mATX (Micro ATX)")).toBe("mATX");
+    });
+
+    test("normalizeSpecs keeps the Czech row and raw value; a GPU's length is its longest dimension", () => {
+        expect(normalizeSpecs("case", CASE_H5).maxGpuLengthMm).toEqual({
+            value: 410,
+            source: "Max. délka grafické karty",
+            raw: "410 mm",
+        });
+        expect(normalizeSpecs("gpu", GPU_RTX).gpuLengthMm).toMatchObject({ value: 291.9, source: "Šířka" });
+        expect(normalizeSpecs("cooler", COOLER_AIR).coolerSockets?.value).toEqual(["AM4", "AM5", "LGA1700", "LGA1851"]);
+    });
+
+    test("detectRole reads the spec signature", () => {
+        expect(detectRole("AMD Ryzen 7 5800X3D", CPU_AM4)).toBe("cpu");
+        expect(detectRole("Kingston FURY 32GB KIT DDR5", RAM_DDR5_KIT)).toBe("ram");
+        expect(detectRole("Corsair RM850x", PSU_850)).toBe("psu");
+    });
+});
+
+describe("pc build: compatibility rules", () => {
+    test("socket, RAM and display output", () => {
+        const mb = pcPart("motherboard", "M", MB_AM5_ATX);
+        expect(checkCpuSocket(pcPart("cpu", "C", CPU_AM5_IGPU), mb).verdict).toBe("pass");
+        expect(checkCpuSocket(pcPart("cpu", "C", CPU_AM4), mb).verdict).toBe("fail");
+        expect(checkCpuSocket(undefined, mb).verdict).toBe("not_applicable");
+        expect(checkRamMotherboard([pcPart("ram", "R", RAM_SODIMM)], mb).verdict).toBe("fail");
+        expect(
+            checkRamMotherboard([pcPart("ram", "R1", RAM_DDR5_KIT), pcPart("ram", "R2", RAM_DDR5_KIT)], mb).verdict
+        ).toBe("fail");
+        expect(checkDisplayOutput(pcPart("cpu", "C", CPU_AM4), undefined).verdict).toBe("fail");
+        expect(checkDisplayOutput(pcPart("cpu", "C", CPU_AM5_IGPU), undefined).verdict).toBe("pass");
+    });
+
+    test("PSU wattage: estimate, headroom and the GPU vendor's recommendation", () => {
+        const cpu = pcPart("cpu", "C", CPU_AM5_IGPU);
+        const gpu = pcPart("gpu", "G", GPU_RTX);
+        expect(estimatePower({ cpu, gpu })).toMatchObject({ cpuW: 162, gpuW: 180, totalW: 417, recommendedPsuW: 550 });
+        expect(checkPsuWattage({ cpu, gpu, psu: pcPart("psu", "P", PSU_850) }).verdict).toBe("pass");
+        expect(checkPsuWattage({ cpu, gpu, psu: pcPart("psu", "P", PSU_450) }).verdict).toBe("warn");
+        const radeon = pcPart("gpu", "G", GPU_RADEON);
+        expect(estimatePower({ cpu, gpu: radeon }).recommendedPsuW).toBe(800);
+        expect(checkPsuWattage({ cpu, gpu: radeon, psu: pcPart("psu", "P", PSU_450) }).verdict).toBe("fail");
+    });
+
+    test("case clearances and form factors", () => {
+        const h5 = pcPart("case", "K", CASE_H5);
+        const small = pcPart("case", "K", CASE_SMALL);
+        expect(checkGpuLength(pcPart("gpu", "G", GPU_RTX), h5).verdict).toBe("pass");
+        expect(checkGpuLength(pcPart("gpu", "G", GPU_RADEON), small).verdict).toBe("fail");
+        expect(checkCoolerClearance(pcPart("cooler", "A", COOLER_AIR), small).verdict).toBe("fail");
+        expect(checkMotherboardFormFactor(pcPart("motherboard", "M", MB_AM5_ATX), small).verdict).toBe("fail");
+        expect(checkPsuFormFactor(pcPart("psu", "P", PSU_850), small).verdict).toBe("fail");
+    });
+
+    test("checkBuild runs every rule and overallVerdict needs the required roles", () => {
+        const good = checkBuild({
+            cpu: pcPart("cpu", "C", CPU_AM5_IGPU),
+            motherboard: pcPart("motherboard", "M", MB_AM5_ATX),
+            ram: [pcPart("ram", "R", RAM_DDR5_KIT)],
+            gpu: pcPart("gpu", "G", GPU_RTX),
+            case: pcPart("case", "K", CASE_H5),
+            cooler: pcPart("cooler", "A", COOLER_AIR),
+            psu: pcPart("psu", "P", PSU_850),
+        });
+        expect(good.every((v) => v.verdict === "pass")).toBe(true);
+        expect(overallVerdict(good)).toBe("compatible");
+        const partial = checkBuild({ cpu: pcPart("cpu", "C", CPU_AM5_IGPU) });
+        expect(overallVerdict(partial, { complete: false })).toBe("no_conflicts_found");
+    });
+
+    test("PcBuilder.check reads each part once and refuses two CPUs", async () => {
+        const products: Record<string, ProductParam[]> = { CPU1: CPU_AM5_IGPU, CPU2: CPU_AM4, MB1: MB_AM5_ATX };
+        const reads: string[] = [];
+        const catalog: PcCatalog = {
+            getProductSpecs: async (code) => {
+                reads.push(code);
+                return { code, name: code, url: `https://example.com/${code}`, price: 1000, params: products[code] };
+            },
+            searchProducts: async () => ({ products: [] }),
+            getCategoryFilters: async () => ({ brands: [] }),
+        };
+        const report = await new PcBuilder(catalog).check({ parts: [{ code: "CPU2" }, { code: "MB1" }] });
+        expect(reads).toEqual(["CPU2", "MB1"]);
+        expect(report.overall).toBe("incompatible");
+        expect(report.missingRoles).toContain("psu");
+        await expect(new PcBuilder(catalog).check({ parts: [{ code: "CPU1" }, { code: "CPU2" }] })).rejects.toThrow(
+            /Two parts have role cpu/
+        );
+    });
+});
+
+describe("pc build: CLI part syntax", () => {
+    test("parsePcPart takes a role only after the last colon", () => {
+        expect(parsePcPart("BD750m7b1")).toEqual({ code: "BD750m7b1" });
+        expect(parsePcPart("BD750m7b1:psu")).toEqual({ code: "BD750m7b1", role: "psu" });
+        expect(parsePcPart("https://www.alza.cz/x-d9383715.htm")).toEqual({
+            code: "https://www.alza.cz/x-d9383715.htm",
+        });
     });
 });

@@ -159,11 +159,38 @@ export function registerAccountCommands(program: Command): void {
             await runAccountOperation(command, "cart_remove", { product });
         });
 
-    program
+    const favorites = program
         .command("favorites")
-        .description("Products in the favourites list (Oblíbené)")
+        .description("The favourites list (Oblíbené) and the buy-later list; signed in or as the visitor");
+    favorites
+        .command("list", { isDefault: true })
+        .description("Products in the favourites list")
         .action(async (_flags: unknown, command: Command) => {
             await runAccountOperation(command, "favorites_list", {});
+        });
+    favorites
+        .command("add")
+        .description("Add a product to the favourites (or --later: the buy-later list)")
+        .argument("<product>", "Code, numeric id or product URL")
+        .option("--later", "Use the buy-later list")
+        .action(async (product: string, flags: { later?: boolean }, command: Command) => {
+            await runAccountOperation(command, "mutate_list", {
+                action: "add",
+                product,
+                list: flags.later ? "later" : "favorites",
+            });
+        });
+    favorites
+        .command("remove")
+        .description("Remove a product from the favourites (or --later: the buy-later list)")
+        .argument("<product>", "Code, numeric id or product URL")
+        .option("--later", "Use the buy-later list")
+        .action(async (product: string, flags: { later?: boolean }, command: Command) => {
+            await runAccountOperation(command, "mutate_list", {
+                action: "remove",
+                product,
+                list: flags.later ? "later" : "favorites",
+            });
         });
 
     const orders = program.command("orders").description("Your orders (signed in)");
