@@ -217,7 +217,7 @@ function shellBodies(scan: ShellScan): ShellBody[] {
 
     // The scanner keeps a heredoc as code when a shell word stands on its line; it counts here when the
     // command the operator belongs to is that shell.
-    for (const heredoc of scan.heredocs) {
+    for (const heredoc of scan.heredocs.filter((found) => found.fed)) {
         const { text, base } = around((range) => range.start <= heredoc.opener && heredoc.opener < range.end);
         const invocation = invocationBefore(scan.command, text, base, heredoc.opener);
 
@@ -289,10 +289,19 @@ function shellAt(scan: ShellScan, position: number): string {
     return body.shell ?? shellAt(scan, body.start - 1);
 }
 
-// Whether the `$?` the consumer reads is the outer shell's, expanded before the body's pipeline ran.
+// Whether the `$?` the consumer reads is the outer shell's, expanded before the body's pipeline ran. Not
+// when both sit in one `$( … )` the outer shell expands (`bash -c "echo $(false | tail -1; echo $?)"`):
+// the outer shell runs the pipeline too.
 function readOutside(scan: ShellScan, read: PipelineRead): boolean {
     const ref = EXIT_STATUS_REF.exec(read.consumer.text);
-    return ref !== null && expandedOutsideAt(scan, read.consumer.start + ref.index);
+
+    if (ref === null || !expandedOutsideAt(scan, read.consumer.start + ref.index)) {
+        return false;
+    }
+
+    const unit = scan.units.find((statements) => statements.includes(read.pipeline));
+    const opener = /\$\(\s*$/.exec(scan.command.slice(0, unit?.[0]?.start ?? 0));
+    return !(opener && expandedOutsideAt(scan, opener.index));
 }
 
 // Whether pipefail is on at `position` in one shell's cleaned text. A statement before it turns
@@ -382,7 +391,7 @@ function pipelineFollowedByExitStatus(
 
             const elements = splitPipeline(statements[i]);
 
-            if (elements.length < 2 || !lastWords.has(simpleCommandWord(elements[elements.length - 1].text))) {
+            if (elements.length < 2 || !lastWords.has(simpleCommandWord(elements[elements.length - 1], scan.command))) {
                 continue;
             }
 
@@ -411,7 +420,8 @@ function pipefailMatch(scan: ShellScan, read: PipelineRead): ShellMatch {
         // an inserted `;` ended that list, so `cd wt && grep … | head` ran grep even when cd
         // failed. The subshell keeps the list intact, scopes pipefail, and its `$?` is the
         // pipeline's status.
-        suggestion: `${scan.command.slice(0, start)}(set -o pipefail; ${matched})${scan.command.slice(end)}`,
+        // Right after `$(` the subshell needs a space, or `$((` opens arithmetic.
+        suggestion: `${scan.command.slice(0, start)}${scan.command[start - 1] === "(" ? " " : ""}(set -o pipefail; ${matched})${scan.command.slice(end)}`,
     };
 }
 
@@ -508,12 +518,12 @@ function elementWords(element: Span): Set<string> {
 }
 
 // curl -s fails without a word on stderr unless -S / --show-error brings the error back.
-function silentCurl(element: string): boolean {
-    if (simpleCommandWord(element) !== "curl") {
+function silentCurl(scan: ShellScan, element: Span): boolean {
+    if (simpleCommandWord(element, scan.command) !== "curl") {
         return false;
     }
 
-    const flags = tokenize({ text: element, start: 0 }).map((token) => token.text);
+    const flags = tokenize(element).map((token) => token.text);
     const short = (letter: string) => flags.some((flag) => /^-[A-Za-z0-9]+$/.test(flag) && flag.includes(letter));
     return (flags.includes("--silent") || short("s")) && !(flags.includes("--show-error") || short("S"));
 }
@@ -555,14 +565,14 @@ function deliberateMatchTest(scan: ShellScan, read: PipelineRead): boolean {
     // The cleaned text blanks quoted text, so the label is read from the raw command.
     const label = scan.command.slice(read.consumer.start, read.consumer.start + (ref?.index ?? 0));
     const left = read.elements.slice(0, -1);
-    const filter = simpleCommandWord(read.elements[read.elements.length - 1].text);
+    const filter = simpleCommandWord(read.elements[read.elements.length - 1], scan.command);
     const leftWords = new Set(left.flatMap((element) => runWords(scan.command, element)));
     const words = [...label.matchAll(MATCH_LABEL)].map((m) => m[2].toLowerCase());
     return (
         words.length > 0 &&
         words.every((word) => MATCH_WORD.test(word) || word === filter || !leftWords.has(word)) &&
         !read.pipeline.text.includes("|&") &&
-        left.every((element) => !STDERR_REDIRECT.test(element.text) && !silentCurl(element.text))
+        left.every((element) => !STDERR_REDIRECT.test(element.text) && !silentCurl(scan, element))
     );
 }
 
@@ -621,9 +631,10 @@ function leftStatusSuggestion(scan: ShellScan, consumer: Span): string | undefin
         return undefined;
     }
 
-    // The `$?` is `\$?` in a body the shell around it expands, and the inserted `$` needs the same backslash.
-    const left = innermost(shellBodies(scan), refStart)?.expandedOutside ? `\\${status}` : status;
-    const word = simpleCommandWord(consumer.text);
+    // The `$?` reaches its shell through the backslashes it is typed with (`\$?` in a double-quoted body,
+    // more in a body nested in one), and the inserted `$` needs the same ones.
+    const left = `${/\\*$/.exec(scan.command.slice(0, refStart))?.[0] ?? ""}${status}`;
+    const word = simpleCommandWord(consumer, scan.command);
     let at = refStart + ref[0].length;
     let insert = ` left_exit=${left}`;
 
@@ -635,7 +646,7 @@ function leftStatusSuggestion(scan: ShellScan, consumer: Span): string | undefin
             return undefined;
         }
     } else {
-        const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(\\?"?)\\?(?:\$\?|\$\{\?\})\2/.exec(
+        const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(\\*"?)\\*(?:\$\?|\$\{\?\})\2/.exec(
             scan.command.slice(consumer.start)
         );
 
@@ -762,7 +773,7 @@ export const pipestatusIndexMismatch: ShellRule = {
                     const right = !outside && (named.includes(n) || (named.length === 0 && !meaningless));
                     return right || shellAt(scan, at) !== OUTER_SHELL
                         ? []
-                        : [{ ...read, to: named.length === 1 ? named[0] : 0 }];
+                        : [{ ...read, label, named, outside, to: named.length === 1 ? named[0] : 0 }];
                 });
                 const last = wrong.at(-1);
 
@@ -777,10 +788,26 @@ export const pipestatusIndexMismatch: ShellRule = {
                           return text.slice(0, digitsAt) + String(to) + text.slice(digitsAt + digits.length);
                       }, scan.command)
                     : undefined;
+                // As typed, up to the next element: a span ends before a trailing quoted argument.
+                const owner = (k: number) => {
+                    const end = elements[k]?.start ?? consumer.start;
+                    const typed = scan.command.slice(elements[k - 1].start, end).replace(/[\s;&|]+$/, "");
+                    return `element ${k} (${typed.length > 40 ? `${typed.slice(0, 39)}…` : typed})`;
+                };
+                const detail = wrong
+                    .map(({ ref, n, label, named, outside }) =>
+                        outside
+                            ? `${ref[0]} names element ${n} of ${elements.length}, so it expands to nothing`
+                            : label && named.length > 0
+                              ? `${ref[0]} is ${owner(n)}, while ${label}= names ${named.map(owner).join(" or ")}`
+                              : `${ref[0]} is ${owner(n)}, a filter that exits 0`
+                    )
+                    .join("; ");
                 return {
                     matched: scan.command.slice(pipeline.start, last.at + last.ref[0].length),
                     index: pipeline.start,
                     ...(suggestion ? { suggestion } : {}),
+                    detail,
                 };
             }
         }

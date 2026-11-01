@@ -5,8 +5,10 @@ import { resolve } from "node:path";
 import {
     commandTokenIndex,
     commandWord,
+    NUMERIC_GLOB,
     originalSlice,
     RESERVED_PREFIX,
+    runningShell,
     type ShellScan,
     type Span,
     splitPipeline,
@@ -116,31 +118,15 @@ function squash(text: string): string {
     return text.replace(/\s+/g, " ").trim();
 }
 
-const HEREDOC_OPENER = /<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g;
-
-// `index` sits in the body of a heredoc with an unquoted delimiter: the outer shell expands a `$(…)` there before the
-// command that reads the body runs, so before any `cd` in the body.
-function inExpandedHeredoc(command: string, index: number): boolean {
-    for (const m of command.slice(0, index).matchAll(HEREDOC_OPENER)) {
-        const bodyStart = command.indexOf("\n", m.index) + 1;
-
-        if (m[2] !== "" || command[m.index - 1] === "<" || bodyStart === 0 || bodyStart > index) {
-            continue;
-        }
-
-        const end = new RegExp(`^${m[1] ? "\\t*" : ""}${m[3]}$`, "m").exec(command.slice(bodyStart));
-
-        if (!end || bodyStart + end.index > index) {
-            return true;
-        }
-    }
-
-    return false;
+// `index` sits in the body of a heredoc with an unquoted delimiter, fed to a shell or not: the outer shell expands a
+// `$(…)` there before the command that reads the body runs, so before any `cd` in the body.
+function inExpandedHeredoc(scan: ShellScan, index: number): boolean {
+    return scan.heredocs.some((heredoc) => !heredoc.quoted && heredoc.start <= index && index < heredoc.end);
 }
 
 // A gate in front of the checkout reads the tree the checkout writes, and decides whether the checkout runs.
 function gateable(scan: ShellScan, inv: GitInvocation): boolean {
-    return inv.pipe === 0 && bareGit(inv) && !inExpandedHeredoc(scan.command, inv.element.start);
+    return inv.pipe === 0 && bareGit(inv) && !inExpandedHeredoc(scan, inv.element.start);
 }
 
 /**
@@ -165,23 +151,60 @@ function corrected(scan: ShellScan, match: ShellMatch, replacement: string): str
 
 // Shell words as typed, quotes kept.
 const RAW_WORD = /(?:[^\s'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")+/g;
-// `>|` and `>&` before `>`, which would leave the `|` or `&` as the target.
-const REDIRECTION = /^(\d*|&)(>\||>&|>>?|<<?<?|<&)(.*)$/;
+// The longer operators first, which would otherwise leave their `&`, `|` or `!` as the target: `>&`, `>|` and zsh's
+// `>!`, `>&|` and `>>|`.
+const REDIRECTION = /^(\d*|&)(>>&[|!]?|>&[|!]?|>>?[|!]?|<&|<<?<?)(.*)$/;
+// Text before a `>` that stays with the operator: a descriptor (`2>`), `&` (`&>`), or the operator so far.
+const OPERATOR_SO_FAR = /^(?:\d*|&)[<>&|!]*$/;
+
+// The shells that write every stdout target of `> a > b` (MULTIOS); "" is the zsh the command was typed into.
+const MULTIOS_SHELLS: ReadonlySet<string> = new Set(["", "zsh"]);
+
+interface StdoutTarget {
+    file: string;
+    /** `>>`: stdout is added to the file, not written over it. */
+    appends: boolean;
+}
 
 interface Words {
     args: string[];
-    /** The file a `>`, `>|`, `>>`, `>&` or `&>` sends stdout to. */
-    stdout?: string;
-    /** `>>`: stdout is added to the file, not written over it. */
-    appends?: boolean;
+    /** Every file stdout goes to: zsh's MULTIOS writes each of `> a > b`, and bash truncates `a`. */
+    stdout: StdoutTarget[];
+}
+
+// A word cut where the shell cuts it: before an unquoted `>` that follows text, so `main:a.ts>a.ts` is the object
+// and a redirection, and `a>b>c` writes b and c.
+function redirectionParts(word: string): string[] {
+    const parts: string[] = [];
+    let from = 0;
+
+    for (let i = 0; i < word.length; i++) {
+        if (word[i] === "\\") {
+            i++;
+        } else if (word[i] === "'") {
+            const close = word.indexOf("'", i + 1);
+            i = close === -1 ? word.length : close;
+        } else if (word[i] === '"') {
+            for (i++; i < word.length && word[i] !== '"'; i++) {
+                i += word[i] === "\\" ? 1 : 0;
+            }
+        } else if (word[i] === "<") {
+            i += (NUMERIC_GLOB.exec(word.slice(i))?.[0].length ?? 1) - 1;
+        } else if (word[i] === ">" && !OPERATOR_SO_FAR.test(word.slice(from, i))) {
+            parts.push(word.slice(from, i));
+            from = i;
+        }
+    }
+
+    parts.push(word.slice(from));
+    return parts;
 }
 
 // The words of a raw text up to a comment, with each redirection and its target set apart from the arguments.
 function wordsOf(text: string): Words {
-    const words = text.match(RAW_WORD) ?? [];
+    const words = (text.match(RAW_WORD) ?? []).flatMap((word) => (word.includes(">") ? redirectionParts(word) : word));
     const args: string[] = [];
-    let stdout: string | undefined;
-    let appends = false;
+    const stdout: StdoutTarget[] = [];
 
     for (let k = 0; k < words.length; k++) {
         // A word that starts with `#` opens a comment to the end of the line.
@@ -198,15 +221,14 @@ function wordsOf(text: string): Words {
 
         const target = m[3] !== "" ? m[3] : words[++k];
         // `>& <file>` writes stdout and stderr to the file; `>&2`, `>& 2` and `>&-` name a descriptor.
-        const file = m[2] !== ">&" || !/^(\d+|-)$/.test(target ?? "");
+        const file = !m[2].endsWith("&") || !/^(\d+|-)$/.test(target ?? "");
 
-        if (["", "1", "&"].includes(m[1]) && [">", ">>", ">|", ">&"].includes(m[2]) && file) {
-            stdout = target;
-            appends = m[2] === ">>";
+        if (["", "1", "&"].includes(m[1]) && m[2].startsWith(">") && file && target !== undefined) {
+            stdout.push({ file: target, appends: m[2].startsWith(">>") });
         }
     }
 
-    return { args, ...(stdout !== undefined ? { stdout, appends } : {}) };
+    return { args, stdout };
 }
 
 // The words after a token up to the end of its element, in the original text.
@@ -361,23 +383,16 @@ function restoreRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
 // index. The stages `:1:` to `:3:` of a conflict are --ours and --theirs spelled another way. Under `git -C` the
 // redirect writes the shell's folder and a status would read git's, so the path cannot be placed for a gate.
 function showRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
-    const next = splitPipeline(inv.unit[inv.statement])[inv.pipe + 1];
-    // The scanner takes the `|` of `>|` for a pipe, which leaves the target in the next element.
-    const element =
-        next && />\s*$/.test(inv.element.text)
-            ? { start: inv.element.start, text: scan.cleaned.slice(inv.element.start, elementEnd(next)) }
-            : inv.element;
-    const { args, stdout, appends } = wordsAfter(scan, inv.tokens[inv.sub], element);
+    const { args, stdout } = wordsAfter(scan, inv.tokens[inv.sub], inv.element);
+    const written = stdout.filter((target) => !target.appends).map((target) => target.file);
 
-    if (stdout === undefined || appends) {
-        return null;
-    }
-
-    for (const object of args.map(samePath)) {
+    for (const object of written.length > 0 ? args.map(samePath) : []) {
         const colon = object.startsWith("-") ? -1 : object.indexOf(":");
         const stage = /^:([0-3]):/.exec(object);
+        const path = samePath(object.slice(stage ? 3 : colon + 1));
+        const file = colon === -1 ? undefined : written.find((target) => samePath(target) === path);
 
-        if (colon === -1 || samePath(object.slice(stage ? 3 : colon + 1)) !== samePath(stdout)) {
+        if (file === undefined) {
             continue;
         }
 
@@ -385,8 +400,8 @@ function showRevert(scan: ShellScan, inv: GitInvocation): Revert | null {
             return null;
         }
 
-        const paths = gitPlace(scan, inv) === "" ? [stdout] : [];
-        return { inv: { ...inv, element }, files: stdout, paths, ref: object.slice(0, colon), resetsIndex: false };
+        const paths = gitPlace(scan, inv) === "" ? [file] : [];
+        return { inv, files: file, paths, ref: object.slice(0, colon), resetsIndex: false };
     }
 
     return null;
@@ -737,9 +752,12 @@ function savedPaths(scan: ShellScan, statement: Span, revert: Revert, place: str
         } else if (sub.text === "diff") {
             const { args, stdout } = wordsAfter(scan, sub, element);
             const diffed = diffedPaths(args);
+            // zsh writes every target; bash and sh truncate each one and write only the last.
+            const targets = MULTIOS_SHELLS.has(runningShell(scan, element.start)) ? stdout : stdout.slice(-1);
+            const toFile = targets.some((target) => samePath(target.file) !== "/dev/null");
 
             // A plain `git diff` holds what differs from the index, and a revert from a ref drops the staged part too.
-            if (stdout !== undefined && samePath(stdout) !== "/dev/null" && (diffed.head || !revert.resetsIndex)) {
+            if (toFile && (diffed.head || !revert.resetsIndex)) {
                 kept.push(...diffed.paths);
             }
         }

@@ -24,6 +24,8 @@ export interface ShellMatch {
     index: number;
     /** The caller's command, corrected, when that is safely derivable. */
     suggestion?: string;
+    /** What this command reads wrong, in its own words, where the rule's why is general. */
+    detail?: string;
 }
 
 export interface ShellRule {
