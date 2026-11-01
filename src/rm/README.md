@@ -7,18 +7,18 @@ becomes a request that the user confirms with a command an agent cannot run.
 ```bash
 tools rm <paths...>                 # delete what the rules allow, move the rest aside and ask
 tools rm --no-aside <paths...>      # ask, but leave what needs the user in place (--aside forces the move)
-tools rm -n <paths...>              # dry run: each rule's verdict and the sizes
+tools rm -n <paths...>              # dry run: one row per path (verdict, size, rule, where an ask goes), then a summary
 tools rm preset node_modules js-build [--in <dir>]   # find and delete preset folders
 tools rm presets                    # the folder kinds deleted without asking
 tools rm trash                      # what waits for the drain (--sizes measures it)
-tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a request id: each of its batches)
+tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a batch id tail such as fc7b; a request id: each of its batches)
 tools rm drain [--now]              # drain due batches now (--now: all of them)
 tools rm requests [id]              # what agents asked the user to confirm (an id: that request in full)
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
 tools rm deny <id>                  # close a request and put its aside paths back (an agent may cancel its own)
 tools rm prune [-n]                 # close the requests nobody can decide (every path gone, or in place past 24 h)
 tools rm measure <id>               # measure a request's paths and save the sizes (tools rm starts it in the background)
-tools rm log [--since 1d] [--agent codex] [--session <id>] [--by agent|session|day|rule|action]   # audit log
+tools rm log [--since 1d] [--agent codex] [--session <id>] [--each] [--by agent|session|day|rule|action]   # audit log
 tools rm profiles                   # settings per agent, session or project, and what applies to you
 
 # The user only (an agent's shell call is blocked, and the verb asks a person):
@@ -135,8 +135,10 @@ tools rm profile set web-repo --project web-app --protect ~/projects/web-app/.en
 `~/.genesis-tools/rm/ledger.jsonl` holds one line per move, aside, return, drain, restore, refusal, request, decision,
 root, profile and setting change. Each line carries the time, the folder, the path and where it went, the rule, the bytes
 (moved: measured right after the rename; reclaimed: at the drain) and the caller: agent, session id and title, model,
-project, and the operating-system user for a person. `tools rm log` prints the newest entries (local time) with filters;
-`--by agent|session|day|rule|action` prints the totals moved, set aside and reclaimed.
+project, and the operating-system user for a person. `tools rm log` prints the newest entries (local time) with filters:
+the caller once as a header, and one row per run of entries that share action, batch and caller (`15:27 drain 13
+items 4.9 MB batch …fc7b`; `--each` prints every entry). A person reads as `person`; only `--json` carries the
+operating-system user. `--by agent|session|day|rule|action` prints the totals moved, set aside and reclaimed.
 
 ## How a person confirms
 
@@ -199,7 +201,8 @@ GenesisTools.app cannot ask) cannot change once it shows, so it lists only the s
 - Each batch is recorded in `~/.genesis-tools/rm/batches/<id>.json` after every move, so a run that dies halfway
   leaves a record. Every action is a line in `~/.genesis-tools/rm/ledger.jsonl`.
 - Grace: 0 minutes for preset folders, 60 for the rest (`grace-preset`, `grace-other`, or `--keep 2h` / `--now` per
-  run). Until then `tools rm restore <batch>` puts things back.
+  run). Until then `tools rm restore <batch>` puts things back; `tools rm trash` prints each batch's id tail, which
+  `restore` takes when only one batch ends with it.
 - The drainer starts through a double fork, so it is a child of launchd before `tools rm` returns: an agent harness
   that kills its shell's process tree cannot stop it halfway. One drainer runs at a time. It deletes due batches in
   parallel, sleeps until the next one is due, and exits when the trash is empty. Every run also sweeps orphans: a
@@ -207,12 +210,19 @@ GenesisTools.app cannot ask) cannot change once it shows, so it lists only the s
 - The deletion code only deletes inside a trash root, at batch or item depth (`assertInsideTrash`), so a bug that
   builds a wrong path deletes nothing.
 
+## A file named like a subcommand
+
+`tools rm log` lists the audit log, also when the file `./log` was meant; `tools rm -- log` does the same, because
+Commander still runs the subcommand after `--`. Write `tools rm ./log` (any path with a `/`). When a file with the
+subcommand's name is in the current folder, the subcommand prints one line on stderr that says so.
+
 ## Opt-in cache presets
 
 These are safe to delete (the next install refills them), but another install or a running app may be reading one, so
 each is off until `tools rm config set enable-preset <id>`: `bun-cache`, `npm-cache`, `pnpm-store`, `yarn-cache`,
 `homebrew-cache`, and `user-caches` (each app's folder in `~/Library/Caches`; quit the app first). `tools rm presets`
-marks them. Then `tools rm preset bun-cache --in ~/.bun/install/cache` empties that cache.
+marks them. While one is off, a folder it names needs the user and waits in place (never aside), and the reason
+names the command that turns the preset on. Then `tools rm preset bun-cache --in ~/.bun/install/cache` empties that cache.
 
 ## Configuration
 

@@ -994,6 +994,38 @@ async function parsed(argv: string[]): Promise<Seen> {
     return last;
 }
 
+describe("a path named like a subcommand", () => {
+    test("a listing subcommand says how to delete a file of its name in the current folder", async () => {
+        const here = join(base, "shadowed");
+        file(join(here, "log"));
+        const notes: string[] = [];
+        const printlnErr = spyOn(out, "printlnErr").mockImplementation((raw?: unknown) => {
+            notes.push(stripAnsi(String(raw ?? "")));
+        });
+        const cwd = process.cwd();
+
+        try {
+            process.chdir(here);
+            await parsed(["log", "--json"]);
+            await parsed(["trash"]);
+        } finally {
+            process.chdir(cwd);
+            printlnErr.mockRestore();
+        }
+
+        expect(notes).toEqual([`a file named log exists here: delete it with ${toolCommand("rm")} ./log`]);
+    });
+
+    test("the help says to write ./<name>, because -- still runs the subcommand", () => {
+        let help = "";
+        const program = createRmProgram();
+        program.configureOutput({ writeOut: (chunk) => (help += chunk), writeErr: () => {} });
+        program.outputHelp();
+
+        expect(help).toContain(`${toolCommand("rm")} ./log`);
+    });
+});
+
 describe("flag ownership", () => {
     test("a subcommand's own flags reach it, not the root", async () => {
         expect(await parsed(["preset", "node_modules", "-n", "--keep", "1d"])).toMatchObject({

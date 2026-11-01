@@ -1,6 +1,10 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
+import pc from "picocolors";
 import { registerAuditCommands } from "./commands/audit";
 import { registerProfileCommands } from "./commands/profiles";
 import { refuseRootFlagsBeforeSubcommand, registerRemoveCommand } from "./commands/remove";
@@ -41,5 +45,26 @@ export function createRmProgram(): Command {
     registerAuditCommands(program);
     addVerboseDeep(program);
     refuseRootFlagsBeforeSubcommand(program);
+    noteFileNamedLikeSubcommand(program);
+    program.addHelpText(
+        "after",
+        `\nA file named like a subcommand (log, trash, requests, prune, ...): delete it as ${toolCommand("rm")} ./log. ` +
+            `${toolCommand("rm")} -- log still runs the log subcommand.`
+    );
     return program;
+}
+
+/**
+ * `tools rm log` lists the audit log also when the agent meant the file `./log`: the run exits 0, and the agent may
+ * believe the file is gone. When a file with the subcommand's name sits in the current folder, stderr says how to
+ * delete it.
+ */
+function noteFileNamedLikeSubcommand(program: Command): void {
+    program.hook("preSubcommand", (_root, sub) => {
+        const name = sub.name();
+
+        if (existsSync(join(process.cwd(), name))) {
+            out.printlnErr(pc.dim(`a file named ${name} exists here: delete it with ${toolCommand("rm")} ./${name}`));
+        }
+    });
 }
