@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { isInteractive } from "@genesiscz/utils/cli";
+import { isInteractive, spawnToolDetached } from "@genesiscz/utils/cli";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { env } from "@genesiscz/utils/env";
@@ -45,6 +45,7 @@ import {
     ensureClickyLibrary,
     unpackClickyLibrary,
 } from "../clicky-library";
+import { type ShareBundleResourcesReport, shareBundleResources } from "./bundle-resources";
 import {
     ALL_PART_IDS,
     APP_PARTS,
@@ -569,9 +570,14 @@ export interface BuildAppOptions {
     parts?: Omit<PartsChoice, "installed">;
 }
 
+/** Orders builds, and anything else that rewrites `retired.noindex` (`retiredBundlesSummary` with `apply`). */
+function appBuildLockPath(): string {
+    return join(genesisAppDir(), "build.lock");
+}
+
 export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> {
     mkdirSync(genesisAppDir(), { recursive: true });
-    const lockPath = join(genesisAppDir(), "build.lock");
+    const lockPath = appBuildLockPath();
     const requestedAt = Date.now();
     const caller = process.argv.slice(1).join(" ");
 
@@ -1398,6 +1404,9 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     step("pack retired bundles");
     await packRetiredBundles(retiredRootFor(appDir));
 
+    step("share retired bundles' resources (in the background)");
+    startRetiredSharing();
+
     step("reap stale app-face processes");
     await reapStaleAppFaces({ step, relaunch, parts });
 
@@ -1680,12 +1689,10 @@ export async function packRetiredBundles(retiredRoot: string): Promise<void> {
     const entries = readdirSync(retiredRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory() && Number.isFinite(Number(entry.name)))
         .map((entry) => entry.name);
-    const binary = (entry: string) =>
-        join(retiredRoot, entry, `${GENESIS_APP_NAME}.app`, "Contents", "MacOS", GENESIS_APP_NAME);
     const pinned = pinnedRetiredBundles({
         entries,
         running,
-        inodeOf: (entry) => (existsSync(binary(entry)) ? statSync(binary(entry)).ino : null),
+        inodeOf: (entry) => retiredBinaryInode(retiredRoot, entry),
     });
 
     try {
@@ -1713,6 +1720,158 @@ export async function packRetiredBundles(retiredRoot: string): Promise<void> {
     } catch (error) {
         logger.warn({ error, retiredRoot }, "packing retired app bundles failed; they stay as they are");
     }
+}
+
+function retiredBundlePath(retiredRoot: string, stamp: string): string {
+    return join(retiredRoot, stamp, `${GENESIS_APP_NAME}.app`);
+}
+
+function retiredBinaryInode(retiredRoot: string, stamp: string): number | null {
+    const binary = join(retiredBundlePath(retiredRoot, stamp), "Contents", "MacOS", GENESIS_APP_NAME);
+    return existsSync(binary) ? statSync(binary).ino : null;
+}
+
+/** Written beside a retired bundle (never inside it) once its resources share their blocks; the next pass skips it. */
+const RESOURCES_SHARED_MARKER = "resources-shared";
+
+/** The retired folders a sharing pass still has to visit: those without {@link RESOURCES_SHARED_MARKER}. */
+export function retiredStampsToShare(retiredRoot: string, stamps: string[]): string[] {
+    return stamps.filter((stamp) => !existsSync(join(retiredRoot, stamp, RESOURCES_SHARED_MARKER)));
+}
+
+/**
+ * A pinned retired bundle cannot go while a process runs it (tccd resolves that process by its binary's path), but
+ * only its 93 MB executable differs from build to build. Its resources (the Clicky sounds, the web viewers, the icon:
+ * about 65 MB) become APFS clones of the same bytes in the installed bundle or a newer retired one, so each pinned build
+ * costs its own binary and little else. The installed bundle is only read, and nothing outside `Contents/Resources`
+ * is touched (`shareBundleResources`). A folder done once gets a marker and is not walked again, so a build pays
+ * for the folder it just retired, not for every pinned one. Never fatal: a failure is logged and the bundles stay.
+ */
+export function shareRetiredResources({
+    retiredRoot,
+    installedBundle,
+    apply,
+}: {
+    retiredRoot: string;
+    installedBundle: string;
+    apply: boolean;
+}): ShareBundleResourcesReport | null {
+    const stamps = listRetiredStamps(retiredRoot);
+
+    if (stamps === null || stamps.length === 0) {
+        return null;
+    }
+
+    const pending = retiredStampsToShare(retiredRoot, stamps);
+
+    try {
+        const report = shareBundleResources({
+            bundles:
+                pending.length === 0
+                    ? []
+                    : [installedBundle, ...pending.map((stamp) => retiredBundlePath(retiredRoot, stamp))],
+            apply,
+        });
+
+        if (apply) {
+            markSharedFolders(retiredRoot, pending, report);
+        }
+
+        logger.info(
+            {
+                apply,
+                folders: stamps.length,
+                visited: pending.length,
+                files: report.files,
+                shared: report.shared,
+                sharedBytes: report.sharedBytes,
+                alreadyShared: report.alreadyShared,
+                errors: report.errors.length,
+                firstError: report.errors[0],
+                ms: report.ms,
+            },
+            apply ? "retired bundles share their resources" : "retired bundles' resources that could be shared"
+        );
+        return report;
+    } catch (error) {
+        logger.warn({ error, retiredRoot }, "sharing retired bundles' resources failed; they stay as they are");
+        return null;
+    }
+}
+
+/**
+ * Marks each visited folder no error was reported under; a folder with an error is visited again next time. An error
+ * outside every folder (clones refused, so the pass stopped early) marks none.
+ */
+function markSharedFolders(retiredRoot: string, stamps: string[], report: ShareBundleResourcesReport): void {
+    const folders = stamps.map((stamp) => `${join(retiredRoot, stamp)}/`);
+
+    if (report.errors.some((error) => !folders.some((folder) => error.path.startsWith(folder)))) {
+        return;
+    }
+
+    for (const folder of folders) {
+        if (report.errors.some((error) => error.path.startsWith(folder))) {
+            continue;
+        }
+
+        try {
+            writeFileSync(join(folder, RESOURCES_SHARED_MARKER), `${new Date().toISOString()}\n`);
+        } catch (error) {
+            logger.debug({ error, folder }, "retired folder not marked as shared; the next pass visits it again");
+        }
+    }
+}
+
+/**
+ * Runs `tools macos permissions retired --apply` detached. It waits for the build lock this build still holds, so it
+ * starts once the build is done and never delays it: the folder a build retires costs about 3.5 s to share (hashing
+ * two 65 MB resource trees, measured on a fresh copy 2026-11-01), and the first pass over an unshared pile of 22
+ * folders about 50 s. Never fatal: a failed start is logged, and the next build tries again.
+ */
+function startRetiredSharing(): void {
+    try {
+        const pid = spawnToolDetached(["macos", "permissions", "retired", "--apply"], { reparent: true });
+        logger.info({ pid }, "retired bundles' resources: sharing started in the background");
+    } catch (error) {
+        logger.warn({ error }, "retired bundles' resources: the background share did not start");
+    }
+}
+
+export interface RetiredBundlesSummary {
+    root: string;
+    /** Retired folders, newest first. */
+    folders: string[];
+    /** Folders a running process executes; null when the processes could not be read. */
+    pinned: string[] | null;
+    /** Packed `<ms>.zst` copies. */
+    archives: string[];
+    /** Folders an earlier pass already shared; this pass does not visit them. */
+    alreadyVisited: number;
+    sharing: ShareBundleResourcesReport | null;
+}
+
+/**
+ * What `tools macos permissions retired` reports. `apply: false` reads only; `apply: true` shares under the build
+ * lock, so it never races a build's pack of the same folders.
+ */
+export async function retiredBundlesSummary({ apply }: { apply: boolean }): Promise<RetiredBundlesSummary> {
+    const root = retiredRootFor(genesisAppDir());
+    const folders = listRetiredStamps(root) ?? [];
+    const running = readRunningExecutableInodes();
+    const pinnedSet =
+        running === null
+            ? null
+            : pinnedRetiredBundles({ entries: folders, running, inodeOf: (entry) => retiredBinaryInode(root, entry) });
+    const pinned = pinnedSet === null ? null : folders.filter((stamp) => pinnedSet.has(stamp));
+    const archives = existsSync(root) ? readdirSync(root).filter((name) => /^\d+\.zst$/.test(name)) : [];
+    const alreadyVisited = folders.length - retiredStampsToShare(root, folders).length;
+    const share = () => shareRetiredResources({ retiredRoot: root, installedBundle: genesisAppBundlePath(), apply });
+    const sharing = apply
+        ? await withFileLock(appBuildLockPath(), async () => share(), BUILD_LOCK_TIMEOUT_MS)
+        : share();
+
+    return { root, folders, pinned, archives, alreadyVisited, sharing };
 }
 
 const STALE_FACE_TERM_GRACE_MS = 500;
