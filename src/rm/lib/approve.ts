@@ -45,6 +45,7 @@ import {
     saveRmRequest,
     stillAside,
     type TrashBatch,
+    targetLiveState,
     updateRmRequest,
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
@@ -54,6 +55,14 @@ import type { RunContext } from "./run";
 export interface ApproveEntry {
     wanted: RmRequestTarget;
     target: RmTarget;
+}
+
+/** The row of a path that is back in place beside its aside copy: approving it deletes the copy, never the path. */
+export const CAME_BACK_REASON = "Delete the set-aside copy (the path is back in place)";
+
+/** The original path exists again and its aside copy too (k38jcw, m8sn2z): a deny cannot put the copy back. */
+export function cameBack(target: RmRequestTarget): boolean {
+    return targetLiveState(target) === "came-back";
 }
 
 /** An aside batch folder that the decision emptied; a non-empty one (something kept) stays. */
@@ -294,7 +303,7 @@ export function approvalRows(
             path: wanted.path,
             kind: target.kind,
             storedAt: wanted.stored,
-            reason: approvalItemReason(wanted.rule, wanted.reason),
+            reason: cameBack(wanted) ? CAME_BACK_REASON : approvalItemReason(wanted.rule, wanted.reason),
             alsoIn: alsoIn.get(wanted.path),
         };
 
