@@ -416,8 +416,8 @@ On 2026-10-18 the disk sat full three times while the lead waited for him, and t
 2. Read the list. Then `--apply --plan <file>` within 30 minutes: only the planned entries, each re-checked (same
    inode, still old, still closed), moved into a scratch folder `.tmp-reclaim-<pid>-XXXXXX` in the same root and
    deleted there. An apply that is killed first leaves that folder behind; the next dry run lists it once its pid is
-   gone. The apply also deletes the plan it ran and every expired plan in `/tmp/cc`. The result is a `note` in the
-   run ledger.
+   gone (an `--own-session` apply leaves it in the session folder, so the next `--own-session` dry run lists it). The
+   apply also deletes the plan it ran and every expired plan in `/tmp/cc`. The result is a `note` in the run ledger.
 
 Limits you must know:
 

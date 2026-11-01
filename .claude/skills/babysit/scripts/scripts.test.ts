@@ -2571,7 +2571,7 @@ describe("round 7 review regressions", () => {
                 "return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)}; };",
             ].join("\n")
         );
-        const execute = (args: string[]) =>
+        const execute = (args: string[], cwd?: string) =>
             Bun.spawnSync(
                 [
                     process.execPath,
@@ -2583,6 +2583,7 @@ describe("round 7 review regressions", () => {
                     ...args,
                 ],
                 {
+                    cwd,
                     stdout: "pipe",
                     stderr: "pipe",
                     timeout: 5000,
@@ -2653,15 +2654,17 @@ describe("round 7 review regressions", () => {
         for (const id of [running, exited]) {
             fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
             fs.mkdirSync(join(s.root, "cc", "fixture-project", id), { recursive: true });
+            // A scratch folder that names its session by the first 8 hex digits only.
+            fs.mkdirSync(join(s.root, `scratch-${id.slice(0, 8)}`));
         }
         const result = s.execute(["--min-age-hours", "0"]);
         expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
         const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
         const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
-        expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
-            join(s.root, "cc", "fixture-project", exited),
-        ]);
-        expect(result.stdout.toString()).toContain('"live-session":1');
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path).sort()).toEqual(
+            [join(s.root, "cc", "fixture-project", exited), join(s.root, `scratch-${exited.slice(0, 8)}`)].sort()
+        );
+        expect(result.stdout.toString()).toContain('"live-session":2');
     });
 
     test("an apply deletes the plan in /tmp/cc it ran and the expired ones, and keeps a fresh one", () => {
@@ -2682,6 +2685,22 @@ describe("round 7 review regressions", () => {
         const result = s.execute(["--apply", "--plan", applied]);
         expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
         expect(fs.readdirSync(plans).sort()).toEqual(["notes.json", "tmp-reclaim-plan-2000.json"]);
+        // The plan folder is canonical (/private/tmp/cc on macOS): a plan named through a symlinked folder, as
+        // /tmp/cc is there, or by a relative path is the same file and goes too.
+        const linked = join(s.dir, "tmp-link");
+        fs.symlinkSync(s.root, linked);
+        for (const [name, plan, cwd] of [
+            ["tmp-reclaim-plan-4000.json", join(linked, "cc", "tmp-reclaim-plan-4000.json"), undefined],
+            ["tmp-reclaim-plan-5000.json", "tmp-reclaim-plan-5000.json", plans],
+        ] as const) {
+            fs.writeFileSync(
+                join(plans, name),
+                SafeJSON.stringify({ createdAt: Date.now(), minAgeHours: 0, candidates: [] })
+            );
+            const named = s.execute(["--apply", "--plan", plan], cwd);
+            expect({ plan, code: named.exitCode, err: named.stderr.toString() }).toEqual({ plan, code: 0, err: "" });
+            expect(fs.readdirSync(plans).sort()).toEqual(["notes.json", "tmp-reclaim-plan-2000.json"]);
+        }
     });
 
     test("reclaim --help and an unknown flag exit before any scan and write no plan", () => {
@@ -6237,6 +6256,39 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(judgeOwn(hub, options)).toBe("socket");
     });
 
+    /** What a killed own-session apply leaves in the session folder: mkdtemp's private folder with a moved triple. */
+    function plantQuarantine(path: string): string {
+        fs.mkdirSync(join(path, "0-arm64-apple-macosx", "debug"), { recursive: true });
+        fs.writeFileSync(join(path, "0-arm64-apple-macosx", "debug", "App.o"), "x");
+        fs.chmodSync(path, 0o700);
+        return path;
+    }
+
+    test("a quarantine a killed own-session apply left is listed whole, and taken once its pid is gone", () => {
+        const { dir } = plantSession();
+        const orphan = plantQuarantine(join(dir, ".tmp-reclaim-999999999-Ab12Cd"));
+        const legacy = plantQuarantine(join(dir, ".tmp-reclaim-Ef34Gh"));
+        const live = plantQuarantine(join(dir, `.tmp-reclaim-${process.pid}-Ij56Kl`));
+        // Not mkdtemp's: readable by others, or not directly in the session folder.
+        const shared = plantQuarantine(join(dir, ".tmp-reclaim-999999999-Mn78Op"));
+        fs.chmodSync(shared, 0o755);
+        const nested = plantQuarantine(join(dir, "pluggable", ".tmp-reclaim-999999999-Qr90St"));
+        const listed = ownBuildOutput(dir);
+        expect(listed.filter((path) => path.includes("/.tmp-reclaim-"))).toEqual([legacy, orphan, shared, live].sort());
+        Bun.sleepSync(20);
+        const options = { sessionDirs: [dir], open: [] as string[], minAgeMinutes: 0 };
+        for (const taken of [orphan, legacy]) {
+            const verdict = judgeOwn(taken, options);
+            expect(typeof verdict === "string" ? verdict : verdict.path).toBe(taken);
+        }
+        expect(judgeOwn(live, options)).toBe("live-quarantine");
+        expect(judgeOwn(shared, options)).toBe("not-build-output");
+        expect(judgeOwn(nested, options)).toBe("not-build-output");
+        expect(judgeOwn(orphan, { ...options, open: [join(orphan, "0-arm64-apple-macosx/debug/App.o")] })).toBe(
+            "open-file"
+        );
+    });
+
     test("the session is found by its full uuid only", () => {
         const { cc, dir } = plantSession();
         expect(ownSessionDirs(session, cc)).toEqual([dir]);
@@ -6323,6 +6375,36 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(result.stdout.toString()).toContain("removed 1 of 2 planned entries");
         expect(fs.existsSync(hub)).toBe(false);
         expect(fs.readFileSync(join(notesTriple, "kept.md"), "utf8")).toBe("a note");
+        expect(fs.existsSync(join(dir, "pluggable/b-notes/notes.md"))).toBe(true);
+    });
+
+    test("after a killed own-session apply, the next own-session plan frees its quarantine", () => {
+        const { dir } = plantInTmpCc();
+        const orphan = plantQuarantine(join(dir, ".tmp-reclaim-999999999-Ab12Cd"));
+        Bun.sleepSync(20);
+        // The dry run's own steps: list, then judge each entry.
+        const planned = ownBuildOutput(dir).flatMap((path) => {
+            const verdict = judgeOwn(path, { sessionDirs: [dir], open: [], minAgeMinutes: 0 });
+            return typeof verdict === "string" || verdict.path !== orphan ? [] : [verdict];
+        });
+        expect(planned.map((candidate) => candidate.path)).toEqual([orphan]);
+        const plan = join(dir, "..", "quarantine-plan.json");
+        fs.writeFileSync(
+            plan,
+            SafeJSON.stringify({
+                createdAt: Date.now(),
+                minAgeHours: 0,
+                candidates: planned,
+                ownSession: { id: session, dirs: [dir], minAgeMinutes: 0 },
+            })
+        );
+        const result = Bun.spawnSync(
+            [process.execPath, join(import.meta.dir, "tmp-reclaim.ts"), "--apply", "--plan", plan],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        expect(result.stderr.toString()).toBe("");
+        expect(result.stdout.toString()).toContain("removed 1 of 1 planned entries");
+        expect(fs.readdirSync(dir).filter((name) => name.startsWith(".tmp-reclaim-"))).toEqual([]);
         expect(fs.existsSync(join(dir, "pluggable/b-notes/notes.md"))).toBe(true);
     });
 });

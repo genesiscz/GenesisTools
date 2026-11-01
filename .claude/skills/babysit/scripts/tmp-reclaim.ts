@@ -39,7 +39,9 @@
  * `.modulevalidation` and `.lock` files). Notes, logs, reply files, patches, briefs, worktrees' sources and the
  * `removals/` folder are never listed. Every other guard stays: no open file, socket, FIFO or `.git` inside, same
  * owner and device, not changed in the last --min-age-minutes (default 10, because the session is live), and on
- * apply the same inode and the same build-output class again.
+ * apply the same inode and the same build-output class again. An own-session apply quarantines inside the session
+ * folder, which the regular run never opens while the session lives, so the own-session dry run also lists a
+ * private `.tmp-reclaim-*` folder directly in the session folder, whole, once the pid in its name is gone.
  */
 import {
     existsSync,
@@ -118,6 +120,8 @@ const SCAN_BUDGET_MS = 20_000;
 const SYSTEM_PREFIXES = ["com.apple.", "launchd", "tmux-", "ssh-", "claude-", "cc-socks", "powerlog", ".X"];
 /** An apply's scratch folder for the entries it removes: `.tmp-reclaim-<pid>-XXXXXX` (before 2026-11-01 without pid). */
 const QUARANTINE_PREFIX = ".tmp-reclaim-";
+/** The whole name `mkdtempSync` gives that folder, with or without the pid. */
+const QUARANTINE_NAME = /^\.tmp-reclaim-(?:\d+-)?[A-Za-z0-9]{6}$/;
 
 /** True while the apply that made this quarantine still runs; an orphan, an old unnamed one or another name is false. */
 export function isLiveQuarantine(name: string, alive: (pid: number) => boolean = isProcessAlive): boolean {
@@ -248,9 +252,11 @@ function protectedEntries(): Protection {
     const cutoff = Date.now() - liveHours * 3_600_000;
     // A running Claude session is live however long it idles, and one that exited is over however recent its
     // transcript: the registry answers for the projects folder beside it. Codex and Grok keep no such registry.
+    // Each id goes in as its first 8 hex digits, as the transcript scan below does: a path that names only that
+    // short form (`scratch-1b4001ba`) is shielded too, and the full id contains it.
     const runningClaude = liveClaudeSessionIds();
     const registryProjects = runningClaude ? join(dirname(claudeSessionsDir()), "projects") : null;
-    ids.push(...(runningClaude ?? []));
+    ids.push(...[...(runningClaude ?? [])].map((id) => id.slice(0, 8).toLowerCase()));
     const transcriptDirs = (["claude", "codex", "grok"] as const).flatMap((kind) =>
         nativeSessionRoots(kind)
             .filter((top) => resolve(top) !== registryProjects)
@@ -545,6 +551,14 @@ export function ownBuildOutput(sessionDir: string): string[] {
                 continue;
             }
 
+            // An own-session apply quarantines in the session folder itself: such a folder is listed whole, and
+            // judgeOwn decides whether its apply still runs. Its moved entries (`0-arm64-apple-macosx`) are never
+            // listed one by one.
+            if (depth === 0 && QUARANTINE_NAME.test(name)) {
+                out.push(path);
+                continue;
+            }
+
             const kind = buildOutputKind(path);
 
             if (kind === "swiftpm-scratch" && "refuse" in scan(path, rootDev)) {
@@ -603,9 +617,19 @@ export function judgeOwn(
         return "skipped-folder";
     }
 
-    const kind = buildOutputKind(path);
+    // The quarantine a killed own-session apply left in the session folder: a private (0700) folder of mkdtemp's
+    // name, holding only entries that apply judged. It goes whole once the apply's pid is gone.
+    const quarantine =
+        dirname(real) === sessionDir &&
+        QUARANTINE_NAME.test(basename(real)) &&
+        st.isDirectory() &&
+        (st.mode & 0o777) === 0o700;
 
-    if (!kind) {
+    if (quarantine && isLiveQuarantine(basename(real))) {
+        return "live-quarantine";
+    }
+
+    if (!quarantine && !buildOutputKind(path)) {
         return "not-build-output";
     }
 
@@ -925,12 +949,20 @@ function main(): void {
 function removeSpentPlans(appliedPlan: string): void {
     const planDir = join(roots[0] ?? "/tmp", "cc");
     const isPlan = (name: string) => /^tmp-reclaim-plan-\d+\.json$/.test(name);
+    // `planDir` is canonical (`/private/tmp/cc` on macOS), so the applied plan is compared by its canonical folder:
+    // `--plan /tmp/cc/<plan>` or a relative path names the same file.
+    let applied = resolve(appliedPlan);
+    try {
+        applied = join(realpathSync(dirname(applied)), basename(applied));
+    } catch {
+        // Its folder went away after the apply read it: nothing in planDir can be that plan then.
+    }
 
     for (const name of childNames(planDir) ?? []) {
         const path = join(planDir, name);
         const st = isPlan(name) ? lstatSync(path, { throwIfNoEntry: false }) : undefined;
 
-        if (st?.isFile() && st.uid === uid && (path === appliedPlan || Date.now() - st.mtimeMs > PLAN_MAX_AGE_MS)) {
+        if (st?.isFile() && st.uid === uid && (path === applied || Date.now() - st.mtimeMs > PLAN_MAX_AGE_MS)) {
             rmSync(path, { force: true });
         }
     }
