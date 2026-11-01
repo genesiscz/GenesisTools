@@ -414,7 +414,7 @@ export const ACCOUNT_OPERATIONS: AccountOperation[] = [
     accountOperation({
         name: "subscription_overview",
         description:
-            "The account's AlzaPlus+ / subscription section. The answer shape is not verified live; --json has it whole.",
+            "The account's AlzaPlus+ / subscription section, as Alza's own form (its options and links); --json has it whole.",
         input: z.object({}),
         kind: "read",
         run: async (ctx) => {
