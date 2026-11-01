@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import {
     chmodSync,
     existsSync,
+    lstatSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
@@ -516,6 +517,40 @@ describe("trash", () => {
         expect(existsSync(orphan)).toBe(false);
         expect(readdirSync(trashPaths.batchesDir)).toContain("dead.json");
         renameSync(join(trashPaths.batchesDir, "dead.json"), join(base, "dead.json.kept"));
+    });
+
+    test("a claim or lock whose pid now runs a process started after it was made is given back", async () => {
+        mkdirSync(trashPaths.batchesDir, { recursive: true });
+        const live = join(trashPaths.batchesDir, `reused.json.draining-${process.pid}`);
+        writeFileSync(live, "{}");
+
+        // This test's own process made the claim, so it holds it.
+        expect((await sweepOrphans({ config, paths: trashPaths })).held).toContainEqual({
+            id: "reused",
+            reason: `process ${process.pid} holds its record`,
+        });
+
+        // The same pid, but a process that started after the claim: a recycled pid holds nothing.
+        const marks: number[] = [];
+        const reused = (pid: number, markedAtMs: number) => {
+            marks.push(markedAtMs);
+            return pid !== process.pid;
+        };
+        const swept = await sweepOrphans({ config, paths: trashPaths, claimAlive: reused });
+
+        expect(swept.held.some((entry) => entry.id === "reused")).toBe(false);
+        expect(readdirSync(trashPaths.batchesDir)).toContain("reused.json");
+        expect(marks[0]).toBeCloseTo(lstatSync(join(trashPaths.batchesDir, "reused.json")).ctimeMs, -4);
+        renameSync(join(trashPaths.batchesDir, "reused.json"), join(base, "reused.json.kept"));
+
+        const lockPath = join(base, "reused-lock", "drainer.lock");
+        mkdirSync(dirname(lockPath), { recursive: true });
+        writeFileSync(lockPath, String(process.pid));
+
+        expect(acquireDrainerLock(lockPath)).toBeNull();
+        const release = acquireDrainerLock(lockPath, reused);
+        expect(release).not.toBeNull();
+        release?.();
     });
 
     test("the drainer waits for the grace period, then drains and exits", async () => {
@@ -1795,7 +1830,7 @@ describe("crash safety: the record comes before the move", () => {
         return proc.pid;
     }
 
-    test("a crash between moves keeps every file: no drain, the sweep keeps the folder, restore brings it back", async () => {
+    test("a crash between moves: the sweep finishes the batch, its moved item drains, the one never moved stays", async () => {
         const first = file(join(dir("crash-trash"), "first.txt"), "one");
         const second = file(join(dir("crash-trash"), "second.txt"), "two");
         const pid = crashOnSecondMove(
@@ -1818,24 +1853,54 @@ describe("crash safety: the record comes before the move", () => {
         expect(listBatches(crashPaths)).toEqual([]);
         expect((await drainDue({ config: crashConfig, paths: crashPaths, force: true })).items).toBe(0);
 
+        // The run is dead: the sweep gives its claim back and finishes the batch with the item that moved. Before,
+        // the record stayed incomplete for good and the trash kept the item (a 2.9 GB batch on 2026-11-01).
         const swept = await sweepOrphans({ config: crashConfig, paths: crashPaths, minAgeMs: 0 });
         const record = SafeJSON.parse(readFileSync(join(crashPaths.batchesDir, `${id}.json`), "utf8"));
 
         expect(swept.batches).toBe(0);
-        expect(swept.held.map((entry) => entry.id)).toEqual([id]);
-        // An older reader drains and restores `items`; the incomplete record has none, so it reads no batch.
-        expect(record.items).toBeUndefined();
-        expect(record.planned.map((item: { original: string }) => item.original)).toEqual([first, second]);
-        expect(listBatches(crashPaths).map((batch) => [batch.id, batch.incomplete])).toEqual([[id, true]]);
-        expect((await drainDue({ config: crashConfig, paths: crashPaths, force: true })).items).toBe(0);
-        expect(existsSync(join(crashConfig.trashRoot, id))).toBe(true);
+        expect(swept.held).toEqual([]);
+        expect(swept.finished).toEqual([{ id, moved: [first], notMoved: [second] }]);
+        expect(record.incomplete).toBeUndefined();
+        expect(record.items.map((item: { original: string }) => item.original)).toEqual([first]);
+        expect(readRmLedger().filter((entry) => entry.batchId === id && entry.action === "finish")).toHaveLength(1);
+        expect(listBatches(crashPaths).map((batch) => [batch.id, batch.incomplete])).toEqual([[id, undefined]]);
 
-        const restored = restoreBatch(id, { config: crashConfig, paths: crashPaths });
-
-        expect(restored).toEqual({ restored: [first], skipped: [], notMoved: [second] });
-        expect(readFileSync(first, "utf8")).toBe("one");
+        // A finished batch drains after its grace (0 here) like any other; the path that never moved stays put.
+        expect((await drainDue({ config: crashConfig, paths: crashPaths })).items).toBe(1);
+        expect(existsSync(join(crashConfig.trashRoot, id))).toBe(false);
+        expect(existsSync(first)).toBe(false);
         expect(readFileSync(second, "utf8")).toBe("two");
         expect(listBatches(crashPaths)).toEqual([]);
+    });
+
+    test("an incomplete batch keeps waiting for a restore while its grace runs, and a finished one restores", async () => {
+        const batchesDir = join(base, "finish-state", "batches");
+        const finishPaths = { batchesDir, lockPath: join(base, "finish-state", "lock") };
+        const moved = join(crashConfig.trashRoot, "fin1", "0-aaaa-kept.txt");
+        const kept = file(join(dir("finish-trash"), "kept.txt"), "kept");
+        renameSync(kept, file(moved, "x"));
+        writeFileSync(moved, "kept");
+        mkdirSync(batchesDir, { recursive: true });
+        const later = new Date(Date.now() + 60 * 60_000).toISOString();
+        writeFileSync(
+            join(batchesDir, "fin1.json"),
+            SafeJSON.stringify({
+                id: "fin1",
+                createdAt: new Date().toISOString(),
+                drainAfter: later,
+                caller: null,
+                incomplete: true,
+                planned: [{ original: kept, stored: moved, kind: "file", rule: "test" }],
+            })
+        );
+
+        const swept = await sweepOrphans({ config: crashConfig, paths: finishPaths, minAgeMs: 0 });
+
+        expect(swept.finished).toEqual([{ id: "fin1", moved: [kept], notMoved: [] }]);
+        expect((await drainDue({ config: crashConfig, paths: finishPaths })).items).toBe(0);
+        expect(restoreBatch("fin1", { config: crashConfig, paths: finishPaths }).restored).toEqual([kept]);
+        expect(readFileSync(kept, "utf8")).toBe("kept");
     });
 
     test("while the producer moves, the drain sees nothing, the sweep keeps the folder and a restore refuses", async () => {

@@ -2143,7 +2143,9 @@ describe("the trash view", () => {
         expect(lines[1]).toMatch(
             /^ {2}fc7b {2}\d\d:\d\d \(in 26 min\)\s+4\.0 MB {2}aaaaaaaa shop cleanup {2}2 items {2}\/work\/shop\/node_modules \+1$/
         );
-        expect(lines[2]).toMatch(/^ {2}a1c3 {2}● incomplete: restore it\s+- {2}-\s+1 item {2}\/work\/shop\/\.cache$/);
+        expect(lines[2]).toMatch(
+            /^ {2}a1c3 {2}● moving, or the next sweep finishes it\s+- {2}-\s+1 item {2}\/work\/shop\/\.cache$/
+        );
         expect(lines.at(-1)).toBe(
             `Undo: ${toolCommand("rm")} restore <batch>   Drain now (a person): ${toolCommand("rm")} drain --now`
         );
