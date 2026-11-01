@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LimitWindow } from "@app/dev-dashboard/contract/ai-accounts";
-import { formatMoney, limitColor, percentOf } from "./LimitBar";
+import { absentLimitRowText, formatMoney, limitColor, percentOf } from "./LimitBar";
+import { mergeLimitSeries } from "./LimitsChart";
 
 /**
  * `anthropic-sub` forwards the API's own exponent into `LimitMoney`, so a
@@ -62,5 +63,41 @@ describe("formatMoney honours the limit exponent and the cap", () => {
         expect(formatMoney({ usedMinor: 900, currency: "USD", exponent: 2, capMinor: 3000, capCurrency: "EUR" })).toBe(
             "$9.00 / EUR 30.00"
         );
+    });
+});
+
+describe("absentLimitRowText", () => {
+    test("an account without a 5-hour limit reads as a dash and no 5h limit, never 0%", () => {
+        expect(absentLimitRowText({ key: "five_hour", kind: "session" })).toEqual({
+            label: "Session (5h)",
+            value: "— no 5h limit",
+        });
+    });
+});
+
+describe("mergeLimitSeries", () => {
+    const series = (key: string, points: Array<[string, number]>, endedAt?: string) => ({
+        accountId: "acc_work",
+        accountName: "work",
+        provider: "anthropic-sub",
+        key,
+        label: key,
+        points: points.map(([t, percent]) => ({ t, percent })),
+        ...(endedAt ? { endedAt } : {}),
+    });
+
+    test("a window the account no longer has stops at its end; a live one carries its level forward", () => {
+        const rows = mergeLimitSeries([
+            series("five_hour", [["2026-11-01T10:00:00Z", 40]], "2026-11-01T10:00:00Z"),
+            series("seven_day", [
+                ["2026-11-01T10:00:00Z", 20],
+                ["2026-11-01T12:00:00Z", 25],
+            ]),
+        ]);
+
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toMatchObject({ "acc_work:five_hour": 40, "acc_work:seven_day": 20 });
+        expect(rows[1]["acc_work:five_hour"]).toBeUndefined();
+        expect(rows[1]["acc_work:seven_day"]).toBe(25);
     });
 });

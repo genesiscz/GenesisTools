@@ -40,7 +40,7 @@ import { publishAiUsage } from "@app/dev-dashboard/lib/live/ai-usage-producer";
 import { getLiveHub } from "@app/dev-dashboard/lib/live/singleton";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import type { AccountFeatures } from "@genesiscz/utils/ai/providers/account-features";
+import { type AccountFeatures, absentLimitKindLabel } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
@@ -588,7 +588,7 @@ export function createAiAggregator(): AiAggregator {
             }
 
             const current = await readCurrent();
-            const labels = new Map(
+            const labels = new Map<string, string>(
                 current.snapshots.flatMap((snapshot) =>
                     snapshot.limits.map(
                         (limit) =>
@@ -612,7 +612,18 @@ export function createAiAggregator(): AiAggregator {
             // The DB narrows by account NAME only, so the provider filter is applied
             // again over the rows it returned; each row keeps the provider it was
             // written under rather than borrowing one from a same-named account.
-            const series: LimitSeries[] = limitSeriesFrom(entries, accounts, labels, query);
+            // A window the account no longer has keeps its old rows; its line ends and keeps a readable label.
+            const absent = new Set<string>();
+
+            for (const snapshot of current.snapshots) {
+                for (const limit of snapshot.absentLimits ?? []) {
+                    const id = `${providerAccountKey(snapshot.provider, snapshot.accountName)}|${limit.key}`;
+                    absent.add(id);
+                    labels.set(id, absentLimitKindLabel(limit));
+                }
+            }
+
+            const series: LimitSeries[] = limitSeriesFrom(entries, accounts, labels, query, absent);
 
             logger.debug({ series: series.length, from: query.from, to: query.to }, "[ai-dashboard] limit series");
             return { series };
