@@ -1277,13 +1277,21 @@ export interface DrainerOptions {
     sleep?: (ms: number) => Promise<void>;
     /** Called once per batch whose items the drain could not all delete. */
     onFailure?: (failure: DrainFailure) => void;
+    /**
+     * The request sweep (`sweepRmRequests` with the caller's rule contexts): run at the start and every
+     * `config.sweep.everyMinutes` while the drainer runs. Unset: no sweep, and the drainer exits with the trash empty.
+     */
+    sweepRequests?: () => void | Promise<void>;
+    /** Whether a request still waits: the drainer then stays `config.sweep.lingerMinutes` after the trash emptied. */
+    requestsWaiting?: () => boolean;
 }
 
 /**
  * The background drainer. Every start drains the due batches at once: claims keep two drainers off one batch, so
- * a new batch never waits for a drainer that sleeps toward a later one. Then one drainer at a time (the lock) sleeps
- * until the next batch is due (at most 10 minutes, so a restore or a new batch is noticed), and exits when no
- * batch waits.
+ * a new batch never waits for a drainer that sleeps toward a later one. Then one drainer at a time (the lock) sweeps
+ * the requests (at start and every `sweep.everyMinutes`), sleeps until the next batch is due or the next sweep (at
+ * most 10 minutes, so a restore or a new batch is noticed), and exits when no batch waits and either no request
+ * waits or none has for `sweep.lingerMinutes`.
  */
 export async function runDrainer(options: DrainerOptions): Promise<DrainResult> {
     const paths = options.paths ?? defaultTrashPaths();
@@ -1304,20 +1312,43 @@ export async function runDrainer(options: DrainerOptions): Promise<DrainResult> 
         return total;
     }
 
+    const sweepEvery = options.config.sweep.everyMinutes * 60_000;
+    const linger = options.config.sweep.lingerMinutes * 60_000;
+    let lastSweep = Number.NEGATIVE_INFINITY;
+    let idleSince: number | null = null;
+
     try {
         add(await sweepOrphans({ config: options.config, paths, now: now() }));
 
         while (true) {
+            if (options.sweepRequests && now().getTime() - lastSweep >= sweepEvery) {
+                lastSweep = now().getTime();
+                await options.sweepRequests();
+            }
+
             add(await drainDue({ config: options.config, paths, now: now(), onFailure }));
             // A failed batch waits for a person's forced drain, not for this loop.
             const waiting = listBatches(paths).filter((batch) => !batch.incomplete && !batch.failed);
+            const at = now().getTime();
 
             if (waiting.length === 0) {
-                break;
+                if (!options.sweepRequests || !options.requestsWaiting?.()) {
+                    break;
+                }
+
+                idleSince ??= at;
+
+                if (at - idleSince >= linger) {
+                    break;
+                }
+            } else {
+                idleSince = null;
             }
 
-            const nextDue = Math.min(...waiting.map((batch) => Date.parse(batch.drainAfter)));
-            await sleep(Math.min(Math.max(nextDue - now().getTime(), 1_000), 10 * 60_000));
+            const nextDue =
+                waiting.length > 0 ? Math.min(...waiting.map((batch) => Date.parse(batch.drainAfter))) : Infinity;
+            const nextSweep = options.sweepRequests ? lastSweep + sweepEvery : Infinity;
+            await sleep(Math.min(Math.max(Math.min(nextDue, nextSweep) - at, 1_000), 10 * 60_000));
         }
     } finally {
         release();

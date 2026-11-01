@@ -1720,6 +1720,81 @@ describe("the request writes production runs", () => {
     });
 });
 
+describe("a rule that covers a request now", () => {
+    /** The run context of a person whose config turns tmp-small on: every fixture here lives in the per-user temp. */
+    function ruled(): RunContext {
+        const on = { ...config, tmpSmallMB: 10 };
+        return { ...context(), config: on, base: on };
+    }
+
+    test("approve decides it with the rule before any window opens, and the request closes as ruled", async () => {
+        const request = asideRequest("ruled-at-approve");
+        const asked: string[] = [];
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            lines.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany([request.id], ruled(), {
+                ask: async (_ctx, prompt) => {
+                    asked.push(prompt.title);
+                    throw new Error("no window may open for a request a rule covers");
+                },
+                kickDrainer: () => undefined,
+            });
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        expect(asked).toEqual([]);
+        expect(loadRmRequest(request.id)).toMatchObject({ status: "ruled", decidedVia: "rule tmp-small" });
+        expect(request.targets.every((target) => !existsSync(target.stored ?? ""))).toBe(true);
+        expect(lines.filter((line) => line.includes("refused: rule tmp-small"))).toHaveLength(2);
+        expect(lines.some((line) => line.includes("deleted without a request"))).toBe(true);
+    });
+
+    test("the listing shows which requests a rule covers and reads only; --all shows a ruled one as ruled", () => {
+        const request = asideRequest("ruled-in-list");
+        const coverage = (asked: RmRequest) =>
+            asked.targets.map((target) => ({
+                path: target.path,
+                rule: "tmp-small",
+                reason: "/tmp path, 4.0 KB under 10 MB",
+            }));
+        const [view] = buildRequestViews([request], { sizeOf: () => 4096, coverage });
+        const list = renderRequestList(view ? [view] : [], { now: new Date(), caller: PERSON }).map(stripAnsi);
+        const detail = view ? renderRequestDetail(view, new Date()).map(stripAnsi) : [];
+
+        expect(list.some((line) => line.startsWith(`A rule covers: ${request.id} (tmp-small)`))).toBe(true);
+        expect(list.some((line) => line.includes("tmp-small: closes at the sweep"))).toBe(true);
+        expect(detail.filter((line) => line.includes("rule tmp-small covers it now"))).toHaveLength(2);
+        expect(loadRmRequest(request.id)?.status).toBe("pending");
+
+        const closed: RmRequest = {
+            ...request,
+            status: "ruled",
+            decidedAt: new Date().toISOString(),
+            decidedVia: "rule tmp-small",
+            ruled: request.targets.map((target) => ({
+                path: target.path,
+                rule: "tmp-small",
+                reason: "/tmp path, 4.0 KB under 10 MB, not git-tracked, no unsaved repo inside",
+                at: new Date().toISOString(),
+            })),
+        };
+        const [closedView] = buildRequestViews([closed], { sizeOf: () => 4096, coverage });
+        const closedList = renderRequestList(closedView ? [closedView] : [], { now: new Date(), caller: PERSON });
+        const closedDetail = closedView ? renderRequestDetail(closedView, new Date()).map(stripAnsi) : [];
+
+        expect(closedList.map(stripAnsi).some((line) => line.includes("ruled"))).toBe(true);
+        expect(closedDetail.filter((line) => line.includes("refused: rule tmp-small, /tmp path"))).toHaveLength(2);
+        expect(closedView?.covered).toEqual([]);
+    });
+});
+
 describe("one window for several requests", () => {
     /** An in-place delete request for `paths`, each a fresh file under `folder`. */
     function inPlaceAsk(folder: string, names: string[]): RmRequest {

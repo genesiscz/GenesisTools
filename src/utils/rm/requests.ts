@@ -7,10 +7,12 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
 import { effectiveConfig } from "./profiles";
+import type { RmRuledTarget } from "./request-rules";
 import type { RmCaller, RmTargetKind } from "./rules";
 
 export type RmRequestKind = "delete" | "root";
-export type RmRequestStatus = "pending" | "approved" | "denied" | "expired" | "gone";
+/** `ruled`: a rule decided every path after it was asked (`ruled` on the request says which and why). */
+export type RmRequestStatus = "pending" | "approved" | "denied" | "expired" | "gone" | "ruled";
 
 export interface RmRequestTarget {
     path: string;
@@ -46,6 +48,8 @@ export interface RmRequest {
     batchIds?: string[];
     /** The person's note on a deny, shown to the agent when it asks for the same path again. */
     deniedNote?: string;
+    /** Paths a rule decided after the request was made: they left `targets` (or the request closed as `ruled`). */
+    ruled?: RmRuledTarget[];
 }
 
 /** How approved items leave: the trash (restorable for a short grace) or deleted at once. */

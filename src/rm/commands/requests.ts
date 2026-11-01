@@ -25,6 +25,7 @@ import {
     requestLive,
     reserveRmRequestId,
     resolveTarget,
+    ruleCoverage,
     updateRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
@@ -44,7 +45,16 @@ import {
     reportLostCopies,
 } from "../lib/approve";
 import { buildRequestViews, renderRequestDetail, renderRequestList, renderRequestRow } from "../lib/requests-view";
-import { minutesOption, printRequestHint, type RunContext, requirePerson, runContext, shown } from "../lib/run";
+import {
+    minutesOption,
+    printRequestHint,
+    type RunContext,
+    requestRuleContext,
+    requirePerson,
+    runContext,
+    shown,
+    sweepRequests,
+} from "../lib/run";
 
 function approvalLines(
     request: RmRequest,
@@ -175,6 +185,23 @@ function prepareApproval(request: RmRequest, ctx: RunContext, quiet = false): Pr
     return { blocked, openEntries: entries.filter((entry) => !blocked.includes(entry)), lost, denyOf };
 }
 
+/**
+ * The paths of an open request a rule covers now, judged as the session that asked: the listing shows them as
+ * closing at the next sweep. It only reads; the sweep (the drainer, `tools rm drain`, `approve`) closes them.
+ */
+function coverageOf(ctx: RunContext): (request: RmRequest) => Array<{ path: string; rule: string; reason: string }> {
+    return (request) => {
+        const rules = request.status === "pending" ? requestRuleContext(ctx.base, request) : null;
+        return rules
+            ? ruleCoverage(request, rules).map(({ target, verdict }) => ({
+                  path: target.path,
+                  rule: verdict.rule,
+                  reason: verdict.reason,
+              }))
+            : [];
+    };
+}
+
 /** Why a batch approval leaves `request` out, or null: it takes only open delete requests a window can decide. */
 function leftOutReason(request: RmRequest | null, id: string): string | null {
     const rm = toolCommand("rm");
@@ -269,7 +296,14 @@ export async function approveMany(
             }
 
             releases.push(lock.release);
+            // A path a rule covers now is decided by it, never shown to the person (the lock is this process's).
+            const swept = sweepRequests(ctx, { ids: [id] });
             const request = loadRmRequest(id);
+
+            if (swept.ruled.some((close) => close.closed) || swept.gone.includes(id)) {
+                continue;
+            }
+
             const why = leftOutReason(request, id);
 
             if (why || !request) {
@@ -588,6 +622,13 @@ async function pickAndDecide(ctx: RunContext): Promise<void> {
 
 /** `tools rm approve <id>`: shows the request to a person and does what they picked; the caller holds its lock. */
 async function approveOne(id: string, ctx: RunContext): Promise<void> {
+    // A path a rule covers now is decided by it before any window opens; a request it closes needs no person.
+    const swept = sweepRequests(ctx, { ids: [id] });
+
+    if (swept.ruled.some((close) => close.closed) || swept.gone.includes(id)) {
+        return;
+    }
+
     const request = loadRmRequest(id);
 
     if (!request || request.status !== "pending") {
@@ -737,7 +778,7 @@ export function registerRequestCommands(program: Command): void {
                     return;
                 }
 
-                const [view] = buildRequestViews([request], { sizeOf: listedSize });
+                const [view] = buildRequestViews([request], { sizeOf: listedSize, coverage: coverageOf(ctx) });
                 out.println(view ? renderRequestDetail(view, now).join("\n") : "");
                 return;
             }
@@ -754,7 +795,7 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const views = buildRequestViews(requests, { sizeOf: listedSize });
+            const views = buildRequestViews(requests, { sizeOf: listedSize, coverage: coverageOf(ctx) });
 
             if (flags.long) {
                 out.println(views.map((view) => renderRequestDetail(view, now).join("\n")).join("\n\n"));
