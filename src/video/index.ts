@@ -5,9 +5,11 @@ import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
+import { encoderUnavailableReason, findEncoder, VIDEO_ENCODERS } from "@genesiscz/utils/video/reencode";
 import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { Command } from "commander";
+import { encodeVideos, renderRows, summarize } from "./encode";
 
 export function registerVideoCommands(program: Command): void {
     program
@@ -19,6 +21,93 @@ export function registerVideoCommands(program: Command): void {
                 handleTermination: true,
             });
         });
+    program
+        .command("encode <paths...>")
+        .description(
+            "Re-encode videos with the hardware encoder (HEVC on macOS), keeping a result only when it is verified"
+        )
+        .option("--quality <n>", "Encoder quality, higher is better (hevc: 58 matches libx265 crf 26)", "58")
+        .option("--codec <name>", `Target codec: ${Object.keys(VIDEO_ENCODERS).join(", ")}`, "hevc")
+        .option("--jobs <n>", "Files encoded at once (the hardware encoder has few sessions)", "2")
+        .option("--min-saving <percent>", "Discard an output that is less than this much smaller", "25")
+        .option("--replace", "Put the result at the original path and move the original to the GenesisTools trash")
+        .option("--dry-run", "List what would happen, with input sizes and skip reasons; write nothing")
+        .option("--json", "Print one row per file")
+        .action(
+            async (
+                paths: string[],
+                options: {
+                    quality: string;
+                    codec: string;
+                    jobs: string;
+                    minSaving: string;
+                    replace?: boolean;
+                    dryRun?: boolean;
+                    json?: boolean;
+                }
+            ) => {
+                const encoder = findEncoder(options.codec);
+
+                if (!encoder) {
+                    out.log.error(suggestEnumFlag("tools video encode", "--codec", Object.keys(VIDEO_ENCODERS)));
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const quality = Number(options.quality);
+                const jobs = Number(options.jobs);
+                const minSavingPct = Number(options.minSaving);
+
+                if (
+                    !Number.isFinite(quality) ||
+                    quality < 0 ||
+                    quality > 100 ||
+                    !Number.isInteger(jobs) ||
+                    jobs < 1 ||
+                    !Number.isFinite(minSavingPct)
+                ) {
+                    out.log.error("Use --quality 0 to 100, --jobs 1 or more, and --min-saving as a number.");
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const unavailable = await encoderUnavailableReason(encoder);
+
+                if (unavailable) {
+                    out.log.error(`Cannot encode: ${unavailable}`);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                await withInterrupt(
+                    async (signal) => {
+                        const started = performance.now();
+                        const rows = await encodeVideos({
+                            paths,
+                            encoder,
+                            quality,
+                            jobs,
+                            minSavingPct,
+                            replace: options.replace === true,
+                            dryRun: options.dryRun === true,
+                            signal,
+                        });
+
+                        if (options.json) {
+                            out.result(rows);
+                            return;
+                        }
+
+                        renderRows({
+                            rows,
+                            summary: summarize({ rows, seconds: (performance.now() - started) / 1000 }),
+                            dryRun: options.dryRun === true,
+                        });
+                    },
+                    { handleTermination: true }
+                );
+            }
+        );
     program
         .command("frames <input>")
         .description("Prepare timestamped PNG contact sheets and full-resolution frames")
