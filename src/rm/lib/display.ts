@@ -1,11 +1,12 @@
 import { homedir, tmpdir } from "node:os";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { RmCaller } from "@genesiscz/utils/rm";
 
 /**
  * Who deletes an aside copy outside `tools rm`, as the listing and `approve` say it: the copy waits in /tmp, where
  * macOS tmp_cleaner removes files untouched for 3 days (the keepalive refreshes them, but only from its first run).
  */
-export const LOST_COPY_CAUSE = "deleted outside tools rm, by macOS tmp_cleaner or a person";
+export const LOST_COPY_CAUSE = `deleted outside ${toolCommand("rm")}, by macOS tmp_cleaner or a person`;
 
 export interface ShortPathContext {
     home: string;
