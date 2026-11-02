@@ -11,9 +11,9 @@ import { logger } from "@genesiscz/utils/logger";
 import { DAEMON_ALIVE_MS, readerMaxStaleMs, touchUsageDaemonHeartbeat, usageDaemonAgeMs } from "./daemon-heartbeat";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 import { mergeAccountSlice } from "./legacy-cache";
-import { __fetchProviderSnapshots, latestFetchedAt, type UsagePlugin, usagePlugins } from "./poll";
+import { __fetchProviderSnapshots, latestFetchedAt, readCachedSnapshots, type UsagePlugin, usagePlugins } from "./poll";
 import { blockedEntry, loadPollGate, type PollGate, PollSuppressed, recordFailure, savePollGate } from "./poll-gate";
-import { __resetUsagePollStorage } from "./storage";
+import { __resetUsagePollStorage, snapshotsCacheKey, USAGE_CACHE_TTL, usagePollStorage } from "./storage";
 import type { AccountUsageSnapshot } from "./types";
 
 /**
@@ -692,6 +692,56 @@ describe("readerMaxStaleMs", () => {
             const age = usageDaemonAgeMs();
             expect(age).not.toBeNull();
             expect(age ?? Number.POSITIVE_INFINITY).toBeLessThan(DAEMON_ALIVE_MS);
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("readCachedSnapshots", () => {
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        __resetUsagePollStorage();
+    });
+
+    const row = (accountName: string): AccountUsageSnapshot => ({
+        provider: "fake-sub",
+        accountId: `acc_${accountName}`,
+        accountName,
+        fetchedAt: "2026-10-31T20:00:00.000Z",
+        limits: [{ key: "five_hour", label: "5h", kind: "session", percentUsed: 0 }],
+    });
+
+    test("every row of a provider's own cache goes through its upgradeCached, so a served row is in the current shape", async () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-usage-upgrade-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        __resetUsagePollStorage();
+
+        try {
+            const key = snapshotsCacheKey("fake-sub");
+            await usagePollStorage().putCacheFile(
+                key,
+                { fetchedAt: 1, accounts: [row("work"), row("shop")] },
+                USAGE_CACHE_TTL
+            );
+            const upgradeCached = (snapshot: AccountUsageSnapshot): AccountUsageSnapshot => ({
+                ...snapshot,
+                limits: [],
+                absentLimits: [{ key: "five_hour", kind: "session" }],
+            });
+
+            const upgraded = await readCachedSnapshots({ upgradeCached }, key);
+            expect(upgraded?.fetchedAt).toBe(1);
+            expect(upgraded?.accounts.map((snapshot) => [snapshot.accountName, snapshot.absentLimits?.length])).toEqual(
+                [
+                    ["work", 1],
+                    ["shop", 1],
+                ]
+            );
+
+            // Negative control: a provider without the member gets the rows exactly as cached.
+            expect((await readCachedSnapshots({}, key))?.accounts).toEqual([row("work"), row("shop")]);
+            expect(await readCachedSnapshots({ upgradeCached }, snapshotsCacheKey("other-sub"))).toBeNull();
         } finally {
             rmSync(home, { recursive: true, force: true });
         }
