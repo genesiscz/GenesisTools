@@ -380,6 +380,42 @@ describe("runDiffPost", () => {
         }
     });
 
+    it("hands the change log the call's exact start, so a file born earlier in the same second is not the call's", () => {
+        // 🛑 `tools rm` counts a file as made by a Bash call when it was born at or after the row's `began`. The row
+        // took the whole-second `stamp`, so a person's file born earlier in that second, which the call only changed,
+        // passed as the call's own and could be deleted with no request.
+        const earlier = join(repo, "born-before.ts");
+
+        writeFileSync(earlier, "a person's file\n");
+
+        try {
+            const born = lstatSync(earlier).birthtimeMs;
+            const current = begin({ command: `perl -pi -e 's/person/agent/' ${earlier}` }, plain.diff);
+            const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+            const started = Number(readFileSync(join(dir, "started-ms"), "utf8"));
+
+            // The stamp's second is the one the file was born in, as when the call follows it within the second.
+            writeFileSync(join(dir, "stamp"), String(Math.floor(born / 1000)));
+            writeFileSync(earlier, "an agent's edit\n");
+
+            let window: { since: number; began?: number } | undefined;
+            runDiffPost({
+                payload: current,
+                config: plain,
+                record: (_payload, _captures, seen) => {
+                    window = seen;
+                },
+            });
+
+            // The positive control: the rounded start admits the earlier file, which is what the row used to carry.
+            expect(window?.since).toBeLessThanOrEqual(born);
+            expect(window?.began).toBe(started);
+            expect(window?.began).toBeGreaterThan(born);
+        } finally {
+            rmSync(earlier, { force: true });
+        }
+    });
+
     it("git before-states come back per file, in order, with a missing path empty", () => {
         const base = { root: repo, base: "HEAD" };
         const read = capturedBefores([
