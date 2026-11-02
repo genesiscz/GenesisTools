@@ -182,6 +182,27 @@ test("a single line with a backslash goes as one literal paste, so cmux never re
     ]);
 });
 
+test("--type text or a slash command with a backslash, a newline or a carriage return still goes as one literal paste", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    // Each would take the typed path, where `cmux send` reads `\n`, `\r` and `\t` as keys and splits the message.
+    const typed = [
+        { text: String.raw`grep "\n" in the log`, opts: { type: true } },
+        { text: "first line\nsecond line", opts: { type: true } },
+        { text: "first line\rsecond line", opts: { type: true } },
+        { text: String.raw`/review the "\t" handling`, opts: {} },
+        { text: "/compact keep\nthe plan", opts: {} },
+        { text: "/compact keep\rthe plan", opts: {} },
+    ];
+
+    for (const { text, opts } of typed) {
+        expect(await sendCommand(SESSION_A, text, { ...opts, enter: true, enterDelay: "0" }, deps)).toBe(true);
+    }
+
+    expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual(
+        typed.map(({ text }) => `paste --surface surface:41 --submit -- ${text}`)
+    );
+});
+
 test("paste can leave the message unsubmitted, and a paste cmux refused before sending falls back to the matcher", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
     expect(await sendCommand(SESSION_A, "a\nb\\n", { paste: true, enter: false }, deps)).toBe(true);
