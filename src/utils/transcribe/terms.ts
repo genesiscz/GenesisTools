@@ -501,12 +501,19 @@ function bareWord(token: string): string {
 
 /**
  * The confidence a run needs to be a suspect, or undefined when it is ordinary speech. With a word check, a single
- * word is scored when no layer accepts it, or when it is a rare dictionary word. Without one, and for longer runs, a
- * run with a Czech letter or a single English word is speech.
+ * word is scored when no layer accepts it, or when it is a rare dictionary word, and a longer run is speech when the
+ * dictionary knows every word of it. A run with a Czech letter, or a single English word without a check, is speech.
  */
 function requiredConfidence(run: RunKeys, minConfidence: number, wordCheck?: WordCheck): number | undefined {
     if (!wordCheck || run.words > 1) {
-        return CZECH_LETTERS.test(run.run) || (run.words === 1 && isEnglishWord(run.run)) ? undefined : minConfidence;
+        // Czech words the dictionary knows, side by side ("jako skripty"), are speech; "chess benefit" is not.
+        const czech =
+            wordCheck !== undefined &&
+            run.run.split(" ").every((word) => wordCheck.verdict(bareWord(word)).class === "dictionary");
+
+        return czech || CZECH_LETTERS.test(run.run) || (run.words === 1 && isEnglishWord(run.run))
+            ? undefined
+            : minConfidence;
     }
 
     const verdict = wordCheck.verdict(bareWord(run.run));
