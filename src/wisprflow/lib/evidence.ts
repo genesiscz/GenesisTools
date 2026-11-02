@@ -67,6 +67,25 @@ export function parseObservations(raw: string, selfName?: string): SpeakingObser
     return observations.sort((a, b) => a.tSec - b.tSec);
 }
 
+const metaSchema = z.object({ meta: z.object({ platform: z.string().optional() }) });
+
+/** The call platform the observations came from, in Wispr's words (`teams`, `google_meet`); from the `meta` line. */
+export function observationsPlatform(raw: string): string | undefined {
+    for (const row of raw.split("\n")) {
+        if (!row.includes('"meta"')) {
+            continue;
+        }
+
+        const parsed = metaSchema.safeParse(SafeJSON.parse(row, { strict: true }));
+
+        if (parsed.success && parsed.data.meta.platform) {
+            return parsed.data.meta.platform;
+        }
+    }
+
+    return undefined;
+}
+
 const tokensSchema = z.object({
     mic: z.object({ total_tokens: z.number() }),
     system: z.object({ total_tokens: z.number() }),
@@ -110,9 +129,9 @@ export function readEvidence(meetingId: string, selfName: string | undefined): M
           })
         : [];
     const observationsPath = join(folder, "speakers.observations.ndjson");
-    const speaking = existsSync(observationsPath)
-        ? parseObservations(readFileSync(observationsPath, "utf8"), selfName)
-        : [];
+    const observationsRaw = existsSync(observationsPath) ? readFileSync(observationsPath, "utf8") : "";
+    const speaking = observationsRaw ? parseObservations(observationsRaw, selfName) : [];
+    const platform = observationsRaw ? observationsPlatform(observationsRaw) : undefined;
     const tokens = tokensSchema.safeParse(readJson(join(folder, "native-language-evidence.json")));
     const devices = z.record(z.string(), z.unknown()).safeParse(readJson(join(folder, "audio-devices.json")));
     log.debug(
@@ -122,6 +141,7 @@ export function readEvidence(meetingId: string, selfName: string | undefined): M
 
     return {
         ...(selfName ? { selfName } : {}),
+        ...(platform ? { platform } : {}),
         segments,
         speaking,
         ...(tokens.success

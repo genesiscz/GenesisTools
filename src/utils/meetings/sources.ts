@@ -38,6 +38,8 @@ export interface RecordingClock {
 export interface MeetingEvidence {
     /** The recording user's name, as the source knows it. */
     selfName?: string;
+    /** The call platform, in the source's own words (Wispr: `teams`, `google_meet`); `MeetingPlatform.sourceNames` maps it. */
+    platform?: string;
     segments: EvidenceSegment[];
     speaking: SpeakingObservation[];
     /** Words recognized per channel: the user's share of the speech. */

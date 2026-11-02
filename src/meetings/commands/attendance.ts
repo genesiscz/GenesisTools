@@ -1,12 +1,13 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
-import { presenceSections } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import { loadPresence } from "../lib/attendance";
+import { storeAttendance } from "../lib/collect";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
 
@@ -34,35 +35,16 @@ async function attendance(ref: string, opts: { from?: string; json?: boolean }):
                       ).start
                     : record.start;
             const loaded = await loadPresence({ title: record.calendar?.title ?? record.title, start }, opts.from);
-            const selfName = record.participants.find((person) => person.self)?.name;
-            const people = loaded.presence.map((stay) => ({
-                ...stay,
-                name: stay.self && selfName ? selfName : stay.name,
-            }));
-            const lastKnown = Math.max(
-                ...people.flatMap((stay) => [stay.fromSec, Number.isFinite(stay.toSec) ? stay.toSec : stay.fromSec])
+            current = await storeAttendance({ store, record, loaded, from: opts.from });
+            ui.ok(
+                `${record.id}: ${current.attendance?.people.length ?? 0} stays, ${current.sections?.length ?? 0} sections stored.`
             );
-            const stored = people.map((stay) => ({
-                ...stay,
-                toSec: Number.isFinite(stay.toSec) ? stay.toSec : lastKnown,
-            }));
-            const sections = presenceSections(stored);
-            current = await store.update(
-                record.id,
-                {
-                    command: "attendance",
-                    change: `${stored.length} stays, ${sections.length} sections (${loaded.note})`,
-                },
-                (next) => {
-                    next.attendance = { from: opts.from === "teams" ? "ms-teams" : opts.from!, people: stored };
-                    next.sections = sections;
-                }
-            );
-            ui.ok(`${record.id}: ${stored.length} stays, ${sections.length} sections stored.`);
         }
 
         if (!current.attendance || !current.sections) {
-            fail(`${current.id} has no attendance yet. Add it: ${TOOL} attendance ${current.id} --from teams`);
+            fail(
+                `${current.id} has no attendance yet. Add it: ${TOOL} attendance ${current.id} --from <${MEETING_PLATFORM_IDS.join("|")}>`
+            );
             return;
         }
 
@@ -94,7 +76,10 @@ export function registerAttendanceCommand(program: Command): void {
         .description(
             "Who was in the call and when; with --from, store it and its sections in the meeting (the rules read them)"
         )
-        .option("--from <teams|file>", "teams asks tools ms-teams by the meeting title, or a file of its --json output")
+        .option(
+            "--from <platform|file>",
+            `${MEETING_PLATFORM_IDS.join(", ")} (teams asks tools ms-teams by the title; facetime reads the call history), or a file of tools ms-teams --json output`
+        )
         .option("--json", "print JSON")
         .action(attendance);
 }

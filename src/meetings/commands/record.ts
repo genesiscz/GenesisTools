@@ -12,6 +12,7 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { z } from "zod";
+import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
@@ -177,6 +178,11 @@ async function stop(): Promise<void> {
 
     if (typeof recording?.warning === "string") {
         ui.warn(recording.warning);
+    }
+
+    // The call is over: what the platform and the recording can tell is complete now.
+    if (record) {
+        await collectAndReport(store, record);
     }
 }
 

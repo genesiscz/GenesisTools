@@ -32,7 +32,9 @@ import {
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { collectAndReport } from "../lib/collect";
 import { energyMicShareFor } from "../lib/energy";
+import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
 import { openQuestions } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
@@ -138,19 +140,26 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
     }
 
     try {
-        const { source, sourceMeetingId } = await linkedSource(record);
+        // The platform, attendance and channel layout first, when the record lacks any of them.
+        const collected =
+            record.platform && record.attendance && record.evidence?.channels
+                ? record
+                : await collectAndReport(store, record);
+        const { source, sourceMeetingId } = await linkedSource(collected);
         const meeting = await source.load(sourceMeetingId);
         const config = await new MeetingsConfigStore().read();
-        const evidence = rules.includes("evidence") ? await source.evidence(sourceMeetingId) : null;
+        const evidence = rules.includes("evidence")
+            ? speakingEvidence(collected, await source.evidence(sourceMeetingId))
+            : null;
         const fresh = suggestItems({
-            record,
+            record: collected,
             meeting,
             rules,
             dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }),
             sourceWords: await source.dictionary(),
-            presence: await presenceFor(record, meeting, opts.attendance),
+            presence: await presenceFor(collected, meeting, opts.attendance),
             evidence,
-            energyMicShare: (await energyMicShareFor(store, record, evidence)).share,
+            energyMicShare: (await energyMicShareFor(store, collected, evidence)).share,
             listenBelow: config.global.suggest.listenBelow,
             now: new Date().toISOString(),
         });

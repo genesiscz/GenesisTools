@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
+import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
+import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { answerQuestion, openQuestions, questionFor, skipQuestion } from "./lib/questions";
 import { suggestItems } from "./lib/suggest";
 import { type WatchDeps, watchOnce } from "./lib/watch";
@@ -521,5 +525,43 @@ describe("questions (R2.3)", () => {
         skipQuestion(skipped, "i3", now);
         expect(skipped.items.map((item) => item.status)).toEqual(["suggested", "rejected"]);
         expect(openQuestions(skipped)).toEqual([]);
+    });
+});
+
+describe("platforms (R3.1)", () => {
+    test("every platform has an entry, and a source name finds its platform", () => {
+        expect(Object.keys(MEETING_PLATFORMS).sort()).toEqual([...MEETING_PLATFORM_IDS].sort());
+        expect(platformOfSourceName("teams")?.id).toBe("teams");
+        expect(platformOfSourceName("google_meet")?.id).toBe("google-meet");
+        expect(platformOfSourceName("zoom")).toBeUndefined();
+    });
+
+    test("E3 reads no speaking readings on a platform without an indicator", () => {
+        const evidence = { segments: [], speaking: [{ tSec: 1, speaking: ["Bob Example"], muted: [] }], files: [] };
+        const on = (platform?: "teams" | "facetime") =>
+            meetingRecordSchema.parse({ ...record, ...(platform ? { platform } : {}) });
+        expect(speakingEvidence(on("facetime"), evidence)?.speaking).toEqual([]);
+        expect(speakingEvidence(on("teams"), evidence)?.speaking).toHaveLength(1);
+        expect(speakingEvidence(on(), evidence)?.speaking).toHaveLength(1);
+    });
+
+    test("a Teams attendance file is read onto the transcript clock; a call far away is not this meeting", () => {
+        const raw = SafeJSON.stringify([
+            {
+                meeting: { title: "Planning", startedAt: "2026-11-02T14:00:10.000Z" },
+                attendance: [
+                    { name: "Bob Example", joinedAt: "2026-11-02T14:01:00.000Z", leftAt: "2026-11-02T14:30:00.000Z" },
+                    { name: "alice@example.com", self: true, joinedAt: "2026-11-02T14:00:00.000Z" },
+                ],
+            },
+        ]);
+        const loaded = teamsAttendanceFromJson(raw, { title: "Planning", start: meeting.start }, "file");
+        expect(loaded?.presence).toEqual([
+            { name: "Bob Example", fromSec: 60, toSec: 1800 },
+            { name: "alice@example.com", self: true, fromSec: 0, toSec: Number.POSITIVE_INFINITY },
+        ]);
+        expect(
+            teamsAttendanceFromJson(raw, { title: "Planning", start: "2026-11-02T18:00:00.000Z" }, "file")
+        ).toBeNull();
     });
 });
