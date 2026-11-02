@@ -112,7 +112,8 @@ rename keeps the times inside a moved folder, so an aside copy or a trash item o
 before a person decides. So every move into the aside folder, or into a trash batch with a grace period, sets each
 moved file's access time to now (the modification time stays) and each empty folder's times to now, and the daily pass
 (started by the first GenesisTools process of each day) repeats that for every pending request's aside copies and
-every trash batch still in its grace period.
+every trash batch `tools rm restore` can still bring back: in its grace period, incomplete, or failed (a drain that
+could not delete it leaves it in the trash until `drain --now`).
 
 ## Reading the requests
 

@@ -2,7 +2,7 @@ import { keepFromTmpCleaner, type TmpCleanerRefresh } from "@genesiscz/utils/fs/
 import { logger } from "@genesiscz/utils/logger";
 import { asideJournals } from "./pending-aside";
 import { listRmRequests, type RmRequest, rmRequestsDir } from "./requests";
-import { defaultTrashPaths, listBatches, type TrashPaths } from "./trash";
+import { defaultTrashPaths, isRestorableBatch, listBatches, type TrashPaths } from "./trash";
 
 export interface RmKeepaliveResult extends TmpCleanerRefresh {
     /** Pending requests (and aside runs that have not saved theirs) whose aside copies were walked. */
@@ -20,8 +20,9 @@ export interface RmKeepaliveOptions {
 /**
  * The daily keepalive against macOS tmp_cleaner, which deletes a file in /tmp once all its times are older than 3
  * days: refreshes the files of every aside copy a pending request still waits on (a person may take days) and of every
- * trash batch still in its grace period, or incomplete (never drained, so restorable for good). A decided request and
- * a batch past its grace are left alone. Stat and utimes only. The daily pass (`compress/daily-pass.ts`) runs it.
+ * trash batch `tools rm restore` can still bring back (`isRestorableBatch`: in its grace period, incomplete, or failed,
+ * the last two restorable for good). A decided request and a drained batch past its grace are left alone. Stat and
+ * utimes only. The daily pass (`compress/daily-pass.ts`) runs it.
  */
 export function refreshWaitingRmData(options: RmKeepaliveOptions = {}): RmKeepaliveResult {
     const started = Date.now();
@@ -51,7 +52,7 @@ export function refreshWaitingRmData(options: RmKeepaliveOptions = {}): RmKeepal
     }
 
     for (const batch of listBatches(options.trashPaths ?? defaultTrashPaths())) {
-        if (!batch.incomplete && Date.parse(batch.drainAfter) <= now.getTime()) {
+        if (!isRestorableBatch(batch, now.getTime())) {
             continue;
         }
 
