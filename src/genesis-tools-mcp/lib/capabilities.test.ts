@@ -30,7 +30,11 @@ const ALL = registry(
     "question_update",
     "annotate_image",
     "jev_live",
-    "question_tokens"
+    "question_tokens",
+    "fetch_markdown",
+    "fetch_jsonld",
+    "alza_search_products",
+    "waze_police"
 );
 
 afterEach(() => {
@@ -88,6 +92,9 @@ describe("filterRegistryByCapabilities", () => {
         ]);
         expect(withCapabilities("annotate")).toEqual(["annotate_image"]);
         expect(withCapabilities("jev")).toEqual(["jev_live"]);
+        expect(withCapabilities("fetch")).toEqual(["fetch_jsonld", "fetch_markdown"]);
+        expect(withCapabilities("alza")).toEqual(["alza_search_products"]);
+        expect(withCapabilities("waze")).toEqual(["waze_police"]);
     });
 
     test("an unset filter leaves every tool enabled", () => {
