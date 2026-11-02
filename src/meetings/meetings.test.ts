@@ -353,6 +353,54 @@ describe("energy over the live segments (R4.3)", () => {
     });
 });
 
+describe("energy where the live segments are mixed", () => {
+    const base = {
+        record,
+        rules: ["evidence" as const],
+        dictionary: { abbrExpansion: "every" as const, entries: [] },
+        sourceWords: [],
+        now: "2026-11-02T15:00:00.000Z",
+    };
+    const lines = {
+        ...meeting,
+        transcript: [
+            line("Carol Example", 0, "To je moje."),
+            line("Carol Example", 10, "A tohle taky."),
+            line("Carol Example", 20, "Hm."),
+            line("Carol Example", 30, "Konec."),
+        ],
+    };
+    // Each line is 10 s: 4 s of the microphone in the first and third, 6 s in the second.
+    const evidence = {
+        selfName: "Alice Example",
+        segments: [
+            { startSec: 0, endSec: 4, channel: "mic" as const },
+            { startSec: 4, endSec: 10, channel: "system" as const, liveName: "Carol Example" },
+            { startSec: 10, endSec: 16, channel: "mic" as const },
+            { startSec: 16, endSec: 24, channel: "system" as const, liveName: "Carol Example" },
+            { startSec: 24, endSec: 30, channel: "system" as const, liveName: "Carol Example" },
+        ],
+        speaking: [],
+        files: [],
+    };
+    const at = (items: ReturnType<typeof suggestItems>, sec: number) =>
+        items.find((item) => item.kind === "speaker-range" && item.fromSec === sec);
+
+    test("the energy's majority decides: 0.7 or more on the microphone is the user, to ask; under 0.5 never", () => {
+        const items = suggestItems({
+            ...base,
+            meeting: lines,
+            evidence,
+            energyMicShare: (fromSec) => ({ 0: 0.8, 10: 0.4, 20: 0.65 })[fromSec],
+        });
+
+        expect(at(items, 0)).toMatchObject({ speaker: "Alice Example", rules: ["energy"], confidence: 0.55 });
+        expect(at(items, 0)?.evidence).toMatchObject({ listen: true });
+        expect(at(items, 10)).toBeUndefined();
+        expect(at(items, 20)).toBeUndefined();
+    });
+});
+
 describe("own label (R17)", () => {
     test("in a dialogue with a person's own label, the other voice E3 shows is the line's, and that person's live name loses", () => {
         const items = suggestItems({

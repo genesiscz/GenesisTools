@@ -357,6 +357,13 @@ const ENERGY_CALL_SURE = 0.1;
 const ENERGY_SURE_CONFIDENCE = 0.85;
 /** The energy says the microphone while the segments said the call: both voices may be in the line. */
 const ENERGY_OVER_SEGMENTS_CONFIDENCE = 0.75;
+/**
+ * Where the segments are mixed (neither channel holds `CHANNEL_SHARE`), the energy's majority decides: this much on
+ * the microphone is the user, unsure enough to ask; under `ENERGY_CALL_LEANS` it is not the user.
+ */
+const ENERGY_MIC_LEANS = 0.7;
+const ENERGY_CALL_LEANS = 0.5;
+const ENERGY_LEANS_CONFIDENCE = 0.55;
 /** R17: a platform-named label with a line this close to another label's line is talking in the same dialogue. */
 const OWN_LABEL_SEC = 10;
 const OWN_LABEL_CONFIDENCE = 0.65;
@@ -420,17 +427,21 @@ function findingFor(options: {
     const selfMuted = muted(selfName);
 
     // R4.3: a sure energy share is the user's line whatever the segments, E3 or E4 say, and never the user's below.
-    const micSure = line.energyMic !== undefined && line.energyMic >= ENERGY_MIC_SURE;
-    const callSure = line.energyMic !== undefined && line.energyMic <= ENERGY_CALL_SURE;
+    // Where the segments are mixed, the energy's majority decides the same way.
+    const energy = line.energyMic;
+    const mixed = line.micShare > 1 - CHANNEL_SHARE && line.micShare < CHANNEL_SHARE;
+    const micSure = energy !== undefined && energy >= ENERGY_MIC_SURE;
+    const micLeans = mixed && energy !== undefined && energy >= ENERGY_MIC_LEANS;
+    const callSure = energy !== undefined && (energy <= ENERGY_CALL_SURE || (mixed && energy < ENERGY_CALL_LEANS));
 
-    if (micSure && line.winner !== SELF) {
+    if ((micSure || micLeans) && line.winner !== SELF) {
         return isSelfLabel
             ? undefined
             : {
                   speaker: selfName,
                   rules: [MeetingRule.Energy],
-                  confidence: ENERGY_OVER_SEGMENTS_CONFIDENCE,
-                  ...(line.micShare > 1 - CHANNEL_SHARE ? { listen: true } : {}),
+                  confidence: micSure ? ENERGY_OVER_SEGMENTS_CONFIDENCE : ENERGY_LEANS_CONFIDENCE,
+                  ...(mixed ? { listen: true } : {}),
               };
     }
 
