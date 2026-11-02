@@ -364,6 +364,8 @@ const ENERGY_OVER_SEGMENTS_CONFIDENCE = 0.75;
 const ENERGY_MIC_LEANS = 0.7;
 const ENERGY_CALL_LEANS = 0.5;
 const ENERGY_LEANS_CONFIDENCE = 0.55;
+/** A mixed line under a platform label whose person E3 alone shows speaking stays the label's below this energy. */
+const ENERGY_LABEL_HOLDS = 0.8;
 /** R17: a platform-named label with a line this close to another label's line is talking in the same dialogue. */
 const OWN_LABEL_SEC = 10;
 const OWN_LABEL_CONFIDENCE = 0.65;
@@ -415,6 +417,8 @@ function findingFor(options: {
     isSelfLabel: boolean;
     /** The platform-named labels other than this line's that have a line within `OWN_LABEL_SEC` of it (R17). */
     ownLabelNearby: string[];
+    /** The platform named the line's label after a person. */
+    platformLabel: boolean;
 }): EvidenceFinding | undefined {
     const { line, selfName, isSelfLabel, ownLabelNearby } = options;
 
@@ -433,6 +437,15 @@ function findingFor(options: {
     const micSure = energy !== undefined && energy >= ENERGY_MIC_SURE;
     const micLeans = mixed && energy !== undefined && energy >= ENERGY_MIC_LEANS;
     const callSure = energy !== undefined && (energy <= ENERGY_CALL_SURE || (mixed && energy < ENERGY_CALL_LEANS));
+
+    // The platform's label and its speaking indicator agree on the label's person: a microphone lean does not win.
+    const shown = speakingNames(line).filter((name) => !sameName(name, selfName) && !muted(name));
+    const labelShownAlone =
+        options.platformLabel && !isSelfLabel && shown.length === 1 && sameName(shown[0]!, line.label);
+
+    if (labelShownAlone && mixed && energy !== undefined && energy < ENERGY_LABEL_HOLDS) {
+        return undefined;
+    }
 
     if ((micSure || micLeans) && line.winner !== SELF) {
         return isSelfLabel
@@ -465,7 +478,6 @@ function findingFor(options: {
     // The call's sound won the line, or the energy says it did. Some microphone in it means two voices: listen.
     const channel = line.winner === SELF ? MeetingRule.Energy : MeetingRule.Channel;
     const listen = line.micShare > 1 - CHANNEL_SHARE ? { listen: true } : {};
-    const shown = speakingNames(line).filter((name) => !sameName(name, selfName) && !muted(name));
     const present = line.present?.filter((name) => !sameName(name, selfName) && !muted(name));
     const live =
         line.liveName && !muted(line.liveName) && (!present || present.some((name) => sameName(name, line.liveName!)))
@@ -616,6 +628,7 @@ function evidenceItems(options: {
                 line,
                 selfName,
                 isSelfLabel,
+                platformLabel: platformLabels.has(label),
                 ownLabelNearby: [
                     ...new Set(
                         lines
