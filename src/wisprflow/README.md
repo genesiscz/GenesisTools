@@ -20,6 +20,7 @@ Two sources, and every command prints which one answered (on stderr):
 | `meetings list [query]` | List or search meetings (`--since`, `--until`, `--folder`, `--attendee`, `--limit`) |
 | `meetings show <meeting>` | Participants, folders, share link, summary and notes (`--format md\|json\|txt`) |
 | `meetings transcript <meeting>` | The transcript in speaker turns and paragraphs (`--format md\|txt\|json\|srt\|vtt`) |
+| `dictionary list [--snippets]` | The app's own dictionary, most used first (read-only, local data only) |
 | `meetings speakers <meeting> [--attendance teams\|<file>]` | Teams attendance first (a label speaking while its person was out of the call, a voice when one person was left); then per label: who named it (platform or llm), turns, lines, words, spoken time and spans (`--gap 2m`), with hints: a label that says goodbye and keeps speaking (the times), a label that may be several people, and a lone one-turn label with the word it cut (`--format table\|json`) |
 | `meetings export <meeting...> --dir <dir>` | `Summary.md`, `Transcript.md` and `meeting.json` per meeting |
 | `meetings series <meeting>` | Every recorded occurrence of a recurring meeting (MCP) |

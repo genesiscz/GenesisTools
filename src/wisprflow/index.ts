@@ -1,6 +1,7 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerCalendarCommand } from "./commands/calendar";
+import { registerDictionaryCommand } from "./commands/dictionary";
 import { registerDoctorCommand } from "./commands/doctor";
 import { registerMeetingsCommand } from "./commands/meetings";
 import { registerNotesCommand } from "./commands/notes";
@@ -10,6 +11,7 @@ program.name("wisprflow").description("Wispr Flow meetings, notes and calendar, 
 registerMeetingsCommand(program);
 registerNotesCommand(program);
 registerCalendarCommand(program);
+registerDictionaryCommand(program);
 registerDoctorCommand(program);
 
 await runTool(program, { tool: "wisprflow" });
