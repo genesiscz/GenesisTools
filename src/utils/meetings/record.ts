@@ -52,8 +52,14 @@ const contextSchema = z.object({
 
 export const ITEM_STATUSES = ["suggested", "confirmed", "rejected"] as const;
 
+/** What a question asks about: whose voice, which word, or what was said. */
+export const QUESTION_TOPICS = ["speaker", "term", "text"] as const;
+export type QuestionTopic = (typeof QUESTION_TOPICS)[number];
+
+const itemIdSchema = z.string().regex(/^i\d+$/);
+
 const itemBase = {
-    id: z.string().regex(/^i\d+$/),
+    id: itemIdSchema,
     status: z.enum(ITEM_STATUSES),
     /** 0 to 1. */
     confidence: z.number().min(0).max(1).optional(),
@@ -92,6 +98,22 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         atSec: z.number().optional(),
         heard: z.string(),
         proposed: z.string(),
+        ...itemBase,
+    }),
+    /**
+     * A question a person answers by ear (`tools meetings listen`). Open while suggested; confirmed once answered,
+     * rejected when skipped. The answer confirms or rejects the items in `decides`.
+     */
+    z.object({
+        kind: z.literal("question"),
+        about: z.enum(QUESTION_TOPICS),
+        fromSec: z.number(),
+        toSec: z.number(),
+        question: z.string().min(1),
+        choices: z.array(z.string()).default([]),
+        decides: z.array(itemIdSchema).default([]),
+        answer: z.string().optional(),
+        comment: z.string().optional(),
         ...itemBase,
     }),
 ]);

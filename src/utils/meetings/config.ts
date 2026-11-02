@@ -70,11 +70,22 @@ const wisprflowSourceSchema = z.object({
 /** The players `tools meetings play` can start, in the order it tries them. */
 export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
 
+/** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
+export const LISTEN_PLAYERS = ["afplay", "vlc", "ffplay"] as const;
+
+const listenSchema = z.object({
+    /** Plays the cut clip; a clip needs no seeking, so macOS's own afplay is enough. */
+    player: z.enum(LISTEN_PLAYERS).default("afplay"),
+    /** Seconds of audio around the question's range. No default: the first `listen` asks and saves it. */
+    padSec: z.number().min(0).max(60).optional(),
+});
+
 const playbackSchema = z.object({
     /** Which player opens a meeting's audio at a moment; the other is the fallback when it is missing. */
     player: z.enum(MEETING_PLAYERS).default("vlc"),
     /** Start this many seconds before the asked time, so the sentence is heard from its start. */
     beforeSec: z.number().min(0).max(60).default(5),
+    listen: listenSchema.prefault({}),
 });
 
 export const meetingsConfigSchema = z.object({
@@ -232,6 +243,13 @@ export class MeetingsConfigStore {
     async setAbbrExpansion(scope: DictionaryScope, mode: AbbrExpansion): Promise<MeetingsConfig> {
         return this.update((raw) => {
             dictionaryAt(raw, scope).abbrExpansion = mode;
+        });
+    }
+
+    /** Saves the padding `tools meetings listen` cuts around a question's range. */
+    async setListenPad(padSec: number): Promise<MeetingsConfig> {
+        return this.update((raw) => {
+            objectAt(objectAt(objectAt(raw, "global"), "playback"), "listen").padSec = padSec;
         });
     }
 

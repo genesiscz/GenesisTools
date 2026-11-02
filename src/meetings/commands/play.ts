@@ -5,8 +5,8 @@ import { MEETING_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
+import { meetingAudioPath } from "../lib/audio";
 import { errorText, fail, TOOL } from "../lib/shared";
-import { meetingSource } from "../lib/sources";
 
 const { log } = logger.scoped("meetings-play");
 
@@ -40,21 +40,7 @@ async function play(ref: string, opts: { at: string; before?: string }): Promise
             return;
         }
 
-        const [sourceId, block] =
-            Object.entries(record.sources).find(([, value]) => typeof value.meetingId === "string") ?? [];
-
-        if (!sourceId || typeof block?.meetingId !== "string") {
-            fail(`${record.id} has no linked source with audio.`);
-            return;
-        }
-
-        const evidence = await (await meetingSource(sourceId)).evidence(block.meetingId);
-
-        if (!evidence?.audioPath) {
-            fail(`The source keeps no audio for ${record.id} on this Mac.`);
-            return;
-        }
-
+        const audioPath = await meetingAudioPath(record);
         const playback = (await new MeetingsConfigStore().read()).global.playback;
         const before = opts.before === undefined ? playback.beforeSec : Number(opts.before);
         const order = [playback.player, ...MEETING_PLAYERS.filter((player) => player !== playback.player)];
@@ -66,7 +52,7 @@ async function play(ref: string, opts: { at: string; before?: string }): Promise
         }
 
         const startSec = Math.max(0, atSec - before);
-        const argv = PLAYERS[player].argv(evidence.audioPath, startSec);
+        const argv = PLAYERS[player].argv(audioPath, startSec);
         Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true }).unref();
         log.debug({ argv }, "player started");
         ui.ok(`Playing ${record.id} from ${formatClock(startSec)} in ${player}.`);

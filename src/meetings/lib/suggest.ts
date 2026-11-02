@@ -6,6 +6,7 @@ import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, type SpeakerHint, sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
+import { questionForRange, questionKey } from "./questions";
 
 const { log } = logger.scoped("meetings-suggest");
 
@@ -360,7 +361,13 @@ function evidenceItems(options: {
     const lines = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyLeftShare);
     const items: NewItem[] = [];
     let open:
-        | { item: Extract<NewItem, { kind: "speaker-range" }>; key: string; shares: number[]; echoLines: number }
+        | {
+              item: Extract<NewItem, { kind: "speaker-range" }>;
+              key: string;
+              shares: number[];
+              echoLines: number;
+              endSec: number;
+          }
         | undefined;
     const close = () => {
         if (open) {
@@ -369,6 +376,7 @@ function evidenceItems(options: {
             open.item.evidence = {
                 ...open.item.evidence,
                 lines: open.shares.length,
+                endSec: open.endSec,
                 ...(open.echoLines > 0 ? { echoLines: open.echoLines } : {}),
             };
             items.push(open.item);
@@ -396,6 +404,7 @@ function evidenceItems(options: {
 
             if (open && open.key === key && line.startSec - open.item.toSec < EVIDENCE_GAP_SEC) {
                 open.item.toSec = line.startSec;
+                open.endSec = Math.max(open.endSec, line.endSec);
                 open.shares.push(finding.confidence);
                 open.echoLines += finding.echo ? 1 : 0;
                 continue;
@@ -406,6 +415,7 @@ function evidenceItems(options: {
                 key,
                 shares: [finding.confidence],
                 echoLines: finding.echo ? 1 : 0,
+                endSec: line.endSec,
                 item: {
                     kind: "speaker-range",
                     status: "suggested",
@@ -418,7 +428,9 @@ function evidenceItems(options: {
                     rules: finding.rules,
                     evidence: {
                         channel: finding.speaker === selfName ? "mic" : "system",
-                        ...(finding.listen ? { note: "both channels in these lines: confirm by listening" } : {}),
+                        ...(finding.listen
+                            ? { listen: true, note: "both channels in these lines: confirm by listening" }
+                            : {}),
                     },
                 },
             };
@@ -439,6 +451,10 @@ function itemKey(item: NewItem | MeetingItem): string {
 
     if (item.kind === "join") {
         return `join|${Math.round(item.atSec)}`;
+    }
+
+    if (item.kind === "question") {
+        return questionKey(item);
     }
 
     return `term|${item.heard.toLowerCase()}|${item.proposed}`;
@@ -504,6 +520,16 @@ export function suggestItems(options: {
         const withId = meetingItemSchema.parse({ ...item, id: nextId("i", taken), suggestedAt: options.now });
         taken.push(withId);
         fresh.push(withId);
+
+        // A range to confirm by listening gets its question (R2.3), answered with `tools meetings listen`.
+        const question = withId.kind === "speaker-range" ? questionForRange(withId) : undefined;
+
+        if (question && !known.has(questionKey(question))) {
+            known.add(questionKey(question));
+            const asked = meetingItemSchema.parse({ ...question, id: nextId("i", taken), suggestedAt: options.now });
+            taken.push(asked);
+            fresh.push(asked);
+        }
     }
 
     return fresh;

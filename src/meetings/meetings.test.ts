@@ -4,6 +4,7 @@ import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
+import { answerQuestion, openQuestions, questionForRange, skipQuestion } from "./lib/questions";
 import { suggestItems } from "./lib/suggest";
 import { type WatchDeps, watchOnce } from "./lib/watch";
 
@@ -186,8 +187,10 @@ describe("evidence rule", () => {
             expect.objectContaining({
                 fromSec: 200,
                 speaker: "Alice Example",
-                evidence: expect.objectContaining({ note: expect.stringContaining("listening") }),
+                evidence: expect.objectContaining({ listen: true, note: expect.stringContaining("listening") }),
             }),
+            // The mixed range gets its question, which decides it (R2.3).
+            expect.objectContaining({ kind: "question", fromSec: 200, decides: ["i2"] }),
         ]);
     });
 });
@@ -225,6 +228,7 @@ describe("evidence rule after a leave", () => {
                 rules: ["E1", "E3", "RA"],
                 confidence: 0.45,
             }),
+            expect.objectContaining({ kind: "question", choices: ["Bob Example"], decides: ["i1"] }),
         ]);
     });
 });
@@ -402,5 +406,84 @@ describe("fuzzy dictionary suggestions (R2.5)", () => {
                 rules: ["dictionary-fuzzy"],
             })
         );
+    });
+});
+
+describe("questions (R2.3)", () => {
+    const now = "2026-11-02T15:00:00.000Z";
+    const withItems = (items: unknown[]) => meetingRecordSchema.parse({ ...record, items });
+    const range = {
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Speaker 5",
+        fromSec: 120,
+        toSec: 140,
+        speaker: "Alice Example",
+        candidates: ["Carol Example", "Alice Example"],
+        rules: ["E1"],
+        evidence: { listen: true, endSec: 146 },
+        suggestedAt: now,
+    };
+
+    test("a range marked for listening becomes a question that hears its last line to the end", () => {
+        const parsed = withItems([range]).items[0]!;
+        const question = parsed.kind === "speaker-range" ? questionForRange(parsed) : undefined;
+        expect(question).toMatchObject({
+            kind: "question",
+            about: "speaker",
+            fromSec: 120,
+            toSec: 146,
+            choices: ["Alice Example", "Carol Example"],
+            decides: ["i1"],
+        });
+    });
+
+    test("a range without the listen mark asks nothing", () => {
+        const parsed = withItems([{ ...range, evidence: {} }]).items[0]!;
+        expect(parsed.kind === "speaker-range" ? questionForRange(parsed) : "wrong kind").toBeUndefined();
+    });
+
+    test("an answer confirms the decided items with it; 'none of these' rejects them", () => {
+        const term = {
+            id: "i2",
+            kind: "term",
+            status: "suggested",
+            heard: "jenezetka",
+            proposed: "JDZ",
+            rules: [],
+            suggestedAt: now,
+        };
+        const question = (id: string, decides: string[]) => ({
+            id,
+            kind: "question",
+            status: "suggested",
+            about: "speaker",
+            fromSec: 120,
+            toSec: 146,
+            question: "Who?",
+            decides,
+            rules: [],
+            suggestedAt: now,
+        });
+        const answered = withItems([range, term, question("i3", ["i1", "i2"])]);
+        const ledger = answerQuestion(answered, "i3", { answer: "Carol Example", comment: " clear ", now });
+        expect(answered.items.map((item) => [item.id, item.status])).toEqual([
+            ["i1", "confirmed"],
+            ["i2", "confirmed"],
+            ["i3", "confirmed"],
+        ]);
+        expect(answered.items[0]).toMatchObject({ speaker: "Carol Example" });
+        expect(answered.items[2]).toMatchObject({ answer: "Carol Example", comment: "clear" });
+        expect(ledger).toEqual([expect.objectContaining({ kind: "term", heard: "jenezetka", fixed: "Carol Example" })]);
+
+        const refused = withItems([range, question("i3", ["i1"])]);
+        expect(answerQuestion(refused, "i3", { answer: "None of these", now })).toEqual([]);
+        expect(refused.items[0]).toMatchObject({ status: "rejected", speaker: "Alice Example" });
+
+        const skipped = withItems([range, question("i3", ["i1"])]);
+        skipQuestion(skipped, "i3", now);
+        expect(skipped.items.map((item) => item.status)).toEqual(["suggested", "rejected"]);
+        expect(openQuestions(skipped)).toEqual([]);
     });
 });
