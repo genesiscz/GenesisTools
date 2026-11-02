@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
-import { printLn } from "./stdout";
+import { printLn, writeStdout } from "./stdout";
 
 const FIXTURE = join(import.meta.dir, "__fixtures__/stdout-fixture.ts");
 
@@ -74,5 +74,37 @@ describe("printLn", () => {
         }
 
         expect(output).toBe("hello\nworld\n");
+    });
+});
+
+describe("writeStdout on a closed pipe", () => {
+    function failingWrite(code: string) {
+        return spyOn(process.stdout, "write").mockImplementation(((
+            _text: string,
+            cb?: (error?: Error | null) => void
+        ) => {
+            cb?.(Object.assign(new Error(`${code}: write`), { code }));
+            return false;
+        }) as typeof process.stdout.write);
+    }
+
+    it("resolves when the reader went away (`… | head`), instead of crashing the tool", async () => {
+        const spy = failingWrite("EPIPE");
+
+        try {
+            await expect(writeStdout("skeleton\n")).resolves.toBeUndefined();
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it("still rejects any other write error", async () => {
+        const spy = failingWrite("EIO");
+
+        try {
+            await expect(writeStdout("skeleton\n")).rejects.toThrow("EIO");
+        } finally {
+            spy.mockRestore();
+        }
     });
 });
