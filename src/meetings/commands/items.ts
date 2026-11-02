@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -682,7 +683,7 @@ export function registerItemCommands(program: Command): void {
         .action(items)
         .command("add")
         .argument("<meeting>", MEETING_REF)
-        .description("Add a question to answer by ear (tools meetings listen)")
+        .description(`Add a question to answer by ear (${toolCommand("meetings", "listen")})`)
         .option("--listen", "the item is a question answered by listening (the only kind added by hand)")
         .requiredOption("--from <time>", "start of the range: 37:43, 1:02:10 or seconds")
         .requiredOption("--to <time>", "end of the range")
