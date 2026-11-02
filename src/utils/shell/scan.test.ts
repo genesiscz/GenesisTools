@@ -599,6 +599,11 @@ describe("the helpers the rules match with", () => {
         expect(commandAfter("xargs -J '%' rm %")).toBe("rm");
         expect(commandAfter('xargs -I "{}" rm "{}"')).toBe("rm");
         expect(commandAfter("xargs --max-args '1' rm")).toBe("rm");
+        // A line continuation is blanked too, but it is no value: the next word is.
+        expect(commandAfter("xargs -n \\\n1 rm -f")).toBe("rm");
+        expect(commandAfter("xargs -J \\\n'%' rm %")).toBe("rm");
+        // An escaped character is a word, so it is the value.
+        expect(commandAfter("xargs -n \\1 rm")).toBe("rm");
     });
 });
 

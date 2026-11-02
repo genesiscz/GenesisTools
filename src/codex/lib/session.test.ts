@@ -40,9 +40,15 @@ class FakeRpcClient implements RpcClient {
     readonly answeredAt: Array<{ id: unknown; sent: number }> = [];
     /** An answer write that never completes, as a wedged stdin sink leaves it. */
     answerWedged = false;
+    /** An answer write that failed, as `AppServerClient.answered` reports it. */
+    answerFailure: Error | null = null;
 
     async answered(id: unknown): Promise<void> {
         this.answeredAt.push({ id, sent: this.requests.length });
+
+        if (this.answerFailure) {
+            throw this.answerFailure;
+        }
 
         if (this.answerWedged) {
             await new Promise<never>(() => undefined);
@@ -804,6 +810,27 @@ describe("CodexSessionRuntime", () => {
                 expect(warned[0]?.[0]).toMatchObject({ name: "reviewer", requestId: "7" });
                 expect(store.readMeta("reviewer")?.pendingApprovals).toEqual({});
                 expect(store.readMeta("reviewer")?.queuedSteers).toBeUndefined();
+            } finally {
+                warn.mockRestore();
+            }
+        });
+    });
+
+    test("a decline whose write failed answers attributed false and steers nothing", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-write-failed-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { client, runtime } = await startAskWorker(home);
+            await parkApproval(runtime, "7");
+            client.answerFailure = new Error("stdin closed");
+            const sent = client.requests.length;
+            const warn = spyOn(getLogger(), "warn").mockImplementation(() => undefined);
+
+            try {
+                await expect(
+                    runtime.execute({ op: "deny", requestId: "7", refusal: { by: "parent", reason: "wrong file" } })
+                ).resolves.toEqual({ resolved: true, attributed: false });
+                // The decline never reached the server, so no refusal reason follows it.
+                expect(client.requests.slice(sent)).toEqual([]);
             } finally {
                 warn.mockRestore();
             }

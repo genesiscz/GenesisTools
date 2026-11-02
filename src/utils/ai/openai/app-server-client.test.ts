@@ -315,6 +315,40 @@ describe("AppServerClient", () => {
         await client.close();
     });
 
+    test("answered rejects when the answer write fails, and the failed write is not answered as a handler error", async () => {
+        const harness = createProcessHarness();
+        const realWrite = harness.process.stdin.write;
+        let failNext = true;
+        harness.process.stdin.write = (value) => {
+            realWrite(value);
+
+            if (failNext) {
+                failNext = false;
+                return Promise.reject(new Error("stdin closed"));
+            }
+
+            return value.length;
+        };
+        let resolveApproval: (decision: { decision: string }) => void = () => {};
+        const approval = new Promise<{ decision: string }>((resolve) => {
+            resolveApproval = resolve;
+        });
+        const client = new AppServerClient(harness.process, { onServerRequest: () => approval });
+
+        harness.push({ id: "approval-4", method: "item/fileChange/requestApproval", params: {} });
+        await Bun.sleep(0);
+        // As `resolveApproval` in the codex session asks: right after it resolved the decision.
+        const answered = client.answered("approval-4");
+        resolveApproval({ decision: "decline" });
+
+        await expect(answered).rejects.toThrow("stdin closed");
+        // Only the decline was tried: no error response went out in its place.
+        expect(harness.writes.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
+            { id: "approval-4", result: { decision: "decline" } },
+        ]);
+        await client.close();
+    });
+
     test("rejects pending requests when the child exits", async () => {
         let resolveExit: (code: number) => void = () => {};
         const harness = createProcessHarness();

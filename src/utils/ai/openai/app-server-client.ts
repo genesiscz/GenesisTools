@@ -306,9 +306,10 @@ export class AppServerClient {
     }
 
     /**
-     * Settles once this client's answer to the server request `id` has been written, or failed to be. A caller that
-     * resolved the answer awaits it before its next message, so the server reads the answer first. An id with no
-     * answer in flight settles at once.
+     * Resolves once this client's answer to the server request `id` has been written, and rejects with the write's
+     * error when it failed: a caller that resolved the answer awaits it before its next message, so the server reads
+     * the answer first, and a failed write must not read as an answer that arrived (eve on #648, 2026-11-01). An id
+     * with no answer in flight resolves at once.
      */
     answered(id: RpcId): Promise<void> {
         return this.answering.get(id) ?? Promise.resolve();
@@ -316,16 +317,12 @@ export class AppServerClient {
 
     private async handleServerRequest(request: RpcServerRequest): Promise<void> {
         const written = this.answerServerRequest(request);
-        const settled = written.then(
-            () => undefined,
-            () => undefined
-        );
-        this.answering.set(request.id, settled);
+        this.answering.set(request.id, written);
 
         try {
             await written;
         } finally {
-            if (this.answering.get(request.id) === settled) {
+            if (this.answering.get(request.id) === written) {
                 this.answering.delete(request.id);
             }
         }
@@ -340,16 +337,22 @@ export class AppServerClient {
             return;
         }
 
+        let result: unknown;
+
         try {
-            const result = await this.options.onServerRequest(request);
-            await this.writeMessage({ id: request.id, result });
+            result = await this.options.onServerRequest(request);
         } catch (err) {
             // The peer is told, and until now nothing else was: the text went out over the wire
             // and left no record of which handler threw.
             log.warn({ err, method: request.method }, "app-server request handler failed");
             const message = err instanceof Error ? err.message : String(err);
             await this.writeMessage({ id: request.id, error: { code: -32_000, message } });
+            return;
         }
+
+        // Outside the handler's catch: a failed write is not a handler error, and answering it with an error response
+        // that does get through would let `answered` report the decision as delivered.
+        await this.writeMessage({ id: request.id, result });
     }
 
     private async watchExit(): Promise<void> {

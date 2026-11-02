@@ -138,6 +138,8 @@ describe("rm-use-tools-rm", () => {
         "xargs --arg-file list.txt rm",
         "xargs --max-a 1 rm",
         "xargs --null --no-run-if-empty rm",
+        // A line continuation between an option and its value is not a quoted value.
+        "printf '%s\\n' victim | xargs -n \\\n1 rm -f",
     ])("blocks %j", (command) => {
         expect(ids(command)).toContain("rm-use-tools-rm");
     });
