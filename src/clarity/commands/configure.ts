@@ -1,5 +1,6 @@
 import { saveSignIn } from "@app/clarity/lib/auth/client";
 import { authDriverIds, chooseAuthDriver, DEFAULT_AUTH_DRIVER } from "@app/clarity/lib/auth/drivers";
+import { claritySessionStore } from "@app/clarity/lib/auth/session-store";
 import type { ClarityAuthDriver } from "@app/clarity/lib/auth/types";
 import * as clack from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -73,11 +74,12 @@ async function runInteractiveSetup(driverFlag?: string): Promise<void> {
     clack.outro(pc.green("Configuration saved!"));
 }
 
-function showConfig(config: ClarityConfig): void {
+async function showConfig(config: ClarityConfig): Promise<void> {
+    const session = await claritySessionStore.read();
+
     out.println("\nClarity Configuration:");
     out.println(`  Base URL:     ${config.baseUrl}`);
-    out.println(`  Auth Token:   [configured]`);
-    out.println(`  Session ID:   [configured]`);
+    out.println(`  Session:      ${session ? "saved" : "none"} (${claritySessionStore.describe()})`);
     out.println(`  Auth driver:  ${config.auth?.driver ?? DEFAULT_AUTH_DRIVER}`);
     out.println(`  Resource ID:  ${config.resourceId ?? "not set"}`);
     out.println(`  User:         ${config.uniqueName ?? "not set"}`);
@@ -114,7 +116,7 @@ export function registerConfigureCommand(program: Command): void {
                 process.exit(1);
             }
 
-            showConfig(config);
+            await showConfig(config);
         });
 
     cmd.command("mappings")
@@ -165,7 +167,7 @@ export function registerConfigureCommand(program: Command): void {
         while (true) {
             // Refresh config each iteration (may have changed)
             config = (await getConfig())!;
-            showConfig(config);
+            await showConfig(config);
 
             const action = await clack.select({
                 message: "What would you like to do?",
