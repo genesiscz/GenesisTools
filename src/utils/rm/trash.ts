@@ -275,7 +275,8 @@ export interface MoveOptions {
  * process holds, with every planned item and its restore path; each move follows, and the record is published as
  * `<id>.json` only once the moves are over. Until then the drain cannot see the batch, a restore refuses it, and
  * the orphan sweep keeps its folder; a crash leaves the claim, which the sweep gives back as an incomplete record
- * that a restore reads and the drain never deletes. Returns the batch, or null when nothing moved.
+ * that a restore reads and the drain never deletes. Returns the batch, or null when nothing moved. A step that throws
+ * after an item reached the trash throws `RmPartialMoveError`, which carries the published batch.
  */
 export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptions): TrashBatch | null {
     if (requests.length === 0) {
@@ -328,6 +329,7 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
     const claim = producerClaim(paths, batch.id);
     writeBatch(batch, paths, claim);
     let published: TrashBatch | null = null;
+    let failure: { error: unknown } | null = null;
 
     try {
         // The claim first, then the look at the root: a trash-root change counts claims after it marks itself, so
@@ -374,12 +376,33 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
             });
             logger.debug({ path: request.target.path, stored: item.stored, batch: batch.id }, "rm: moved aside");
         }
+    } catch (error) {
+        failure = { error };
     } finally {
         // Also on a throw: what reached the trash is on the published record, whatever stopped the loop.
         published = publishBatch(batch, { paths, claim, config: options.config });
     }
 
+    if (failure) {
+        // A caller that saw only the error would think nothing moved; the batch tells it what to put back.
+        throw published ? new RmPartialMoveError(published, failure.error) : failure.error;
+    }
+
     return published;
+}
+
+/** The move threw after items reached the trash; `batch` is their published record, which a restore puts back. */
+export class RmPartialMoveError extends Error {
+    constructor(
+        readonly batch: TrashBatch,
+        cause: unknown
+    ) {
+        super(
+            `rm: ${batch.items.length} item(s) reached trash batch ${batch.id}, then the move failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            { cause }
+        );
+        this.name = "RmPartialMoveError";
+    }
 }
 
 /** Moves one planned item; a cross-volume fallback puts its new destination on record before it moves there. */

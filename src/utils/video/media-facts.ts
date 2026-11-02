@@ -1,8 +1,8 @@
-import { stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
-import { runVideoCommand } from "./process";
+import { runVideoCommand, VideoCommandExitError } from "./process";
 
 export interface MediaStream {
     type: string;
@@ -54,18 +54,49 @@ export function primaryVideo(facts: MediaFacts): MediaStream | null {
 }
 
 export function hasAudio(facts: MediaFacts): boolean {
-    return facts.streams.some((stream) => stream.type === "audio");
+    return audioStreamCount(facts) > 0;
+}
+
+export function audioStreamCount(facts: MediaFacts): number {
+    return facts.streams.filter((stream) => stream.type === "audio").length;
+}
+
+/**
+ * ffprobe ran on a readable file and exited non-zero: the file is not media it can read. Every other failure of
+ * `readMediaFacts` (a missing or unreadable file, no ffprobe, a timeout, a cancel) throws as it is, so a caller can
+ * tell "not a video" from a probe that never ran.
+ */
+export class NotMediaError extends Error {
+    constructor(path: string, cause: VideoCommandExitError) {
+        super(`ffprobe cannot read ${path} as media: ${cause.message.trim()}`, { cause });
+        this.name = "NotMediaError";
+    }
 }
 
 /** Reads container and stream facts of any media file; no size or duration limit, unlike `probeVideo`. */
 export async function readMediaFacts({ input, signal }: { input: string; signal?: AbortSignal }): Promise<MediaFacts> {
     const path = resolve(input);
-    const file = await stat(path);
-    const raw = await runVideoCommand({
-        command: ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", path],
-        signal,
-        timeoutMs: 60_000,
-    });
+    // Opened, not only stat'ed: a file this process cannot read fails here, before ffprobe could call it "not media".
+    const handle = await open(path, "r");
+    const bytes = await handle
+        .stat()
+        .then((stat) => stat.size)
+        .finally(() => handle.close());
+    let raw: string;
 
-    return parseMediaFacts({ raw: SafeJSON.parse(raw, { strict: true }), path, bytes: file.size });
+    try {
+        raw = await runVideoCommand({
+            command: ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", path],
+            signal,
+            timeoutMs: 60_000,
+        });
+    } catch (error) {
+        if (error instanceof VideoCommandExitError) {
+            throw new NotMediaError(path, error);
+        }
+
+        throw error;
+    }
+
+    return parseMediaFacts({ raw: SafeJSON.parse(raw, { strict: true }), path, bytes });
 }

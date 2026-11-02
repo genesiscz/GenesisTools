@@ -1,5 +1,5 @@
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
-import { hasAudio, type MediaFacts, primaryVideo } from "./media-facts";
+import { audioStreamCount, hasAudio, type MediaFacts, type MediaStream, primaryVideo } from "./media-facts";
 
 /** A re-encode target. Add a codec by adding one entry to `VIDEO_ENCODERS`; no call site branches on the name. */
 export interface VideoEncoder {
@@ -69,7 +69,21 @@ export async function encoderUnavailableReason(encoder: VideoEncoder): Promise<s
         : `this ffmpeg has no ${encoder.ffmpegName} encoder (ffmpeg -encoders)`;
 }
 
-/** Why an input is not re-encoded, or null when it is a candidate. */
+/** How a skip reason names a stream the encode would not carry over. */
+function droppedStream(stream: MediaStream): string {
+    if (stream.type === "video") {
+        return stream.attachedPicture ? `a cover picture (${stream.codec})` : `a second video track (${stream.codec})`;
+    }
+
+    const article = /^[aeiou]/i.test(stream.type) ? "an" : "a";
+    return `${article} ${stream.type} track (${stream.codec})`;
+}
+
+/**
+ * Why an input is not re-encoded, or null when it is a candidate. The encode carries over the first playable video
+ * and every audio track (`encodeArgs`), so a file with any other stream (a subtitle, a second video, a cover picture,
+ * a data or attachment track) is skipped rather than replaced by a file without it.
+ */
 export function skipReason({ facts, encoder }: { facts: MediaFacts; encoder: VideoEncoder }): string | null {
     const video = primaryVideo(facts);
 
@@ -81,10 +95,10 @@ export function skipReason({ facts, encoder }: { facts: MediaFacts; encoder: Vid
         return `already ${encoder.codec}`;
     }
 
-    const data = facts.streams.find((stream) => stream.type === "data");
+    const dropped = facts.streams.find((stream) => stream !== video && stream.type !== "audio");
 
-    if (data) {
-        return `has a data track (${data.codec}) that a re-encode would drop`;
+    if (dropped) {
+        return `has ${droppedStream(dropped)} that a re-encode would drop`;
     }
 
     return null;
@@ -135,6 +149,13 @@ export function judgeOutput({
 
     if (hasAudio(input) && !hasAudio(output)) {
         return { keep: false, reason: "the output lost its audio" };
+    }
+
+    if (audioStreamCount(output) < audioStreamCount(input)) {
+        return {
+            keep: false,
+            reason: `the output has ${audioStreamCount(output)} of the input's ${audioStreamCount(input)} audio tracks`,
+        };
     }
 
     if (decodeErrors.trim() !== "") {

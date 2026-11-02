@@ -91,6 +91,7 @@ import {
     type RmCaller,
     type RmConfig,
     type RmLedgerEntry,
+    RmPartialMoveError,
     type RmRequest,
     type RmRuleContext,
     readRmLedger,
@@ -533,6 +534,62 @@ describe("trash", () => {
         expect(refused[0]).toContain("EROFS");
         expect(existsSync(target.path)).toBe(true);
         expect(() => moveToTrash([{ target, rule: "test" }], options)).toThrow(/kept in place/);
+    });
+
+    test("a move that throws after an item reached the trash names the published batch; one that moved nothing does not", () => {
+        const first = resolveTarget(file(join(dir("partial-move"), "first")), base);
+        const second = resolveTarget(file(join(dir("partial-move"), "second")), base);
+        let renames = 0;
+        const options = {
+            config,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths: trashPaths,
+            hooks: {
+                beforeRename: () => {
+                    renames++;
+
+                    if (renames === 2) {
+                        throw new Error("the disk went away");
+                    }
+                },
+            },
+        };
+        let thrown: unknown = null;
+
+        try {
+            moveToTrash(
+                [
+                    { target: first, rule: "test" },
+                    { target: second, rule: "test" },
+                ],
+                options
+            );
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(RmPartialMoveError);
+        const partial = thrown instanceof RmPartialMoveError ? thrown : null;
+        expect(partial?.message).toContain("1 item(s) reached trash batch");
+        expect(partial?.message).toContain("the disk went away");
+        expect(partial?.batch.items.map((item) => item.original)).toEqual([first.path]);
+        expect(existsSync(first.path)).toBe(false);
+        expect(existsSync(second.path)).toBe(true);
+        expect(restoreBatch(partial?.batch.id ?? "", { config, paths: trashPaths }).restored).toEqual([first.path]);
+
+        renames = 1;
+        let plain: unknown = null;
+
+        try {
+            moveToTrash([{ target: second, rule: "test" }], options);
+        } catch (error) {
+            plain = error;
+        }
+
+        expect(plain).not.toBeInstanceOf(RmPartialMoveError);
+        expect(plain).toMatchObject({ message: "the disk went away" });
+        expect(existsSync(second.path)).toBe(true);
     });
 
     test("assertInsideTrash refuses anything outside the trash or above item depth", () => {
