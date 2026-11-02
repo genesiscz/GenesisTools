@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -78,7 +79,7 @@ export function registerAttendanceCommand(program: Command): void {
         )
         .option(
             "--from <platform|file>",
-            `${MEETING_PLATFORM_IDS.join(", ")} (teams asks tools ms-teams by the title; facetime reads the call history), or a file of tools ms-teams --json output`
+            `${MEETING_PLATFORM_IDS.join(", ")} (teams asks ${toolCommand("ms-teams")} by the title; facetime reads the call history), or a file of ${toolCommand("ms-teams", "meetings", "attendance", "--json")} output`
         )
         .option("--json", "print JSON")
         .action(attendance);
