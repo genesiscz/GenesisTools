@@ -189,3 +189,40 @@ describe("evidence rule", () => {
         ]);
     });
 });
+
+describe("evidence rule after a leave", () => {
+    test("a live name of someone who left is dropped; the speaking indicator among those still here guesses, to listen", () => {
+        const items = suggestItems({
+            record,
+            meeting: {
+                ...meeting,
+                transcript: [line("Carol Example", 100, "Tak dál.", 2), line("Alice Example", 110, "Ano.", 1)],
+            },
+            rules: ["evidence"],
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            presence: [
+                { name: "alice@example.com", self: true, fromSec: 0, toSec: 200 },
+                { name: "Bob Example", fromSec: 0, toSec: 200 },
+                { name: "Carol Example", fromSec: 0, toSec: 50 },
+                { name: "Dave Example", fromSec: 0, toSec: 60 },
+            ],
+            evidence: {
+                selfName: "Alice Example",
+                segments: [{ startSec: 100, endSec: 110, channel: "system", liveName: "Dave Example" }],
+                speaking: [{ tSec: 102, speaking: ["Bob Example", "Alice Example"], muted: [] }],
+                files: [],
+            },
+            now: "2026-11-02T15:00:00.000Z",
+        });
+
+        expect(items).toEqual([
+            expect.objectContaining({
+                label: "Carol Example",
+                speaker: "Bob Example",
+                rules: ["E1", "E3", "RA"],
+                confidence: 0.45,
+            }),
+        ]);
+    });
+});
