@@ -19,7 +19,7 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { suggestItems } from "./lib/suggest";
-import { type WatchDeps, watchOnce } from "./lib/watch";
+import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
     return { speaker, startSec, text, speakerId };
@@ -258,6 +258,7 @@ describe("watchOnce", () => {
         stores += 1;
         const runs: string[][] = [];
         const notes: string[] = [];
+        const posted: WatchNote[] = [];
         let running = false;
         const deps: Partial<WatchDeps> = {
             settings: async () => settings,
@@ -274,12 +275,13 @@ describe("watchOnce", () => {
                 running = args[2] === "start";
                 return { success: true, exitCode: 0, stderr: "" };
             },
-            notify: async (title) => {
-                notes.push(title);
+            notify: async (note) => {
+                notes.push(note.title);
+                posted.push(note);
             },
             ...over,
         };
-        return { store: new MeetingStore(new Storage(`meetings-watch-${stores}`)), deps, runs, notes };
+        return { store: new MeetingStore(new Storage(`meetings-watch-${stores}`)), deps, runs, notes, posted };
     }
 
     test("off: nothing happens", async () => {
@@ -295,6 +297,14 @@ describe("watchOnce", () => {
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
         expect(h.runs).toEqual([["meetings", "record", "start", "--source", "wisprflow:w1", "--yes"]]);
         expect(h.notes).toEqual(["Recording the screen"]);
+        // A click must do something: a stop button, and a subtitle even before Wispr names the meeting.
+        expect(h.posted[0]?.actions).toEqual([expect.objectContaining({ id: "stop", title: "Stop recording" })]);
+        expect(h.posted[0]?.subtitle).toBeTruthy();
+        expect(h.posted[0]?.message.startsWith(":")).toBe(false);
+
+        const untitled = harness({ liveRecording: async () => ({ ...live, title: "" }) });
+        await watchOnce(untitled.store, { deps: untitled.deps, now });
+        expect(untitled.posted[0]?.subtitle).toMatch(/^Wispr Flow meeting since \d\d:\d\d$/);
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 10_000 })).toBe("recording");
     });
 
