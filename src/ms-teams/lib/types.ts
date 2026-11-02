@@ -144,3 +144,47 @@ export interface TeamsDump {
     calls: unknown[];
     activity: unknown[];
 }
+
+/** One attendance fact the Teams web client logged for a call. `at` is epoch ms. */
+export type CallLogEvent =
+    | { kind: "participant-added"; callId: string; at: number; mri: string }
+    | { kind: "participant-removed"; callId: string; at: number; mri: string }
+    | { kind: "self-state"; callId: string; at: number; state: string }
+    | { kind: "thread-link"; callId: string; at: number; threadId: string };
+
+/** Where an attendance row came from. */
+export type AttendanceSource = "ms-teams:web-client-log" | "ms-teams:call-ended-message";
+
+/**
+ * One presence interval of one person in one call. Times are ISO 8601 with the local offset.
+ * `joinedAtExact: false` means the person was already in the call when the observer joined, so the real join is
+ * earlier. `leftAtExact: false` means the person was still in when the observer left, so the real leave is later.
+ */
+export interface AttendanceRow {
+    name: string;
+    email: string | null;
+    id: string;
+    self: boolean;
+    joinedAt: string | null;
+    leftAt: string | null;
+    joinedAtExact: boolean;
+    leftAtExact: boolean;
+    source: AttendanceSource;
+}
+
+export interface MeetingAttendance {
+    provider: "ms-teams";
+    meeting: {
+        id: string;
+        title: string;
+        callId: string;
+        organizer: string | null;
+        scheduledStart: string | null;
+        scheduledEnd: string | null;
+        startedAt: string | null;
+        endedAt: string | null;
+    };
+    /** Join and leave times exist only while the call was on this Mac's Teams client, seen from its user. */
+    observer: { id: string | null; joinedAt: string | null; leftAt: string | null };
+    attendance: AttendanceRow[];
+}

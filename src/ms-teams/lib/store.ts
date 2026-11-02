@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { callLogEventSubject } from "./call-log";
 import { foldTeamsText } from "./decode";
 import {
     isSystemMessageType,
@@ -14,6 +15,7 @@ import {
 } from "./ingest-parse";
 import type {
     ActivityRow,
+    CallLogEvent,
     CallRow,
     ConversationRow,
     ConversationType,
@@ -98,6 +100,13 @@ export class TeamsCache {
         this.db.run(`CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        )`);
+        this.db.run(`CREATE TABLE IF NOT EXISTS call_log_events (
+            call_id TEXT NOT NULL,
+            at INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            PRIMARY KEY (call_id, at, kind, subject)
         )`);
     }
 
@@ -366,6 +375,48 @@ export class TeamsCache {
     getMeta(key: string): string | null {
         const row = this.db.query(`SELECT value FROM meta WHERE key = ?`).get(key) as { value: string } | null;
         return row?.value ?? null;
+    }
+
+    /** Keep web-client call-log facts past the log's rotation. Returns how many were new. */
+    ingestCallLogEvents(events: CallLogEvent[]): number {
+        const insert = this.db.prepare(
+            `INSERT OR IGNORE INTO call_log_events (call_id, at, kind, subject) VALUES (?, ?, ?, ?)`
+        );
+        let added = 0;
+        const tx = this.db.transaction(() => {
+            for (const event of events) {
+                added += insert.run(event.callId, event.at, event.kind, callLogEventSubject(event)).changes;
+            }
+        });
+        tx();
+
+        return added;
+    }
+
+    listCallLogEvents(callIds: string[]): CallLogEvent[] {
+        if (callIds.length === 0) {
+            return [];
+        }
+
+        const rows = this.db
+            .query(
+                `SELECT call_id, at, kind, subject FROM call_log_events
+                 WHERE call_id IN (${callIds.map(() => "?").join(", ")}) ORDER BY at`
+            )
+            .all(...callIds) as Array<{ call_id: string; at: number; kind: string; subject: string }>;
+
+        return rows.flatMap((row) => {
+            const event = callLogEventFromRow(row);
+            return event ? [event] : [];
+        });
+    }
+
+    callIdsForThread(threadId: string): string[] {
+        const rows = this.db
+            .query(`SELECT DISTINCT call_id FROM call_log_events WHERE kind = 'thread-link' AND subject = ?`)
+            .all(threadId) as Array<{ call_id: string }>;
+
+        return rows.map((row) => row.call_id);
     }
 
     counts(): { conversations: number; messages: number; people: number; calls: number; activity: number } {
@@ -731,6 +782,23 @@ function mapMessageRow(row: Record<string, unknown>): MessageRow {
         deletedAt: typeof row.deleted_at === "number" ? row.deleted_at : null,
         lastSeenAt: typeof row.last_seen_at === "number" ? row.last_seen_at : null,
     };
+}
+
+function callLogEventFromRow(row: { call_id: string; at: number; kind: string; subject: string }): CallLogEvent | null {
+    const base = { callId: row.call_id, at: row.at };
+
+    switch (row.kind) {
+        case "participant-added":
+        case "participant-removed":
+            return { ...base, kind: row.kind, mri: row.subject };
+        case "self-state":
+            return { ...base, kind: "self-state", state: row.subject };
+        case "thread-link":
+            return { ...base, kind: "thread-link", threadId: row.subject };
+        default:
+            log.debug({ kind: row.kind }, "[ms-teams] skipped a call-log row of an unknown kind");
+            return null;
+    }
 }
 
 export function isOneToOneId(id: string, title: string): boolean {

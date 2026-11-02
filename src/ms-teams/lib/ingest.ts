@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
-import { cacheDbPath, dumpIdbScript, venvDir, venvPython } from "./paths";
+import { readCallLogEvents } from "./call-log";
+import { cacheDbPath, dumpIdbScript, liveWebLogRoot, venvDir, venvPython } from "./paths";
 import { liveIdbMtimeMs, snapshotTeamsIdb } from "./snapshot";
 import { TeamsCache } from "./store";
 import type { TeamsDump } from "./types";
@@ -20,6 +21,8 @@ export interface IngestResult {
     /** Messages in the store after this sync, including ones the Teams cache has dropped. */
     storedMessages: number;
     dumpCounts: Record<string, number>;
+    /** Web-client call-log facts (who joined or left a call) this sync stored for the first time. */
+    newCallLogEvents: number;
 }
 
 const SYNC_LOCK_MS = 15 * 60 * 1000;
@@ -33,18 +36,29 @@ async function ingestIndexedDbLocked(opts: { force?: boolean }): Promise<IngestR
 
     if (!opts.force && existsSync(path)) {
         const existing = new TeamsCache(path, { readonly: true });
+        let current: ReturnType<TeamsCache["counts"]> | null = null;
 
         try {
             const stored = Number(existing.getMeta("idb_mtime") ?? "0");
             const live = liveIdbMtimeMs();
 
             if (stored > 0 && live > 0 && live <= stored) {
-                const counts = existing.counts();
+                current = existing.counts();
                 log.debug({ stored, live }, "[ms-teams] cache is current; skip snapshot");
-                return { ...counts, storedMessages: counts.messages, dumpCounts: {} };
             }
         } finally {
             existing.close();
+        }
+
+        if (current) {
+            const cache = new TeamsCache(path);
+
+            try {
+                const newCallLogEvents = storeCallLog(cache);
+                return { ...current, storedMessages: current.messages, dumpCounts: {}, newCallLogEvents };
+            } finally {
+                cache.close();
+            }
         }
     }
 
@@ -65,10 +79,19 @@ async function ingestIndexedDbLocked(opts: { force?: boolean }): Promise<IngestR
             log.debug({ mtimeBefore, mtimeAfter }, "[ms-teams] IDB changed during snapshot; next sync will re-ingest");
         }
 
-        return { ...counts, storedMessages: cache.counts().messages, dumpCounts };
+        const newCallLogEvents = storeCallLog(cache);
+        return { ...counts, storedMessages: cache.counts().messages, dumpCounts, newCallLogEvents };
     } finally {
         cache.close();
     }
+}
+
+function storeCallLog(cache: TeamsCache): number {
+    const root = liveWebLogRoot();
+    const added = cache.ingestCallLogEvents(readCallLogEvents(root));
+    log.debug({ root, added }, "[ms-teams] stored web-client call-log events");
+
+    return added;
 }
 
 export function readDumpDir(dir: string): TeamsDump {
