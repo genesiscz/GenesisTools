@@ -136,8 +136,8 @@ describe("speakerStats", () => {
             label: "Carol Example",
             strength: "strong",
             ranges: [
-                { fromSec: 20, toSec: 20, lines: 1 },
-                { fromSec: 380, toSec: 380, lines: 1 },
+                { fromSec: 20, toSec: 20, lines: 1, present: ["Bob Example", "alice@example.com"] },
+                { fromSec: 380, toSec: 380, lines: 1, present: ["alice@example.com"] },
             ],
         });
         expect(stats.hints).toContainEqual(
