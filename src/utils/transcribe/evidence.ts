@@ -19,8 +19,12 @@ export interface EvidenceSegment {
 export interface SpeakingObservation {
     tSec: number;
     speaking: string[];
-    muted: string[];
+    /** Who was muted; absent when the reading did not read the mute state (Teams leaves it out of most readings). */
+    muted?: string[];
 }
+
+/** A mute state read this long before a line still holds at its start: mute is a state, not an event. */
+const MUTED_CARRY_SEC = 10;
 
 /** The identity of the recording user in evidence: the microphone channel is always them. */
 export const SELF = "self";
@@ -164,7 +168,19 @@ export function lineEvidence(
             }
         }
 
-        const muted = readings[0]?.muted.filter((name) => readings.every((reading) => reading.muted.includes(name)));
+        // Only readings that read the mute state count, and the last one before the line still holds in it.
+        const muteReads = evidence.speaking.filter(
+            (observation) =>
+                observation.muted !== undefined &&
+                observation.tSec >= startSec - MUTED_CARRY_SEC &&
+                observation.tSec < endSec
+        );
+        const lastBefore = muteReads.findLast((observation) => observation.tSec <= startSec);
+        const counted = [
+            ...(lastBefore ? [lastBefore] : []),
+            ...muteReads.filter((observation) => observation.tSec > startSec),
+        ];
+        const muted = counted[0]?.muted?.filter((name) => counted.every((reading) => reading.muted?.includes(name)));
 
         const present = presence
             ?.filter((stay) => startSec >= stay.fromSec - 5 && startSec <= stay.toSec + 5)
