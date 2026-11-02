@@ -124,6 +124,13 @@ public final class ApprovalDialogModel: ObservableObject {
     /// "Deny…" was pressed: the note field is open.
     @Published public var denying = false
     @Published public private(set) var finish: ApprovalFinish?
+    /// An approval that came sooner than `confirmWithin` after the window appeared: its method, waiting for the
+    /// person's "Approve" (`confirmIntent`) before it counts.
+    @Published public private(set) var pendingIntent: String?
+    /// When the panel came on screen (`ApprovalPanelPresenter.present`); nil never asks again.
+    public var shownAt: Date?
+    /// How soon after `shownAt` an approval asks once more; 0 never asks (`ApprovalAttention.confirmWithin`).
+    public var confirmWithin: TimeInterval = ApprovalAttention.confirmWithin
 
     public var onAllow: @MainActor (ApprovalRemember?) -> Void = { _ in }
     public var onDeny: @MainActor () -> Void = {}
@@ -244,9 +251,31 @@ public final class ApprovalDialogModel: ObservableObject {
         }
     }
 
-    private func verified(method: String) {
+    /// "Approve" after an approval that came too soon: it counts now.
+    public func confirmIntent() {
+        guard !answered, let method = pendingIntent else { return }
+        pendingIntent = nil
+        answer(method: method)
+    }
+
+    /// Whether an approval at `now` came too soon after the window appeared to count without asking again.
+    func needsIntentConfirmation(now: Date = Date()) -> Bool {
+        guard let shownAt, confirmWithin > 0 else { return false }
+        return now.timeIntervalSince(shownAt) < confirmWithin
+    }
+
+    func verified(method: String, now: Date = Date()) {
         // A reply that lands while the deny note is open is late: the sensor was paused for the note.
-        guard !answered, !denying else { return }
+        guard !answered, !denying, pendingIntent == nil else { return }
+        if needsIntentConfirmation(now: now) {
+            pendingIntent = method
+            KitHost.log("approval \(identifier) \(method) came \(Int(now.timeIntervalSince(shownAt ?? now) * 1_000)) ms after the window appeared; asking to confirm")
+            return
+        }
+        answer(method: method)
+    }
+
+    private func answer(method: String) {
         answered = true
         onVerified(method, rememberChoices.indices.contains(rememberIndex) ? rememberChoices[rememberIndex] : nil)
     }
@@ -593,6 +622,15 @@ struct ApprovalVerifyFooter: View {
 
     @ViewBuilder
     private var sensor: some View {
+        if model.pendingIntent != nil {
+            ApprovalStateGlyph(symbol: "hand.raised.fill", size: 18, style: .secondary)
+        } else {
+            verifierSensor
+        }
+    }
+
+    @ViewBuilder
+    private var verifierSensor: some View {
         switch verifier.state {
         case .unavailable, .password:
             ApprovalStateGlyph(symbol: "lock.fill", size: 18, style: .secondary)
@@ -610,6 +648,7 @@ struct ApprovalVerifyFooter: View {
     }
 
     private var headline: String {
+        if model.pendingIntent != nil { return "Approve this request?" }
         switch verifier.state {
         case .idle, .listening, .failed: return "Touch ID to approve"
         case .paused where offUntilClick: return "Touch ID is off"
@@ -621,6 +660,9 @@ struct ApprovalVerifyFooter: View {
     }
 
     private var message: (text: String, isProblem: Bool)? {
+        if model.pendingIntent != nil {
+            return ("That came right as the window opened. Approve if you meant this request.", true)
+        }
         switch verifier.state {
         case .failed(let text): return (text, true)
         case .unavailable(let text): return (text, false)
@@ -657,6 +699,13 @@ struct ApprovalVerifyFooter: View {
 
     private var buttons: some View {
         HStack(spacing: 8) {
+            // Not on Return either: the point is a deliberate click on this request.
+            if model.pendingIntent != nil {
+                Button("Approve", action: model.confirmIntent)
+                    .buttonStyle(.borderedProminent)
+                    .pointerCursor()
+                    .accessibilityIdentifier("\(model.identifier)-confirm")
+            }
             if case .failed = verifier.state {
                 Button("Try again", action: verifier.retry)
                     .pointerCursor()
@@ -833,6 +882,7 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
         self.panel = panel
         self.model = model
         panel.orderFrontRegardless()
+        model.shownAt = Date()
         let reminder = ApprovalReminder(model: model) { [weak self] in self?.bringForward() }
         self.reminder?.stop()
         self.reminder = reminder

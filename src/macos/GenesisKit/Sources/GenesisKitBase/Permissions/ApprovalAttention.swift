@@ -37,6 +37,23 @@ public enum ApprovalAttention {
         ApprovalNotifyChoice(seconds: 8, title: "8 seconds"),
     ]
 
+    /// Milliseconds after a request's window appears in which an approval asks once more ("Approve?"): a finger that
+    /// already rested on the sensor, or a click aimed at what was there a moment before, must not approve a request the
+    /// person has not read (Martin, 2026-11-02). 0 never asks.
+    public static let confirmWithinKey = "approvals.confirmWithinMs"
+    public static let defaultConfirmWithin = 1_000
+    public static let confirmWithinChoices = [
+        ApprovalDelayChoice(milliseconds: 0, title: "Never ask"),
+        ApprovalDelayChoice(milliseconds: 500, title: "Within half a second"),
+        ApprovalDelayChoice(milliseconds: 1_000, title: "Within 1 second"),
+        ApprovalDelayChoice(milliseconds: 2_000, title: "Within 2 seconds"),
+    ]
+
+    /// `confirmWithinKey` in seconds.
+    public static var confirmWithin: TimeInterval {
+        TimeInterval(UserDefaults.standard.object(forKey: confirmWithinKey) as? Int ?? defaultConfirmWithin) / 1_000
+    }
+
     public static var sound: String {
         UserDefaults.standard.string(forKey: soundKey) ?? defaultSound
     }
@@ -76,6 +93,13 @@ public enum ApprovalAttention {
     private static let queue = DispatchQueue(label: "genesiskit.approval.sound", qos: .userInitiated)
     /// Keeps the last players alive until they finish; a released NSSound stops at once.
     private nonisolated(unsafe) static var playing: [NSSound] = []
+}
+
+public struct ApprovalDelayChoice: Identifiable, Hashable, Sendable {
+    public let milliseconds: Int
+    public let title: String
+
+    public var id: Int { milliseconds }
 }
 
 public struct ApprovalNotifyChoice: Identifiable, Hashable, Sendable {
