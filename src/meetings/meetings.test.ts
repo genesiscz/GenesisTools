@@ -411,7 +411,8 @@ describe("fuzzy dictionary suggestions (R2.5)", () => {
                 heard: "kubernetu",
                 proposed: "Kubernetes",
                 atSec: 12,
-                rules: ["dictionary-fuzzy"],
+                // The phonetic check finds it too; the two agree in one item.
+                rules: expect.arrayContaining(["dictionary-fuzzy"]),
             })
         );
     });
@@ -563,5 +564,74 @@ describe("platforms (R3.1)", () => {
         expect(
             teamsAttendanceFromJson(raw, { title: "Planning", start: "2026-11-02T18:00:00.000Z" }, "file")
         ).toBeNull();
+    });
+});
+
+describe("arrival and muted (R16, RM), Martin's three lines of the example", () => {
+    // Invented names; the shape is the example's first 35 s. Fil joins at 12.1 s, Jan only later; the live names say
+    // Rob throughout, and Alice (the user) is muted the whole time.
+    const people = ["Alice Example", "Bob Example", "Rob Example", "Fil Example"];
+    const presence = [
+        { name: "Alice Example", self: true, fromSec: 0, toSec: 100 },
+        { name: "Bob Example", fromSec: 0, toSec: 100 },
+        { name: "Rob Example", fromSec: 0, toSec: 100 },
+        { name: "Fil Example", fromSec: 12.1, toSec: 100 },
+    ];
+    const reading = (tSec: number, speaking: string[]) => ({ tSec, speaking, muted: ["Alice Example"] });
+    const items = suggestItems({
+        record: meetingRecordSchema.parse({ ...record, participants: [{ name: "Alice Example", self: true }] }),
+        meeting: {
+            ...meeting,
+            transcript: [
+                line("Jan Example", 20, "Plus."),
+                line("Jan Example", 22, "No musíme to nějak opravit."),
+                line("Bob Example", 26, "Jo, to musíme."),
+                line("Alice Example", 31, "O co jsem přišel?"),
+                line("Bob Example", 34, "Nic moc."),
+            ],
+        },
+        rules: ["evidence"],
+        dictionary: { abbrExpansion: "every", entries: [] },
+        sourceWords: [],
+        presence,
+        evidence: {
+            selfName: "Alice Example",
+            segments: [{ startSec: 19, endSec: 36, channel: "system", liveName: "Rob Example" }],
+            speaking: [
+                reading(10.6, ["Bob Example"]),
+                reading(17.8, ["Bob Example"]),
+                reading(20.7, ["Fil Example"]),
+                reading(22.5, ["Rob Example"]),
+                reading(27, ["Bob Example"]),
+                reading(32.7, ["Fil Example"]),
+            ],
+            files: [],
+        },
+        now: "2026-11-02T15:00:00.000Z",
+    });
+    const ranges = items.filter((item) => item.kind === "speaker-range");
+    const at = (sec: number) => ranges.filter((item) => item.fromSec === sec);
+
+    test("0:20 'Plus.' is the newcomer: R16 by the first speaking reading, and the live name loses to E3", () => {
+        // E3 among those present (0.45) and R16's first reading (0.55) agree: one item, 1 - 0.55 × 0.45 = 0.75.
+        expect(at(20)).toEqual([
+            expect.objectContaining({ speaker: "Fil Example", rules: ["E1", "E3", "RA", "R16"], confidence: 0.75 }),
+        ]);
+        expect(at(20).some((item) => item.speaker === "Rob Example")).toBe(false);
+    });
+
+    test("0:22 is the live name and the speaking indicator together", () => {
+        expect(at(22)).toContainEqual(expect.objectContaining({ speaker: "Rob Example", rules: ["E1", "E3", "E4"] }));
+    });
+
+    test("0:31 under the muted user's label is the newcomer's question, and the user is no candidate", () => {
+        expect(at(31)).toContainEqual(
+            expect.objectContaining({ speaker: "Fil Example", rules: ["R16"], confidence: 0.65 })
+        );
+        const rm = at(31).find((item) => item.rules.includes("RM"));
+        expect(rm).toBeDefined();
+        expect(rm?.speaker ?? "").not.toBe("Alice Example");
+        expect(rm?.candidates ?? [rm?.speaker]).toEqual(expect.arrayContaining(["Fil Example"]));
+        expect(people).toContain("Fil Example");
     });
 });

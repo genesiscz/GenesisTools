@@ -68,6 +68,17 @@ export const LEAVE_PHRASES: readonly RegExp[] = [
  * A bare greeting ("čau", "tak ahoj", "čaute"). It is a goodbye only when it ends the label's run and another label
  * answers it; otherwise it is someone arriving ("Čau." at 00:21).
  */
+/**
+ * What a person says when they arrive in a call (rule R16): a greeting, or a newcomer's question. Czech, Slovak and
+ * English, as whole words.
+ */
+export const ARRIVAL_PHRASES: readonly RegExp[] = [
+    "čus|čau|ahoj|ahojte|zdravím|zdravíčko|dobrý den|dobrý den všem|nazdar",
+    "o co jsem (?:přišel|přišla)|co jsem (?:zmeškal|zmeškala|propásl)",
+    "slyšíte mě|slyšíš mě|je mě slyšet|jde mě slyšet|počujete ma",
+    "hi|hello|hey all|hi all|can you hear me|what did i miss",
+].map(wholeWords);
+
 const CLOSING_GREETING = wholeWords("(?:tak |zatím )?(?:čau|ahoj|čaute)");
 /** Rule R13: another label answers a departure with one of these within `FAREWELL_REPLY_WITHIN_SEC`. */
 const FAREWELL_REPLY = wholeWords("čau|ahoj|čaute|měj(?:te)? se|maj(?:te)? sa|nic se neděje|díky|dík|bye|see you");

@@ -59,6 +59,8 @@ export interface LineEvidence {
      * microphone picked up the speakers (echo), so the microphone does not prove the user spoke.
      */
     echo?: number;
+    /** The people the platform showed muted in every reading over the line (rule RM: they did not speak it). */
+    muted?: string[];
     /**
      * The microphone channel's share of the audio energy in the line; undefined without audio, when quiet, or when the
      * recording's channel layout is unknown (calibrated per recording).
@@ -143,9 +145,12 @@ export function lineEvidence(
             }
         };
 
+        const readings: SpeakingObservation[] = [];
+
         for (const observation of evidence.speaking) {
             if (observation.tSec >= startSec - SPEAKING_LEAD_SEC && observation.tSec < endSec) {
                 count(observation.speaking);
+                readings.push(observation);
             }
         }
 
@@ -153,7 +158,13 @@ export function lineEvidence(
 
         if (atStart) {
             count(atStart.speaking);
+
+            if (!readings.includes(atStart)) {
+                readings.push(atStart);
+            }
         }
+
+        const muted = readings[0]?.muted.filter((name) => readings.every((reading) => reading.muted.includes(name)));
 
         const present = presence
             ?.filter((stay) => startSec >= stay.fromSec - 5 && startSec <= stay.toSec + 5)
@@ -174,6 +185,7 @@ export function lineEvidence(
             ...(best?.voiceId !== undefined ? { liveVoiceId: best.voiceId } : {}),
             ...(echo !== undefined ? { echo } : {}),
             ...(energyMic !== undefined ? { energyMic } : {}),
+            ...(muted && muted.length > 0 ? { muted } : {}),
         };
     });
 }

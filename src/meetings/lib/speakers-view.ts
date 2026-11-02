@@ -1,5 +1,6 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { PresenceRange, SpeakerHint, SpeakerStats } from "@genesiscz/utils/transcribe/speakers";
@@ -26,7 +27,7 @@ function rangesText(ranges: PresenceRange[]): string {
 
 function hintText(hint: SpeakerHint): string {
     if (hint.kind === "label-drift") {
-        return `${hint.person}: in the call but silent under their own label from ${formatClock(Math.max(0, hint.fromSec))} to ${formatClock(hint.toSec)} (R15), so their voice is probably under other labels`;
+        return `${hint.person}: in the call but silent under their own label from ${formatClock(Math.max(0, hint.fromSec))} to ${formatClock(hint.toSec)} (${MeetingRule.LabelDrift}), so their voice is probably under other labels`;
     }
 
     if (hint.kind === "absent-speaker") {
