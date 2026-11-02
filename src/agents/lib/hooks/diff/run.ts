@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import {
     closeSync,
+    constants,
     existsSync,
+    fstatSync,
     lstatSync,
     openSync,
     readdirSync,
@@ -89,6 +91,11 @@ export interface DiffDecision {
  * path drops it on its empty patch (`blockFrom`); past `maxFiles` there is no patch for every file, and the note named
  * it as changed (CI, every run until 2026-11-02). A copy is at most `maxCaptureFileMB`, so the compare is two small
  * reads and no `git` process.
+ *
+ * Both sides are read as git reads them, like `readHead` and `readAsGitStores`: a symlink is its link text, so a
+ * retargeted link is a change even when both targets hold the same bytes, and a link is never followed out of the
+ * repository. Anything but a regular file (a FIFO, a socket, a folder) is not opened: a FIFO blocks the read until a
+ * writer comes, and the hook with it.
  */
 function sameAsBefore(before: string | null, file: ChangedFile): boolean {
     if (before === null || file.deleted) {
@@ -96,14 +103,41 @@ function sameAsBefore(before: string | null, file: ChangedFile): boolean {
     }
 
     try {
-        if (statSync(before).size !== statSync(file.path).size) {
+        const was = lstatSync(before);
+        const now = lstatSync(file.path);
+
+        if (was.isSymbolicLink() || now.isSymbolicLink()) {
+            return (
+                was.isSymbolicLink() &&
+                now.isSymbolicLink() &&
+                readlinkSync(before, { encoding: "buffer" }).equals(readlinkSync(file.path, { encoding: "buffer" }))
+            );
+        }
+
+        if (!was.isFile() || !now.isFile() || was.size !== now.size) {
             return false;
         }
 
-        return readFileSync(before).equals(readFileSync(file.path));
+        const copy = readRegularFile(before);
+        const live = readRegularFile(file.path);
+        return copy !== null && live !== null && copy.equals(live);
     } catch {
         // Not proven unchanged, so it is still named.
         return false;
+    }
+}
+
+/**
+ * A regular file's bytes, or null for anything else. The open neither follows a link nor waits for a FIFO's writer,
+ * so a path swapped after the caller's `lstat` is refused rather than read out of the repository or blocked on.
+ */
+function readRegularFile(path: string): Buffer | null {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+
+    try {
+        return fstatSync(fd).isFile() ? readFileSync(fd) : null;
+    } finally {
+        closeSync(fd);
     }
 }
 
