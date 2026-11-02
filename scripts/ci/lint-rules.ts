@@ -148,17 +148,24 @@ function toolNames(): Set<string> {
 
 const TOOL_NAMES = toolNames();
 const TOOL_MENTION = /(?:^|[^\w./-])tools ([a-z][a-z0-9-]*)/g;
-const TOOL_COMMAND_CALLEES = new Set(["toolCommand", "suggestCommand"]);
+/** `tools ${toolName} history index`: a computed tool name (and subcommand) followed by a written-out command word. */
+const COMPUTED_TOOL_COMMAND = /(?:^|[^\w./-])tools (?:\$\{[^}]*\} )+[a-z]/;
+const TOOL_COMMAND_CALLEES = new Set(["toolCommand", "suggestCommand", "suggestEnumFlag"]);
 
 /**
  * True for a literal that names a GenesisTools command: `tools <tool>` written out, where `<tool>` is a real tool (so
- * prose such as "the tools are" passes), or the first argument of `toolCommand(…)`. Comments are not literals.
+ * prose such as "the tools are" passes), a template whose tool name is a value but whose next word is written out, or
+ * the first argument of `toolCommand(…)`, `suggestCommand(…)` or `suggestEnumFlag(…)`. Comments are not literals.
  */
 export function namesToolCommand(text: string, node: SgNode): boolean {
     for (const match of text.matchAll(TOOL_MENTION)) {
         if (TOOL_NAMES.has(match[1])) {
             return true;
         }
+    }
+
+    if (node.kind() === "template_string" && COMPUTED_TOOL_COMMAND.test(text)) {
+        return true;
     }
 
     const args = node.parent();
@@ -180,17 +187,12 @@ const SSR_REACHABLE =
     /(?:^|\/)src\/(?:utils\/|[^/]+\/ui\/|dashboard\/|claude-history-dashboard\/|debugging-master\/dashboard\/)/;
 /**
  * Files under src/utils that still call a bare `require()`, each inside a function (a lazy load), counted 2026-10-22
- * when lint-rules `no-bare-require-in-utils` was added. A ratchet: no file joins, and lint-rules.test.ts fails when a
- * listed file no longer calls it.
+ * when lint-rules `no-bare-require-in-utils` was added: six files. Emptied on 2026-11-01: each lazy load now goes
+ * through `createRequire(import.meta.url)`, and date.ts, which browser code imports, reaches it through
+ * `process.getBuiltinModule("node:module")`. A ratchet: no file joins, and lint-rules.test.ts fails when a listed file
+ * no longer calls it.
  */
-export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/utils/ai/local/runtimes/sherpa/diarize.ts",
-    "src/utils/browser-router/link-gate.ts",
-    "src/utils/date.ts",
-    "src/utils/search/drivers/sqlite-fts5/index.ts",
-    "src/utils/search/stores/sqlite-vec-loader.ts",
-    "src/utils/tokens.ts",
-]);
+export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 // ─── The ratchet rules of 2026-10-25 (❓ DECISION 22 b) ────────────────────────────────────────────────────────────────
 // no-transcript-format-outside-readers, no-hand-built-claude-home, no-hand-built-codex-grok-home,
@@ -446,13 +448,13 @@ const RULES: Rule[] = [
         severity: "error",
         kinds: LITERAL_KINDS,
         message:
-            "A module under src/utils names no `tools …` command: another repo copies these modules, and there " +
-            "`toolCommand()` names its own binary. Add a function to src/utils/genesis-tools/tools/hints.ts and have " +
-            "the GenesisTools caller pass its result into the util as an option; a util without the option prints " +
-            "no hint. scripts/ci/tool-command-ratchet.ts lists the files not migrated yet.",
+            "A module under src/utils names a `tools …` command only through src/utils/genesis-tools/tools/, the one " +
+            "folder a copy of src/utils in another repo edits. Import the function for the command from " +
+            "@genesiscz/utils/genesis-tools/tools/<file> (ai, system, services; suggest for a suggestCommand or suggestEnumFlag line) " +
+            "and call it, or add one there built with toolCommand().",
         test: namesToolCommand,
         onlyIn: /(^|\/)src\/utils\//,
-        allowedIn: /(^|\/)src\/utils\/genesis-tools\/tools\/hints\.ts$/,
+        allowedIn: /(^|\/)src\/utils\/genesis-tools\/tools\//,
         allowedFiles: TOOL_COMMAND_RATCHET,
     },
     {
@@ -476,8 +478,7 @@ const RULES: Rule[] = [
         matcher: { rule: { kind: "call_expression", has: { field: "function", regex: "^require$" } } },
         message:
             "A bare `require()` throws a ReferenceError under Vite's SSR runner, which has no `require`. Use a static " +
-            "import, or `requireSibling(import.meta, name)` / `createRequire(import.meta.url)` for a lazy load. " +
-            "BARE_REQUIRE_RATCHET lists the files not migrated yet.",
+            "import, or `requireSibling(import.meta, name)` / `createRequire(import.meta.url)` for a lazy load.",
         test: (_text, node) => node.field("function")?.text() === "require",
         onlyIn: /(?:^|\/)src\/utils\//,
         allowedIn: /\.test\.tsx?$|(?:^|\/)src\/utils\/test\//,

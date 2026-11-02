@@ -9,7 +9,7 @@ import {
     readCodexAuthJson,
 } from "@genesiscz/utils/ai/openai/codex-auth";
 import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiAccountsListCommand, codexLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { profiler } from "@genesiscz/utils/profile";
 import { masterKey, resolveSecret, secrets } from "@genesiscz/utils/security";
 import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
@@ -59,7 +59,7 @@ export class CodexAccountBinding {
         if (!matched) {
             const names = store.accounts({ provider: "openai-sub", enabled: true }).map((entry) => entry.name);
             throw new Error(
-                `No Codex account matches "${selector}". Enabled OpenAI subscription accounts: ${names.join(", ") || "none"} (${toolCommand("ai accounts list")}).`
+                `No Codex account matches "${selector}". Enabled OpenAI subscription accounts: ${names.join(", ") || "none"} (${aiAccountsListCommand()}).`
             );
         }
 
@@ -124,9 +124,7 @@ export class CodexAccountBinding {
                 }
 
                 if (!latest.refreshToken) {
-                    throw new Error(
-                        `No refresh token; use ${toolCommand("codex login")} <account> for a new managed grant`
-                    );
+                    throw new Error(`No refresh token; use ${codexLoginCommand()} for a new managed grant`);
                 }
 
                 // Legacy plaintext grants must not be spent before vault encryption is available.
@@ -140,10 +138,9 @@ export class CodexAccountBinding {
                         .measureAsync("network-refresh", () => codexOAuth.refresh(latest.refreshToken));
                 } catch (error) {
                     // Preserve only classification. Raw bodies/causes can carry credentials.
-                    throw Object.assign(
-                        new Error(`Codex token refresh failed; re-login with ${toolCommand("codex login")} <account>`),
-                        { code: isTransportFailure(error) ? "UPSTREAM_TRANSPORT_ERROR" : "CODEX_REFRESH_REJECTED" }
-                    );
+                    throw Object.assign(new Error(`Codex token refresh failed; re-login with ${codexLoginCommand()}`), {
+                        code: isTransportFailure(error) ? "UPSTREAM_TRANSPORT_ERROR" : "CODEX_REFRESH_REJECTED",
+                    });
                 }
 
                 this.checkIdentity(current, rotated);
@@ -163,7 +160,7 @@ export class CodexAccountBinding {
 
         if (force && (!this.lastAccessToken || tokens?.accessToken === this.lastAccessToken)) {
             throw new Error(
-                `The CLI-owned token has not changed. Use ${toolCommand("codex login")} <account> for a separate managed grant`
+                `The CLI-owned token has not changed. Use ${codexLoginCommand()} for a separate managed grant`
             );
         }
 
@@ -198,9 +195,7 @@ export class CodexAccountBinding {
     private accept(account: AccountEntry, tokens: CodexTokens | null): CodexAccountTokens {
         const workspaceId = this.checkIdentity(account, tokens);
         if (!tokens?.expiresAt || tokens.expiresAt <= Date.now()) {
-            throw new Error(
-                `Codex credentials expired. Re-login with ${toolCommand("codex login")} <account> for managed refresh`
-            );
+            throw new Error(`Codex credentials expired. Re-login with ${codexLoginCommand()} for managed refresh`);
         }
 
         this.workspaceId = workspaceId;

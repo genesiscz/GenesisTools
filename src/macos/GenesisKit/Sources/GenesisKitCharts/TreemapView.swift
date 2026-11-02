@@ -246,6 +246,7 @@ struct TreemapCanvas: View {
 /// hover or an unrelated update of the view around it. `formatProbe` is one value run through `valueText`, so a new
 /// formatter (another unit) still redraws.
 struct TreemapCellsLayer: View, Equatable {
+    // lint-rules-ignore: follows `revision`, which `TreemapStore` bumps on every rebuild of the partition
     let partition: ChartPartition
     let revision: Int
     let focusIndex: Int

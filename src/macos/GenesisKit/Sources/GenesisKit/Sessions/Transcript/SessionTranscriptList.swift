@@ -380,12 +380,14 @@ public struct SessionTranscriptList: View {
     }
 
     /// "All" plus one toggle chip per filter. Several chips can be on (Chat + Errors); turning the
-    /// last one off, or pressing All, shows everything again.
+    /// last one off, or pressing All, shows everything again. A toolbar, not a list: its chips stay
+    /// buttons at all times (`rowLive(true)`), so the keyboard reaches them.
     private var chipBar: some View {
         HStack(spacing: 4) {
             FilterChip(title: "All", isOn: chips.isEmpty) { chips = [] }
                 .instantTooltip("Show every row")
                 .accessibilityIdentifier("session-transcript-chip-all")
+                .rowLive(true)
             ForEach(TranscriptFilter.allCases) { chip in
                 FilterChip(title: chip.title, isOn: chips.contains(chip), tint: chip == .errors ? SessionPalette.red : SessionPalette.blue) {
                     if chips.contains(chip) {
@@ -396,6 +398,7 @@ public struct SessionTranscriptList: View {
                 }
                 .instantTooltip(chipTooltip(chip))
                 .accessibilityIdentifier("session-transcript-chip-\(chip.rawValue)")
+                .rowLive(true)
             }
             // The host's tool filter, cleared from here.
             if let toolFilter {
@@ -404,6 +407,7 @@ public struct SessionTranscriptList: View {
                 }
                 .instantTooltip("Only \(toolFilter) calls in the loaded turns (set in the sidebar's Tools). Click to show every row")
                 .accessibilityIdentifier("session-transcript-chip-tool")
+                .rowLive(true)
             }
         }
         .fixedSize()
@@ -1123,6 +1127,8 @@ public struct TranscriptSectionHeader: View {
         .background(NativePaneBackground(.bar) { SessionPalette.background }.padding(.vertical, -4).padding(.trailing, -20))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("session-transcript-section-header")
+        // The turn and usage tooltips exist only under the pointer: one header per loaded turn.
+        .liveRow()
     }
 }
 
@@ -1587,6 +1593,7 @@ private struct NoticeCard: View {
 /// The live activity row of a followed session: it alone observes the feed, so an activity change reaches no
 /// other view. Its height stays the row's 32 pt for the moment the feed has no row yet.
 private struct ActivitySlot: View {
+    // lint-rules-ignore: 1 row (ForEach([activityRowId])), observes on purpose: the list would redraw per activity
     @ObservedObject var feed: TranscriptActivityFeed
 
     var body: some View {
@@ -1674,7 +1681,8 @@ private struct WorkingMark: View {
     }
 }
 
-/// A toggle chip: filled when on, hairline when off.
+/// A toggle chip: filled when on, hairline when off. A button while its row is live (`LiveButton`); in a resting row
+/// the same label, which VoiceOver still presses. A toolbar of chips keeps them live with `.rowLive(true)`.
 public struct FilterChip: View {
     public let title: String
     public let isOn: Bool
@@ -1689,7 +1697,7 @@ public struct FilterChip: View {
     }
 
     public var body: some View {
-        Button(action: action) {
+        LiveButton(tooltip: nil, pressable: true, action: action) {
             // As wide as the semibold label either way. A chip that widened when turned on made the
             // toolbar's ViewThatFits switch layout under the pointer, so the next click landed on
             // another control (2026-09-30).
@@ -1708,7 +1716,6 @@ public struct FilterChip: View {
                 .overlay(Capsule().strokeBorder(isOn ? tint.opacity(0.6) : SessionPalette.cardBorder))
                 .contentShape(Capsule())
         }
-        .buttonStyle(.genHoverPlain())
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
@@ -1784,10 +1791,8 @@ private struct TranscriptThumbnail: View {
 
     var body: some View {
         if let path = image.path {
-            Button {
-                // One opener for every path; a missing image says so.
-                PathOpener.open(path)
-            } label: {
+            // One opener for every path; a missing image says so.
+            LiveButton(tooltip: "Open \(image.label)", pressable: true, action: { PathOpener.open(path) }) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous).fill(SessionPalette.fill)
                     if let thumbnail {
@@ -1803,13 +1808,12 @@ private struct TranscriptThumbnail: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(SessionPalette.cardBorder))
             }
-            .buttonStyle(.genHoverPlain())
-            .instantTooltip("Open \(image.label)")
             .accessibilityLabel(Text(verbatim: "Open \(image.label)"))
             .accessibilityIdentifier("transcript-image-thumbnail")
             .task(id: path) {
-                thumbnail = await TranscriptThumbnailCache.shared.thumbnail(for: path)
+                thumbnail = await TranscriptThumbnailCache.thumbnail(at: path)
             }
+            .liveRow()
         } else {
             HStack(spacing: 5) {
                 Image(systemName: "photo")
@@ -1822,6 +1826,7 @@ private struct TranscriptThumbnail: View {
             .frame(height: 22)
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(SessionPalette.fill))
             .instantTooltip("A pasted image; the transcript keeps no copy of it")
+            .liveRow()
         }
     }
 }
@@ -1831,6 +1836,12 @@ public actor TranscriptThumbnailCache {
     public static let shared = TranscriptThumbnailCache()
 
     private var images: [String: NSImage] = [:]
+
+    /// The shared cache's thumbnail, for a row: it asks the type and holds no store (the cache publishes nothing a
+    /// body could follow).
+    public static func thumbnail(at path: String) async -> NSImage? {
+        await shared.thumbnail(for: path)
+    }
 
     public func thumbnail(for path: String) -> NSImage? {
         if let cached = images[path] { return cached }

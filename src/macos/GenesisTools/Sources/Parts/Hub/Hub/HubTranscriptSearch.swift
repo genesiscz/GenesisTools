@@ -227,6 +227,7 @@ struct HubTranscriptSearchPanel: View {
                     }
                     ForEach(search.result?.results ?? []) { hit in
                         HubSearchHitRow(hit: hit) { open(hit) }
+                            .equatable()
                     }
                 }
                 .padding(.vertical, 6)
@@ -301,52 +302,57 @@ struct HubTranscriptSearchPanel: View {
     }
 }
 
-/// One session of the results: its title line, then up to three matching snippets.
-private struct HubSearchHitRow: View {
+/// One session of the results: its title line, then up to three matching snippets. A value row: a keystroke in the
+/// query re-renders the panel, not the rows, and the row button and its tooltip exist only under the pointer
+/// (`liveRow`); at rest VoiceOver still presses it (`restingButton` inside `rowButton`).
+private struct HubSearchHitRow: View, Equatable {
     let hit: HubSearchHit
     let open: () -> Void
 
+    static func == (a: HubSearchHitRow, b: HubSearchHitRow) -> Bool {
+        a.hit == b.hit
+    }
+
     var body: some View {
-        Button(action: open) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(verbatim: AIProviders.meta(for: hit.provider).displayName)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.jarvisTeal)
-                    Text(verbatim: TitleFormatter.cleanSessionTitle(hit.title) ?? String(hit.sessionId.prefix(8)))
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.9))
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    LiveAgo(date: hit.when, style: .brief) { ago in
-                        [hit.project ?? (hit.cwd as NSString).lastPathComponent, ago].filter { !$0.isEmpty }.joined(separator: " · ")
-                    }
-                    .font(.system(size: 10.5))
-                    .foregroundColor(ReviewPalette.dim)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(verbatim: AIProviders.meta(for: hit.provider).displayName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Color.jarvisTeal)
+                Text(verbatim: TitleFormatter.cleanSessionTitle(hit.title) ?? String(hit.sessionId.prefix(8)))
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.9))
                     .lineLimit(1)
+                Spacer(minLength: 8)
+                LiveAgo(date: hit.when, style: .brief) { ago in
+                    [hit.project ?? (hit.cwd as NSString).lastPathComponent, ago].filter { !$0.isEmpty }.joined(separator: " · ")
                 }
-                ForEach(hit.snippets, id: \.self) { snippet in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(verbatim: snippet.tool ?? snippet.role)
-                            .font(.system(size: 9.5, design: .monospaced))
-                            .foregroundColor(.settingsTextMuted)
-                            .frame(width: 58, alignment: .trailing)
-                            .lineLimit(1)
-                        Text(verbatim: snippet.text)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.7))
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                    }
+                .font(.system(size: 10.5))
+                .foregroundColor(ReviewPalette.dim)
+                .lineLimit(1)
+            }
+            ForEach(hit.snippets, id: \.self) { snippet in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: snippet.tool ?? snippet.role)
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundColor(.settingsTextMuted)
+                        .frame(width: 58, alignment: .trailing)
+                        .lineLimit(1)
+                    Text(verbatim: snippet.text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .lineLimit(2)
+                        .truncationMode(.tail)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: 6))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .rowButton(cornerRadius: 6) { open() }
         .padding(.horizontal, 4)
         .instantTooltip("Open this session at the first matching turn")
+        .liveRow()
     }
 }

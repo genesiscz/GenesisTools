@@ -1,8 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-
 import { env } from "@genesiscz/utils/env";
+import { aiConfigSecretRotateCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MASTER_KEY_BYTES } from "./keyring/types";
@@ -110,7 +109,7 @@ export async function rotateMasterKey(): Promise<{ rotated: number }> {
                     `and the outgoing key stays escrowed at ${escrow}. ` +
                     "If vault reads still work, the old key is still active: delete that file. " +
                     `If they fail to decrypt, recover with: export ${env.security.getMasterKeyEnvKey()}=$(cat ${escrow}) ` +
-                    `then re-run '${toolCommand("ai config secret rotate")}' and delete the file once it succeeds.`,
+                    `then re-run '${aiConfigSecretRotateCommand()}' and delete the file once it succeeds.`,
                 { cause: err }
             );
         }

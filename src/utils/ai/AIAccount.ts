@@ -4,8 +4,8 @@ import type {
     OpenAIModelCategory,
 } from "@genesiscz/utils/ask/providers/ModelResolver";
 import type { DetectedProvider, ModelInfo } from "@genesiscz/utils/ask/types";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIProvider } from "@genesiscz/utils/config/ai.types";
+import { askConfigCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 
 /**
  * A handle to an AI account from AIConfig.
@@ -44,7 +44,7 @@ export class AIAccount {
         const accounts = config.getAccountsByProvider("anthropic-sub");
 
         if (accounts.length === 0) {
-            throw new Error(`No Claude subscription accounts configured. Run \`${toolCommand("ask config")}\` first.`);
+            throw new Error(`No Claude subscription accounts configured. Run \`${askConfigCommand()}\` first.`);
         }
 
         return new AIAccount(accounts[0].name, "anthropic-sub");
@@ -89,7 +89,7 @@ export class AIAccount {
             return new AIAccount(apiAccounts[0].name, "openai");
         }
 
-        throw new Error(`No OpenAI accounts configured. Run \`${toolCommand("ask config")}\` first.`);
+        throw new Error(`No OpenAI accounts configured. Run \`${askConfigCommand()}\` first.`);
     }
 
     /** List all OpenAI/Codex accounts. */
@@ -118,7 +118,7 @@ export class AIAccount {
         const entry = config.getAccount(name);
 
         if (!entry) {
-            throw new Error(`Account "${name}" not found. Run \`${toolCommand("ask config")}\` to add it.`);
+            throw new Error(`Account "${name}" not found. Run \`${askConfigCommand()}\` to add it.`);
         }
 
         return new AIAccount(entry.name, entry.provider);

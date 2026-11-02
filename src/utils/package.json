@@ -233,6 +233,11 @@
             "types": "./fuzzy-tokens.ts",
             "default": "./fuzzy-tokens.ts"
         },
+        "./genesis-tools/tools/services": {
+            "bun": "./genesis-tools/tools/services.ts",
+            "types": "./genesis-tools/tools/services.ts",
+            "default": "./genesis-tools/tools/services.ts"
+        },
         "./git": {
             "bun": "./git/index.ts",
             "types": "./git/index.ts",

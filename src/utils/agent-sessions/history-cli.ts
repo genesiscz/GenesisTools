@@ -1,7 +1,9 @@
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
-import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { historyAllCommand, historyFormatFlagHint } from "@genesiscz/utils/genesis-tools/tools/suggest";
+import { historyIndexCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -165,9 +167,7 @@ export function registerAgentHistoryCommand(
             let options = raw;
 
             if (options.interactive && !isInteractive()) {
-                out.error(
-                    `--interactive needs a TTY. ${suggestCommand(`tools ${toolName} history`, { add: ["--all"] })}`
-                );
+                out.error(`--interactive needs a TTY. ${historyAllCommand(toolName)}`);
                 process.exitCode = 1;
                 return;
             }
@@ -183,10 +183,11 @@ export function registerAgentHistoryCommand(
             // and `--format yaml` threw a raw stack trace at the user. Both now name the values.
             if (typeof options.format !== "string" || !HISTORY_FORMATS.includes(options.format as "ai" | "json")) {
                 out.error(
-                    suggestEnumFlag(`tools ${toolName} history`, "--format", HISTORY_FORMATS, {
-                        subcommand: ["history"],
-                        ...(typeof options.format === "string" ? { given: options.format } : {}),
-                    })
+                    historyFormatFlagHint(
+                        toolName,
+                        HISTORY_FORMATS,
+                        typeof options.format === "string" ? options.format : undefined
+                    )
                 );
                 process.exitCode = 1;
                 return;
@@ -320,7 +321,7 @@ export async function warnUnresolvedIdentities(adapter: AgentSessionAdapter<stri
         // lists, so this does not clear on its own.
         out.log.warn(
             `${pending} indexed session(s) still carry the pre-index identity, so results may be ` +
-                `short or show a stale title. Run \`tools ${toolName} history index\` once to ` +
+                `short or show a stale title. Run \`${historyIndexCommand(toolName)}\` once to ` +
                 `complete the migration.`
         );
     }

@@ -1,7 +1,7 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { MissingCredential } from "@genesiscz/utils/ai/providers/account-features";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { grokLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
@@ -54,7 +54,7 @@ export interface ResolveGrokSubTokenOptions {
 export function grokCredentialRefusal(accountName: string): MissingCredential {
     return {
         message: `Account "${accountName}" holds no grok credential (no authFile, no accessToken).`,
-        remedy: `${toolCommand("grok login")} ${accountName}`,
+        remedy: grokLoginCommand(accountName),
     };
 }
 
@@ -137,7 +137,7 @@ export async function resolveGrokSubToken(
                         force,
                         ...(options?.noRefresh === undefined ? {} : { noRefresh: options.noRefresh }),
                     }),
-                hint: `Run: ${toolCommand("grok login")} ${name}`,
+                hint: `Run: ${grokLoginCommand(name)}`,
             },
             account: pick(account),
         };

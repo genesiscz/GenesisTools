@@ -447,8 +447,8 @@ public struct ToolCallRowView: View, Equatable {
     @State private var context = 0
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.rowId == rhs.rowId && lhs.line == rhs.line && lhs.verbosity == rhs.verbosity && lhs.open == rhs.open
-            && lhs.showAll == rhs.showAll && lhs.wrap == rhs.wrap && lhs.services === rhs.services
+        lhs.rowId == rhs.rowId && lhs.toolId == rhs.toolId && lhs.line == rhs.line && lhs.verbosity == rhs.verbosity
+            && lhs.open == rhs.open && lhs.showAll == rhs.showAll && lhs.wrap == rhs.wrap && lhs.services === rhs.services
     }
 
     private var finished: Bool { line.status != .pending }

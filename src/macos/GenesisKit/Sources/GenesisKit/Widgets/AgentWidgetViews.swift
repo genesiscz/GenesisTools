@@ -107,6 +107,8 @@ private struct WidgetStatusDot: View {
     }
 }
 
+/// One choice of a decision. Its button exists only while the row is live (`liveRow`: hovered or the chosen one); at
+/// rest it draws the same label with no control, and VoiceOver still picks it (`LiveButton`, `pressable`).
 private struct WidgetChoiceRow: View {
     let choice: AgentWidgetChoice
     let number: Int
@@ -115,7 +117,7 @@ private struct WidgetChoiceRow: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        LiveButton(tooltip: nil, enabled: !disabled, pressable: true, action: action) {
             HStack(alignment: .top, spacing: 8) {
                 Text(selected ? "✓" : String(number))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -140,9 +142,8 @@ private struct WidgetChoiceRow: View {
                 selected ? Color.green.opacity(0.19) : WidgetInk.row,
                 in: RoundedRectangle(cornerRadius: 9))
         }
-        .buttonStyle(.genHoverPlain())
-        .disabled(disabled)
         .accessibilityLabel("Choice " + String(number) + ": " + choice.title)
+        .liveRow(selected: selected)
     }
 }
 

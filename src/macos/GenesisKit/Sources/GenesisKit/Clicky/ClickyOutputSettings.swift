@@ -99,7 +99,10 @@ struct ClickyOutputCard: View {
             Text("While the system plays on one output, Clicky can play on another one.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             ForEach(model.preferences.outputRules) { rule in
-                ClickyOutputRuleRow(model: model, rule: rule)
+                ClickyOutputRuleRow(rule: rule, outputs: model.outputs,
+                                    setRule: { system, target in model.setRule(when: system, playOn: target) },
+                                    remove: { model.removeRule(rule.id) })
+                    .equatable()
             }
             if let system = model.output?.system, !model.preferences.outputRules.contains(where: { $0.whenUID == system.uid }) {
                 Button("Add a rule for \(system.name)") {
@@ -112,36 +115,46 @@ struct ClickyOutputCard: View {
     }
 }
 
-private struct ClickyOutputRuleRow: View {
-    @ObservedObject var model: ClickyModel
+/// One rule, from values: the card reads the model, so a publish of it redraws only a row whose rule or outputs
+/// changed. Its trash button exists while the pointer is on it (`liveRow`); at rest the same glyph, which VoiceOver
+/// still presses.
+private struct ClickyOutputRuleRow: View, Equatable {
     let rule: ClickyOutputRule
+    let outputs: [AudioOutputDevice]
+    let setRule: (_ system: AudioOutputDevice, _ target: AudioOutputDevice) -> Void
+    let remove: () -> Void
+
+    static func == (a: ClickyOutputRuleRow, b: ClickyOutputRuleRow) -> Bool {
+        a.rule == b.rule && a.outputs == b.outputs
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Text("When the system plays on \(rule.whenName), play on").font(.system(size: 12))
             Picker("Play on", selection: target) {
-                ForEach(model.outputs.filter { !$0.isVirtual }) { device in
+                ForEach(outputs.filter { !$0.isVirtual }) { device in
                     Text("\(device.name) (\(device.delayText))").tag(device.uid)
                 }
-                if !model.outputs.contains(where: { $0.uid == rule.playOnUID }) {
+                if !outputs.contains(where: { $0.uid == rule.playOnUID }) {
                     Text("\(rule.playOnName) (not connected)").tag(rule.playOnUID)
                 }
             }
             .labelsHidden().fixedSize()
             Spacer(minLength: 0)
-            IconButton(systemName: "trash", tooltip: "Remove this rule") { model.removeRule(rule.id) }
+            IconButton(systemName: "trash", tooltip: "Remove this rule", action: remove)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("clicky.output.rule.\(rule.whenUID)")
+        .liveRow()
     }
 
     private var target: Binding<String> {
         Binding(
             get: { rule.playOnUID },
             set: { uid in
-                guard let device = model.outputs.first(where: { $0.uid == uid }) else { return }
+                guard let device = outputs.first(where: { $0.uid == uid }) else { return }
                 let system = AudioOutputDevice(id: 0, uid: rule.whenUID, name: rule.whenName, transport: 0, delay: 0)
-                model.setRule(when: system, playOn: device)
+                setRule(system, device)
             })
     }
 }

@@ -1,4 +1,4 @@
-import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { jevProviderFlagHint } from "@genesiscz/utils/genesis-tools/tools/suggest";
 import type { Command } from "commander";
 import { loadJevSettings, savedJevSettings } from "./settings";
 import {
@@ -19,7 +19,7 @@ export function selectedProvider(program: Command): EvaluationProviderId {
         flag ?? savedJevSettings().provider ?? DEFAULT_EVALUATION_PROVIDER
     );
     if (!parsed.success) {
-        throw new Error(suggestEnumFlag("tools jev", "--provider", [...EVALUATION_PROVIDERS]));
+        throw new Error(jevProviderFlagHint([...EVALUATION_PROVIDERS]));
     }
 
     return parsed.data;

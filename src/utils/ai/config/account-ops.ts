@@ -1,4 +1,4 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiConfigAccountListCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { secrets } from "@genesiscz/utils/security";
@@ -69,7 +69,7 @@ export interface EditAccountPatch {
 
 export class AccountNotFoundError extends Error {
     constructor(idOrName: string) {
-        super(`No AI account matches "${idOrName}". List them with: ${toolCommand("ai config account list")}`);
+        super(`No AI account matches "${idOrName}". List them with: ${aiConfigAccountListCommand()}`);
         this.name = "AccountNotFoundError";
     }
 }
