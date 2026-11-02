@@ -6,8 +6,10 @@ import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genes
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, type SpeakerHint, sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
+import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -551,8 +553,10 @@ export function suggestItems(options: {
     evidence?: MeetingEvidence | null;
     /** The microphone channel's share of the audio energy over a time range (R2.1), when the audio is at hand. */
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
-    /** Items under this confidence become questions to answer by ear (default 0.8). */
+    /** Items under this confidence become questions to answer by ear, when they matter (default 0.6). */
     listenBelow?: number;
+    /** The summary's action items and decisions: a range that cites one matters more. */
+    points?: SummaryPoint[];
     now: string;
 }): MeetingItem[] {
     const { record, meeting } = options;
@@ -614,19 +618,27 @@ export function suggestItems(options: {
         const withId = meetingItemSchema.parse({ ...item, id: nextId("i", taken), suggestedAt: options.now });
         taken.push(withId);
         fresh.push(withId);
+    }
 
-        // A mixed-channel range or a low-confidence item gets its question, answered with `tools meetings listen`.
-        const question = questionFor(withId, {
-            listenBelow: options.listenBelow ?? DEFAULT_LISTEN_BELOW,
-            presence: options.presence,
-        });
+    // Only the unsure items that matter become questions for `tools meetings listen`, clustered and ranked.
+    const context = {
+        listenBelow: options.listenBelow ?? DEFAULT_LISTEN_BELOW,
+        presence: options.presence,
+        selfName: record.participants.find((person) => person.self)?.name,
+        transcript: meeting.transcript,
+        points: options.points ?? [],
+    };
+    const candidates = fresh.flatMap((item) => questionFor(item, context) ?? []);
 
-        if (question && !known.has(questionKey(question))) {
-            known.add(questionKey(question));
-            const asked = meetingItemSchema.parse({ ...question, id: nextId("i", taken), suggestedAt: options.now });
-            taken.push(asked);
-            fresh.push(asked);
+    for (const question of selectQuestions(candidates, taken)) {
+        if (known.has(questionKey(question))) {
+            continue;
         }
+
+        known.add(questionKey(question));
+        const asked = meetingItemSchema.parse({ ...question, id: nextId("i", taken), suggestedAt: options.now });
+        taken.push(asked);
+        fresh.push(asked);
     }
 
     return fresh;

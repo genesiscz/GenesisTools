@@ -78,6 +78,10 @@ const listenSchema = z.object({
     player: z.enum(LISTEN_PLAYERS).default("afplay"),
     /** Seconds of audio around the question's range. No default: the first `listen` asks and saves it. */
     padSec: z.number().min(0).max(60).optional(),
+    /** Questions one `listen` round asks at most; the rest stay as suggestions, marked in the transcript. */
+    budget: z.number().int().min(1).max(500).default(12),
+    /** A question under this priority is not worth a person's time; it stays a marked suggestion. */
+    minPriority: z.number().min(0).default(0.5),
 });
 
 const playbackSchema = z.object({
@@ -86,6 +90,12 @@ const playbackSchema = z.object({
     /** Start this many seconds before the asked time, so the sentence is heard from its start. */
     beforeSec: z.number().min(0).max(60).default(5),
     listen: listenSchema.prefault({}),
+});
+
+/** The summary headings whose bullets are action items or decisions, in the languages summaries are written in. */
+const summarySchema = z.object({
+    actionHeadings: z.array(z.string().trim().min(1)).default(["Další kroky", "Úkoly", "Next steps", "Action items"]),
+    decisionHeadings: z.array(z.string().trim().min(1)).default(["Přijatá rozhodnutí", "Rozhodnutí", "Decisions"]),
 });
 
 const renderSchema = z.object({
@@ -101,10 +111,11 @@ export const meetingsConfigSchema = z.object({
             capture: captureSchema.prefault({}),
             playback: playbackSchema.prefault({}),
             render: renderSchema.prefault({}),
+            summary: summarySchema.prefault({}),
             suggest: z
                 .object({
-                    /** An item under this confidence, or a mixed-channel range, becomes a question for `listen`. */
-                    listenBelow: z.number().min(0).max(1).default(0.8),
+                    /** An item under this confidence that matters (enough words, or a decision) becomes a question. */
+                    listenBelow: z.number().min(0).max(1).default(0.6),
                 })
                 .prefault({}),
         })

@@ -161,9 +161,13 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             continue;
         }
 
+        // Whole words only: JavaScript's `\b` treats "í" or "ž" as a word edge, so the edges are spelled out.
+        const escaped = heard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const word = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u");
+
         for (const line of lines) {
-            if (inRange(line, passage) && line.text.includes(heard)) {
-                line.text = line.text.replace(heard, unclearMarker(unclearLabel, heard, passage.readings));
+            if (inRange(line, passage) && word.test(line.text)) {
+                line.text = line.text.replace(word, unclearMarker(unclearLabel, heard, passage.readings));
                 counts.unclear += 1;
             }
         }

@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { applyCorrections } from "./apply";
 import { applyDictionary, dictionaryLevelSchema, fuzzyMatches, mergeDictionaries } from "./dictionary";
 import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
+import { importanceOf } from "./importance";
 import { stemOf } from "./languages/cs";
 import { formatClock, parseClock } from "./render";
 import { LEAVE_PHRASES, type Presence, presenceSections, speakerStats } from "./speakers";
+import { citesPoint, keyWords, summaryPoints } from "./summary";
 import type { Participant, TranscriptEntry } from "./types";
 
 function line(speaker: string, startSec: number | undefined, text: string, speakerId?: number): TranscriptEntry {
@@ -454,5 +456,33 @@ describe("notes and unclear passages (R2.6, R2.7)", () => {
             ["Alice Example", 'A ten [nejasné: "pentagon"; 1) Pentaho]?'],
         ]);
         expect(applied.unclear).toBe(2);
+    });
+});
+
+describe("summary points and importance", () => {
+    test("action items and decisions come from their headings, with the owner in parentheses", () => {
+        const markdown = [
+            "### Shrnutí",
+            "- Probrali jsme export.",
+            "### Další kroky",
+            "- (Bob Example) Připravit export dat do nového systému (3. 11.)",
+            "### Přijatá rozhodnutí",
+            "- Export poběží každou noc.",
+        ].join("\n");
+        const points = summaryPoints(markdown, {
+            actionHeadings: ["Další kroky"],
+            decisionHeadings: ["Přijatá rozhodnutí"],
+        });
+        expect(points.map((point) => [point.kind, point.person ?? ""])).toEqual([
+            ["action", "Bob Example"],
+            ["decision", ""],
+        ]);
+        expect(citesPoint(new Set(keyWords("ten export dat do nového systému připravíme")), points[0]!)).toBe(true);
+        expect(citesPoint(new Set(keyWords("dobrý den všem")), points[0]!)).toBe(false);
+    });
+
+    test("fillers carry nothing; a decision word makes a short line matter", () => {
+        expect(importanceOf("Jo, jo, mhm.")).toEqual({ words: 3, fillersOnly: true, decision: false });
+        expect(importanceOf("Tak to pošlu zítra.").decision).toBe(true);
     });
 });

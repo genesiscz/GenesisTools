@@ -75,6 +75,7 @@ function toSourceMeeting(meeting: Meeting): SourceMeeting {
         transcript: meeting.transcript,
         calendar: calendarFor(meeting),
         folders: meeting.folders.map((folder) => folder.name),
+        ...(meeting.summary?.trim() ? { summary: meeting.summary } : {}),
     };
 }
 

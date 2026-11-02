@@ -8,7 +8,16 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
-import { answerQuestion, openQuestions, questionFor, skipQuestion } from "./lib/questions";
+import { selectQuestions } from "./lib/question-select";
+import {
+    answerQuestion,
+    openQuestions,
+    propagateAnswer,
+    type QuestionContext,
+    questionFor,
+    skipQuestion,
+    splitQuestion,
+} from "./lib/questions";
 import { suggestItems } from "./lib/suggest";
 import { type WatchDeps, watchOnce } from "./lib/watch";
 
@@ -193,8 +202,6 @@ describe("evidence rule", () => {
                 speaker: "Alice Example",
                 evidence: expect.objectContaining({ listen: true, note: expect.stringContaining("listening") }),
             }),
-            // The mixed range gets its question, which decides it (R2.3).
-            expect.objectContaining({ kind: "question", fromSec: 200, decides: ["i2"] }),
         ]);
     });
 });
@@ -231,11 +238,6 @@ describe("evidence rule after a leave", () => {
                 speaker: "Bob Example",
                 rules: ["E1", "E3", "RA"],
                 confidence: 0.45,
-            }),
-            expect.objectContaining({
-                kind: "question",
-                choices: expect.arrayContaining(["Bob Example"]),
-                decides: ["i1"],
             }),
         ]);
     });
@@ -435,54 +437,141 @@ describe("questions (R2.3)", () => {
         suggestedAt: now,
     };
 
-    test("a range marked for listening becomes a question that hears its last line to the end", () => {
-        const parsed = withItems([range]).items[0]!;
-        const question = questionFor(parsed, { listenBelow: 0.8 });
-        expect(question).toMatchObject({
+    // Speaker 5 says enough at 120 s to matter (15 words); 140 s holds only fillers.
+    const transcript = [
+        line(
+            "Speaker 5",
+            120,
+            "Tak to bychom měli, ten export dat do nového systému připravíme do konce příštího týdne."
+        ),
+        line("Speaker 5", 140, "Jo, jo, mhm."),
+        line("Bob Example", 146, "Dobře."),
+    ];
+    const context = (extra: Partial<QuestionContext> = {}): QuestionContext => ({
+        listenBelow: 0.6,
+        transcript,
+        points: [],
+        ...extra,
+    });
+
+    test("an unsure range that matters is asked, offering everyone present, the user under their own name", () => {
+        const parsed = withItems([{ ...range, confidence: 0.45 }]).items[0]!;
+        const presence = [
+            { name: "Bob Example", fromSec: 0, toSec: 200 },
+            { name: "alice@example.com", self: true, fromSec: 0, toSec: 200 },
+            { name: "Dan Example", fromSec: 150, toSec: 200 },
+        ];
+        expect(questionFor(parsed, context({ presence, selfName: "Alice Example" }))).toMatchObject({
             kind: "question",
             about: "speaker",
             fromSec: 120,
             toSec: 146,
-            choices: ["Alice Example", "Carol Example"],
-            decides: ["i1"],
-        });
-    });
-
-    test("a range without the listen mark asks nothing", () => {
-        const parsed = withItems([{ ...range, evidence: {} }]).items[0]!;
-        expect(questionFor(parsed, { listenBelow: 0.8 })).toBeUndefined();
-    });
-
-    test("a low-confidence item is asked: a range offers everyone present, a term its proposal", () => {
-        const [low, term] = withItems([
-            { ...range, evidence: {}, confidence: 0.45 },
-            {
-                id: "i2",
-                kind: "term",
-                status: "suggested",
-                atSec: 30,
-                heard: "pentagon",
-                proposed: "Pentaho",
-                confidence: 0.6,
-                rules: [],
-                suggestedAt: now,
-            },
-        ]).items;
-        const presence = [
-            { name: "Bob Example", fromSec: 0, toSec: 200 },
-            { name: "Dan Example", fromSec: 150, toSec: 200 },
-        ];
-        expect(questionFor(low!, { listenBelow: 0.8, presence })).toMatchObject({
             choices: ["Alice Example", "Carol Example", "Bob Example"],
+            decides: ["i1"],
+            clip: { fromSec: 120, toSec: 140 },
         });
-        expect(questionFor(term!, { listenBelow: 0.8 })).toMatchObject({
+    });
+
+    test("a sure range, a mixed channel alone, or a range of fillers is not asked", () => {
+        const sure = withItems([{ ...range, confidence: 0.7 }]).items[0]!;
+        expect(questionFor(sure, context())).toBeUndefined();
+        const fillers = withItems([{ ...range, fromSec: 140, toSec: 140, confidence: 0.3 }]).items[0]!;
+        expect(questionFor(fillers, context())).toBeUndefined();
+    });
+
+    test("a term is asked only when it matters: seen twice, an identifier, or a decision", () => {
+        const term = (extra: object) =>
+            withItems([
+                {
+                    id: "i2",
+                    kind: "term",
+                    status: "suggested",
+                    atSec: 146,
+                    heard: "pentagon",
+                    proposed: "pentaho",
+                    confidence: 0.5,
+                    rules: [],
+                    suggestedAt: now,
+                    ...extra,
+                },
+            ]).items[0]!;
+        expect(questionFor(term({}), context())).toBeUndefined();
+        expect(questionFor(term({ evidence: { occurrences: 3 } }), context())).toMatchObject({
             about: "term",
             heard: "pentagon",
-            choices: ["Pentaho"],
-            fromSec: 30,
+            choices: ["pentaho"],
             decides: ["i2"],
         });
-        expect(questionFor(term!, { listenBelow: 0.5 })).toBeUndefined();
+        expect(questionFor(term({ proposed: "PentahoDI" }), context())).toBeDefined();
+    });
+
+    test("neighbours offering the same people become one question, and a shared signature raises its priority", () => {
+        const question = (id: string, fromSec: number, choices: string[], confidence: number) => ({
+            kind: "question" as const,
+            status: "suggested" as const,
+            about: "speaker" as const,
+            fromSec,
+            toSec: fromSec + 10,
+            question: "Who?",
+            choices,
+            decides: [id],
+            rules: [],
+            confidence,
+            signature: choices.join("+"),
+            evidence: { words: 20, impact: 4, labels: ["Speaker 5"] },
+        });
+        const picked = selectQuestions(
+            [
+                question("i1", 100, ["Bob Example", "Carol Example"], 0.4),
+                question("i2", 125, ["Carol Example", "Bob Example"], 0.5),
+                question("i3", 400, ["Bob Example", "Carol Example"], 0.5),
+                question("i4", 130, ["Dan Example"], 0.5),
+            ],
+            []
+        );
+        expect(picked.map((item) => item.decides)).toEqual([["i1", "i2"], ["i4"], ["i3"]]);
+        // The cluster: (1 − 0.4) × (4 + log2 2) × 2 questions with its signature.
+        expect(picked[0]).toMatchObject({ priority: 6, toSec: 135 });
+        expect(picked[1]).toMatchObject({ priority: 2 });
+    });
+
+    test("an answer settles the questions with the same signature, and two voices split per line", () => {
+        const ask = (id: string, decides: string[]) => ({
+            id,
+            kind: "question",
+            status: "suggested",
+            about: "speaker",
+            fromSec: 120,
+            toSec: 146,
+            question: "Who?",
+            choices: ["Carol Example", "Bob Example"],
+            decides,
+            signature: "same",
+            rules: [],
+            suggestedAt: now,
+        });
+        const meetingRecord = withItems([
+            { ...range, confidence: 0.4 },
+            { ...range, id: "i2", fromSec: 300, toSec: 300, confidence: 0.35 },
+            ask("i3", ["i1"]),
+            ask("i4", ["i2"]),
+        ]);
+        answerQuestion(meetingRecord, "i3", { answer: "Carol Example", now });
+        const question = meetingRecord.items[2]!;
+        const settled =
+            question.kind === "question"
+                ? propagateAnswer(meetingRecord, question, { answer: "Carol Example", listenBelow: 0.6, now })
+                : [];
+        expect(settled).toEqual(["i4"]);
+        expect(meetingRecord.items[1]).toMatchObject({ speaker: "Carol Example", confidence: 0.65 });
+
+        const split = withItems([{ ...range, confidence: 0.4 }, ask("i2", ["i1"])]);
+        const lines = splitQuestion(split, "i2", { transcript, now });
+        expect(lines.map((item) => [item.fromSec, item.toSec])).toEqual([
+            [120, 140],
+            [140, 146],
+        ]);
+        expect(split.items.filter((item) => item.status === "rejected").map((item) => item.id)).toEqual(["i1", "i2"]);
     });
 
     test("an answer confirms the decided items with it; 'none of these' rejects them", () => {

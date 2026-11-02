@@ -14,10 +14,13 @@ import {
     answerVocabulary,
     NONE_OF_THESE,
     openQuestions,
+    propagateAnswer,
     type QuestionItem,
     skipQuestion,
+    splitQuestion,
 } from "../lib/questions";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { meetingTranscript } from "../lib/sources";
 
 const { log } = logger.scoped("meetings-listen");
 
@@ -27,17 +30,20 @@ const OTHER = "\u0000other";
 const SKIP = "\u0000skip";
 const STOP = "\u0000stop";
 const TYPE_IT = "\u0000type";
+const SPLIT = "\u0000split";
 
 /** Writes one answer (or a skip) and the term corrections it confirms. */
 async function record(
     store: MeetingStore,
     meetingId: string,
     question: QuestionItem,
-    outcome: { answer: string; comment?: string } | "skip"
-): Promise<void> {
+    outcome: { answer: string; comment?: string } | "skip",
+    listenBelow: number
+): Promise<string[]> {
     const now = new Date().toISOString();
     const change = outcome === "skip" ? `${question.id} skipped` : `${question.id} → ${outcome.answer}`;
     let ledger: ReturnType<typeof answerQuestion> = [];
+    let settled: string[] = [];
     await store.update(meetingId, { command: "listen", change }, (current) => {
         if (outcome === "skip") {
             skipQuestion(current, question.id, now);
@@ -45,8 +51,10 @@ async function record(
         }
 
         ledger = answerQuestion(current, question.id, { ...outcome, now });
+        settled = propagateAnswer(current, question, { answer: outcome.answer, listenBelow, now });
     });
     appendCorrections(ledger);
+    return settled;
 }
 
 /** The first `listen` asks how much audio to hear around a range and keeps the answer. */
@@ -98,7 +106,7 @@ async function ask(options: {
     clip: string;
     player: (typeof LISTEN_PLAYERS)[number];
     vocabulary: string[];
-}): Promise<{ answer: string; comment?: string } | "skip" | "stop"> {
+}): Promise<{ answer: string; comment?: string } | "skip" | "stop" | "split"> {
     const { question } = options;
     let playing = playClip(options.player, options.clip);
 
@@ -111,8 +119,11 @@ async function ask(options: {
                     { value: AGAIN, label: "Play again" },
                     { value: OTHER, label: "Something else…" },
                     { value: NONE_OF_THESE, label: "None of these", hint: "rejects the items it decides" },
+                    ...(question.about === "speaker"
+                        ? [{ value: SPLIT, label: "Two voices", hint: "ask each line on its own" }]
+                        : []),
                     { value: SKIP, label: "Skip" },
-                    { value: STOP, label: "Stop" },
+                    { value: STOP, label: "Enough for now" },
                 ],
             });
             playing.kill();
@@ -123,6 +134,10 @@ async function ask(options: {
 
             if (picked === SKIP) {
                 return "skip";
+            }
+
+            if (picked === SPLIT) {
+                return "split";
             }
 
             if (picked === AGAIN) {
@@ -179,7 +194,19 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
                 return;
             }
 
-            await record(store, meeting.id, questions[0]!, { answer: opts.answer, comment: opts.comment });
+            const settings = await new MeetingsConfigStore().read();
+            const settled = await record(
+                store,
+                meeting.id,
+                questions[0]!,
+                { answer: opts.answer, comment: opts.comment },
+                settings.global.suggest.listenBelow
+            );
+
+            if (settled.length > 0) {
+                ui.dim(`the same answer settled ${settled.length} more: ${settled.join(" ")}`);
+            }
+
             ui.ok(`${opts.item} answered: ${opts.answer}`);
             return;
         }
@@ -216,25 +243,66 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
             dictionary.entries.map((entry) => entry.value)
         );
 
-        for (const [index, question] of questions.entries()) {
-            const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
-            ui.header(
-                `${index + 1}/${questions.length}  ${question.id}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)} (±${padSec} s)`
+        const { budget, minPriority } = settings.global.playback.listen;
+        const listenBelow = settings.global.suggest.listenBelow;
+        const passed = new Set<string>();
+        let asked = 0;
+
+        // The most valuable question first; each answer can settle its look-alikes, so the list is read again.
+        while (asked < budget) {
+            const current = store.read(meeting.id) ?? meeting;
+            const question = openQuestions(current).find(
+                (item) =>
+                    !passed.has(item.id) &&
+                    (!opts.item || item.id === opts.item || passed.size > 0) &&
+                    (opts.item !== undefined || (item.priority ?? minPriority) >= minPriority)
             );
-            await cutClip({ audioPath, fromSec: question.fromSec, toSec: question.toSec, padSec, outPath: clip });
+
+            if (!question) {
+                break;
+            }
+
+            const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
+            const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
+            asked += 1;
+            ui.header(
+                `${asked}/${budget}  ${question.id}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
+            );
+            await cutClip({ audioPath, fromSec: heard.fromSec, toSec: heard.toSec, padSec, outPath: clip });
             const outcome = await ask({ question, clip, player, vocabulary });
 
             if (outcome === "stop") {
-                ui.info(`Stopped; ${questions.length - index} questions stay open.`);
-                return;
+                break;
             }
 
-            await record(store, meeting.id, question, outcome);
-            log.info({ meeting: meeting.id, question: question.id, outcome }, "question decided");
+            if (outcome === "split") {
+                const transcript = await meetingTranscript(current);
+                let lines = 0;
+                await store.update(
+                    meeting.id,
+                    { command: "listen", change: `${question.id} split per line` },
+                    (next) => {
+                        lines = splitQuestion(next, question.id, { transcript, now: new Date().toISOString() }).length;
+                    }
+                );
+                ui.info(`${question.id}: split into ${lines} questions, one per line; they come next.`);
+                continue;
+            }
+
+            passed.add(question.id);
+            const settled = await record(store, meeting.id, question, outcome, listenBelow);
+            log.info({ meeting: meeting.id, question: question.id, outcome, settled }, "question decided");
             ui.ok(outcome === "skip" ? `${question.id} skipped` : `${question.id}: ${outcome.answer}`);
+
+            if (settled.length > 0) {
+                ui.dim(`  the same answer settled ${settled.length} more: ${settled.join(" ")}`);
+            }
         }
 
-        ui.ok(`All ${questions.length} questions decided. ${TOOL} transcript ${meeting.id}`);
+        const left = openQuestions(store.read(meeting.id) ?? meeting).length;
+        ui.ok(
+            `${asked} asked; ${left} open questions stay as suggestions, marked in ${TOOL} transcript ${meeting.id}.`
+        );
     } catch (err) {
         fail(errorText(err));
     }
