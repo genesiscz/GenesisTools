@@ -14,10 +14,9 @@ import {
     MeetingStore,
     QUESTION_TOPICS,
 } from "@genesiscz/utils/meetings/record";
-import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import { applyCorrections, type TranscriptCorrections, type UnclearPassage } from "@genesiscz/utils/transcribe/apply";
+import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
     entriesToSrt,
@@ -26,7 +25,6 @@ import {
     groupTurns,
     localTime,
     TRANSCRIPT_FORMATS,
-    type TranscriptFormat,
     transcriptMarkdown,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
@@ -40,11 +38,11 @@ import { energyMicShareFor } from "../lib/energy";
 import { FINDING_KINDS, findingItems, findingProblem, findingSchema, findingsFileSchema } from "../lib/findings";
 import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
-import { openQuestions } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { linkedSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
+import { correctionsOf } from "../lib/transcript-corrections";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice, wordCheckFor } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -572,101 +570,6 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     } catch (err) {
         fail(errorText(err));
     }
-}
-
-/**
- * The open questions as passages a transcript marks: a speaker question marks the label of the ranges it decides, a
- * question with `heard` marks those words.
- */
-function unclearPassages(record: MeetingRecord, listenBelow: number): UnclearPassage[] {
-    const open = openQuestions(record);
-    const asked = new Set(open.flatMap((question) => question.decides));
-    // A low term the rules have a guess for is marked wherever it was heard, even unasked. An unknown word with no
-    // guess is often plain spoken Czech no dictionary has ("byznysák"): it stays text unless it is asked.
-    const unaskedTerms = record.items.flatMap((item): UnclearPassage[] =>
-        item.kind === "term" &&
-        item.status === "suggested" &&
-        item.proposed !== undefined &&
-        !item.rules.includes(MeetingRule.UnknownWord) &&
-        !asked.has(item.id) &&
-        (item.confidence ?? 1) < listenBelow
-            ? [
-                  {
-                      fromSec: 0,
-                      toSec: Number.POSITIVE_INFINITY,
-                      heard: item.heard,
-                      readings: item.proposed ? withConfidence([item.proposed], item.confidence) : [],
-                  },
-              ]
-            : []
-    );
-
-    return [
-        ...unaskedTerms,
-        ...open.flatMap((question): UnclearPassage[] => {
-            if (question.heard) {
-                const { fromSec, toSec, heard, choices } = question;
-                return [{ fromSec, toSec, heard, readings: withConfidence(choices, question.confidence) }];
-            }
-
-            if (question.about !== "speaker") {
-                return [];
-            }
-
-            return record.items.flatMap((item) =>
-                item.kind === "speaker-range" && item.status === "suggested" && question.decides.includes(item.id)
-                    ? [
-                          {
-                              fromSec: item.fromSec,
-                              toSec: item.toSec,
-                              speaker: item.label,
-                              readings: withConfidence(question.choices, item.confidence),
-                          },
-                      ]
-                    : []
-            );
-        }),
-    ];
-}
-
-/** The first reading is the rules' guess: it carries their confidence. The others have none of their own. */
-function withConfidence(readings: string[], confidence: number | undefined): string[] {
-    return readings.map((reading, index) =>
-        index === 0 && confidence !== undefined ? `${reading} ${Math.round(confidence * 100)} %` : reading
-    );
-}
-
-/** What a transcript applies: renames, then the confirmed items (and the suggested ones on request), then the dictionary. */
-function correctionsOf(
-    record: MeetingRecord,
-    config: Awaited<ReturnType<MeetingsConfigStore["read"]>>,
-    opts: { withSuggested?: boolean; dictionary?: boolean; format: TranscriptFormat }
-): TranscriptCorrections {
-    const used = record.items.filter(
-        (item) => item.status === "confirmed" || (opts.withSuggested && item.status === "suggested")
-    );
-    // With --with-suggested the top reading is applied, so nothing stays open.
-    const passages = opts.withSuggested ? [] : unclearPassages(record, config.global.suggest.listenBelow);
-
-    return {
-        labels: record.speakers.labels,
-        ranges: used.flatMap((item) =>
-            item.kind === "speaker-range" && item.speaker
-                ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker }]
-                : []
-        ),
-        joins: used.flatMap((item) =>
-            item.kind === "join" ? [{ atSec: item.atSec, ...(item.speaker ? { speaker: item.speaker } : {}) }] : []
-        ),
-        terms: used.flatMap((item) =>
-            item.kind === "term" && item.proposed ? [{ heard: item.heard, replacement: item.proposed }] : []
-        ),
-        ...(opts.dictionary === false
-            ? {}
-            : { dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }) }),
-        notes: opts.format === "md" ? "sup" : "inline",
-        ...(passages.length > 0 ? { unclear: { label: config.global.render.unclearLabel, passages } } : {}),
-    };
 }
 
 async function transcript(
