@@ -35,6 +35,7 @@ import {
     type LatLon,
     type Place,
     type RouteAlternative,
+    type WazeJam,
 } from "./types";
 import { parseWhen } from "./when";
 
@@ -116,6 +117,16 @@ function inArea<T extends LatLon>(
     items: Array<T & { distanceM: number }>
 ): Array<T & { distanceM: number }> {
     return resolved.isBox ? items.filter((item) => bboxContains(resolved.box, item)) : items;
+}
+
+/**
+ * The feed's jams that belong to the area, nearest first: a point within the radius, or inside the box the user gave.
+ * The feed covers the box around a radius, so its corners hold jams outside the area.
+ */
+function jamsInArea(resolved: ResolvedArea, jams: WazeJam[]): Array<WazeJam & { distanceM: number }> {
+    return jamsNear({ jams, center: resolved.center, radiusM: resolved.radiusM }).filter(
+        (jam) => !resolved.isBox || jam.line.some((point) => bboxContains(resolved.box, point))
+    );
 }
 
 interface Trip {
@@ -476,11 +487,7 @@ const OPERATION_DEFS: WazeOperation[] = [
             const resolved = await resolveArea(ctx, input.area, input.radiusKm ?? 5);
             const types: FeedType[] = ["traffic"];
             const feed = await (await ctx.client()).feed({ boxes: [resolved.box], types });
-            const jams = jamsNear({ jams: feed.jams, center: resolved.center, radiusM: resolved.radiusM }).filter(
-                (jam) =>
-                    jam.level >= minLevel &&
-                    (!resolved.isBox || jam.line.some((point) => bboxContains(resolved.box, point)))
-            );
+            const jams = jamsInArea(resolved, feed.jams).filter((jam) => jam.level >= minLevel);
             const head = `${jams.length} jams around **${resolved.label}**; ${statsLine(feed.stats)}.`;
             return {
                 data: { area: resolved, jams, stats: feed.stats, fetchedAt: feed.fetchedAt },
@@ -753,7 +760,7 @@ const OPERATION_DEFS: WazeOperation[] = [
                 label: resolved.label,
                 area: { center: resolved.center, box: resolved.box, radiusM: resolved.radiusM },
                 alerts,
-                jams: feed.jams.length,
+                jams: jamsInArea(resolved, feed.jams).length,
                 takenAt: feed.fetchedAt,
             });
             return {
