@@ -34,6 +34,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { dictionaryPhrases, listLocalMeetings, localAvailable } from "../lib/local";
 import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
+import { calendarFor } from "../lib/meeting-source";
 import { writeGuarded } from "../lib/output";
 import {
     meetingFrontmatter,
@@ -335,10 +336,28 @@ function showMarkdown(meeting: Meeting, source: SourceName): string {
         ),
         `# ${meeting.title || "Untitled meeting"}`,
     ];
-    const people = meeting.participants.map((p) => `- ${p.name}${p.isSelf ? " (you)" : ""}`);
+    // Who named each label matters: a platform name is evidence, a language model's name is a guess.
+    const people = meeting.participants.map((p) => {
+        const speaker = p.speakerId === undefined ? "" : `speaker ${p.speakerId}`;
+        const origin = p.origin ? `named by ${p.origin}` : "";
+        const notes = [speaker, origin].filter(Boolean).join(", ");
+        return `- ${p.name}${p.isSelf ? " (you)" : ""}${notes ? ` (${notes})` : ""}`;
+    });
 
     if (people.length > 0) {
         parts.push("## Participants", people.join("\n"));
+    }
+
+    const invited = calendarFor(meeting);
+
+    if (invited && invited.attendees.length > 0) {
+        parts.push(
+            "## Invited",
+            [
+                ...invited.attendees.map((name) => `- ${name}`),
+                ...(invited.conferenceUrl ? [``, `Call: ${invited.conferenceUrl}`] : []),
+            ].join("\n")
+        );
     }
 
     if (meeting.summary.trim()) {
@@ -487,7 +506,11 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
             const files: Array<[string, string, boolean]> = [
                 ["Summary.md", showMarkdown(meeting, loaded.source), true],
                 ["Transcript.md", renderMarkdown(meeting, { ...base, suspects }), true],
-                ["meeting.json", `${SafeJSON.stringify({ source: loaded.source, meeting }, null, 2)}\n`, false],
+                [
+                    "meeting.json",
+                    `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendarFor(meeting) ?? null }, null, 2)}\n`,
+                    false,
+                ],
             ];
 
             for (const [name, content, keepFrontmatter] of files) {

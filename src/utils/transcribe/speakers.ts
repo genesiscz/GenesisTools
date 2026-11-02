@@ -94,6 +94,8 @@ export interface Presence {
 
 /** Rule RA: attendance times are exact to a few seconds; a line this close to a join or leave still counts. */
 export const PRESENCE_TOLERANCE_SEC = 5;
+/** Rule R15: an attendee silent under their own label this long is probably heard under other labels. */
+export const LABEL_DRIFT_SEC = 15 * 60;
 /** Lines of one label closer than this form one range in an attendance hint. */
 const PRESENCE_RANGE_GAP_SEC = 60;
 
@@ -160,6 +162,8 @@ export interface PresenceRange {
 }
 
 export type SpeakerHint =
+    /** R15: a person in the call whose own label stayed silent this long: their voice is under other labels. */
+    | { kind: "label-drift"; label: string; strength: HintStrength; person: string; fromSec: number; toSec: number }
     /** RA: the label speaks while that person was not in the call. */
     | { kind: "absent-speaker"; label: string; strength: HintStrength; ranges: PresenceRange[] }
     /** RA: only one person was in the call, so the voice is that person, whatever the label says. */
@@ -505,8 +509,43 @@ function toRanges(times: number[], presence?: Presence[]): PresenceRange[] {
  * Rule RA, before every content rule: a label cannot speak while its person is out of the call, and when only one
  * person is in the call, every voice is that person.
  */
-function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presence: Presence[]): SpeakerHint[] {
+/** R15: stretches of at least `LABEL_DRIFT_SEC` inside a person's stay with no line under a label of their name. */
+function driftHints(lines: TranscriptEntry[], presence: Presence[]): SpeakerHint[] {
     const hints: SpeakerHint[] = [];
+
+    for (const stay of presence) {
+        if (stay.self || !Number.isFinite(stay.toSec)) {
+            continue;
+        }
+
+        const own = lines
+            .filter((line) => line.startSec !== undefined && sameName(line.speaker, stay.name))
+            .map((line) => line.startSec!)
+            .filter((sec) => sec >= stay.fromSec && sec <= stay.toSec);
+        const edges = [stay.fromSec, ...own, stay.toSec];
+
+        for (let index = 1; index < edges.length; index += 1) {
+            const fromSec = edges[index - 1]!;
+            const toSec = edges[index]!;
+
+            if (toSec - fromSec >= LABEL_DRIFT_SEC) {
+                hints.push({
+                    kind: "label-drift",
+                    label: stay.name,
+                    strength: "normal",
+                    person: stay.name,
+                    fromSec,
+                    toSec,
+                });
+            }
+        }
+    }
+
+    return hints;
+}
+
+function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presence: Presence[]): SpeakerHint[] {
+    const hints: SpeakerHint[] = driftHints(lines, presence);
     const people = new Set(presence.map((stay) => stay.name));
 
     for (const stat of speakers) {

@@ -44,6 +44,8 @@ export interface MeetingEvidence {
     tokens?: { mic: number; system: number };
     /** The audio setup, as the source recorded it. */
     devices?: Record<string, unknown>;
+    /** The meeting's audio, for playing a moment back before confirming a voice. */
+    audioPath?: string;
     /** The files the evidence came from, with their sizes, for a doctor view. */
     files: Array<{ name: string; bytes: number }>;
 }

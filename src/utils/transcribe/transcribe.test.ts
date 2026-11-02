@@ -154,6 +154,29 @@ describe("speakerStats", () => {
         expect(stats.hints.some((h) => h.label === "Bob Example" && h.kind === "absent-speaker")).toBe(false);
     });
 
+    test("R15: an attendee silent under their own label for 15 minutes is a drift hint", () => {
+        const stats = speakerStats(
+            [
+                line("Alice Example", 10, "Začneme."),
+                line("Bob Example", 60, "Ano."),
+                line("Bob Example", 1500, "Ještě já."),
+            ],
+            {
+                presence: [
+                    { name: "Alice Example", fromSec: 0, toSec: 2000 },
+                    { name: "Bob Example", fromSec: 0, toSec: 1600 },
+                    { name: "me@example.com", self: true, fromSec: 0, toSec: 2000 },
+                ],
+            }
+        );
+        const drift = stats.hints.filter((hint) => hint.kind === "label-drift");
+
+        expect(drift).toEqual([
+            expect.objectContaining({ person: "Alice Example", fromSec: 10, toSec: 2000 }),
+            expect.objectContaining({ person: "Bob Example", fromSec: 60, toSec: 1500 }),
+        ]);
+    });
+
     test("leave phrases match whole Czech words only", () => {
         const leaves = (text: string) => LEAVE_PHRASES.some((phrase) => phrase.test(text));
 

@@ -67,12 +67,23 @@ const wisprflowSourceSchema = z.object({
     suggest: z.object({ ignore: strings }).prefault({}),
 });
 
+/** The players `tools meetings play` can start, in the order it tries them. */
+export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
+
+const playbackSchema = z.object({
+    /** Which player opens a meeting's audio at a moment; the other is the fallback when it is missing. */
+    player: z.enum(MEETING_PLAYERS).default("vlc"),
+    /** Start this many seconds before the asked time, so the sentence is heard from its start. */
+    beforeSec: z.number().min(0).max(60).default(5),
+});
+
 export const meetingsConfigSchema = z.object({
     version: z.literal(1).default(1),
     global: z
         .object({
             dictionary: dictionaryLevelSchema.prefault({}),
             capture: captureSchema.prefault({}),
+            playback: playbackSchema.prefault({}),
         })
         .prefault({}),
     /** The known projects. `--project` with a new name adds one here. */
