@@ -58,18 +58,19 @@ export const VIDEO_ENCODERS = {
         containers: [".mp4", ".m4v", ".mov", ".mkv"],
         platforms: ["darwin"],
         decodeArgs: ["-hwaccel", "videotoolbox"],
-        // At 420 kbit/s on a talk recording, a capped rate (-maxrate) scored SSIM 0.859 and looked broken; an uncapped
-        // rate with a long GOP, quality priority and spatial AQ scored 0.978. The uncapped rate overshoots by about 10%,
-        // which the size-target loop corrects (measured 2026-11-02).
+        // 10 s of a 720p talk recording at -b:v 420k (2026-11-02, SSIM against the source): a -maxrate cap 0.859 (broken);
+        // -g 600 -prio_speed 0 0.978 at 443 kbit/s; adding -bf 2 (ffmpeg leaves B-frames off) 0.979 at 398; adding
+        // -qmax 36 (no frame coarser than QP 36) 0.982 at 395. -spatial_aq 1 changed nothing on an M4 Max. The rate can
+        // still miss, which the size-target loop corrects.
         videoArgs: (rate) => [
             "-c:v",
             "hevc_videotoolbox",
-            ...(rate.kind === "quality" ? ["-q:v", String(rate.quality)] : ["-b:v", `${rate.kbps}k`]),
+            ...(rate.kind === "quality" ? ["-q:v", String(rate.quality)] : ["-b:v", `${rate.kbps}k`, "-qmax", "36"]),
             ...LONG_GOP,
+            "-bf",
+            "2",
             "-prio_speed",
             "0",
-            "-spatial_aq",
-            "1",
             "-tag:v",
             "hvc1",
         ],

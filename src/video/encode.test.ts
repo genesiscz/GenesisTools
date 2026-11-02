@@ -257,6 +257,8 @@ describe("size target and GPU scale", () => {
         expect(args[args.indexOf("-b:v") + 1]).toBe("420k");
         expect(args).not.toContain("-maxrate");
         expect(args[args.indexOf("-g") + 1]).toBe("600");
+        expect(args[args.indexOf("-bf") + 1]).toBe("2");
+        expect(args[args.indexOf("-qmax") + 1]).toBe("36");
         expect(args).not.toContain("-q:v");
         expect(args[args.indexOf("-c:a") + 1]).toBe("copy");
     });

@@ -48,7 +48,8 @@ Folders are walked for `.mp4`, `.m4v`, `.mov` and `.mkv`. The output keeps the i
 
 Presets, measured on a 10 s clip of a 720p talk recording at 420 kbit/s (2026-11-02, SSIM against the source):
 
-- `fast`: `hevc`, the GPU. SSIM 0.978. Fastest and almost no CPU, but visibly softer at low bitrates.
+- `fast`: `hevc`, the GPU, with a 20 s GOP, two B-frames and no frame coarser than QP 36. SSIM 0.982. Fastest and
+  almost no CPU, but visibly softer at low bitrates.
 - `compatible`: `x264` slow, two passes for a size target. SSIM 0.993. Plays everywhere; on that clip it took about a
   third of the time x265 took.
 - `small`: `av1`, SVT-AV1 preset 5. SSIM 0.995, the best per byte; older devices may not decode AV1.
