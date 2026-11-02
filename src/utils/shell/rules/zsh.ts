@@ -125,10 +125,10 @@ export const bareLogCommand: ShellRule = {
  * `search`: the result of looking something up (`rg -l`, `fd`, `find`, `ls`, `pgrep`), often
  * the one hit the command expects. `unknown`: a command substitution the tables below cannot
  * place. `single`: one value by construction (`git rev-parse`, `wc -l`, `head -1`). `words`: a
- * quoted literal with whitespace inside. `scalar`: anything else (`x=foo`, `x=$y`, a quoted
- * path or sentence).
+ * quoted literal with whitespace inside. `array`: `x=( … )`, which zsh iterates per element.
+ * `scalar`: anything else (`x=foo`, `x=$y`, a quoted path or sentence).
  */
-type ValueKind = "list" | "search" | "unknown" | "single" | "words" | "scalar";
+type ValueKind = "list" | "search" | "unknown" | "single" | "words" | "array" | "scalar";
 type OutputShape = "list" | "search" | "single" | "unknown";
 /** `pass`: a filter that keeps its input's shape. `narrow`: a grep filter, which turns a list into a search. */
 type ElementVerdict = OutputShape | "pass" | "narrow";
@@ -142,9 +142,16 @@ interface AssignedValue {
     end: number;
 }
 
+interface Range {
+    start: number;
+    end: number;
+}
+
 interface Assignment extends AssignedValue {
     name: string;
     start: number;
+    /** The subshell it was made in: zsh keeps it from every use outside that range. */
+    scope: Range;
 }
 
 interface ParameterUse {
@@ -164,10 +171,13 @@ const ARRAY_ASSIGNMENT = /(^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)\+?=\(/g;
 const ANY_ASSIGNMENT = /(^|[\s;&|(])[A-Za-z_][A-Za-z0-9_]*\+?=/m;
 const PARAMETER = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/;
 const REDIRECT = /^(\d*(<|>|>>|>\||<>|>&|<&)|&>|&>>|<<<)$/;
-// The command turned splitting on itself, or switched to sh semantics.
-const SPLIT_ENABLED = /\b(setopt|set\s+-o)\s[^;\n]*\bsh_?word_?split\b|\bemulate\s+(-\S+\s+)*(sh|ksh|bash)\b/i;
-// A heredoc fed to bash or sh: the scanner reads its body as code, but bash splits.
-const NON_ZSH_HEREDOC = /(^|[\s;&|(])(bash|sh|dash|ksh)(\s[^\n]*)?<<-?[ \t]*['"]?[A-Za-z_]/m;
+// The command turned splitting on itself, or switched to sh semantics. Matched in code only.
+const SPLIT_ENABLED = /\b(setopt|set\s+-o)\s[^;\n]*\bsh_?word_?split\b|\bemulate\s+(-\S+\s+)*(sh|ksh|bash)\b/gi;
+// The opening line of a heredoc fed to a shell (`bash <<'EOF'`, `sudo zsh -s <<EOF`). The
+// scanner reads that body as code. bash and sh split it; zsh runs it in a child shell.
+// Groups: 2 the shell, 3 the operator, 4 the `-` that strips tabs, 6 the delimiter.
+const SHELL_HEREDOC =
+    /(^|[\s;&|(])(bash|sh|zsh|dash|ksh)(?:\s(?:[^\n<]|<(?!<))*)?(<<(?!<)(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\5)/gm;
 // `$name` and a `${…}` without quotes inside; marked to tell code from a double-quoted span.
 const EXPANSION_MARK = /\$(?=[A-Za-z_]|\{[^}"'`]*\})/g;
 const MARK = "\u0001";
@@ -481,6 +491,19 @@ function elementOutput(element: Span, raw: string, hasPrevious: boolean): Elemen
     return "unknown";
 }
 
+// `tr '\n' ' '` and a bare `xargs` put every line on one, separated by spaces. Any other
+// `tr` maps characters and keeps the lines.
+function joinsLines(element: Span, raw: string): boolean {
+    const tokens = tokenize(element);
+    const cmd = commandTokenIndex(tokens);
+
+    if (cmd === -1) {
+        return tokens.some((t) => commandWord(t.text) === "xargs");
+    }
+
+    return commandWord(tokens[cmd].text) === "tr" && trOutput(raw) === "list";
+}
+
 // The output shape of the last statement of a `$( … )` body, read from its last pipeline
 // element back to the first one that decides it.
 function substitutionValue(body: string, end: number): AssignedValue {
@@ -495,10 +518,12 @@ function substitutionValue(body: string, end: number): AssignedValue {
     const elements = splitPipeline(last);
     let shape: OutputShape = "unknown";
     let narrowed = false;
+    let joined = false;
 
     for (let i = elements.length - 1; i >= 0; i--) {
         const raw = body.slice(elements[i].start, elements[i + 1]?.start ?? body.length);
         const verdict = elementOutput(elements[i], raw, i > 0);
+        joined ||= joinsLines(elements[i], raw);
 
         if (verdict === "narrow") {
             narrowed = true;
@@ -515,12 +540,8 @@ function substitutionValue(body: string, end: number): AssignedValue {
         shape = "search";
     }
 
-    // Lines split per line, so a path with a space survives. Lines joined by `tr` or a
-    // bare `xargs`, and anything unplaced, split on IFS: what bash would have done.
-    const lastTokens = tokenize(elements[elements.length - 1]);
-    const lastCmd = commandTokenIndex(lastTokens);
-    const joined =
-        lastCmd === -1 ? lastTokens.some((t) => commandWord(t.text) === "xargs") : lastTokens[lastCmd].text === "tr";
+    // Lines split per line, so a path with a space survives. Lines that an element at or after
+    // the deciding one joined, and anything unplaced, split on IFS: what bash would have done.
     const flag: SplitFlag = (shape === "list" || shape === "search") && !joined ? "(f)" : "=";
 
     return { kind: shape, flag, end };
@@ -583,6 +604,10 @@ function doubleQuotedValue(command: string, cleaned: string, at: number): Assign
 function assignedValue(command: string, cleaned: string, at: number): AssignedValue {
     const ch = command[at];
 
+    if (ch === "(") {
+        return { kind: "array", flag: SCALAR_FLAG, end: matchParen(cleaned, at) + 1 };
+    }
+
     if (command.startsWith("$((", at)) {
         return { kind: "scalar", flag: SCALAR_FLAG, end: matchParen(cleaned, at + 1) + 1 };
     }
@@ -618,6 +643,75 @@ function blankRange(text: string, start: number, end: number): string {
     return text.slice(0, start) + text.slice(start, end).replace(/[^\n]/g, " ") + text.slice(end);
 }
 
+interface HeredocBody extends Range {
+    zsh: boolean;
+}
+
+// The body of each heredoc fed to a shell: from the line after its operator to its terminator.
+function shellHeredocBodies(command: string, cleaned: string): HeredocBody[] {
+    const bodies: HeredocBody[] = [];
+
+    for (const m of command.matchAll(SHELL_HEREDOC)) {
+        const word = m.index + m[1].length;
+        const op = m.index + m[0].length - m[3].length;
+        const open = command.indexOf("\n", op);
+
+        // The shell word and the operator are code, not text inside quotes or a comment.
+        if (
+            open === -1 ||
+            !cleaned.startsWith(m[2], word) ||
+            !stripShellNoise(`${command.slice(word, op)}x`).endsWith("x")
+        ) {
+            continue;
+        }
+
+        let end = command.length;
+        let line = open + 1;
+
+        while (line < command.length) {
+            const next = command.indexOf("\n", line);
+            const lineEnd = next === -1 ? command.length : next;
+            const text = command.slice(line, lineEnd);
+
+            if ((m[4] === "-" ? text.replace(/^\t+/, "") : text) === m[6]) {
+                end = line;
+                break;
+            }
+
+            line = lineEnd + 1;
+        }
+
+        bodies.push({ start: open + 1, end, zsh: m[2] === "zsh" });
+    }
+
+    return bodies;
+}
+
+// Each `( … )` pair: a subshell, or a `$( … )` or `<( … )` body. The other pairs (an array
+// body, `$(( … ))`, a glob qualifier) hold no assignment this rule records.
+function parenRanges(cleaned: string): Range[] {
+    const ranges: Range[] = [];
+    const open: number[] = [];
+
+    for (let i = 0; i < cleaned.length; i++) {
+        if (cleaned[i] === "(") {
+            open.push(i);
+        } else if (cleaned[i] === ")") {
+            const start = open.pop();
+
+            if (start !== undefined) {
+                ranges.push({ start, end: i });
+            }
+        }
+    }
+
+    return [...ranges, ...open.map((start) => ({ start, end: cleaned.length }))];
+}
+
+function within(scope: Range, at: number): boolean {
+    return scope.start <= at && at < scope.end;
+}
+
 interface WordSplitHit {
     use: ParameterUse;
     flag: SplitFlag;
@@ -626,15 +720,30 @@ interface WordSplitHit {
 function wordSplitHits(scan: ShellScan): WordSplitHit[] {
     const { command } = scan;
 
-    if (!ANY_ASSIGNMENT.test(scan.cleaned) || SPLIT_ENABLED.test(command) || NON_ZSH_HEREDOC.test(command)) {
+    if (!ANY_ASSIGNMENT.test(scan.cleaned)) {
         return [];
     }
 
-    const arrays = new Set<string>();
+    // bash and sh split, so a body fed to them is dropped. A zsh body runs in a child shell.
+    const heredocs = shellHeredocBodies(command, scan.cleaned);
+    let code = scan.cleaned;
+
+    for (const body of heredocs) {
+        if (!body.zsh) {
+            code = blankRange(code, body.start, body.end);
+        }
+    }
+
+    // A subshell keeps its assignments and its `setopt` from everything outside it.
+    const whole: Range = { start: 0, end: command.length };
+    const scopes: Range[] = [...parenRanges(code), ...heredocs.filter((body) => body.zsh)];
+    const scopeAt = (at: number): Range =>
+        scopes.reduce((best, s) => (within(s, at) && s.start >= best.start ? s : best), whole);
+
     const assignments: Assignment[] = [];
     const uses: ParameterUse[] = [];
 
-    const record = (token: Span): number => {
+    const record = (token: Span, scope: Range): number => {
         const m = ASSIGNMENT.exec(token.text);
 
         if (!m) {
@@ -642,7 +751,7 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         }
 
         const value = assignedValue(command, scan.cleaned, token.start + m[0].length);
-        assignments.push({ name: m[1], start: token.start, ...value });
+        assignments.push({ name: m[1], start: token.start, scope, ...value });
         return value.end;
     };
 
@@ -664,16 +773,16 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         uses.push({ name: m[1] ?? m[2], start: token.start, end, ...use });
     };
 
-    // `files=( … )` is an array, which zsh iterates per element. Its items are a list context
-    // like a `for` list (`arr=( $x )` holds ONE element in zsh). The statement splitter cuts on
-    // the parens, so the body is blanked or `arr=( foo $x )` would read as a command `foo $x`.
-    let cleaned = scan.cleaned;
+    // `files=( … )` is an array, which zsh iterates per element; `record` gives it the kind
+    // `array`. Its items are a list context like a `for` list (`arr=( $x )` holds ONE element in
+    // zsh). The statement splitter cuts on the parens, so the body is blanked or
+    // `arr=( foo $x )` would read as a command `foo $x`.
+    let cleaned = code;
 
-    for (const m of scan.cleaned.matchAll(ARRAY_ASSIGNMENT)) {
-        arrays.add(m[2]);
+    for (const m of code.matchAll(ARRAY_ASSIGNMENT)) {
         const open = m.index + m[0].length - 1;
-        const close = matchParen(scan.cleaned, open);
-        const items = tokenize({ text: scan.cleaned.slice(open + 1, close), start: open + 1 });
+        const close = matchParen(code, open);
+        const items = tokenize({ text: code.slice(open + 1, close), start: open + 1 });
 
         for (const item of items) {
             addUse(item, { loop: true, soleItem: items.length === 1, optionValue: false });
@@ -687,7 +796,14 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         .sort((a, b) => a.start - b.start);
 
     for (const statement of statements) {
-        for (const element of splitPipeline(statement)) {
+        const elements = splitPipeline(statement);
+
+        for (const [e, element] of elements.entries()) {
+            // zsh runs every element of a pipeline but the last in a subshell.
+            const scope =
+                e < elements.length - 1
+                    ? { start: element.start, end: element.start + element.text.length }
+                    : scopeAt(element.start);
             const all = tokenize(element);
             let first = 0;
 
@@ -725,7 +841,7 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
                 }
 
                 if (leading && ASSIGNMENT.test(token.text)) {
-                    valueEnd = record(token);
+                    valueEnd = record(token, scope);
                     tokens.push(token);
                     continue;
                 }
@@ -749,7 +865,7 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
 
                 for (const token of args) {
                     if (token.start >= end) {
-                        end = record(token);
+                        end = record(token, scope);
                     }
                 }
 
@@ -772,15 +888,20 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         }
     }
 
+    // `setopt shwordsplit` or `emulate sh` splits the uses after it in its own subshell.
+    const splitOn = [...code.matchAll(SPLIT_ENABLED)].map((m) => ({ at: m.index, scope: scopeAt(m.index) }));
     let marked: string | null = null;
     const hits: WordSplitHit[] = [];
 
     for (const use of uses) {
-        if (arrays.has(use.name)) {
+        if (splitOn.some((s) => s.at < use.start && within(s.scope, use.start))) {
             continue;
         }
 
-        const source = assignments.filter((a) => a.name === use.name && a.start < use.start).at(-1);
+        // The last assignment that took effect before the use, made in a scope that reaches it.
+        const source = assignments
+            .filter((a) => a.name === use.name && a.end <= use.start && within(a.scope, use.start))
+            .at(-1);
 
         if (!source || !splits(source.kind, use)) {
             continue;
