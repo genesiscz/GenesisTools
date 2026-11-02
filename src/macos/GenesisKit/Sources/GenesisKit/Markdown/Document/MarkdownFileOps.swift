@@ -79,18 +79,94 @@ extension MarkdownDocumentsModel {
     }
 }
 
-/// A tab's right-click menu: the tab verbs, then the file's own (the configuration's `fileActions`).
-/// A rename or a trash there tells the sidebar, which reads its folders again (`pathHandlers`).
+extension MarkdownDocumentsModel {
+    /// One open document's verbs: the tab verbs, then the file's own (the configuration's `fileActions`). The tab's
+    /// right-click, the page's right-click (`MarkdownPageMenu`) and the menu bar's Document menu all show this list,
+    /// so the three never drift apart. A rename or a trash tells the sidebar, which reads its folders again
+    /// (`pathHandlers`).
+    func documentMenuEntries(for doc: MarkdownDocument) -> [PathMenuEntry] {
+        var out: [PathMenuEntry] = [
+            .item(PathMenuItem(id: "close-tab", title: "Close Tab", systemImage: "xmark") { [weak self] in self?.close(doc) }),
+        ]
+        if docs.count > 1 {
+            out.append(.item(PathMenuItem(id: "close-others", title: closeOthersTitle, systemImage: "xmark.square") { [weak self] in
+                self?.closeOthers(doc)
+            }))
+        }
+        let verbs = PathMenu.entries(
+            for: doc.url, kind: .file, actions: pathActions(for: .file), handlers: pathHandlers(for: doc.url, kind: .file)
+        )
+        if !verbs.isEmpty {
+            out.append(.divider(id: "divider-file"))
+            out += verbs
+        }
+        return out
+    }
+}
+
+/// A tab's right-click menu: `documentMenuEntries`, built when the menu opens.
 struct MarkdownTabMenu: View {
     @ObservedObject var doc: MarkdownDocument
     let model: MarkdownDocumentsModel
 
     var body: some View {
-        Button("Close Tab") { model.close(doc) }
-        Button(model.closeOthersTitle) { model.closeOthers(doc) }
-            .disabled(model.docs.count < 2)
-        Divider()
-        PathActionsMenu(url: doc.url, kind: .file, actions: model.pathActions(for: .file), handlers: model.pathHandlers(for: doc.url, kind: .file))
+        PathActionsMenu(entries: model.documentMenuEntries(for: doc))
+    }
+}
+
+/// The page's right-click and the menu bar's Document menu: the selected document's verbs (`documentMenuEntries`).
+@MainActor
+enum MarkdownPageMenu {
+    /// WebKit's own item that reloads the page: it only re-ran the renderer, and was the one item a right-click on
+    /// the page offered.
+    static let webKitReload = NSUserInterfaceItemIdentifier("WKMenuItemIdentifierReload")
+
+    /// The selected document's verbs in the window that holds `view`, else in the shared viewer window.
+    static func entries(for view: NSView?) -> [PathMenuEntry] {
+        let controller = view?.window?.windowController as? MarkdownDocumentWindowController
+            ?? MarkdownDocumentWindowController.shared
+        guard let doc = controller.model.selected else { return [] }
+        return controller.model.documentMenuEntries(for: doc)
+    }
+
+    /// WebKit's page menu with the document's verbs: its Reload goes, its selection and link items (Copy, Look Up,
+    /// Open Link) stay above the verbs. A page outside the viewer (no document) keeps WebKit's menu as it is.
+    static func adapt(_ menu: NSMenu, entries: [PathMenuEntry]) {
+        guard !entries.isEmpty else { return }
+        for item in menu.items where item.identifier == webKitReload {
+            menu.removeItem(item)
+        }
+        while menu.items.last?.isSeparatorItem == true {
+            menu.removeItem(at: menu.items.count - 1)
+        }
+        if !menu.items.isEmpty {
+            menu.addItem(.separator())
+        }
+        let built = PathMenu.nsMenu(entries)
+        for item in built.items {
+            built.removeItem(item)
+            menu.addItem(item)
+        }
+    }
+}
+
+/// The menu bar's Document menu: rebuilt from the selected document each time it opens.
+@MainActor
+final class MarkdownDocumentMenu: NSObject, NSMenuDelegate {
+    static let shared = MarkdownDocumentMenu()
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let entries = MarkdownPageMenu.entries(for: NSApp.keyWindow?.contentView)
+        if entries.isEmpty {
+            menu.addItem(withTitle: "No document open", action: nil, keyEquivalent: "").isEnabled = false
+            return
+        }
+        let built = PathMenu.nsMenu(entries)
+        for item in built.items {
+            built.removeItem(item)
+            menu.addItem(item)
+        }
     }
 }
 

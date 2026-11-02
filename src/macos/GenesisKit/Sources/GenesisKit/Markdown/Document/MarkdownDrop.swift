@@ -90,6 +90,12 @@ final class MarkdownDropWebView: WKWebView {
             : .copy
     }
 
+    /// A right-click on the page offers the document's verbs, the same list as its tab's menu (`MarkdownPageMenu`).
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        MarkdownPageMenu.adapt(menu, entries: MarkdownPageMenu.entries(for: self))
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = MarkdownDrop.urls(from: sender.draggingPasteboard)
         guard !urls.isEmpty else { return super.performDragOperation(sender) }
