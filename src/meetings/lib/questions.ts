@@ -384,3 +384,34 @@ export function answerVocabulary(record: MeetingRecord, dictionaryValues: string
         ]),
     ].filter((value) => value.trim().length > 0);
 }
+
+/**
+ * The moment in the recording the question is about: for a term or text, where its heard words fall, estimated from
+ * their place in the line (a source times lines, not words); for a speaker, or words not found, the range's start.
+ */
+export function askedSpotSec(question: QuestionItem, transcript: TranscriptEntry[]): number {
+    const heard = question.heard?.toLowerCase();
+
+    if (!heard) {
+        return question.fromSec;
+    }
+
+    for (const [n, line] of transcript.entries()) {
+        const startSec = line.startSec;
+
+        if (startSec === undefined || startSec < question.fromSec - 1 || startSec > question.toSec) {
+            continue;
+        }
+
+        const at = line.text.toLowerCase().indexOf(heard);
+
+        if (at < 0) {
+            continue;
+        }
+
+        const endSec = transcript.slice(n + 1).find((next) => next.startSec !== undefined)?.startSec ?? question.toSec;
+        return startSec + (at / Math.max(1, line.text.length)) * Math.max(0, endSec - startSec);
+    }
+
+    return question.fromSec;
+}

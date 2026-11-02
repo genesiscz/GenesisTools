@@ -1,17 +1,30 @@
 import { join } from "node:path";
+import * as clack from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { LISTEN_PLAYERS, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import { appendCorrections } from "@genesiscz/utils/meetings/corrections";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import * as p from "@genesiscz/utils/prompts/p";
+import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
+import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { Command } from "commander";
+import pc from "picocolors";
+import {
+    ANSWER_LOG_FILE,
+    type AnswerEvent,
+    appendAnswerEvent,
+    type RoundEndReason,
+    readAnswerEvents,
+    runningRound,
+    subscribeAnswers,
+} from "../lib/answer-log";
 import { clipPlayer, cutClip, meetingAudioPath, playClip } from "../lib/audio";
 import {
     answerQuestion,
     answerVocabulary,
+    askedSpotSec,
     NONE_OF_THESE,
     openQuestions,
     propagateAnswer,
@@ -31,30 +44,58 @@ const SKIP = "\u0000skip";
 const STOP = "\u0000stop";
 const TYPE_IT = "\u0000type";
 const SPLIT = "\u0000split";
+const DEFAULT_SUBSCRIBE_MINUTES = 120;
 
-/** Writes one answer (or a skip) and the term corrections it confirms. */
-async function record(
-    store: MeetingStore,
-    meetingId: string,
-    question: QuestionItem,
-    outcome: { answer: string; comment?: string } | "skip",
-    listenBelow: number
-): Promise<string[]> {
+type Outcome = { answer: string; comment?: string } | "skip" | "split" | "stop" | "back";
+
+/** One decided question of the round: the items before the decision, so Esc can undo it. */
+interface Step {
+    question: QuestionItem;
+    before: MeetingItem[];
+    /** Written when the round ends, so an undone answer leaves no correction behind. */
+    corrections: Correction[];
+}
+
+/** Writes one answer or skip; returns the questions the answer settled and the corrections it confirms. */
+async function decide(options: {
+    store: MeetingStore;
+    meetingId: string;
+    question: QuestionItem;
+    outcome: { answer: string; comment?: string } | "skip";
+    listenBelow: number;
+}): Promise<{ settled: string[]; corrections: Correction[] }> {
+    const { question, outcome } = options;
     const now = new Date().toISOString();
     const change = outcome === "skip" ? `${question.id} skipped` : `${question.id} → ${outcome.answer}`;
-    let ledger: ReturnType<typeof answerQuestion> = [];
+    let corrections: Correction[] = [];
     let settled: string[] = [];
-    await store.update(meetingId, { command: "listen", change }, (current) => {
+    await options.store.update(options.meetingId, { command: "listen", change }, (current) => {
         if (outcome === "skip") {
             skipQuestion(current, question.id, now);
             return;
         }
 
-        ledger = answerQuestion(current, question.id, { ...outcome, now });
-        settled = propagateAnswer(current, question, { answer: outcome.answer, listenBelow, now });
+        corrections = answerQuestion(current, question.id, { ...outcome, now });
+        settled = propagateAnswer(current, question, { answer: outcome.answer, listenBelow: options.listenBelow, now });
     });
-    appendCorrections(ledger);
-    return settled;
+    return { settled, corrections };
+}
+
+function answeredEvent(question: QuestionItem, answer: { answer: string; comment?: string }, settled: string[]) {
+    const event: AnswerEvent = {
+        event: "answered",
+        at: new Date().toISOString(),
+        item: question.id,
+        about: question.about,
+        fromSec: question.fromSec,
+        toSec: question.toSec,
+        question: question.question,
+        ...(question.heard ? { heard: question.heard } : {}),
+        answer: answer.answer,
+        ...(answer.comment ? { comment: answer.comment } : {}),
+        settled,
+    };
+    return event;
 }
 
 /** The first `listen` asks how much audio to hear around a range and keeps the answer. */
@@ -65,12 +106,12 @@ async function padSeconds(config: MeetingsConfigStore): Promise<number | undefin
         return saved;
     }
 
-    const picked = await p.select({
+    const picked = await clack.select({
         message: "How much audio around each question? (saved as playback.listen.padSec)",
         options: PAD_CHOICES.map((sec) => ({ value: sec, label: `${sec} seconds` })),
     });
 
-    if (p.isCancel(picked)) {
+    if (clack.isCancel(picked)) {
         return undefined;
     }
 
@@ -78,17 +119,14 @@ async function padSeconds(config: MeetingsConfigStore): Promise<number | undefin
     return Number(picked);
 }
 
-/** "Something else": pick a known name or word, or type a new one. */
+/** "Something else": pick a known name or word, or type a new one. Esc returns undefined (back to the choices). */
 async function somethingElse(vocabulary: string[]): Promise<string | undefined> {
-    const picked = await p.search<string>({
-        message: "Who or what is it? (type to filter)",
-        options: async () => [
-            { value: TYPE_IT, label: "Type it…" },
-            ...vocabulary.map((value) => ({ value, label: value })),
-        ],
+    const picked = await searchSelect<string>({
+        message: "Who or what is it? (type to filter, Esc goes back)",
+        items: [{ value: TYPE_IT, label: "Type it…" }, ...vocabulary.map((value) => ({ value, label: value }))],
     });
 
-    if (p.isCancel(picked)) {
+    if (typeof picked === "symbol") {
         return undefined;
     }
 
@@ -96,48 +134,48 @@ async function somethingElse(vocabulary: string[]): Promise<string | undefined> 
         return picked;
     }
 
-    const typed = await p.text({ message: "Answer", validate: (value) => (value.trim() ? undefined : "Empty") });
-    return p.isCancel(typed) ? undefined : typed.trim();
+    const typed = await clack.text({ message: "Answer", validate: (value) => (value?.trim() ? undefined : "Empty") });
+    return clack.isCancel(typed) ? undefined : typed.trim();
 }
 
-/** Plays one question's clip and asks until it is answered, skipped or the listener stops. */
+/**
+ * Shows one question, plays its clip after `delayMs`, and asks until it is answered, skipped, split or left. Esc on
+ * the choices goes back to the previous question; Esc in a later step goes back to the choices.
+ */
 async function ask(options: {
     question: QuestionItem;
     clip: string;
     player: (typeof LISTEN_PLAYERS)[number];
     vocabulary: string[];
-}): Promise<{ answer: string; comment?: string } | "skip" | "stop" | "split"> {
+    delayMs: number;
+}): Promise<Outcome> {
     const { question } = options;
-    let playing = playClip(options.player, options.clip);
+    let playing = playClip(options.player, options.clip, options.delayMs);
 
     try {
         while (true) {
-            const picked = await p.select({
-                message: question.question,
+            const picked = await clack.select({
+                message: `${question.question} ${pc.dim("(Esc: back to the previous question)")}`,
                 options: [
                     ...question.choices.map((choice) => ({ value: choice, label: choice })),
-                    { value: AGAIN, label: "Play again" },
+                    { value: AGAIN, label: "Play the audio again" },
                     { value: OTHER, label: "Something else…" },
                     { value: NONE_OF_THESE, label: "None of these", hint: "rejects the items it decides" },
                     ...(question.about === "speaker"
                         ? [{ value: SPLIT, label: "Two voices", hint: "ask each line on its own" }]
                         : []),
                     { value: SKIP, label: "Skip" },
-                    { value: STOP, label: "Enough for now" },
+                    { value: STOP, label: "Enough for now", hint: "the rest stay open for the next listen" },
                 ],
             });
-            playing.kill();
+            playing.stop();
 
-            if (p.isCancel(picked) || picked === STOP) {
-                return "stop";
+            if (clack.isCancel(picked)) {
+                return "back";
             }
 
-            if (picked === SKIP) {
-                return "skip";
-            }
-
-            if (picked === SPLIT) {
-                return "split";
+            if (picked === STOP || picked === SKIP || picked === SPLIT) {
+                return picked === STOP ? "stop" : picked === SKIP ? "skip" : "split";
             }
 
             if (picked === AGAIN) {
@@ -151,15 +189,57 @@ async function ask(options: {
                 continue;
             }
 
-            const comment = await p.text({ message: "Comment (optional)", placeholder: "Enter to skip" });
-            return { answer, ...(p.isCancel(comment) || !comment.trim() ? {} : { comment: comment.trim() }) };
+            const comment = await clack.text({
+                message: `Comment (optional) ${pc.dim("(Esc: back to the choices)")}`,
+                placeholder: "Enter to skip",
+            });
+
+            if (clack.isCancel(comment)) {
+                continue;
+            }
+
+            return { answer, ...(comment?.trim() ? { comment: comment.trim() } : {}) };
         }
     } finally {
-        playing.kill();
+        playing.stop();
     }
 }
 
-async function listen(ref: string, opts: { item?: string; answer?: string; comment?: string }): Promise<void> {
+/** For an agent: prints the answers of the running (or next) round as JSON lines, and exits when it ends. */
+async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: ListenOptions): Promise<void> {
+    const path = join(store.folder(meeting.id), ANSWER_LOG_FILE);
+    const roundRunning = runningRound(readAnswerEvents(path)).length > 0;
+
+    if (!roundRunning && !opts.fromStart && openQuestions(meeting).length === 0) {
+        process.stderr.write(`No open questions in ${meeting.id} and no listen round running.\n`);
+        return;
+    }
+
+    const minutes = opts.timeout === undefined ? DEFAULT_SUBSCRIBE_MINUTES : Number(opts.timeout);
+
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+        fail(`--timeout takes minutes, more than 0 (got "${opts.timeout}").`);
+        return;
+    }
+
+    process.exitCode = await subscribeAnswers({
+        path,
+        fromStart: opts.fromStart === true,
+        timeoutMs: minutes * 60_000,
+        write: (line) => process.stdout.write(`${line}\n`),
+    });
+}
+
+interface ListenOptions {
+    item?: string;
+    answer?: string;
+    comment?: string;
+    subscribeAnswers?: boolean;
+    fromStart?: boolean;
+    timeout?: string;
+}
+
+async function listen(ref: string, opts: ListenOptions): Promise<void> {
     const store = new MeetingStore();
     let meeting: MeetingRecord | undefined;
 
@@ -175,6 +255,11 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
         return;
     }
 
+    if (opts.subscribeAnswers) {
+        await subscribe(meeting, store, opts);
+        return;
+    }
+
     const questions = openQuestions(meeting).filter((item) => !opts.item || item.id === opts.item);
 
     if (questions.length === 0) {
@@ -186,6 +271,8 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
         return;
     }
 
+    const logPath = join(store.folder(meeting.id), ANSWER_LOG_FILE);
+
     try {
         // An answer given on the command line (an agent relaying the user, or a script): no audio, no prompts.
         if (opts.answer !== undefined) {
@@ -195,13 +282,16 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
             }
 
             const settings = await new MeetingsConfigStore().read();
-            const settled = await record(
+            const answer = { answer: opts.answer, ...(opts.comment ? { comment: opts.comment } : {}) };
+            const { settled, corrections } = await decide({
                 store,
-                meeting.id,
-                questions[0]!,
-                { answer: opts.answer, comment: opts.comment },
-                settings.global.suggest.listenBelow
-            );
+                meetingId: meeting.id,
+                question: questions[0]!,
+                outcome: answer,
+                listenBelow: settings.global.suggest.listenBelow,
+            });
+            appendCorrections(corrections);
+            appendAnswerEvent(logPath, answeredEvent(questions[0]!, answer, settled));
 
             if (settled.length > 0) {
                 ui.dim(`the same answer settled ${settled.length} more: ${settled.join(" ")}`);
@@ -242,38 +332,148 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
             meeting,
             dictionary.entries.map((entry) => entry.value)
         );
+        const { budget, minPriority, delaySec, beep, beepLeadSec } = settings.global.playback.listen;
+        const transcript: TranscriptEntry[] = beep ? await meetingTranscript(meeting) : [];
+        await round({
+            meeting,
+            store,
+            logPath,
+            only: opts.item,
+            budget,
+            minPriority,
+            listenBelow: settings.global.suggest.listenBelow,
+            ask: async (question) => {
+                const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
+                const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
+                const spotSec = askedSpotSec(question, transcript);
+                const inClip = spotSec >= heard.fromSec - padSec && spotSec <= heard.toSec + padSec;
+                await cutClip({
+                    audioPath,
+                    fromSec: heard.fromSec,
+                    toSec: heard.toSec,
+                    padSec,
+                    outPath: clip,
+                    ...(beep ? { toneAtSec: (inClip ? spotSec : heard.fromSec) - beepLeadSec } : {}),
+                });
+                return await ask({ question, clip, player, vocabulary, delayMs: delaySec * 1000 });
+            },
+        });
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
 
-        const { budget, minPriority } = settings.global.playback.listen;
-        const listenBelow = settings.global.suggest.listenBelow;
-        const passed = new Set<string>();
-        let asked = 0;
+/** One listening round: asks question after question, keeps each decision on a stack so Esc can undo it. */
+async function round(options: {
+    meeting: MeetingRecord;
+    store: MeetingStore;
+    logPath: string;
+    only?: string;
+    budget: number;
+    minPriority: number;
+    listenBelow: number;
+    ask: (question: QuestionItem) => Promise<Outcome>;
+}): Promise<void> {
+    const { meeting, store, logPath, only, minPriority } = options;
+    const askable = (record: MeetingRecord, passed: Set<string>, reask?: string) =>
+        openQuestions(record).find(
+            (item) =>
+                (reask ? item.id === reask : !passed.has(item.id)) &&
+                (reask !== undefined || !only || item.id === only || passed.size > 0) &&
+                (reask !== undefined || only !== undefined || (item.priority ?? minPriority) >= minPriority)
+        );
+    const steps: Step[] = [];
+    const passed = new Set<string>();
+    const total = Math.min(
+        options.budget,
+        openQuestions(meeting).filter((item) =>
+            only ? item.id === only : (item.priority ?? minPriority) >= minPriority
+        ).length || 1
+    );
+    let ended = false;
+    let reask: string | undefined;
+    let reason: RoundEndReason = "done";
 
-        // The most valuable question first; each answer can settle its look-alikes, so the list is read again.
-        while (asked < budget) {
+    const end = (why: RoundEndReason): void => {
+        if (ended) {
+            return;
+        }
+
+        ended = true;
+        appendCorrections(steps.flatMap((step) => step.corrections));
+        const open = openQuestions(store.read(meeting.id) ?? meeting).length;
+        appendAnswerEvent(logPath, {
+            event: "round-end",
+            at: new Date().toISOString(),
+            reason: why,
+            asked: steps.length,
+            open,
+        });
+        ui.ok(`${steps.length} decided; ${open} open questions stay, marked in ${TOOL} transcript ${meeting.id}.`);
+    };
+    // Ctrl-C outside a prompt (while a clip is cut) ends the process; the exit handler still closes the round.
+    const onExit = (): void => end("aborted");
+    const onSigint = (): void => process.exit(130);
+    process.once("exit", onExit);
+    process.once("SIGINT", onSigint);
+    appendAnswerEvent(logPath, { event: "round-start", at: new Date().toISOString(), pid: process.pid, open: total });
+
+    try {
+        while (steps.length < options.budget) {
             const current = store.read(meeting.id) ?? meeting;
-            const question = openQuestions(current).find(
-                (item) =>
-                    !passed.has(item.id) &&
-                    (!opts.item || item.id === opts.item || passed.size > 0) &&
-                    (opts.item !== undefined || (item.priority ?? minPriority) >= minPriority)
-            );
+            const question = askable(current, passed, reask);
+            reask = undefined;
 
             if (!question) {
                 break;
             }
 
-            const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
-            const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
-            asked += 1;
             ui.header(
-                `${asked}/${budget}  ${question.id}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
+                `${steps.length + 1}/${total}  ${question.id}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
             );
-            await cutClip({ audioPath, fromSec: heard.fromSec, toSec: heard.toSec, padSec, outPath: clip });
-            const outcome = await ask({ question, clip, player, vocabulary });
+            const outcome = await options.ask(question);
 
             if (outcome === "stop") {
+                reason = "stopped";
                 break;
             }
+
+            if (outcome === "back") {
+                const last = steps.pop();
+
+                if (!last) {
+                    const leave = await clack.select({
+                        message: "Leave this round? The answers are saved; the next listen goes on from here.",
+                        options: [
+                            { value: "stay", label: "Stay on this question" },
+                            { value: "leave", label: "Leave" },
+                        ],
+                    });
+
+                    if (clack.isCancel(leave) || leave === "leave") {
+                        reason = "stopped";
+                        break;
+                    }
+
+                    reask = question.id;
+                    continue;
+                }
+
+                await store.update(
+                    meeting.id,
+                    { command: "listen", change: `${last.question.id} reopened` },
+                    (next) => {
+                        next.items = last.before;
+                    }
+                );
+                passed.delete(last.question.id);
+                appendAnswerEvent(logPath, { event: "reopened", at: new Date().toISOString(), item: last.question.id });
+                ui.dim(`  back to ${last.question.id}: its answer is undone`);
+                reask = last.question.id;
+                continue;
+            }
+
+            const before = structuredClone(current.items);
 
             if (outcome === "split") {
                 const transcript = await meetingTranscript(current);
@@ -285,12 +485,32 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
                         lines = splitQuestion(next, question.id, { transcript, now: new Date().toISOString() }).length;
                     }
                 );
+                steps.push({ question, before, corrections: [] });
+                appendAnswerEvent(logPath, {
+                    event: "split",
+                    at: new Date().toISOString(),
+                    item: question.id,
+                    into: lines,
+                });
                 ui.info(`${question.id}: split into ${lines} questions, one per line; they come next.`);
                 continue;
             }
 
             passed.add(question.id);
-            const settled = await record(store, meeting.id, question, outcome, listenBelow);
+            const { settled, corrections } = await decide({
+                store,
+                meetingId: meeting.id,
+                question,
+                outcome,
+                listenBelow: options.listenBelow,
+            });
+            steps.push({ question, before, corrections });
+            appendAnswerEvent(
+                logPath,
+                outcome === "skip"
+                    ? { event: "skipped", at: new Date().toISOString(), item: question.id }
+                    : answeredEvent(question, outcome, settled)
+            );
             log.info({ meeting: meeting.id, question: question.id, outcome, settled }, "question decided");
             ui.ok(outcome === "skip" ? `${question.id} skipped` : `${question.id}: ${outcome.answer}`);
 
@@ -299,12 +519,13 @@ async function listen(ref: string, opts: { item?: string; answer?: string; comme
             }
         }
 
-        const left = openQuestions(store.read(meeting.id) ?? meeting).length;
-        ui.ok(
-            `${asked} asked; ${left} open questions stay as suggestions, marked in ${TOOL} transcript ${meeting.id}.`
-        );
-    } catch (err) {
-        fail(errorText(err));
+        if (reason === "done" && steps.length >= options.budget) {
+            reason = "budget";
+        }
+    } finally {
+        process.off("exit", onExit);
+        process.off("SIGINT", onSigint);
+        end(reason);
     }
 }
 
@@ -312,9 +533,20 @@ export function registerListenCommand(program: Command): void {
     program
         .command("listen")
         .argument("<meeting>", "meeting id, a unique prefix, last, or wisprflow:<id>")
-        .description("Answer the open questions by ear: each range is cut, played, and its answer decides its items")
+        .description(
+            "Answer the open questions by ear, one at a time: each range is cut, played, and its answer decides its items"
+        )
         .option("--item <id>", "only this question")
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
+        .option(
+            "--subscribe-answers",
+            "for an agent: print each answer as one JSON line while the person answers; exit when the round ends"
+        )
+        .option("--from-start", "with --subscribe-answers: print every earlier round first")
+        .option(
+            "--timeout <minutes>",
+            `with --subscribe-answers: give up after this long (default ${DEFAULT_SUBSCRIBE_MINUTES})`
+        )
         .action(listen);
 }
