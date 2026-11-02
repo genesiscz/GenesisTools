@@ -353,6 +353,43 @@ describe("energy over the live segments (R4.3)", () => {
     });
 });
 
+describe("own label (R17)", () => {
+    test("in a dialogue with a person's own label, the other voice E3 shows is the line's, and that person's live name loses", () => {
+        const items = suggestItems({
+            record,
+            meeting: {
+                ...meeting,
+                speakers: [
+                    { speakerId: 1, name: "Bob Example", origin: "platform" },
+                    { speakerId: 2, name: "Carol Example", origin: "llm" },
+                ],
+                transcript: [
+                    line("Bob Example", 0, "Jak to máš?", 1),
+                    line("Carol Example", 4, "Mám to hotové.", 2),
+                    line("Carol Example", 60, "A ještě tohle.", 2),
+                ],
+            },
+            rules: ["evidence"],
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            evidence: {
+                selfName: "Alice Example",
+                segments: [{ startSec: 0, endSec: 70, channel: "system", liveName: "Bob Example" }],
+                speaking: [
+                    { tSec: 4, speaking: ["Bob Example", "Rob Example"], muted: [] },
+                    { tSec: 60, speaking: ["Bob Example", "Rob Example"], muted: [] },
+                ],
+                files: [],
+            },
+            now: "2026-11-02T15:00:00.000Z",
+        });
+        const at = (sec: number) => items.find((item) => item.kind === "speaker-range" && item.fromSec === sec);
+
+        expect(at(4)).toMatchObject({ speaker: "Rob Example", rules: ["E1", "E3", "R17"], confidence: 0.65 });
+        expect(at(60)).toMatchObject({ speaker: "Bob Example", rules: ["E1", "E3", "E4"] });
+    });
+});
+
 describe("evidence rule after a leave", () => {
     test("a live name of someone who left is dropped; the speaking indicator among those still here guesses, to listen", () => {
         const items = suggestItems({

@@ -357,6 +357,9 @@ const ENERGY_CALL_SURE = 0.1;
 const ENERGY_SURE_CONFIDENCE = 0.85;
 /** The energy says the microphone while the segments said the call: both voices may be in the line. */
 const ENERGY_OVER_SEGMENTS_CONFIDENCE = 0.75;
+/** R17: a platform-named label with a line this close to another label's line is talking in the same dialogue. */
+const OWN_LABEL_SEC = 10;
+const OWN_LABEL_CONFIDENCE = 0.65;
 
 /**
  * How sure a microphone-won line is the user: the microphone's share, at most 0.95; less when the microphone heard
@@ -399,7 +402,15 @@ function speakingNames(line: LineEvidence): string[] {
  *   name them when they agree, else the people in the call are the candidates.
  * - The call's sound under another label whose live name and speaking indicator agree on a different person.
  */
-function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean): EvidenceFinding | undefined {
+function findingFor(options: {
+    line: LineEvidence;
+    selfName: string;
+    isSelfLabel: boolean;
+    /** The platform-named labels other than this line's that have a line within `OWN_LABEL_SEC` of it (R17). */
+    ownLabelNearby: string[];
+}): EvidenceFinding | undefined {
+    const { line, selfName, isSelfLabel, ownLabelNearby } = options;
+
     if (line.micShare === undefined || !line.winner) {
         return undefined;
     }
@@ -462,6 +473,22 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
             confidence: 0.9,
             ...listen,
         };
+    }
+
+    // R17: of the people E3 shows, one who talks under their own label right now is the other side of the dialogue.
+    const elsewhere = shown.filter((name) => ownLabelNearby.some((label) => sameName(label, name)));
+    const others = shown.filter((name) => !elsewhere.includes(name));
+    const other = others.length === 1 && elsewhere.length > 0 ? others[0] : undefined;
+
+    if (other && (!present || present.some((name) => sameName(name, other)))) {
+        return sameName(other, line.label)
+            ? undefined
+            : {
+                  speaker: other,
+                  rules: [channel, MeetingRule.SpeakingIndicator, MeetingRule.OwnLabel],
+                  confidence: OWN_LABEL_CONFIDENCE,
+                  ...listen,
+              };
     }
 
     if (isSelfLabel) {
@@ -561,6 +588,9 @@ function evidenceItems(options: {
             open = undefined;
         }
     };
+    const platformLabels = new Set(
+        options.meeting.speakers.filter((speaker) => speaker.origin === "platform").map((speaker) => speaker.name)
+    );
     const byLabel = new Map<string, LineEvidence[]>();
 
     for (const line of lines) {
@@ -571,7 +601,23 @@ function evidenceItems(options: {
         const isSelfLabel = sameName(label, selfName);
 
         for (const line of labelLines) {
-            const finding = findingFor(line, selfName, isSelfLabel);
+            const finding = findingFor({
+                line,
+                selfName,
+                isSelfLabel,
+                ownLabelNearby: [
+                    ...new Set(
+                        lines
+                            .filter(
+                                (near) =>
+                                    near.label !== label &&
+                                    platformLabels.has(near.label) &&
+                                    Math.abs(near.startSec - line.startSec) <= OWN_LABEL_SEC
+                            )
+                            .map((near) => near.label)
+                    ),
+                ],
+            });
 
             // A range holds only consecutive lines with its finding: a line without one stays its label's.
             if (!finding) {
