@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { RecordedEvent } from "./channels.ts";
 import { harFromMessages } from "./har/build.ts";
 import type { CdpMessage } from "./har/types.ts";
@@ -144,6 +145,64 @@ describe("sanitizeHar", () => {
         // the original is untouched
         expect(raw.log.entries[0].request.headers.find((h) => h.name === "Cookie")?.value).toBe("sid=hunter2");
         expect(raw.log.entries[0].request.url).toContain("code=oauth-secret");
+    });
+});
+
+describe("sanitizeHar custom credential headers", () => {
+    // 2026-11-02: a HAR written with --sanitize still carried a live `authToken` request header.
+    test("masks authToken and other credential headers by name, case-insensitive; keeps ordinary ones", () => {
+        const messages: CdpMessage[] = [
+            { method: "Page.frameStartedLoading", params: { frameId: "F1" } },
+            {
+                method: "Network.requestWillBeSent",
+                params: {
+                    requestId: "r1",
+                    frameId: "F1",
+                    timestamp: 1,
+                    wallTime: 1700000000,
+                    type: "XHR",
+                    initiator: { type: "other" },
+                    request: {
+                        method: "GET",
+                        url: "https://timesheets.example.com/ppm/rest/v1/timesheets",
+                        headers: {
+                            authToken: "12345678__00000000-0000-0000-0000-000000000000",
+                            "X-Auth-Token": "fake-auth-token-value",
+                            "x-api-next-string": "dHJ1ZQ==",
+                            Accept: "application/json",
+                        },
+                    },
+                },
+            },
+            {
+                method: "Network.responseReceived",
+                params: {
+                    requestId: "r1",
+                    frameId: "F1",
+                    timestamp: 1.2,
+                    response: {
+                        url: "https://timesheets.example.com/ppm/rest/v1/timesheets",
+                        protocol: "http/1.1",
+                        status: 200,
+                        statusText: "OK",
+                        mimeType: "application/json",
+                        headers: { "content-type": "application/json" },
+                        encodedDataLength: 10,
+                        connectionId: 1,
+                    },
+                },
+            },
+            { method: "Network.loadingFinished", params: { requestId: "r1", timestamp: 1.3, encodedDataLength: 10 } },
+        ];
+
+        const clean = sanitizeHar(harFromMessages(messages));
+        const headers = clean.log.entries[0].request.headers;
+        const value = (name: string) => headers.find((h) => h.name === name)?.value;
+        expect(value("authToken")).toBe("[REDACTED]");
+        expect(value("X-Auth-Token")).toBe("[REDACTED]");
+        expect(value("x-api-next-string")).toBe("dHJ1ZQ==");
+        expect(value("Accept")).toBe("application/json");
+        expect(SafeJSON.stringify(clean)).not.toContain("12345678__00000000-0000-0000-0000-000000000000");
     });
 });
 

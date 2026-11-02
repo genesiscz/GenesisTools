@@ -3,6 +3,7 @@
  * The conversion itself is the chrome-har port in ./har/build.ts.
  */
 import { localNetworkBlockOf } from "@genesiscz/utils/chrome-devtools/permissions";
+import { sensitiveHeaderKind } from "@genesiscz/utils/http/sensitive-headers";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attach, type Page } from "./cdp.ts";
@@ -13,8 +14,6 @@ import { captureDir } from "./paths.ts";
 import { readEvents } from "./segments.ts";
 
 const { log } = logger.scoped("chrome-devtools:har-io");
-
-const SENSITIVE_HEADER = /^(cookie|set-cookie|authorization|proxy-authorization|x-api-key|x-auth-token|x-csrf-token)$/i;
 
 /** "90s" | "30m" | "2h" → ms. Bare numbers are minutes. */
 export function parseDuration(raw: string): number | null {
@@ -277,7 +276,7 @@ export function sanitizeHar(har: HarFile): HarFile {
         }
 
         for (const h of [...entry.request.headers, ...(entry.response?.headers ?? [])]) {
-            if (SENSITIVE_HEADER.test(h.name)) {
+            if (sensitiveHeaderKind(h.name) !== null) {
                 h.value = "[REDACTED]";
             }
         }
