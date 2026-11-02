@@ -5,7 +5,15 @@ import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
-import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    ITEM_STATUSES,
+    type MeetingItem,
+    type MeetingRecord,
+    MeetingStore,
+    meetingItemSchema,
+    nextId,
+    QUESTION_TOPICS,
+} from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { applyCorrections, type TranscriptCorrections } from "@genesiscz/utils/transcribe/apply";
@@ -15,6 +23,7 @@ import {
     formatClock,
     groupTurns,
     localTime,
+    parseClock,
     TRANSCRIPT_FORMATS,
     transcriptMarkdown,
     transcriptTextLines,
@@ -74,6 +83,12 @@ function itemWhat(item: MeetingItem): string {
 
     if (item.kind === "join") {
         return `${formatClock(item.atSec)} "${item.joined ?? ""}"${item.speaker ? ` → ${item.speaker}` : ""}`;
+    }
+
+    if (item.kind === "question") {
+        const range = `${formatClock(item.fromSec)}–${formatClock(item.toSec)}`;
+        const said = item.answer ? `→ ${item.answer}` : item.choices.length > 0 ? `(${item.choices.join(" / ")})` : "";
+        return `${range} ${item.question} ${said}`.trim();
     }
 
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";
@@ -197,6 +212,90 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
     printItems(listed);
 }
 
+/** `items add --listen`: a question of the polisher's own, answered later by ear with `listen`. */
+async function addQuestion(
+    ref: string,
+    opts: {
+        listen?: boolean;
+        from: string;
+        to: string;
+        about?: string;
+        question: string;
+        choices?: string;
+        decides?: string;
+    }
+): Promise<void> {
+    if (!opts.listen) {
+        fail(`Only questions can be added by hand: pass --listen. The other kinds come from ${TOOL} suggest.`);
+        return;
+    }
+
+    const fromSec = parseClock(opts.from);
+    const toSec = parseClock(opts.to);
+
+    if (fromSec === undefined || toSec === undefined || toSec < fromSec) {
+        fail(`--from and --to need transcript times (37:43, 1:02:10 or seconds), --from first.`);
+        return;
+    }
+
+    const about = await resolveEnum({
+        value: opts.about,
+        fallback: "speaker",
+        values: QUESTION_TOPICS,
+        flag: "--about",
+        subcommand: ["items", "add"],
+    });
+
+    if (!about) {
+        return;
+    }
+
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
+
+    if (!record) {
+        return;
+    }
+
+    const list = (value?: string) =>
+        (value ?? "")
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean);
+    const decides = list(opts.decides);
+    const unknown = decides.filter((id) => !record.items.some((item) => item.id === id));
+
+    if (unknown.length > 0) {
+        fail(`${record.id} has no item ${unknown.join(", ")} (${TOOL} items ${record.id})`);
+        return;
+    }
+
+    try {
+        let id = "";
+        await store.update(record.id, { command: "items add", change: opts.question }, (current) => {
+            id = nextId("i", current.items);
+            current.items.push(
+                meetingItemSchema.parse({
+                    id,
+                    kind: "question",
+                    status: "suggested",
+                    about,
+                    fromSec,
+                    toSec,
+                    question: opts.question,
+                    choices: list(opts.choices),
+                    decides,
+                    rules: ["user"],
+                    suggestedAt: new Date().toISOString(),
+                })
+            );
+        });
+        ui.ok(`${id} added to ${record.id}. Answer it: ${TOOL} listen ${record.id} --item ${id}`);
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 /** Picks the items a decision names: ids, or every suggested item at or above a confidence. */
 function pickItems(record: MeetingRecord, ids: string[], minConfidence?: number): MeetingItem[] | string {
     if (minConfidence !== undefined) {
@@ -249,7 +348,14 @@ async function decide(
         status === "confirmed"
             ? picked.filter((item) => item.kind === "speaker-range" && !item.speaker && !opts.speaker)
             : [];
-    const deciding = picked.filter((item) => !unnamed.includes(item));
+    // A question is answered by ear, which also decides the items it names.
+    const questions: MeetingItem[] = status === "confirmed" ? picked.filter((item) => item.kind === "question") : [];
+
+    for (const item of questions) {
+        ui.warn(`${item.id} is a question; answer it: ${TOOL} listen ${record.id} --item ${item.id}`);
+    }
+
+    const deciding = picked.filter((item) => !unnamed.includes(item) && !questions.includes(item));
 
     for (const item of unnamed) {
         const candidates =
@@ -260,7 +366,7 @@ async function decide(
     }
 
     if (deciding.length === 0) {
-        process.exitCode = unnamed.length > 0 ? 1 : 0;
+        process.exitCode = unnamed.length + questions.length > 0 ? 1 : 0;
         return;
     }
 
@@ -496,9 +602,20 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("The meeting's items with their status, confidence and rules")
         .option("--status [status]", ITEM_STATUSES.join(" | "))
-        .option("--kind <kind>", "speaker-range | join | term")
+        .option("--kind <kind>", "speaker-range | join | term | question")
         .option("--json", "print JSON")
-        .action(items);
+        .action(items)
+        .command("add")
+        .argument("<meeting>", MEETING_REF)
+        .description("Add a question to answer by ear (tools meetings listen)")
+        .option("--listen", "the item is a question answered by listening (the only kind added by hand)")
+        .requiredOption("--from <time>", "start of the range: 37:43, 1:02:10 or seconds")
+        .requiredOption("--to <time>", "end of the range")
+        .option("--about [topic]", `${QUESTION_TOPICS.join(" | ")} (default speaker)`)
+        .requiredOption("--question <text>", "what to decide, as the listener reads it")
+        .option("--choices <list>", "comma-separated answers to offer")
+        .option("--decides <ids>", "comma-separated items the answer confirms or rejects")
+        .action(addQuestion);
 
     for (const [name, status] of [
         ["confirm", "confirmed"],

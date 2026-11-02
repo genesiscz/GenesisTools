@@ -30,6 +30,8 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
 | `attendance <meeting> [--from teams\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given |
+| `listen <meeting> [--item i42]` | Answer the open questions by ear: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), played (`afplay` by default), and the answer decides its items. `--item i42 --answer "<text>"` answers without audio |
+| `items add <meeting> --listen --from 37:43 --to 37:51 --question "…" [--choices "A,B"] [--decides i7]` | Add a question of your own for `listen` |
 | `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
@@ -83,6 +85,10 @@ confirmed items change a transcript (`--with-suggested` previews the rest).
   live name, overruled when attendance says that person was not in the call).
 - `join`: a word cut between two lines ("dot" + "áhnu").
 - `term`: a misheard term and its proposed spelling.
+- `question`: something to decide by ear (`about`: speaker, term or text), with its time range, `choices` and the
+  items it `decides`. `suggest` asks one for each range marked "confirm by listening". Answering it confirms each
+  decided item with the answer (a range's speaker, a term's spelling); "none of these" rejects them; a skip leaves
+  them as they were.
 
 A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
 
