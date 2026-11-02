@@ -669,13 +669,12 @@ function backgroundTaskOf(payload: HookPayload): DeferredCall | null {
     }
 
     const folder = join(`claude-${process.getuid?.() ?? 0}`, basename(dirname(transcript)), payload.sessionId, "tasks");
-    const agent = payload.raw.agent_id ?? payload.raw.agentId;
 
     for (const base of new Set(["/private/tmp", "/tmp", tmpdir()])) {
         const output = join(base, folder, `${id}.output`);
 
         if (existsSync(output)) {
-            return { id, output, ...(typeof agent === "string" ? { agent } : {}) };
+            return { id, output, ...(payload.agentId ? { agent: payload.agentId } : {}) };
         }
     }
 
@@ -903,8 +902,7 @@ export function flushDeferred({
     const parent = dirname(callDir(payload.harness, session, call));
     // The main agent and its subagents share one session folder. A task is printed only to a later call of the agent
     // that started it, or a subagent's background test run lands in the main agent's output (2026-11-01).
-    const agent = payload.raw.agent_id ?? payload.raw.agentId;
-    const caller = typeof agent === "string" ? agent : undefined;
+    const caller = payload.agentId;
     const decisions: DiffDecision[] = [];
     let spent = 0;
     let names: string[];
@@ -961,7 +959,8 @@ export function flushDeferred({
                     // the spread) and the agent that made the call carry over, never this later call's tool fields.
                     toolInput: undefined,
                     toolResponse: undefined,
-                    raw: deferred.agent ? { agent_id: deferred.agent } : {},
+                    agentId: deferred.agent,
+                    raw: {},
                 },
                 config,
                 record,
