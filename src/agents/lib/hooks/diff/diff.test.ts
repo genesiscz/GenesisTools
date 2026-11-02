@@ -349,6 +349,37 @@ describe("runDiffPost", () => {
         expect(kept?.gitBase).toBeUndefined();
     });
 
+    it("leaves a changed file under a cloud storage folder out of the change log, whose read would download it", () => {
+        const cloud = join(repo, "Library", "CloudStorage", "Provider-log");
+        const note = join(cloud, "note.md");
+        const control = join(repo, "cloud-control.ts");
+
+        mkdirSync(cloud, { recursive: true });
+        // Dirty before the command, so the pre phase leaves it out of the capture, as it does a placeholder.
+        writeFileSync(note, "alpha\n");
+
+        try {
+            const current = begin({ command: `perl -pi -e 's/a/b/' cloud-control.ts ${note}` }, plain.diff);
+            writeFileSync(note, "bravo\n");
+            writeFileSync(control, "made\n");
+            let logged: string[] = [];
+            runDiffPost({
+                payload: current,
+                config: plain,
+                record: (_payload, captures) => {
+                    logged = captures.map((item) => item.path);
+                },
+            });
+
+            // The control file is the positive case: the recorder ran and got the command's other file.
+            expect(logged).toContain(control);
+            expect(logged).not.toContain(note);
+        } finally {
+            rmSync(join(repo, "Library"), { recursive: true, force: true });
+            rmSync(control, { force: true });
+        }
+    });
+
     it("git before-states come back per file, in order, with a missing path empty", () => {
         const base = { root: repo, base: "HEAD" };
         const read = capturedBefores([

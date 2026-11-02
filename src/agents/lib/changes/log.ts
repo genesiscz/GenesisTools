@@ -1,5 +1,6 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, sep } from "node:path";
+import { cloudReadRisk } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmBashWrite } from "@genesiscz/utils/rm";
@@ -381,6 +382,20 @@ export function capBlob(bytes: Buffer): ChangeBytes {
 /** The largest blob kept whole; a reader may ask for one byte more to learn it is too large. */
 export const MAX_BLOB_BYTES = MAX_BYTES;
 
+/**
+ * Why reading the bytes `path` has now could download them from a cloud provider (`cloudReadRisk`), or `null`; `null`
+ * too for a path that cannot be stat'ed, which no read reaches. The Bash hook refuses such a file a before-state, and
+ * its after-state is never read either: the change log reads a file whole, and a command that only touched a
+ * placeholder downloaded it while the hook recorded the call (eve on #669, 2026-11-02).
+ */
+export function afterReadRisk(path: string): string | null {
+    try {
+        return cloudReadRisk(path, statSync(path));
+    } catch {
+        return null;
+    }
+}
+
 /** Read a file the hook already capped, or mark it skipped. Never throws. */
 export function readCapped(path: string | null): ChangeBytes {
     if (!path || !existsSync(path)) {
@@ -495,6 +510,13 @@ export function recordScriptedEdits(
 
         for (const path of discovered) {
             if (byPath.has(path) || known?.has(path) || since === undefined || !modifiedSince(path, since)) {
+                continue;
+            }
+
+            const risk = afterReadRisk(path);
+
+            if (risk) {
+                sink.log(`changes: ${path} not logged: ${risk}`);
                 continue;
             }
 
