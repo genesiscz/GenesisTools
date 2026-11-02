@@ -7,7 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { speakerLabel } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { completeTranscript, type LiveLine, parseLive } from "./live";
-import { fillSpeakerMentions, resolveSpeakers } from "./speakers";
+import { fillSpeakerMentions, resolveSpeakers, selfName } from "./speakers";
 import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote } from "./types";
 
 const { log } = logger.scoped("wisprflow-local");
@@ -295,6 +295,16 @@ export function dictionaryCandidates(): Array<{ value: string; replacement?: str
         value: row.phrase,
         ...(row.replacement ? { replacement: row.replacement } : {}),
     }));
+}
+
+/** The recording user's name in one meeting's speaker map. */
+export function localSelfName(id: string): string | undefined {
+    return withDb((db) => {
+        const row = db
+            .query<{ speakerMap: string | null }, [string]>("SELECT speakerMap FROM Meetings WHERE id = ?")
+            .get(id);
+        return selfName(row?.speakerMap);
+    });
 }
 
 /** The newest meeting the app has not ended: the one it is recording now, if any. */

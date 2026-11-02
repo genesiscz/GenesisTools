@@ -1,14 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
-import type { DictionaryCandidate, SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
-import { type Presence, type SpeakerHint, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
+import { type Presence, type SpeakerHint, sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
 
 const { log } = logger.scoped("meetings-suggest");
 
-export const SUGGEST_RULES = ["speakers", "terms"] as const;
+export const SUGGEST_RULES = ["speakers", "evidence", "terms"] as const;
 export type SuggestRule = (typeof SUGGEST_RULES)[number];
 
 export function isSuggestRule(value: string): value is SuggestRule {
@@ -180,6 +181,158 @@ function termItems(options: {
     });
 }
 
+/** A line counts as one channel when that channel holds at least this share of it (rule E1). */
+const CHANNEL_SHARE = 0.9;
+/** Lines of one label closer than this, with the same finding, form one item. */
+const EVIDENCE_GAP_SEC = 120;
+
+interface EvidenceFinding {
+    speaker?: string;
+    candidates?: string[];
+    rules: string[];
+    confidence: number;
+    /** Both channels are in the line: a person should listen before confirming. */
+    listen?: boolean;
+}
+
+/** The names the platform showed speaking during a line, most often first. */
+function speakingNames(line: LineEvidence): string[] {
+    return Object.entries(line.speaking)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name]) => name);
+}
+
+/**
+ * Rule E1 with E3 and E4: what the audio channel says about one line.
+ * - The user's microphone under another label: the line is the user.
+ * - The call's sound under the user's label: someone else; the platform's speaking indicator (E3) and live name (E4)
+ *   name them when they agree, else the people in the call are the candidates.
+ * - The call's sound under another label whose live name and speaking indicator agree on a different person.
+ */
+function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean): EvidenceFinding | undefined {
+    if (line.micShare === undefined || !line.winner) {
+        return undefined;
+    }
+
+    if (line.winner === SELF) {
+        return isSelfLabel
+            ? undefined
+            : {
+                  speaker: selfName,
+                  rules: ["E1"],
+                  confidence: line.micShare,
+                  ...(line.micShare < CHANNEL_SHARE ? { listen: true } : {}),
+              };
+    }
+
+    // The call's sound won the line. Some microphone in it means two voices: listen before confirming.
+    const listen = line.micShare > 1 - CHANNEL_SHARE ? { listen: true } : {};
+    const shown = speakingNames(line).filter((name) => !sameName(name, selfName));
+    const present = line.present?.filter((name) => !sameName(name, selfName));
+    const live =
+        line.liveName && (!present || present.some((name) => sameName(name, line.liveName!)))
+            ? line.liveName
+            : undefined;
+    const agreed = live && shown[0] && sameName(shown[0], live) ? live : undefined;
+
+    if (isSelfLabel) {
+        return agreed
+            ? { speaker: agreed, rules: ["E1", "E3", "E4"], confidence: 0.8, ...listen }
+            : { candidates: present ?? shown, rules: ["E1"], confidence: 0.6, ...listen };
+    }
+
+    if (agreed && !sameName(agreed, line.label)) {
+        return { speaker: agreed, rules: ["E1", "E3", "E4"], confidence: 0.7, ...listen };
+    }
+
+    // RA: the label's own person was not in the call, so the platform's live name is the best guess left.
+    const labelAbsent = present !== undefined && !present.some((name) => sameName(name, line.label));
+
+    if (labelAbsent && live) {
+        return { speaker: live, rules: ["E1", "E4", "RA"], confidence: 0.6, ...listen };
+    }
+
+    return undefined;
+}
+
+function evidenceItems(options: {
+    meeting: SourceMeeting;
+    evidence: MeetingEvidence;
+    presence?: Presence[];
+}): NewItem[] {
+    const selfName = options.evidence.selfName;
+
+    if (!selfName || options.evidence.segments.length === 0) {
+        log.debug({ selfName, segments: options.evidence.segments.length }, "no channel evidence");
+        return [];
+    }
+
+    const lines = lineEvidence(options.meeting.transcript, options.evidence, options.presence);
+    const items: NewItem[] = [];
+    let open: { item: Extract<NewItem, { kind: "speaker-range" }>; key: string; shares: number[] } | undefined;
+    const close = () => {
+        if (open) {
+            const mean = open.shares.reduce((sum, share) => sum + share, 0) / open.shares.length;
+            open.item.confidence = Math.round(mean * 100) / 100;
+            open.item.evidence = { ...open.item.evidence, lines: open.shares.length };
+            items.push(open.item);
+            open = undefined;
+        }
+    };
+    const byLabel = new Map<string, LineEvidence[]>();
+
+    for (const line of lines) {
+        byLabel.set(line.label, [...(byLabel.get(line.label) ?? []), line]);
+    }
+
+    for (const [label, labelLines] of byLabel) {
+        const isSelfLabel = sameName(label, selfName);
+
+        for (const line of labelLines) {
+            const finding = findingFor(line, selfName, isSelfLabel);
+            const key = finding
+                ? `${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}`
+                : "";
+
+            if (!finding) {
+                continue;
+            }
+
+            if (open && open.key === key && line.startSec - open.item.toSec < EVIDENCE_GAP_SEC) {
+                open.item.toSec = line.startSec;
+                open.shares.push(finding.confidence);
+                continue;
+            }
+
+            close();
+            open = {
+                key,
+                shares: [finding.confidence],
+                item: {
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label,
+                    fromSec: line.startSec,
+                    toSec: line.startSec,
+                    ...(finding.speaker ? { speaker: finding.speaker } : {}),
+                    ...(finding.candidates ? { candidates: finding.candidates } : {}),
+                    confidence: finding.confidence,
+                    rules: finding.rules,
+                    evidence: {
+                        channel: finding.speaker === selfName ? "mic" : "system",
+                        ...(finding.listen ? { note: "both channels in these lines: confirm by listening" } : {}),
+                    },
+                },
+            };
+        }
+
+        close();
+    }
+
+    log.debug({ lines: lines.length, items: items.length }, "evidence items");
+    return items;
+}
+
 /** Two items say the same thing: the same kind on the same label, time or word. */
 function itemKey(item: NewItem | MeetingItem): string {
     if (item.kind === "speaker-range") {
@@ -204,6 +357,7 @@ export function suggestItems(options: {
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
     presence?: Presence[];
+    evidence?: MeetingEvidence | null;
     now: string;
 }): MeetingItem[] {
     const { record, meeting } = options;
@@ -218,6 +372,10 @@ export function suggestItems(options: {
         const selfName = record.participants.find((person) => person.self)?.name;
         const selfAttendee = options.presence?.find((stay) => stay.self)?.name;
         found.push(...speakerItems({ hints: stats.hints, selfName, selfAttendee, lastSecOf }));
+    }
+
+    if (options.rules.includes("evidence") && options.evidence) {
+        found.push(...evidenceItems({ meeting, evidence: options.evidence, presence: options.presence }));
     }
 
     if (options.rules.includes("terms")) {

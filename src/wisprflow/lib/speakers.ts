@@ -55,6 +55,16 @@ export function resolveSpeakers(raw: string | null | undefined): Participant[] {
     return participants.sort((a, b) => (a.speakerId ?? 0) - (b.speakerId ?? 0));
 }
 
+/** The recording user's name: the person the app marks `origin: "self"`, whether or not a speaker is assigned to them. */
+export function selfName(raw: string | null | undefined): string | undefined {
+    if (!raw) {
+        return undefined;
+    }
+
+    const map = SafeJSON.parse(raw, { strict: true }) as SpeakerMap;
+    return Object.values(map.people ?? {}).find((person) => person.origin === "self")?.name;
+}
+
 /** The app writes speakers into its summary and notes as `<@speaker:N>`; the MCP resolves them server-side. */
 export function fillSpeakerMentions(text: string, participants: Participant[]): string {
     return text.replace(/<@speaker:(\d+)>/g, (_, id: string) => speakerLabel(participants, Number(id)));

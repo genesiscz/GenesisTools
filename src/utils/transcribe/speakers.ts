@@ -469,7 +469,7 @@ function nameWords(name: string): Set<string> {
 }
 
 /** "Bob Example" is "Example Bob (QT)": every word of the shorter name is in the longer one, and it has two words at least. */
-function sameName(a: string, b: string): boolean {
+export function sameName(a: string, b: string): boolean {
     const [short, long] = [nameWords(a), nameWords(b)].sort((x, y) => x.size - y.size);
     return short!.size >= 2 && [...short!].every((word) => long!.has(word));
 }

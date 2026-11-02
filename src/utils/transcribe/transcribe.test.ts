@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { applyCorrections } from "./apply";
 import { applyDictionary, dictionaryLevelSchema, mergeDictionaries } from "./dictionary";
+import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
 import { LEAVE_PHRASES, type Presence, speakerStats } from "./speakers";
 import type { Participant, TranscriptEntry } from "./types";
 
@@ -251,5 +252,42 @@ describe("applyCorrections", () => {
             ["Carol Renamed", "Pak ještě něco."],
         ]);
         expect(applied).toMatchObject({ joins: 1, ranges: 1, terms: 1, expansions: 1 });
+    });
+});
+
+describe("lineEvidence", () => {
+    const entries = [
+        line("Alice Example", 0, "Ahoj všichni."),
+        line("Bob Example", 10, "Já mám otázku."),
+        line("Bob Example", 20, "Jedna věc."),
+        line("Bob Example", 30, "Konec."),
+    ];
+    const segments = [
+        { startSec: 0, endSec: 10, channel: "system" as const, liveName: "Alice Example" },
+        { startSec: 10, endSec: 20, channel: "mic" as const },
+        { startSec: 20, endSec: 25, channel: "mic" as const },
+        { startSec: 25, endSec: 30, channel: "system" as const, liveName: "Carol Example" },
+    ];
+    const speaking = [
+        { tSec: 2, speaking: ["Alice Example"], muted: [] },
+        { tSec: 22, speaking: ["Carol Example"], muted: ["Alice Example"] },
+    ];
+
+    test("the channel with the most overlap wins; an exact tie has no winner", () => {
+        const lines = lineEvidence(entries, { segments, speaking });
+
+        expect(lines[0]).toMatchObject({ winner: "Alice Example", micShare: 0, liveName: "Alice Example" });
+        expect(lines[1]).toMatchObject({ winner: SELF, micShare: 1 });
+        expect(lines[2]).toMatchObject({ tie: true, micShare: 0.5 });
+        expect(lines[2]!.winner).toBeUndefined();
+        expect(lines[3]!.micShare).toBeUndefined();
+        // The reading during the line (Carol) and the state at its start (Alice, shown since second 2).
+        expect(lines[2]!.speaking).toEqual({ "Alice Example": 1, "Carol Example": 1 });
+    });
+
+    test("the label-by-voice table counts ties and lines without evidence apart", () => {
+        const table = labelIdentityTable(lineEvidence(entries, { segments, speaking }));
+
+        expect(Object.fromEntries(table.get("Bob Example")!)).toEqual({ [SELF]: 1, tie: 1, "?": 1 });
     });
 });
