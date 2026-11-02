@@ -411,13 +411,16 @@ On 2026-10-18 the disk sat full three times while the lead waited for him, and t
    each `/tmp/cc/<project>/<session>` folder, writes a plan file, deletes nothing. It skips live sessions (a Claude
    session whose process still runs, by Claude Code's `~/.claude/sessions` registry; a Codex or Grok transcript
    changed in the last 12 h; the run folder; `--protect`), system and daemon entries, anything holding a
-   socket, a FIFO or a `.git`, open files (it stops if lsof gives no listing), anything changed in the last 6 h,
+   socket, a FIFO or a `.git` (except SwiftPM's own dependency clones, `checkouts/<package>/.git`, in a dead
+   session's folder), open files (it stops if lsof gives no listing), anything changed in the last 6 h,
    symlinks, other users' and other devices' entries.
 2. Read the list. Then `--apply --plan <file>` within 30 minutes: only the planned entries, each re-checked (same
    inode, still old, still closed), moved into a scratch folder `.tmp-reclaim-<pid>-XXXXXX` in the same root and
    deleted there. An apply that is killed first leaves that folder behind; the next dry run lists it once its pid is
-   gone (an `--own-session` apply leaves it in the session folder, so the next `--own-session` dry run lists it). The
-   apply also deletes the plan it ran and every expired plan in `/tmp/cc`. The result is a `note` in the run ledger.
+   gone (an `--own-session` apply leaves it in the session folder, so the next `--own-session` dry run lists it). A
+   session folder keeps its `cc/<project>/<session>` place in it, so its SwiftPM clones still count, and the apply
+   that removes a left-behind folder deletes it where it is. The apply also deletes the plan it ran and every expired
+   plan in `/tmp/cc`. The result is a `note` in the run ledger.
 
 Limits you must know:
 

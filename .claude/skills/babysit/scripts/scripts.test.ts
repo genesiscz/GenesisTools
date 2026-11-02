@@ -2554,9 +2554,11 @@ describe("round 7 review regressions", () => {
             [
                 "import {mock} from 'bun:test'; import * as fs from 'node:fs';",
                 "const original = {...fs};",
+                // killApply: the apply dies where it starts to delete its quarantine, as a killed apply does.
+                "const killApply = process.env.TMP_RECLAIM_FIXTURE_KILL_APPLY === '1';",
                 "mock.module('node:fs', () => ({...original, realpathSync: (p) => p === '/tmp' ? " +
                     SafeJSON.stringify(root) +
-                    " : original.realpathSync(p)}));",
+                    " : original.realpathSync(p), rmSync: (p, o) => { if (killApply && String(p).includes('/.tmp-reclaim-')) process.exit(9); return original.rmSync(p, o); }}));",
                 "mock.module(" +
                     SafeJSON.stringify(sessionModule) +
                     ", () => ({nativeSessionRoots: (kind) => kind === 'grok' ? " +
@@ -2571,7 +2573,7 @@ describe("round 7 review regressions", () => {
                 "return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)}; };",
             ].join("\n")
         );
-        const execute = (args: string[], cwd?: string) =>
+        const execute = (args: string[], cwd?: string, extraEnv: Record<string, string> = {}) =>
             Bun.spawnSync(
                 [
                     process.execPath,
@@ -2587,7 +2589,7 @@ describe("round 7 review regressions", () => {
                     stdout: "pipe",
                     stderr: "pipe",
                     timeout: 5000,
-                    env: { ...env.getProcessEnv(), HOME: home, TMPDIR: root },
+                    env: { ...env.getProcessEnv(), HOME: home, TMPDIR: root, ...extraEnv },
                 }
             );
         return { dir, root, run, native, managed, execute };
@@ -2669,9 +2671,10 @@ describe("round 7 review regressions", () => {
 
     test("reclaim reads SwiftPM package caches as build output in a dead session, and still spares a real clone", () => {
         const s = reclaimFixture();
-        const running = "99999999-9999-4999-8999-999999999991";
-        const swiftpmDead = "99999999-9999-4999-8999-999999999992";
-        const cloneDead = "99999999-9999-4999-8999-999999999993";
+        // A running session shields every path with its first 8 hex digits, so each session needs its own.
+        const running = "91919191-9999-4999-8999-999999999991";
+        const swiftpmDead = "92929292-9999-4999-8999-999999999992";
+        const cloneDead = "93939393-9999-4999-8999-999999999993";
         const sessions = join(s.dir, "home", ".claude", "sessions");
         const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
         fs.mkdirSync(sessions, { recursive: true });
@@ -2715,11 +2718,12 @@ describe("round 7 review regressions", () => {
         fs.mkdirSync(projects, { recursive: true });
         fs.writeFileSync(
             join(sessions, `${process.pid}.json`),
-            SafeJSON.stringify({ pid: process.pid, sessionId: "99999999-9999-4999-8999-999999999990" })
+            SafeJSON.stringify({ pid: process.pid, sessionId: "90909090-9999-4999-8999-999999999990" })
         );
-        const borrows = "99999999-9999-4999-8999-999999999994";
-        const noAlternates = "99999999-9999-4999-8999-999999999995";
-        const foreign = "99999999-9999-4999-8999-999999999996";
+        // Distinct first 8 hex digits: the running session above shields every path that holds its own.
+        const borrows = "94949494-9999-4999-8999-999999999994";
+        const noAlternates = "95959595-9999-4999-8999-999999999995";
+        const foreign = "96969696-9999-4999-8999-999999999996";
         // A killed resolve leaves `repositories/` and `checkouts/` before SwiftPM writes any of its state files.
         const interruptedBuild = (id: string, alternates: ((build: string) => string) | null) => {
             const build = join(s.root, "cc", "fixture-project", id, "gk-build");
@@ -2749,6 +2753,71 @@ describe("round 7 review regressions", () => {
             join(s.root, "cc", "fixture-project", borrows),
         ]);
         expect(result.stdout.toString()).toContain('"git-checkout":2');
+    });
+
+    test("a killed apply's quarantine still reads a dead session's SwiftPM clones as build output, and the next apply deletes it", () => {
+        const s = reclaimFixture();
+        const dead = "97979797-9999-4999-8999-999999999997";
+        const swiftpmBuild = (build: string) => {
+            fs.mkdirSync(join(build, "checkouts", "pkg", ".git"), { recursive: true });
+            fs.writeFileSync(join(build, "checkouts", "pkg", ".git", "HEAD"), "ref: refs/heads/main\n");
+            fs.writeFileSync(join(build, "workspace-state.json"), "{}");
+        };
+        const planOf = (result: ReturnType<typeof s.execute>) => {
+            expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+            const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+            const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+            return { planPath, paths: plan.candidates.map((candidate: { path: string }) => candidate.path) };
+        };
+        const quarantines = () =>
+            fs
+                .readdirSync(s.root)
+                .filter((name) => name.startsWith(".tmp-reclaim-"))
+                .sort();
+        swiftpmBuild(join(s.root, "cc", "fixture-project", dead, "gk-build"));
+
+        const first = planOf(s.execute(["--min-age-hours", "0"]));
+        expect(first.paths).toEqual([join(s.root, "cc", "fixture-project", dead)]);
+        // The apply dies as it starts to delete its quarantine; the session folder keeps its cc/ place in there.
+        const killed = s.execute(["--apply", "--plan", first.planPath], undefined, {
+            TMP_RECLAIM_FIXTURE_KILL_APPLY: "1",
+        });
+        expect({ code: killed.exitCode, err: killed.stderr.toString() }).toEqual({ code: 9, err: "" });
+        expect(quarantines()).toHaveLength(1);
+        const orphan = join(s.root, quarantines()[0]);
+        const moved = join(orphan, "cc", "fixture-project", dead, "gk-build");
+        expect(fs.existsSync(join(moved, "checkouts", "pkg", ".git", "HEAD"))).toBe(true);
+        // The killed delete may already have taken SwiftPM's state files.
+        fs.rmSync(join(moved, "workspace-state.json"));
+
+        // Controls: a SwiftPM clone in a moved top-level entry, which was never judged as a session's, and a clone
+        // under cc/ that is not at SwiftPM's checkouts/<package>/.git.
+        const topLevel = join(s.root, ".tmp-reclaim-999999998-Ab12Cd");
+        const notCheckout = join(s.root, ".tmp-reclaim-999999997-Ab12Cd");
+        fs.mkdirSync(topLevel, { mode: 0o700 });
+        swiftpmBuild(join(topLevel, "0-moved-entry", "gk-build"));
+        fs.mkdirSync(notCheckout, { mode: 0o700 });
+        const plainClone = join(notCheckout, "cc", "fixture-project", "98989898-9999-4999-8999-999999999998", "clone");
+        fs.mkdirSync(join(plainClone, ".git"), { recursive: true });
+
+        const recovery = s.execute(["--min-age-hours", "0"]);
+        const second = planOf(recovery);
+        expect(second.paths).toEqual([orphan]);
+        expect(recovery.stdout.toString()).toContain('"git-checkout":2');
+
+        // The quarantine is deleted where it is, not moved into a new one: a recovery apply killed as well leaves it
+        // at its place, and the next dry run still lists it (nested in a new quarantine, its clones would leave cc/).
+        const killedAgain = s.execute(["--apply", "--plan", second.planPath], undefined, {
+            TMP_RECLAIM_FIXTURE_KILL_APPLY: "1",
+        });
+        expect({ code: killedAgain.exitCode, err: killedAgain.stderr.toString() }).toEqual({ code: 9, err: "" });
+        const third = planOf(s.execute(["--min-age-hours", "0"]));
+        expect(third.paths).toEqual([orphan]);
+
+        const applied = s.execute(["--apply", "--plan", third.planPath]);
+        expect({ code: applied.exitCode, err: applied.stderr.toString() }).toEqual({ code: 0, err: "" });
+        expect(applied.stdout.toString()).toContain("removed 1 of 1 planned entries");
+        expect(quarantines()).toEqual([basename(notCheckout), basename(topLevel)].sort());
     });
 
     test("an apply deletes the plan in /tmp/cc it ran and the expired ones, and keeps a fresh one", () => {
