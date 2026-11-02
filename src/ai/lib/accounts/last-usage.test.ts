@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
 import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
-import { formatLimitLine, lastSnapshotFor } from "./last-usage";
+import { formatLimitLine, lastSnapshotFor, usageRows } from "./last-usage";
 
 /**
  * `tools ai accounts show` reports the last RECORDED snapshot and never polls, so
@@ -151,6 +151,38 @@ describe("formatLimitLine", () => {
 
         expect(line).toContain("1234 JPY");
         expect(line).not.toContain("/");
+    });
+});
+
+/**
+ * `show` prints "No windows recorded" only when these rows are empty. It returned early on an empty
+ * `limits` list, so a reading that named only an absent window never printed its "no 5h limit" row
+ * (PR #661 review t2).
+ */
+describe("usageRows", () => {
+    const now = Date.parse("2026-09-05T12:00:00.000Z");
+
+    test("a reading with only an absent window prints that window, not an empty state", () => {
+        const rows = usageRows(snapshot({ absentLimits: [{ key: "five_hour", kind: "session" }] }), now);
+
+        expect(rows).toEqual([{ label: "Session (5h)", value: "— no 5h limit on this account" }]);
+    });
+
+    test("recorded windows come first, then the absent ones", () => {
+        const rows = usageRows(
+            snapshot({
+                limits: [{ key: "seven_day", label: "7d", kind: "weekly", percentUsed: 11 }],
+                absentLimits: [{ key: "five_hour", kind: "session" }],
+            }),
+            now
+        );
+
+        expect(rows.map((row) => row.label)).toEqual(["7d", "Session (5h)"]);
+        expect(rows[0].value).toBe("11.0%");
+    });
+
+    test("a snapshot with neither list has no rows", () => {
+        expect(usageRows(snapshot(), now)).toEqual([]);
     });
 });
 
