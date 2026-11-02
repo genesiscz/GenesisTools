@@ -1,3 +1,4 @@
+import { similarityScore } from "@genesiscz/utils/fuzzy-match";
 import { z } from "zod";
 import type { TranscriptEntry } from "./types";
 
@@ -19,7 +20,14 @@ const value = z.string().trim().min(1);
 export const dictionaryEntrySchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("fix"), value, substitution: value }),
     z.object({ type: z.literal("abbr"), value, substitution: value }),
-    z.object({ type: z.literal("term"), value, spoken: z.array(value).optional() }),
+    z.object({
+        type: z.literal("term"),
+        value,
+        /** How people say it ("jenezetka" for JDZ): a whole-word spoken form is replaced by the value. */
+        spoken: z.array(value).optional(),
+        /** What it means, shown after its first mention in Markdown. */
+        meaning: value.optional(),
+    }),
     z.object({ type: z.literal("keep"), value }),
 ]);
 export type DictionaryEntry = z.infer<typeof dictionaryEntrySchema>;
@@ -34,6 +42,14 @@ function wholeWord(text: string, flags = "gu"): RegExp {
 export const dictionaryLevelSchema = z
     .object({
         abbrExpansion: z.enum(ABBR_EXPANSIONS).optional(),
+        /**
+         * Fuzzy matching against terms and their spoken forms, 0 to 1: at `apply` or above a word is replaced; from
+         * `suggest` up to `apply` it becomes a suggestion with its score; below `suggest` nothing happens.
+         */
+        fuzzy: z
+            .object({ apply: z.number().min(0).max(1), suggest: z.number().min(0).max(1) })
+            .partial()
+            .optional(),
         entries: z.array(dictionaryEntrySchema).default([]),
     })
     .superRefine((level, ctx) => {
@@ -53,7 +69,10 @@ export const dictionaryLevelSchema = z
     });
 export type DictionaryLevel = z.infer<typeof dictionaryLevelSchema>;
 
+export const DEFAULT_FUZZY = { apply: 0.95, suggest: 0.8 } as const;
+
 export interface ResolvedDictionary {
+    fuzzy?: { apply: number; suggest: number };
     abbrExpansion: AbbrExpansion;
     entries: DictionaryEntry[];
 }
@@ -64,6 +83,7 @@ export interface ResolvedDictionary {
  */
 export function mergeDictionaries(levels: Array<DictionaryLevel | undefined>): ResolvedDictionary {
     let abbrExpansion = DEFAULT_ABBR_EXPANSION;
+    let fuzzy: { apply: number; suggest: number } = { ...DEFAULT_FUZZY };
     const byValue = new Map<string, DictionaryEntry>();
 
     for (const level of levels) {
@@ -72,6 +92,7 @@ export function mergeDictionaries(levels: Array<DictionaryLevel | undefined>): R
         }
 
         abbrExpansion = level.abbrExpansion ?? abbrExpansion;
+        fuzzy = { ...fuzzy, ...level.fuzzy };
 
         for (const entry of level.entries) {
             byValue.delete(entry.value);
@@ -79,13 +100,118 @@ export function mergeDictionaries(levels: Array<DictionaryLevel | undefined>): R
         }
     }
 
-    return { abbrExpansion, entries: [...byValue.values()] };
+    return { abbrExpansion, fuzzy, entries: [...byValue.values()] };
+}
+
+/** Czech endings stripped before a fuzzy comparison, longest first: "jenezetkou" and "jenezetka" share "jenezet". */
+const CZECH_ENDINGS = [
+    "kama",
+    "kami",
+    "kách",
+    "ečko",
+    "čkem",
+    "čko",
+    "čka",
+    "kou",
+    "ama",
+    "ami",
+    "ách",
+    "ům",
+    "em",
+    "ou",
+    "ka",
+    "ky",
+    "ku",
+    "ce",
+    "u",
+    "y",
+    "a",
+    "e",
+    "i",
+    "o",
+];
+/** A stem shorter than this compares too loosely to mean anything. */
+const MIN_STEM = 4;
+
+/** Lower case, no diacritics, no Czech ending. */
+export function stemOf(word: string): string {
+    const plain = word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+    const ending = CZECH_ENDINGS.map((end) => end.normalize("NFD").replace(/\p{M}/gu, "")).find(
+        (end) => plain.endsWith(end) && plain.length - end.length >= MIN_STEM - 1
+    );
+    return ending ? plain.slice(0, -ending.length) : plain;
+}
+
+/** A word that sounds like a term or one of its spoken forms. */
+export interface FuzzyMatch {
+    line: number;
+    heard: string;
+    value: string;
+    score: number;
+}
+
+function termForms(dictionary: ResolvedDictionary): Array<{ value: string; form: string; stem: string }> {
+    return dictionary.entries.flatMap((entry) => {
+        if (entry.type !== "term") {
+            return [];
+        }
+
+        return [entry.value, ...(entry.spoken ?? [])]
+            .filter((form) => !/\s/.test(form))
+            .map((form) => ({ value: entry.value, form, stem: stemOf(form) }))
+            .filter((form) => form.stem.length >= MIN_STEM);
+    });
+}
+
+/**
+ * Single words that are not a term or a spoken form but come close to one, after the Czech ending is stripped
+ * (normalised edit distance on the stem). Only matches at `fuzzy.suggest` or above are returned.
+ */
+export function fuzzyMatches(entries: TranscriptEntry[], dictionary: ResolvedDictionary): FuzzyMatch[] {
+    const threshold = (dictionary.fuzzy ?? DEFAULT_FUZZY).suggest;
+    const forms = termForms(dictionary);
+    const exact = new Set(forms.map((form) => form.form.toLowerCase()));
+    const matches: FuzzyMatch[] = [];
+
+    entries.forEach((entry, line) => {
+        for (const word of entry.text.match(/[\p{L}\p{N}]+/gu) ?? []) {
+            const stem = stemOf(word);
+
+            if (stem.length < MIN_STEM || exact.has(word.toLowerCase())) {
+                continue;
+            }
+
+            let best: FuzzyMatch | undefined;
+
+            for (const form of forms) {
+                if (Math.min(stem.length, form.stem.length) / Math.max(stem.length, form.stem.length) < 0.7) {
+                    continue;
+                }
+
+                const score = similarityScore(stem, form.stem);
+
+                if (score >= threshold && (!best || score > best.score)) {
+                    best = { line, heard: word, value: form.value, score };
+                }
+            }
+
+            if (best) {
+                matches.push(best);
+            }
+        }
+    });
+
+    return matches;
 }
 
 export interface DictionaryApplied {
     entries: TranscriptEntry[];
     /** Replacements made by `fix` entries. */
     fixes: number;
+    /** Spoken forms replaced by their term. */
+    spoken: number;
+    /** Words replaced by a fuzzy match at or above `fuzzy.apply`. */
+    fuzzy: number;
     /** Abbreviations expanded. */
     expansions: number;
 }
@@ -97,17 +223,43 @@ export interface DictionaryApplied {
 export function applyDictionary(entries: TranscriptEntry[], dictionary: ResolvedDictionary): DictionaryApplied {
     const fixes = dictionary.entries.filter((entry) => entry.type === "fix");
     const abbrs = dictionary.abbrExpansion === "off" ? [] : dictionary.entries.filter((entry) => entry.type === "abbr");
+    const spokenForms = dictionary.entries.flatMap((entry) =>
+        entry.type === "term" ? (entry.spoken ?? []).map((form) => ({ form, value: entry.value })) : []
+    );
+    const applyAt = (dictionary.fuzzy ?? DEFAULT_FUZZY).apply;
+    const sure = new Map<number, FuzzyMatch[]>();
+
+    for (const match of fuzzyMatches(entries, dictionary).filter((candidate) => candidate.score >= applyAt)) {
+        sure.set(match.line, [...(sure.get(match.line) ?? []), match]);
+    }
+
     const expanded = new Set<string>();
     let fixCount = 0;
+    let spokenCount = 0;
+    let fuzzyCount = 0;
     let expansionCount = 0;
 
-    const result = entries.map((line) => {
+    const result = entries.map((line, index) => {
         let text = line.text;
 
         for (const fix of fixes) {
             text = text.replace(wholeWord(fix.value), () => {
                 fixCount += 1;
                 return fix.substitution;
+            });
+        }
+
+        for (const spoken of spokenForms) {
+            text = text.replace(wholeWord(spoken.form, "giu"), () => {
+                spokenCount += 1;
+                return spoken.value;
+            });
+        }
+
+        for (const match of sure.get(index) ?? []) {
+            text = text.replace(wholeWord(match.heard), () => {
+                fuzzyCount += 1;
+                return match.value;
             });
         }
 
@@ -133,5 +285,5 @@ export function applyDictionary(entries: TranscriptEntry[], dictionary: Resolved
         return text === line.text ? line : { ...line, text };
     });
 
-    return { entries: result, fixes: fixCount, expansions: expansionCount };
+    return { entries: result, fixes: fixCount, spoken: spokenCount, fuzzy: fuzzyCount, expansions: expansionCount };
 }

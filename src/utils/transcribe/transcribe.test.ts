@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyCorrections } from "./apply";
-import { applyDictionary, dictionaryLevelSchema, mergeDictionaries } from "./dictionary";
+import { applyDictionary, dictionaryLevelSchema, fuzzyMatches, mergeDictionaries, stemOf } from "./dictionary";
 import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
 import { formatClock, parseClock } from "./render";
 import { LEAVE_PHRASES, type Presence, presenceSections, speakerStats } from "./speakers";
@@ -368,5 +368,38 @@ describe("presenceSections (R2.4)", () => {
             { fromSec: 120, toSec: 200, present: ["Alice Example"] },
             { fromSec: 200, toSec: 300, present: ["Alice Example", "Bob Example"] },
         ]);
+    });
+});
+
+describe("spoken forms and fuzzy matches (R2.5)", () => {
+    const dictionary = mergeDictionaries([
+        {
+            fuzzy: { apply: 0.95, suggest: 0.8 },
+            entries: [
+                { type: "term", value: "JDZ", spoken: ["jenezetka", "jenezetkou"] },
+                { type: "term", value: "Kubernetes" },
+            ],
+        },
+    ]);
+
+    test("Czech endings are stripped before a comparison", () => {
+        expect(["jenezetka", "jenezetkou", "jenezetkama", "Kubernetesu"].map(stemOf)).toEqual([
+            "jenezet",
+            "jenezet",
+            "jenezet",
+            "kubernetes",
+        ]);
+    });
+
+    test("a spoken form is replaced; a close word at or above apply too; a weaker one is only a match", () => {
+        const entries = [line("Alice Example", 0, "Ta Jenezetkou se pošle, jenezetkama taky, a kubernetu ne.")];
+        const matches = fuzzyMatches(entries, dictionary);
+        const applied = applyDictionary(entries, dictionary);
+
+        expect(matches).toContainEqual(expect.objectContaining({ heard: "jenezetkama", value: "JDZ", score: 1 }));
+        expect(matches).toContainEqual(expect.objectContaining({ heard: "kubernetu", value: "Kubernetes" }));
+        expect(matches.find((match) => match.heard === "kubernetu")!.score).toBeLessThan(0.95);
+        expect(applied.entries[0]!.text).toBe("Ta JDZ se pošle, JDZ taky, a kubernetu ne.");
+        expect(applied).toMatchObject({ spoken: 1, fuzzy: 1 });
     });
 });

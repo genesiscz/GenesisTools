@@ -377,3 +377,30 @@ describe("microphone scoring (R2.1)", () => {
         expect(items[0]).toMatchObject({ speaker: "Alice Example", confidence: 0.95 });
     });
 });
+
+describe("fuzzy dictionary suggestions (R2.5)", () => {
+    test("a word close to a term but below the apply score becomes a term item with its score", () => {
+        const items = suggestItems({
+            record,
+            meeting: { ...meeting, transcript: [line("Alice Example", 12, "A kubernetu zítra.", 1)] },
+            rules: ["terms"],
+            dictionary: {
+                abbrExpansion: "every",
+                fuzzy: { apply: 0.95, suggest: 0.8 },
+                entries: [{ type: "term", value: "Kubernetes" }],
+            },
+            sourceWords: [],
+            now: "2026-11-02T15:00:00.000Z",
+        });
+
+        expect(items).toContainEqual(
+            expect.objectContaining({
+                kind: "term",
+                heard: "kubernetu",
+                proposed: "Kubernetes",
+                atSec: 12,
+                rules: ["dictionary-fuzzy"],
+            })
+        );
+    });
+});
