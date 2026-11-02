@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { execTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
@@ -149,7 +150,10 @@ export async function watchOnce(
     );
 
     if (settings.notify) {
-        await deps.notify("Recording the screen", `${live.title}: tools meetings record stop ends it.`);
+        await deps.notify(
+            "Recording the screen",
+            `${live.title}: ${toolCommand("meetings", "record", "stop")} ends it.`
+        );
     }
 
     return "started";

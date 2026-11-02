@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -50,7 +51,7 @@ async function list(opts: { format?: string | boolean; snippets?: boolean }): Pr
 
         out.println(table.toString());
         ui.dim(
-            `${rows.length} entries (read-only). Propose them for the meetings dictionary: tools meetings dictionary suggest`
+            `${rows.length} entries (read-only). Propose them for the meetings dictionary: ${toolCommand("meetings", "dictionary", "suggest")}`
         );
     } catch (err) {
         fail(errorText(err));

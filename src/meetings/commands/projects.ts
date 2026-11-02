@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -30,7 +31,7 @@ async function listProjects(opts: { json?: boolean }): Promise<void> {
         const names = Object.keys(config.projects);
 
         if (names.length === 0) {
-            ui.info(`No known projects yet. Add one: tools meetings projects add <name>`);
+            ui.info(`No known projects yet. Add one: ${toolCommand("meetings", "projects", "add")} <name>`);
             return;
         }
 

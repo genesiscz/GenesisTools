@@ -1,10 +1,13 @@
 import { existsSync } from "node:fs";
 import { readLivePermissions } from "@app/control/lib/permissions";
 import { execToolInteractive, isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath, installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 
 const { log } = logger.scoped("meetings-grants");
+
+const OPEN_PANE = toolCommand("macos", "permissions", "open", "--pane", "screen-recording");
 
 export interface GrantOutcome {
     granted: boolean;
@@ -44,8 +47,8 @@ export async function ensureScreenRecording(options: { quiet?: boolean } = {}): 
 
     const appInstalled = existsSync(genesisAppBundlePath());
     const installHint = appInstalled
-        ? "Grant it in the window: tools macos permissions open --pane screen-recording"
-        : "GenesisTools.app is not installed, and this terminal has no grant. Install the app (tools macos permissions build), then grant it: tools macos permissions open --pane screen-recording";
+        ? `Grant it in the window: ${OPEN_PANE}`
+        : `GenesisTools.app is not installed, and this terminal has no grant. Install the app (${toolCommand("macos", "permissions", "build")}), then grant it: ${OPEN_PANE}`;
 
     if (options.quiet || !isInteractive()) {
         return {

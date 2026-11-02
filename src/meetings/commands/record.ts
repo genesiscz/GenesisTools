@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -135,7 +136,7 @@ async function start(opts: {
 
         if (!reported) {
             fail(
-                `The recorder did not report within ${START_WAIT_MS / 1000} s. Its log: tools genesis-tools logs day --tool meetings`
+                `The recorder did not report within ${START_WAIT_MS / 1000} s. Its log: ${toolCommand("genesis-tools", "logs", "day", "--tool", "meetings")}`
             );
             return;
         }

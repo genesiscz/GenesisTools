@@ -10,6 +10,7 @@ import {
     unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
@@ -238,8 +239,7 @@ export async function runRecorder(options: {
                 });
 
                 if (state.frames === 0 && ocr.text.trim().length < EMPTY_FRAME_CHARS) {
-                    state.warning =
-                        "The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check tools control doctor), or the text is too small for capture.resolutionCap.";
+                    state.warning = `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`;
                 }
 
                 appendFileSync(
