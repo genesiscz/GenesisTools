@@ -6,6 +6,7 @@ import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireConfig as requireAdoConfig, requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { requireConfig } from "@app/clarity/config";
 import { type AssignmentRows, buildAssignmentRows } from "@app/clarity/lib/assignments";
+import { ClarityClient } from "@app/clarity/lib/auth/client";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import {
     findWeekForDate,
@@ -15,7 +16,7 @@ import {
     taskSourceWeekOrder,
 } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+import type { ClarityApi } from "@genesiscz/utils/clarity";
 
 export interface AssignmentView extends AssignmentRows {
     tasks: ClarityTask[];
@@ -61,17 +62,12 @@ async function firstNonEmptyCatalogue(api: ClarityApi, candidates: TimesheetWeek
  */
 export async function buildAssignmentView(date: string): Promise<AssignmentView> {
     const clarityConfig = await requireConfig();
+    const clarityApi = new ClarityClient(clarityConfig);
     const adoConfig = requireTimeLogConfig();
     const adoUser = requireTimeLogUser(adoConfig);
     const { month, year } = parseMonthArg(date);
 
     const timeLogApi = new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, adoUser);
-    const clarityApi = new ClarityApi({
-        baseUrl: clarityConfig.baseUrl,
-        authToken: clarityConfig.authToken,
-        sessionId: clarityConfig.sessionId,
-        cookies: clarityConfig.cookies,
-    });
 
     const monthExport = await exportMonth(timeLogApi, month, year, adoUser.userId);
     const minutesByWorkItem = new Map<number, number>();

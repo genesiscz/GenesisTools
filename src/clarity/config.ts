@@ -21,6 +21,8 @@ const ClarityConfigSchema = z.object({
     resourceId: z.number().optional(),
     uniqueName: z.string().optional(),
     mappings: z.array(MappingSchema).default([]),
+    /** Absent in configs saved before drivers existed; those were cURL pastes. */
+    auth: z.object({ driver: z.string() }).optional(),
 });
 
 export type ClarityMapping = z.infer<typeof MappingSchema>;

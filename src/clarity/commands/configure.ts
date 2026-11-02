@@ -1,7 +1,7 @@
-import { createInterface } from "node:readline";
-import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
+import { saveSignIn } from "@app/clarity/lib/auth/client";
+import { authDriverIds, chooseAuthDriver, DEFAULT_AUTH_DRIVER } from "@app/clarity/lib/auth/drivers";
+import type { ClarityAuthDriver } from "@app/clarity/lib/auth/types";
 import * as clack from "@clack/prompts";
-import { ClarityApi } from "@genesiscz/utils/clarity";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -10,66 +10,39 @@ import type { ClarityConfig } from "../config.js";
 import { getConfig, saveConfig } from "../config.js";
 import { runInteractiveLinking } from "../lib/interactive-linking.js";
 
-/**
- * Read multiline cURL input from stdin.
- * Collects lines until: empty line entered, or a line without trailing backslash
- * (with a short debounce to handle fast paste).
- */
-async function readMultilineCurl(): Promise<string> {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const lines: string[] = [];
-    let finishTimer: ReturnType<typeof setTimeout> | null = null;
+/** Sign in with the driver, test the connection, and save. False when any step failed (already reported). */
+async function signInAndSave(driver: ClarityAuthDriver, existing: ClarityConfig | null): Promise<boolean> {
+    let auth: Awaited<ReturnType<ClarityAuthDriver["signIn"]>>;
 
-    return new Promise((resolve) => {
-        out.println(pc.gray("  (paste cURL, press Enter on blank line to finish)"));
-        process.stdout.write(pc.cyan("  > "));
+    try {
+        auth = await driver.signIn({ baseUrl: existing?.baseUrl });
+    } catch (err) {
+        clack.log.error(err instanceof Error ? err.message : String(err));
+        return false;
+    }
 
-        function finish() {
-            if (finishTimer) {
-                clearTimeout(finishTimer);
-            }
+    clack.log.info(`Base URL: ${pc.cyan(auth.baseUrl)}`);
+    const spinner = clack.spinner();
+    spinner.start("Testing connection...");
 
-            rl.close();
-            const result = lines
-                .map((l) => l.replace(/\\\s*$/, ""))
-                .join(" ")
-                .trim();
-            resolve(result);
+    try {
+        const { resource } = await saveSignIn({ auth, driver, existing });
+        spinner.stop("Connection successful!");
+
+        if (resource) {
+            clack.log.info(`Logged in as: ${pc.green(resource.full_name)} (${resource.email})`);
         }
 
-        rl.on("line", (line) => {
-            if (finishTimer) {
-                clearTimeout(finishTimer);
-                finishTimer = null;
-            }
-
-            // Empty line after content = done
-            if (lines.length > 0 && line.trim() === "") {
-                finish();
-                return;
-            }
-
-            lines.push(line);
-
-            // Line ends with backslash = more input expected
-            if (line.trim().endsWith("\\")) {
-                process.stdout.write(pc.cyan("  > "));
-                return;
-            }
-
-            // No backslash: debounce 200ms in case paste buffer has more lines
-            finishTimer = setTimeout(finish, 200);
-        });
-
-        rl.on("close", () => {
-            if (lines.length > 0) {
-                finish();
-            }
-        });
-    });
+        return true;
+    } catch (err) {
+        spinner.stop("Connection failed");
+        clack.log.error(err instanceof Error ? err.message : String(err));
+        clack.log.warn("The credentials may be expired. Sign in again.");
+        return false;
+    }
 }
 
-async function runInteractiveSetup(): Promise<void> {
+async function runInteractiveSetup(driverFlag?: string): Promise<void> {
     clack.intro(pc.bgCyan(pc.black(" Clarity PPM Configuration ")));
 
     const existingConfig = await getConfig();
@@ -86,94 +59,18 @@ async function runInteractiveSetup(): Promise<void> {
         }
     }
 
-    clack.note(
-        [
-            "To configure Clarity, you need to paste a cURL command from your browser.",
-            "This lets the tool extract your authentication tokens automatically.",
-            "",
-            "Steps:",
-            "  1. Open Clarity PPM in Chrome/Edge and go to Timesheets",
-            "  2. Press F12 (or Ctrl+Shift+I / Cmd+Option+I on Mac) to open Developer Tools",
-            "  3. Click the 'Network' tab at the top of the Developer Tools panel",
-            "  4. Reload the page (F5) so requests appear in the list",
-            "  5. Look for any request whose name contains '/ppm/rest/v1/'",
-            "     (click the 'Name' column to sort, or use the filter box to search 'ppm')",
-            "  6. Right-click that request -> Copy -> Copy as cURL (bash)",
-            "  7. Paste it below (multi-line is OK, press Enter twice when done)",
-        ].join("\n"),
-        "How to get the cURL command"
-    );
+    const driver = await chooseAuthDriver(driverFlag, existingConfig?.auth?.driver);
 
-    clack.log.step("Paste the cURL command:");
-    const curlInput = await readMultilineCurl();
-
-    if (!curlInput.trim()) {
-        clack.cancel("No cURL command provided.");
+    if (!driver) {
+        clack.cancel("Configuration unchanged.");
         process.exit(0);
     }
 
-    if (!curlInput.includes("curl") && !curlInput.includes("http")) {
-        clack.log.error("Doesn't look like a valid cURL command.");
+    if (!(await signInAndSave(driver, existingConfig))) {
         process.exit(1);
     }
 
-    const spinner = clack.spinner();
-    spinner.start("Parsing cURL command...");
-
-    let baseUrl: string;
-    let authToken: string;
-    let sessionId: string;
-    let cookies: string;
-
-    try {
-        ({ baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curlInput));
-    } catch (err) {
-        spinner.stop("Failed to parse cURL command");
-        clack.log.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
-    }
-
-    spinner.stop("cURL parsed successfully");
-
-    clack.log.info(`Base URL: ${pc.cyan(baseUrl)}`);
-    clack.log.info("Auth Token: [configured]");
-    clack.log.info("Session ID: [configured]");
-
-    // Test connection
-    spinner.start("Testing connection...");
-
-    const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
-
-    try {
-        // Try to fetch any timesheet data to validate the credentials
-        // 0 fetches the default/current timesheet app list, not tied to a specific period
-        const appData = await api.getTimesheetApp(0);
-        const resource = appData.resource._results[0];
-
-        spinner.stop("Connection successful!");
-
-        if (resource) {
-            clack.log.info(`Logged in as: ${pc.green(resource.full_name)} (${resource.email})`);
-        }
-
-        const config: ClarityConfig = {
-            baseUrl,
-            authToken,
-            sessionId,
-            cookies,
-            resourceId: resource?.id,
-            uniqueName: resource?.email,
-            mappings: existingConfig?.mappings ?? [],
-        };
-
-        await saveConfig(config);
-        clack.outro(pc.green("Configuration saved!"));
-    } catch (err) {
-        spinner.stop("Connection failed");
-        clack.log.error(err instanceof Error ? err.message : String(err));
-        clack.log.warn("The credentials may be expired. Try copying a fresh cURL from the browser.");
-        process.exit(1);
-    }
+    clack.outro(pc.green("Configuration saved!"));
 }
 
 function showConfig(config: ClarityConfig): void {
@@ -181,6 +78,7 @@ function showConfig(config: ClarityConfig): void {
     out.println(`  Base URL:     ${config.baseUrl}`);
     out.println(`  Auth Token:   [configured]`);
     out.println(`  Session ID:   [configured]`);
+    out.println(`  Auth driver:  ${config.auth?.driver ?? DEFAULT_AUTH_DRIVER}`);
     out.println(`  Resource ID:  ${config.resourceId ?? "not set"}`);
     out.println(`  User:         ${config.uniqueName ?? "not set"}`);
     out.println(`  Mappings:     ${config.mappings.length}`);
@@ -200,9 +98,10 @@ export function registerConfigureCommand(program: Command): void {
     const cmd = program.command("configure").description("Configure Clarity PPM connection and mappings");
 
     cmd.command("auth")
-        .description("Set up authentication (interactive cURL paste)")
-        .action(async () => {
-            await runInteractiveSetup();
+        .description("Set up authentication (interactive)")
+        .option("--driver <id>", `How to sign in: ${authDriverIds()}`)
+        .action(async (options: { driver?: string }) => {
+            await runInteractiveSetup(options.driver);
         });
 
     cmd.command("show")
@@ -225,8 +124,9 @@ export function registerConfigureCommand(program: Command): void {
         });
 
     cmd.command("update-auth")
-        .description("Update auth credentials (paste new cURL)")
-        .action(async () => {
+        .description("Sign in again; mappings are kept")
+        .option("--driver <id>", `How to sign in: ${authDriverIds()}`)
+        .action(async (options: { driver?: string }) => {
             const config = await getConfig();
 
             if (!config) {
@@ -235,76 +135,18 @@ export function registerConfigureCommand(program: Command): void {
             }
 
             clack.intro(pc.bgCyan(pc.black(" Update Clarity Auth ")));
+            const driver = await chooseAuthDriver(options.driver, config.auth?.driver);
 
-            clack.note(
-                [
-                    "Paste a fresh cURL command from Clarity to update auth credentials.",
-                    "Your mappings will be preserved.",
-                    "",
-                    "Steps:",
-                    "  1. Open Clarity PPM in Chrome/Edge, go to Timesheets",
-                    "  2. Press F12 (or Ctrl+Shift+I / Cmd+Option+I on Mac) to open Developer Tools",
-                    "  3. Click the 'Network' tab, then reload the page (F5)",
-                    "  4. Find any request containing '/ppm/rest/v1/'",
-                    "  5. Right-click it -> Copy -> Copy as cURL (bash)",
-                    "  6. Paste below (multi-line is OK, press Enter twice when done)",
-                ].join("\n"),
-                "Update credentials"
-            );
-
-            clack.log.step("Paste the cURL command:");
-            const curlInput = await readMultilineCurl();
-
-            if (!curlInput.trim()) {
-                clack.cancel("No cURL command provided.");
+            if (!driver) {
+                clack.cancel("Auth unchanged.");
                 process.exit(0);
             }
 
-            let baseUrl: string;
-            let authToken: string;
-            let sessionId: string;
-            let cookies: string;
-
-            try {
-                ({ baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curlInput));
-            } catch (err) {
-                clack.log.error(err instanceof Error ? err.message : String(err));
+            if (!(await signInAndSave(driver, config))) {
                 process.exit(1);
             }
 
-            const spinner = clack.spinner();
-            spinner.start("Testing connection...");
-
-            const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
-
-            try {
-                // 0 fetches the default/current timesheet app list, not tied to a specific period
-                const appData = await api.getTimesheetApp(0);
-                const resource = appData.resource._results[0];
-
-                spinner.stop("Connection successful!");
-
-                if (resource) {
-                    clack.log.info(`Logged in as: ${pc.green(resource.full_name)} (${resource.email})`);
-                }
-
-                config.baseUrl = baseUrl;
-                config.authToken = authToken;
-                config.sessionId = sessionId;
-                config.cookies = cookies;
-
-                if (resource) {
-                    config.resourceId = resource.id;
-                    config.uniqueName = resource.email;
-                }
-
-                await saveConfig(config);
-                clack.outro(pc.green(`Auth updated! ${config.mappings.length} mappings preserved.`));
-            } catch (err) {
-                spinner.stop("Connection failed");
-                clack.log.error(err instanceof Error ? err.message : String(err));
-                process.exit(1);
-            }
+            clack.outro(pc.green(`Auth updated! ${config.mappings.length} mappings preserved.`));
         });
 
     // Default action: show config + menu
@@ -331,7 +173,7 @@ export function registerConfigureCommand(program: Command): void {
                     { value: "done", label: "Done" },
                     { value: "link", label: "Add/update mappings (link work items)" },
                     { value: "remove-mapping", label: "Remove a mapping" },
-                    { value: "update-auth", label: "Update auth credentials (paste new cURL)" },
+                    { value: "update-auth", label: "Update auth credentials (sign in again)" },
                     { value: "reconfigure", label: "Full reconfigure (reset everything)" },
                 ],
             });
@@ -341,64 +183,10 @@ export function registerConfigureCommand(program: Command): void {
             }
 
             if (action === "update-auth") {
-                clack.note(
-                    [
-                        "Paste a fresh cURL command from Clarity to update credentials.",
-                        "Your mappings will be preserved.",
-                        "",
-                        "  1. Open Clarity PPM in Chrome/Edge, press F12 to open Developer Tools",
-                        "  2. Click 'Network' tab, reload the page (F5)",
-                        "  3. Right-click any '/ppm/rest/v1/' request -> Copy -> Copy as cURL (bash)",
-                    ].join("\n"),
-                    "Update credentials"
-                );
+                const driver = await chooseAuthDriver(undefined, config.auth?.driver);
 
-                clack.log.step("Paste the cURL command:");
-                const curlInput = await readMultilineCurl();
-
-                if (!curlInput.trim()) {
-                    clack.log.warn("No cURL command provided.");
-                    continue;
-                }
-
-                let baseUrl: string;
-                let authToken: string;
-                let sessionId: string;
-                let cookies: string;
-
-                try {
-                    ({ baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curlInput));
-                } catch (err) {
-                    clack.log.error(err instanceof Error ? err.message : String(err));
-                    continue;
-                }
-
-                const spinner = clack.spinner();
-                spinner.start("Testing connection...");
-                const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
-
-                try {
-                    // 0 fetches the default/current timesheet app list, not tied to a specific period
-                    const appData = await api.getTimesheetApp(0);
-                    const resource = appData.resource._results[0];
-                    spinner.stop("Connection successful!");
-
-                    config.baseUrl = baseUrl;
-                    config.authToken = authToken;
-                    config.sessionId = sessionId;
-                    config.cookies = cookies;
-
-                    if (resource) {
-                        config.resourceId = resource.id;
-                        config.uniqueName = resource.email;
-                        clack.log.info(`Logged in as: ${pc.green(resource.full_name)} (${resource.email})`);
-                    }
-
-                    await saveConfig(config);
+                if (driver && (await signInAndSave(driver, config))) {
                     clack.log.success(`Auth updated! ${config.mappings.length} mappings preserved.`);
-                } catch (err) {
-                    spinner.stop("Connection failed");
-                    clack.log.error(err instanceof Error ? err.message : String(err));
                 }
 
                 continue;

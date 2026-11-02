@@ -1,6 +1,7 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { requireConfig } from "@app/clarity/config";
+import { ClarityClient } from "@app/clarity/lib/auth/client";
 import { checkUnmapped } from "@app/clarity/lib/fill-guard";
 import {
     buildFillMap,
@@ -19,7 +20,7 @@ import {
 } from "@app/clarity/lib/timesheet-weeks";
 import { requireAdoTimeLogConfig } from "@app/clarity/ui/src/server/ado-config";
 import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+
 import { addDay, isDateInHalfOpenRange } from "@genesiscz/utils/date";
 
 interface WeekPreviewTimelogEntry {
@@ -68,13 +69,8 @@ export interface FillPreviewResult {
 
 export async function getFillPreview(month: number, year: number, allowUnmapped = false): Promise<FillPreviewResult> {
     const clarityConfig = await requireConfig();
+    const clarityApi = new ClarityClient(clarityConfig);
     const { config: adoConfig, user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
-    const clarityApi = new ClarityApi({
-        baseUrl: clarityConfig.baseUrl,
-        authToken: clarityConfig.authToken,
-        sessionId: clarityConfig.sessionId,
-        cookies: clarityConfig.cookies,
-    });
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
 
@@ -340,13 +336,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
 }
 
 export async function postTimesheetNote(timesheetId: number, noteText: string, userId: number): Promise<void> {
-    const clarityConfig = await requireConfig();
-    const clarityApi = new ClarityApi({
-        baseUrl: clarityConfig.baseUrl,
-        authToken: clarityConfig.authToken,
-        sessionId: clarityConfig.sessionId,
-        cookies: clarityConfig.cookies,
-    });
+    const clarityApi = new ClarityClient(await requireConfig());
 
     await clarityApi.createTimesheetNote(timesheetId, noteText, userId);
 }
@@ -358,13 +348,8 @@ export async function executeFill(
     allowUnmapped = false
 ): Promise<ExecuteFillResult> {
     const clarityConfig = await requireConfig();
+    const clarityApi = new ClarityClient(clarityConfig);
     const { user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
-    const clarityApi = new ClarityApi({
-        baseUrl: clarityConfig.baseUrl,
-        authToken: clarityConfig.authToken,
-        sessionId: clarityConfig.sessionId,
-        cookies: clarityConfig.cookies,
-    });
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
     const { fillMap, unmappedByWi } = buildFillMap(adoExport.entries, clarityConfig.mappings);

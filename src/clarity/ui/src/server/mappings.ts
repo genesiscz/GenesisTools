@@ -1,10 +1,10 @@
 import type { ClarityMapping } from "@app/clarity/config";
 import { getConfig, saveConfig } from "@app/clarity/config";
+import { ClarityClient } from "@app/clarity/lib/auth/client";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimesheetWeeks as getTimesheetWeeksShared, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
 import { invalidateAssignmentView } from "@app/clarity/ui/src/server/assignments";
-import { ClarityApi } from "@genesiscz/utils/clarity";
 
 export type { TimesheetWeek };
 
@@ -15,12 +15,7 @@ export async function getTimesheetWeeks(month?: number, year?: number): Promise<
         throw new Error("Clarity not configured");
     }
 
-    const api = new ClarityApi({
-        baseUrl: config.baseUrl,
-        authToken: config.authToken,
-        sessionId: config.sessionId,
-        cookies: config.cookies,
-    });
+    const api = new ClarityClient(config);
 
     return getTimesheetWeeksShared(api, month, year);
 }
@@ -89,12 +84,7 @@ export async function getClarityTasks(timesheetId: number): Promise<{ tasks: Cla
         throw new Error("Clarity not configured");
     }
 
-    const api = new ClarityApi({
-        baseUrl: config.baseUrl,
-        authToken: config.authToken,
-        sessionId: config.sessionId,
-        cookies: config.cookies,
-    });
+    const api = new ClarityClient(config);
 
     return { tasks: await listClarityTasks({ api, timesheetId }) };
 }

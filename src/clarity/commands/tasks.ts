@@ -1,5 +1,6 @@
 import { requireConfig } from "@app/clarity/config";
 import { parseMonthArg } from "@app/clarity/lib/assignment-view";
+import { ClarityClient } from "@app/clarity/lib/auth/client";
 import { renderReceipt, rowWriteReceipt } from "@app/clarity/lib/receipts";
 import { mergeSearchHits, searchPrefixes } from "@app/clarity/lib/task-search";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
@@ -19,7 +20,7 @@ import {
     type TimesheetWeek,
 } from "@app/clarity/lib/timesheet-weeks";
 import * as p from "@clack/prompts";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+import type { ClarityApi } from "@genesiscz/utils/clarity";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { addDay, formatLocalDate } from "@genesiscz/utils/date";
@@ -119,14 +120,7 @@ export function registerTasksCommand(parent: Command): void {
 }
 
 async function connect(): Promise<ClarityApi> {
-    const config = await requireConfig();
-
-    return new ClarityApi({
-        baseUrl: config.baseUrl,
-        authToken: config.authToken,
-        sessionId: config.sessionId,
-        cookies: config.cookies,
-    });
+    return new ClarityClient(await requireConfig());
 }
 
 /**

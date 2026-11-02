@@ -6,6 +6,7 @@ import { buildAdoConfig, checkAzureCliLogin, saveAdoConfig } from "@app/azure-de
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { getConfig, saveConfig } from "@app/clarity/config";
+import { ClarityClient } from "@app/clarity/lib/auth/client";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { type AuthStatus, pingAdo, pingClarity, pingTimelog, type ServiceAuthState } from "@app/clarity/lib/preflight";
 import { invalidateAssignmentView } from "@app/clarity/ui/src/server/assignments";
@@ -57,14 +58,7 @@ export async function testConnection(): Promise<{ success: boolean; message: str
     }
 
     try {
-        const api = new ClarityApi({
-            baseUrl: config.baseUrl,
-            authToken: config.authToken,
-            sessionId: config.sessionId,
-            cookies: config.cookies,
-        });
-
-        await api.getTimesheetApp();
+        await new ClarityClient(config).getTimesheetApp();
         return { success: true, message: "Connected successfully" };
     } catch (err) {
         return {

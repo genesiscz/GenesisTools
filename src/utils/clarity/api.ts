@@ -23,14 +23,29 @@ const SEARCH_PAGE_SIZE = 100;
 const SEARCH_MAX_PAGES = 50;
 
 export class ClarityApi {
-    private config: ClarityApiConfig;
+    protected config: ClarityApiConfig;
 
     constructor(config: ClarityApiConfig) {
         this.config = config;
     }
 
+    /** Called once when a request answers 401. Return true after `config` holds a fresh session. */
+    protected async renewAuth(): Promise<boolean> {
+        return false;
+    }
+
     /** The one place headers and TLS are set, so an auth change cannot land in half the verbs. */
     private async send(path: string, options: RequestInit = {}): Promise<Response> {
+        const response = await this.sendOnce(path, options);
+
+        if (response.status !== 401 || !(await this.renewAuth())) {
+            return response;
+        }
+
+        return this.sendOnce(path, options);
+    }
+
+    private async sendOnce(path: string, options: RequestInit): Promise<Response> {
         const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
         const signal = options.signal ?? AbortSignal.timeout(30_000);
 
@@ -188,20 +203,7 @@ export class ClarityApi {
         const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
         const bodyStr = SafeJSON.stringify(body);
 
-        const response = await fetch(url, {
-            method: "PUT",
-            tls: { rejectUnauthorized: false },
-            headers: {
-                Accept: "application/json, text/plain, */*",
-                "Content-Type": "application/json",
-                authToken: this.config.authToken,
-                "Cache-Control": "no-cache",
-                "x-api-force-patch": "true",
-                "x-api-full-response": "true",
-                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
-            },
-            body: bodyStr,
-        });
+        const response = await this.send(path, { method: "PUT", body: bodyStr });
 
         const text = await response.text();
         let responseBody: unknown;
@@ -239,21 +241,10 @@ export class ClarityApi {
 
     /** Post a note to a timesheet. Returns void — API returns 200 with empty body. */
     async createTimesheetNote(timesheetId: number, noteText: string, authorUserId: number): Promise<void> {
-        const url = `${this.config.baseUrl}/ppm/rest/v1/timesheets/${timesheetId}/timesheetNotes`;
         const body: CreateTimesheetNoteRequest = { noteText, author: authorUserId };
-
-        const response = await fetch(url, {
+        const response = await this.send(`/timesheets/${timesheetId}/timesheetNotes`, {
             method: "POST",
-            signal: AbortSignal.timeout(30_000),
-            tls: { rejectUnauthorized: false },
-            headers: {
-                Accept: "application/json, text/plain, */*",
-                "Content-Type": "application/json;charset=UTF-8",
-                authToken: this.config.authToken,
-                "Cache-Control": "no-cache",
-                "x-api-full-response": "true",
-                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
-            },
+            headers: { "Content-Type": "application/json;charset=UTF-8" },
             body: SafeJSON.stringify(body),
         });
 
