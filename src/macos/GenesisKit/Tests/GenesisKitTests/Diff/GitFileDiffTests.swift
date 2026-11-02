@@ -44,6 +44,9 @@ final class GitFileDiffTests: XCTestCase {
         let changed = try XCTUnwrap(files.first { $0.path == "logo.png" }?.image)
         let added = try XCTUnwrap(files.first { $0.path == "new.png" }?.image)
         XCTAssertNil(files.first { $0.path == "blob.bin" }?.image, "a binary file that is no image has no picture")
+        XCTAssertEqual(files.first { $0.path == "blob.bin" }?.skipped, "binary file, 2 bytes", "a binary note carries the size")
+        XCTAssertEqual(files.first { $0.path == "logo.png" }?.skipped, "binary file, 7 bytes → 8 bytes",
+                       "a binary file changed on both sides shows both sizes")
         XCTAssertNil(added.old, "an added image has no before side")
         let svg = try XCTUnwrap(files.first { $0.path == "icon.svg" })
         XCTAssertNotNil(svg.newContents, "an SVG keeps its code")
