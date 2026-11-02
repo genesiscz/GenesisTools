@@ -30,6 +30,15 @@ export function genesisAppBundlePath(): string {
     return join(env.tools.getHome(), "Applications", `${GENESIS_APP_NAME}.app`);
 }
 
+/**
+ * The command that shows the permissions window (Permissions, Services and Settings tabs). A bare `open -a` follows
+ * the app's "main window" setting and can open the hub instead; `--window` always names this window, and a running
+ * copy of it takes the request over through its instance lock. `-n` is what hands the argument to a new process.
+ */
+export function genesisAppWindowCommand(): string[] {
+    return ["/usr/bin/open", "-n", genesisAppBundlePath(), "--args", "--window"];
+}
+
 export function genesisAppLauncherPath(): string {
     return join(genesisAppBundlePath(), "Contents", "MacOS", GENESIS_APP_NAME);
 }
