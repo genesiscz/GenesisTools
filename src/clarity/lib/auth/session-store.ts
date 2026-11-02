@@ -1,5 +1,5 @@
-import { fileSessionStore } from "@app/clarity/lib/auth/file-session-store";
+import { authStorageSessionStore } from "@app/clarity/lib/auth/auth-storage-session-store";
 import type { ClaritySessionStore } from "@app/clarity/lib/auth/types";
 
-/** Where the Clarity session lives. A downstream copy of this tool can point it at a secret store. */
-export const claritySessionStore: ClaritySessionStore = fileSessionStore;
+/** Where the Clarity session lives. A downstream copy of this tool can point it at its own secret store. */
+export const claritySessionStore: ClaritySessionStore = authStorageSessionStore;
