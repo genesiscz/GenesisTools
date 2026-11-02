@@ -162,6 +162,42 @@ final class MarkdownTaskListTests: XCTestCase {
     - [ ] gamma
     """
 
+    /// A fence that opens as a list item's own content (`- ````) holds the item's code, and its closing fence closes it,
+    /// as CommonMark reads it (eve on #664). Read as text, the code's box was a task and the closing fence opened a
+    /// fence that hid the real task after it, so a click on the real one saved the byte in the code.
+    func testAFenceAfterAListMarkerIsTheItemsCode() throws {
+        let note = Self.listFenceNote
+        let items = MarkdownTaskList.items(in: bytes(note))
+        XCTAssertEqual(items.map(\.text), ["beta", "gamma", "delta"])
+        XCTAssertEqual(items.map(\.line), [3, 4, 11])
+
+        let beta = try target(note, bodyLine: 3, item: "beta", checked: true)
+        XCTAssertEqual(beta.line, 3, "the real task, not the code example with its text on line 1")
+        let saved = try XCTUnwrap(MarkdownTaskList.applying(beta, to: note))
+        XCTAssertEqual(saved.components(separatedBy: "\n")[1], "  - [ ] beta", "the code stays as it was")
+        XCTAssertEqual(saved.components(separatedBy: "\n")[3], "  - [x] beta")
+        // A line came in above it: the item is found by its text, and only the real task has it.
+        XCTAssertEqual(MarkdownTaskList.locate(beta, in: bytes("Inserted.\n" + note)), .moved(MarkdownTaskList.items(
+            in: bytes("Inserted.\n" + note))[0]))
+    }
+
+    /// Fences that open after a list marker, closed and not. `MarkdownTaskWebTests` checks that the page draws boxes on
+    /// exactly the lines the scanner names.
+    static let listFenceNote = """
+    - ```
+      - [ ] beta
+      ```
+      - [ ] beta
+    - [ ] gamma
+    1. ~~~
+       - [x] ordered code
+       ~~~
+    - ```
+      - [ ] unclosed item code
+    not indented
+    - [ ] delta
+    """
+
     func testLineNumbersMatchThePageForCRLFAndABOM() {
         let note = "\u{FEFF}- [ ] first\r\n\r\n- [x] third\r\n"
         let items = MarkdownTaskList.items(in: bytes(note))
@@ -254,6 +290,44 @@ final class MarkdownTaskListTests: XCTestCase {
         }
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), ["in-place.md", "renamed.md"],
                        "no temporary file and no old file left behind")
+    }
+
+    /// Another program's save that the swap took out and that cannot be put back (the note was locked meanwhile, so
+    /// the swap and the rename both fail) is never deleted: it stays at the temporary path, and the failure names it.
+    /// The same holds for a third program's newer file at the second restore (eve on #664).
+    func testAnotherProgramsSaveThatCannotBePutBackIsKeptAndNamed() throws {
+        let theirs = "- [ ] one\n- [ ] added by an agent\n"
+        let newest = "- [ ] one\n- [ ] added by an agent\n- [ ] and by a third\n"
+        for (name, steps) in [("changed.md", 1), ("newest.md", 2)] {
+            let url = try file("- [ ] one\n", name: name)
+            defer { chflags(url.path, 0) }
+            var restores = 0
+            var thrown: Error?
+            do {
+                try MarkdownAtomicWrite.replace(
+                    url, with: bytes("- [x] one\n"), expected: bytes("- [ ] one\n"),
+                    beforePlacing: { try? Data(theirs.utf8).write(to: url) },
+                    beforeRestoring: {
+                        restores += 1
+                        // The second case: a third program renames its file over the new bytes before the first restore.
+                        if steps == 2, restores == 1 { try? Data(newest.utf8).write(to: url, options: .atomic) }
+                        if restores == steps { XCTAssertEqual(chflags(url.path, UInt32(UF_IMMUTABLE)), 0, name) }
+                    })
+            } catch {
+                thrown = error
+            }
+            guard case .kept(let step, let code, let path)? = thrown as? MarkdownAtomicWrite.Failure else {
+                XCTFail("\(name): expected a kept file, got \(String(describing: thrown))")
+                continue
+            }
+            XCTAssertEqual(step, steps == 1 ? "put the changed file back" : "put the newest file back", name)
+            XCTAssertEqual(code, EPERM, name)
+            XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), steps == 1 ? theirs : newest,
+                           "\(name): the other program's file is still there")
+            XCTAssertEqual(MarkdownAtomicWrite.Failure.kept(step, code, path: path).message,
+                           "\(step): Operation not permitted. The other program's version is kept at \(path)",
+                           "the notice's Details say where the other program's file is")
+        }
     }
 
     // MARK: The file changed underneath

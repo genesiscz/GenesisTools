@@ -134,6 +134,16 @@ final class MarkdownTaskWebTests: XCTestCase {
         XCTAssertEqual(lines, [5, 10, 16])
     }
 
+    /// A fence that opens after a list marker is the item's code on the page as in the scanner, so the scanner never
+    /// names a box in that code, and never misses the task after its closing fence.
+    func testThePageAndTheScannerReadAFenceAfterAListMarkerAsCode() async throws {
+        let note = MarkdownTaskListTests.listFenceNote
+        let (web, _) = try await page(view(note, tasks: Self.editable))
+        let lines = try await boxes(web).map { Int($0.split(separator: "|")[0]) ?? -1 }
+        XCTAssertEqual(lines, MarkdownTaskList.items(in: Array(note.utf8)).map(\.line))
+        XCTAssertEqual(lines, [3, 4, 11])
+    }
+
     func testALockedPageShowsDisabledBoxesWithTheReasonAndCanBeUnlockedInPlace() async throws {
         let (web, coordinator) = try await page(view(Self.note, tasks: .locked("A past version of the note.")))
         let locked = try await boxes(web)

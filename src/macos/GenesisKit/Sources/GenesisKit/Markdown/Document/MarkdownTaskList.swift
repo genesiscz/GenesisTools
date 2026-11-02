@@ -175,6 +175,14 @@ enum MarkdownTaskList {
             }
             open.append(marker.content)
             paragraph = !marker.empty
+            // A fence can open as the item's own content (`- ```` on one line): the lines after it that are indented
+            // into the item are its code, on the page as in CommonMark, and its closing fence closes it. Read as text,
+            // a box in that code was a task and the closing fence opened a fence that hid the real task after it.
+            if !marker.code, !marker.empty, let opening = fenceMark(line, at: marker.first) {
+                fence = (opening.mark, opening.count, lead.depth, marker.content)
+                paragraph = false
+                continue
+            }
             guard !marker.code, let found = parse(line) else { continue }
             out.append(MarkdownTaskLine(line: n, stateOffset: found.state, checked: found.checked, text: found.text))
         }
@@ -227,10 +235,10 @@ enum MarkdownTaskList {
     }
 
     /// The list marker at `first` (`-`, `*`, `+`, `1.`, `1)`, then a blank or the end of the line) as the column its
-    /// item's content starts at. `code`: five or more blank columns follow the marker, so the content is indented
-    /// code. `empty`: nothing follows it.
+    /// item's content starts at, and the index of the content's first byte (`first` of the result). `code`: five or
+    /// more blank columns follow the marker, so the content is indented code. `empty`: nothing follows it.
     private static func listMarker(_ line: ArraySlice<UInt8>, at first: Int, column: Int)
-        -> (content: Int, code: Bool, empty: Bool)? {
+        -> (content: Int, first: Int, code: Bool, empty: Bool)? {
         var i = first
         let end = line.endIndex
         if line[i] == dash || line[i] == star || line[i] == plus {
@@ -242,16 +250,16 @@ enum MarkdownTaskList {
             i += 1
         }
         let marked = column + (i - first)
-        guard i < end else { return (marked + 1, false, true) }
+        guard i < end else { return (marked + 1, i, false, true) }
         guard line[i] == space || line[i] == tab else { return nil }
         var after = marked
         while i < end, line[i] == space || line[i] == tab {
             after = line[i] == tab ? after + 4 - after % 4 : after + 1
             i += 1
         }
-        if i == end { return (marked + 1, false, true) }
-        if after - marked >= 5 { return (marked + 1, true, false) }
-        return (after, false, false)
+        if i == end { return (marked + 1, i, false, true) }
+        if after - marked >= 5 { return (marked + 1, i, true, false) }
+        return (after, i, false, false)
     }
 
     /// An ATX heading or a thematic break at `first`: blocks that end a paragraph, and with it every list item the
@@ -297,6 +305,13 @@ enum MarkdownTaskList {
         var i = line.startIndex
         let end = line.endIndex
         while i < end, line[i] == space || line[i] == tab || line[i] == quote { i += 1 }
+        return fenceMark(line, at: i)
+    }
+
+    /// The code fence that starts at `first` itself, as `fenceMark(_:)` reads it.
+    private static func fenceMark(_ line: ArraySlice<UInt8>, at first: Int) -> (mark: UInt8, count: Int, bare: Bool)? {
+        var i = first
+        let end = line.endIndex
         guard i < end, line[i] == backtick || line[i] == tilde else { return nil }
         let mark = line[i]
         let start = i

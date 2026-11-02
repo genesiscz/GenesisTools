@@ -18,11 +18,16 @@ enum MarkdownAtomicWrite {
         case changed
         /// A system call failed: what it was doing and `errno`.
         case system(String, Int32)
+        /// Another program's save came out in the swap and could not be put back: what failed, `errno`, and the path
+        /// its file is kept at, so it is never lost.
+        case kept(String, Int32, path: String)
 
         var message: String {
             switch self {
             case .changed: "the file changed while it was written"
             case .system(let step, let code): "\(step): \(String(cString: strerror(code)))"
+            case .kept(let step, let code, let path):
+                "\(step): \(String(cString: strerror(code))). The other program's version is kept at \(path)"
             }
         }
     }
@@ -37,26 +42,34 @@ enum MarkdownAtomicWrite {
     /// needs the writer's cooperation. A volume that cannot swap gets the check right before a plain rename.
     ///
     /// `beforePlacing` runs between the check and the placement; a test writes there as another program would.
-    static func replace(_ url: URL, with data: [UInt8], expected: [UInt8]?, beforePlacing: () -> Void = {}) throws {
+    /// `beforeRestoring` runs before each attempt to put another program's file back; a test locks the note there.
+    static func replace(_ url: URL, with data: [UInt8], expected: [UInt8]?, beforePlacing: () -> Void = {},
+                        beforeRestoring: () -> Void = {}) throws {
         let target = url.resolvingSymlinksInPath()
         var coordination: NSError?
         var outcome: Result<Void, Error> = .success(())
         NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: target, options: .forReplacing,
                                                          error: &coordination) { granted in
-            outcome = Result { try write(data, over: granted, expected: expected, beforePlacing: beforePlacing) }
+            outcome = Result {
+                try write(data, over: granted, expected: expected, beforePlacing: beforePlacing,
+                          beforeRestoring: beforeRestoring)
+            }
         }
         if let coordination { throw coordination }
         try outcome.get()
     }
 
-    private static func write(_ data: [UInt8], over target: URL, expected: [UInt8]?, beforePlacing: () -> Void) throws {
+    private static func write(_ data: [UInt8], over target: URL, expected: [UInt8]?, beforePlacing: () -> Void,
+                              beforeRestoring: () -> Void) throws {
         let temporary = target.deletingLastPathComponent()
             .appendingPathComponent(".\(target.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = open(temporary.path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw Failure.system("create the temporary file", errno) }
-        // Whatever is left at the temporary path when this returns: the new bytes that did not go in, or the old file
-        // the swap took out. Never a file another program wrote: that one is put back in place first.
-        defer { unlink(temporary.path) }
+        // Whatever is left at the temporary path when this returns goes: the new bytes that did not go in, or the old
+        // file the swap took out. Never a file another program wrote: that one is put back in place first, and when it
+        // cannot be, it stays there and the failure names it.
+        var disposable = true
+        defer { if disposable { unlink(temporary.path) } }
         var original = stat()
         let known = stat(target.path, &original) == 0
         var failure: Failure?
@@ -102,15 +115,26 @@ enum MarkdownAtomicWrite {
         // The old file is now at the temporary path. It still has `expected`: the new bytes stay, and it goes.
         if holds(temporary, expected) { return }
         // Someone wrote it meanwhile: their file goes back in place, and the new bytes come out.
+        beforeRestoring()
         guard renamex_np(temporary.path, target.path, UInt32(RENAME_SWAP)) == 0 else {
             // Theirs is at the temporary path: a plain rename puts it back over the new bytes.
-            guard rename(temporary.path, target.path) == 0 else { throw Failure.system("put the changed file back", errno) }
+            guard rename(temporary.path, target.path) == 0 else {
+                let code = errno
+                disposable = false
+                throw Failure.kept("put the changed file back", code, path: temporary.path)
+            }
             throw Failure.changed
         }
         // What came out is not the new bytes: a third program renamed its own file over them after the swap. That one
         // is the newest, so it goes back in place, and the older write it replaced comes out.
-        if !holds(temporary, data), renamex_np(temporary.path, target.path, UInt32(RENAME_SWAP)) != 0 {
-            guard rename(temporary.path, target.path) == 0 else { throw Failure.system("put the newest file back", errno) }
+        guard !holds(temporary, data) else { throw Failure.changed }
+        beforeRestoring()
+        if renamex_np(temporary.path, target.path, UInt32(RENAME_SWAP)) != 0 {
+            guard rename(temporary.path, target.path) == 0 else {
+                let code = errno
+                disposable = false
+                throw Failure.kept("put the newest file back", code, path: temporary.path)
+            }
         }
         throw Failure.changed
     }
