@@ -1328,6 +1328,25 @@ describe("folder archives", () => {
         }
     });
 
+    it("unpack checks a compressed file opened through a symlink of another name against its target's record", async () => {
+        const dir = scratch("pack-symlink-name");
+        const source = join(dir, "notes.log");
+        writeFileSync(source, logText(200));
+        const { record } = await compressPath({ source, force: true, caller: "test" });
+        const alias = join(dir, "restore.log.zst");
+        symlinkSync(record.target, alias);
+
+        const { id: _id, ...shape } = record;
+        recordCompression({ ...shape, inputSha256: "0".repeat(64) });
+        await expect(expandPath({ archive: alias, caller: "test" })).rejects.toThrow("other bytes than the original");
+        expect(existsSync(join(dir, "restore.log"))).toBe(false);
+
+        recordCompression(shape);
+        const restored = await expandPath({ archive: alias, caller: "test" });
+        expect(restored.outputSha256).toBe(record.inputSha256);
+        expect(readFileSync(join(dir, "restore.log"), "utf8")).toBe(logText(200));
+    });
+
     it("compressPath keeps the original unless asked, records the ledger, and expandPath restores the folder", async () => {
         const dir = scratch("ops");
         const tree = makeTree(dir);

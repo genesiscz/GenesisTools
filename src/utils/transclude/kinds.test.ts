@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compressFile } from "@genesiscz/utils/compress/file";
+import * as readLines from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { transclude } from "./engine";
 import { checkAllowed, cmdTransclusion, createCmdTransclusion, splitCommandLine } from "./kinds/cmd";
@@ -127,6 +128,29 @@ describe("file kinds", () => {
         expect(lines.text).toContain('{"n":2}\n{"n":3}');
         expect((await one(`{{file path="${plain}" max=1}}`)).text).toContain('{"n":1}\n```');
         expect((await one(`{{tail path="${plain}" n=1}}`)).text).toContain('{"n":5}');
+    });
+
+    test("lines reads the .zst of a day file the daily pass retired after the lookup, and drops a BOM", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "transclude-retired-"));
+        const plain = join(dir, "2026-10-12-failures.jsonl");
+        writeFileSync(plain, '{"n":1}\n{"n":2}\n');
+        await compressFile({ source: plain });
+        unlinkSync(plain);
+        // The lookup ran just before the daily pass removed the plain file, so it still names the plain file.
+        const lookup = spyOn(readLines, "storedFilePath").mockImplementationOnce((path) => path);
+
+        try {
+            const retired = await one(`{{lines path="${plain}" range="2"}}`);
+            expect(retired.token.error).toBeUndefined();
+            expect(retired.text).toContain('{"n":2}');
+        } finally {
+            lookup.mockRestore();
+        }
+
+        writeFileSync(join(dir, "bom.txt"), "﻿first\n");
+        const bom = await one(`{{lines path="${join(dir, "bom.txt")}" range="1"}}`);
+        expect(bom.text).toContain("\nfirst\n");
+        expect(bom.text).not.toContain("﻿");
     });
 
     test("json follows a JSON pointer or a $ path in a commented file", async () => {
