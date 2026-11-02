@@ -3,7 +3,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
@@ -17,6 +17,8 @@ import { presenceFor } from "../lib/presence";
 import { rawMeeting } from "../lib/raw";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
+import { rawTerms } from "../lib/suggest";
+import { DEFAULT_WORD_CHECK, WORD_CHECKS, wordCheckFor } from "../lib/word-check";
 
 const FORMATS = ["table", "json"] as const;
 /** The user's microphone recognized this many times more words than their own label holds: they are spread over others. */
@@ -24,7 +26,7 @@ const VOLUME_RATIO = 2;
 
 async function evidence(
     ref: string,
-    opts: { attendance?: string; format?: string | boolean; files?: boolean; raw?: boolean }
+    opts: { attendance?: string; format?: string | boolean; files?: boolean; raw?: boolean; wordCheck?: string }
 ): Promise<void> {
     const format = await resolveEnum({
         value: opts.format,
@@ -69,23 +71,45 @@ async function evidence(
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
         if (opts.raw) {
+            const choice = await resolveEnum({
+                value: opts.wordCheck,
+                fallback: DEFAULT_WORD_CHECK,
+                values: WORD_CHECKS,
+                flag: "--word-check",
+                subcommand: ["evidence"],
+            });
+
+            if (!choice) {
+                return;
+            }
+
             const config = await new MeetingsConfigStore().read();
             const points = meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [];
             const current = store.read(record.id) ?? record;
-            out.result(
-                SafeJSON.stringify(
-                    rawMeeting({
-                        record: current,
-                        meeting,
-                        evidence: found,
-                        presence,
-                        energyMicShare: energy.share,
-                        points,
-                    }),
-                    null,
-                    2
-                )
-            );
+            const opened = await wordCheckFor(choice, meeting.transcript);
+
+            try {
+                const terms = rawTerms({
+                    meeting,
+                    record: current,
+                    dictionary: resolveDictionary(config, { project: current.project, meeting: current.dictionary }),
+                    sourceWords: await source.dictionary(),
+                    ...(opened.check ? { wordCheck: opened.check } : { unavailable: opened.reason }),
+                });
+                const raw = rawMeeting({
+                    record: current,
+                    meeting,
+                    evidence: found,
+                    presence,
+                    energyMicShare: energy.share,
+                    points,
+                    terms,
+                });
+                out.result(SafeJSON.stringify(raw, null, 2));
+            } finally {
+                opened.check?.dispose();
+            }
+
             return;
         }
 
@@ -178,7 +202,11 @@ export function registerEvidenceCommand(program: Command): void {
         .option("--files", "also list the evidence files and their sizes")
         .option(
             "--raw",
-            "the facts per line as JSON, with no rule or confidence: who, channel, platform, present, summary"
+            "the facts per line as JSON, with no rule or confidence: who, channel, platform, present, terms, summary"
+        )
+        .option(
+            "--word-check <provider>",
+            `--raw: ${WORD_CHECKS.join(" | ")} for the term part (default ${DEFAULT_WORD_CHECK})`
         )
         .option("--format [format]", "table | json (json has one row per line)")
         .action(evidence);
