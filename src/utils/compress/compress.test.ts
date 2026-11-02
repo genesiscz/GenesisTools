@@ -1970,7 +1970,35 @@ describe("day logs", () => {
         writeFileSync(today, `${logText(30)}\ntoday only\n`);
         const lines = logText(50).split("\n");
         const exists = fs.existsSync;
-        // The daily pass (another process) removes the plain file the moment after a reader found it.
+        // readTextChunks looks nothing up: its open decides. The daily pass removes the plain file between the
+        // reader's Bun.file(), which opens nothing yet, and the stream's open, which then fails with ENOENT.
+        writeFileSync(plain, logText(50));
+        await compressFile({ source: plain, frameBytes: 1024 });
+        const bunFile = Bun.file;
+        let retired = 0;
+        const handle = spyOn(Bun, "file").mockImplementation((name, options) => {
+            // The reader names its file by a string path.
+            const file = bunFile(String(name), options);
+
+            if (name === plain && exists(plain)) {
+                unlinkSync(plain);
+                retired += 1;
+            }
+
+            return file;
+        });
+        const chunks: Buffer[] = [];
+
+        try {
+            for await (const chunk of readTextChunks(plain)) {
+                chunks.push(Buffer.from(chunk));
+            }
+        } finally {
+            handle.mockRestore();
+        }
+
+        expect([retired, exists(plain), Buffer.concat(chunks).toString()]).toEqual([1, false, logText(50)]);
+        // rg is handed the plain name, so the daily pass removes the plain file the moment after ripgrepFiles found it.
         const retiredAfterLookup = async <T>(read: () => Promise<T>): Promise<T> => {
             writeFileSync(plain, logText(50));
             await compressFile({ source: plain, frameBytes: 1024 });
@@ -1990,17 +2018,6 @@ describe("day logs", () => {
                 probe.mockRestore();
             }
         };
-
-        const text = await retiredAfterLookup(async () => {
-            const chunks: Buffer[] = [];
-
-            for await (const chunk of readTextChunks(plain)) {
-                chunks.push(Buffer.from(chunk));
-            }
-
-            return Buffer.concat(chunks).toString();
-        });
-        expect(text).toBe(logText(50));
 
         const rg = ripgrepBinary();
 

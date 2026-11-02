@@ -34,9 +34,12 @@ export const DAY_LOGS_PLAIN_DAYS = 2;
 /**
  * ai-proxy transcripts: only today's UTC day stays plain by date. A realtime session that keeps writing its start day
  * after UTC midnight is held back by the plan's quiet window (no write for 2 hours), and the proxy opens a file only for
- * each append, so a cold file of a past day holds no writer. Two days were kept before: the pass runs just after LOCAL
- * midnight, which in Prague is still the day before in UTC, so a transcript stayed plain for over two days after its
- * last write (2026-11-01: a 5.6 GB day, cold for 26 hours).
+ * each append, so a cold file of a past day holds no open handle. The quiet window does not end a session, though: one
+ * that stays silent for 2 hours and then writes again finds its file compressed, and the proxy's append restores the
+ * `.zst` under the plain name first (`restoreRetired` in `src/ai-proxy/lib/usage/transcripts.ts`), so the plain file
+ * never holds only the later entries. Two days were kept before: the pass runs just after LOCAL midnight, which in
+ * Prague is still the day before in UTC, so a transcript stayed plain for over two days after its last write
+ * (2026-11-01: a 5.6 GB day, cold for 26 hours).
  */
 export const TRANSCRIPTS_PLAIN_DAYS = 1;
 /** The app's hang and stack captures (`logs/hangs/`): today and yesterday stay plain for `tools hub dev monitor`. */

@@ -17,9 +17,12 @@
  * is one file. Untagged callers land in `_untagged.jsonl`. Writes are
  * best-effort: a transcript must never slow down or fail a proxied request.
  */
+import { existsSync } from "node:fs";
 import { appendFile, chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { CompressRefusal, expandPath } from "@genesiscz/utils/compress/operations";
+import { ZSTD_SUFFIX } from "@genesiscz/utils/compress/zstd";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -91,12 +94,43 @@ async function enforceMode(path: string, mode: number): Promise<void> {
     }
 }
 
+/**
+ * Puts a transcript the daily pass compressed back under its plain name before an append. A realtime session writes
+ * the file of its start day for as long as it runs, so one that went quiet for the pass's 2-hour window after UTC
+ * midnight can find its file replaced by `<file>.zst`. An append to the plain name would start a file holding only the
+ * new entries: readers take the plain file first (`transcriptOnDisk`), so the earlier exchanges would vanish from
+ * them, and the next pass would compress that remainder over the archive. The restore is checked against the
+ * ledger's record of the compression, and the archive goes only after the plain file holds every byte. A failed
+ * restore throws, and the append is skipped rather than written beside the archive.
+ */
+async function restoreRetired(file: string): Promise<void> {
+    const archive = `${file}${ZSTD_SUFFIX}`;
+
+    if (existsSync(file) || !existsSync(archive)) {
+        return;
+    }
+
+    try {
+        await expandPath({ archive, removeArchive: true, caller: "ai-proxy-transcripts" });
+        logger.info({ file }, "ai-proxy transcripts: restored a compressed transcript its session writes again");
+    } catch (err) {
+        // Another process restored it first: the plain file already holds the history.
+        if (err instanceof CompressRefusal && existsSync(file)) {
+            return;
+        }
+
+        logger.warn({ err, file }, "ai-proxy transcripts: could not restore a compressed transcript; append skipped");
+        throw err;
+    }
+}
+
 function queueAppend(file: string, day: string, payload: string): void {
     const next = (appendQueues.get(file) ?? Promise.resolve())
         .then(async () => {
             const dir = join(transcriptsRoot(), day);
             await mkdir(dir, { recursive: true, mode: DIR_MODE });
             await enforceMode(dir, DIR_MODE);
+            await restoreRetired(file);
             await appendFile(file, payload, { mode: FILE_MODE });
             await enforceMode(file, FILE_MODE);
         })
@@ -110,6 +144,11 @@ function queueAppend(file: string, day: string, payload: string): void {
             appendQueues.delete(file);
         }
     });
+}
+
+/** Resolves when every append queued so far has landed (or failed and was logged). */
+export async function transcriptAppendsSettled(): Promise<void> {
+    await Promise.all(appendQueues.values());
 }
 
 /** Transcripts are opt-out; a realtime session must honour the same switch. */
