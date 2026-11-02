@@ -189,6 +189,29 @@ describe("the Bash writes a session recorded", () => {
         expect(bashWriteLookup(session)("/w/old.txt")).toHaveLength(1);
     });
 
+    test("50,000 Bash rows of one path index in linear time, in log order", () => {
+        const session = `bash-writes-hot-${process.pid}`;
+        const log = sessionChangesPath(session);
+        mkdirSync(dirname(log), { recursive: true });
+        const rows = 50_000;
+        const hot = row(session, "/w/hot.txt", "bash", "2026-11-01T10:00:00.000Z", "2026-11-01T09:59:59.000Z");
+        const last = row(session, "/w/hot.txt", "bash", "2026-11-01T11:00:00.000Z", "2026-11-01T10:59:59.000Z");
+        writeFileSync(
+            log,
+            `${Array(rows - 1)
+                .fill(hot)
+                .join("\n")}\n${last}\n`
+        );
+        const started = performance.now();
+        const writes = bashWriteLookup(session, { maxBytes: 16 * 1024 * 1024 })("/w/hot.txt");
+        const ms = performance.now() - started;
+
+        expect(writes).toHaveLength(rows);
+        expect(writes.at(-1)).toEqual({ began: "2026-11-01T10:59:59.000Z", ended: "2026-11-01T11:00:00.000Z" });
+        // A copy of the path's list per row took 2.2 s here (O(N²)); one list appended to takes about 20 ms.
+        expect(ms).toBeLessThan(750);
+    });
+
     test("a lookup made after the log grew sees the new row; one made before keeps what it read", () => {
         const session = `bash-writes-grow-${process.pid}`;
         const log = sessionChangesPath(session);
