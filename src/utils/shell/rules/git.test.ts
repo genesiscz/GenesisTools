@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -1027,6 +1027,58 @@ describe("git-checkout-overwrites-saved-file", () => {
             "git checkout -- b.ts"
         );
     });
+});
+
+// A file check that cannot answer throws, and the rules runner skips a rule whose detect throws: the three revert
+// rules then say nothing for the whole command, and its checkout runs unguarded.
+describe("git-checkout-overwrites-file: a file check that cannot answer keeps the block", () => {
+    const dir = mkdtempSync(join(tmpdir(), "git-rule-unsure-"));
+    const locked = join(dir, "locked");
+    writeFileSync(join(dir, "a.ts"), "work");
+    writeFileSync(join(dir, "note.txt"), "x");
+    mkdirSync(locked);
+
+    afterAll(() => {
+        chmodSync(locked, 0o755);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("blocks when a reverted path or a copy lies under a file, where the check fails with ENOTDIR", () => {
+        for (const command of [
+            "git checkout main -- note.txt/a.ts",
+            "git checkout main -- note.txt/a.ts; git checkout -- a.ts",
+            // cp fails on a destination under a file, and the statement after it still runs.
+            "cp a.ts note.txt/a.ts; git checkout -- a.ts",
+            `cp a.ts ${join(dir, "note.txt", "a.ts")}; git checkout -- a.ts`,
+        ]) {
+            expect(ids(command, dir)).toEqual([CHECKOUT]);
+        }
+
+        expect(ids(`cp a.ts ${join(dir, "note.txt", "a.ts")}; git checkout -- a.ts`)).toEqual([CHECKOUT]);
+        expect(ids("cp a.ts bak.ts; git checkout -- a.ts", dir)).toEqual([SAVED]);
+    });
+
+    // root searches every folder, so only another user gets EACCES.
+    it.skipIf(process.getuid?.() === 0)(
+        "blocks when a reverted path or a copy lies in a folder nobody may search, where the check fails with EACCES",
+        () => {
+            chmodSync(locked, 0o000);
+
+            try {
+                for (const command of [
+                    "git checkout main -- locked/a.ts",
+                    "cp a.ts locked/backup.ts; git checkout -- a.ts",
+                    "cp a.ts locked/; git checkout -- a.ts",
+                ]) {
+                    expect(ids(command, dir)).toEqual([CHECKOUT]);
+                }
+
+                expect(ids(`cp a.ts ${join(locked, "backup.ts")}; git checkout -- a.ts`)).toEqual([CHECKOUT]);
+            } finally {
+                chmodSync(locked, 0o755);
+            }
+        }
+    );
 });
 
 describe("git-push-force-without-lease", () => {

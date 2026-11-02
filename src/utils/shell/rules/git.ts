@@ -613,6 +613,17 @@ function knownFolder(scan: ShellScan, inv: GitInvocation): string | null {
     return folder;
 }
 
+// Whether nothing is at `path`, not even a dangling symlink (lstat). A check that cannot answer throws (EACCES
+// in a folder nobody may search, ENOTDIR under a file), and such a path may hold a file. The throw must not leave
+// here: the rules runner skips a rule whose detect throws, and all three revert rules would say nothing.
+function surelyAbsent(path: string): boolean {
+    try {
+        return lstatSync(path, { throwIfNoEntry: false }) === undefined;
+    } catch {
+        return false;
+    }
+}
+
 // A revert from a named source whose every path is a literal file absent where it is written only creates files.
 // A statement before it may have made the file first: one that names the file or a folder on its path, a stash, a
 // move or a patch. A `(` right after the last path is a zsh glob the scanner cut off.
@@ -638,10 +649,10 @@ function onlyCreates(scan: ShellScan, revert: Revert): boolean {
     const moved = place === "" ? "" : literalPath(/^-C (\S+)$/.exec(place)?.[1] ?? "");
     const shell = moved === null ? null : knownFolder(scan, inv);
     const folder = shell === null || moved === null ? null : resolve(shell, moved);
-    // lstat: a dangling symlink is a file the checkout replaces.
+    // A dangling symlink is a file the checkout replaces.
     return (
         folder !== null &&
-        paths.every((path) => lstatSync(resolve(folder, path), { throwIfNoEntry: false }) === undefined) &&
+        paths.every((path) => surelyAbsent(resolve(folder, path))) &&
         !(revert.resetsIndex && indexMayHold(folder, paths))
     );
 }
@@ -860,7 +871,9 @@ interface Saves {
 // one file (a symlink or a hard link). Without one, two relative spellings are unsure when some folder makes them one
 // path (mayMeet), and an absolute and a relative one with the same last name are unsure since the shell may stand
 // where the absolute one points; only an absolute target that does not exist yet is surely a new file. A word the
-// shell expands is unsure too, and an unsure copy saves nothing.
+// shell expands is unsure too, and an unsure copy saves nothing. So does a copy whose check cannot answer (EACCES in
+// a folder nobody may search, ENOTDIR under a file): cp fails there as well, and the throw must not reach the rules
+// runner, which skips a rule whose detect throws and would silence all three revert rules.
 function keepsCopy(folder: string | null, source: string, dest: string): boolean {
     const from = literalPath(source);
     const to = literalPath(dest);
@@ -873,34 +886,39 @@ function keepsCopy(folder: string | null, source: string, dest: string): boolean
     const base = posix.basename(f);
     const located = (path: string) => (isAbsolute(path) ? path : folder === null ? null : resolve(folder, path));
     const place = located(to);
-    const mayBeFolder =
-        /(?:^|\/)\.{0,2}$/.test(to) || place === null || statSync(place, { throwIfNoEntry: false })?.isDirectory();
-    const targets = mayBeFolder ? [to, posix.join(to, base)] : [to];
 
-    return targets.every((target) => {
-        const a = located(from);
-        const b = located(target);
+    try {
+        const mayBeFolder =
+            /(?:^|\/)\.{0,2}$/.test(to) || place === null || statSync(place, { throwIfNoEntry: false })?.isDirectory();
+        const targets = mayBeFolder ? [to, posix.join(to, base)] : [to];
 
-        if (a !== null && b !== null) {
-            const left = statSync(a, { throwIfNoEntry: false });
-            const right = statSync(b, { throwIfNoEntry: false });
-            const oneFile =
-                left !== undefined && right !== undefined && left.dev === right.dev && left.ino === right.ino;
-            return a.toLowerCase() !== b.toLowerCase() && !oneFile;
-        }
+        return targets.every((target) => {
+            const a = located(from);
+            const b = located(target);
 
-        const t = posix.normalize(target);
+            if (a !== null && b !== null) {
+                const left = statSync(a, { throwIfNoEntry: false });
+                const right = statSync(b, { throwIfNoEntry: false });
+                const oneFile =
+                    left !== undefined && right !== undefined && left.dev === right.dev && left.ino === right.ino;
+                return a.toLowerCase() !== b.toLowerCase() && !oneFile;
+            }
 
-        if (!isAbsolute(f) && !isAbsolute(t)) {
-            return !mayMeet(f, t);
-        }
+            const t = posix.normalize(target);
 
-        if (posix.basename(t).toLowerCase() !== base.toLowerCase()) {
-            return true;
-        }
+            if (!isAbsolute(f) && !isAbsolute(t)) {
+                return !mayMeet(f, t);
+            }
 
-        return isAbsolute(t) && lstatSync(t, { throwIfNoEntry: false }) === undefined;
-    });
+            if (posix.basename(t).toLowerCase() !== base.toLowerCase()) {
+                return true;
+            }
+
+            return isAbsolute(t) && surelyAbsent(t);
+        });
+    } catch {
+        return false;
+    }
 }
 
 // Whether two relative paths can name one file from some folder, case-folded. After the leading `..` of each, the
