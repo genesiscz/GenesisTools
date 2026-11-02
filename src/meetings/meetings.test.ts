@@ -208,6 +208,41 @@ describe("evidence rule", () => {
     });
 });
 
+describe("evidence ranges (R4.1)", () => {
+    test("a line of the label without a finding closes the range, so the range never covers it", () => {
+        const items = suggestItems({
+            record,
+            meeting: {
+                ...meeting,
+                transcript: [
+                    line("Carol Example", 0, "Já to udělám.", 2),
+                    line("Carol Example", 10, "Tohle říká Carol.", 2),
+                    line("Carol Example", 20, "A ještě tohle.", 2),
+                ],
+            },
+            rules: ["evidence"],
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            evidence: {
+                selfName: "Alice Example",
+                segments: [
+                    { startSec: 0, endSec: 10, channel: "mic" },
+                    { startSec: 10, endSec: 20, channel: "system", liveName: "Carol Example" },
+                    { startSec: 20, endSec: 30, channel: "mic" },
+                ],
+                speaking: [],
+                files: [],
+            },
+            now: "2026-11-02T15:00:00.000Z",
+        });
+
+        expect(items.map((item) => item.kind === "speaker-range" && [item.fromSec, item.toSec])).toEqual([
+            [0, 0],
+            [20, 20],
+        ]);
+    });
+});
+
 describe("evidence rule after a leave", () => {
     test("a live name of someone who left is dropped; the speaking indicator among those still here guesses, to listen", () => {
         const items = suggestItems({
