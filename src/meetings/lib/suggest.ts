@@ -295,8 +295,19 @@ export function rawTerms(options: TermSources & { wordCheck?: WordCheck; unavail
 function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] {
     const { meeting, dictionary, wordCheck } = options;
     const vocab = termVocabulary(options);
+    // A word the dictionary keeps, or already replaces (a fix, a term's spoken form), needs no item and no question.
     const keep = new Set(
-        dictionary.entries.filter((entry) => entry.type === "keep").map((entry) => entry.value.toLowerCase())
+        dictionary.entries.flatMap((entry) => {
+            if (entry.type === "keep") {
+                return [entry.value.toLowerCase()];
+            }
+
+            if (entry.type === "fix") {
+                return entry.value.toLowerCase().split(/\s+/).length === 1 ? [entry.value.toLowerCase()] : [];
+            }
+
+            return entry.type === "term" ? (entry.spoken ?? []).map((form) => form.toLowerCase()) : [];
+        })
     );
     const context = termsFromText(meeting.title, "title");
     const suspects = findSuspectTerms({ entries: meeting.transcript, vocab, context, wordCheck }).filter(
@@ -323,7 +334,9 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
         { heard: string; value: string; score: number; atSec?: number; occurrences: number }
     >();
 
-    for (const match of fuzzyMatches(meeting.transcript, dictionary).filter((candidate) => candidate.score < applyAt)) {
+    for (const match of fuzzyMatches(meeting.transcript, dictionary).filter(
+        (candidate) => candidate.score < applyAt && !keep.has(candidate.heard.toLowerCase())
+    )) {
         const key = `${match.heard.toLowerCase()}|${match.value}`;
         const seen = fuzzy.get(key);
         fuzzy.set(key, {
