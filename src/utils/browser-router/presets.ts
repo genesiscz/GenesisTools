@@ -181,6 +181,28 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             ]),
         },
         {
+            id: "meetings-play",
+            title: "Play a meeting moment",
+            kind: "installable",
+            description:
+                "https://<link host>/meetings/play?meeting=<id>&at=<time> plays the meeting's audio from that time (tools meetings play).",
+            enabledIf: ["platform:darwin"],
+            needsLinkHost: true,
+            routes: withHost((host) => [
+                {
+                    preset: "meetings-play",
+                    name: "Play a meeting moment",
+                    pattern: on(host, "meetings/play"),
+                    // Plays and nothing else, so it runs at once; an unknown meeting or time makes the tool say so.
+                    action: {
+                        type: "run",
+                        argv: ["tools", "meetings", "play", "{meeting}", "--at", "{at}"],
+                        approval: "allow",
+                    },
+                },
+            ]),
+        },
+        {
             id: "decide",
             title: "Claude decision answer",
             kind: "installable",
