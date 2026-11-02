@@ -32,3 +32,7 @@ export const noAnalysis: SessionAnalysisReader = {
     compactions: async () => ({ supported: false, reason: "test reader" }),
     quotaReadings: async () => ({ supported: false, reason: "test reader" }),
 };
+/** `readChanges` for a test reader whose sessions record no file changes. */
+export function noSessionChanges(): null {
+    return null;
+}

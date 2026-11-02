@@ -8,6 +8,7 @@ import {
     noContinuedIn,
     noCurrentModel,
     noRowAnchors,
+    noSessionChanges,
 } from "./testing/no-backward-read";
 import type { HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
@@ -108,6 +109,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
         currentModel: noCurrentModel,
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
+        readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
         readTurnBoundary: async () => null,

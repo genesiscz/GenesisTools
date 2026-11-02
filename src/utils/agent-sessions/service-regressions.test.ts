@@ -15,6 +15,7 @@ import {
     noContinuedIn,
     noCurrentModel,
     noRowAnchors,
+    noSessionChanges,
 } from "./testing/no-backward-read";
 import type { HistoryMetadataRecord, HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
@@ -144,6 +145,7 @@ function fixtureReader(options: {
         currentModel: noCurrentModel,
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
+        readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
         readTurnBoundary: async () => null,
