@@ -1,6 +1,7 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerDictionaryCommand } from "./commands/dictionary";
+import { registerMeetingCommands } from "./commands/meeting";
 import { registerProjectsCommand } from "./commands/projects";
 
 const program = new Command();
@@ -9,6 +10,7 @@ program
     .description(
         "Meetings as one record each: projects, the transcript dictionary, and (to come) recording and review"
     );
+registerMeetingCommands(program);
 registerProjectsCommand(program);
 registerDictionaryCommand(program);
 

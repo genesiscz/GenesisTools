@@ -248,6 +248,30 @@ export function pendingSpeakerRenames(): Array<{ id: string; title: string }> {
     );
 }
 
+/** The app's dictionary rows, with the replacement when the row has one. */
+export function dictionaryCandidates(): Array<{ value: string; replacement?: string }> {
+    return withDb((db) =>
+        db
+            .query<{ phrase: string; replacement: string | null }, []>(
+                "SELECT phrase, replacement FROM Dictionary WHERE isDeleted = 0 AND isSnippet = 0"
+            )
+            .all()
+            .map((row) => ({ value: row.phrase, ...(row.replacement ? { replacement: row.replacement } : {}) }))
+    );
+}
+
+/** The newest meeting the app has not ended: the one it is recording now, if any. */
+export function liveLocalMeeting(): { id: string; title: string; start: string } | undefined {
+    return withDb((db) => {
+        const row = db
+            .query<{ id: string; title: string; createdAt: string }, []>(
+                "SELECT id, title, createdAt FROM Meetings WHERE endedAt IS NULL AND isDeleted = 0 ORDER BY createdAt DESC LIMIT 1"
+            )
+            .get();
+        return row ? { id: row.id, title: row.title, start: toIso(row.createdAt) } : undefined;
+    });
+}
+
 /** The user's Wispr Flow dictionary: words the app was taught to spell. */
 export function dictionaryPhrases(): string[] {
     return withDb((db) =>
