@@ -1196,10 +1196,21 @@ export function silentReason({
 }
 
 /**
+ * The two starts of a call. `since` is the whole second of `stamp` (mtime comparisons find the call's changes with
+ * it), so it can be up to a second before the call. `began` is the exact start (`started-ms`), absent when the pre
+ * phase left none: `tools rm` counts a file born at or after it as made by the call, so a rounded start would hand it
+ * a file born earlier in the same second.
+ */
+export interface CallWindow {
+    since: number;
+    began?: number;
+}
+
+/**
  * What the session change log receives: every file the call captured, before the render cap, except a file whose
  * read could download it (`loggableCaptures`).
  */
-export type EditRecorder = (payload: HookPayload, captures: CapturedEdit[], since: number) => void;
+export type EditRecorder = (payload: HookPayload, captures: CapturedEdit[], window: CallWindow) => void;
 
 export interface CapturedEdit {
     path: string;
@@ -1913,7 +1924,7 @@ export function runDiffPost({
         blocks.push(block);
     }
 
-    record(payload, loggableCaptures(captures), since);
+    record(payload, loggableCaptures(captures), { since, ...(Number.isFinite(started) ? { began: started } : {}) });
     recordTouches(touches);
 
     try {
@@ -2158,7 +2169,7 @@ export function captureChunks(
  * hashed and dropped one bounded chunk at a time instead of all held at once. Tests never touch the
  * home directory. Never throws.
  */
-function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: number): void {
+function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], { since, began }: CallWindow): void {
     try {
         if (!payload.sessionId || isTestProcess() || !commandEditsFiles(payload.command)) {
             return;
@@ -2174,8 +2185,9 @@ function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: 
             tool: payload.tool,
             ...(payload.toolUseId ? { toolUseId: payload.toolUseId } : {}),
             cwd: payload.cwd,
-            // tools rm counts a file as made by this command only when it was born after this.
-            ...(Number.isFinite(since) ? { began: new Date(since).toISOString() } : {}),
+            // tools rm counts a file as made by this command only when it was born after this: the exact start,
+            // never the rounded `since`, which is up to a second earlier.
+            ...(began !== undefined && Number.isFinite(began) ? { began: new Date(began).toISOString() } : {}),
         };
 
         captureChunks(captures).forEach((chunk, at) => {
