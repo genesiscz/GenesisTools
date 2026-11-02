@@ -3,6 +3,7 @@
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { GenesisAppRpcFailure, GenesisAppRpcOutcome } from "@genesiscz/utils/macos/genesis-app-rpc";
@@ -25,6 +26,7 @@ import {
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import type { ChannelConfigs } from "@genesiscz/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
+import { notificationLedgerPath, readNotificationLedger } from "@genesiscz/utils/notifications/ledger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import {
     createBoxTable,
@@ -33,6 +35,7 @@ import {
     renderCliKeyRow,
     truncateDisplay,
 } from "@genesiscz/utils/table";
+import { localTime } from "@genesiscz/utils/transcribe/render";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -586,6 +589,61 @@ program
         }
 
         out.println(table.toString());
+    });
+
+program
+    .command("history")
+    .description("Every notification sent, held back or clicked, from the ledger (~/.genesis-tools/notifications)")
+    .option("--since <duration>", "how far back: 30m, 6h, 2d", "24h")
+    .option("--source <source>", "only this source (meetings, hub, claude-usage, ...)")
+    .option("--clicks", "only the clicks")
+    .option("--json", "print the rows as JSON")
+    .action((options: { since: string; source?: string; clicks?: boolean; json?: boolean }) => {
+        const backMs = parseDuration(options.since);
+
+        if (!(backMs > 0)) {
+            out.error(`--since ${options.since} is not a duration (try 30m, 6h or 2d)`);
+            process.exitCode = 1;
+            return;
+        }
+
+        const rows = readNotificationLedger({ sinceMs: Date.now() - backMs }).filter(
+            (row) =>
+                (!options.source || row.source === options.source) && (!options.clicks || row.outcome === "clicked")
+        );
+
+        if (options.json) {
+            out.result({ path: notificationLedgerPath(), notifications: rows });
+            return;
+        }
+
+        if (rows.length === 0) {
+            out.println(`Nothing in the last ${options.since} (${notificationLedgerPath()}).`);
+            return;
+        }
+
+        const color: Record<string, (text: string) => string> = {
+            posted: pc.green,
+            clicked: pc.cyan,
+            failed: pc.red,
+            suppressed: pc.dim,
+            withdrawn: pc.dim,
+        };
+        const table = createBoxTable(["TIME", "SOURCE", "OUTCOME", "TITLE", "DETAIL"]);
+
+        for (const row of rows) {
+            const did = typeof row.did === "string" ? `${String(row.action ?? "")}: ${row.did}` : undefined;
+            table.push([
+                localTime(row.at).slice(5),
+                truncateDisplay(row.source, 16),
+                (color[row.outcome] ?? ((text: string) => text))(row.outcome),
+                truncateDisplay([row.title, row.subtitle].filter(Boolean).join(" · "), 40),
+                truncateDisplay(did ?? row.reason ?? row.body ?? "", 60),
+            ]);
+        }
+
+        out.println(table.toString());
+        out.println(pc.dim(`${rows.length} rows · ${notificationLedgerPath()}`));
     });
 
 program

@@ -379,7 +379,8 @@ func logClick(_ message: String) {
     let dir = (genesisHome() as NSString).appendingPathComponent(".genesis-tools/app")
     let path = (dir as NSString).appendingPathComponent("notify-clicks.log")
     let stamp = ISO8601DateFormatter().string(from: Date())
-    let line = "\(stamp) \(message)\n"
+    // Several faces of the bundle write here (the relay, a window, a click-launched instance): the pid tells them apart.
+    let line = "\(stamp) pid=\(getpid()) \(message)\n"
 
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
 
@@ -398,9 +399,32 @@ private func clickHasRoute(userInfo: [AnyHashable: Any], actionIdentifier: Strin
     return [route?["open"], route?["execute"]].contains { ($0 as? String)?.isEmpty == false }
 }
 
+/// When a notification was last clicked, for every face of the bundle: a click also sends the running relay a
+/// "reopen", which must not open a window on top of what the click did (LinkRelay.swift).
+func lastNotificationClickPath() -> String {
+    ((genesisHome() as NSString).appendingPathComponent(".genesis-tools/app") as NSString)
+        .appendingPathComponent("last-notification-click")
+}
+
+func noteNotificationClick() {
+    try? String(Date().timeIntervalSince1970).write(toFile: lastNotificationClickPath(), atomically: true, encoding: .utf8)
+}
+
+/// Seconds since the last notification click, or nil when none was recorded.
+func secondsSinceNotificationClick() -> TimeInterval? {
+    guard let text = try? String(contentsOfFile: lastNotificationClickPath(), encoding: .utf8),
+          let at = TimeInterval(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    else {
+        return nil
+    }
+
+    return Date().timeIntervalSince1970 - at
+}
+
 /// Run whatever the clicked element was carrying. Blocks until an `execute` command finishes, so
-/// the caller must not run this on the main queue.
-func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) {
+/// the caller must not run this on the main queue. Returns what it did, for the log and the ledger.
+@discardableResult
+func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) -> String {
     // Read one level at a time. userInfo comes back from the notification store as a plist, so the
     // inner dictionaries arrive as [String: Any] and a direct cast to [String: [String: String]]
     // fails, silently turning every click into a no-op. That was the first shipped bug here.
@@ -412,6 +436,8 @@ func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) 
     logClick(
         "action=\(actionIdentifier) routes=\(routes?.keys.sorted() ?? []) open=\(open ?? "-") execute=\(execute ?? "-")"
     )
+
+    var did: [String] = []
 
     if let execute, !execute.isEmpty {
         let task = Process()
@@ -439,23 +465,39 @@ func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) 
             if group.wait(timeout: .now() + 30) == .timedOut {
                 task.terminate()
                 logClick("execute timed out after 30s; killed")
+                did.append("execute timed out")
             } else {
                 logClick("execute finished status=\(task.terminationStatus)")
+                did.append("execute status \(task.terminationStatus)")
             }
         } catch {
             logClick("execute failed: \(error.localizedDescription)")
+            did.append("execute failed: \(error.localizedDescription)")
         }
     }
 
-    if let open, !open.isEmpty, let url = URL(string: open) {
-        if url.isFileURL {
-            // A folder opens in Finder by name, never its default app (Hub/HubPathActions.swift).
+    if let open, !open.isEmpty {
+        if open.hasPrefix("/") || open.hasPrefix("~") {
+            // A plain path. `URL(string:)` makes it a URL with no scheme, which NSWorkspace refuses with error -50
+            // ("The application can't be opened"); a folder opens in Finder by name (Hub/HubPathActions.swift).
+            let target = PathOpener.perform(.open, open)
+            logClick("opened path \(open) -> \(target)")
+            did.append("opened \(open)")
+        } else if let url = URL(string: open), url.isFileURL {
             PathOpener.open(url.path)
+            logClick("opened file URL \(open)")
+            did.append("opened \(url.path)")
+        } else if let url = URL(string: open), url.scheme != nil {
+            let opened = NSWorkspace.shared.open(url)
+            logClick("opened \(open) ok=\(opened)")
+            did.append(opened ? "opened \(open)" : "could not open \(open)")
         } else {
-            NSWorkspace.shared.open(url)
+            logClick("open is neither a path nor a URL: \(open)")
+            did.append("not a path or URL: \(open)")
         }
-        logClick("opened \(open)")
     }
+
+    return did.isEmpty ? "nothing (no action for this click)" : did.joined(separator: "; ")
 }
 
 /// Registered by every face of the bundle that can receive a click, including an instance macOS
@@ -486,6 +528,7 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         let typed = (response as? UNTextInputNotificationResponse)?.userText
 
         logClick("response id=\(notificationId) action=\(actionIdentifier) text=\(typed ?? "-")")
+        noteNotificationClick()
 
         // Every response leaves a reply file, not just a typed one, so a caller can await a plain
         // button press exactly as it awaits an answer.
@@ -496,8 +539,25 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             BrowserURLForwarder.shared.yieldActivation()
         }
 
+        let content = response.notification.request.content
+
         DispatchQueue.global(qos: .userInitiated).async {
-            performClickAction(userInfo: userInfo, actionIdentifier: actionIdentifier)
+            let did = performClickAction(userInfo: userInfo, actionIdentifier: actionIdentifier)
+            // The same ledger as the posts (~/.genesis-tools/notifications/ledger.jsonl), so a click is found next to
+            // the card it came from.
+            NotificationLedger.record(
+                source: (userInfo["source"] as? String) ?? (content.threadIdentifier.isEmpty ? "genesis-app" : content.threadIdentifier),
+                channel: "macos",
+                outcome: .clicked,
+                title: content.title,
+                subtitle: content.subtitle.isEmpty ? nil : content.subtitle,
+                body: content.body,
+                fields: [
+                    "id": notificationId,
+                    "action": actionIdentifier == UNNotificationDefaultActionIdentifier ? "body" : actionIdentifier,
+                    "did": did,
+                ].merging(typed.map { ["text": $0] } ?? [:]) { first, _ in first }
+            )
 
             DispatchQueue.main.async {
                 completionHandler()

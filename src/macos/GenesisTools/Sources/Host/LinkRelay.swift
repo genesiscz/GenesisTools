@@ -256,6 +256,12 @@ private final class LinkRelayDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // A reopen turns the relay regular before this runs (App/DockTile.swift): back to accessory first.
         DockTile.enforce("reopen")
+        // A notification click reaches the running relay as a reopen too; the click already did its action.
+        if let since = secondsSinceNotificationClick(), since < 3 {
+            LinkRelay.note("reopen \(String(format: "%.1f", since)) s after a notification click, no window")
+            return false
+        }
+
         if (AppMainWindow.current == .hub || HubSingleInstance.isRunningElsewhere), AppDock.showHub(nil) {
             LinkRelay.note("reopen, showing the hub")
         } else if let executable = Bundle.main.executablePath {

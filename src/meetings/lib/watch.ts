@@ -66,7 +66,10 @@ function defaultDeps(store: MeetingStore): WatchDeps {
         recorder: () => readRecorderState(store),
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
         notify: async (note) => {
-            await sendNotification(note).catch((err: unknown) => log.warn({ err }, "notification failed"));
+            // The group names the source in the notification ledger (`tools notify history --source meetings`).
+            await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
+                log.warn({ err }, "notification failed")
+            );
         },
     };
 }
