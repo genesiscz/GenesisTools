@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -117,7 +118,9 @@ async function evidence(
         if (volume) {
             const say = `your microphone recognized ${volume.micTokens} words; your label "${found.selfName}" holds ${volume.selfLabelWords}`;
             volume.spread
-                ? ui.warn(`${say}: you are spread over other labels (tools meetings suggest --rules evidence)`)
+                ? ui.warn(
+                      `${say}: you are spread over other labels (${toolCommand("meetings", "suggest", record.id, "--rules", "evidence")})`
+                  )
                 : ui.dim(say);
         }
 

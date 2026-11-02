@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { execTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
@@ -55,10 +56,12 @@ async function readCalls(spec: string, meeting: AttendanceTarget): Promise<{ raw
     log.debug({ title: meeting.title, exitCode: result.exitCode }, "ms-teams attendance");
 
     if (!result.success) {
-        throw new Error(`tools ms-teams meetings attendance failed: ${result.stderr || `exit ${result.exitCode}`}`);
+        throw new Error(
+            `${toolCommand("ms-teams", "meetings", "attendance")} failed: ${result.stderr || `exit ${result.exitCode}`}`
+        );
     }
 
-    return { raw: result.stdout, from: "tools ms-teams" };
+    return { raw: result.stdout, from: toolCommand("ms-teams") };
 }
 
 /** The call that started closest to the meeting, if one is close enough to be the same call. */

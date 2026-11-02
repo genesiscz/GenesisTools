@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { loadPresence } from "@app/meetings/lib/attendance";
 import { printSpeakerStats } from "@app/meetings/lib/speakers-view";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -589,7 +590,7 @@ export function registerMeetingsCommand(program: Command): void {
         .option("--gap <duration>", "a pause shorter than this keeps two turns in one span", "2m")
         .option(
             "--attendance <teams|file>",
-            "who was in the call and when: teams asks tools ms-teams by the meeting title, or a file of its --json output"
+            `who was in the call and when: teams asks ${toolCommand("ms-teams")} by the meeting title, or a file of its --json output`
         )
         .option("--source [source]", "auto | local | mcp")
         .option("--format [format]", "table | json")

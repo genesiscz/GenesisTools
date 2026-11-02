@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import {
@@ -78,7 +79,7 @@ export async function linkSource(options: {
         : options.store.resolve(`${ref.source}:${meeting.sourceMeetingId}`);
 
     if (options.meetingRef && !existing) {
-        throw new Error(`No meeting "${options.meetingRef}" (tools meetings list)`);
+        throw new Error(`No meeting "${options.meetingRef}" (${toolCommand("meetings", "list")})`);
     }
 
     const { project } = await resolveProject({

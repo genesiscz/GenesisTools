@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -23,7 +24,7 @@ async function show(opts: { project?: string; json?: boolean }): Promise<void> {
         if (opts.project && !config.projects[opts.project]) {
             const known = Object.keys(config.projects).join(", ") || "none yet";
             fail(
-                `Unknown project ${opts.project}. Known: ${known}. Add it: tools meetings projects add ${opts.project}`
+                `Unknown project ${opts.project}. Known: ${known}. Add it: ${toolCommand("meetings", "projects", "add", opts.project)}`
             );
             return;
         }
@@ -232,7 +233,7 @@ async function suggest(opts: {
 
         out.println(table.toString());
         ui.dim(
-            `Save some: tools meetings dictionary suggest${opts.project ? ` --project ${opts.project}` : ""} --apply 1,3 (or --apply all)`
+            `Save some: ${toolCommand("meetings", "dictionary", "suggest")}${opts.project ? ` --project ${opts.project}` : ""} --apply 1,3 (or --apply all)`
         );
     } catch (err) {
         fail(errorText(err));
