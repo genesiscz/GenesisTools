@@ -41,6 +41,8 @@ export interface LineEvidence {
     startSec: number;
     endSec: number;
     label: string;
+    /** The line's own text: taken from its entry, never looked up by time (two lines can start in one second). */
+    text: string;
     /** The share of the line's overlap with microphone segments; undefined when no segment overlaps. */
     micShare?: number;
     /** The identity with the most overlap: `self` (microphone) or the platform's name for the call sound. */
@@ -191,6 +193,7 @@ export function lineEvidence(
             startSec,
             endSec,
             label: entry.speaker,
+            text: entry.text,
             ...(total > 0 ? { micShare: (overlap.get(SELF)?.sec ?? 0) / total } : {}),
             ...(winner && best ? { winner, winnerShare: best.sec / total } : {}),
             ...(tie ? { tie: true } : {}),

@@ -19,6 +19,7 @@ import {
     skipQuestion,
     splitQuestion,
 } from "./lib/questions";
+import { rawMeeting } from "./lib/raw";
 import { suggestItems } from "./lib/suggest";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
 
@@ -848,5 +849,30 @@ describe("an agent's findings (items add)", () => {
             findings: [{ kind: "question", from: 5, to: 9, question: "?", decides: ["i9"] }],
         });
         expect(findingProblem(late!, [])).toContain("i9");
+    });
+});
+
+describe("evidence --raw", () => {
+    test("two lines that start in the same second keep their own text, after an untimed line too", () => {
+        const raw = rawMeeting({
+            record,
+            meeting: {
+                ...meeting,
+                transcript: [
+                    { speaker: "Alice Example", text: "No time on this one." },
+                    line("Bob Example", 181, "To právě."),
+                    // The same start as the line before: Wispr gives starts in whole seconds.
+                    line("Carol Example", 181, "Já ti ho pošlu novej."),
+                    line("Bob Example", 185, "Dobře."),
+                ],
+            },
+            evidence: null,
+            points: [],
+        });
+        expect(raw.lines.map((entry) => [entry.label, entry.text])).toEqual([
+            ["Bob Example", "To právě."],
+            ["Carol Example", "Já ti ho pošlu novej."],
+            ["Bob Example", "Dobře."],
+        ]);
     });
 });

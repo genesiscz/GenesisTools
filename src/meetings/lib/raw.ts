@@ -80,9 +80,6 @@ export function rawMeeting(options: {
         options.presence,
         options.energyMicShare
     );
-    const textAt = new Map(
-        meeting.transcript.filter((entry) => entry.startSec !== undefined).map((entry) => [entry.startSec!, entry.text])
-    );
     const selfName = record.participants.find((person) => person.self)?.name;
     const names = [
         ...new Set([
@@ -120,7 +117,7 @@ export function rawMeeting(options: {
                 toSec: line.endSec,
                 label: line.label,
                 ...(origin ? { labelOrigin: origin } : {}),
-                text: textAt.get(line.startSec) ?? "",
+                text: line.text,
                 ...(line.micShare !== undefined
                     ? { channel: { micShare: Math.round(line.micShare * 1000) / 1000 } }
                     : {}),
