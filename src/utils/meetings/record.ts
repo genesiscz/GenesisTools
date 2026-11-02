@@ -118,6 +118,12 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         decides: z.array(itemIdSchema).default([]),
         answer: z.string().optional(),
         comment: z.string().optional(),
+        /** What `listen` plays when the range is long: the longest line in it. Absent: the whole range. */
+        clip: z.object({ fromSec: z.number(), toSec: z.number() }).optional(),
+        /** Value of information, (1 − confidence) × impact × reach: `listen` asks the highest first. */
+        priority: z.number().optional(),
+        /** The evidence shape (top choices and who was present): one answer settles every question that shares it. */
+        signature: z.string().optional(),
         ...itemBase,
     }),
 ]);

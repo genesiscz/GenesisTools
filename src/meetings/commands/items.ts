@@ -15,7 +15,7 @@ import {
     QUESTION_TOPICS,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { applyCorrections, type TranscriptCorrections, type UnclearPassage } from "@genesiscz/utils/transcribe/apply";
 import {
@@ -31,6 +31,7 @@ import {
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
@@ -39,7 +40,7 @@ import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
 import { openQuestions } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
-import { meetingSource } from "../lib/sources";
+import { linkedSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
 
@@ -60,18 +61,6 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
         fail(errorText(err));
         return undefined;
     }
-}
-
-/** The transcript of the first linked source that has a meeting id. */
-/** The first linked source that names a meeting of its own. */
-async function linkedSource(record: MeetingRecord): Promise<{ source: TranscriptSource; sourceMeetingId: string }> {
-    for (const [sourceId, block] of Object.entries(record.sources)) {
-        if (typeof block.meetingId === "string") {
-            return { source: await meetingSource(sourceId), sourceMeetingId: block.meetingId };
-        }
-    }
-
-    throw new Error(`${record.id} has no source with a transcript. Link one: ${TOOL} link ${record.id} wisprflow:<id>`);
 }
 
 async function loadTranscript(record: MeetingRecord): Promise<SourceMeeting> {
@@ -162,6 +151,7 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
             evidence,
             energyMicShare: (await energyMicShareFor(store, collected, evidence)).share,
             listenBelow: config.global.suggest.listenBelow,
+            points: meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [],
             now: new Date().toISOString(),
         });
 
@@ -505,23 +495,59 @@ async function speakersRename(ref: string, label: string, name: string): Promise
  * The open questions as passages a transcript marks: a speaker question marks the label of the ranges it decides, a
  * question with `heard` marks those words.
  */
-function unclearPassages(record: MeetingRecord): UnclearPassage[] {
-    return openQuestions(record).flatMap((question): UnclearPassage[] => {
-        if (question.heard) {
-            const { fromSec, toSec, heard, choices } = question;
-            return [{ fromSec, toSec, heard, readings: choices }];
-        }
+function unclearPassages(record: MeetingRecord, listenBelow: number): UnclearPassage[] {
+    const open = openQuestions(record);
+    const asked = new Set(open.flatMap((question) => question.decides));
+    // A low term not worth a question is still marked wherever it was heard.
+    const unaskedTerms = record.items.flatMap((item): UnclearPassage[] =>
+        item.kind === "term" &&
+        item.status === "suggested" &&
+        !asked.has(item.id) &&
+        (item.confidence ?? 1) < listenBelow
+            ? [
+                  {
+                      fromSec: 0,
+                      toSec: Number.POSITIVE_INFINITY,
+                      heard: item.heard,
+                      readings: withConfidence([item.proposed], item.confidence),
+                  },
+              ]
+            : []
+    );
 
-        if (question.about !== "speaker") {
-            return [];
-        }
+    return [
+        ...unaskedTerms,
+        ...open.flatMap((question): UnclearPassage[] => {
+            if (question.heard) {
+                const { fromSec, toSec, heard, choices } = question;
+                return [{ fromSec, toSec, heard, readings: withConfidence(choices, question.confidence) }];
+            }
 
-        return record.items.flatMap((item) =>
-            item.kind === "speaker-range" && item.status === "suggested" && question.decides.includes(item.id)
-                ? [{ fromSec: item.fromSec, toSec: item.toSec, speaker: item.label, readings: question.choices }]
-                : []
-        );
-    });
+            if (question.about !== "speaker") {
+                return [];
+            }
+
+            return record.items.flatMap((item) =>
+                item.kind === "speaker-range" && item.status === "suggested" && question.decides.includes(item.id)
+                    ? [
+                          {
+                              fromSec: item.fromSec,
+                              toSec: item.toSec,
+                              speaker: item.label,
+                              readings: withConfidence(question.choices, item.confidence),
+                          },
+                      ]
+                    : []
+            );
+        }),
+    ];
+}
+
+/** The first reading is the rules' guess: it carries their confidence. The others have none of their own. */
+function withConfidence(readings: string[], confidence: number | undefined): string[] {
+    return readings.map((reading, index) =>
+        index === 0 && confidence !== undefined ? `${reading} ${Math.round(confidence * 100)} %` : reading
+    );
 }
 
 /** What a transcript applies: renames, then the confirmed items (and the suggested ones on request), then the dictionary. */
@@ -534,7 +560,7 @@ function correctionsOf(
         (item) => item.status === "confirmed" || (opts.withSuggested && item.status === "suggested")
     );
     // With --with-suggested the top reading is applied, so nothing stays open.
-    const passages = opts.withSuggested ? [] : unclearPassages(record);
+    const passages = opts.withSuggested ? [] : unclearPassages(record, config.global.suggest.listenBelow);
 
     return {
         labels: record.speakers.labels,

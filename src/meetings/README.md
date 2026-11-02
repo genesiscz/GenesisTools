@@ -86,9 +86,29 @@ confirmed items change a transcript (`--with-suggested` previews the rest).
 - `join`: a word cut between two lines ("dot" + "áhnu").
 - `term`: a misheard term and its proposed spelling.
 - `question`: something to decide by ear (`about`: speaker, term or text), with its time range, `choices` and the
-  items it `decides`. `suggest` asks one for each range marked "confirm by listening". Answering it confirms each
-  decided item with the answer (a range's speaker, a term's spelling); "none of these" rejects them; a skip leaves
-  them as they were.
+  items it `decides`. Answering it confirms each decided item with the answer (a range's speaker, a term's
+  spelling); "none of these" rejects them; a skip leaves them as they were; "Two voices" splits it per line.
+
+The rules are one documented enum, `MeetingRule` in `src/utils/meetings/rules.ts`. Two rules that reach the same item
+merge into one, with the confidence 1 − (1 − a)(1 − b), at most 0.95.
+
+### Which items become questions
+
+Only what is unsure and matters (Martin, 2026-11-02: "just on those which are really important and not sure of"):
+
+1. Confidence under `global.suggest.listenBelow` (0.6). A mixed channel alone is no reason to ask.
+2. A speaker range needs more than 5 words that are not all fillers, and 15 words or a decision or action word
+   (`src/utils/transcribe/importance.ts`). A term needs two occurrences, an identifier, a person's name from the
+   summary, or a decision in its line; any other low term is only marked in the transcript.
+3. A goodbye or attendance range is dropped when finer audio-evidence items cover 80 % of it.
+4. Neighbours within 30 s offering the same people become one question; it plays the longest line.
+5. Priority = (1 − confidence) × impact × reach. Impact is log2(1 + words), +3 for a decision word, +3 when the
+   range cites a summary action item or decision (`global.summary` headings), +2 when the answer moves an action's
+   owner. Reach counts the questions with the same signature (top two choices and the people present).
+
+`listen` asks by priority, at most `playback.listen.budget` (12) per round and none under `minPriority` (0.5). Each
+answer settles its look-alikes: the questions with the same signature get the answer, +0.3 up to 0.9, and close when
+that reaches the threshold. "Enough for now" ends the round; the rest stay marked in the transcript.
 
 A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
 

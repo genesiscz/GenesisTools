@@ -20,6 +20,8 @@ export interface SourceMeeting {
     calendar?: MeetingCalendar;
     /** Words that help a project match: the source's folders, for example. */
     folders: string[];
+    /** The source's own Markdown summary, with its action items and decisions (`summaryPoints`). */
+    summary?: string;
 }
 
 /** A word the source was taught to spell, for `dictionary suggest`. */

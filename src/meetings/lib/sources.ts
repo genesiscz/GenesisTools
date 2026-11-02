@@ -1,4 +1,7 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 
 /** One loader per source. The table lives in the tool, because a source is implemented in its own tool. */
 const MEETING_SOURCES: Record<MeetingSourceId, () => Promise<TranscriptSource>> = {
@@ -15,4 +18,25 @@ export async function meetingSource(id: string): Promise<TranscriptSource> {
     }
 
     return MEETING_SOURCES[id]();
+}
+
+/** The first linked source that names a meeting of its own, with that meeting's id. Throws a message ready to print. */
+export async function linkedSource(
+    record: MeetingRecord
+): Promise<{ source: TranscriptSource; sourceMeetingId: string }> {
+    for (const [sourceId, block] of Object.entries(record.sources)) {
+        if (typeof block.meetingId === "string") {
+            return { source: await meetingSource(sourceId), sourceMeetingId: block.meetingId };
+        }
+    }
+
+    throw new Error(
+        `${record.id} has no source with a transcript. Link one: ${toolCommand("meetings", "link", record.id, "wisprflow:<id>")}`
+    );
+}
+
+/** The linked source's transcript, on its own labels. */
+export async function meetingTranscript(record: MeetingRecord): Promise<TranscriptEntry[]> {
+    const { source, sourceMeetingId } = await linkedSource(record);
+    return (await source.load(sourceMeetingId)).transcript;
 }
