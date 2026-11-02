@@ -211,6 +211,7 @@ export function encodeArgs({
     output,
     rate,
     height,
+    progress = false,
 }: {
     encoder: VideoEncoder;
     input: string;
@@ -218,12 +219,15 @@ export function encodeArgs({
     rate: VideoRate;
     /** Scale to this height on the GPU; undefined keeps the size. */
     height?: number;
+    /** Write `key=value` progress blocks to stdout, for `ffmpegProgressReader`. */
+    progress?: boolean;
 }): string[] {
     return ffmpegCommand([
         "-nostdin",
         "-n",
         "-v",
         "error",
+        ...(progress ? ["-progress", "pipe:1", "-nostats"] : []),
         ...(height === undefined ? encoder.decodeArgs : encoder.gpuScale.decodeArgs),
         "-i",
         input,

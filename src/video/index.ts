@@ -16,7 +16,8 @@ import {
 import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { Command } from "commander";
-import { encodeVideos, exitCodeFor, renderRows, summarize } from "./encode";
+import { collectInputs, encodeVideos, exitCodeFor, renderRows, summarize } from "./encode";
+import { createEncodeReporter, ENCODE_FORMATS, isEncodeFormat } from "./encode-progress";
 import { registerStreamCommands } from "./stream/command";
 
 export function registerVideoCommands(program: Command): void {
@@ -51,7 +52,12 @@ export function registerVideoCommands(program: Command): void {
             'Put the result at the original path and move the original to the GenesisTools trash. An agent cannot replace a file the rm rules mark "ask": the result stays beside it. A bare trash restore refuses while the new file sits at the original path: move it to <name>.hevc.<ext> first. The summary prints the undo line, which never writes over an existing <name>.hevc.<ext>'
         )
         .option("--dry-run", "List what would happen, with input sizes and skip reasons; write nothing")
-        .option("--json", "Print one row per file")
+        .option(
+            "--progress",
+            "Report each encode as it runs: a bar in a terminal, JSON lines with --format json (stderr) or jsonl (stdout)"
+        )
+        .option("--format [value]", `Output: ${ENCODE_FORMATS.join(", ")} (jsonl streams one row per finished file)`)
+        .option("--json", "Print one row per file (same as --format json)")
         .action(
             async (
                 paths: string[],
@@ -64,6 +70,8 @@ export function registerVideoCommands(program: Command): void {
                     height?: string;
                     replace?: boolean;
                     dryRun?: boolean;
+                    progress?: boolean;
+                    format?: string | boolean;
                     json?: boolean;
                 }
             ) => {
@@ -121,6 +129,21 @@ export function registerVideoCommands(program: Command): void {
                     return;
                 }
 
+                const format = await pickEnumFlag({
+                    tool: toolCommand("video", "encode"),
+                    subcommand: ["encode"],
+                    flag: "--format",
+                    given: options.format ?? (options.json ? "json" : undefined),
+                    values: ENCODE_FORMATS,
+                    fallback: "text",
+                    accepts: isEncodeFormat,
+                });
+
+                if (format === null) {
+                    process.exitCode = 1;
+                    return;
+                }
+
                 const unavailable = await encoderUnavailableReason(encoder);
 
                 if (unavailable) {
@@ -132,6 +155,11 @@ export function registerVideoCommands(program: Command): void {
                 await withInterrupt(
                     async (signal) => {
                         const started = performance.now();
+                        const reporter = createEncodeReporter({
+                            format,
+                            progress: options.progress === true && options.dryRun !== true,
+                            files: collectInputs({ paths, encoder }).length,
+                        });
                         const rows = await encodeVideos({
                             paths,
                             encoder,
@@ -143,7 +171,9 @@ export function registerVideoCommands(program: Command): void {
                             replace: options.replace === true,
                             dryRun: options.dryRun === true,
                             signal,
-                        });
+                            onProgress: reporter.onProgress,
+                            onRow: reporter.onRow,
+                        }).finally(() => reporter.stop());
 
                         const exitCode = exitCodeFor(rows);
 
@@ -151,7 +181,11 @@ export function registerVideoCommands(program: Command): void {
                             process.exitCode = exitCode;
                         }
 
-                        if (options.json) {
+                        if (format === "jsonl") {
+                            return;
+                        }
+
+                        if (format === "json") {
                             out.result(rows);
                             return;
                         }

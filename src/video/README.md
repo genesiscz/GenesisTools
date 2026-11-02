@@ -58,6 +58,11 @@ Flags and defaults:
   103% of the target is encoded again with a corrected rate, at most twice. An input already in HEVC is a candidate too.
 - `--height <px>`: scale a taller video down to this height. Decode, `scale_vt` and the encode all stay on the GPU:
   2 minutes of 1080p took 0.7 s of user CPU, against 11 s with ffmpeg's software scaler.
+- `--progress`: report each encode while it runs, from ffmpeg's `-progress` output. In a terminal it is a clack bar;
+  without one, a line per 10%. With `--format json` the progress events are JSON lines on stderr and stdout stays one
+  document; with `--format jsonl` stdout carries `{"type":"progress",...}` lines and a `{"type":"row",...}` line for
+  each file as soon as it is finished.
+- `--format text|json|jsonl`: text (the table, the default), json (all rows at the end; `--json` is the same), or jsonl.
 - `--dry-run`: lists each file with its size and skip reason, writes nothing.
 - `--replace`: the result takes the original path; the original goes to the GenesisTools trash and the batch id is
   printed. An agent may not replace a file that the `tools rm` rules mark "ask": the verified result stays beside it

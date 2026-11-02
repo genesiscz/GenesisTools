@@ -21,6 +21,7 @@ import {
     type TrashPaths,
 } from "@genesiscz/utils/rm";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
+import { ffmpegProgressReader } from "@genesiscz/utils/video/ffmpeg-progress";
 import { NotMediaError, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import {
     audioBytes,
@@ -59,6 +60,21 @@ export interface EncodeRow {
 /** Corrected passes after the first one when a size target is missed (each pass encodes the whole file). */
 const MAX_SIZE_CORRECTIONS = 2;
 
+/** Where one input is: an encode pass with its position in the timeline, or the decode check of the result. */
+export interface EncodeProgressEvent {
+    type: "progress";
+    input: string;
+    phase: "encode" | "verify";
+    /** 0 for the first encode, 1 and 2 for size corrections. */
+    pass: number;
+    durationSec: number | null;
+    outTimeSec: number | null;
+    /** 0 to 1 within this pass; null while the duration or the position is unknown. */
+    fraction: number | null;
+    speed: number | null;
+    outputBytes: number | null;
+}
+
 export interface EncodeOptions {
     paths: string[];
     encoder: VideoEncoder;
@@ -72,6 +88,10 @@ export interface EncodeOptions {
     replace: boolean;
     dryRun: boolean;
     signal?: AbortSignal;
+    /** Called with each ffmpeg progress block and when the decode check starts. */
+    onProgress?: (event: EncodeProgressEvent) => void;
+    /** Called with each row as soon as its input is finished. */
+    onRow?: (row: EncodeRow) => void;
     /** How `--replace` asks the trash about an original; the GenesisTools trash unless a test passes another. */
     planReplace?: (input: string) => PlannedReplace;
 }
@@ -593,10 +613,29 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         let temp = staging.file;
 
         for (let pass = 0; ; pass++) {
+            const onProgress = options.onProgress;
             const run = await boundedCommand({
-                command: encodeArgs({ encoder, input, output: temp, rate, height }),
+                command: encodeArgs({ encoder, input, output: temp, rate, height, progress: onProgress !== undefined }),
                 timeoutMs: 4 * 60 * 60_000,
                 signal: options.signal,
+                onStdout: onProgress
+                    ? ffmpegProgressReader((block) =>
+                          onProgress({
+                              type: "progress",
+                              input,
+                              phase: "encode",
+                              pass,
+                              durationSec: facts.durationSec,
+                              outTimeSec: block.outTimeSec,
+                              fraction:
+                                  facts.durationSec && block.outTimeSec !== null
+                                      ? Math.min(1, block.outTimeSec / facts.durationSec)
+                                      : null,
+                              speed: block.speed,
+                              outputBytes: block.totalBytes,
+                          })
+                      )
+                    : undefined,
             });
 
             if (run.error || run.status !== 0) {
@@ -617,7 +656,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
                 outputBytes,
                 audio: audioBytes(facts),
             });
-            logger.info(
+            logger.debug(
                 { input, pass, kbps: rate.kbps, outputBytes, targetBytes: options.targetBytes, next },
                 "Size-target pass finished"
             );
@@ -631,6 +670,17 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         }
 
         const output = await readMediaFacts({ input: temp, signal: options.signal });
+        options.onProgress?.({
+            type: "progress",
+            input,
+            phase: "verify",
+            pass: 0,
+            durationSec: facts.durationSec,
+            outTimeSec: null,
+            fraction: null,
+            speed: null,
+            outputBytes: statSync(temp).size,
+        });
         const errors = await decodeErrors({ encoder, path: temp, signal: options.signal });
         const verdict = judgeOutput({
             input: facts,
@@ -684,7 +734,9 @@ export async function encodeVideos(options: EncodeOptions): Promise<EncodeRow[]>
     const inputs = collectInputs({ paths: options.paths, encoder: options.encoder });
     const rows = new Map<string, EncodeRow>();
     await pool(inputs, options.jobs, async (input) => {
-        rows.set(input, await encodeOne({ input, options }));
+        const row = await encodeOne({ input, options });
+        rows.set(input, row);
+        options.onRow?.(row);
     });
     return inputs.map((input) => rows.get(input) as EncodeRow);
 }

@@ -23,6 +23,7 @@ import {
     restoreBatch,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
+import { type FfmpegProgress, ffmpegProgressReader } from "@genesiscz/utils/video/ffmpeg-progress";
 import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
 import {
@@ -283,6 +284,22 @@ describe("size target and GPU scale", () => {
         expect(correctedKbps({ kbps: 400, targetBytes: target, outputBytes: 395_000_000, audio })).toBeNull();
         // 296 MB with 100 MB of audio: the video took 196 MB of its 296 MB share (1% of the target goes to the container), so 400 becomes 604.
         expect(correctedKbps({ kbps: 400, targetBytes: target, outputBytes: 296_000_000, audio })).toBe(604);
+    });
+
+    test("ffmpeg progress blocks are read across chunk boundaries, one callback per block", () => {
+        const seen: FfmpegProgress[] = [];
+        const read = ffmpegProgressReader((block) => seen.push(block));
+        const text =
+            "out_time_us=1500000\ntotal_size=4096\nspeed=21.3x\nprogress=continue\nout_time_us=N/A\nprogress=end\n";
+        const bytes = new TextEncoder().encode(text);
+        read(bytes.slice(0, 7));
+        read(bytes.slice(7, 40));
+        read(bytes.slice(40));
+
+        expect(seen).toEqual([
+            { outTimeSec: 1.5, speed: 21.3, totalBytes: 4096, ended: false },
+            { outTimeSec: null, speed: null, totalBytes: null, ended: true },
+        ]);
     });
 
     test("sizes parse with or without a unit, a bare number being megabytes", () => {
