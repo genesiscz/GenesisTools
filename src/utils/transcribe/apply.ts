@@ -107,6 +107,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         unclear: 0,
     };
 
+    // Ranges name the source's labels: each line is matched by the label it came with, so a line a range moved to a
+    // name that is also a label ("Martin Foltýn") is not moved again by that label's ranges. A join that names the
+    // voice settles its line.
+    const sourceLabel = new Map(lines.map((line) => [line, line.speaker]));
+    const voiced = new Set<TranscriptEntry>();
+
     for (const join of corrections.joins ?? []) {
         const index = lines.findIndex(
             (line) => line.startSec !== undefined && Math.abs(line.startSec - join.atSec) <= JOIN_MATCH_SEC
@@ -121,6 +127,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         const { word, rest } = firstWord(line.text);
         before.text = `${before.text.trimEnd()}${word}`;
         before.speaker = join.speaker ?? line.speaker;
+        sourceLabel.set(before, sourceLabel.get(line) ?? line.speaker);
+
+        if (join.speaker) {
+            voiced.add(before);
+        }
+
         line.text = rest;
         counts.joins += 1;
     }
@@ -130,7 +142,8 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     for (const range of corrections.ranges ?? []) {
         for (const line of lines) {
             const inside =
-                line.speaker === range.label &&
+                !voiced.has(line) &&
+                sourceLabel.get(line) === range.label &&
                 line.startSec !== undefined &&
                 line.startSec >= range.fromSec &&
                 line.startSec <= range.toSec;

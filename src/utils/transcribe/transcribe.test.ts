@@ -281,6 +281,18 @@ describe("applyCorrections", () => {
         expect(applied).toMatchObject({ joins: 1, ranges: 1, terms: 1, expansions: 1 });
     });
 
+    test("a range matches the label a line came with, so a line moved to a name that is also a label stays", () => {
+        const spoken = [line("Speaker 2", 10, "Jedna."), line("Alice Example", 12, "Dvě.")];
+        const applied = applyCorrections(spoken, {
+            ranges: [
+                { label: "Speaker 2", fromSec: 0, toSec: 20, speaker: "Alice Example" },
+                { label: "Alice Example", fromSec: 0, toSec: 20, speaker: "Bob Example" },
+            ],
+        });
+
+        expect(applied.entries.map((e) => e.speaker)).toEqual(["Alice Example", "Bob Example"]);
+    });
+
     test("a quote replaces the words it reads with the document text, untouched by the dictionary; a meaning follows its words", () => {
         const spoken = [
             line("Alice Example", 5, "Tak čtu: kapitola dva sekce UVČ, konec."),
