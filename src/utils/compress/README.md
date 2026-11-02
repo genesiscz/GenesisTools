@@ -47,6 +47,7 @@ uses `node:zlib`'s one-frame compressor, the only API that takes parameters (che
 | The same search again and again over finished files, their lines kept | `ripgrepFilesCached`, `ripgrepDigestPath` | `search.ts` |
 | Pack, list, unpack, verify a folder | `packDirectory`, `listArchive`, `unpackArchive`, `verifyArchiveAgainstFolder` | `tar.ts` |
 | One safe compress or restore with a ledger entry | `planCompressPath`, `compressPath`, `expandPath`, `verifyPath` | `operations.ts` |
+| What a source holds: its bytes and its cloud placeholders (every pack refuses those) | `scanSource`, `placeholderRefusal`, `CompressRefusal` | `source-scan.ts` |
 | Keep N folders, pack older, cap archives | `planFolderRetention`, `applyFolderRetention` | `retention.ts` |
 | Compress day-stamped files once their day is over | `planOldFileCompression`, `applyOldFileCompression` | `retention.ts` |
 | The daily pass (day files, ai-proxy transcripts, hang captures) | `runDailyCompression`, `dailyTargets` | `daily.ts` |
