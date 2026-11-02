@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { readManifest } from "@app/macos/lib/permissions/app";
+import { installedParts } from "@app/macos/lib/permissions/parts";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { findProcesses } from "@genesiscz/utils/process/processes";
@@ -13,11 +15,13 @@ export interface WidgetAutostartDeps {
     platform: NodeJS.Platform;
     showWidget: () => Promise<boolean>;
     bundle: () => string | null;
+    /** The installed build links the widget part (a build can leave it out: `--parts`). */
+    widgetBuilt: () => boolean;
     widgetRunning: () => boolean;
     launch: (argv: string[]) => void;
 }
 
-export type WidgetAutostartResult = "started" | "running" | "hidden" | "no-app" | "not-macos";
+export type WidgetAutostartResult = "started" | "running" | "hidden" | "no-app" | "not-built" | "not-macos";
 
 const defaultDeps: WidgetAutostartDeps = {
     platform: process.platform,
@@ -26,6 +30,7 @@ const defaultDeps: WidgetAutostartDeps = {
         const bundle = genesisAppBundlePath();
         return existsSync(bundle) ? bundle : null;
     },
+    widgetBuilt: () => installedParts(readManifest()).includes("widget"),
     widgetRunning: () => findProcesses({ command: WIDGET_PROCESS }).length > 0,
     launch: (argv) => {
         Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
@@ -35,7 +40,8 @@ const defaultDeps: WidgetAutostartDeps = {
 /**
  * Starts the widget when it should be on screen and is not: nothing started it after a login, so a reboot left it
  * off while its preference said "shown" (2026-11-02, after the macOS 27.2 update). The daemon calls this once at its
- * start, which launchd runs at login. `--ensure-running` makes a widget that is already up ignore the launch.
+ * start, which launchd runs at login. It launches nothing when the app is not installed, when the installed build has no
+ * widget part, or when "Show the widget" is off (its default). `--ensure-running` makes a widget that is already up ignore the launch.
  */
 export async function ensureWidgetRunning(deps: Partial<WidgetAutostartDeps> = {}): Promise<WidgetAutostartResult> {
     const d = { ...defaultDeps, ...deps };
@@ -44,14 +50,18 @@ export async function ensureWidgetRunning(deps: Partial<WidgetAutostartDeps> = {
         return "not-macos";
     }
 
-    if (!(await d.showWidget())) {
-        return "hidden";
-    }
-
     const bundle = d.bundle();
 
     if (!bundle) {
         return "no-app";
+    }
+
+    if (!d.widgetBuilt()) {
+        return "not-built";
+    }
+
+    if (!(await d.showWidget())) {
+        return "hidden";
     }
 
     if (d.widgetRunning()) {
