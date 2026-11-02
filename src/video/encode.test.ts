@@ -1,9 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import {
+    chmodSync,
     existsSync,
     mkdtempSync,
     readdirSync,
     readFileSync,
+    realpathSync,
     renameSync,
     rmSync,
     statSync,
@@ -12,8 +14,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { listBatches } from "@genesiscz/utils/rm";
-import type { MediaFacts } from "@genesiscz/utils/video/media-facts";
+import {
+    defaultRmConfig,
+    identityOf,
+    listBatches,
+    RmPartialMoveError,
+    restoreBatch,
+    type TrashBatch,
+} from "@genesiscz/utils/rm";
+import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
 import {
     encodeArgs,
     ffmpegCommand,
@@ -24,6 +34,7 @@ import {
 } from "@genesiscz/utils/video/reencode";
 import {
     collectInputs,
+    type EncodeOptions,
     type EncodeRow,
     type EncodeStatus,
     encodeVideos,
@@ -32,9 +43,14 @@ import {
     isEarlierOutput,
     makeStaging,
     type PlannedReplace,
+    planReplaceWithRm,
+    probeFailureRow,
     ReplaceInstallError,
     replaceDecision,
     siblingOutput,
+    snapshotSource,
+    sourceChange,
+    undoCommand,
 } from "./encode";
 
 const encoder = findEncoder("hevc") as VideoEncoder;
@@ -108,6 +124,26 @@ describe("skipReason", () => {
         expect(skipReason({ facts: mebx, encoder })).toContain("data track");
         expect(skipReason({ facts: music, encoder })).toContain("not a video");
     });
+
+    test("skips every stream the encode does not carry over, and keeps a file with several audio tracks", () => {
+        const h264 = { type: "video", codec: "h264", attachedPicture: false };
+        const aac = { type: "audio", codec: "aac", attachedPicture: false };
+        const withStream = (stream: MediaFacts["streams"][number]) => facts({ streams: [h264, aac, stream] });
+
+        expect(
+            skipReason({ facts: withStream({ type: "subtitle", codec: "mov_text", attachedPicture: false }), encoder })
+        ).toBe("has a subtitle track (mov_text) that a re-encode would drop");
+        expect(skipReason({ facts: withStream({ ...h264, codec: "mpeg4" }), encoder })).toBe(
+            "has a second video track (mpeg4) that a re-encode would drop"
+        );
+        expect(
+            skipReason({ facts: withStream({ type: "video", codec: "mjpeg", attachedPicture: true }), encoder })
+        ).toBe("has a cover picture (mjpeg) that a re-encode would drop");
+        expect(
+            skipReason({ facts: withStream({ type: "attachment", codec: "ttf", attachedPicture: false }), encoder })
+        ).toBe("has an attachment track (ttf) that a re-encode would drop");
+        expect(skipReason({ facts: facts({ streams: [h264, aac, { ...aac, codec: "ac3" }] }), encoder })).toBeNull();
+    });
 });
 
 describe("judgeOutput", () => {
@@ -127,6 +163,17 @@ describe("judgeOutput", () => {
 
         const noAudio = { ...hevcOutput, streams: [hevcOutput.streams[0]] };
         expect(judge({ output: noAudio }).reason).toContain("lost its audio");
+
+        const twoTracks = facts({
+            streams: [...facts().streams, { type: "audio", codec: "ac3", attachedPicture: false }],
+        });
+        expect(judge({ input: twoTracks }).reason).toBe("the output has 1 of the input's 2 audio tracks");
+        expect(
+            judge({
+                input: twoTracks,
+                output: { ...hevcOutput, streams: [...hevcOutput.streams, twoTracks.streams[2]] },
+            }).keep
+        ).toBe(true);
     });
 
     test("a silent input needs no audio in the output", () => {
@@ -234,14 +281,19 @@ describe("installVerified", () => {
         writeFileSync(staging.file, "encoded");
         return {
             clip,
+            source: snapshotSource(clip),
             staged: staging.file,
             sibling: siblingOutput({ input: clip, encoder }),
             held: join(dir, "held"),
         };
     }
 
+    function trashBatch(id: string): TrashBatch {
+        return { id, createdAt: "", drainAfter: "", caller: null, items: [] };
+    }
+
     // Every step that touches the trash throws unless the test opts in, so a guarded path that reaches it fails.
-    function planned(patch: Partial<PlannedReplace> & Pick<PlannedReplace, "verdict" | "isInAgent">) {
+    function planned(patch: Partial<PlannedReplace> & Pick<PlannedReplace, "verdict" | "isInAgent" | "identity">) {
         return (): PlannedReplace => ({
             reason: "test rule",
             moveOriginal: () => {
@@ -303,18 +355,26 @@ describe("installVerified", () => {
     });
 
     test("deny refuses before the trash move", () => {
-        const { clip, staged } = setup();
-        const planReplace = planned({ verdict: "deny", isInAgent: false });
-        expect(() => installVerified({ input: clip, staged, encoder, replace: true, keptReason, planReplace })).toThrow(
-            "the trash rules refuse the original"
-        );
+        const { clip, source, staged } = setup();
+        const planReplace = planned({ verdict: "deny", isInAgent: false, identity: source.identity });
+        expect(() =>
+            installVerified({ input: clip, source, staged, encoder, replace: true, keptReason, planReplace })
+        ).toThrow("the trash rules refuse the original");
         expect(readFileSync(clip, "utf8")).toBe("original");
     });
 
     test("an agent keeps the result beside an ask original and never reaches the trash", () => {
-        const { clip, staged, sibling } = setup();
-        const planReplace = planned({ verdict: "ask", isInAgent: true });
-        const result = installVerified({ input: clip, staged, encoder, replace: true, keptReason, planReplace });
+        const { clip, source, staged, sibling } = setup();
+        const planReplace = planned({ verdict: "ask", isInAgent: true, identity: source.identity });
+        const result = installVerified({
+            input: clip,
+            source,
+            staged,
+            encoder,
+            replace: true,
+            keptReason,
+            planReplace,
+        });
         expect(result.status).toBe("kept-beside");
         expect(result.output).toBe(sibling);
         expect(result.trashBatch).toBeNull();
@@ -323,11 +383,12 @@ describe("installVerified", () => {
     });
 
     test("allow moves the original, installs the result with the original's times, then starts the drainer", () => {
-        const { clip, staged, held } = setup();
+        const { clip, source, staged, held } = setup();
         const steps: string[] = [];
         const planReplace = planned({
             verdict: "allow",
             isInAgent: true,
+            identity: source.identity,
             moveOriginal: () => {
                 steps.push("move");
                 renameSync(clip, held);
@@ -338,18 +399,172 @@ describe("installVerified", () => {
             },
         });
 
-        const result = installVerified({ input: clip, staged, encoder, replace: true, keptReason, planReplace });
+        const result = installVerified({
+            input: clip,
+            source,
+            staged,
+            encoder,
+            replace: true,
+            keptReason,
+            planReplace,
+        });
         expect(result).toEqual({ status: "kept", output: clip, reason: keptReason, trashBatch: "batch-1" });
         expect(steps).toEqual(["move", "drain with encoded installed"]);
         expect(statSync(clip).mtime.getTime()).toBe(originalTime.getTime());
         expect(readFileSync(held, "utf8")).toBe("original");
     });
 
-    test("a failed install puts the original back and reports no batch", () => {
-        const { clip, staged, held } = setup();
+    test("an original edited during the encode drops the result, with --replace before the trash and without it", () => {
+        const replaced = setup();
+        // Same size, so only the modification time tells the edit apart.
+        writeFileSync(replaced.clip, "ORIGINAL");
+        const planReplace = planned({ verdict: "allow", isInAgent: false, identity: replaced.source.identity });
+        const result = installVerified({
+            ...replaced,
+            input: replaced.clip,
+            encoder,
+            replace: true,
+            keptReason,
+            planReplace,
+        });
+        expect(result.status).toBe("discarded");
+        expect(result.reason).toBe("the original changed during the encode (it was modified); the result was dropped");
+        expect(readFileSync(replaced.clip, "utf8")).toBe("ORIGINAL");
+
+        const beside = setup();
+        writeFileSync(beside.clip, "edited during the encode");
+        const kept = installVerified({
+            ...beside,
+            input: beside.clip,
+            encoder,
+            replace: false,
+            keptReason,
+            planReplace: () => {
+                throw new Error("planReplace reached");
+            },
+        });
+        expect(kept.status).toBe("discarded");
+        expect(existsSync(beside.sibling)).toBe(false);
+    });
+
+    test("another run's result at the original path is never trashed in place of the original", () => {
+        const { clip, source, staged, held } = setup();
+        renameSync(clip, held);
+        writeFileSync(clip, "another run's result");
+        // The rules judge whatever sits at the path now, and the move would be pinned to that.
+        const planReplace = planned({ verdict: "allow", isInAgent: false, identity: identityOf(clip) });
+        const result = installVerified({
+            input: clip,
+            source,
+            staged,
+            encoder,
+            replace: true,
+            keptReason,
+            planReplace,
+        });
+        expect(result.reason).toContain("(another file took its path)");
+        expect(readFileSync(clip, "utf8")).toBe("another run's result");
+        expect(readFileSync(held, "utf8")).toBe("original");
+    });
+
+    test("a move pinned to another file than the encode read is refused, and a gone original is named", () => {
+        const { clip, source, staged } = setup();
+        const planReplace = planned({ verdict: "allow", isInAgent: false, identity: "0:0" });
+        const result = installVerified({
+            input: clip,
+            source,
+            staged,
+            encoder,
+            replace: true,
+            keptReason,
+            planReplace,
+        });
+        expect(result.reason).toContain("(the trash rules judged another file at its path)");
+        expect(readFileSync(clip, "utf8")).toBe("original");
+
+        rmSync(clip);
+        expect(sourceChange({ source, path: clip })).toBe("it is gone");
+    });
+
+    test("a trash move that fails after the original moved puts it back, or names the batch when that fails", () => {
+        const back = setup();
+        const restored = installError(() =>
+            installVerified({
+                ...back,
+                input: back.clip,
+                encoder,
+                replace: true,
+                keptReason,
+                planReplace: planned({
+                    verdict: "allow",
+                    isInAgent: false,
+                    identity: back.source.identity,
+                    moveOriginal: () => {
+                        renameSync(back.clip, back.held);
+                        throw new RmPartialMoveError(trashBatch("batch-1"), new Error("the ledger write failed"));
+                    },
+                    restore: (batch) => {
+                        expect(batch).toBe("batch-1");
+                        renameSync(back.held, back.clip);
+                        return true;
+                    },
+                }),
+            })
+        );
+        expect(restored.trashBatch).toBeNull();
+        expect(restored.message).toBe(
+            "the trash move failed after the original moved (the ledger write failed); the original is back"
+        );
+        expect(readFileSync(back.clip, "utf8")).toBe("original");
+        expect(readFileSync(back.staged, "utf8")).toBe("encoded");
+
+        const stuck = setup();
+        const waiting = installError(() =>
+            installVerified({
+                ...stuck,
+                input: stuck.clip,
+                encoder,
+                replace: true,
+                keptReason,
+                planReplace: planned({
+                    verdict: "allow",
+                    isInAgent: false,
+                    identity: stuck.source.identity,
+                    moveOriginal: () => {
+                        renameSync(stuck.clip, stuck.held);
+                        throw new RmPartialMoveError(trashBatch("batch-2"), new Error("the ledger write failed"));
+                    },
+                    restore: () => false,
+                }),
+            })
+        );
+        expect(waiting.trashBatch).toBe("batch-2");
+        expect(waiting.message).toContain("the original waits in trash batch batch-2");
+        expect(existsSync(stuck.clip)).toBe(false);
+    });
+
+    test("a move that throws before the original moved is a plain failure with nothing to put back", () => {
+        const { clip, source, staged } = setup();
         const planReplace = planned({
             verdict: "allow",
             isInAgent: false,
+            identity: source.identity,
+            moveOriginal: () => {
+                throw new Error("the trash is unwritable");
+            },
+        });
+        expect(() =>
+            installVerified({ input: clip, source, staged, encoder, replace: true, keptReason, planReplace })
+        ).toThrow("the trash is unwritable");
+        expect(readFileSync(clip, "utf8")).toBe("original");
+    });
+
+    test("a failed install puts the original back and reports no batch", () => {
+        const { clip, source, staged, held } = setup();
+        const planReplace = planned({
+            verdict: "allow",
+            isInAgent: false,
+            identity: source.identity,
             moveOriginal: () => {
                 renameSync(clip, held);
                 rmSync(staged);
@@ -363,7 +578,7 @@ describe("installVerified", () => {
         });
 
         const error = installError(() =>
-            installVerified({ input: clip, staged, encoder, replace: true, keptReason, planReplace })
+            installVerified({ input: clip, source, staged, encoder, replace: true, keptReason, planReplace })
         );
         expect(error.trashBatch).toBeNull();
         expect(error.message).toContain("the original is back");
@@ -371,10 +586,11 @@ describe("installVerified", () => {
     });
 
     test("a failed install whose restore fails keeps the batch, and the file at the original path is left alone", () => {
-        const { clip, staged, held } = setup();
+        const { clip, source, staged, held } = setup();
         const planReplace = planned({
             verdict: "allow",
             isInAgent: false,
+            identity: source.identity,
             moveOriginal: () => {
                 renameSync(clip, held);
                 writeFileSync(clip, "appeared meanwhile");
@@ -384,12 +600,103 @@ describe("installVerified", () => {
         });
 
         const error = installError(() =>
-            installVerified({ input: clip, staged, encoder, replace: true, keptReason, planReplace })
+            installVerified({ input: clip, source, staged, encoder, replace: true, keptReason, planReplace })
         );
         expect(error.trashBatch).toBe("batch-1");
         expect(error.message).toContain("trash batch batch-1");
         expect(readFileSync(clip, "utf8")).toBe("appeared meanwhile");
         expect(readFileSync(held, "utf8")).toBe("original");
+    });
+});
+
+function encodeOptions(patch: Partial<EncodeOptions> & Pick<EncodeOptions, "paths">): EncodeOptions {
+    return { encoder, quality: 58, jobs: 1, minSavingPct: 25, replace: false, dryRun: false, ...patch };
+}
+
+describe("probe failures", () => {
+    test("a process that exits non-zero judged its input; one that cannot start or is killed did not", async () => {
+        const failure = (command: string[]) => runVideoCommand({ command }).catch((error: unknown) => error);
+
+        const exited = await failure(["sh", "-c", "echo bad input >&2; exit 3"]);
+        expect(exited).toBeInstanceOf(VideoCommandExitError);
+        expect(exited).toMatchObject({ status: 3, message: "bad input\n" });
+
+        // The child-deadline watchdog reports a failed exec as exit 127 and a signal as 128 + N.
+        const missing = await failure(["gt-no-such-video-binary"]);
+        expect(missing).toBeInstanceOf(Error);
+        expect(missing).not.toBeInstanceOf(VideoCommandExitError);
+
+        const killed = await failure(["sh", "-c", "kill -9 $$"]);
+        expect(killed).toBeInstanceOf(Error);
+        expect(killed).not.toBeInstanceOf(VideoCommandExitError);
+    });
+
+    test("a file ffprobe rejects is skipped; any other probe failure fails the row", () => {
+        const notMedia = new NotMediaError("/clips/a.mp4", new VideoCommandExitError("Invalid data found", 1));
+        expect(probeFailureRow({ input: "/clips/a.mp4", error: notMedia })).toEqual({
+            status: "skipped",
+            reason: "not a video (ffprobe cannot read it)",
+        });
+        expect(probeFailureRow({ input: "/clips/a.mp4", error: new Error("spawn ffprobe ENOENT") })).toEqual({
+            status: "failed",
+            reason: "the probe failed: spawn ffprobe ENOENT",
+        });
+    });
+
+    test.skipIf(process.getuid?.() === 0)(
+        "a file this process cannot read fails the run instead of passing as not a video",
+        async () => {
+            const clip = join(tempDir(), "locked.mp4");
+            writeFileSync(clip, "x");
+            chmodSync(clip, 0o000);
+
+            try {
+                await expect(readMediaFacts({ input: clip })).rejects.toThrow(/EACCES/);
+                const rows = await encodeVideos(encodeOptions({ paths: [clip] }));
+                expect(rows[0]?.status).toBe("failed");
+                expect(rows[0]?.reason).toMatch(/^the probe failed: EACCES/);
+                expect(exitCodeFor(rows)).toBe(1);
+            } finally {
+                chmodSync(clip, 0o600);
+            }
+        }
+    );
+
+    test.skipIf(Bun.which("ffprobe") === null)(
+        "a file ffprobe reads and rejects is skipped as not a video",
+        async () => {
+            const clip = join(tempDir(), "notes.mp4");
+            writeFileSync(clip, "plain text, not a video");
+
+            await expect(readMediaFacts({ input: clip })).rejects.toBeInstanceOf(NotMediaError);
+            const rows = await encodeVideos(encodeOptions({ paths: [clip] }));
+            expect(rows[0]).toMatchObject({ status: "skipped", reason: "not a video (ffprobe cannot read it)" });
+            expect(exitCodeFor(rows)).toBe(0);
+        }
+    );
+});
+
+describe("undoCommand", () => {
+    test("moves the result aside without writing over a sibling, and restores only after a real move", () => {
+        const dir = tempDir();
+        const clip = join(dir, "it's a clip.mp4");
+        const sibling = siblingOutput({ input: clip, encoder });
+        const command = undoCommand({ input: clip, encoder, restore: "touch restored" });
+        writeFileSync(clip, "result");
+        writeFileSync(sibling, "an earlier output");
+
+        const blocked = Bun.spawnSync(["sh", "-c", command], { cwd: dir, stderr: "pipe" });
+        expect(blocked.exitCode).not.toBe(0);
+        expect(readFileSync(sibling, "utf8")).toBe("an earlier output");
+        expect(readFileSync(clip, "utf8")).toBe("result");
+        expect(existsSync(join(dir, "restored"))).toBe(false);
+
+        rmSync(sibling);
+        const done = Bun.spawnSync(["sh", "-c", command], { cwd: dir, stderr: "pipe" });
+        expect(done.exitCode).toBe(0);
+        expect(readFileSync(sibling, "utf8")).toBe("result");
+        expect(existsSync(clip)).toBe(false);
+        expect(existsSync(join(dir, "restored"))).toBe(true);
     });
 });
 
@@ -439,36 +746,45 @@ describe("encode with the hardware encoder", () => {
             expect(made.exitCode).toBe(0);
             const before = statSync(clip).size;
 
-            const [row] = await encodeVideos({
-                paths: [dir],
-                encoder,
-                quality: 58,
-                jobs: 1,
-                minSavingPct: 25,
-                replace: true,
-                dryRun: false,
-            });
+            // An rm config of the test's own: the fixture folder is a trusted root, so the replace runs for an agent
+            // too, the original goes to a trash inside the fixture (never the shared one), and no drainer starts.
+            const trash = tempDir();
+            const config = {
+                ...defaultRmConfig(),
+                trashRoot: join(trash, "GenesisTools", "rm"),
+                roots: [{ path: dir, addedAt: new Date().toISOString(), via: "test" }],
+            };
+            const paths = { batchesDir: join(trash, "batches"), lockPath: join(trash, "drainer.lock") };
+            let drainerStarts = 0;
+            const startDrainer = () => {
+                drainerStarts++;
+            };
 
-            // The trash rules decide for the temp folder: an agent run gets "ask" and keeps the result beside the
-            // original, a run the rules allow replaces it. Both outcomes must leave a clean, verified state.
-            expect(row.kept).toBe(true);
+            const [row] = await encodeVideos(
+                encodeOptions({
+                    paths: [dir],
+                    replace: true,
+                    planReplace: (input) => planReplaceWithRm(input, { config, paths, startDrainer }),
+                })
+            );
+
+            expect(row).toMatchObject({ status: "kept", kept: true, output: clip });
             expect(readdirSync(dir).filter((name) => name.startsWith("."))).toEqual([]);
-
-            if (row.status === "kept-beside") {
-                expect(statSync(clip).size).toBe(before);
-                expect(row.output).toBe(join(dir, "clip.hevc.mp4"));
-                expect(statSync(join(dir, "clip.hevc.mp4")).size).toBeLessThan(before * 0.75);
-                expect(row.trashBatch).toBeNull();
-                return;
-            }
-
-            expect(row.status).toBe("kept");
             expect(statSync(clip).size).toBeLessThan(before * 0.75);
-            expect(row.trashBatch).not.toBeNull();
+            expect(drainerStarts).toBe(1);
 
-            const batch = listBatches().find((candidate) => candidate.id === row.trashBatch);
+            const batch = listBatches(paths).find((candidate) => candidate.id === row.trashBatch);
             expect(batch?.items[0]?.original).toBe(clip);
-            expect(existsSync(batch?.items[0]?.stored ?? "")).toBe(true);
+            expect(batch?.items[0]?.stored.startsWith(realpathSync(config.trashRoot))).toBe(true);
+
+            // The printed undo: the result moves aside, then the real restore puts the original back.
+            const aside = Bun.spawnSync(["sh", "-c", undoCommand({ input: clip, encoder, restore: "true" })], {
+                stderr: "pipe",
+            });
+            expect(aside.exitCode).toBe(0);
+            expect(restoreBatch(row.trashBatch ?? "", { config, paths }).restored).toEqual([clip]);
+            expect(statSync(clip).size).toBe(before);
+            expect(statSync(siblingOutput({ input: clip, encoder })).size).toBeLessThan(before * 0.75);
         },
         60_000
     );

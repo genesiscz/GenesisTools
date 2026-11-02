@@ -22,6 +22,12 @@ export function argvWithChildDeadline(cmd: string[], deadlineMs: number): string
 export const CHILD_DEADLINE_EXIT = 124;
 
 /**
+ * The watchdog's exit status when the command could not start (the script's `exit 127` after a failed `exec`): a
+ * missing binary reads as this status, not as a spawn error, whenever the watchdog wraps the command.
+ */
+export const CHILD_EXEC_FAILED_EXIT = 127;
+
+/**
  * Why a run through the watchdog ended early, read off its exit status, or null for an ordinary exit.
  *
  * The watchdog turns a child killed by signal N into exit status 128 + N, and exits 124 when its own deadline

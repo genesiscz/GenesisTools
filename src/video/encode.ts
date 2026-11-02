@@ -8,16 +8,20 @@ import {
     DESTINATION_TAKEN,
     defaultRuleContext,
     graceMinutesFor,
+    identityOf,
     kickDrainer,
     loadRmConfig,
     moveToTrash,
     planRemoval,
+    type RmConfig,
+    RmPartialMoveError,
     renameNoReplace,
     restoreBatch,
     rmCallerFromRuntime,
+    type TrashPaths,
 } from "@genesiscz/utils/rm";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import { readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import {
     decodeErrors,
     encodeArgs,
@@ -103,6 +107,44 @@ export function isEarlierOutput({ input, encoder }: { input: string; encoder: Vi
     return basename(input, extname(input)).endsWith(`.${encoder.codec}`);
 }
 
+/** The original as the encode found it, taken before the probe; a result is installed only over this same file. */
+export interface SourceSnapshot {
+    /** Device and inode (`identityOf`), what a trash move is pinned to. */
+    identity: string | null;
+    size: number;
+    mtimeMs: number;
+}
+
+export function snapshotSource(path: string): SourceSnapshot {
+    const stat = statSync(path);
+    return { identity: identityOf(path), size: stat.size, mtimeMs: stat.mtimeMs };
+}
+
+/** Why `path` no longer holds the file `source` describes, or null when it still does. */
+export function sourceChange({ source, path }: { source: SourceSnapshot; path: string }): string | null {
+    let now: SourceSnapshot;
+
+    try {
+        now = snapshotSource(path);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return "it is gone";
+        }
+
+        throw error;
+    }
+
+    if (now.identity !== source.identity) {
+        return "another file took its path";
+    }
+
+    if (now.size !== source.size || now.mtimeMs !== source.mtimeMs) {
+        return "it was modified";
+    }
+
+    return null;
+}
+
 function emptyRow(input: string, inputBytes: number): EncodeRow {
     return {
         input,
@@ -175,7 +217,12 @@ export interface PlannedReplace {
     verdict: "allow" | "ask" | "deny";
     reason: string;
     isInAgent: boolean;
-    /** Moves the original into the trash; the batch id, or null when it did not move. */
+    /** The device and inode the rules judged; the trash move takes only the file that still has it. */
+    identity: string | null;
+    /**
+     * Moves the original into the trash; the batch id, or null when it did not move. Throws `RmPartialMoveError`
+     * when the original reached the trash and a later step of the move failed.
+     */
     moveOriginal: () => string | null;
     /** Puts the batch back; true when the original is at its path again. */
     restore: (batch: string) => boolean;
@@ -183,9 +230,17 @@ export interface PlannedReplace {
     startDrainer: () => void;
 }
 
+/** What `planReplaceWithRm` works on: the saved rm config, its trash and the real drainer unless a test passes others. */
+export interface RmReplaceDeps {
+    /** An rm config to use instead of the saved one; its trash root is then the one in force for the move. */
+    config?: RmConfig;
+    paths?: TrashPaths;
+    startDrainer?: () => void;
+}
+
 /** `--replace` through the GenesisTools trash and the `tools rm` rules. */
-export function planReplaceWithRm(input: string): PlannedReplace {
-    const config = loadRmConfig();
+export function planReplaceWithRm(input: string, deps: RmReplaceDeps = {}): PlannedReplace {
+    const config = deps.config ?? loadRmConfig();
     const caller = rmCallerFromRuntime();
     const ctx = defaultRuleContext(config, caller, process.cwd());
     const [item] = planRemoval([input], ctx);
@@ -198,14 +253,17 @@ export function planReplaceWithRm(input: string): PlannedReplace {
         verdict: item.verdict.kind,
         reason: item.verdict.reason,
         isInAgent: caller.isInAgent,
+        identity: item.target.identity,
         moveOriginal: () =>
             moveToTrash([{ target: item.target, rule: "video-encode-replace" }], {
                 config,
                 caller,
                 graceMinutes: graceMinutesFor(item, ctx),
+                paths: deps.paths,
+                currentTrashRoot: deps.config ? () => config.trashRoot : undefined,
             })?.id ?? null,
-        restore: (batch) => restoreBatch(batch, { config, caller }).restored.length > 0,
-        startDrainer: () => kickDrainer(config),
+        restore: (batch) => restoreBatch(batch, { config, caller, paths: deps.paths }).restored.length > 0,
+        startDrainer: deps.startDrainer ?? (() => kickDrainer(config, deps.paths)),
     };
 }
 
@@ -259,16 +317,16 @@ function claimName({
     return { status, output: target, reason, trashBatch: null };
 }
 
+/** Puts the original back from `batch` after `failure` (a sentence: what went wrong, and why). */
 function rollBack({
     plan,
     batch,
-    cause,
+    failure,
 }: {
     plan: PlannedReplace;
     batch: string;
-    cause: unknown;
+    failure: string;
 }): ReplaceInstallError {
-    const why = cause instanceof Error ? cause.message : String(cause);
     let restored = false;
 
     try {
@@ -278,20 +336,49 @@ function rollBack({
     }
 
     return restored
-        ? new ReplaceInstallError(`the result could not take the original path (${why}); the original is back`, null)
-        : new ReplaceInstallError(
-              `the result could not take the original path (${why}); the original waits in trash batch ${batch}`,
-              batch
-          );
+        ? new ReplaceInstallError(`${failure}; the original is back`, null)
+        : new ReplaceInstallError(`${failure}; the original waits in trash batch ${batch}`, batch);
+}
+
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+/** A discarded result when `input` is no longer the file the encode read (or not the one the rules judged), else null. */
+function sourceChanged({
+    source,
+    input,
+    judged = source.identity,
+}: {
+    source: SourceSnapshot;
+    input: string;
+    judged?: string | null;
+}): InstallResult | null {
+    const why =
+        sourceChange({ source, path: input }) ??
+        (judged === source.identity ? null : "the trash rules judged another file at its path");
+
+    if (!why) {
+        return null;
+    }
+
+    return {
+        status: "discarded",
+        output: null,
+        reason: `the original changed during the encode (${why}); the result was dropped`,
+        trashBatch: null,
+    };
 }
 
 /**
- * Puts a verified encode in place. Without `--replace` it takes the sibling name. With it the trash rules decide (see
- * `replaceDecision`); a replace moves the original to the trash, installs the result, puts the original back when the
- * install fails, and starts the drainer only after the install holds.
+ * Puts a verified encode in place, only while `input` is still the file `source` describes (an edit or another run's
+ * replace during the encode drops the result). Without `--replace` it takes the sibling name. With it the trash rules
+ * decide (see `replaceDecision`); a replace moves the original to the trash, installs the result, puts the original
+ * back when the move or the install fails, and starts the drainer only after the install holds.
  */
 export function installVerified({
     input,
+    source,
     staged,
     encoder,
     replace,
@@ -299,6 +386,7 @@ export function installVerified({
     planReplace,
 }: {
     input: string;
+    source: SourceSnapshot;
     staged: string;
     encoder: VideoEncoder;
     replace: boolean;
@@ -308,7 +396,10 @@ export function installVerified({
     const sibling = siblingOutput({ input, encoder });
 
     if (!replace) {
-        return claimName({ staged, target: sibling, status: "kept", reason: keptReason, takenReason: "" });
+        return (
+            sourceChanged({ source, input }) ??
+            claimName({ staged, target: sibling, status: "kept", reason: keptReason, takenReason: "" })
+        );
     }
 
     const plan = planReplace(input);
@@ -316,6 +407,13 @@ export function installVerified({
 
     if (decision.kind === "refuse") {
         throw new Error(decision.reason);
+    }
+
+    // Checked after the rules ran, right before the step that acts: the move is pinned to the file they judged.
+    const changed = sourceChanged({ source, input, judged: plan.identity });
+
+    if (changed) {
+        return changed;
     }
 
     if (decision.kind === "beside") {
@@ -329,7 +427,21 @@ export function installVerified({
     }
 
     const before = statSync(input);
-    const batch = plan.moveOriginal();
+    let batch: string | null;
+
+    try {
+        batch = plan.moveOriginal();
+    } catch (error) {
+        if (error instanceof RmPartialMoveError) {
+            throw rollBack({
+                plan,
+                batch: error.batch.id,
+                failure: `the trash move failed after the original moved (${messageOf(error.cause)})`,
+            });
+        }
+
+        throw error;
+    }
 
     if (!batch) {
         throw new Error("the original did not move to the trash");
@@ -338,7 +450,11 @@ export function installVerified({
     try {
         renameNoReplace(staged, input);
     } catch (error) {
-        throw rollBack({ plan, batch, cause: error });
+        throw rollBack({
+            plan,
+            batch,
+            failure: `the result could not take the original path (${messageOf(error)})`,
+        });
     }
 
     try {
@@ -356,11 +472,31 @@ export function installVerified({
     return { status: "kept", output: input, reason: keptReason, trashBatch: batch };
 }
 
+/**
+ * The row for a probe that threw: a file ffprobe read and rejected is skipped as not a video; anything else (no
+ * ffprobe, a timeout, a file this process cannot read) is a failed row, so the run exits 1.
+ */
+export function probeFailureRow({
+    input,
+    error,
+}: {
+    input: string;
+    error: unknown;
+}): Pick<EncodeRow, "status" | "reason"> {
+    if (error instanceof NotMediaError) {
+        logger.debug({ input, error }, "ffprobe could not read the input as media");
+        return { status: "skipped", reason: "not a video (ffprobe cannot read it)" };
+    }
+
+    logger.warn({ input, error }, "ffprobe did not run on the input");
+    return { status: "failed", reason: `the probe failed: ${messageOf(error)}` };
+}
+
 async function encodeOne({ input, options }: { input: string; options: EncodeOptions }): Promise<EncodeRow> {
     const { encoder } = options;
     const started = performance.now();
-    const bytes = statSync(input).size;
-    const row = emptyRow(input, bytes);
+    const source = snapshotSource(input);
+    const row = emptyRow(input, source.size);
     const finish = (patch: Partial<EncodeRow>): EncodeRow => ({
         ...row,
         ...patch,
@@ -380,8 +516,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
     try {
         facts = await readMediaFacts({ input, signal: options.signal });
     } catch (error) {
-        logger.debug({ input, error }, "ffprobe could not read the input");
-        return finish({ reason: "not a video (ffprobe cannot read it)" });
+        return finish(probeFailureRow({ input, error }));
     }
 
     const skip = skipReason({ facts, encoder });
@@ -440,6 +575,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
 
         const placed = installVerified({
             input,
+            source,
             staged: temp,
             encoder,
             replace: options.replace,
@@ -457,7 +593,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         logger.warn({ input, error }, "Video encode failed");
         return finish({
             status: "failed",
-            reason: error instanceof Error ? error.message : String(error),
+            reason: messageOf(error),
             trashBatch: error instanceof ReplaceInstallError ? error.trashBatch : null,
         });
     } finally {
@@ -504,6 +640,24 @@ function shellQuote(path: string): string {
     return `'${path.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * The shell line that undoes a replace: the result moves to the sibling name without writing over a file already
+ * there (`mv -n`), and `restore` runs only when the original path is free afterwards, since `mv -n` exits 0 when it
+ * skips the move.
+ */
+export function undoCommand({
+    input,
+    encoder,
+    restore,
+}: {
+    input: string;
+    encoder: VideoEncoder;
+    restore: string;
+}): string {
+    const result = shellQuote(input);
+    return `mv -n ${result} ${shellQuote(siblingOutput({ input, encoder }))} && test ! -e ${result} && ${restore}`;
+}
+
 export function renderRows({
     rows,
     summary,
@@ -537,10 +691,8 @@ export function renderRows({
         if (row.status === "failed") {
             out.println(`restore ${basename(row.input)}: ${toolCommand("rm", "restore", row.trashBatch)}`);
         } else {
-            out.println(
-                `undo ${basename(row.input)}: mv ${shellQuote(row.input)} ${shellQuote(siblingOutput({ input: row.input, encoder }))}` +
-                    ` && ${toolCommand("rm", "restore", row.trashBatch)}`
-            );
+            const restore = toolCommand("rm", "restore", row.trashBatch);
+            out.println(`undo ${basename(row.input)}: ${undoCommand({ input: row.input, encoder, restore })}`);
         }
     }
 

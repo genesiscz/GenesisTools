@@ -57,16 +57,21 @@ Flags and defaults:
   printed. An agent may not replace a file that the `tools rm` rules mark "ask": the verified result stays beside it
   as `<name>.hevc.<ext>` (status `kept-beside`) and the summary prints the `tools rm <originals>` command a person runs
   to finish. A person at a terminal replaces as asked, and a "deny" verdict stops everyone. See "Undo a replace". Without it the result is `<name>.hevc.<ext>` beside the input.
-  When the result cannot take the original path after the move, the original is put back and the row is `failed`; if
-  that also fails, the row keeps its `trashBatch` and the summary prints the `tools rm restore <batch>` command.
+  When the trash move or the install fails after the original moved, the original is put back and the row is
+  `failed`; if that also fails, the row keeps its `trashBatch` and the summary prints the `tools rm restore <batch>`
+  command.
 - `--json`: one row per file (input, output, sizes, saving, kept, status, reason, trashBatch).
 
-Skipped with a reason: files already HEVC, files with a data track (an iPhone `.MOV` with `mebx` metadata),
-non-video files, containers that cannot hold HEVC, and earlier `.hevc` outputs.
+Skipped with a reason: files already HEVC, files with a track the encode does not carry over (a data track like an
+iPhone `.MOV`'s `mebx` metadata, a subtitle, a second video, a cover picture, an attachment), files ffprobe reads and
+rejects as not a video, containers that cannot hold HEVC, and earlier `.hevc` outputs. The encode keeps the first
+playable video and every audio track.
 
 A result is kept only when it is at least `--min-saving` smaller, its duration is within 0.5 s of the input, its video
-is HEVC, audio is present when the input had audio, and a full hardware decode (`ffmpeg -v error -xerror`) prints
-nothing. Otherwise the output is discarded and the input stays. Each ffmpeg (the encoder check, the encode and the
+is HEVC, it has every audio track the input had, and a full hardware decode (`ffmpeg -v error -xerror`) prints
+nothing. Otherwise the output is discarded and the input stays. The original's device, inode, size and modification
+time are read before the probe; a result is installed only while the original still matches them, so an edit during
+the encode, or another run's replace, discards the result and the original is never trashed for a stale encode. Each ffmpeg (the encoder check, the encode and the
 decode check) runs under `nice -n 10`; background QoS (`taskpolicy -b`) starved the jobs on a loaded Mac, so it is not
 used.
 
@@ -75,14 +80,17 @@ uses and removes when it finishes. The folder walk skips hidden folders, ffmpeg 
 a file, and the result takes its final name only when nothing is there yet. Two runs on the same folder therefore never
 touch each other's files. The encode maps the first playable video stream (`0:V:0`), never a cover picture.
 
-The command exits 1 when any file failed (ffmpeg, a probe or the replace); skipped and discarded files exit 0.
+The command exits 1 when any file failed (ffmpeg, the replace, or a probe that could not run: no ffprobe, a timeout,
+a file this process cannot read); skipped and discarded files exit 0.
 
 ### Undo a replace
 
-`tools rm restore <batch>` alone refuses, because the new file sits at the original path. Two commands undo it; the
-summary prints both after every replace:
+`tools rm restore <batch>` alone refuses, because the new file sits at the original path. The summary prints one line
+that undoes it after every replace:
 
 ```sh
-mv ./a.mp4 ./a.hevc.mp4
-tools rm restore <batch>
+mv -n ./a.mp4 ./a.hevc.mp4 && test ! -e ./a.mp4 && tools rm restore <batch>
 ```
+
+`mv -n` never writes over an `a.hevc.mp4` that is already there, and since it exits 0 when it skips, the `test`
+lets the restore run only when the original path is free.

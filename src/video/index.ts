@@ -39,7 +39,7 @@ export function registerVideoCommands(program: Command): void {
         .option("--min-saving <percent>", "Discard an output that is less than this much smaller", "25")
         .option(
             "--replace",
-            'Put the result at the original path and move the original to the GenesisTools trash. An agent cannot replace a file the rm rules mark "ask": the result stays beside it. A bare trash restore refuses while the new file sits at the original path: move it to <name>.hevc.<ext> first. The summary prints both undo steps'
+            'Put the result at the original path and move the original to the GenesisTools trash. An agent cannot replace a file the rm rules mark "ask": the result stays beside it. A bare trash restore refuses while the new file sits at the original path: move it to <name>.hevc.<ext> first. The summary prints the undo line, which never writes over an existing <name>.hevc.<ext>'
         )
         .option("--dry-run", "List what would happen, with input sizes and skip reasons; write nothing")
         .option("--json", "Print one row per file")
