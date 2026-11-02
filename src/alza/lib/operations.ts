@@ -69,6 +69,15 @@ const limit = (fallback: number, max: number) =>
     z.number().int().min(1).max(max).optional().describe(`How many to return (default ${fallback}, max ${max})`);
 const sortKeys = Object.keys(SEARCH_SORTS) as [SearchSort, ...SearchSort[]];
 
+const skip = z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+        "Matching products of the first page to leave out: next.skip of the previous answer, with page = next.page"
+    );
+
 const listingFilters = {
     min_price: z.number().min(0).optional().describe("Lowest price, in the storefront currency"),
     max_price: z.number().min(0).optional().describe("Highest price, in the storefront currency"),
@@ -83,6 +92,7 @@ export const SEARCH_INPUT = z.object({
         .optional()
         .describe("relevance (default), price-asc, price-desc, newest, rating (server-side)"),
     page: z.number().int().min(0).optional().describe("First result page, 0-based"),
+    skip,
     limit: limit(20, 100),
     brand_id: z.number().int().positive().optional().describe("Brand (producer) id from list_category_filters"),
     ...listingFilters,
@@ -95,6 +105,7 @@ export const CATEGORY_LISTING_INPUT = z.object({
         .positive()
         .describe("Category id (get_category, autocomplete or a product's category)"),
     page: z.number().int().min(1).optional().describe("First page, 1-based"),
+    skip,
     limit: limit(24, 200),
     brand_id: z.number().int().positive().optional().describe("Brand id from list_category_filters"),
     filters: z
@@ -131,6 +142,7 @@ export const ALZA_OPERATIONS: AlzaOperation[] = [
                 sort: i.sort,
                 page: i.page,
                 limit: i.limit,
+                skip: i.skip,
                 brandId: i.brand_id,
                 minPrice: i.min_price,
                 maxPrice: i.max_price,
@@ -150,6 +162,7 @@ export const ALZA_OPERATIONS: AlzaOperation[] = [
                 categoryId: i.category_id,
                 page: i.page,
                 limit: i.limit,
+                skip: i.skip,
                 brandId: i.brand_id,
                 params: i.filters?.map((f) => ({ paramId: f.param_id, valueId: f.value_id })),
                 minPrice: i.min_price,

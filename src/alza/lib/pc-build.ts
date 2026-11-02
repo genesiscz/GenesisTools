@@ -705,7 +705,7 @@ export function checkRamMotherboard(ram: RulePart[] | undefined, mb?: RulePart):
     const unknowns: string[] = [];
     const warns: string[] = [];
     let modules = 0;
-    let modulesKnown = true;
+    const modulesUnknown: string[] = [];
     for (const r of ram) {
         const t = r.specs.memoryTypes?.value;
         if (!t) {
@@ -720,17 +720,23 @@ export function checkRamMotherboard(ram: RulePart[] | undefined, mb?: RulePart):
         }
         const m = r.specs.memoryModules?.value;
         if (m === undefined) {
-            modulesKnown = false;
+            modulesUnknown.push(r.code);
         } else {
             modules += m;
         }
     }
+    const modulesKnown = modulesUnknown.length === 0;
     const slots = mb.specs.memorySlots?.value;
     if (slots !== undefined && modulesKnown && modules > slots) {
         problems.push(`${modules} modules but only ${slots} slots`);
     }
     if (slots === undefined) {
         warns.push("slot count unknown");
+    } else if (!modulesKnown) {
+        // A kit whose module count was not read may hold more modules than the board has slots: not a pass.
+        warns.push(
+            `module count unknown for ${modulesUnknown.join(", ")}, so the fit in ${slots} slots is not checked`
+        );
     }
     if (problems.length) {
         return verdict(rule, "fail", `Incompatible: ${problems.join("; ")}.`, values);

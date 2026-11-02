@@ -115,8 +115,13 @@ function start(request: WorkerRequest): void {
 
     curl.setString(easy, CURLOPT.URL, request.url);
     curl.setString(easy, CURLOPT.CAINFO, config.caBundle);
-    curl.setPointer(easy, CURLOPT.SHARE, share);
-    curl.setString(easy, CURLOPT.COOKIEFILE, "");
+    // The share handle holds the cookie jar (and turns the cookie engine on), so a cookie-free transfer stays out of
+    // it, giving up the shared DNS and TLS session cache for this one transfer.
+    if (!request.noCookies) {
+        curl.setPointer(easy, CURLOPT.SHARE, share);
+        curl.setString(easy, CURLOPT.COOKIEFILE, "");
+    }
+
     curl.setString(easy, CURLOPT.ACCEPT_ENCODING, ACCEPT_ENCODING);
     curl.setLong(easy, CURLOPT.NOSIGNAL, 1);
     curl.setLong(easy, CURLOPT.FOLLOWLOCATION, request.followRedirects ? 1 : 0);

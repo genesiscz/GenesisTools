@@ -46,12 +46,14 @@ export function alzaPcCatalog(api: AlzaApi): PcCatalog {
 
             return pending;
         },
+        // One call is one listing page, as the builder counts it: a sparse in-stock filter must not read more pages.
         searchProducts: async (opts) => {
             const page = await listCategory(api, {
                 categoryId: opts.categoryId,
                 inStock: opts.inStock,
                 limit: opts.limit,
                 brandId: opts.producerIds?.[0],
+                maxPages: 1,
             });
             return { products: page.items.map(fromSummary) };
         },

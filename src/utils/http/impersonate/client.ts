@@ -42,6 +42,8 @@ export interface ImpersonatedRequest {
     signal?: AbortSignal;
     /** Stops the transfer and rejects once the body passes this many bytes, so a large answer is never buffered. */
     maxBodyBytes?: number;
+    /** Sends no cookie from this client's jar and keeps none from the answer, for a check that must leave no trace. */
+    noCookies?: boolean;
 }
 
 export interface ImpersonatedResponse {
@@ -69,10 +71,13 @@ interface Pending {
     resolve: (reply: WorkerReply) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
+    /** The worker carrying the request: its close or crash ends this request, never one of a newer worker. */
+    worker: ImpersonateEngine["worker"];
 }
 
-interface Engine {
-    worker: Worker;
+/** A started curl worker. `start()` makes the real one; a test may return another. */
+export interface ImpersonateEngine {
+    worker: Pick<Worker, "postMessage" | "terminate">;
     wakeup: () => void;
     closed: Promise<void>;
 }
@@ -89,7 +94,7 @@ function abortedError(method: string, url: string): ImpersonatedHttpError {
 }
 
 export class ImpersonatedHttpClient {
-    private engine: Promise<Engine> | null = null;
+    private engine: Promise<ImpersonateEngine> | null = null;
     private readonly pending = new Map<number, Pending>();
     private nextId = 1;
     private idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -142,6 +147,7 @@ export class ImpersonatedHttpClient {
                         reject(error);
                     },
                     timer,
+                    worker: engine.worker,
                 });
                 req.signal?.addEventListener("abort", onAbort, { once: true });
                 this.send(engine, {
@@ -154,6 +160,7 @@ export class ImpersonatedHttpClient {
                     timeoutMs,
                     followRedirects: req.followRedirects ?? true,
                     maxBodyBytes: req.maxBodyBytes,
+                    noCookies: req.noCookies,
                 });
             });
         } finally {
@@ -184,7 +191,7 @@ export class ImpersonatedHttpClient {
         }
 
         this.engine = null;
-        let engine: Engine;
+        let engine: ImpersonateEngine;
         try {
             engine = await starting;
         } catch (error) {
@@ -192,7 +199,8 @@ export class ImpersonatedHttpClient {
             return;
         }
 
-        this.rejectAll("impersonate client closed");
+        // Only this worker's requests: a request after close() already runs on a new worker.
+        this.rejectAll(engine.worker, "impersonate client closed");
         engine.worker.postMessage({ type: "close" } satisfies ToWorker);
         // A cleared timer, not Bun.sleep: a pending sleep keeps the process alive for its full grace after the exit.
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -214,7 +222,7 @@ export class ImpersonatedHttpClient {
         await this.close();
     }
 
-    private send(engine: Engine, message: ToWorker): void {
+    private send(engine: ImpersonateEngine, message: ToWorker): void {
         engine.worker.postMessage(message);
         engine.wakeup();
     }
@@ -243,12 +251,14 @@ export class ImpersonatedHttpClient {
 
     /**
      * The running worker. The first request may wait for the library download and the worker start; an abort in that
-     * wait rejects at once, and a request whose signal aborted meanwhile is never posted.
+     * wait rejects at once, and a request whose signal aborted meanwhile is never posted. A worker that close() gave
+     * up on while it started is refused: it is being closed, so a request posted to it would never be answered.
      */
-    private async engineFor(req: ImpersonatedRequest, method: string): Promise<Engine> {
-        let engine: Engine;
+    private async engineFor(req: ImpersonatedRequest, method: string): Promise<ImpersonateEngine> {
+        const starting = this.ensureStarted();
+        let engine: ImpersonateEngine;
         try {
-            engine = await untilAborted(this.ensureStarted(), req.signal);
+            engine = await untilAborted(starting, req.signal);
         } catch (error) {
             if (req.signal?.aborted) {
                 throw abortedError(method, req.url);
@@ -261,18 +271,33 @@ export class ImpersonatedHttpClient {
             throw abortedError(method, req.url);
         }
 
+        if (this.engine !== starting) {
+            throw new ImpersonatedHttpError(`${method} ${req.url}: impersonate client closed`);
+        }
+
         return engine;
     }
 
-    private ensureStarted(): Promise<Engine> {
-        this.engine ??= this.start().catch((error: unknown) => {
-            this.engine = null;
-            throw error;
-        });
+    /** Each start clears `this.engine` only while it is still the current one, never a newer worker's start. */
+    private ensureStarted(): Promise<ImpersonateEngine> {
+        if (!this.engine) {
+            const forget = () => {
+                if (this.engine === starting) {
+                    this.engine = null;
+                }
+            };
+            const starting: Promise<ImpersonateEngine> = this.start(forget).catch((error: unknown) => {
+                forget();
+                throw error;
+            });
+            this.engine = starting;
+        }
+
         return this.engine;
     }
 
-    private async start(): Promise<Engine> {
+    /** Starts a worker. `forget` drops it as the current worker (after a crash) unless a newer one replaced it. */
+    protected async start(forget: () => void): Promise<ImpersonateEngine> {
         const files = await ensureLibcurlImpersonate();
         const target = PROFILE_TARGETS[this.profile];
         logger.debug({ label: this.label, library: files.library, target }, "starting impersonate worker");
@@ -311,8 +336,8 @@ export class ImpersonatedHttpClient {
                     { label: this.label, error: event.message, pending: this.pending.size },
                     "impersonate worker crashed"
                 );
-                this.engine = null;
-                this.rejectAll(error.message);
+                forget();
+                this.rejectAll(worker, error.message);
                 reject(error);
             };
             worker.postMessage({
@@ -352,8 +377,12 @@ export class ImpersonatedHttpClient {
         waiter.resolve(reply);
     }
 
-    private rejectAll(reason: string): void {
+    private rejectAll(worker: ImpersonateEngine["worker"], reason: string): void {
         for (const [id, waiter] of this.pending) {
+            if (waiter.worker !== worker) {
+                continue;
+            }
+
             clearTimeout(waiter.timer);
             waiter.reject(new ImpersonatedHttpError(reason));
             this.pending.delete(id);

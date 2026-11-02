@@ -64,7 +64,7 @@ export interface JsonRequestInit {
     withToken?: boolean;
     /** Send exactly this token and never ask the token callback (a diagnostic must not refresh). */
     token?: string;
-    /** Neither send nor absorb the persisted cookies. */
+    /** Neither send nor absorb any cookie: not the persisted visitor cookies, not the HTTP client's own jar. */
     noCookies?: boolean;
 }
 
@@ -218,6 +218,7 @@ export class AlzaApi {
             method: init.method ?? "GET",
             headers,
             body: init.body === undefined ? undefined : SafeJSON.stringify(init.body),
+            noCookies: init.noCookies,
         });
         if (!init.noCookies) {
             this.options.cookies?.absorb(response.headers["set-cookie"]);

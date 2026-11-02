@@ -6,7 +6,7 @@ import pc from "picocolors";
 import { openAccountContext } from "../lib/account";
 import { findAccountOperation } from "../lib/account-operations";
 import { AlzaApi } from "../lib/api";
-import { money, ratingText } from "../lib/format";
+import { money, moreText, ratingText } from "../lib/format";
 import { findOperation, type OperationResult } from "../lib/operations";
 import { isStorefrontId, STOREFRONT_IDS, type StorefrontId } from "../lib/storefront";
 import type { ListingPage, ProductSummary } from "../lib/types";
@@ -76,7 +76,7 @@ export async function runOperation(command: Command, name: string, input: Record
             out.println(renderListingTable(listing.items));
             out.println(
                 pc.dim(
-                    `${listing.items.length} shown${listing.total ? ` of ${listing.total}` : ""}${listing.hasMore ? ", more pages exist" : ""}`
+                    `${listing.items.length} shown${listing.total ? ` of ${listing.total}` : ""}${moreText(listing)}`
                 )
             );
             return;

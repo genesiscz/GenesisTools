@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
@@ -530,6 +531,26 @@ async function fetchPdfDocument(
 }
 
 /**
+ * Writes the document. Without `overwrite` the file is created exclusively (O_EXCL), so a file that appeared during
+ * the download (another call to the same path, another program) is never replaced; the check before the download only
+ * saves a request.
+ */
+async function saveDocument(path: string, body: Uint8Array, overwrite: boolean): Promise<void> {
+    try {
+        await writeFile(path, body, { flag: overwrite ? "w" : "wx" });
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+            throw new AlzaApiError(
+                `${path} was created while the document downloaded. Pass overwrite to replace it.`,
+                409
+            );
+        }
+
+        throw error;
+    }
+}
+
+/**
  * Downloads an order document to a file. pdf.alza.cz answers a plain fetch (live 2026-11-01: a real 404 page, not the
  * Cloudflare challenge) and serves binary PDFs, which the Chrome-fingerprint client would decode as text; so that host
  * is read with fetch. The other Alza hosts go through the fingerprint client and must answer a text document.
@@ -590,7 +611,7 @@ export async function orderDocument(
         throw new AlzaApiError(`The document is larger than ${MAX_DOCUMENT_BYTES} bytes; not saved.`, 413);
     }
 
-    await Bun.write(path, body);
+    await saveDocument(path, body, opts.overwrite ?? false);
     logger.debug({ host: url.hostname, path, bytes: body.byteLength, contentType }, "alza order document saved");
     return { path, bytes: body.byteLength, contentType };
 }

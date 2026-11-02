@@ -135,52 +135,111 @@ export interface SearchOptions {
     discounted?: boolean;
     /** Result pages to read at most (capped at MAX_PAGES), however few of their products pass the filters. */
     maxPages?: number;
+    /** Matching products of the first page to leave out: the `next.skip` of the answer before. */
+    skip?: number;
 }
+
+type ListingFilters = Pick<SearchOptions, "minPrice" | "maxPrice" | "inStock" | "discounted">;
 
 /** How many pages a listing reads: the caller's page budget, never more than MAX_PAGES. */
 function pageBudget(maxPages: number | undefined): number {
     return Math.min(MAX_PAGES, Math.max(1, maxPages ?? MAX_PAGES));
 }
 
-/** Keyword search over the app's v5 search route. Price, stock and discount filters apply to the fetched pages. */
-export async function searchProducts(api: AlzaApi, opts: SearchOptions): Promise<ListingPage> {
-    const limit = opts.limit ?? 20;
-    const startPage = opts.page ?? 0;
+/**
+ * The matching products of upstream pages from `startPage`, at most `limit`, and where the next call continues. A
+ * page whose matches pass the limit is cut there, and `next` points back into it with the count already returned,
+ * so a caller that follows `next` never loses the rest of that page.
+ */
+async function collectListing(opts: {
+    startPage: number;
+    limit: number;
+    skip?: number;
+    maxPages?: number;
+    filters: ListingFilters;
+    read: (page: number) => Promise<{ items: ProductSummary[]; total?: number; more: boolean }>;
+}): Promise<ListingPage & { pagesRead: number }> {
     const items: ProductSummary[] = [];
+    const seen = new Set<number>();
+    const skip = opts.skip ?? 0;
     let total: number | undefined;
-    let page = startPage;
-    let hasMore = false;
-    for (; page < startPage + pageBudget(opts.maxPages); page++) {
-        const result = await api.search({
-            term: opts.term,
-            page,
-            sort: opts.sort ?? "relevance",
-            producerIds: opts.brandId ? [opts.brandId] : undefined,
-        });
-        total = result.totalUnfiltered ?? total;
-        const cards = result.data2 ?? [];
-        for (const card of cards) {
-            const item = cardToSummary(card, api.storefront.currency, api.storefront.baseUrl);
-            if (matchesFilters(item, opts) && !items.some((i) => i.id === item.id)) {
-                items.push(item);
+    let page = opts.startPage;
+    let pagesRead = 0;
+    let next: ListingPage["next"];
+    while (pagesRead < pageBudget(opts.maxPages)) {
+        const result = await opts.read(page);
+        pagesRead++;
+        total = result.total ?? total;
+        let matched = 0;
+        for (const item of result.items) {
+            if (!matchesFilters(item, opts.filters) || seen.has(item.id)) {
+                continue;
             }
+
+            seen.add(item.id);
+            matched++;
+            if (page === opts.startPage && matched <= skip) {
+                continue;
+            }
+
+            if (items.length >= opts.limit) {
+                next = { page, skip: matched - 1 };
+                break;
+            }
+
+            items.push(item);
         }
 
-        hasMore =
-            cards.length >= SEARCH_PAGE_SIZE - 1 && (total === undefined || (page + 1) * SEARCH_PAGE_SIZE < total);
-        if (items.length >= limit || !hasMore) {
+        if (next || !result.more) {
             break;
         }
+
+        if (items.length >= opts.limit || pagesRead >= pageBudget(opts.maxPages)) {
+            next = { page: page + 1, skip: 0 };
+            break;
+        }
+
+        page++;
     }
 
-    logger.debug({ term: opts.term, pages: page - startPage + 1, kept: items.length, total }, "alza search");
-    return { total, page, hasMore, items: items.slice(0, limit) };
+    return { total, page, hasMore: next !== undefined, next, items, pagesRead };
 }
 
-function matchesFilters(
-    item: ProductSummary,
-    opts: Pick<SearchOptions, "minPrice" | "maxPrice" | "inStock" | "discounted">
-) {
+/** Keyword search over the app's v5 search route. Price, stock and discount filters apply to the fetched pages. */
+export async function searchProducts(api: AlzaApi, opts: SearchOptions): Promise<ListingPage> {
+    let knownTotal: number | undefined;
+    const { pagesRead, ...listing } = await collectListing({
+        startPage: opts.page ?? 0,
+        limit: opts.limit ?? 20,
+        skip: opts.skip,
+        maxPages: opts.maxPages,
+        filters: opts,
+        read: async (page) => {
+            const result = await api.search({
+                term: opts.term,
+                page,
+                sort: opts.sort ?? "relevance",
+                producerIds: opts.brandId ? [opts.brandId] : undefined,
+            });
+            const cards = result.data2 ?? [];
+            knownTotal = result.totalUnfiltered ?? knownTotal;
+            return {
+                items: cards.map((card) => cardToSummary(card, api.storefront.currency, api.storefront.baseUrl)),
+                total: knownTotal,
+                more:
+                    cards.length >= SEARCH_PAGE_SIZE - 1 &&
+                    (knownTotal === undefined || (page + 1) * SEARCH_PAGE_SIZE < knownTotal),
+            };
+        },
+    });
+    logger.debug(
+        { term: opts.term, pages: pagesRead, kept: listing.items.length, total: listing.total },
+        "alza search"
+    );
+    return listing;
+}
+
+function matchesFilters(item: ProductSummary, opts: ListingFilters) {
     if (opts.minPrice !== undefined && (item.price === undefined || item.price < opts.minPrice)) {
         return false;
     }
@@ -212,6 +271,8 @@ export interface CategoryListingOptions {
     discounted?: boolean;
     /** Listing pages to read at most (capped at MAX_PAGES), however few of their products pass the filters. */
     maxPages?: number;
+    /** Matching products of the first page to leave out: the `next.skip` of the answer before. */
+    skip?: number;
 }
 
 /**
@@ -299,30 +360,24 @@ export function parseListingCards(
 }
 
 export async function listCategory(api: AlzaApi, opts: CategoryListingOptions): Promise<ListingPage> {
-    const limit = opts.limit ?? 24;
-    const startPage = Math.max(1, opts.page ?? 1);
-    const items: ProductSummary[] = [];
-    let total: number | undefined;
-    let page = startPage;
-    let hasMore = false;
-    for (; page < startPage + pageBudget(opts.maxPages); page++) {
-        const { html } = await api.html(categoryListingPath(opts, page));
-        const parsed = parseListingCards(html, api.storefront.currency, api.storefront.baseUrl);
-        total = parsed.total ?? total;
-        for (const item of parsed.items) {
-            if (matchesFilters(item, opts) && !items.some((i) => i.id === item.id)) {
-                items.push(item);
-            }
-        }
-
-        hasMore = parsed.items.length > 0 && parsed.pages.some((p) => p > page);
-        if (items.length >= limit || !hasMore) {
-            break;
-        }
-    }
-
-    logger.debug({ categoryId: opts.categoryId, pages: page - startPage + 1, kept: items.length }, "alza category");
-    return { total, page, hasMore, items: items.slice(0, limit) };
+    const { pagesRead, ...listing } = await collectListing({
+        startPage: Math.max(1, opts.page ?? 1),
+        limit: opts.limit ?? 24,
+        skip: opts.skip,
+        maxPages: opts.maxPages,
+        filters: opts,
+        read: async (page) => {
+            const { html } = await api.html(categoryListingPath(opts, page));
+            const parsed = parseListingCards(html, api.storefront.currency, api.storefront.baseUrl);
+            return {
+                items: parsed.items,
+                total: parsed.total,
+                more: parsed.items.length > 0 && parsed.pages.some((p) => p > page),
+            };
+        },
+    });
+    logger.debug({ categoryId: opts.categoryId, pages: pagesRead, kept: listing.items.length }, "alza category");
+    return listing;
 }
 
 export async function getProduct(api: AlzaApi, ref: string): Promise<ProductDetail> {

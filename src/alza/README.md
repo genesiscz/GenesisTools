@@ -7,6 +7,7 @@ Unofficial; not affiliated with Alza.
 ```bash
 tools alza search alkohol tester --sort rating --limit 10
 tools alza search monitor --brand 1602 --max 5000 --in-stock --discounted
+tools alza search monitor --page 0 --skip 20   # continue: the page and skip of the "next" in the answer before
 tools alza product AUPR65708            # code, numeric id or product URL
 tools alza reviews AUPR65708 --limit 100
 tools alza questions AUPR65708
@@ -25,6 +26,9 @@ tools alza --country sk search "alkohol tester"
 tools alza --json product AUPR65708     # machine-readable result
 tools alza mcp                          # stdio MCP server, one tool per command
 ```
+
+A listing that reaches `--limit` inside a page ends with `next: page N, skip K` (in `--json`, `next`). Pass both back
+(`--page N --skip K`) and the rest of that page comes first, so no product is lost between two calls.
 
 Add the MCP server to a client: `tools mcp-manager install alza "tools alza mcp" -t stdio -p claude`.
 
@@ -70,9 +74,12 @@ Files, all mode 0600, under `~/.genesis-tools/alza/`: `tokens.json` (access and 
 `pending-login.json` (the PKCE verifier between the two sign-in steps, removed after the exchange) and
 `visitors/<storefront>.json` (the visitor id and the `IDOX`/`VST` cookies of one storefront: the anonymous basket is
 keyed by the `IDOX` cookie, not by the visitor id, and alza.cz and alza.sk set their own cookies). An older
-`state.json` is read as the Czech visitor until that visitor is saved again. An account command renews an expiring
+`state.json` is read as the Czech visitor until that visitor is saved again. Signed out, until the visitor has its `IDOX`
+cookie, each account call holds `visitors/<storefront>.json.lock` and first takes a visitor another process saved, so
+two first calls share one basket. An account command renews an expiring
 access token with the refresh token; `auth status` never does, and it sends no request until a catalog command has
-downloaded the HTTP library. A renewal never writes tokens back over a logout or a new sign-in from another process.
+downloaded the HTTP library. A renewal never writes tokens back over a logout or a new sign-in from another process, and a sign-in that completes
+after a logout or a newer `auth login` is refused.
 
 MCP tools: `account_status`, `cart_show`, `cart_add`, `cart_remove`, `favorites_list`, `orders_list`, `order_show`,
 `watchdog_list`, `watchdog_add`, `watchdog_remove`. The four that change the basket or the watchdogs are annotated

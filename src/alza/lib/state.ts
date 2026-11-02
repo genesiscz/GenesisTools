@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type VisitorState, visitorStateSchema } from "./account-schemas";
 import type { AlzaCookieJar } from "./api";
@@ -95,7 +96,7 @@ export class VisitorSession implements AlzaCookieJar {
     private dirty: boolean;
 
     private constructor(
-        private readonly state: VisitorState,
+        private state: VisitorState,
         private readonly path: string,
         isNew: boolean
     ) {
@@ -155,6 +156,46 @@ export class VisitorSession implements AlzaCookieJar {
                 this.dirty = true;
             }
         }
+    }
+
+    /** True once the visitor holds the basket cookie, which every later process reuses. */
+    get established(): boolean {
+        return Boolean(this.state.cookies.IDOX);
+    }
+
+    /**
+     * Runs an account call, then saves the visitor, also when the call fails. Signed out, the basket is the visitor's,
+     * and until the visitor holds the basket cookie the call runs under a lock beside the state file and first takes the
+     * visitor another process saved meanwhile: two first calls (two CLI commands, two MCP servers) then share one
+     * basket, where each would get its own cookie and the last save would lose the other basket. The basket follows the
+     * cookie, so the Balancer-Guid this process already sends needs no change. Signed in, the basket is the account's
+     * and no lock is taken.
+     */
+    async withVisitor<T>(run: () => Promise<T>, opts: { signedIn: boolean }): Promise<T> {
+        const runAndSave = async (): Promise<T> => {
+            try {
+                return await run();
+            } finally {
+                this.save();
+            }
+        };
+        if (opts.signedIn || this.established) {
+            return runAndSave();
+        }
+
+        return withFileLock(
+            `${this.path}.lock`,
+            async () => {
+                const saved = readState(this.path);
+                if (saved) {
+                    this.state = saved;
+                    this.dirty = false;
+                }
+
+                return runAndSave();
+            },
+            NETWORKED_LOCK_WAIT_MS
+        );
     }
 
     /** Writes the visitor when it is new or a kept cookie changed. Mode 0600: the cookie opens the basket. */

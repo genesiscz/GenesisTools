@@ -26,7 +26,13 @@ export function buildReportMarkdown(r: BuildReport, heading: string): string {
         ? ` (without ${r.unpriced.length} unpriced part(s): ${r.unpriced.join(", ")})`
         : "";
     const total = `total ${r.total} ${r.currency}${unpriced}`;
-    const budget = r.budget !== undefined ? ` of a ${r.budget} budget${r.withinBudget ? "" : " (OVER BUDGET)"}` : "";
+    const fit =
+        r.withinBudget === false
+            ? " (OVER BUDGET)"
+            : r.withinBudget === null
+              ? " (budget fit unknown: unpriced parts)"
+              : "";
+    const budget = r.budget !== undefined ? ` of a ${r.budget} budget${fit}` : "";
     const lines = [`**${heading}**`, "", `Overall: **${overall}**, ${total}${budget}`, ""];
     for (const p of r.parts) {
         const stock = p.inStock === true ? "in stock" : p.inStock === false ? "not purchasable now" : "stock unknown";
