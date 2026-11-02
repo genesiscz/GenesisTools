@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -209,7 +208,7 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
         expect(path.dirname(scratchDir("cli"))).toBe(path.join(temp, "fable-replace", "session-a"));
     });
 
-    test("a CLI edit with only an inherited TMPDIR and FABLE_REPLACE_HOME changes its file, its own session folder and the journal", () => {
+    test("a CLI edit with only an inherited TMPDIR and FABLE_REPLACE_HOME changes its file, its own session folder and the journal", async () => {
         const work = path.join(base, "work");
         fs.mkdirSync(work);
         fs.writeFileSync(path.join(work, "a.ts"), "const a = 1;\n");
@@ -228,13 +227,23 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
             delete env[name];
         }
 
-        const child = spawnSync(process.execPath, [CLI], {
+        // Awaited, not spawnSync: on the Linux CI runner Bun 1.4.2's spawnSync can lose its child's exit
+        // inside a long-lived test worker (oven-sh/bun#34069) and spin until the 30 s timeout, which this
+        // case did in two PR runs on 2026-11-02.
+        const proc = Bun.spawn([process.execPath, CLI], {
             cwd: work,
-            input: "@@ a.ts\n<<<\nconst a = 1;\n===\nconst a = 2;\n>>>\n",
-            encoding: "utf8",
+            stdin: new Blob(["@@ a.ts\n<<<\nconst a = 1;\n===\nconst a = 2;\n>>>\n"]),
             env,
+            stdout: "pipe",
+            stderr: "pipe",
             timeout: 30_000,
         });
+        const [stdout, stderr, status] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        const child = { status, stdout, stderr };
         const after = snapshot();
         if (child.status !== 0) {
             console.error(child.stdout, child.stderr);

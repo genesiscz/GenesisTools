@@ -12,14 +12,25 @@ interface RunResult {
     stderr: string;
 }
 
-function run(repo: TestRepo, args: string[]): RunResult {
-    const proc = Bun.spawnSync([process.execPath, SCRIPT, ...args], {
+/**
+ * The CLI as a real process, awaited rather than through `Bun.spawnSync`: on the Linux CI runner
+ * Bun 1.4.2's spawnSync can lose its child's exit inside a long-lived test worker
+ * (oven-sh/bun#34069) and spin until the 20 s test timeout. On 2026-11-02 four of these seven
+ * cases did that in one PR run, 80.5 s for a file a clean run finishes in under 3 s.
+ */
+async function run(repo: TestRepo, args: string[]): Promise<RunResult> {
+    const proc = Bun.spawn([process.execPath, SCRIPT, ...args], {
         env: process.env,
         cwd: repo.dir,
         stdout: "pipe",
         stderr: "pipe",
     });
-    return { exitCode: proc.exitCode ?? -1, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+    return { exitCode, stdout, stderr };
 }
 
 let repo: TestRepo;
@@ -89,12 +100,12 @@ let goodGroup: { result: RunResult; plan: string } | null = null;
  * runs it for real and later cases get that run's result and its plan file written back where
  * `group` puts it.
  */
-function groupGood(): RunResult {
+async function groupGood(): Promise<RunResult> {
     const groups = groupsFile(GOOD());
     const out = groups.replace(/\.json$/, ".plan.txt");
 
     if (goodGroup === null) {
-        const result = run(repo, ["group", "--base", base, "--groups", groups]);
+        const result = await run(repo, ["group", "--base", base, "--groups", groups]);
         goodGroup = { result, plan: existsSync(out) ? readFileSync(out, "utf8") : "" };
         return result;
     }
@@ -104,8 +115,8 @@ function groupGood(): RunResult {
 }
 
 describe("recommit group", () => {
-    test("places every path by commits, globs and rest, reports a shared path, and the plan checks", () => {
-        const res = groupGood();
+    test("places every path by commits, globs and rest, reports a shared path, and the plan checks", async () => {
+        const res = await groupGood();
 
         expect(res.exitCode).toBe(0);
         expect(res.stdout).toContain("tree identity OK");
@@ -116,11 +127,11 @@ describe("recommit group", () => {
         expect(res.stdout).toContain("3.    2 paths  chore: the rest");
     });
 
-    test("refuses a commit in no group and a path two groups claim", () => {
+    test("refuses a commit in no group and a path two groups claim", async () => {
         const groups = GOOD();
         groups[2] = { message: "chore: the rest", commits: [shas[3]], paths: ["docs/**", "src/ui/**"], rest: true };
         groups[1] = { ...groups[1], paths: ["src/ui/**"] } as (typeof groups)[number];
-        const res = run(repo, ["group", "--base", base, "--groups", groupsFile(groups)]);
+        const res = await run(repo, ["group", "--base", base, "--groups", groupsFile(groups)]);
 
         expect(res.exitCode).toBe(1);
         expect(res.stderr).toContain(`commit ${shas[4].slice(0, 9)} (docs) is in no group`);
@@ -131,10 +142,10 @@ describe("recommit group", () => {
 describe("recommit apply", () => {
     test("moves the branch to N commits with head's exact tree, tags the old head, and leaves the checkout clean", async () => {
         const head = await repo.sha();
-        const grouped = groupGood();
+        const grouped = await groupGood();
         expect(grouped.exitCode).toBe(0);
 
-        const res = run(repo, ["apply", "--base", base, "--plan", join(repo.root, "groups.plan.txt")]);
+        const res = await run(repo, ["apply", "--base", base, "--plan", join(repo.root, "groups.plan.txt")]);
 
         expect(res.exitCode).toBe(0);
         expect(res.stdout).toContain("feat/work:");
@@ -150,12 +161,19 @@ describe("recommit apply", () => {
         const plan = join(repo.root, "bad.plan.txt");
         writeFileSync(plan, "COMMIT 1: all\nFILES:\nsrc/api/a.ts\nsrc/shared.ts\nsrc/ui/b.tsx\ndocs/readme.md\n");
 
-        const bad = run(repo, ["apply", "--base", base, "--plan", plan]);
+        const bad = await run(repo, ["apply", "--base", base, "--plan", plan]);
         expect(bad.exitCode).toBe(1);
         expect(bad.stderr).toContain("missing: src/old.ts");
 
-        groupGood();
-        const dry = run(repo, ["apply", "--base", base, "--plan", join(repo.root, "groups.plan.txt"), "--dry-run"]);
+        await groupGood();
+        const dry = await run(repo, [
+            "apply",
+            "--base",
+            base,
+            "--plan",
+            join(repo.root, "groups.plan.txt"),
+            "--dry-run",
+        ]);
         expect(dry.exitCode).toBe(0);
         expect(dry.stdout).toContain("dry run");
         expect(await repo.sha()).toBe(head);
@@ -210,11 +228,17 @@ describe("recommit edge cases", () => {
                 ])
             );
 
-            const grouped = run(edge, ["group", "--base", edgeBase, "--groups", groupsPath]);
+            const grouped = await run(edge, ["group", "--base", edgeBase, "--groups", groupsPath]);
             expect(grouped.exitCode).toBe(0);
             expect(grouped.stdout).toContain("areas:");
 
-            const applied = run(edge, ["apply", "--base", edgeBase, "--plan", join(edge.root, "groups.plan.txt")]);
+            const applied = await run(edge, [
+                "apply",
+                "--base",
+                edgeBase,
+                "--plan",
+                join(edge.root, "groups.plan.txt"),
+            ]);
             expect(applied.exitCode).toBe(0);
             expect(applied.stdout).toContain("per-path audit OK");
             expect(await edge.git(["diff", cleanup, "feat/edge"])).toBe("");
@@ -233,9 +257,9 @@ describe("recommit edge cases", () => {
 
     test("--verify-each refuses to move the branch when a commit does not pass on its own", async () => {
         const head = await repo.sha();
-        groupGood();
+        await groupGood();
 
-        const res = run(repo, [
+        const res = await run(repo, [
             "apply",
             "--base",
             base,
@@ -256,7 +280,7 @@ describe("recommit edge cases", () => {
 describe("auditCommits", () => {
     // negative control: the audit must fail on commits whose content does not follow the plan
     test("catches a path that changes in the wrong commit", async () => {
-        groupGood();
+        await groupGood();
         const head = await repo.sha();
         const planText = await Bun.file(join(repo.root, "groups.plan.txt")).text();
         const shas = buildCommits({ cwd: repo.dir, base, head, planText });
