@@ -252,6 +252,14 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
         return { speaker: live, rules: ["E1", "E4", "RA"], confidence: 0.6, ...listen };
     }
 
+    // The live name belongs to someone who had left: a live voice id keeps its last name after the person goes.
+    // The speaking indicator among the people still in the call is the guess, sampled only every few seconds.
+    const stillHere = shown.filter((name) => present?.some((person) => sameName(person, name)));
+
+    if (labelAbsent && line.liveName && stillHere[0]) {
+        return { speaker: stillHere[0], rules: ["E1", "E3", "RA"], confidence: 0.45, listen: true };
+    }
+
     return undefined;
 }
 
@@ -267,7 +275,9 @@ function evidenceItems(options: {
         return [];
     }
 
-    const lines = lineEvidence(options.meeting.transcript, options.evidence, options.presence);
+    // Teams attendance names the user by email; here the user is always `selfName`.
+    const presence = options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay));
+    const lines = lineEvidence(options.meeting.transcript, options.evidence, presence);
     const items: NewItem[] = [];
     let open: { item: Extract<NewItem, { kind: "speaker-range" }>; key: string; shares: number[] } | undefined;
     const close = () => {

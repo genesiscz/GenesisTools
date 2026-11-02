@@ -19,7 +19,7 @@ export function participantName(raw: string): string {
 }
 
 const observationLine = z.union([
-    z.object({ participant: z.object({ pid: z.string(), name: z.string() }) }),
+    z.object({ participant: z.object({ pid: z.string(), name: z.string(), self: z.boolean().optional() }) }),
     z.object({
         obs: z.object({
             tMs: z.number(),
@@ -30,8 +30,11 @@ const observationLine = z.union([
     z.object({ meta: z.unknown() }),
 ]);
 
-/** `speakers.observations.ndjson`: Teams' speaking indicator about every 5 s. A failed read has no `speaking`. */
-export function parseObservations(raw: string): SpeakingObservation[] {
+/**
+ * `speakers.observations.ndjson`: Teams' speaking indicator about every 5 s. A failed read has no `speaking`. Teams
+ * names the user by email; with `selfName` the user is called that instead.
+ */
+export function parseObservations(raw: string, selfName?: string): SpeakingObservation[] {
     const names = new Map<string, string>();
     const observations: SpeakingObservation[] = [];
 
@@ -49,7 +52,8 @@ export function parseObservations(raw: string): SpeakingObservation[] {
         const line = parsed.data;
 
         if ("participant" in line) {
-            names.set(line.participant.pid, participantName(line.participant.name));
+            const name = line.participant.self && selfName ? selfName : participantName(line.participant.name);
+            names.set(line.participant.pid, name);
         } else if ("obs" in line && line.obs.speaking) {
             const named = (pids: string[]) => pids.map((pid) => names.get(pid) ?? pid);
             observations.push({
@@ -104,7 +108,9 @@ export function readEvidence(meetingId: string, selfName: string | undefined): M
           })
         : [];
     const observationsPath = join(folder, "speakers.observations.ndjson");
-    const speaking = existsSync(observationsPath) ? parseObservations(readFileSync(observationsPath, "utf8")) : [];
+    const speaking = existsSync(observationsPath)
+        ? parseObservations(readFileSync(observationsPath, "utf8"), selfName)
+        : [];
     const tokens = tokensSchema.safeParse(readJson(join(folder, "native-language-evidence.json")));
     const devices = z.record(z.string(), z.unknown()).safeParse(readJson(join(folder, "audio-devices.json")));
     log.debug(
