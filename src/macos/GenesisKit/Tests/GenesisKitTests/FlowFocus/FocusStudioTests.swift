@@ -1048,3 +1048,51 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertEqual(model.totals.focusedMs, 10 * 60_000)
     }
 }
+
+/// The sessions list from the keyboard. A resting card is no control, so the list is the one keyboard stop: it lands on
+/// a card when it takes the focus, the arrows walk the cards, Return or Space opens the keyed one, and only that card is
+/// live while the list holds the focus (PR #677 review, 2026-11-02).
+@MainActor
+final class FocusSessionKeysTests: XCTestCase {
+    private let ids: [Int64] = [3, 5, 8]
+
+    func testTheListLandsOnTheFirstCardWhenNothingIsKeyed() {
+        XCTAssertEqual(FocusSessionKeys.landing(ids, keyed: nil), 3)
+        XCTAssertNil(FocusSessionKeys.landing([], keyed: nil), "an empty list keys nothing")
+    }
+
+    func testTheListLandsBackOnTheKeyedCardWhileItIsStillListed() {
+        XCTAssertEqual(FocusSessionKeys.landing(ids, keyed: 5), 5)
+        XCTAssertEqual(FocusSessionKeys.landing([3, 8], keyed: 5), 3, "a card a reload dropped falls back to the first")
+    }
+
+    func testTheArrowsWalkTheCardsAndStopAtTheEnds() {
+        var revealed: [Int64] = []
+        _ = GitHistoryKeys.move(ids, from: nil, by: 1) { revealed.append($0) }
+        _ = GitHistoryKeys.move(ids, from: 3, by: 1) { revealed.append($0) }
+        _ = GitHistoryKeys.move(ids, from: 8, by: 1) { revealed.append($0) }
+        _ = GitHistoryKeys.move(ids, from: 3, by: -1) { revealed.append($0) }
+        XCTAssertEqual(revealed, [3, 5, 8, 3])
+    }
+
+    func testReturnOpensOnlyAKeyedCardThatIsStillListed() {
+        XCTAssertEqual(FocusSessionKeys.opened(ids, keyed: 5), 5)
+        XCTAssertNil(FocusSessionKeys.opened(ids, keyed: 9), "a stale key opens nothing")
+        XCTAssertNil(FocusSessionKeys.opened(ids, keyed: nil))
+    }
+
+    func testOnlyTheKeyedCardOfAFocusedListIsLive() {
+        XCTAssertTrue(FocusSessionKeys.keepsCardLive(5, keyed: 5, listFocused: true))
+        XCTAssertFalse(FocusSessionKeys.keepsCardLive(3, keyed: 5, listFocused: true))
+        XCTAssertFalse(FocusSessionKeys.keepsCardLive(5, keyed: 5, listFocused: false),
+                       "a list without the focus leaves its keyed card at rest")
+    }
+
+    func testAKeyedCardIsNotEqualToTheSameCardAtRest() {
+        let card = FocusStudioModel.SessionCard(id: 5, kind: "flow", tag: nil, note: nil, startedMs: 0, actualMs: 60_000,
+                                                plannedMs: 60_000, interruptions: 0, state: "done", keys: 0, topApps: [])
+        XCTAssertNotEqual(FocusSessionCardView(card: card, keyed: true, open: {}),
+                          FocusSessionCardView(card: card, keyed: false, open: {}),
+                          "== must compare keyed, or the card keeps its resting body when the keys reach it")
+    }
+}

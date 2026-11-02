@@ -663,32 +663,97 @@ public struct FocusHeatmapView: View {
 
 // MARK: - Sessions
 
+/// The sessions list is one keyboard stop, because a resting card is no control (`FocusSessionCardView`): the arrows
+/// walk the cards, Return or Space opens the keyed one, and that card is live while the list holds the focus.
 public struct FocusSessionsView: View {
     @ObservedObject public var model: FocusStudioModel
+    /// The card the keys stand on, apart from the pointer.
+    @State private var keyed: Int64?
+    @FocusState private var focused: Bool
 
     public var body: some View {
-        ScrollView {
-            LazyVStack(spacing: GenSpacing.sm) {
-                ForEach(model.sessionCards) { card in
-                    FocusSessionCardView(card: card, open: { model.onOpenSession?(card.id) })
-                        .equatable()
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: GenSpacing.sm) {
+                    ForEach(model.sessionCards) { card in
+                        FocusSessionCardView(card: card,
+                                             keyed: FocusSessionKeys.keepsCardLive(card.id, keyed: keyed, listFocused: focused),
+                                             open: { open(card.id) })
+                            .equatable()
+                            .id(card.id)
+                    }
+                }
+                .padding(GenSpacing.md)
+                .focusable()
+                .focused($focused)
+                .focusEffectDisabled()
+                .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in walk(-1, proxy) }
+                .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in walk(1, proxy) }
+                .onKeyPress(keys: [.return, .space], phases: .down) { _ in
+                    guard let id = FocusSessionKeys.opened(cardIds, keyed: keyed) else { return .ignored }
+                    open(id)
+                    return .handled
+                }
+                .onChange(of: focused) { _, now in
+                    guard now, let id = FocusSessionKeys.landing(cardIds, keyed: keyed) else { return }
+                    keyed = id
+                    proxy.scrollTo(id)
                 }
             }
-            .padding(GenSpacing.md)
         }
         .accessibilityIdentifier("focus-studio-sessions")
+    }
+
+    private var cardIds: [Int64] {
+        model.sessionCards.map(\.id)
+    }
+
+    private func open(_ id: Int64) {
+        keyed = id
+        model.onOpenSession?(id)
+    }
+
+    private func walk(_ step: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
+        GitHistoryKeys.move(cardIds, from: keyed, by: step) { id in
+            keyed = id
+            proxy.scrollTo(id)
+        }
+    }
+}
+
+/// The keyboard over the sessions list, as values the tests can read.
+enum FocusSessionKeys {
+    /// The card the keyboard lands on when the list takes the focus: the one keyed before while it is still listed,
+    /// else the first.
+    static func landing(_ ids: [Int64], keyed: Int64?) -> Int64? {
+        if let keyed, ids.contains(keyed) { return keyed }
+        return ids.first
+    }
+
+    /// The card Return or Space opens: the keyed one, while it is still listed.
+    static func opened(_ ids: [Int64], keyed: Int64?) -> Int64? {
+        guard let keyed, ids.contains(keyed) else { return nil }
+        return keyed
+    }
+
+    /// Whether a card is live without the pointer: the keys stand on it and the list holds the keyboard focus.
+    static func keepsCardLive(_ id: Int64, keyed: Int64?, listFocused: Bool) -> Bool {
+        listFocused && keyed == id
     }
 }
 
 /// One pomodoro, from values: the list reads the model, so a publish of it redraws only a card that changed. A card is a
 /// button: clicking it opens the full breakdown of that one pomodoro in its own window. The button and the tooltips
-/// exist while the pointer is on the card (`liveRow`); at rest the same card, which VoiceOver still opens.
+/// exist while the pointer is on the card or the keys stand on it (`liveRow`, `keyed`, drawn with an accent outline);
+/// at rest the same card, which VoiceOver still opens.
 public struct FocusSessionCardView: View, Equatable {
     public let card: FocusStudioModel.SessionCard
+    /// The keyboard's card in a focused list (`FocusSessionKeys.keepsCardLive`).
+    let keyed: Bool
     let open: () -> Void
 
     public static func == (a: FocusSessionCardView, b: FocusSessionCardView) -> Bool {
-        a.card == b.card
+        a.card == b.card && a.keyed == b.keyed
     }
 
     private var accent: Color {
@@ -704,7 +769,8 @@ public struct FocusSessionCardView: View, Equatable {
             .accessibilityIdentifier("focus-session-card-\(card.id)")
             .accessibilityHint("Opens the full breakdown of this session")
             .instantTooltip("Open the full breakdown of this session")
-            .liveRow()
+            .accessibilityAddTraits(keyed ? .isSelected : [])
+            .liveRow(selected: keyed)
     }
 
     private var content: some View {
@@ -781,7 +847,7 @@ public struct FocusSessionCardView: View, Equatable {
             RoundedRectangle(cornerRadius: GenRadius.md, style: .continuous)
                 .fill(Color.genSurface)
                 .overlay(RoundedRectangle(cornerRadius: GenRadius.md, style: .continuous)
-                    .strokeBorder(Color.genGlassBorder, lineWidth: 1)))
+                    .strokeBorder(keyed ? Color.genAccent : Color.genGlassBorder, lineWidth: keyed ? 1.5 : 1)))
     }
 
     private var plannedShare: Double {
@@ -793,6 +859,8 @@ public struct FocusSessionCardView: View, Equatable {
 /// The card's button while its card is live; the plain-style button keeps the card's own background instead of
 /// drawing a second one around it. At rest the bare card, which VoiceOver still presses. A view of its own because the
 /// card's body cannot read `rowLive`, and `LiveButton`'s plain style would swap the card's small lift for a brightening.
+/// The button is no keyboard stop of its own: the list is (`FocusSessionsView`), so Tab cannot land on a button that
+/// disappears the moment the list loses the focus.
 private struct FocusSessionCardButton<Label: View>: View {
     let action: () -> Void
     @ViewBuilder let label: () -> Label
@@ -805,6 +873,7 @@ private struct FocusSessionCardButton<Label: View>: View {
                                        padding: EdgeInsets(),
                                        drawsBackground: false,
                                        scale: 1.008))
+                .focusable(false)
         } else {
             label()
                 .restingButton(action: action)

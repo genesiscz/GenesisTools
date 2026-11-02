@@ -127,9 +127,10 @@ public struct GitCommitList: View {
     }
 }
 
-/// A key step selects and reveals one identity, including rows not created by the lazy stack yet.
+/// A key step selects and reveals one identity, including rows not created by the lazy stack yet. Any identity type:
+/// the Focus Studio's session cards walk their `Int64` ids with it too.
 enum GitHistoryKeys {
-    static func move(_ ids: [String], from current: String?, by step: Int, selectAndReveal: (String) -> Void) -> KeyPress.Result {
+    static func move<ID: Equatable>(_ ids: [ID], from current: ID?, by step: Int, selectAndReveal: (ID) -> Void) -> KeyPress.Result {
         guard !ids.isEmpty else { return .ignored }
         let start = ids.firstIndex { $0 == current }
         let index = start.map { min(max($0 + step, 0), ids.count - 1) } ?? (step > 0 ? 0 : ids.count - 1)
