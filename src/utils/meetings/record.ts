@@ -101,6 +101,10 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         heard: z.string(),
         /** The right spelling. Absent for a word no dictionary layer accepts and no term resembles: asked by ear. */
         proposed: z.string().optional(),
+        /** Shown after the heard words, which stay as said: `lomeno type` means `/{type}`. */
+        meaning: z.string().min(1).optional(),
+        /** The heard words read a document line aloud: its exact text replaces them, with the source. */
+        quote: z.object({ text: z.string().min(1), source: z.string().min(1) }).optional(),
         ...itemBase,
     }),
     /**

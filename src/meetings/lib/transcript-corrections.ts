@@ -149,7 +149,21 @@ export function correctionsOf(
                 : []
         ),
         terms: used.flatMap((item) =>
-            item.kind === "term" && item.proposed ? [{ heard: item.heard, replacement: item.proposed }] : []
+            item.kind === "term" && item.proposed && !item.meaning && !item.quote
+                ? [{ heard: item.heard, replacement: item.proposed }]
+                : []
+        ),
+        marks: used.flatMap((item) =>
+            item.kind === "term" && item.atSec !== undefined && (item.meaning || item.quote)
+                ? [
+                      {
+                          atSec: item.atSec,
+                          heard: item.heard,
+                          ...(item.meaning ? { meaning: item.meaning } : {}),
+                          ...(item.quote ? { quote: item.quote } : {}),
+                      },
+                  ]
+                : []
         ),
         ...(opts.dictionary === false
             ? {}

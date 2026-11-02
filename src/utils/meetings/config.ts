@@ -107,6 +107,9 @@ const summarySchema = z.object({
 const renderSchema = z.object({
     /** The word an open passage starts with in a transcript: `[nejasné: "<raw>"; 1) … 2) …]`. */
     unclearLabel: z.string().trim().min(1).default("nejasné"),
+    /** How a quote names its source: `(<readAloudLabel> WikiProposals, <lineLabel> 33)`. */
+    readAloudLabel: z.string().trim().min(1).default("čte z"),
+    lineLabel: z.string().trim().min(1).default("ř."),
 });
 
 export const meetingsConfigSchema = z.object({
