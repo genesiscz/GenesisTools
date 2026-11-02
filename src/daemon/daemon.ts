@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { ensureWidgetRunning } from "@app/hub/lib/widget/autostart";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import {
     attemptStaleTakeover,
@@ -100,6 +101,11 @@ export async function startDaemon(): Promise<void> {
     await claimPidfile(pidFile);
 
     log.info({ pid: process.pid }, "[daemon] starting");
+
+    // launchd starts the daemon at login, and nothing else brings the widget back after a reboot.
+    ensureWidgetRunning()
+        .then((result) => log.info({ result }, "[daemon] widget at start"))
+        .catch((err) => log.warn({ err }, "[daemon] widget start check failed"));
 
     const cleanup = () => {
         // Guarded: a daemon that lost its claim must not delete the winner's file.
