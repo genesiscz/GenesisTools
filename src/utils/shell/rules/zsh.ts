@@ -152,6 +152,8 @@ interface Assignment extends AssignedValue {
     start: number;
     /** The subshell it was made in: zsh keeps it from every use outside that range. */
     scope: Range;
+    /** Made by `export` or `typeset -x`: a fresh zsh started after it sees the variable too. */
+    exported: boolean;
 }
 
 interface ParameterUse {
@@ -174,10 +176,14 @@ const REDIRECT = /^(\d*(<|>|>>|>\||<>|>&|<&)|&>|&>>|<<<)$/;
 // The command turned splitting on itself, or switched to sh semantics. Matched in code only.
 const SPLIT_ENABLED = /\b(setopt|set\s+-o)\s[^;\n]*\bsh_?word_?split\b|\bemulate\s+(-\S+\s+)*(sh|ksh|bash)\b/gi;
 // The opening line of a heredoc fed to a shell (`bash <<'EOF'`, `sudo zsh -s <<EOF`). The
-// scanner reads that body as code. bash and sh split it; zsh runs it in a child shell.
+// scanner reads that body as code. bash and sh split it; zsh runs it in a fresh child shell.
 // Groups: 2 the shell, 3 the operator, 4 the `-` that strips tabs, 6 the delimiter.
 const SHELL_HEREDOC =
     /(^|[\s;&|(])(bash|sh|zsh|dash|ksh)(?:\s(?:[^\n<]|<(?!<))*)?(<<(?!<)(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\5)/gm;
+// A zsh command line that starts its shell with splitting on: `zsh -y`, `zsh -fy`. The letter is
+// case-sensitive (`-Y` is another option); the names below are not, and ignore `_` and `-`.
+const ZSH_SPLIT_LETTER = /\s-[A-Za-z]*y(?=\s|$)/;
+const ZSH_SPLIT_NAME = /\s(?:-o\s*|--)sh[-_]?word[-_]?split(?=\s|$)|\s--emulate\s+(?:sh|ksh|bash)(?=\s|$)/i;
 // `$name` and a `${…}` without quotes inside; marked to tell code from a double-quoted span.
 const EXPANSION_MARK = /\$(?=[A-Za-z_]|\{[^}"'`]*\})/g;
 const MARK = "\u0001";
@@ -644,6 +650,11 @@ function blankRange(text: string, start: number, end: number): string {
 }
 
 interface HeredocBody extends Range {
+    /**
+     * A fresh zsh reads the body as written, with splitting off. Not so for bash or sh, for a
+     * zsh started with `-y` or `-o shwordsplit`, or for an unquoted delimiter (`zsh <<EOF`),
+     * where the outer shell expands every `$x` into the text before the child parses it.
+     */
     zsh: boolean;
 }
 
@@ -681,7 +692,9 @@ function shellHeredocBodies(command: string, cleaned: string): HeredocBody[] {
             line = lineEnd + 1;
         }
 
-        bodies.push({ start: open + 1, end, zsh: m[2] === "zsh" });
+        const options = command.slice(word + m[2].length, op);
+        const zsh = m[2] === "zsh" && m[5] !== "" && !ZSH_SPLIT_LETTER.test(options) && !ZSH_SPLIT_NAME.test(options);
+        bodies.push({ start: open + 1, end, zsh });
     }
 
     return bodies;
@@ -724,8 +737,10 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         return [];
     }
 
-    // bash and sh split, so a body fed to them is dropped. A zsh body runs in a child shell.
+    // A body that splits, or that the outer shell expands first, is dropped (see HeredocBody).
+    // A body a fresh zsh reads as written is checked as the separate shell it is.
     const heredocs = shellHeredocBodies(command, scan.cleaned);
+    const fresh = heredocs.filter((body) => body.zsh);
     let code = scan.cleaned;
 
     for (const body of heredocs) {
@@ -734,16 +749,15 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         }
     }
 
-    // A subshell keeps its assignments and its `setopt` from everything outside it.
-    const whole: Range = { start: 0, end: command.length };
-    const scopes: Range[] = [...parenRanges(code), ...heredocs.filter((body) => body.zsh)];
-    const scopeAt = (at: number): Range =>
-        scopes.reduce((best, s) => (within(s, at) && s.start >= best.start ? s : best), whole);
+    // A fresh zsh starts with the default options and sees only exported variables, so an
+    // option or an unexported assignment made outside its body never reaches a use inside.
+    const crossesIntoFresh = (from: number, to: number): boolean =>
+        fresh.some((body) => within(body, to) && !within(body, from));
 
     const assignments: Assignment[] = [];
     const uses: ParameterUse[] = [];
 
-    const record = (token: Span, scope: Range): number => {
+    const record = (token: Span, scope: Range, exported: boolean): number => {
         const m = ASSIGNMENT.exec(token.text);
 
         if (!m) {
@@ -751,7 +765,7 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         }
 
         const value = assignedValue(command, scan.cleaned, token.start + m[0].length);
-        assignments.push({ name: m[1], start: token.start, scope, ...value });
+        assignments.push({ name: m[1], start: token.start, scope, exported, ...value });
         return value.end;
     };
 
@@ -791,19 +805,33 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
         cleaned = blankRange(cleaned, open + 1, close);
     }
 
-    const statements = splitSubstitutions(cleaned)
+    const pipelines = splitSubstitutions(cleaned)
         .flatMap((unit) => splitStatements(unit))
-        .sort((a, b) => a.start - b.start);
+        .sort((a, b) => a.start - b.start)
+        .map((statement) => splitPipeline(statement));
 
-    for (const statement of statements) {
-        const elements = splitPipeline(statement);
+    // A subshell keeps its assignments and its `setopt` from everything outside it: a `( … )`,
+    // a fresh zsh, and every element of a pipeline but the last, which zsh runs in a subshell.
+    const whole: Range = { start: 0, end: command.length };
+    const scopes: Range[] = [
+        ...fresh,
+        ...parenRanges(code),
+        ...pipelines.flatMap((elements) =>
+            elements.slice(0, -1).map((element) => ({ start: element.start, end: element.start + element.text.length }))
+        ),
+    ];
+    // The innermost scope around a position: the one that starts last, or ends first on a tie
+    // (a `( … )` on the first line of a heredoc body starts where the body starts).
+    const scopeAt = (at: number): Range =>
+        scopes.reduce(
+            (best, s) =>
+                within(s, at) && (s.start > best.start || (s.start === best.start && s.end < best.end)) ? s : best,
+            whole
+        );
 
-        for (const [e, element] of elements.entries()) {
-            // zsh runs every element of a pipeline but the last in a subshell.
-            const scope =
-                e < elements.length - 1
-                    ? { start: element.start, end: element.start + element.text.length }
-                    : scopeAt(element.start);
+    for (const elements of pipelines) {
+        for (const element of elements) {
+            const scope = scopeAt(element.start);
             const all = tokenize(element);
             let first = 0;
 
@@ -841,7 +869,7 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
                 }
 
                 if (leading && ASSIGNMENT.test(token.text)) {
-                    valueEnd = record(token, scope);
+                    valueEnd = record(token, scope, false);
                     tokens.push(token);
                     continue;
                 }
@@ -861,11 +889,12 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
 
             // `local files=$(…)`, `export LIST="a b"`: assignments too.
             if (DECLARATIONS.has(word)) {
+                const exported = word === "export" || args.some((token) => /^-[A-Za-z]*x/.test(token.text));
                 let end = -1;
 
                 for (const token of args) {
                     if (token.start >= end) {
-                        end = record(token, scope);
+                        end = record(token, scope, exported);
                     }
                 }
 
@@ -890,11 +919,14 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
 
     // `setopt shwordsplit` or `emulate sh` splits the uses after it in its own subshell.
     const splitOn = [...code.matchAll(SPLIT_ENABLED)].map((m) => ({ at: m.index, scope: scopeAt(m.index) }));
+    // Once exported, a variable stays exported, and a later plain assignment changes what a child sees.
+    const exportedAt = (a: Assignment): boolean =>
+        assignments.some((b) => b.name === a.name && b.exported && b.start <= a.start && within(b.scope, a.start));
     let marked: string | null = null;
     const hits: WordSplitHit[] = [];
 
     for (const use of uses) {
-        if (splitOn.some((s) => s.at < use.start && within(s.scope, use.start))) {
+        if (splitOn.some((s) => s.at < use.start && within(s.scope, use.start) && !crossesIntoFresh(s.at, use.start))) {
             continue;
         }
 
@@ -904,6 +936,10 @@ function wordSplitHits(scan: ShellScan): WordSplitHit[] {
             .at(-1);
 
         if (!source || !splits(source.kind, use)) {
+            continue;
+        }
+
+        if (crossesIntoFresh(source.start, use.start) && !exportedAt(source)) {
             continue;
         }
 
