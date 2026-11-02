@@ -7,6 +7,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { dictionaryLevelSchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { projectNameSchema } from "./config";
+import { CHANNEL_LAYOUTS } from "./energy";
 
 const { log } = logger.scoped("meetings-record");
 
@@ -153,6 +154,21 @@ export const meetingRecordSchema = z.object({
         .optional(),
     /** One section per interval between two joins or leaves, derived from `attendance`: who is present then. */
     sections: z.array(z.object({ fromSec: z.number(), toSec: z.number(), present: z.array(z.string()) })).optional(),
+    /** What was measured about the recording itself. */
+    evidence: z
+        .object({
+            /** Which audio channel is the user's microphone, calibrated on this recording's tagged segments. */
+            channels: z
+                .object({
+                    layout: z.enum(CHANNEL_LAYOUTS),
+                    micMedian: z.number().optional(),
+                    systemMedian: z.number().optional(),
+                    segments: z.object({ mic: z.number(), system: z.number() }),
+                    reason: z.string().optional(),
+                })
+                .optional(),
+        })
+        .optional(),
     /** Written by `record stop`; its shape is owned by the recorder. */
     recording: z.record(z.string(), z.unknown()).optional(),
     /** One line per command that changed the record. Never rewritten. */

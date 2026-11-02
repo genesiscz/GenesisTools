@@ -1,21 +1,52 @@
 import { join } from "node:path";
-import { channelEnergy, energyShare } from "@genesiscz/utils/meetings/energy";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { type ChannelCalibration, calibrateChannels, channelEnergy, micShare } from "@genesiscz/utils/meetings/energy";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence } from "@genesiscz/utils/meetings/sources";
 
+const { log } = logger.scoped("meetings-energy");
+
+export interface MicEnergy {
+    /** The microphone channel's energy share per time range; undefined when the layout is unknown. */
+    share?: (fromSec: number, toSec: number) => number | undefined;
+    calibration?: ChannelCalibration;
+}
+
 /**
- * The microphone channel's energy share per time range, from the meeting's audio, cached in its record folder
- * (`evidence/energy.bin`). Undefined when the source keeps no audio or ffmpeg is missing.
+ * The meeting's audio energy (cached in its record folder as `evidence/energy.bin`), with the channel layout
+ * calibrated on the recorder's tagged segments and stored in the record as `evidence.channels` when it changed.
+ * Nothing when the source keeps no audio or ffmpeg is missing.
  */
-export async function energyLeftShareFor(
+export async function energyMicShareFor(
     store: MeetingStore,
-    meetingId: string,
+    record: MeetingRecord,
     evidence: MeetingEvidence | null
-): Promise<((fromSec: number, toSec: number) => number | undefined) | undefined> {
+): Promise<MicEnergy> {
     if (!evidence?.audioPath) {
-        return undefined;
+        return {};
     }
 
-    const energy = await channelEnergy(evidence.audioPath, join(store.folder(meetingId), "evidence", "energy.bin"));
-    return energy ? (fromSec, toSec) => energyShare(energy, fromSec, toSec).share : undefined;
+    const energy = await channelEnergy(evidence.audioPath, join(store.folder(record.id), "evidence", "energy.bin"));
+
+    if (!energy) {
+        return {};
+    }
+
+    const calibration = calibrateChannels(energy, evidence.segments);
+    log.info({ meeting: record.id, ...calibration }, "channel layout calibrated");
+
+    if (SafeJSON.stringify(record.evidence?.channels) !== SafeJSON.stringify(calibration)) {
+        await store.update(record.id, { command: "calibrate", change: `channels ${calibration.layout}` }, (current) => {
+            current.evidence = { ...current.evidence, channels: calibration };
+        });
+    }
+
+    const { layout } = calibration;
+    return {
+        calibration,
+        ...(layout === "unknown"
+            ? {}
+            : { share: (fromSec: number, toSec: number) => micShare(energy, layout, fromSec, toSec) }),
+    };
 }

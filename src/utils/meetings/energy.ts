@@ -11,7 +11,10 @@ const BLOCK = 200;
 const QUIET = 60;
 export const ENERGY_BLOCKS_PER_SEC = RATE / BLOCK;
 
-/** RMS loudness per 100 ms of the left (the user's microphone) and right (the call) channel of a stereo recording. */
+/**
+ * RMS loudness per 100 ms of the left and right channel of a stereo recording. Which one is the user's microphone is
+ * not assumed: `calibrateChannels` decides it per recording.
+ */
 export interface ChannelEnergy {
     left: Float32Array;
     right: Float32Array;
@@ -138,4 +141,117 @@ export function energyShare(
     left /= to - from;
     right /= to - from;
     return { left, right, ...(left + right >= QUIET ? { share: left / (left + right) } : {}) };
+}
+
+/** Which channel holds the user's microphone, as one recording's tagged segments show it. */
+export const CHANNEL_LAYOUTS = ["left-mic", "right-mic", "unknown"] as const;
+export type ChannelLayout = (typeof CHANNEL_LAYOUTS)[number];
+
+export interface ChannelCalibration {
+    layout: ChannelLayout;
+    /** The median left share over segments the recorder tagged as the microphone, and as the call. */
+    micMedian?: number;
+    systemMedian?: number;
+    /** How many tagged segments were long and loud enough to count. */
+    segments: { mic: number; system: number };
+    /** Why the layout is unknown, ready to print. */
+    reason?: string;
+}
+
+/** A tagged segment shorter than this says too little about its channel. */
+const CALIBRATION_MIN_SEC = 1.5;
+/** Fewer counted segments than this per tag, and the layout stays unknown. */
+const CALIBRATION_MIN_SEGMENTS = 20;
+/** The microphone's side holds at least this median share of its own segments, and at most `1 - SIDE` of the call's. */
+const CALIBRATION_SIDE = 0.8;
+
+function median(values: number[]): number | undefined {
+    if (values.length === 0) {
+        return undefined;
+    }
+
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+/**
+ * Decides which channel is the microphone from the segments the recorder tagged "mic" and "system" (Wispr's live
+ * segments). Measured on one Wispr recording: mic segments had a median left share of 0.964, call segments 0.004, so
+ * left was the microphone there; another recorder, FaceTime or a system setting may differ, so nothing is assumed.
+ * A mono recording (both channels alike) and a recorder with no tags come out "unknown".
+ */
+export function calibrateChannels(
+    energy: ChannelEnergy,
+    segments: Array<{ startSec: number; endSec: number; channel: string }>
+): ChannelCalibration {
+    const shares: Record<"mic" | "system", number[]> = { mic: [], system: [] };
+
+    for (const segment of segments) {
+        if (segment.endSec - segment.startSec < CALIBRATION_MIN_SEC) {
+            continue;
+        }
+
+        if (segment.channel !== "mic" && segment.channel !== "system") {
+            continue;
+        }
+
+        const { share } = energyShare(energy, segment.startSec, segment.endSec);
+
+        if (share !== undefined) {
+            shares[segment.channel].push(share);
+        }
+    }
+
+    const counted = { mic: shares.mic.length, system: shares.system.length };
+    const micMedian = median(shares.mic);
+    const systemMedian = median(shares.system);
+    const medians = {
+        ...(micMedian === undefined ? {} : { micMedian: Math.round(micMedian * 1000) / 1000 }),
+        ...(systemMedian === undefined ? {} : { systemMedian: Math.round(systemMedian * 1000) / 1000 }),
+    };
+
+    if (counted.mic < CALIBRATION_MIN_SEGMENTS || counted.system < CALIBRATION_MIN_SEGMENTS) {
+        return {
+            layout: "unknown",
+            ...medians,
+            segments: counted,
+            reason: `too few tagged segments (${counted.mic} mic, ${counted.system} call; ${CALIBRATION_MIN_SEGMENTS} of each needed)`,
+        };
+    }
+
+    if (micMedian! >= CALIBRATION_SIDE && systemMedian! <= 1 - CALIBRATION_SIDE) {
+        return { layout: "left-mic", ...medians, segments: counted };
+    }
+
+    if (micMedian! <= 1 - CALIBRATION_SIDE && systemMedian! >= CALIBRATION_SIDE) {
+        return { layout: "right-mic", ...medians, segments: counted };
+    }
+
+    return {
+        layout: "unknown",
+        ...medians,
+        segments: counted,
+        reason: `the channels do not separate the voices (mic median ${medians.micMedian}, call median ${medians.systemMedian})`,
+    };
+}
+
+/** The microphone channel's share of the energy over a range, by the calibrated layout; undefined when unknown or quiet. */
+export function micShare(
+    energy: ChannelEnergy,
+    layout: ChannelLayout,
+    fromSec: number,
+    toSec: number
+): number | undefined {
+    if (layout === "unknown") {
+        return undefined;
+    }
+
+    const { share } = energyShare(energy, fromSec, toSec);
+
+    if (share === undefined) {
+        return undefined;
+    }
+
+    return layout === "left-mic" ? share : 1 - share;
 }

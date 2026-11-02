@@ -59,8 +59,11 @@ export interface LineEvidence {
      * microphone picked up the speakers (echo), so the microphone does not prove the user spoke.
      */
     echo?: number;
-    /** The left (microphone) channel's share of the audio energy in the line; undefined without audio or when quiet. */
-    energyLeft?: number;
+    /**
+     * The microphone channel's share of the audio energy in the line; undefined without audio, when quiet, or when the
+     * recording's channel layout is unknown (calibrated per recording).
+     */
+    energyMic?: number;
 }
 
 function plainText(text: string): string {
@@ -97,7 +100,7 @@ export function lineEvidence(
     evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[] },
     presence?: Presence[],
     /** The microphone channel's share of the audio energy over a time range, when the audio is at hand. */
-    energyLeftShare?: (fromSec: number, toSec: number) => number | undefined
+    energyMicShare?: (fromSec: number, toSec: number) => number | undefined
 ): LineEvidence[] {
     const timed = entries.filter((entry) => entry.startSec !== undefined && entry.text.trim());
 
@@ -127,7 +130,7 @@ export function lineEvidence(
         }
 
         const echo = echoScore(touching);
-        const energyLeft = energyLeftShare?.(startSec, endSec);
+        const energyMic = energyMicShare?.(startSec, endSec);
 
         const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
         const ranked = [...overlap.entries()].sort((a, b) => b[1].sec - a[1].sec);
@@ -170,7 +173,7 @@ export function lineEvidence(
             ...(entry.speakerId !== undefined ? { refinedSpeakerId: entry.speakerId } : {}),
             ...(best?.voiceId !== undefined ? { liveVoiceId: best.voiceId } : {}),
             ...(echo !== undefined ? { echo } : {}),
-            ...(energyLeft !== undefined ? { energyLeft } : {}),
+            ...(energyMic !== undefined ? { energyMic } : {}),
         };
     });
 }

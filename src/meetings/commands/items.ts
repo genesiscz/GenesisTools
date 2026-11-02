@@ -32,7 +32,7 @@ import {
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { energyLeftShareFor } from "../lib/energy";
+import { energyMicShareFor } from "../lib/energy";
 import { presenceFor } from "../lib/presence";
 import { openQuestions } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
@@ -150,7 +150,7 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
             sourceWords: await source.dictionary(),
             presence: await presenceFor(record, meeting, opts.attendance),
             evidence,
-            energyLeftShare: await energyLeftShareFor(store, record.id, evidence),
+            energyMicShare: (await energyMicShareFor(store, record, evidence)).share,
             now: new Date().toISOString(),
         });
 
