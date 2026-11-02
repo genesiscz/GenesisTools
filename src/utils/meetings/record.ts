@@ -72,7 +72,10 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         label: z.string(),
         fromSec: z.number(),
         toSec: z.number(),
-        speaker: z.string(),
+        /** Whose voice it is. Empty until a rule or a person knows; confirming needs it. */
+        speaker: z.string().optional(),
+        /** Who could it be: the people in the call during the range. */
+        candidates: z.array(z.string()).optional(),
         ...itemBase,
     }),
     /** Two lines that are one sentence cut by diarization. */

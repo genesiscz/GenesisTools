@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { applyCorrections } from "./apply";
 import { applyDictionary, dictionaryLevelSchema, mergeDictionaries } from "./dictionary";
 import { LEAVE_PHRASES, type Presence, speakerStats } from "./speakers";
 import type { Participant, TranscriptEntry } from "./types";
@@ -218,5 +219,37 @@ describe("dictionary", () => {
         expect(first.entries.map((e) => e.text)[2]).toBe("Tak MOP dořešíme.");
         expect(first.expansions).toBe(1);
         expect(off.entries).toEqual(lines);
+    });
+});
+
+describe("applyCorrections", () => {
+    const lines = [
+        line("Alice Example", 0, "Začneme s UVČ."),
+        line("Speaker 5", 20, "jak já vlastně dot"),
+        line("Carol Example", 21, "áhnu tu druhou queryu."),
+        line("Carol Example", 60, "A MOP je hotový."),
+        line("Carol Example", 200, "Pak ještě něco."),
+    ];
+
+    test("joins, ranges, renames, terms and the dictionary apply in that order", () => {
+        const applied = applyCorrections(lines, {
+            joins: [{ atSec: 21, speaker: "Carol Example" }],
+            ranges: [{ label: "Carol Example", fromSec: 50, toSec: 100, speaker: "Bob Example" }],
+            labels: { "Carol Example": "Carol Renamed" },
+            terms: [{ heard: "UVČ", replacement: "UIčko" }],
+            dictionary: {
+                abbrExpansion: "every",
+                entries: [{ type: "abbr", value: "MOP", substitution: "MOP (Obchodní partner)" }],
+            },
+        });
+
+        expect(applied.entries.map((e) => [e.speaker, e.text])).toEqual([
+            ["Alice Example", "Začneme s UIčko."],
+            ["Carol Renamed", "jak já vlastně dotáhnu"],
+            ["Carol Renamed", "tu druhou queryu."],
+            ["Bob Example", "A MOP (Obchodní partner) je hotový."],
+            ["Carol Renamed", "Pak ještě něco."],
+        ]);
+        expect(applied).toMatchObject({ joins: 1, ranges: 1, terms: 1, expansions: 1 });
     });
 });
