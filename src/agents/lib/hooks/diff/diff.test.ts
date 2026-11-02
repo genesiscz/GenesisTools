@@ -663,6 +663,24 @@ describe("the diffs that went missing on 2026-11-01", () => {
     it("follows cd ~ to the home folder, as the shell expands it", () => {
         expect(commandDirs("cd ~ && bun x", repo)).toEqual([repo, homedir()]);
         expect(commandDirs("cd ~/; bun x", repo)).toEqual([repo, homedir()]);
+        // An unquoted `~` in an assignment is expanded when the shell assigns it.
+        expect(commandDirs("W=~; cd $W && bun x", repo)).toEqual([repo, homedir()]);
+    });
+
+    it("reads a quoted ~ as a folder named ~, which the shell does not expand", () => {
+        const tilde = join(other, "~", "sub");
+
+        mkdirSync(tilde, { recursive: true });
+
+        try {
+            // The folder called `~` is the positive control: it is followed, the home folder is not.
+            expect(commandDirs(`cd "~/sub" && bun x`, other)).toEqual([other, tilde]);
+            expect(commandDirs(`cd '~' && bun x`, repo)).toEqual([repo]);
+            expect(commandDirs(`cd "~" && bun x`, repo)).toEqual([repo]);
+            expect(commandDirs(`W='~/sub'; cd "$W" && bun x`, other)).toEqual([other, tilde]);
+        } finally {
+            rmSync(join(other, "~"), { recursive: true, force: true });
+        }
     });
 
     it("diffs a relative edit after `cd <repo>;` in the repository the command moved to", () => {
@@ -1571,6 +1589,30 @@ describe("files the command NAMES rather than works in", () => {
         expect(
             mentionsOf({ tool: "Bash", input: { command: `cat src/a.ts && git -C ${other} add src/a.ts` }, cwd: main })
         ).toContain(theirs);
+    });
+
+    it("keeps a separator inside a quoted variable path as part of the path, never a cut-short sibling", () => {
+        const cut = join(vault, "cut");
+
+        writeFileSync(cut, "x");
+
+        try {
+            for (const name of ["cut;b", "cut&b", "cut(b)"]) {
+                const path = join(vault, name);
+
+                writeFileSync(path, "x");
+                expect(namedArguments(`V=${vault}; sed -i '' s/x/y/ "$V/${name}"`, [vault])).toContain(path);
+                expect(namedArguments(`V=${vault}; cat "$V/${name}"`, [vault])).toEqual([path]);
+                rmSync(path, { force: true });
+            }
+
+            // Inside a longer quoted word the `$V` is not where the word starts, so nothing is read from it.
+            expect(namedArguments(`V=${vault}; echo "see $V/cut;b"`, [vault])).toEqual([]);
+            // The negative control: an unquoted `;` does end the word.
+            expect(namedArguments(`V=${vault}; cat $V/cut;b`, [vault])).toEqual([cut]);
+        } finally {
+            rmSync(cut, { force: true });
+        }
     });
 
     it("refuses a reference whose braces do not match, which the shell reads as a different path", () => {

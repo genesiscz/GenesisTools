@@ -74,6 +74,30 @@ function shellWord(raw: string | null): string | null {
 }
 
 /**
+ * The word a token starts, read from the original text with its quotes, up to the first separator that is shell code.
+ * A token inside double quotes is the `$W` of `"$W/a;b"`: the scanner blanks the quoted `/a;b`, so that `;` is part of
+ * the path. Cutting there, as `shellWord` does for a word whose quotes are gone, watched `/tmp/a` for a command that
+ * named only `/tmp/a;b` (eve on #693, 2026-11-02). A separator is code when the scan kept it, or when it lies inside
+ * or right after the token as its unit was scanned (a `bash -c` body, which the outer scan blanks whole).
+ */
+function codeWord(scanned: ShellScan, token: Span): string | null {
+    const { command, cleaned } = scanned;
+    const start = token.start > 0 && /["']/.test(command[token.start - 1] ?? "") ? token.start - 1 : token.start;
+    const word = /^\S+/.exec(command.slice(start))?.[0] ?? token.text;
+    const tokenEnd = token.start + token.text.length;
+
+    for (let at = 0; at < word.length; at += 1) {
+        const offset = start + at;
+
+        if (WORD_END.test(word[at] ?? "") && (cleaned[offset] === command[offset] || offset <= tokenEnd)) {
+            return word.slice(0, at) || null;
+        }
+    }
+
+    return word;
+}
+
+/**
  * The value of `NAME=value` at `start` of the original text, as written (quotes kept), and where it ends. `text` is
  * `null` when the value is not one plain word (`V=a"b"`, `V=$(pwd)x`): it goes on past what the pattern read.
  */
@@ -157,8 +181,15 @@ function applyAssignments({
 
         // Read from the original text, which keeps the quotes `rawToken` strips and stops at a `;` that touches it.
         const { text, end } = assignedText(command, token.start);
+        const plain = plainArgument(text);
         // A value with a space is never kept: bash splits an unquoted `$V` there, zsh does not, so a use cannot be read.
-        const value = text !== null && /\s/.test(text) ? null : (plainArgument(text) ?? expandVariable(text, scope));
+        // The shell expands the `~` of `W=~/x` when it assigns, so a later `cd $W` reads the value as it is.
+        const value =
+            text !== null && /\s/.test(text)
+                ? null
+                : plain !== null
+                  ? homeOf(text, plain)
+                  : expandVariable(text, scope);
 
         valueEnd = end;
 
@@ -226,11 +257,14 @@ function cdTargets(command: string): string[] {
 
                 if (token && commandWord(token.text) === "cd") {
                     const raw = shellWord(nextRawArgument(command, token.start + token.text.length));
-                    const target = plainArgument(raw) ?? variableValue(raw, known) ?? expandVariable(raw, known);
-
+                    const plain = plainArgument(raw);
                     // The shell expands `~` in `cd ~/x`; resolved against the cwd it named a folder that never exists.
+                    // A variable's value was expanded when it was assigned (`applyAssignments`).
+                    const target =
+                        plain !== null ? homeOf(raw, plain) : (variableValue(raw, known) ?? expandVariable(raw, known));
+
                     if (target) {
-                        targets.push(expandHome(target));
+                        targets.push(target);
                     }
                 }
 
@@ -295,6 +329,15 @@ function expandHome(value: string): string {
 }
 
 /**
+ * `value`, the plain reading of the word `raw`, with a leading `~` read as the shell reads it: the home folder only
+ * when the word was written unquoted and starts with it. `cd '~'`, `cd "~/work"` and `--out=~/x` name a folder called
+ * `~`, and reading them as the home folder watched a repository the command never named (eve on #693, 2026-11-02).
+ */
+function homeOf(raw: string | null, value: string): string {
+    return value === raw ? expandHome(value) : value;
+}
+
+/**
  * A flag's value when it carries one: `--out=/tmp/x` names `/tmp/x`. The flag itself never
  * names a path, so the part before `=` is dropped rather than tested.
  */
@@ -347,20 +390,22 @@ function expandVariable(raw: string | null, known: Map<string, string>): string 
     return base ? base + (match?.[3] ?? "") : null;
 }
 
+/**
+ * `token` is one shell word with its quotes, already cut where the shell ends it: the statement's `;` comes with its
+ * last token (`perl -pi … a.ts; echo ok`), and `a.ts;` is a file that never exists, so the edit went unwatched
+ * (2026-10-15, a background `perl -pi`).
+ */
 function add({
     into,
-    raw,
+    token,
     bases,
     known = new Map(),
 }: {
     into: string[];
-    raw: string | null;
+    token: string | null;
     bases: string[];
     known?: Map<string, string>;
 }): void {
-    // The statement's `;` comes with its last token (`perl -pi … a.ts; echo ok`), and `a.ts;` is a
-    // file that never exists, so the edit went unwatched (2026-10-15, a background `perl -pi`).
-    const token = shellWord(raw);
     const plain = plainArgument(token) ?? expandVariable(token, known);
 
     if (plain === null) {
@@ -374,7 +419,7 @@ function add({
         return;
     }
 
-    const value = expandHome(flagValue(plain));
+    const value = homeOf(token, flagValue(plain));
 
     if (!pathShaped(value)) {
         return;
@@ -694,22 +739,22 @@ function walkNamed({ command, bases, readings }: { command: string; bases: strin
                 const from = gitDir ? [gitDir] : bases;
 
                 for (const token of tokens) {
-                    for (const raw of [
-                        rawToken(command, token),
-                        nextRawArgument(command, token.start + token.text.length),
+                    for (const word of [
+                        codeWord(scanned, token),
+                        shellWord(nextRawArgument(command, token.start + token.text.length)),
                     ]) {
-                        add({ into: walked.found, raw, bases: from, known });
+                        add({ into: walked.found, token: word, bases: from, known });
 
                         if (!readings) {
                             continue;
                         }
 
                         for (const base of bases) {
-                            add({ into: gitDir ? walked.misread : walked.outside, raw, bases: [base], known });
+                            add({ into: gitDir ? walked.misread : walked.outside, token: word, bases: [base], known });
                         }
 
                         if (gitDir) {
-                            add({ into: walked.scoped, raw, bases: [gitDir], known });
+                            add({ into: walked.scoped, token: word, bases: [gitDir], known });
                         }
                     }
                 }
