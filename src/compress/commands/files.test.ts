@@ -1,8 +1,10 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { linkSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCat } from "./files";
+import { compressPath } from "@genesiscz/utils/compress/operations";
+import { out } from "@genesiscz/utils/logger";
+import { runCat, runVerify } from "./files";
 
 const root = mkdtempSync(join(tmpdir(), "compress-cat-test-"));
 
@@ -28,5 +30,39 @@ describe("tools compress cat", () => {
         const copy = join(root, "copy.log");
         await runCat(source, { output: copy });
         expect(readFileSync(copy, "utf8")).toBe(text);
+    });
+});
+
+describe("tools compress verify", () => {
+    it("names a list that does not read and a refused list, and says 'does not decode' only for a broken archive", async () => {
+        const dir = join(root, "verify");
+        const folder = join(dir, "tree");
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, "a.txt"), "a\n");
+        const { record } = await compressPath({ source: folder, force: true, caller: "test" });
+        const outside = join(dir, "outside.list");
+        writeFileSync(outside, "../outside.txt\n");
+        const broken = join(dir, "broken.zst");
+        writeFileSync(broken, "not zstd");
+        const errors: string[] = [];
+        const printed = spyOn(out, "error").mockImplementation((message: unknown) => {
+            errors.push(String(message));
+        });
+        const exitCode = process.exitCode;
+
+        try {
+            runVerify(record.target, { against: folder, filesFrom: join(dir, "missing.list") });
+            runVerify(record.target, { against: folder, filesFrom: outside });
+            runVerify(broken, {});
+        } finally {
+            printed.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        expect(errors).toEqual([
+            expect.stringMatching(/missing\.list: the file list does not read \(ENOENT/),
+            `${record.target}: ../outside.txt is not inside ${folder}`,
+            expect.stringContaining(`${broken}: does not decode`),
+        ]);
     });
 });

@@ -294,10 +294,14 @@ export function* readZstdFramesSync(
     }
 }
 
+/** Bytes enough for any zstd frame header: magic 4, descriptor 1, window 1, dictionary id up to 4, content size up to 8. */
+const FRAME_HEADER_BYTES = 18;
+
 /**
  * {@link readZstdFramesSync} with up to `concurrency` frames decompressing at once on the thread pool, yielded in file
  * order: the next frames decompress while the caller works on the current one. Memory holds about `concurrency`
- * frames.
+ * frames. A frame that needs a long window ({@link needsLongWindow}) decodes alone: its decoder may allocate a 2 GiB
+ * window, so four at once could ask for 8 GiB and end `tools compress cat` or a search with an out-of-memory kill.
  */
 export async function* readZstdFrames(
     path: string,
@@ -308,21 +312,28 @@ export async function* readZstdFrames(
     try {
         const frames = zstdFrames(fd, fstatSync(fd).size);
         const ordered = fromEnd ? [...frames].reverse() : frames;
-        const window: Array<Promise<Uint8Array>> = [];
+        const window: Array<{ frame: Promise<Uint8Array>; long: boolean }> = [];
         let next = 0;
 
         while (next < ordered.length || window.length > 0) {
-            while (next < ordered.length && window.length < Math.max(1, concurrency)) {
-                const frame = decodeFrame(readExactly(fd, ordered[next]!.compressedSize, ordered[next]!.offset));
+            while (next < ordered.length && window.length < Math.max(1, concurrency) && !window.some((on) => on.long)) {
+                const { compressedSize, offset } = ordered[next]!;
+                const long = needsLongWindow(readExactly(fd, Math.min(compressedSize, FRAME_HEADER_BYTES), offset));
+
+                if (long && window.length > 0) {
+                    break;
+                }
+
+                const frame = decodeFrame(readExactly(fd, compressedSize, offset));
                 // A frame that fails while the reader still holds an earlier one has no handler yet, and bun counts
                 // it as an unhandled rejection (it failed the corrupt-.zst search test in 3 of 12 runs). The await
                 // below still throws its error in order; a frame left in the window when the reader stops is dropped.
                 frame.catch(() => undefined);
-                window.push(frame);
+                window.push({ frame, long });
                 next += 1;
             }
 
-            yield await window.shift()!;
+            yield await window.shift()!.frame;
         }
     } finally {
         closeSync(fd);
