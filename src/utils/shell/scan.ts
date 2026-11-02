@@ -540,7 +540,29 @@ function quotedValueFollows(tokens: Span[], i: number, command: string | undefin
         return false;
     }
 
-    return /\S/.test(command.slice(option.start + option.text.length, next.start));
+    return holdsWord(command.slice(option.start + option.text.length, next.start));
+}
+
+/**
+ * Whether blanked text holds a shell word. The scanner also blanks a backslash-newline, which joins two lines and is
+ * no word: `xargs -n \` then `1 rm -f` read the continuation as `-n`'s quoted value, took `1` for the command and let
+ * the rm through (eve on #648, 2026-11-01). Any other escape (`\1`) is a word.
+ */
+function holdsWord(gap: string): boolean {
+    for (let at = 0; at < gap.length; at += 1) {
+        const ch = gap[at] ?? "";
+
+        if (ch === "\\" && gap[at + 1] === "\n") {
+            at += 1;
+            continue;
+        }
+
+        if (/\S/.test(ch)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /** Whether `wrapper`'s option `token` takes the next word as its value. */
