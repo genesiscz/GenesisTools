@@ -117,11 +117,48 @@ describe("findSuspectTerms", () => {
 
         expect(suspects.map((s) => s.heard)).toEqual([]);
     });
+
+    test("a two-word run matches a two-part term only when both words sound like its parts", () => {
+        const parts = buildVocabulary([[{ term: "CategoryData", source: "test" }]]);
+        const heard = (text: string) =>
+            findSuspectTerms({ entries: [entry("Bob", 0, text)], vocab: parts }).map((s) => s.heard);
+
+        expect(heard("Je to v kategorie a pak dál.")).not.toContain("kategorie a");
+        expect(heard("Je to v kategorie data dál.")).toContain("kategorie data");
+    });
+
+    test("each suspect carries where it was heard, with the sentences around it", () => {
+        const suspects = findSuspectTerms({
+            entries: [entry("Bob", 12, "První věta. Použijeme Zushtent místo toho. Třetí věta.")],
+            vocab,
+        });
+
+        expect(suspects[0]?.examples).toEqual([
+            {
+                atSec: 12,
+                speaker: "Bob",
+                before: "První věta.",
+                sentence: "Použijeme ==Zushtent== místo toho.",
+                after: "Třetí věta.",
+            },
+        ]);
+    });
+
+    test("a person's name only the summary proposes needs a person's check and is left out of 'all'", () => {
+        const names = buildVocabulary([[{ term: "Pavel Kubat", source: "summary" }]]);
+        const suspects = findSuspectTerms({
+            entries: [entry("Bob", 0, "Ptal jsem se Pavlu Kubatu včera.")],
+            vocab: names,
+        });
+
+        expect(suspects[0]?.needsConfirmation).toBe(true);
+        expect(selectFixes(["all"], suspects, 0)).toEqual([]);
+    });
 });
 
 describe("applyFixes", () => {
     test("replaces whole words only, and a named pair overrides the candidate", () => {
-        const suspect = { heard: "Zushtent", occurrences: 1, kind: "exact" as const, candidates: [] };
+        const suspect = { heard: "Zushtent", occurrences: 1, kind: "exact" as const, candidates: [], examples: [] };
         const fixes = selectFixes(
             ["redakt::Redux", "Zushtent"],
             [{ ...suspect, candidates: [{ term: "Zustand", confidence: 80, source: "test" }] }],

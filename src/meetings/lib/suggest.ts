@@ -202,10 +202,12 @@ function termItems(options: {
                     status: "suggested" as const,
                     heard: suspect.heard,
                     proposed: best.term,
+                    ...(suspect.examples[0]?.atSec !== undefined ? { atSec: suspect.examples[0].atSec } : {}),
                     confidence: best.confidence / 100,
-                    rules: ["phonetic", best.source],
+                    rules: ["phonetic", best.source, ...(suspect.needsConfirmation ? ["summary-name"] : [])],
                     evidence: {
                         occurrences: suspect.occurrences,
+                        examples: suspect.examples,
                         match: suspect.kind,
                         candidates: suspect.candidates.map(
                             (candidate) => `${candidate.term} ${candidate.confidence} %`

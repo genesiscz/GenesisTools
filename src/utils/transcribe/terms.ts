@@ -25,12 +25,25 @@ export interface TermCandidate {
     source: string;
 }
 
+/** One place a suspect was heard, with the sentences around it, so a person can judge it without the transcript. */
+export interface TermExample {
+    atSec?: number;
+    speaker: string;
+    before?: string;
+    /** The sentence with the heard run marked as `==run==`. */
+    sentence: string;
+    after?: string;
+}
+
 export interface TermSuggestion {
     heard: string;
     occurrences: number;
     /** `stem`: the heard word is an inflected form (Czech case ending), so a plain swap would break grammar. */
     kind: "exact" | "stem";
     candidates: TermCandidate[];
+    examples: TermExample[];
+    /** The top candidate is a person's name that only the meeting's summary proposes: a person checks it first. */
+    needsConfirmation?: boolean;
 }
 
 export const DEFAULT_MIN_CONFIDENCE = 70;
@@ -173,15 +186,19 @@ function compact(value: string): string {
 }
 
 /** "React Query" and "useSelector" are two parts each; a run of N words may only match a term of N or more parts. */
-function partCount(term: string): number {
-    return term.split(/[\s._-]+|(?<=[a-z])(?=[A-Z])/).filter(Boolean).length;
+function termParts(term: string): string[] {
+    return term.split(/[\s._-]+|(?<=[a-z])(?=[A-Z])/).filter(Boolean);
 }
+
+/** Each heard word of a multi-word run must sound like its own part of the term, or the run glued on a neighbour. */
+const PART_MIN = 0.5;
 
 interface IndexedTerm extends VocabTerm {
     key: string;
     skeleton: string;
     compact: string;
     parts: number;
+    partKeys: string[];
 }
 
 interface RunKeys {
@@ -194,7 +211,15 @@ interface RunKeys {
 
 function indexTerm(term: VocabTerm): IndexedTerm {
     const key = phoneticKey(term.term);
-    return { ...term, key, skeleton: skeleton(key), compact: compact(term.term), parts: partCount(term.term) };
+    const parts = termParts(term.term);
+    return {
+        ...term,
+        key,
+        skeleton: skeleton(key),
+        compact: compact(term.term),
+        parts: parts.length,
+        partKeys: parts.map(phoneticKey),
+    };
 }
 
 function runKeys(run: string): RunKeys {
@@ -211,9 +236,38 @@ function mix(run: RunKeys, term: IndexedTerm, runKey = run.key): number {
     );
 }
 
+/** Every heard word sounds like one of the term's parts, in order ("kategorie data" fits CategoryData, "kategorie a" does not). */
+function partsMatch(run: RunKeys, term: IndexedTerm): boolean {
+    let next = 0;
+
+    for (const word of run.run.split(" ")) {
+        const key = phoneticKey(word);
+        let found = -1;
+
+        for (let part = next; part < term.partKeys.length; part++) {
+            if (similarityScore(key, term.partKeys[part]!) >= PART_MIN) {
+                found = part;
+                break;
+            }
+        }
+
+        if (found < 0) {
+            return false;
+        }
+
+        next = found + 1;
+    }
+
+    return true;
+}
+
 /** Scores `run` against one term; `stem` when only the run minus a Czech case ending matches. */
 function scorePair(run: RunKeys, term: IndexedTerm): { value: number; kind: TermSuggestion["kind"] } | undefined {
     if (run.words > term.parts || run.key[0] !== term.key[0] || term.key.length < 3) {
+        return undefined;
+    }
+
+    if (run.words > 1 && !partsMatch(run, term)) {
         return undefined;
     }
 
@@ -398,6 +452,38 @@ class TermIndex {
     }
 }
 
+const MAX_EXAMPLES = 5;
+
+function sentencesOf(text: string): string[] {
+    return text.split(/(?<=[.?!…])\s+/u).filter((sentence) => sentence.trim());
+}
+
+/** The sentence of `entries[index]` that holds `heard`, marked, with the sentence before and after it. */
+function exampleAt(entries: TranscriptEntry[], index: number, heard: string): TermExample {
+    const entry = entries[index]!;
+    const sentences = sentencesOf(entry.text);
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(heard).replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}])`, "iu");
+    const at = Math.max(
+        0,
+        sentences.findIndex((sentence) => re.test(sentence))
+    );
+    const before = at > 0 ? sentences[at - 1] : sentencesOf(entries[index - 1]?.text ?? "").at(-1);
+    const after = at < sentences.length - 1 ? sentences[at + 1] : sentencesOf(entries[index + 1]?.text ?? "")[0];
+
+    return {
+        ...(entry.startSec !== undefined ? { atSec: entry.startSec } : {}),
+        speaker: entry.speaker,
+        ...(before ? { before } : {}),
+        sentence: (sentences[at] ?? entry.text).replace(re, (match) => `==${match}==`),
+        ...(after ? { after } : {}),
+    };
+}
+
+/** A person's name ("Jana Nováková") that only the meeting's summary proposes; the summary often has the wrong case. */
+function isSummaryName(candidate: TermCandidate | undefined): boolean {
+    return candidate?.source === "summary" && /^\p{Lu}\p{Ll}+(?:\s+\p{Lu}\p{Ll}+)+$/u.test(candidate.term);
+}
+
 /**
  * Every 1 to 3 word run that is not already a vocabulary term but sounds like one. A run that is a
  * known term is skipped whole, so its neighbours never glue onto it.
@@ -413,7 +499,7 @@ export function findSuspectTerms(options: {
     const context = new Set((options.context ?? []).map((t) => compact(t.term)));
     const index = new TermIndex(options.vocab);
     const cache = new Map<string, { known: boolean; scored?: Scored }>();
-    const counts = new Map<string, { scored: Scored; occurrences: number }>();
+    const counts = new Map<string, { scored: Scored; occurrences: number; examples: TermExample[] }>();
 
     const lookup = (run: string) => {
         let hit = cache.get(run);
@@ -428,7 +514,7 @@ export function findSuspectTerms(options: {
         return hit;
     };
 
-    for (const entry of options.entries) {
+    for (const [entryIndex, entry] of options.entries.entries()) {
         const tokens = words(entry.text);
         let i = 0;
 
@@ -461,15 +547,23 @@ export function findSuspectTerms(options: {
 
             const key = best.heard.toLowerCase();
             const seen = counts.get(key);
-            counts.set(key, { scored: seen?.scored ?? best, occurrences: (seen?.occurrences ?? 0) + 1 });
+            const examples = seen?.examples ?? [];
+
+            if (examples.length < MAX_EXAMPLES) {
+                examples.push(exampleAt(options.entries, entryIndex, best.heard));
+            }
+
+            counts.set(key, { scored: seen?.scored ?? best, occurrences: (seen?.occurrences ?? 0) + 1, examples });
             i += best.heard.split(" ").length;
         }
     }
 
     return [...counts.values()]
-        .map(({ scored, occurrences }) => ({
+        .map(({ scored, occurrences, examples }) => ({
             heard: scored.heard,
             occurrences,
+            examples,
+            ...(isSummaryName(scored.candidates[0]) ? { needsConfirmation: true } : {}),
             kind: scored.kind,
             candidates: scored.candidates,
         }))
@@ -498,7 +592,9 @@ export function selectFixes(specs: string[], suggestions: TermSuggestion[], minC
     return specs.flatMap((spec) => {
         if (spec === "all") {
             return suggestions
-                .filter((s) => s.kind === "exact" && s.candidates[0]!.confidence >= minConfidence)
+                .filter(
+                    (s) => s.kind === "exact" && !s.needsConfirmation && s.candidates[0]!.confidence >= minConfidence
+                )
                 .map((s) => ({ heard: s.heard, replacement: s.candidates[0]!.term }));
         }
 
