@@ -82,6 +82,12 @@ const listenSchema = z.object({
     budget: z.number().int().min(1).max(500).default(12),
     /** A question under this priority is not worth a person's time; it stays a marked suggestion. */
     minPriority: z.number().min(0).default(0.5),
+    /** Seconds between showing a question and playing its clip, so the question is read before the audio starts. */
+    delaySec: z.number().min(0).max(10).default(2),
+    /** A short tone in the clip just before the asked spot: the heard words of a term, the start of a speaker range. */
+    beep: z.boolean().default(true),
+    /** How long before the asked spot the tone sounds. */
+    beepLeadSec: z.number().min(0).max(3).default(0.4),
 });
 
 const playbackSchema = z.object({
@@ -116,6 +122,8 @@ export const meetingsConfigSchema = z.object({
                 .object({
                     /** An item under this confidence that matters (enough words, or a decision) becomes a question. */
                     listenBelow: z.number().min(0).max(1).default(0.6),
+                    /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
+                    applyAbove: z.number().min(0).max(1).default(0.5),
                 })
                 .prefault({}),
         })
