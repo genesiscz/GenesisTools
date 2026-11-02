@@ -32,6 +32,7 @@ import {
     type EncodePass,
     encodeArgs,
     judgeOutput,
+    MAX_SIZE_CORRECTIONS,
     MIN_TARGET_VIDEO_KBPS,
     planAudio,
     savingPercent,
@@ -60,9 +61,6 @@ export interface EncodeRow {
     trashBatch: string | null;
     seconds: number;
 }
-
-/** Corrected passes after the first one when a size target is missed (each pass encodes the whole file). */
-const MAX_SIZE_CORRECTIONS = 2;
 
 /** Where one input is: an encode pass with its position in the timeline, or the decode check of the result. */
 export interface EncodeProgressEvent {
@@ -740,7 +738,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
                 break;
             }
 
-            rate = { kind: "bitrate", kbps: next };
+            rate = { kind: "bitrate", kbps: next, attempt: pass + 1 };
             temp = join(staging.dir, `${basename(staging.file, ext)}.pass${pass + 1}${ext}`);
         }
 

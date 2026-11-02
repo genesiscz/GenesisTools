@@ -18,8 +18,10 @@ import {
     encodeArgs,
     encoderUnavailableReason,
     findEncoder,
+    MAX_SIZE_CORRECTIONS,
     MIN_TARGET_VIDEO_KBPS,
     planAudio,
+    TARGET_BAND,
     VIDEO_PRESETS,
     type VideoEncoder,
     type VideoPreset,
@@ -42,6 +44,8 @@ export type HeightRequest = number | "auto" | "source";
 export interface ShrinkPlan {
     facts: MediaFacts;
     audio: AudioPlan;
+    /** The size target, when one was given. */
+    targetBytes?: number;
     /** The video bitrate a size target leaves, or null without one. */
     kbps: number | null;
     height: HeightChoice;
@@ -56,6 +60,8 @@ export interface WindowResult {
     label: SampleWindow["label"];
     path: string;
     bytes: number;
+    /** The bytes the window's share of a size target allows; null without a target. */
+    plannedBytes: number | null;
     encodeSec: number;
     vmaf: number | null;
     ssim: number;
@@ -118,7 +124,7 @@ export async function planShrink({
     const sourceVideoBytes = packets.reduce((sum, packet) => sum + packet.bytes, 0);
     logger.debug({ input: facts.path, audio, kbps, height, windows }, "Shrink plan");
     const heightAuto = heightRequest === "auto" && kbps !== null && height.height !== undefined;
-    return { facts, audio, kbps, height, heightAuto, windows, sourceVideoBytes };
+    return { facts, audio, targetBytes, kbps, height, heightAuto, windows, sourceVideoBytes };
 }
 
 function resolveHeight({
@@ -226,6 +232,12 @@ function windowRate({ plan, window, quality }: { plan: ShrinkPlan; window: Sampl
         kbps: windowKbps({ kbps: plan.kbps, windowSourceKbps: window.sourceKbps, overallSourceKbps }),
     };
 }
+
+/**
+ * A 10 s window lands less exactly than a full two-pass encode, so the preview corrects only a real miss, like the GPU
+ * encoder's QP floor (124% of the target on the full talk), not the few percent of rate noise.
+ */
+const PREVIEW_BAND = { low: 0.75, high: 1.1 } as const;
 
 /** Lossless cuts of each window, by window label. */
 export type References = Map<SampleWindow["label"], string>;
@@ -369,19 +381,58 @@ export async function previewPresets({
             }
 
             onStep?.({ type: "step", message: `${preset}: encoding the ${window.label} window` });
-            const output = join(workDir, `${preset}-${window.label}.mp4`);
-            const encodeSec = await encodeWindow({
-                encoder,
-                reference,
-                output,
-                rate: windowRate({ plan, window, quality: encoder.defaultQuality }),
-                height: plan.height.height,
-                statsPrefix: join(workDir, `${preset}-${window.label}-2pass`),
-                signal,
-            });
+            let rate = windowRate({ plan, window, quality: encoder.defaultQuality });
+            let encodeSec: number | null = null;
+            let output = "";
+            let bytes = 0;
+
+            // The same correction the full encode makes (encodeVideos), so a preset that misses its rate is previewed
+            // at the settings, and the size, it will end with.
+            for (let attempt = 0; ; attempt++) {
+                output = join(workDir, `${preset}-${window.label}-${attempt}.mp4`);
+                const sec = await encodeWindow({
+                    encoder,
+                    reference,
+                    output,
+                    rate,
+                    height: plan.height.height,
+                    statsPrefix: join(workDir, `${preset}-${window.label}-2pass`),
+                    signal,
+                });
+                // Only the first attempt times the encoder; corrections here are a short window's rate noise.
+                encodeSec ??= sec;
+                bytes = statSync(output).size;
+
+                if (rate.kind !== "bitrate" || attempt >= MAX_SIZE_CORRECTIONS) {
+                    break;
+                }
+
+                const expected = (rate.kbps * 1000 * window.durationSec) / 8;
+                const ratio = bytes / expected;
+
+                if (ratio >= PREVIEW_BAND.low && ratio <= PREVIEW_BAND.high) {
+                    break;
+                }
+
+                rate = { kind: "bitrate", kbps: Math.max(1, Math.round(rate.kbps / ratio)), attempt: attempt + 1 };
+                onStep?.({
+                    type: "step",
+                    message: `${preset}: the ${window.label} window missed its size, correcting`,
+                });
+            }
+
             onStep?.({ type: "step", message: `${preset}: scoring the ${window.label} window` });
             const score = await measureQuality({ distorted: output, reference, signal });
-            windows.push({ label: window.label, path: output, bytes: statSync(output).size, encodeSec, ...score });
+            const planned = windowRate({ plan, window, quality: encoder.defaultQuality });
+            const plannedBytes = planned.kind === "bitrate" ? (planned.kbps * 1000 * window.durationSec) / 8 : null;
+            windows.push({
+                label: window.label,
+                path: output,
+                bytes,
+                plannedBytes,
+                encodeSec: encodeSec ?? 0,
+                ...score,
+            });
             onStep?.({ type: "window", preset, label: window.label, ...score });
         }
 
@@ -394,8 +445,11 @@ export async function previewPresets({
         );
         const windowSec = plan.windows.reduce((sum, window) => sum + window.durationSec, 0);
         const encodeSec = windows.reduce((sum, window) => sum + window.encodeSec, 0);
+        // Under a size target each window is measured against the bytes it was meant to take, so a preset that cannot
+        // reach the rate shows the size it will really have.
+        const overshoot = mean(windows.map((window) => (window.plannedBytes ? window.bytes / window.plannedBytes : 1)));
         const predictedVideo =
-            plan.kbps === null ? plan.sourceVideoBytes * ratio : (plan.kbps * 1000 * durationSec) / 8;
+            plan.kbps === null ? plan.sourceVideoBytes * ratio : ((plan.kbps * 1000 * durationSec) / 8) * overshoot;
         previews.push({
             preset,
             encoder,
@@ -415,14 +469,28 @@ export async function previewPresets({
  * The recommendation over finished previews: VMAF when every preset has it, otherwise SSIM in decibels
  * (-10 log10(1 - SSIM)), where 0.993 against 0.995 is about 1.5 dB, a gap the VMAF margins also fit.
  */
-export function recommendFromPreviews(previews: PresetPreview[]): Recommendation | null {
-    const useVmaf = previews.every((preview) => preview.vmaf !== null);
-    const scores: PresetScore[] = previews.map((preview) => ({
+export function recommendFromPreviews(plan: ShrinkPlan, previews: PresetPreview[]): Recommendation | null {
+    const fits = previews.filter((preview) => !missesTarget(plan, preview));
+    const pool = fits.length > 0 ? fits : previews;
+    const useVmaf = pool.every((preview) => preview.vmaf !== null);
+    const scores: PresetScore[] = pool.map((preview) => ({
         preset: preview.preset,
         score: useVmaf ? rankScore(preview) : rankScore({ vmaf: null, ssim: preview.ssim }),
         predictedSeconds: preview.predictedSeconds,
     }));
-    return recommendPreset(scores);
+    const recommendation = recommendPreset(scores);
+    const dropped = previews.filter((preview) => !pool.includes(preview)).map((preview) => preview.preset);
+
+    if (recommendation && dropped.length > 0) {
+        return { ...recommendation, reason: `${recommendation.reason}; ${dropped.join(", ")} cannot reach the size` };
+    }
+
+    return recommendation;
+}
+
+/** A preview whose predicted size is over the target's band: it would write a bigger file than asked for. */
+export function missesTarget(plan: ShrinkPlan, preview: PresetPreview): boolean {
+    return plan.targetBytes !== undefined && preview.predictedBytes > plan.targetBytes * TARGET_BAND.high * 1.07;
 }
 
 export function formatClock(seconds: number): string {

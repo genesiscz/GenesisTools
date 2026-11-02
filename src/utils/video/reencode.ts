@@ -2,7 +2,10 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { audioStreamCount, hasAudio, type MediaFacts, type MediaStream, primaryVideo } from "./media-facts";
 
 /** How the encoder spends bits: a constant quality, or an average bitrate that a size target asks for. */
-export type VideoRate = { kind: "quality"; quality: number } | { kind: "bitrate"; kbps: number };
+export type VideoRate =
+    | { kind: "quality"; quality: number }
+    /** `attempt` counts size-correction passes (0 first); an encoder may loosen a quality floor as it grows. */
+    | { kind: "bitrate"; kbps: number; attempt?: number };
 
 /** What happens to the audio tracks: copied as they are, or re-encoded to AAC at a bitrate per track. */
 export type AudioPlan = { kind: "copy" } | { kind: "aac"; kbps: number };
@@ -17,6 +20,14 @@ export interface EncodePass {
     index: 1 | 2;
     /** The statistics file prefix both passes share. */
     logFile: string;
+}
+
+/** The QP cap per size-correction attempt of the GPU encoder; past the list there is no cap. */
+const HEVC_QP_CAPS = [36, 42];
+
+function hevcQpCap(attempt = 0): string[] {
+    const cap = HEVC_QP_CAPS[attempt];
+    return cap === undefined ? [] : ["-qmax", String(cap)];
 }
 
 /** A re-encode target. Add a codec by adding one entry to `VIDEO_ENCODERS`; no call site branches on the name. */
@@ -68,12 +79,16 @@ export const VIDEO_ENCODERS = {
         decodeArgs: ["-hwaccel", "videotoolbox"],
         // 10 s of a 720p talk recording at -b:v 420k (2026-11-02, SSIM against the source): a -maxrate cap 0.859 (broken);
         // -g 600 -prio_speed 0 0.978 at 443 kbit/s; adding -bf 2 (ffmpeg leaves B-frames off) 0.979 at 398; adding
-        // -qmax 36 (no frame coarser than QP 36) 0.982 at 395. -spatial_aq 1 changed nothing on an M4 Max. The rate can
-        // still miss, which the size-target loop corrects.
+        // -qmax 36 (no frame coarser than QP 36) 0.982 at 395. -spatial_aq 1 changed nothing on an M4 Max. The QP cap is
+        // also a size floor: on the hardest minute of the talk -b:v 300k gave 1234 kbit/s at -qmax 36, 783 at 42 and
+        // 498 with no cap, and the full 108 min stayed at 521 MB for 417, 317 and 241k. So each size correction loosens
+        // it (HEVC_QP_CAPS).
         videoArgs: (rate) => [
             "-c:v",
             "hevc_videotoolbox",
-            ...(rate.kind === "quality" ? ["-q:v", String(rate.quality)] : ["-b:v", `${rate.kbps}k`, "-qmax", "36"]),
+            ...(rate.kind === "quality"
+                ? ["-q:v", String(rate.quality)]
+                : ["-b:v", `${rate.kbps}k`, ...hevcQpCap(rate.attempt)]),
             ...LONG_GOP,
             "-bf",
             "2",
@@ -513,6 +528,8 @@ export function videoKbpsForTarget({
 
 /** A size within this band of the target needs no corrected pass. */
 export const TARGET_BAND = { low: 0.9, high: 1.03 } as const;
+/** Corrected passes after the first, when a size-target output lands outside `TARGET_BAND`. */
+export const MAX_SIZE_CORRECTIONS = 2;
 
 /**
  * The rate for the next pass, scaled by how far the video part of the last output missed its share of the target;

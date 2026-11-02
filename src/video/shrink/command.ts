@@ -18,6 +18,7 @@ import {
     findEncoder,
     isVideoPreset,
     parseAudioRequest,
+    TARGET_BAND,
     VIDEO_PRESET_NAMES,
     VIDEO_PRESETS,
     type VideoPreset,
@@ -31,6 +32,7 @@ import {
     cutReferences,
     formatClock,
     type HeightRequest,
+    missesTarget,
     type PresetPreview,
     planShrink,
     previewPresets,
@@ -130,9 +132,11 @@ function renderPlan(plan: ShrinkPlan, targetBytes: number | undefined): void {
 }
 
 function renderPreviews({
+    plan,
     previews,
     recommended,
 }: {
+    plan: ShrinkPlan;
     previews: PresetPreview[];
     recommended: VideoPreset | undefined;
 }): void {
@@ -148,7 +152,9 @@ function renderPreviews({
             name,
             quality,
             preview.ssim.toFixed(4),
-            `~${formatBytes(preview.predictedBytes)}`,
+            missesTarget(plan, preview)
+                ? pc.yellow(`~${formatBytes(preview.predictedBytes)} (over)`)
+                : `~${formatBytes(preview.predictedBytes)}`,
             `~${formatDuration(preview.predictedSeconds * 1000)}`,
             PRESET_TRADE[preview.preset],
         ]);
@@ -334,12 +340,12 @@ async function runShrink({ file, flags, signal }: { file: string; flags: ShrinkF
             );
         }
 
-        const recommendation = previews.length > 1 ? recommendFromPreviews(previews) : null;
+        const recommendation = previews.length > 1 ? recommendFromPreviews(plan, previews) : null;
         const recommended = preset ?? recommendation?.preset ?? (flags.preview ? previews[0]?.preset : "compatible");
         emit({ type: "previews", previews: previews.map(previewJson), recommendation });
 
         if (text && previews.length > 0) {
-            renderPreviews({ previews, recommended });
+            renderPreviews({ plan, previews, recommended });
 
             if (recommendation) {
                 out.log.info(`Recommended: ${pc.green(recommendation.preset)}, ${recommendation.reason}.`);
@@ -500,8 +506,9 @@ function renderFinal({
     chosen: VideoPreset;
 }): void {
     const bytes = row.output ? statSync(row.output).size : 0;
+    const missed = targetBytes !== undefined && bytes > targetBytes * TARGET_BAND.high;
     const lines = [
-        `${pc.green("Done")}: ${row.output}`,
+        `${missed ? pc.yellow("Done, over the size") : pc.green("Done")}: ${row.output}`,
         `${formatBytes(bytes)}${targetBytes === undefined ? "" : ` (${((bytes / targetBytes) * 100).toFixed(0)}% of the target)`}, from ${formatBytes(row.inputBytes ?? 0)}.`,
     ];
 

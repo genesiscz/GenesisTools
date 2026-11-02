@@ -268,6 +268,15 @@ describe("size target and GPU scale", () => {
         expect(args[args.indexOf("-c:a") + 1]).toBe("copy");
     });
 
+    test("each size correction loosens the GPU QP cap, which is a size floor", () => {
+        const cap = (attempt: number) =>
+            encodeArgs({ encoder, input: "/a.mp4", output: "/b.mp4", rate: { kind: "bitrate", kbps: 300, attempt } });
+
+        expect(cap(0)[cap(0).indexOf("-qmax") + 1]).toBe("36");
+        expect(cap(1)[cap(1).indexOf("-qmax") + 1]).toBe("42");
+        expect(cap(2)).not.toContain("-qmax");
+    });
+
     test("without a resize the command has no filter and no GPU frame format", () => {
         const args = encodeArgs({ encoder, input: "/a.mp4", output: "/b.mp4", rate: { kind: "quality", quality: 58 } });
 
