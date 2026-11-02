@@ -79,7 +79,8 @@ function impactOf(text: string, label: string, context: QuestionContext): { impa
 export function questionFor(item: MeetingItem, context: QuestionContext): NewQuestion | undefined {
     const low = item.confidence !== undefined && item.confidence < context.listenBelow;
 
-    if (item.status !== "suggested" || !low) {
+    // A goodbye nobody answered (R1/R5 without R13 or R14) may be only an intention: kept, never asked by ear.
+    if (item.status !== "suggested" || !low || item.evidence?.intention === true) {
         return undefined;
     }
 
