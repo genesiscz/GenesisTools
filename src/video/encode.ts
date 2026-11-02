@@ -22,11 +22,12 @@ import {
 } from "@genesiscz/utils/rm";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { ffmpegProgressReader } from "@genesiscz/utils/video/ffmpeg-progress";
-import { NotMediaError, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { type MediaFacts, NotMediaError, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import {
     audioBytes,
     correctedKbps,
     decodeErrors,
+    type EncodePass,
     encodeArgs,
     judgeOutput,
     MIN_TARGET_VIDEO_KBPS,
@@ -64,7 +65,8 @@ const MAX_SIZE_CORRECTIONS = 2;
 export interface EncodeProgressEvent {
     type: "progress";
     input: string;
-    phase: "encode" | "verify";
+    /** "analyze" is pass 1 of a two-pass encode, which writes only statistics. */
+    phase: "analyze" | "encode" | "verify";
     /** 0 for the first encode, 1 and 2 for size corrections. */
     pass: number;
     durationSec: number | null;
@@ -524,6 +526,68 @@ export function probeFailureRow({
     return { status: "failed", reason: `the probe failed: ${messageOf(error)}` };
 }
 
+/** Runs one ffmpeg encode (or one run of a two-pass encode) and reports its progress; the failure text, or null. */
+async function runEncodePass({
+    input,
+    output,
+    rate,
+    height,
+    pass,
+    twoPass,
+    facts,
+    options,
+}: {
+    input: string;
+    output: string;
+    rate: VideoRate;
+    height: number | undefined;
+    /** The size-correction attempt, 0 for the first. */
+    pass: number;
+    twoPass: EncodePass | undefined;
+    facts: MediaFacts;
+    options: EncodeOptions;
+}): Promise<string | null> {
+    const { encoder, onProgress } = options;
+    const phase: EncodeProgressEvent["phase"] = twoPass?.index === 1 ? "analyze" : "encode";
+    const run = await boundedCommand({
+        command: encodeArgs({
+            encoder,
+            input,
+            output,
+            rate,
+            height,
+            pass: twoPass,
+            progress: onProgress !== undefined,
+        }),
+        timeoutMs: 4 * 60 * 60_000,
+        signal: options.signal,
+        onStdout: onProgress
+            ? ffmpegProgressReader((block) =>
+                  onProgress({
+                      type: "progress",
+                      input,
+                      phase,
+                      pass,
+                      durationSec: facts.durationSec,
+                      outTimeSec: block.outTimeSec,
+                      fraction:
+                          facts.durationSec && block.outTimeSec !== null
+                              ? Math.min(1, block.outTimeSec / facts.durationSec)
+                              : null,
+                      speed: block.speed,
+                      outputBytes: phase === "analyze" ? null : block.totalBytes,
+                  })
+              )
+            : undefined,
+    });
+
+    if (run.error || run.status !== 0) {
+        return `ffmpeg failed${phase === "analyze" ? " in the analysis pass" : ""}: ${run.error?.message ?? run.stderr.slice(-300)}`;
+    }
+
+    return null;
+}
+
 async function encodeOne({ input, options }: { input: string; options: EncodeOptions }): Promise<EncodeRow> {
     const { encoder } = options;
     const started = performance.now();
@@ -600,7 +664,8 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
     if (options.dryRun) {
         const plan = [
             rate.kind === "bitrate" ? `at ${rate.kbps} kbit/s` : null,
-            height === undefined ? null : `scaled to ${height}p on the GPU`,
+            height === undefined ? null : `scaled to ${height}p`,
+            rate.kind === "bitrate" && encoder.twoPass ? "in two passes" : null,
         ].filter(Boolean);
         return finish({ output: finalPath, status: "planned", reason: ["would encode", ...plan].join(" ") });
     }
@@ -613,36 +678,26 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         let temp = staging.file;
 
         for (let pass = 0; ; pass++) {
-            const onProgress = options.onProgress;
-            const run = await boundedCommand({
-                command: encodeArgs({ encoder, input, output: temp, rate, height, progress: onProgress !== undefined }),
-                timeoutMs: 4 * 60 * 60_000,
-                signal: options.signal,
-                onStdout: onProgress
-                    ? ffmpegProgressReader((block) =>
-                          onProgress({
-                              type: "progress",
-                              input,
-                              phase: "encode",
-                              pass,
-                              durationSec: facts.durationSec,
-                              outTimeSec: block.outTimeSec,
-                              fraction:
-                                  facts.durationSec && block.outTimeSec !== null
-                                      ? Math.min(1, block.outTimeSec / facts.durationSec)
-                                      : null,
-                              speed: block.speed,
-                              outputBytes: block.totalBytes,
-                          })
-                      )
-                    : undefined,
-            });
+            const logFile = join(staging.dir, "2pass");
+            const passes: (EncodePass | undefined)[] =
+                rate.kind === "bitrate" && encoder.twoPass
+                    ? [
+                          { index: 1, logFile },
+                          { index: 2, logFile },
+                      ]
+                    : [undefined];
+            let failure: string | null = null;
 
-            if (run.error || run.status !== 0) {
-                return finish({
-                    status: "failed",
-                    reason: `ffmpeg failed: ${run.error?.message ?? run.stderr.slice(-300)}`,
-                });
+            for (const twoPass of passes) {
+                failure = await runEncodePass({ input, output: temp, rate, height, pass, twoPass, facts, options });
+
+                if (failure) {
+                    break;
+                }
+            }
+
+            if (failure) {
+                return finish({ status: "failed", reason: failure });
             }
 
             if (rate.kind !== "bitrate" || options.targetBytes === undefined) {

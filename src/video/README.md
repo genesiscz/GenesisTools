@@ -34,30 +34,43 @@ Cancellation terminates the owned process group and removes only that generation
 Completed generations are retained. The original input is not modified. The widget imports originals to
 durable storage before starting preparation.
 
-## Hardware re-encode
+## Re-encode
 
 ```sh
 tools video encode ./clips --dry-run
 tools video encode ./a.mp4 ./b.mov --replace --json
+tools video encode ./talk.mp4 --preset compatible --height 720 --target-size 400MB --progress
 ```
 
-`tools video encode <paths...>` shrinks videos with the hardware encoder (HEVC through VideoToolbox, macOS only),
-which keeps the CPU free: three jobs use about 28% of one core in total, against about 550% for libx265.
+`tools video encode <paths...>` shrinks videos. By default it uses the hardware encoder (HEVC through VideoToolbox,
+macOS only), which keeps the CPU free: three jobs use about 28% of one core in total, against about 550% for libx265.
 Folders are walked for `.mp4`, `.m4v`, `.mov` and `.mkv`. The output keeps the input's container.
+
+Presets, measured on a 10 s clip of a 720p talk recording at 420 kbit/s (2026-11-02, SSIM against the source):
+
+- `fast`: `hevc`, the GPU. SSIM 0.978. Fastest and almost no CPU, but visibly softer at low bitrates.
+- `compatible`: `x264` slow, two passes for a size target. SSIM 0.993. Plays everywhere; on that clip it took about a
+  third of the time x265 took.
+- `small`: `av1`, SVT-AV1 preset 5. SSIM 0.995, the best per byte; older devices may not decode AV1.
 
 Flags and defaults:
 
-- `--quality <n>`: 58. SSIM against libx265 crf 26 was equal or better on three clips; 50 is visibly lower.
-- `--codec [name]`: `hevc`, the only value. A bare `--codec` lists the values (a picker in a terminal). Encoders are a
-  table in `src/utils/video/reencode.ts`.
+- `--preset [name]`: `fast`, `compatible` or `small`. It picks the encoder, so it cannot be combined with `--codec`.
+- `--codec [name]`: `hevc` (default), `x264`, `x265` or `av1`. A bare `--codec` lists the values (a picker in a
+  terminal). Encoders are a table in `src/utils/video/reencode.ts`, each with its own rate, scale and two-pass flags.
+- `--quality <n>`: in the encoder's own scale. `hevc`: 0 to 100, higher is better, default 58 (SSIM against libx265
+  crf 26 was equal or better on three clips; 50 is visibly lower). `x264`/`x265`: CRF, lower is better, default 23/26.
+  `av1`: CRF 1 to 63, default 35.
 - `--jobs <n>`: 2. The hardware encoder has few sessions.
 - `--min-saving <percent>`: 25. A smaller saving discards the output.
 - `--target-size <size>`: aim each output at this size (`400MB`, `1.5GB`, a bare number is MB) instead of `--quality`.
   The audio is copied, so the video gets the target minus the audio and a 1% container share. VideoToolbox misses an
-  average bitrate (a bare `-b:v` overshot by 36% on a talk recording), so the rate is capped and a result outside 90% to
-  103% of the target is encoded again with a corrected rate, at most twice. An input already in HEVC is a candidate too.
-- `--height <px>`: scale a taller video down to this height. Decode, `scale_vt` and the encode all stay on the GPU:
-  2 minutes of 1080p took 0.7 s of user CPU, against 11 s with ffmpeg's software scaler.
+  average bitrate, so a result outside 90% to 103% of the target is encoded again with a corrected rate, at most twice.
+  x264 and x265 run two passes instead, which land within a few percent. An input already in the target codec is a
+  candidate too. A bitrate cap (`-maxrate`) is not used: on VideoToolbox it starved the picture (SSIM 0.859).
+- `--height <px>`: scale a taller video down to this height. With `hevc`, decode, `scale_vt` and the encode all stay on
+  the GPU: 2 minutes of 1080p took 0.7 s of user CPU, against 11 s with ffmpeg's software scaler. The CPU encoders
+  scale with Lanczos, which keeps slide text sharper.
 - `--progress`: report each encode while it runs, from ffmpeg's `-progress` output. In a terminal it is a clack bar;
   without one, a line per 10%. With `--format json` the progress events are JSON lines on stderr and stdout stays one
   document; with `--format jsonl` stdout carries `{"type":"progress",...}` lines and a `{"type":"row",...}` line for

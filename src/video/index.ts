@@ -11,7 +11,11 @@ import {
     encoderUnavailableReason,
     findEncoder,
     isVideoEncoderCodec,
+    isVideoPreset,
     VIDEO_ENCODER_CODECS,
+    VIDEO_ENCODERS,
+    VIDEO_PRESET_NAMES,
+    VIDEO_PRESETS,
 } from "@genesiscz/utils/video/reencode";
 import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/video/types";
@@ -33,10 +37,20 @@ export function registerVideoCommands(program: Command): void {
     program
         .command("encode <paths...>")
         .description(
-            "Re-encode videos with the hardware encoder (HEVC on macOS), keeping a result only when it is verified"
+            "Re-encode videos (HEVC on the GPU by default, or x264, x265 or AV1 on the CPU), keeping a result only when it is verified"
         )
-        .option("--quality <n>", "Encoder quality, higher is better (hevc: 58 matches libx265 crf 26)", "58")
-        .option("--codec [name]", `Target codec: ${VIDEO_ENCODER_CODECS.join(", ")}`, "hevc")
+        .option(
+            "--preset [name]",
+            `A named starting point: ${VIDEO_PRESET_NAMES.map((name) => `${name} (${VIDEO_PRESETS[name]})`).join(", ")}`
+        )
+        .option(
+            "--quality <n>",
+            `Constant quality in the encoder's own scale, ignored with --target-size. ${VIDEO_ENCODER_CODECS.map((codec) => `${codec}: ${VIDEO_ENCODERS[codec].qualityHelp}, default ${VIDEO_ENCODERS[codec].defaultQuality}`).join("; ")}`
+        )
+        .option(
+            "--codec [name]",
+            `Target encoder (default hevc): ${VIDEO_ENCODER_CODECS.map((codec) => `${codec}: ${VIDEO_ENCODERS[codec].label}`).join("; ")}`
+        )
         .option("--jobs <n>", "Files encoded at once (the hardware encoder has few sessions)", "2")
         .option("--min-saving <percent>", "Discard an output that is less than this much smaller", "25")
         .option(
@@ -45,7 +59,7 @@ export function registerVideoCommands(program: Command): void {
         )
         .option(
             "--height <px>",
-            "Scale a taller video down to this height; decode, scale and encode all run on the GPU"
+            "Scale a taller video down to this height (on the GPU with hevc, Lanczos on the CPU otherwise)"
         )
         .option(
             "--replace",
@@ -62,8 +76,9 @@ export function registerVideoCommands(program: Command): void {
             async (
                 paths: string[],
                 options: {
-                    quality: string;
-                    codec: string | boolean;
+                    quality?: string;
+                    codec?: string | boolean;
+                    preset?: string | boolean;
                     jobs: string;
                     minSaving: string;
                     targetSize?: string;
@@ -75,15 +90,41 @@ export function registerVideoCommands(program: Command): void {
                     json?: boolean;
                 }
             ) => {
-                const codec = await pickEnumFlag({
-                    tool: toolCommand("video", "encode"),
-                    subcommand: ["encode"],
-                    flag: "--codec",
-                    given: options.codec,
-                    values: VIDEO_ENCODER_CODECS,
-                    fallback: "hevc",
-                    accepts: isVideoEncoderCodec,
-                });
+                if (options.preset !== undefined && options.codec !== undefined) {
+                    out.log.error("Pass --preset or --codec, not both: a preset names its encoder.");
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const preset =
+                    options.preset === undefined
+                        ? undefined
+                        : await pickEnumFlag({
+                              tool: toolCommand("video", "encode"),
+                              subcommand: ["encode"],
+                              flag: "--preset",
+                              given: options.preset,
+                              values: VIDEO_PRESET_NAMES,
+                              fallback: "fast",
+                              accepts: isVideoPreset,
+                          });
+
+                if (preset === null) {
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const codec = preset
+                    ? VIDEO_PRESETS[preset]
+                    : await pickEnumFlag({
+                          tool: toolCommand("video", "encode"),
+                          subcommand: ["encode"],
+                          flag: "--codec",
+                          given: options.codec,
+                          values: VIDEO_ENCODER_CODECS,
+                          fallback: "hevc",
+                          accepts: isVideoEncoderCodec,
+                      });
                 const encoder = codec === null ? undefined : findEncoder(codec);
 
                 if (!encoder) {
@@ -91,7 +132,7 @@ export function registerVideoCommands(program: Command): void {
                     return;
                 }
 
-                const quality = Number(options.quality);
+                const quality = options.quality === undefined ? encoder.defaultQuality : Number(options.quality);
                 const jobs = Number(options.jobs);
                 const minSavingPct = Number(options.minSaving);
 

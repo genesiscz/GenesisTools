@@ -34,6 +34,9 @@ import {
     findEncoder,
     judgeOutput,
     skipReason,
+    VIDEO_ENCODERS,
+    VIDEO_PRESET_NAMES,
+    VIDEO_PRESETS,
     type VideoEncoder,
     videoKbpsForTarget,
 } from "@genesiscz/utils/video/reencode";
@@ -240,7 +243,7 @@ describe("encodeArgs", () => {
 });
 
 describe("size target and GPU scale", () => {
-    test("a resize keeps the frames on the GPU and a bitrate rate caps the encoder", () => {
+    test("a resize keeps the frames on the GPU, and a bitrate is uncapped with a long GOP", () => {
         const args = encodeArgs({
             encoder,
             input: "/clips/a.mp4",
@@ -252,7 +255,8 @@ describe("size target and GPU scale", () => {
         expect(args).toContain("videotoolbox_vld");
         expect(args[args.indexOf("-vf") + 1]).toBe("scale_vt=w=-2:h=720");
         expect(args[args.indexOf("-b:v") + 1]).toBe("420k");
-        expect(args[args.indexOf("-maxrate") + 1]).toBe("420k");
+        expect(args).not.toContain("-maxrate");
+        expect(args[args.indexOf("-g") + 1]).toBe("600");
         expect(args).not.toContain("-q:v");
         expect(args[args.indexOf("-c:a") + 1]).toBe("copy");
     });
@@ -262,6 +266,53 @@ describe("size target and GPU scale", () => {
 
         expect(args).not.toContain("-vf");
         expect(args).not.toContain("videotoolbox_vld");
+    });
+
+    test("a two-pass encoder writes only statistics in pass 1 and the file in pass 2", () => {
+        const x264 = VIDEO_ENCODERS.x264;
+        const rate = { kind: "bitrate", kbps: 385 } as const;
+        const first = encodeArgs({
+            encoder: x264,
+            input: "/a.mp4",
+            output: "/b.mp4",
+            rate,
+            height: 720,
+            pass: { index: 1, logFile: "/tmp/stats" },
+        });
+        const second = encodeArgs({
+            encoder: x264,
+            input: "/a.mp4",
+            output: "/b.mp4",
+            rate,
+            pass: { index: 2, logFile: "/tmp/stats" },
+        });
+
+        expect(first.slice(-4)).toEqual(["-an", "-f", "null", "-"]);
+        expect(first[first.indexOf("-vf") + 1]).toBe("scale=-2:720:flags=lanczos");
+        expect(first[first.indexOf("-pass") + 1]).toBe("1");
+        expect(second.at(-1)).toBe("/b.mp4");
+        expect(second[second.indexOf("-passlogfile") + 1]).toBe("/tmp/stats");
+    });
+
+    test("x265 carries its pass inside -x265-params, beside its own settings", () => {
+        const args = encodeArgs({
+            encoder: VIDEO_ENCODERS.x265,
+            input: "/a.mp4",
+            output: "/b.mp4",
+            rate: { kind: "bitrate", kbps: 385 },
+            pass: { index: 2, logFile: "/tmp/stats" },
+        });
+
+        expect(args[args.indexOf("-x265-params") + 1]).toBe(
+            "keyint=600:aq-mode=3:log-level=error:pass=2:stats=/tmp/stats"
+        );
+        expect(args).not.toContain("-pass");
+    });
+
+    test("every preset names an encoder in the table", () => {
+        for (const name of VIDEO_PRESET_NAMES) {
+            expect(findEncoder(VIDEO_PRESETS[name])?.codec).toBe(VIDEO_PRESETS[name]);
+        }
     });
 
     test("the video gets the target minus the copied audio and a container share", () => {

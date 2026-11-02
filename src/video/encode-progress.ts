@@ -36,16 +36,26 @@ function describe(event: EncodeProgressEvent): string {
 
     const pass = event.pass > 0 ? ` (size correction ${event.pass})` : "";
     const speed = event.speed === null ? "" : `, ${event.speed.toFixed(1)}x`;
-    return `${name}: ${percent(event.fraction)}${speed}${pass}`;
+    const step = event.phase === "analyze" ? "analyzing " : "";
+    return `${name}: ${step}${percent(event.fraction)}${speed}${pass}`;
 }
 
-/** The share of the whole bar an input has reached. A new size-correction pass starts its encode over. */
-function unitsFor(event: EncodeProgressEvent): number {
+/**
+ * The share of the whole bar an input has reached. A two-pass encode splits the encode share between its analysis and
+ * its encode; a new size-correction pass starts its encode over.
+ */
+function unitsFor(event: EncodeProgressEvent, twoPass: boolean): number {
+    const fraction = event.fraction ?? 0;
+
     if (event.phase === "verify") {
         return ENCODE_SHARE * UNITS_PER_FILE;
     }
 
-    return (event.fraction ?? 0) * ENCODE_SHARE * UNITS_PER_FILE;
+    if (event.phase === "analyze") {
+        return (fraction * ENCODE_SHARE * UNITS_PER_FILE) / 2;
+    }
+
+    return (twoPass ? 0.5 + fraction / 2 : fraction) * ENCODE_SHARE * UNITS_PER_FILE;
 }
 
 function writeStderrLine(value: unknown): void {
@@ -83,10 +93,13 @@ export function createEncodeReporter({
     }
 
     if (!process.stderr.isTTY) {
-        const lastStep = new Map<string, number>();
+        const lastStep = new Map<string, string>();
         return {
             onProgress: (event) => {
-                const step = event.phase === "verify" ? 10 : Math.floor((event.fraction ?? 0) / PLAIN_STEP);
+                const step =
+                    event.phase === "verify"
+                        ? "verify"
+                        : `${event.phase}:${Math.floor((event.fraction ?? 0) / PLAIN_STEP)}`;
                 const key = `${event.input}:${event.pass}`;
 
                 if (lastStep.get(key) !== step) {
@@ -100,6 +113,7 @@ export function createEncodeReporter({
 
     const bar = clackProgress({ max: Math.max(1, files) * UNITS_PER_FILE, style: "heavy" });
     const reached = new Map<string, number>();
+    const analyzed = new Set<string>();
     let shown = 0;
     let started = false;
     const moveTo = (message: string) => {
@@ -118,7 +132,12 @@ export function createEncodeReporter({
 
     return {
         onProgress: (event) => {
-            reached.set(event.input, Math.max(reached.get(event.input) ?? 0, unitsFor(event)));
+            if (event.phase === "analyze") {
+                analyzed.add(event.input);
+            }
+
+            const units = unitsFor(event, analyzed.has(event.input));
+            reached.set(event.input, Math.max(reached.get(event.input) ?? 0, units));
             moveTo(describe(event));
         },
         onRow: (row) => {

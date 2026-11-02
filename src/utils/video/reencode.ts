@@ -4,54 +4,177 @@ import { audioStreamCount, hasAudio, type MediaFacts, type MediaStream, primaryV
 /** How the encoder spends bits: a constant quality, or an average bitrate that a size target asks for. */
 export type VideoRate = { kind: "quality"; quality: number } | { kind: "bitrate"; kbps: number };
 
+/** One run of a two-pass encode: pass 1 only writes the statistics file that pass 2 reads. */
+export interface EncodePass {
+    index: 1 | 2;
+    /** The statistics file prefix both passes share. */
+    logFile: string;
+}
+
 /** A re-encode target. Add a codec by adding one entry to `VIDEO_ENCODERS`; no call site branches on the name. */
 export interface VideoEncoder {
     codec: string;
+    /** One line for help and `--preset` listings. */
+    label: string;
     /** The ffmpeg encoder name, e.g. `hevc_videotoolbox`. */
     ffmpegName: string;
     /** What ffprobe calls the codec of a stream this encoder wrote. */
     streamCodec: string;
+    /** `--quality` in this encoder's own scale; `qualityHelp` says which way is better. */
     defaultQuality: number;
+    qualityHelp: string;
     /** Containers that can hold this codec, by extension with the dot. */
     containers: readonly string[];
     /** Platforms the encoder runs on (`process.platform` values). */
     platforms: readonly NodeJS.Platform[];
-    /** Hardware decode flags, also used to verify the output. */
+    /** Decode flags for the input, also used to verify the output. */
     decodeArgs: readonly string[];
-    /** The video part of the ffmpeg command line. */
-    videoArgs: (rate: VideoRate) => string[];
-    /** A resize on the GPU: decode flags that keep the frames there, and the scale filter for a target height. */
-    gpuScale: { decodeArgs: readonly string[]; filter: (height: number) => string };
+    /** The video part of the ffmpeg command line; `pass` is set only for an encoder with `twoPass`. */
+    videoArgs: (rate: VideoRate, pass?: EncodePass) => string[];
+    /** A resize: decode flags that suit the filter, and the scale filter for a target height. */
+    scale: { decodeArgs: readonly string[]; filter: (height: number) => string };
+    /** A bitrate target runs two passes, which lands within a few percent of the size; no correction pass needed. */
+    twoPass: boolean;
 }
+
+const SOFTWARE_CONTAINERS = [".mp4", ".m4v", ".mov", ".mkv"] as const;
+const ANY_PLATFORM: readonly NodeJS.Platform[] = ["darwin", "linux", "win32"];
+/** Lanczos keeps slide text sharper than the default bicubic when a 1080p recording goes to 720p. */
+const SOFTWARE_SCALE = { decodeArgs: [], filter: (height: number) => `scale=-2:${height}:flags=lanczos` } as const;
+/**
+ * A keyframe every 600 frames (20 s at 30 fps). Talks and slides are mostly still, and every keyframe costs a full
+ * picture: the default interval spent the budget on them and the picture pulsed at each one (measured 2026-11-02).
+ */
+const LONG_GOP = ["-g", "600"] as const;
 
 export const VIDEO_ENCODERS = {
     hevc: {
         codec: "hevc",
+        label: "HEVC on the GPU (VideoToolbox): fastest, uses almost no CPU, weakest at low bitrates",
         ffmpegName: "hevc_videotoolbox",
         streamCodec: "hevc",
         defaultQuality: 58,
+        qualityHelp: "0 to 100, higher is better (58 matches libx265 crf 26)",
         containers: [".mp4", ".m4v", ".mov", ".mkv"],
         platforms: ["darwin"],
         decodeArgs: ["-hwaccel", "videotoolbox"],
-        // A bare -b:v overshot by about 36% on a talk recording and -constant_bit_rate by 65%; with the rate capped,
-        // the result lands below the request, and the size-target loop corrects that (measured 2026-11-02).
+        // At 420 kbit/s on a talk recording, a capped rate (-maxrate) scored SSIM 0.859 and looked broken; an uncapped
+        // rate with a long GOP, quality priority and spatial AQ scored 0.978. The uncapped rate overshoots by about 10%,
+        // which the size-target loop corrects (measured 2026-11-02).
         videoArgs: (rate) => [
             "-c:v",
             "hevc_videotoolbox",
-            ...(rate.kind === "quality"
-                ? ["-q:v", String(rate.quality)]
-                : ["-b:v", `${rate.kbps}k`, "-maxrate", `${rate.kbps}k`, "-bufsize", `${rate.kbps * 2}k`]),
+            ...(rate.kind === "quality" ? ["-q:v", String(rate.quality)] : ["-b:v", `${rate.kbps}k`]),
+            ...LONG_GOP,
+            "-prio_speed",
+            "0",
+            "-spatial_aq",
+            "1",
             "-tag:v",
             "hvc1",
         ],
         // Decode, scale and encode all stay on the GPU: 0.7 s of user CPU for 2 min of 1080p, against 11 s with the
         // software scaler (measured 2026-11-02).
-        gpuScale: {
+        scale: {
             decodeArgs: ["-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"],
             filter: (height) => `scale_vt=w=-2:h=${height}`,
         },
+        twoPass: false,
+    },
+    x264: {
+        codec: "x264",
+        label: "H.264 on the CPU (x264 slow): plays everywhere, near the best quality, fast for a CPU encoder",
+        ffmpegName: "libx264",
+        streamCodec: "h264",
+        defaultQuality: 23,
+        qualityHelp: "CRF 0 to 51, lower is better",
+        containers: SOFTWARE_CONTAINERS,
+        platforms: ANY_PLATFORM,
+        decodeArgs: [],
+        videoArgs: (rate, pass) => [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            ...(rate.kind === "quality" ? ["-crf", String(rate.quality)] : ["-b:v", `${rate.kbps}k`]),
+            ...LONG_GOP,
+            ...(pass ? ["-pass", String(pass.index), "-passlogfile", pass.logFile] : []),
+        ],
+        scale: SOFTWARE_SCALE,
+        twoPass: true,
+    },
+    x265: {
+        codec: "x265",
+        label: "HEVC on the CPU (x265 slow): the same quality as x264 here, about five times slower",
+        ffmpegName: "libx265",
+        streamCodec: "hevc",
+        defaultQuality: 26,
+        qualityHelp: "CRF 0 to 51, lower is better",
+        containers: SOFTWARE_CONTAINERS,
+        platforms: ANY_PLATFORM,
+        decodeArgs: [],
+        // libx265 takes its pass and statistics file in -x265-params, not in ffmpeg's -pass.
+        videoArgs: (rate, pass) => [
+            "-c:v",
+            "libx265",
+            "-preset",
+            "slow",
+            ...(rate.kind === "quality" ? ["-crf", String(rate.quality)] : ["-b:v", `${rate.kbps}k`]),
+            "-x265-params",
+            [
+                "keyint=600",
+                "aq-mode=3",
+                "log-level=error",
+                ...(pass ? [`pass=${pass.index}`, `stats=${pass.logFile}`] : []),
+            ].join(":"),
+            "-tag:v",
+            "hvc1",
+        ],
+        scale: SOFTWARE_SCALE,
+        twoPass: true,
+    },
+    av1: {
+        codec: "av1",
+        label: "AV1 on the CPU (SVT-AV1 preset 5): the best quality per byte; older devices may not decode it",
+        ffmpegName: "libsvtav1",
+        streamCodec: "av1",
+        defaultQuality: 35,
+        qualityHelp: "CRF 1 to 63, lower is better",
+        containers: [".mp4", ".mkv"],
+        platforms: ANY_PLATFORM,
+        decodeArgs: [],
+        videoArgs: (rate) => [
+            "-c:v",
+            "libsvtav1",
+            "-preset",
+            "5",
+            ...(rate.kind === "quality" ? ["-crf", String(rate.quality)] : ["-b:v", `${rate.kbps}k`]),
+            ...LONG_GOP,
+            "-svtav1-params",
+            "tune=0:film-grain=0",
+        ],
+        scale: SOFTWARE_SCALE,
+        twoPass: false,
     },
 } as const satisfies Record<string, VideoEncoder>;
+
+/**
+ * Named starting points, one encoder each, picked from a 10 s comparison at 420 kbit/s on a 720p talk recording
+ * (2026-11-02, SSIM against the source): fast 0.978, compatible 0.9931, small 0.9949.
+ */
+export const VIDEO_PRESETS = {
+    fast: "hevc",
+    compatible: "x264",
+    small: "av1",
+} as const satisfies Record<string, keyof typeof VIDEO_ENCODERS>;
+
+export type VideoPreset = keyof typeof VIDEO_PRESETS;
+
+export function isVideoPreset(value: string): value is VideoPreset {
+    return Object.hasOwn(VIDEO_PRESETS, value);
+}
+
+export const VIDEO_PRESET_NAMES: readonly VideoPreset[] = Object.keys(VIDEO_PRESETS).filter(isVideoPreset);
 
 export type VideoEncoderCodec = keyof typeof VIDEO_ENCODERS;
 
@@ -212,6 +335,7 @@ export function encodeArgs({
     rate,
     height,
     progress = false,
+    pass,
 }: {
     encoder: VideoEncoder;
     input: string;
@@ -221,6 +345,8 @@ export function encodeArgs({
     height?: number;
     /** Write `key=value` progress blocks to stdout, for `ffmpegProgressReader`. */
     progress?: boolean;
+    /** One run of a two-pass encode; pass 1 writes only its statistics, to the null muxer. */
+    pass?: EncodePass;
 }): string[] {
     return ffmpegCommand([
         "-nostdin",
@@ -228,19 +354,17 @@ export function encodeArgs({
         "-v",
         "error",
         ...(progress ? ["-progress", "pipe:1", "-nostats"] : []),
-        ...(height === undefined ? encoder.decodeArgs : encoder.gpuScale.decodeArgs),
+        ...(height === undefined ? encoder.decodeArgs : encoder.scale.decodeArgs),
         "-i",
         input,
         ...KEPT_STREAMS,
         "-map_metadata",
         "0",
-        ...(height === undefined ? [] : ["-vf", encoder.gpuScale.filter(height)]),
-        ...encoder.videoArgs(rate),
-        "-c:a",
-        "copy",
-        "-movflags",
-        "+faststart+use_metadata_tags",
-        output,
+        ...(height === undefined ? [] : ["-vf", encoder.scale.filter(height)]),
+        ...encoder.videoArgs(rate, pass),
+        ...(pass?.index === 1
+            ? ["-an", "-f", "null", "-"]
+            : ["-c:a", "copy", "-movflags", "+faststart+use_metadata_tags", output]),
     ]);
 }
 
