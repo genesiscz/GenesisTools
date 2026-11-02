@@ -3,6 +3,7 @@
  * native call: under the test runner the real ax-tool throws, so a handler that reached it fails.
  */
 import { describe, expect, test } from "bun:test";
+import { answerText } from "@app/genesis-tools-mcp/lib/tool-entry";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { controlToolEntries } from "./genesis-tools";
 
@@ -14,7 +15,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<Record
         throw new Error(`no tool ${name}`);
     }
 
-    return SafeJSON.parse(await entry.handler(args), { strict: true }) as Record<string, unknown>;
+    return SafeJSON.parse(answerText(await entry.handler(args)), { strict: true }) as Record<string, unknown>;
 }
 
 describe("controlToolEntries", () => {
@@ -55,7 +56,7 @@ describe("controlToolEntries", () => {
             { plan: { app: "Fixture", restore: true, steps: [{ do: "type", text: "test" }] } },
             { signal: controller.signal }
         );
-        const result = SafeJSON.parse(response, { strict: true });
+        const result = SafeJSON.parse(answerText(response), { strict: true });
         expect(result.kind).toBe("ran");
         expect(result.report.ok).toBe(false);
         expect(result.report.skippedSteps).toBe(1);

@@ -54,6 +54,8 @@ export interface WorkerReply {
     headers: Record<string, string>;
     body: ArrayBuffer;
     error: string | null;
+    /** The body passed the request's `maxBodyBytes` and the transfer was stopped (`error` says so too). */
+    overLimit: boolean;
 }
 
 export interface WorkerClosed {

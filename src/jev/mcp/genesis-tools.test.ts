@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { answerText } from "@app/genesis-tools-mcp/lib/tool-entry";
 import { type Evaluator, lazyEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { GrepSetupError } from "../lib/grep/search";
@@ -64,7 +65,7 @@ describe("jevToolEntries", () => {
     test("the handler returns JSON text the host can parse back", async () => {
         const entries = jevToolEntries();
         const text = await entries.jev_verify_templates.handler({}, { signal: new AbortController().signal });
-        const parsed: { templates?: unknown[] } = SafeJSON.parse(text);
+        const parsed: { templates?: unknown[] } = SafeJSON.parse(answerText(text));
         expect(Array.isArray(parsed.templates)).toBe(true);
     });
 });

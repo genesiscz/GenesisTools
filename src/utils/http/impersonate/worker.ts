@@ -192,6 +192,7 @@ function reply(transfer: Transfer, status: number, error: string | null): void {
             headers: error ? {} : transfer.headers,
             body: error ? new ArrayBuffer(0) : buffer,
             error,
+            overLimit: transfer.overLimit,
         },
         error ? [] : [buffer]
     );
@@ -288,6 +289,7 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
                 headers: {},
                 body: new ArrayBuffer(0),
                 error: text,
+                overLimit: false,
             });
             return;
         }
