@@ -110,6 +110,8 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         fromSec: z.number(),
         toSec: z.number(),
         question: z.string().min(1),
+        /** The words in question (about a term or text), as the transcript shows them; marked until answered. */
+        heard: z.string().min(1).optional(),
         choices: z.array(z.string()).default([]),
         decides: z.array(itemIdSchema).default([]),
         answer: z.string().optional(),

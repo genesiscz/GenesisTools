@@ -214,13 +214,45 @@ export interface DictionaryApplied {
     fuzzy: number;
     /** Abbreviations expanded. */
     expansions: number;
+    /** Term meanings written after a first mention. */
+    meanings: number;
+}
+
+/** How an expansion or a meaning is written: in parentheses (text, subtitles) or as a superscript (Markdown). */
+export const DICTIONARY_NOTES = ["inline", "sup"] as const;
+export type DictionaryNotes = (typeof DICTIONARY_NOTES)[number];
+
+/**
+ * An abbreviation's substitution as written in the output. The stored form stays "MOP (Obchodní partner podnikatel)";
+ * `sup` splits it at the value into "MOP <sup>(Obchodní partner podnikatel)</sup>".
+ */
+function writtenExpansion(abbr: { value: string; substitution: string }, notes: DictionaryNotes): string {
+    const at = abbr.substitution.indexOf(abbr.value);
+    const after = abbr.substitution.slice(at + abbr.value.length).trim();
+
+    if (notes === "inline" || at < 0 || !after) {
+        return abbr.substitution;
+    }
+
+    return `${abbr.substitution.slice(0, at)}${abbr.value} <sup>${after}</sup>`;
 }
 
 /**
  * Applies `fix` and `abbr` entries to every line, in transcript order. Fixes run first, so an abbreviation that a fix
- * produced is expanded too. A mention already written as its expansion ("MOP (Obchodní …)") is left alone.
+ * produced is expanded too. A mention already written as its expansion ("MOP (Obchodní …)") is left alone. A term's
+ * `meaning` follows its first mention. `notes` says how expansions and meanings are written (default `inline`).
  */
-export function applyDictionary(entries: TranscriptEntry[], dictionary: ResolvedDictionary): DictionaryApplied {
+export function applyDictionary(
+    entries: TranscriptEntry[],
+    dictionary: ResolvedDictionary,
+    options: { notes?: DictionaryNotes } = {}
+): DictionaryApplied {
+    const notes = options.notes ?? "inline";
+    const meanings = dictionary.entries.flatMap((entry) =>
+        entry.type === "term" && entry.meaning ? [{ value: entry.value, meaning: entry.meaning }] : []
+    );
+    const meant = new Set<string>();
+    let meaningCount = 0;
     const fixes = dictionary.entries.filter((entry) => entry.type === "fix");
     const abbrs = dictionary.abbrExpansion === "off" ? [] : dictionary.entries.filter((entry) => entry.type === "abbr");
     const spokenForms = dictionary.entries.flatMap((entry) =>
@@ -278,12 +310,38 @@ export function applyDictionary(entries: TranscriptEntry[], dictionary: Resolved
 
                 expanded.add(abbr.value);
                 expansionCount += 1;
-                return abbr.substitution;
+                return writtenExpansion(abbr, notes);
+            });
+        }
+
+        for (const term of meanings) {
+            if (meant.has(term.value)) {
+                continue;
+            }
+
+            const written = `(${term.meaning})`;
+            text = text.replace(wholeWord(term.value, "u"), (match, offset: number, whole: string) => {
+                meant.add(term.value);
+                const next = whole.slice(offset + match.length).trimStart();
+
+                if (next.startsWith(written) || next.startsWith(`<sup>${written}`)) {
+                    return match;
+                }
+
+                meaningCount += 1;
+                return notes === "sup" ? `${match} <sup>${written}</sup>` : `${match} ${written}`;
             });
         }
 
         return text === line.text ? line : { ...line, text };
     });
 
-    return { entries: result, fixes: fixCount, spoken: spokenCount, fuzzy: fuzzyCount, expansions: expansionCount };
+    return {
+        entries: result,
+        fixes: fixCount,
+        spoken: spokenCount,
+        fuzzy: fuzzyCount,
+        expansions: expansionCount,
+        meanings: meaningCount,
+    };
 }

@@ -16,7 +16,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import { applyCorrections, type TranscriptCorrections } from "@genesiscz/utils/transcribe/apply";
+import { applyCorrections, type TranscriptCorrections, type UnclearPassage } from "@genesiscz/utils/transcribe/apply";
 import {
     entriesToSrt,
     entriesToVtt,
@@ -25,6 +25,7 @@ import {
     localTime,
     parseClock,
     TRANSCRIPT_FORMATS,
+    type TranscriptFormat,
     transcriptMarkdown,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
@@ -33,6 +34,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { energyLeftShareFor } from "../lib/energy";
 import { presenceFor } from "../lib/presence";
+import { openQuestions } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
@@ -221,6 +223,7 @@ async function addQuestion(
         to: string;
         about?: string;
         question: string;
+        heard?: string;
         choices?: string;
         decides?: string;
     }
@@ -283,6 +286,7 @@ async function addQuestion(
                     fromSec,
                     toSec,
                     question: opts.question,
+                    ...(opts.heard ? { heard: opts.heard } : {}),
                     choices: list(opts.choices),
                     decides,
                     rules: ["user"],
@@ -486,15 +490,40 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     }
 }
 
+/**
+ * The open questions as passages a transcript marks: a speaker question marks the label of the ranges it decides, a
+ * question with `heard` marks those words.
+ */
+function unclearPassages(record: MeetingRecord): UnclearPassage[] {
+    return openQuestions(record).flatMap((question): UnclearPassage[] => {
+        if (question.heard) {
+            const { fromSec, toSec, heard, choices } = question;
+            return [{ fromSec, toSec, heard, readings: choices }];
+        }
+
+        if (question.about !== "speaker") {
+            return [];
+        }
+
+        return record.items.flatMap((item) =>
+            item.kind === "speaker-range" && item.status === "suggested" && question.decides.includes(item.id)
+                ? [{ fromSec: item.fromSec, toSec: item.toSec, speaker: item.label, readings: question.choices }]
+                : []
+        );
+    });
+}
+
 /** What a transcript applies: renames, then the confirmed items (and the suggested ones on request), then the dictionary. */
 function correctionsOf(
     record: MeetingRecord,
     config: Awaited<ReturnType<MeetingsConfigStore["read"]>>,
-    opts: { withSuggested?: boolean; dictionary?: boolean }
+    opts: { withSuggested?: boolean; dictionary?: boolean; format: TranscriptFormat }
 ): TranscriptCorrections {
     const used = record.items.filter(
         (item) => item.status === "confirmed" || (opts.withSuggested && item.status === "suggested")
     );
+    // With --with-suggested the top reading is applied, so nothing stays open.
+    const passages = opts.withSuggested ? [] : unclearPassages(record);
 
     return {
         labels: record.speakers.labels,
@@ -512,6 +541,8 @@ function correctionsOf(
         ...(opts.dictionary === false
             ? {}
             : { dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }) }),
+        notes: opts.format === "md" ? "sup" : "inline",
+        ...(passages.length > 0 ? { unclear: { label: config.global.render.unclearLabel, passages } } : {}),
     };
 }
 
@@ -541,9 +572,9 @@ async function transcript(
     try {
         const meeting = await loadTranscript(record);
         const config = await new MeetingsConfigStore().read();
-        const applied = applyCorrections(meeting.transcript, correctionsOf(record, config, opts));
+        const applied = applyCorrections(meeting.transcript, correctionsOf(record, config, { ...opts, format }));
         ui.dim(
-            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions`
+            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.unclear} unclear marks`
         );
 
         if (format === "json") {
@@ -575,7 +606,14 @@ async function transcript(
                     ...(record.project ? { project: record.project } : {}),
                     meeting_id: record.id,
                     sources: Object.keys(record.sources),
-                    speakers: [...new Set(applied.entries.map((entry) => entry.speaker))],
+                    // An open speaker mark is not a speaker.
+                    speakers: [
+                        ...new Set(
+                            applied.entries
+                                .map((entry) => entry.speaker)
+                                .filter((name) => !name.startsWith(`[${config.global.render.unclearLabel}:`))
+                        ),
+                    ],
                 })
             );
         }
@@ -613,6 +651,10 @@ export function registerItemCommands(program: Command): void {
         .requiredOption("--to <time>", "end of the range")
         .option("--about [topic]", `${QUESTION_TOPICS.join(" | ")} (default speaker)`)
         .requiredOption("--question <text>", "what to decide, as the listener reads it")
+        .option(
+            "--heard <words>",
+            "about a term or text: the words in question, marked in the transcript until answered"
+        )
         .option("--choices <list>", "comma-separated answers to offer")
         .option("--decides <ids>", "comma-separated items the answer confirms or rejects")
         .action(addQuestion);

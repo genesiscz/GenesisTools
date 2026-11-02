@@ -23,7 +23,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
-| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary |
+| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`global.render.unclearLabel`); `--with-suggested` applies the top reading instead |
 | `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display 1]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
 | `record stop`, `record status` | Stop (it finishes its current 30 s piece) and write the summary into the meeting; what is recording |
 | `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of the screen around a transcript time |

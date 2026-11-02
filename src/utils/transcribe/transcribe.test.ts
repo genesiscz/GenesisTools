@@ -403,3 +403,55 @@ describe("spoken forms and fuzzy matches (R2.5)", () => {
         expect(applied).toMatchObject({ spoken: 1, fuzzy: 1 });
     });
 });
+
+describe("notes and unclear passages (R2.6, R2.7)", () => {
+    const lines: TranscriptEntry[] = [
+        { speaker: "Speaker 5", startSec: 0, text: "MOP a JDZ jsou hotové." },
+        { speaker: "Speaker 5", startSec: 5, text: "JDZ ještě projdeme, MOP taky." },
+        { speaker: "Alice Example", startSec: 9, text: "A ten pentagon?" },
+    ];
+    const dictionary = mergeDictionaries([
+        {
+            abbrExpansion: "first",
+            entries: [
+                { type: "abbr", value: "MOP", substitution: "MOP (Obchodní partner)" },
+                { type: "term", value: "JDZ", meaning: "jednotný dodací závazek" },
+            ],
+        },
+    ]);
+
+    test("Markdown writes the expansion and a term's meaning as a superscript, at the first mention", () => {
+        const applied = applyDictionary(lines, dictionary, { notes: "sup" });
+        expect(applied.entries.map((line) => line.text)).toEqual([
+            "MOP <sup>(Obchodní partner)</sup> a JDZ <sup>(jednotný dodací závazek)</sup> jsou hotové.",
+            "JDZ ještě projdeme, MOP taky.",
+            "A ten pentagon?",
+        ]);
+        expect(applied.meanings).toBe(1);
+    });
+
+    test("text keeps the stored form in parentheses", () => {
+        expect(applyDictionary(lines, dictionary).entries[0]!.text).toBe(
+            "MOP (Obchodní partner) a JDZ (jednotný dodací závazek) jsou hotové."
+        );
+    });
+
+    test("an open speaker question replaces the label; open words are marked with their readings", () => {
+        const applied = applyCorrections(lines, {
+            labels: { "Speaker 5": "Carol Example" },
+            unclear: {
+                label: "nejasné",
+                passages: [
+                    { fromSec: 0, toSec: 0, speaker: "Speaker 5", readings: ["Alice Example", "Bob Example"] },
+                    { fromSec: 9, toSec: 12, heard: "pentagon", readings: ["Pentaho"] },
+                ],
+            },
+        });
+        expect(applied.entries.map((line) => [line.speaker, line.text])).toEqual([
+            ['[nejasné: "Speaker 5"; 1) Alice Example 2) Bob Example]', "MOP a JDZ jsou hotové."],
+            ["Carol Example", "JDZ ještě projdeme, MOP taky."],
+            ["Alice Example", 'A ten [nejasné: "pentagon"; 1) Pentaho]?'],
+        ]);
+        expect(applied.unclear).toBe(2);
+    });
+});
