@@ -114,6 +114,8 @@ export function findHarPlaylists(har: unknown): HarPlaylist[] {
 /**
  * The playlists worth offering as a stream, one per folder: the master when the HAR shows one, else the playlist the
  * player requested first there (a player loads the master before its variants, and a variant plays on its own too).
+ * A playlist in a subfolder of a master's folder (`<id>/1080p/video.m3u8` under `<id>/playlist.m3u8`) is that master's
+ * variant and is not offered on its own.
  */
 export function harStreamCandidates(playlists: HarPlaylist[]): HarPlaylist[] {
     const byFolder = new Map<string, HarPlaylist>();
@@ -127,7 +129,10 @@ export function harStreamCandidates(playlists: HarPlaylist[]): HarPlaylist[] {
         }
     }
 
-    return [...byFolder.values()];
+    const masterFolders = [...byFolder.entries()].filter(([, p]) => p.kind === "master").map(([folder]) => folder);
+    return [...byFolder.entries()]
+        .filter(([folder]) => !masterFolders.some((master) => folder !== master && folder.startsWith(master)))
+        .map(([, playlist]) => playlist);
 }
 
 export async function readHarPlaylists(path: string): Promise<HarPlaylist[]> {

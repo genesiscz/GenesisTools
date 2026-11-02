@@ -76,8 +76,10 @@ function parseHeaderFlags(flags: string[]): Record<string, string> {
 }
 
 function describe(candidate: HarPlaylist, index: number): string {
+    const startedAt = candidate.startedAt ? new Date(candidate.startedAt) : null;
+    const at = startedAt && !Number.isNaN(startedAt.getTime()) ? ` ${startedAt.toLocaleTimeString("en-GB")}` : "";
     const page = candidate.page ? `  (page ${candidate.page})` : "";
-    return `${index + 1}. [${candidate.kind}] ${safeUrl(candidate.url)}${page}`;
+    return `${index + 1}.${at} [${candidate.kind}] ${safeUrl(candidate.url)}${page}`;
 }
 
 /**
@@ -150,8 +152,9 @@ async function chooseCandidate({
     }
 
     const picked = await p.select({
-        message: "Which stream?",
+        message: "Which stream? (the newest request is preselected)",
         options: candidates.map((candidate, index) => ({ value: index, label: describe(candidate, index) })),
+        initialValue: candidates.length - 1,
     });
     return candidates[Number(picked)];
 }

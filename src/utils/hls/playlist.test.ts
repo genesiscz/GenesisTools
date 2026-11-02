@@ -149,6 +149,20 @@ describe("HAR playlists", () => {
         ]);
     });
 
+    it("does not offer a master's variants that sit in its subfolders", () => {
+        const variants = findHarPlaylists({
+            log: {
+                entries: [
+                    { request: { url: `${BASE}playlist.m3u8` }, response: { content: { text: MASTER } } },
+                    { request: { url: `${BASE}1080p/video.m3u8` }, response: { content: { text: LIVE } } },
+                    { request: { url: `${BASE}720p/video.m3u8` } },
+                ],
+            },
+        });
+
+        expect(harStreamCandidates(variants).map((p) => p.url)).toEqual([`${BASE}playlist.m3u8`]);
+    });
+
     it("refuses a file that is not a HAR", () => {
         expect(() => findHarPlaylists({ nope: true })).toThrow("Not a HAR file");
     });
