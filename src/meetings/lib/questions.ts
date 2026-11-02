@@ -1,6 +1,7 @@
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
+import type { Presence } from "@genesiscz/utils/transcribe/speakers";
 
 /** The answer that rejects every item a question decides. */
 export const NONE_OF_THESE = "none of these";
@@ -8,30 +9,65 @@ export const NONE_OF_THESE = "none of these";
 export type QuestionItem = Extract<MeetingItem, { kind: "question" }>;
 export type NewQuestion = Omit<QuestionItem, "id" | "suggestedAt">;
 
-type RangeItem = Extract<MeetingItem, { kind: "speaker-range" }>;
+/** Items below this confidence are asked by ear, unless the config sets `global.suggest.listenBelow`. */
+export const DEFAULT_LISTEN_BELOW = 0.8;
 
-/** A suggested speaker range whose evidence says "confirm by listening" becomes a question that decides it. */
-export function questionForRange(item: RangeItem): NewQuestion | undefined {
-    if (item.status !== "suggested" || item.evidence?.listen !== true) {
+/** A term question hears this much after the word's line starts. */
+const TERM_CLIP_SEC = 4;
+
+/**
+ * The question a suggested item needs before anyone confirms it: a speaker range marked "confirm by listening" (both
+ * channels in its lines) or under `listenBelow`, and a term under `listenBelow` whose time is known. A speaker
+ * question offers the item's speaker first, then its candidates, then everyone present during the range.
+ */
+export function questionFor(
+    item: MeetingItem,
+    options: { listenBelow: number; presence?: Presence[] }
+): NewQuestion | undefined {
+    const low = item.confidence !== undefined && item.confidence < options.listenBelow;
+
+    if (item.status !== "suggested") {
         return undefined;
     }
 
-    const choices = [...new Set([...(item.speaker ? [item.speaker] : []), ...(item.candidates ?? [])])];
-    // A range ends where its last line starts; the clip must hear that line to its end.
-    const lineEnd = item.evidence?.endSec;
-    const toSec = typeof lineEnd === "number" ? Math.max(item.toSec, lineEnd) : item.toSec;
-    return {
-        kind: "question",
-        status: "suggested",
-        about: "speaker",
-        fromSec: item.fromSec,
-        toSec,
-        question: `Who speaks under "${item.label}" from ${formatClock(item.fromSec)} to ${formatClock(toSec)}?`,
-        choices,
-        decides: [item.id],
-        rules: item.rules,
-        ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
-    };
+    if (item.kind === "speaker-range" && (low || item.evidence?.listen === true)) {
+        // A range ends where its last line starts; the clip must hear that line to its end.
+        const lineEnd = item.evidence?.endSec;
+        const toSec = typeof lineEnd === "number" ? Math.max(item.toSec, lineEnd) : item.toSec;
+        const present = (options.presence ?? [])
+            .filter((stay) => stay.fromSec <= toSec && stay.toSec >= item.fromSec)
+            .map((stay) => stay.name);
+        return {
+            kind: "question",
+            status: "suggested",
+            about: "speaker",
+            fromSec: item.fromSec,
+            toSec,
+            question: `Who speaks under "${item.label}" from ${formatClock(item.fromSec)} to ${formatClock(toSec)}?`,
+            choices: [...new Set([...(item.speaker ? [item.speaker] : []), ...(item.candidates ?? []), ...present])],
+            decides: [item.id],
+            rules: item.rules,
+            ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
+        };
+    }
+
+    if (item.kind === "term" && low && item.atSec !== undefined) {
+        return {
+            kind: "question",
+            status: "suggested",
+            about: "term",
+            fromSec: item.atSec,
+            toSec: item.atSec + TERM_CLIP_SEC,
+            question: `Is "${item.heard}" at ${formatClock(item.atSec)} really "${item.proposed}"?`,
+            heard: item.heard,
+            choices: [item.proposed],
+            decides: [item.id],
+            rules: item.rules,
+            ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
+        };
+    }
+
+    return undefined;
 }
 
 /** Two questions are the same when they ask about the same range for the same items. */

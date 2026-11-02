@@ -4,7 +4,7 @@ import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
-import { answerQuestion, openQuestions, questionForRange, skipQuestion } from "./lib/questions";
+import { answerQuestion, openQuestions, questionFor, skipQuestion } from "./lib/questions";
 import { suggestItems } from "./lib/suggest";
 import { type WatchDeps, watchOnce } from "./lib/watch";
 
@@ -228,7 +228,11 @@ describe("evidence rule after a leave", () => {
                 rules: ["E1", "E3", "RA"],
                 confidence: 0.45,
             }),
-            expect.objectContaining({ kind: "question", choices: ["Bob Example"], decides: ["i1"] }),
+            expect.objectContaining({
+                kind: "question",
+                choices: expect.arrayContaining(["Bob Example"]),
+                decides: ["i1"],
+            }),
         ]);
     });
 });
@@ -428,7 +432,7 @@ describe("questions (R2.3)", () => {
 
     test("a range marked for listening becomes a question that hears its last line to the end", () => {
         const parsed = withItems([range]).items[0]!;
-        const question = parsed.kind === "speaker-range" ? questionForRange(parsed) : undefined;
+        const question = questionFor(parsed, { listenBelow: 0.8 });
         expect(question).toMatchObject({
             kind: "question",
             about: "speaker",
@@ -441,7 +445,39 @@ describe("questions (R2.3)", () => {
 
     test("a range without the listen mark asks nothing", () => {
         const parsed = withItems([{ ...range, evidence: {} }]).items[0]!;
-        expect(parsed.kind === "speaker-range" ? questionForRange(parsed) : "wrong kind").toBeUndefined();
+        expect(questionFor(parsed, { listenBelow: 0.8 })).toBeUndefined();
+    });
+
+    test("a low-confidence item is asked: a range offers everyone present, a term its proposal", () => {
+        const [low, term] = withItems([
+            { ...range, evidence: {}, confidence: 0.45 },
+            {
+                id: "i2",
+                kind: "term",
+                status: "suggested",
+                atSec: 30,
+                heard: "pentagon",
+                proposed: "Pentaho",
+                confidence: 0.6,
+                rules: [],
+                suggestedAt: now,
+            },
+        ]).items;
+        const presence = [
+            { name: "Bob Example", fromSec: 0, toSec: 200 },
+            { name: "Dan Example", fromSec: 150, toSec: 200 },
+        ];
+        expect(questionFor(low!, { listenBelow: 0.8, presence })).toMatchObject({
+            choices: ["Alice Example", "Carol Example", "Bob Example"],
+        });
+        expect(questionFor(term!, { listenBelow: 0.8 })).toMatchObject({
+            about: "term",
+            heard: "pentagon",
+            choices: ["Pentaho"],
+            fromSec: 30,
+            decides: ["i2"],
+        });
+        expect(questionFor(term!, { listenBelow: 0.5 })).toBeUndefined();
     });
 
     test("an answer confirms the decided items with it; 'none of these' rejects them", () => {

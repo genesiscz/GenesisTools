@@ -151,6 +151,7 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
             presence: await presenceFor(record, meeting, opts.attendance),
             evidence,
             energyMicShare: (await energyMicShareFor(store, record, evidence)).share,
+            listenBelow: config.global.suggest.listenBelow,
             now: new Date().toISOString(),
         });
 

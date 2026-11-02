@@ -6,7 +6,7 @@ import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, type SpeakerHint, sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
-import { questionForRange, questionKey } from "./questions";
+import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 
 const { log } = logger.scoped("meetings-suggest");
 
@@ -474,6 +474,8 @@ export function suggestItems(options: {
     evidence?: MeetingEvidence | null;
     /** The microphone channel's share of the audio energy over a time range (R2.1), when the audio is at hand. */
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
+    /** Items under this confidence become questions to answer by ear (default 0.8). */
+    listenBelow?: number;
     now: string;
 }): MeetingItem[] {
     const { record, meeting } = options;
@@ -521,8 +523,11 @@ export function suggestItems(options: {
         taken.push(withId);
         fresh.push(withId);
 
-        // A range to confirm by listening gets its question (R2.3), answered with `tools meetings listen`.
-        const question = withId.kind === "speaker-range" ? questionForRange(withId) : undefined;
+        // A mixed-channel range or a low-confidence item gets its question, answered with `tools meetings listen`.
+        const question = questionFor(withId, {
+            listenBelow: options.listenBelow ?? DEFAULT_LISTEN_BELOW,
+            presence: options.presence,
+        });
 
         if (question && !known.has(questionKey(question))) {
             known.add(questionKey(question));

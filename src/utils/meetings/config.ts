@@ -101,6 +101,12 @@ export const meetingsConfigSchema = z.object({
             capture: captureSchema.prefault({}),
             playback: playbackSchema.prefault({}),
             render: renderSchema.prefault({}),
+            suggest: z
+                .object({
+                    /** An item under this confidence, or a mixed-channel range, becomes a question for `listen`. */
+                    listenBelow: z.number().min(0).max(1).default(0.8),
+                })
+                .prefault({}),
         })
         .prefault({}),
     /** The known projects. `--project` with a new name adds one here. */
