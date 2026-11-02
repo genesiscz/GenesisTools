@@ -1,3 +1,4 @@
+import type { EvidenceSegment, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { MeetingCalendar, MeetingParticipant } from "./record";
 
@@ -33,6 +34,20 @@ export interface RecordingClock {
     startedAt: string;
 }
 
+/** Raw speaker evidence a source keeps beside its transcript. Times are on the transcript clock. */
+export interface MeetingEvidence {
+    /** The recording user's name, as the source knows it. */
+    selfName?: string;
+    segments: EvidenceSegment[];
+    speaking: SpeakingObservation[];
+    /** Words recognized per channel: the user's share of the speech. */
+    tokens?: { mic: number; system: number };
+    /** The audio setup, as the source recorded it. */
+    devices?: Record<string, unknown>;
+    /** The files the evidence came from, with their sizes, for a doctor view. */
+    files: Array<{ name: string; bytes: number }>;
+}
+
 /** A recording the source is making right now. */
 export interface LiveRecording {
     sourceMeetingId: string;
@@ -58,6 +73,8 @@ export interface TranscriptSource {
     dictionary(): Promise<DictionaryCandidate[]>;
     /** Where the source's transcript clock starts for this meeting; null when the source has no times. */
     recordingClock(sourceMeetingId: string): Promise<RecordingClock | null>;
+    /** Speaker evidence beside the transcript (channels, the platform's speaking indicator); null when it keeps none. */
+    evidence(sourceMeetingId: string): Promise<MeetingEvidence | null>;
     /** A recording running now, for the autostart; null when none is. */
     liveRecording(): Promise<LiveRecording | null>;
 }

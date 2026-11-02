@@ -6,7 +6,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { applyCorrections, type TranscriptCorrections } from "@genesiscz/utils/transcribe/apply";
 import {
@@ -48,16 +48,21 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
 }
 
 /** The transcript of the first linked source that has a meeting id. */
-async function loadTranscript(record: MeetingRecord): Promise<SourceMeeting> {
+/** The first linked source that names a meeting of its own. */
+async function linkedSource(record: MeetingRecord): Promise<{ source: TranscriptSource; sourceMeetingId: string }> {
     for (const [sourceId, block] of Object.entries(record.sources)) {
         if (typeof block.meetingId === "string") {
-            const source = await meetingSource(sourceId);
-            log.debug({ meeting: record.id, source: sourceId, sourceMeetingId: block.meetingId }, "loading transcript");
-            return source.load(block.meetingId);
+            return { source: await meetingSource(sourceId), sourceMeetingId: block.meetingId };
         }
     }
 
     throw new Error(`${record.id} has no source with a transcript. Link one: ${TOOL} link ${record.id} wisprflow:<id>`);
+}
+
+async function loadTranscript(record: MeetingRecord): Promise<SourceMeeting> {
+    const { source, sourceMeetingId } = await linkedSource(record);
+    log.debug({ meeting: record.id, source: source.id, sourceMeetingId }, "loading transcript");
+    return source.load(sourceMeetingId);
 }
 
 async function presenceFor(
@@ -129,16 +134,17 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
     }
 
     try {
-        const meeting = await loadTranscript(record);
+        const { source, sourceMeetingId } = await linkedSource(record);
+        const meeting = await source.load(sourceMeetingId);
         const config = await new MeetingsConfigStore().read();
-        const sourceId = Object.keys(record.sources)[0]!;
         const fresh = suggestItems({
             record,
             meeting,
             rules,
             dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }),
-            sourceWords: await (await meetingSource(sourceId)).dictionary(),
+            sourceWords: await source.dictionary(),
             presence: await presenceFor(record, meeting, opts.attendance),
+            evidence: rules.includes("evidence") ? await source.evidence(sourceMeetingId) : null,
             now: new Date().toISOString(),
         });
 

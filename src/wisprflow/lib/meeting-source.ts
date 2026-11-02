@@ -3,7 +3,15 @@ import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingCalendar } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
-import { dictionaryCandidates, listLocalCalendar, liveLocalMeeting, localAvailable, WISPR_DIR } from "./local";
+import { readEvidence } from "./evidence";
+import {
+    dictionaryCandidates,
+    listLocalCalendar,
+    liveLocalMeeting,
+    localAvailable,
+    localSelfName,
+    WISPR_DIR,
+} from "./local";
 import { loadMeeting } from "./source";
 import type { Meeting } from "./types";
 
@@ -83,6 +91,15 @@ export const wisprflowSource: TranscriptSource = {
         // Transcript second 0 is the meeting's start (checked 2026-11-02 against Teams leave times, within 4 s).
         const loaded = await loadMeeting(sourceMeetingId, { source: "auto", transcript: false });
         return { startedAt: loaded.data.start };
+    },
+
+    async evidence(sourceMeetingId) {
+        // The raw meeting folder exists only in the local app data; the MCP keeps none of it.
+        if (!localAvailable()) {
+            return null;
+        }
+
+        return readEvidence(sourceMeetingId, localSelfName(sourceMeetingId));
     },
 
     async liveRecording() {

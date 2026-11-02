@@ -143,3 +143,49 @@ describe("suggestDictionary", () => {
         ]);
     });
 });
+
+describe("evidence rule", () => {
+    test("the user's microphone under another label becomes the user; a mixed line asks to listen", () => {
+        const items = suggestItems({
+            record,
+            meeting: {
+                ...meeting,
+                transcript: [
+                    line("Carol Example", 0, "Já to udělám.", 2),
+                    line("Carol Example", 10, "A ještě tohle.", 2),
+                    line("Carol Example", 200, "Půl na půl tady.", 2),
+                ],
+            },
+            rules: ["evidence"],
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            evidence: {
+                selfName: "Alice Example",
+                segments: [
+                    { startSec: 0, endSec: 20, channel: "mic" },
+                    { startSec: 200, endSec: 203, channel: "mic" },
+                    { startSec: 203, endSec: 205, channel: "system", liveName: "Carol Example" },
+                ],
+                speaking: [],
+                files: [],
+            },
+            now: "2026-11-02T15:00:00.000Z",
+        });
+
+        expect(items).toEqual([
+            expect.objectContaining({
+                label: "Carol Example",
+                fromSec: 0,
+                toSec: 10,
+                speaker: "Alice Example",
+                rules: ["E1"],
+                confidence: 1,
+            }),
+            expect.objectContaining({
+                fromSec: 200,
+                speaker: "Alice Example",
+                evidence: expect.objectContaining({ note: expect.stringContaining("listening") }),
+            }),
+        ]);
+    });
+});

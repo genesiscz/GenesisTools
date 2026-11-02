@@ -7,6 +7,7 @@ import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { parseObservations, participantName } from "./evidence";
 import { completeTranscript, parseLive } from "./live";
 import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
@@ -409,5 +410,27 @@ describe("completeTranscript", () => {
 
         expect(parseLive(`${done}\n{"text":"half`).map((l) => l.text)).toEqual(["done"]);
         expect(() => parseLive(`{"text":"half\n${done}\n`)).toThrow();
+    });
+});
+
+describe("speaker evidence", () => {
+    test("Teams status text is cut off a participant's name", () => {
+        expect(participantName("Bob Example External unfamiliar left the meeting")).toBe("Bob Example");
+        expect(participantName("Bob Example External unfamiliar")).toBe("Bob Example");
+        expect(participantName("Example Carol (QT)")).toBe("Example Carol (QT)");
+    });
+
+    test("observations name the speakers by pid and skip failed reads", () => {
+        const raw = [
+            '{"meta":{"platform":"teams","clock":"recording_active_ms"}}',
+            '{"obs":{"tMs":5033,"reason":"source_missing","speaking":null,"muted":null}}',
+            '{"participant":{"pid":"p1","name":"alice@example.com","self":true,"firstSeenMs":10}}',
+            '{"participant":{"pid":"p2","name":"Bob Example External unfamiliar","self":false,"firstSeenMs":10}}',
+            '{"obs":{"tMs":15729,"source":"teams_main","speaking":["p2"],"muted":["p1"]}}',
+        ].join("\n");
+
+        expect(parseObservations(raw)).toEqual([
+            { tSec: 15.729, speaking: ["Bob Example"], muted: ["alice@example.com"] },
+        ]);
     });
 });
