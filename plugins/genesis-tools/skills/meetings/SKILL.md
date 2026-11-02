@@ -45,9 +45,13 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    stays under 60 % and matters, add a listen question: `tools meetings items add <meeting> --kind question --from
    <time> --to <time> --about speaker|term --question "<text>" --choices <list>`, within the question budget in
    speakers.md.
-4. **Pass 3, the user listens.** `tools meetings listen <meeting>` plays each question's clip and takes the answer.
-5. **The agent finishes.** Read the answers (`tools meetings items <meeting> --kind question`) and carry each one to the
-   other lines with the same evidence. Ask what is still open in rounds (the `grilling` style): numbered questions
+4. **Pass 3, the user listens.** Give the user `tools meetings listen <meeting>`: it shows one question, plays its clip
+   with a tone before the asked words, and waits for the answer; Esc goes back one step and undoes the previous
+   answer. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
+   background command): it prints each answer as one JSON line the moment it is given and exits when the round ends,
+   so you act on each answer while the user is still listening. Do not poll the record.
+5. **The agent finishes.** Take the answers from the subscription (or `tools meetings items <meeting> --kind
+   question`) and carry each one to the other lines with the same evidence. Ask what is still open in rounds (the `grilling` style): numbered questions
    with concrete quotes and timestamps, one recommendation each. Never settle a person's identity or a business term
    by guessing.
 6. **Write the one polished file** in the layout of [polishing.md](references/polishing.md#the-polished-file), then
@@ -60,7 +64,8 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 1. Export raw (step 1 above) and `tools meetings new --source wisprflow:<id>`.
 2. `tools meetings suggest <meeting> --attendance teams`. The term rules use the word check (`--word-check hunspell`,
    the default; `hunspell-cc0`, `macos` or `off`). Its dictionaries download on first use.
-3. `tools meetings listen <meeting>`, then review the items (`tools meetings items <meeting>`) and decide each one
+3. `tools meetings listen <meeting>` for the user, with `--subscribe-answers` for you as in step 4 above, then review
+   the items (`tools meetings items <meeting>`) and decide each one
    with `tools meetings confirm <meeting> <items>` or `tools meetings reject <meeting> <items>`.
 4. Continue with steps 5 to 7 above.
 
