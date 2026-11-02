@@ -33,6 +33,7 @@ import {
     type PresetScore,
     type Recommendation,
     recommendPreset,
+    windowKbps,
 } from "./recommend";
 
 /** What `--height` asked for: a number, `auto` (only acts with a size target), or `source`. */
@@ -212,6 +213,20 @@ function mean(values: number[]): number {
     return values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
 }
 
+/** A window's rate: the encoder's default quality, or its two-pass share of the size target (`windowKbps`). */
+function windowRate({ plan, window, quality }: { plan: ShrinkPlan; window: SampleWindow; quality: number }): VideoRate {
+    if (plan.kbps === null) {
+        return { kind: "quality", quality };
+    }
+
+    const durationSec = plan.facts.durationSec ?? 0;
+    const overallSourceKbps = durationSec > 0 ? (plan.sourceVideoBytes * 8) / durationSec / 1000 : 0;
+    return {
+        kind: "bitrate",
+        kbps: windowKbps({ kbps: plan.kbps, windowSourceKbps: window.sourceKbps, overallSourceKbps }),
+    };
+}
+
 /** Lossless cuts of each window, by window label. */
 export type References = Map<SampleWindow["label"], string>;
 
@@ -276,7 +291,6 @@ export async function settleHeight({
     }
 
     const taller = nextTallerHeight(ruled, sourceHeight);
-    const rate: VideoRate = { kind: "bitrate", kbps: plan.kbps };
     const windows = plan.windows.filter((window) => window.label !== "easiest");
     const scores: { height: number | undefined; score: number }[] = [];
 
@@ -297,7 +311,7 @@ export async function settleHeight({
                 encoder,
                 reference,
                 output,
-                rate,
+                rate: windowRate({ plan, window, quality: encoder.defaultQuality }),
                 height,
                 statsPrefix: join(workDir, `height-${name}-${window.label}-2pass`),
                 signal,
@@ -345,10 +359,6 @@ export async function previewPresets({
             continue;
         }
 
-        const rate: VideoRate =
-            plan.kbps === null
-                ? { kind: "quality", quality: encoder.defaultQuality }
-                : { kind: "bitrate", kbps: plan.kbps };
         const windows: WindowResult[] = [];
 
         for (const window of plan.windows) {
@@ -364,7 +374,7 @@ export async function previewPresets({
                 encoder,
                 reference,
                 output,
-                rate,
+                rate: windowRate({ plan, window, quality: encoder.defaultQuality }),
                 height: plan.height.height,
                 statsPrefix: join(workDir, `${preset}-${window.label}-2pass`),
                 signal,

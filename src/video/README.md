@@ -46,13 +46,16 @@ tools video shrink ./talk.mp4 --preview-only --json   # only the measurements
 `tools video shrink <file>` does what otherwise takes an evening of ffmpeg runs:
 
 1. **Plan.** It reads the file, works out the video bitrate a `--to` size leaves, and picks the picture height
-   (`--height auto`): the tallest standard height that still gets 0.015 bits per pixel. A 108 min 1080p talk at 400 MB
+   (`--height auto`): the tallest standard height that still gets 0.015 bits per pixel, and then measures that height
+   against one step taller with x264 on two windows and keeps the better one. A 108 min 1080p talk at 400 MB
    gets 0.007 at 1080p and 0.017 at 720p, so it goes to 720p, which also scored higher at the same size. With
    `--audio auto`, audio that would take more than 15% of the target is re-encoded to AAC 96 kbit/s, which gives the
    video about 30 kbit/s more.
 2. **Sample.** From the source's own packet sizes it finds the hardest, a median and the easiest 10 s (`--window`),
    away from the first and last 5%, and cuts each as a lossless reference.
-3. **Preview.** Each preset (`fast`, `compatible`, `small`) encodes each window at the plan's bitrate, and each result
+3. **Preview.** Each preset (`fast`, `compatible`, `small`) encodes each window at the share of the target a two-pass
+   encode would give it (the average rate times the window's source rate over the file's, to the power 0.6, so the
+   hardest stretch of a talk gets about 1.8 times the average), and each result
    is scored against its reference with VMAF and SSIM (the encode scaled back with bicubic, the same for every
    preset). The table shows the mean and the worst window, the predicted size and the predicted encode time.
 4. **Recommend.** The best score wins, but a faster preset within 1 VMAF point takes its place, and `small` (AV1)

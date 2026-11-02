@@ -115,3 +115,29 @@ export function recommendPreset(scores: PresetScore[]): Recommendation | null {
             : `within ${EQUAL_MARGIN} of the best (${pick.score.toFixed(1)} against ${top.score.toFixed(1)}) and faster${note}`;
     return { preset: pick.preset, reason };
 }
+
+/** How strongly a two-pass encode follows complexity: x264's default `qcomp` 0.6 spends bits as complexity^0.6. */
+const RATE_FOLLOWS_COMPLEXITY = 0.6;
+
+/**
+ * The bitrate a full two-pass encode gives one window: the average, scaled by how much harder the window is than the
+ * whole file (the source's own bitrate as the measure), to the power 0.6, and kept within a quarter and four times the
+ * average. Encoding a hard window at the plain average judged it on bits it would never get: on the full talk the
+ * hardest window has 2.6 times the average source rate.
+ */
+export function windowKbps({
+    kbps,
+    windowSourceKbps,
+    overallSourceKbps,
+}: {
+    kbps: number;
+    windowSourceKbps: number;
+    overallSourceKbps: number;
+}): number {
+    if (overallSourceKbps <= 0 || windowSourceKbps <= 0) {
+        return kbps;
+    }
+
+    const share = (windowSourceKbps / overallSourceKbps) ** RATE_FOLLOWS_COMPLEXITY;
+    return Math.round(kbps * Math.min(4, Math.max(0.25, share)));
+}

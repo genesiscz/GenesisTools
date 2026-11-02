@@ -63,7 +63,7 @@ import {
     sourceChange,
     undoCommand,
 } from "./encode";
-import { chooseHeight, recommendPreset } from "./shrink/recommend";
+import { chooseHeight, recommendPreset, windowKbps } from "./shrink/recommend";
 
 const encoder = findEncoder("hevc") as VideoEncoder;
 const madeDirs: string[] = [];
@@ -442,6 +442,13 @@ describe("shrink sampling and choices", () => {
     test("auto height drops 1080p to 720p when the target leaves 385 kbit/s at 25 fps", () => {
         expect(chooseHeight({ kbps: 385, width: 1920, height: 1080, fps: 25 }).height).toBe(720);
         expect(chooseHeight({ kbps: 4000, width: 1920, height: 1080, fps: 25 }).height).toBeUndefined();
+    });
+
+    test("a window gets its two-pass share of the target rate, within a quarter and four times", () => {
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 1900, overallSourceKbps: 1900 })).toBe(400);
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 4926, overallSourceKbps: 1900 })).toBe(708);
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 1, overallSourceKbps: 1900 })).toBe(100);
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 0, overallSourceKbps: 1900 })).toBe(400);
     });
 
     test("the fastest preset within a VMAF point wins, and AV1 needs a 1.5 lead", () => {
