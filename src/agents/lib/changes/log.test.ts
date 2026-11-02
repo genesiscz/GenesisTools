@@ -3,23 +3,35 @@ import { spawnSync } from "node:child_process";
 import {
     appendFileSync,
     chmodSync,
+    closeSync,
     existsSync,
+    ftruncateSync,
     linkSync,
     mkdirSync,
     mkdtempSync,
+    openSync,
     readdirSync,
     readFileSync,
+    readSync,
     renameSync,
     statSync,
     unlinkSync,
     utimesSync,
     writeFileSync,
+    writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { countObjects, type MaintenanceReport, maintainObjectStore } from "@genesiscz/utils/agents/objects/maintain";
+import {
+    CHANGE_LOG_CHUNK_BYTES,
+    countObjects,
+    type MaintenanceReport,
+    maintainObjectStore,
+    namedOids,
+    objectStoreIo,
+} from "@genesiscz/utils/agents/objects/maintain";
 import { writeBlobs } from "@genesiscz/utils/agents/objects/store";
-import { runDailyCompression } from "@genesiscz/utils/compress/daily";
+import { type DailyPassReports, runDailyCompression } from "@genesiscz/utils/compress/daily";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { out } from "@genesiscz/utils/logger";
@@ -1081,8 +1093,128 @@ describe("the change-log object store maintenance", () => {
         }
     );
 
-    test("tools compress daily exits 1 when the agents-objects step failed or found its lock held, with --json too", () => {
-        const report = (skipped?: "locked"): MaintenanceReport => ({
+    test("a new pack that its index lists but whose content does not read back removes nothing, and goes itself", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const [old = ""] = s.write("packed by an earlier pass\n");
+        s.row("s-old", "/repo/old.ts", old, new Date(now.getTime() - DAY));
+        await maintainObjectStore({
+            now: new Date(now.getTime() - DAY),
+            root: s.store,
+            logsDir: s.agents,
+            settle: noSettle,
+        });
+        const packDir = join(s.store, "objects", "pack");
+        const before = readdirSync(packDir).sort();
+        expect(before.filter((name) => name.endsWith(".pack"))).toHaveLength(1);
+
+        const fresh = s.write("one\n", "two\n");
+        for (const oid of fresh) {
+            s.row("s-1", "/repo/a.ts", oid, now);
+        }
+
+        const writePack = objectStoreIo.writePack;
+        let damaged = "";
+        objectStoreIo.writePack = (root, objects) => {
+            damaged = writePack(root, objects);
+            // One byte of the first object's data: the index still lists every oid, the bytes no longer hash to them.
+            const pack = `${damaged}.pack`;
+            chmodSync(pack, 0o644);
+            const fd = openSync(pack, "r+");
+            const byte = Buffer.alloc(1);
+            readSync(fd, byte, 0, 1, 14);
+            writeSync(fd, Buffer.from([byte[0] ^ 0xff]), 0, 1, 14);
+            closeSync(fd);
+            chmodSync(pack, 0o444);
+            return damaged;
+        };
+
+        try {
+            await expect(
+                maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle })
+            ).rejects.toThrow("git verify-pack");
+        } finally {
+            objectStoreIo.writePack = writePack;
+        }
+
+        expect(damaged).not.toBe("");
+        expect(readdirSync(packDir).sort()).toEqual(before);
+        expect(fresh.map((oid) => existsSync(s.loosePath(oid)))).toEqual([true, true]);
+        expect(s.readable([old, ...fresh])).toEqual([old, ...fresh].sort());
+        expect(readdirSync(join(s.store, "gt-maintenance")).filter((name) => name.startsWith("retired-"))).toEqual([]);
+        const fsck = spawnSync("git", ["--git-dir", s.store, "fsck", "--no-dangling"], {
+            encoding: "utf8",
+            env: process.env,
+        });
+        expect(fsck.status, fsck.stderr).toBe(0);
+
+        const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+        expect(report).toMatchObject({ packed: 3, packsRetired: 1 });
+        expect(s.count()).toMatchObject({ loose: 0, packs: 1, packed: 3 });
+        expect(s.readable([old, ...fresh])).toEqual([old, ...fresh].sort());
+    });
+
+    test("a change log is read in chunks: each row once, a character across two chunks whole, a row without its newline left for the next read", () => {
+        const now = new Date();
+        const agents = join(mkdtempSync(join(tmpdir(), "changes-chunks-")), "agents");
+        mkdirSync(join(agents, "s-1"), { recursive: true });
+        const path = join(agents, "s-1", "changes.jsonl");
+        const oid = (n: number) => n.toString(16).padStart(40, "0");
+        const row = (n: number, file: string) =>
+            `${SafeJSON.stringify({ ts: now.toISOString(), session: "s-1", path: file, beforeOid: null, afterOid: oid(n) })}\n`;
+        // A first row long enough that the next row's "ž" (two bytes) starts on the last byte of the first chunk.
+        const split = row(1, "/repo/ž.ts");
+        const filler = CHANGE_LOG_CHUNK_BYTES - 1 - Buffer.from(split).indexOf(Buffer.from("ž"));
+        const rows = Array.from({ length: 15_000 }, (_, index) => row(index + 2, `/repo/file-${index}.ts`));
+        const partial = row(99_999, "/repo/late.ts").trimEnd();
+        writeFileSync(path, `{"pad":"${"x".repeat(filler - 11)}"}\n${split}${rows.join("")}${partial}`);
+        expect(readFileSync(path)[CHANGE_LOG_CHUNK_BYTES - 1]).toBe(0xc5);
+        expect(statSync(path).size).toBeGreaterThan(2 * CHANGE_LOG_CHUNK_BYTES);
+
+        const first = namedOids({ logsDir: agents, since: 0 });
+
+        expect(first.rows).toBe(15_001);
+        expect(first.oids.get(oid(1))).toBe("/repo/ž.ts");
+        expect(first.oids.get(oid(15_001))).toBe("/repo/file-14999.ts");
+        expect(first.oids.has(oid(99_999))).toBe(false);
+        expect(first.offsets.get(path)).toBe(statSync(path).size - Buffer.byteLength(partial));
+
+        appendFileSync(path, "\n");
+        const late = namedOids({ logsDir: agents, since: 0, offsets: first.offsets });
+
+        expect(late.rows).toBe(1);
+        expect([...late.oids]).toEqual([[oid(99_999), "/repo/late.ts"]]);
+        expect(late.offsets.get(path)).toBe(statSync(path).size);
+    });
+
+    test.skipIf(process.platform === "win32")(
+        "a log larger than one buffer can hold is read from its saved offset, never from its start",
+        () => {
+            const agents = join(mkdtempSync(join(tmpdir(), "changes-offset-")), "agents");
+            mkdirSync(join(agents, "s-1"), { recursive: true });
+            const path = join(agents, "s-1", "changes.jsonl");
+            // 5 GiB of hole (no disk blocks): past the 4 GiB a Buffer holds, so a whole-file read fails at once.
+            const hole = 5 * 1024 ** 3;
+            const fd = openSync(path, "w");
+            ftruncateSync(fd, hole);
+            closeSync(fd);
+            const oid = "ab".repeat(20);
+            const event = { ts: new Date().toISOString(), session: "s-1", path: "/repo/a.ts", beforeOid: null };
+            appendFileSync(path, `${SafeJSON.stringify({ ...event, afterOid: oid })}\n`);
+
+            try {
+                const named = namedOids({ logsDir: agents, since: 0, offsets: new Map([[path, hole]]) });
+
+                expect([...named.oids]).toEqual([[oid, "/repo/a.ts"]]);
+                expect(named.offsets.get(path)).toBe(statSync(path).size);
+            } finally {
+                unlinkSync(path);
+            }
+        }
+    );
+
+    test("tools compress daily exits 1 when a log did not compress, or the agents-objects step failed or found its lock held, with --json too", () => {
+        const report = (skipped?: MaintenanceReport["skipped"]): MaintenanceReport => ({
             root: "/store",
             dryRun: false,
             retentionDays: 30,
@@ -1099,20 +1231,35 @@ describe("the change-log object store maintenance", () => {
             elapsedMs: 0,
             ...(skipped ? { skipped } : {}),
         });
+        const logs = (failed: number): DailyPassReports => [
+            {
+                target: { name: "logs", root: "/logs", recursive: false, dayOf: () => undefined, firstPlainDay: "" },
+                report: {
+                    plan: { root: "/logs", compress: [], finish: [], staleTemps: [] },
+                    compressed: [{ path: "/logs/2026-10-30.log", bytes: 100, compressedBytes: 10 }],
+                    failed: Array.from({ length: failed }, () => ({
+                        path: "/logs/2026-10-31.log",
+                        reason: "the file changed while it was compressed",
+                    })),
+                },
+            },
+        ];
         const result = spyOn(out, "result").mockImplementation(() => undefined);
         const println = spyOn(out, "println").mockImplementation(() => undefined);
         const exitCode = process.exitCode;
         const codes: Record<string, typeof process.exitCode> = {};
 
         try {
-            for (const [name, objectStore] of [
-                ["failed", null],
-                ["locked", report("locked")],
-                ["ran", report()],
+            for (const [name, compression, objectStore] of [
+                ["failed", logs(0), null],
+                ["locked", logs(0), report("locked")],
+                ["ran", logs(0), report()],
+                ["a log failed", logs(1), report()],
+                ["a log failed, no store", logs(1), report("no-store")],
             ] as const) {
                 for (const json of [true, false]) {
                     process.exitCode = 0;
-                    reportDailyPass({ compression: [], objectStore }, json);
+                    reportDailyPass({ compression, objectStore }, json);
                     codes[`${name}${json ? " --json" : ""}`] = process.exitCode;
                 }
             }
@@ -1129,6 +1276,10 @@ describe("the change-log object store maintenance", () => {
             "locked --json": 1,
             ran: 0,
             "ran --json": 0,
+            "a log failed": 1,
+            "a log failed --json": 1,
+            "a log failed, no store": 1,
+            "a log failed, no store --json": 1,
         });
     });
 });
