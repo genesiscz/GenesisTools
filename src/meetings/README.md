@@ -10,12 +10,28 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 
 | Command | What it does |
 |---|---|
+| `new [title] [--at <time>] [--project <name>]` | Create a meeting record by hand |
+| `new --source wisprflow:<id>` | Create it from a source's meeting: title, times, people, the calendar entry |
+| `list [--project <name>]`, `show <meeting>` | The records (`--json`) |
+| `set <meeting> --project <name> \| --title <text>` | Change a field |
+| `link <meeting> wisprflow:<id>` | Attach a source's meeting to an existing record |
+| `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |
 | `dictionary add <value> [substitution] --type fix\|abbr\|term\|keep [--project <name>]` | Add or replace an entry; a new project name is added to the known projects |
 | `dictionary expansion every\|first\|off [--project <name>]` | How abbreviations expand |
 | `dictionary remove <value> [--project <name>]` | Remove an entry |
+
+## The meeting record
+
+One folder per meeting, `~/.genesis-tools/meetings/<YYYY-MM-DD_HH-MM>-<title>/meeting.json`. A meeting is named by its
+id, a unique prefix of it, `last`, or a source reference such as `wisprflow:1a2b3c4d`. Every change adds one line to
+the record's `history`, and a change that would make the record invalid writes nothing.
+
+Every command that creates or changes a meeting resolves its project in this order: `--project` (a new name joins
+the known projects), the meeting's own, one matching project (`projects.<name>.match`), a choice in a terminal, and
+without a terminal no project. `show` then says how to set it.
 
 ## The dictionary
 
