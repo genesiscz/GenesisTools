@@ -444,6 +444,47 @@ describe("SNAPSHOT_OPS", () => {
         expect(store.get("snapshots:openai-sub")?.accounts.every((a) => a.limits.length > 0)).toBe(true);
     });
 
+    // A reading that names only a confirmed absence is data, like a window: a failed round replays it stale
+    // and a lock failure marks it stale, instead of dropping the "no 5h limit" to unknown (PR #661 review t1).
+    test("a reading with only an absent window is replayed stale like any other data", async () => {
+        const lastGoodAt = Date.now() - 120_000;
+        const absentOnly: AccountUsageSnapshot = {
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            accountName: "work",
+            fetchedAt: new Date(lastGoodAt).toISOString(),
+            limits: [],
+            absentLimits: [{ key: "five_hour", kind: "session" }],
+        };
+        const store: CacheStore = new Map();
+        store.set("snapshots:anthropic-sub", { fetchedAt: lastGoodAt, accounts: [absentOnly] });
+
+        const failedRound = makeGet(
+            "anthropic-sub",
+            storeDeps(store, async () => [errored("anthropic-sub", "work", "Unable to connect")])
+        );
+        const [replayed] = await failedRound({ force: true });
+
+        expect(replayed.absentLimits).toEqual([{ key: "five_hour", kind: "session" }]);
+        expect(replayed.stale?.lastSuccessAt).toBe(new Date(lastGoodAt).toISOString());
+
+        // Back to the fresh reading, so the lock path alone decides that it is marked stale.
+        store.set("snapshots:anthropic-sub", { fetchedAt: lastGoodAt, accounts: [absentOnly] });
+        const lockFailure = makeGet("anthropic-sub", {
+            fetchAll: async () => [absentOnly],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async () => {
+                throw new Error("Failed to acquire file lock at /x within 10000ms.");
+            },
+        });
+        const [degraded] = await lockFailure({ force: true });
+
+        expect(degraded.absentLimits).toEqual([{ key: "five_hour", kind: "session" }]);
+        expect(degraded.stale?.lastSuccessAt).toBe(new Date(lastGoodAt).toISOString());
+        expect(degraded.stale?.reason).toContain("Failed to acquire file lock");
+    });
+
     test("chained failures keep the ORIGINAL lastSuccessAt", async () => {
         const originalAt = "2026-09-04T12:00:00.000Z";
         const store: CacheStore = new Map();

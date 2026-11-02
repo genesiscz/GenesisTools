@@ -317,7 +317,9 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
 /** `UsageEntryOps` for the provider-neutral snapshot, used by `pollAccounts`. */
 export const SNAPSHOT_OPS: UsageEntryOps<AccountUsageSnapshot> = {
     nameOf: (entry) => entry.accountName,
-    hasData: (entry) => entry.limits.length > 0,
+    // A confirmed absence is a reading too: an account whose last success named only `absentLimits` lost
+    // that "no 5h limit" to the next failed round, which replayed nothing and showed it as unknown.
+    hasData: (entry) => entry.limits.length > 0 || (entry.absentLimits?.length ?? 0) > 0,
     errorOf: (entry) => entry.error,
     isStale: (entry) => entry.stale !== undefined,
     backfill: (entry, previous, previousFetchedAt) => ({

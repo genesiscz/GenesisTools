@@ -1,10 +1,8 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import {
-    type AccountIdentity,
-    type AccountUsageSnapshot,
-    absentLimitKindLabel,
-    absentLimitText,
-    type DiscoveredHome,
+import type {
+    AccountIdentity,
+    AccountUsageSnapshot,
+    DiscoveredHome,
 } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -17,7 +15,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { renderCliHeader, renderCliKeyRow, renderCliSection } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import { type CredentialKind, credentialKinds } from "./credential-kinds";
-import { formatLimitLine, lastSnapshotFor } from "./last-usage";
+import { lastSnapshotFor, usageRows } from "./last-usage";
 
 export interface RunShowOptions {
     name: string;
@@ -158,16 +156,15 @@ function renderUsage(snapshot: AccountUsageSnapshot | null): void {
         renderCliKeyRow("Stale", snapshot.stale.reason);
     }
 
-    if (snapshot.limits.length === 0) {
+    // An absent window is a reading too: a snapshot with only "no 5h limit" prints that row, not "no windows".
+    const rows = usageRows(snapshot);
+
+    if (rows.length === 0) {
         out.println(pc.dim("  No windows recorded in that snapshot."));
         return;
     }
 
-    for (const window of snapshot.limits) {
-        renderCliKeyRow(window.label, formatLimitLine(window));
-    }
-
-    for (const limit of snapshot.absentLimits ?? []) {
-        renderCliKeyRow(absentLimitKindLabel(limit), `— ${absentLimitText(limit)} on this account`);
+    for (const row of rows) {
+        renderCliKeyRow(row.label, row.value);
     }
 }

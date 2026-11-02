@@ -1,5 +1,10 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import {
+    type AccountUsageSnapshot,
+    absentLimitKindLabel,
+    absentLimitText,
+    type LimitWindow,
+} from "@genesiscz/utils/ai/providers/account-features";
 import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-money";
 import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 
@@ -31,6 +36,30 @@ export function lastSnapshotFor(cache: SnapshotsCache | null, account: AccountEn
         rows.find((row) => row.accountId !== "" && row.accountId === account.id) ??
         rows.find((row) => !row.accountId && row.accountName === account.name)
     );
+}
+
+/** One labelled row under "Last usage" in `tools ai accounts show`. */
+export interface UsageRow {
+    label: string;
+    value: string;
+}
+
+/**
+ * The rows `show` prints for a snapshot: every recorded window, then every window the provider
+ * confirmed absent. Empty only when the snapshot holds neither, which `show` reports as "No windows
+ * recorded"; a reading that names only an absent window still prints its "no 5h limit" row.
+ */
+export function usageRows(
+    snapshot: Pick<AccountUsageSnapshot, "limits" | "absentLimits">,
+    now: number = Date.now()
+): UsageRow[] {
+    return [
+        ...snapshot.limits.map((window) => ({ label: window.label, value: formatLimitLine(window, now) })),
+        ...(snapshot.absentLimits ?? []).map((limit) => ({
+            label: absentLimitKindLabel(limit),
+            value: `— ${absentLimitText(limit)} on this account`,
+        })),
+    ];
 }
 
 /**
