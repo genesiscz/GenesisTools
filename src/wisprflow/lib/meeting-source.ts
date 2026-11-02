@@ -47,17 +47,30 @@ export function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
     };
 }
 
+/**
+ * The participants, with the recording user marked. Wispr knows the user as a person of the speaker map (origin
+ * "self") even when no speaker is assigned to them, so the name may be missing from the speaker list.
+ */
+function participantsOf(meeting: Meeting): SourceMeeting["participants"] {
+    const self = localAvailable() ? localSelfName(meeting.id) : undefined;
+    const people = meeting.participants.map((person) => ({
+        name: person.name,
+        ...(person.isSelf || person.name === self ? { self: true } : {}),
+        from: ["wisprflow"],
+    }));
+
+    return self && !people.some((person) => person.name === self)
+        ? [...people, { name: self, self: true, from: ["wisprflow"] }]
+        : people;
+}
+
 function toSourceMeeting(meeting: Meeting): SourceMeeting {
     return {
         sourceMeetingId: meeting.id,
         title: meeting.title,
         start: meeting.start,
         ...(meeting.end ? { end: meeting.end } : {}),
-        participants: meeting.participants.map((person) => ({
-            name: person.name,
-            ...(person.isSelf ? { self: true } : {}),
-            from: ["wisprflow"],
-        })),
+        participants: participantsOf(meeting),
         speakers: meeting.participants,
         transcript: meeting.transcript,
         calendar: calendarFor(meeting),

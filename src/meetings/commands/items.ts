@@ -19,11 +19,11 @@ import {
     transcriptMarkdown,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
-import { DEFAULT_SPAN_GAP_SEC, type Presence, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { loadPresence } from "../lib/attendance";
 import { energyLeftShareFor } from "../lib/energy";
+import { presenceFor } from "../lib/presence";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
@@ -64,20 +64,6 @@ async function loadTranscript(record: MeetingRecord): Promise<SourceMeeting> {
     const { source, sourceMeetingId } = await linkedSource(record);
     log.debug({ meeting: record.id, source: source.id, sourceMeetingId }, "loading transcript");
     return source.load(sourceMeetingId);
-}
-
-async function presenceFor(
-    record: MeetingRecord,
-    meeting: SourceMeeting,
-    spec?: string
-): Promise<Presence[] | undefined> {
-    if (!spec) {
-        return undefined;
-    }
-
-    const loaded = await loadPresence({ title: record.calendar?.title ?? meeting.title, start: meeting.start }, spec);
-    ui.dim(loaded.note);
-    return loaded.presence;
 }
 
 function itemWhat(item: MeetingItem): string {

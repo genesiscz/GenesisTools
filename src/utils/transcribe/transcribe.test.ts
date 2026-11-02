@@ -3,7 +3,7 @@ import { applyCorrections } from "./apply";
 import { applyDictionary, dictionaryLevelSchema, mergeDictionaries } from "./dictionary";
 import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
 import { formatClock, parseClock } from "./render";
-import { LEAVE_PHRASES, type Presence, speakerStats } from "./speakers";
+import { LEAVE_PHRASES, type Presence, presenceSections, speakerStats } from "./speakers";
 import type { Participant, TranscriptEntry } from "./types";
 
 function line(speaker: string, startSec: number | undefined, text: string, speakerId?: number): TranscriptEntry {
@@ -351,5 +351,22 @@ describe("lineEvidence fields (R2.1, R2.2)", () => {
 
         expect(first).toMatchObject({ refinedSpeakerId: 4, liveVoiceId: 1, energyLeft: 0.8, winner: SELF });
         expect(first!.echo).toBe(1);
+    });
+});
+
+describe("presenceSections (R2.4)", () => {
+    test("one section per join or leave; someone who comes back is present again", () => {
+        const sections = presenceSections([
+            { name: "Alice Example", fromSec: 0, toSec: 300 },
+            { name: "Bob Example", fromSec: 60, toSec: 120 },
+            { name: "Bob Example", fromSec: 200, toSec: 300 },
+        ]);
+
+        expect(sections).toEqual([
+            { fromSec: 0, toSec: 60, present: ["Alice Example"] },
+            { fromSec: 60, toSec: 120, present: ["Alice Example", "Bob Example"] },
+            { fromSec: 120, toSec: 200, present: ["Alice Example"] },
+            { fromSec: 200, toSec: 300, present: ["Alice Example", "Bob Example"] },
+        ]);
     });
 });

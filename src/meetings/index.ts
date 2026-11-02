@@ -1,5 +1,6 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
+import { registerAttendanceCommand } from "./commands/attendance";
 import { registerDictionaryCommand } from "./commands/dictionary";
 import { registerEvidenceCommand } from "./commands/evidence";
 import { registerItemCommands } from "./commands/items";
@@ -18,6 +19,7 @@ program
 registerMeetingCommands(program);
 registerItemCommands(program);
 registerEvidenceCommand(program);
+registerAttendanceCommand(program);
 registerRecordCommands(program);
 registerPlayCommand(program);
 registerWatchCommands(program);
