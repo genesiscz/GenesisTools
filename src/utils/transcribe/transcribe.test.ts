@@ -486,3 +486,22 @@ describe("summary points and importance", () => {
         expect(importanceOf("Tak to pošlu zítra.").decision).toBe(true);
     });
 });
+
+describe("mute state", () => {
+    test("a reading that did not read the mute state does not clear it; a read one 10 s back still holds", () => {
+        const [line] = lineEvidence([{ speaker: "Bob Example", startSec: 20, text: "Čus." }], {
+            segments: [{ startSec: 20, endSec: 22, channel: "system" }],
+            speaking: [
+                { tSec: 17.8, speaking: ["Carol Example"], muted: ["Alice Example"] },
+                { tSec: 20.7, speaking: ["Bob Example"] },
+            ],
+        });
+        expect(line?.muted).toEqual(["Alice Example"]);
+
+        const [stale] = lineEvidence([{ speaker: "Bob Example", startSec: 40, text: "Čus." }], {
+            segments: [{ startSec: 40, endSec: 42, channel: "system" }],
+            speaking: [{ tSec: 17.8, speaking: [], muted: ["Alice Example"] }],
+        });
+        expect(stale?.muted).toBeUndefined();
+    });
+});

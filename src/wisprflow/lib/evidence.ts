@@ -59,7 +59,7 @@ export function parseObservations(raw: string, selfName?: string): SpeakingObser
             observations.push({
                 tSec: line.obs.tMs / 1000,
                 speaking: named(line.obs.speaking),
-                muted: named(line.obs.muted ?? []),
+                ...(line.obs.muted ? { muted: named(line.obs.muted) } : {}),
             });
         }
     }

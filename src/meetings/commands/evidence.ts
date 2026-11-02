@@ -3,15 +3,18 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
+import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { energyMicShareFor } from "../lib/energy";
 import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
+import { rawMeeting } from "../lib/raw";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
 
@@ -21,7 +24,7 @@ const VOLUME_RATIO = 2;
 
 async function evidence(
     ref: string,
-    opts: { attendance?: string; format?: string | boolean; files?: boolean }
+    opts: { attendance?: string; format?: string | boolean; files?: boolean; raw?: boolean }
 ): Promise<void> {
     const format = await resolveEnum({
         value: opts.format,
@@ -63,6 +66,29 @@ async function evidence(
 
         const presence = await presenceFor(record, meeting, opts.attendance);
         const energy = await energyMicShareFor(store, record, found);
+
+        // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
+        if (opts.raw) {
+            const config = await new MeetingsConfigStore().read();
+            const points = meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [];
+            const current = store.read(record.id) ?? record;
+            out.result(
+                SafeJSON.stringify(
+                    rawMeeting({
+                        record: current,
+                        meeting,
+                        evidence: found,
+                        presence,
+                        energyMicShare: energy.share,
+                        points,
+                    }),
+                    null,
+                    2
+                )
+            );
+            return;
+        }
+
         const lines = lineEvidence(meeting.transcript, found, presence, energy.share);
         const selfLabelWords = meeting.transcript
             .filter((entry) => found.selfName && sameName(entry.speaker, found.selfName))
@@ -150,6 +176,10 @@ export function registerEvidenceCommand(program: Command): void {
         .description("Which voice each label's lines are, by audio channel and the platform's speaking indicator")
         .option("--attendance <teams|file>", "who was in the call and when (Teams)")
         .option("--files", "also list the evidence files and their sizes")
+        .option(
+            "--raw",
+            "the facts per line as JSON, with no rule or confidence: who, channel, platform, present, summary"
+        )
         .option("--format [format]", "table | json (json has one row per line)")
         .action(evidence);
 }
