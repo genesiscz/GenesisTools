@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import * as zlib from "node:zlib";
 import { createZstdCompress, constants as zlibConstants } from "node:zlib";
 import { env } from "@genesiscz/utils/env";
 import { fileFlags, SF_DATALESS } from "@genesiscz/utils/fs/cloud-placeholder";
@@ -1049,6 +1050,48 @@ describe("folder archives", () => {
         }
     });
 
+    it("decodes the frames of a 2 GiB window one at a time, so four decoders never ask for 8 GiB at once", async () => {
+        const dir = scratch("long-window-serial");
+        const parts = ["one\n", "two\n", "three\n", "four\n", "five\n"];
+        const file = join(dir, "long.zst");
+        writeFileSync(file, Buffer.concat(await Promise.all(parts.map((part) => longWindowZstd(Buffer.from(part))))));
+        const zstdDecompress = zlib.zstdDecompress;
+        let started = 0;
+        let running = 0;
+        let most = 0;
+        // Only frames with a long window go through node:zlib; Bun's decoder takes the others.
+        function counted(buffer: zlib.InputType, callback: zlib.CompressCallback): void;
+        function counted(buffer: zlib.InputType, options: zlib.ZstdOptions, callback: zlib.CompressCallback): void;
+        function counted(
+            buffer: zlib.InputType,
+            second: zlib.ZstdOptions | zlib.CompressCallback,
+            third?: zlib.CompressCallback
+        ): void {
+            const callback = typeof second === "function" ? second : third;
+            started += 1;
+            running += 1;
+            most = Math.max(most, running);
+            zstdDecompress(buffer, typeof second === "function" ? {} : second, (err, result) => {
+                running -= 1;
+                callback?.(err, result);
+            });
+        }
+        const decode = spyOn(zlib, "zstdDecompress").mockImplementation(
+            Object.assign(counted, { __promisify__: zstdDecompress.__promisify__ })
+        );
+        const read: string[] = [];
+
+        try {
+            for await (const frame of readZstdFrames(file)) {
+                read.push(Buffer.from(frame).toString());
+            }
+        } finally {
+            decode.mockRestore();
+        }
+
+        expect([read.join(""), started, most]).toEqual([parts.join(""), parts.length, 1]);
+    });
+
     it("restores files and folders into missing nested destinations", async () => {
         const dir = scratch("new-destination");
         const tree = makeTree(dir);
@@ -1405,6 +1448,16 @@ describe("folder archives", () => {
         const { id: _id, inputSha256: _sha, ...oldShape } = record;
         recordCompression({ ...oldShape, inputSha256: "0".repeat(64) });
         const into = join(dir, "tampered");
+        await expect(expandPath({ archive, into, caller: "test" })).rejects.toThrow("another sha256");
+        expect(existsSync(join(into, "tree"))).toBe(false);
+        // A restore that wrote the archive (the outer `tree.zst.zst` decompressed) says nothing of its content.
+        recordCompression({
+            ...oldShape,
+            op: "decompress",
+            source: `${archive}.zst`,
+            target: archive,
+            outputSha256: record.outputSha256,
+        });
         await expect(expandPath({ archive, into, caller: "test" })).rejects.toThrow("another sha256");
         expect(existsSync(join(into, "tree"))).toBe(false);
 
