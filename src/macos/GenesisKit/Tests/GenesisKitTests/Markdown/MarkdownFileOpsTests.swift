@@ -30,6 +30,46 @@ final class MarkdownFileOpsTests: XCTestCase {
 
     private func url(_ path: String) -> URL { root.appendingPathComponent(path).standardizedFileURL }
 
+    // The tab's right-click, the page's right-click and the Document menu show one list (2026-11-02: the page only
+    // offered WebKit's Reload).
+    func testTheDocumentMenuIsTheTabVerbsThenTheFileVerbs() throws {
+        model.open([url("readme.md"), url("notes/a.md")])
+        let doc = try XCTUnwrap(model.selected)
+        let outline = PathMenuEntry.outline(model.documentMenuEntries(for: doc))
+
+        XCTAssertEqual(Array(outline.prefix(3)), ["Close Tab", "Close Other Tab", "-"])
+        XCTAssertTrue(outline.contains("Copy Path"), "the file's verbs follow: \(outline)")
+
+        model.closeOthers(doc)
+        XCTAssertEqual(PathMenuEntry.outline(model.documentMenuEntries(for: doc)).prefix(2), ["Close Tab", "-"])
+    }
+
+    private static func webKitReload() -> NSMenuItem {
+        let item = NSMenuItem(title: "Reload", action: nil, keyEquivalent: "")
+        item.identifier = MarkdownPageMenu.webKitReload
+        return item
+    }
+
+    func testThePageMenuDropsWebKitsReloadAndKeepsItsSelectionItems() {
+        let entries: [PathMenuEntry] = [.item(PathMenuItem(id: "close-tab", title: "Close Tab") {})]
+        let reloadOnly = NSMenu()
+        reloadOnly.addItem(Self.webKitReload())
+        MarkdownPageMenu.adapt(reloadOnly, entries: entries)
+        XCTAssertEqual(reloadOnly.items.map(\.title), ["Close Tab"])
+
+        let withSelection = NSMenu()
+        withSelection.addItem(NSMenuItem(title: "Copy", action: nil, keyEquivalent: ""))
+        withSelection.addItem(.separator())
+        withSelection.addItem(Self.webKitReload())
+        MarkdownPageMenu.adapt(withSelection, entries: entries)
+        XCTAssertEqual(withSelection.items.map { $0.isSeparatorItem ? "-" : $0.title }, ["Copy", "-", "Close Tab"])
+
+        let outsideTheViewer = NSMenu()
+        outsideTheViewer.addItem(Self.webKitReload())
+        MarkdownPageMenu.adapt(outsideTheViewer, entries: [])
+        XCTAssertEqual(outsideTheViewer.items.map(\.title), ["Reload"])
+    }
+
     func testAnUnsavedTabBlocksItsFileAndEveryFolderAboveIt() {
         model.open([url("notes/sub/deep.md"), url("readme.md")])
         model.docs.first { $0.url == url("notes/sub/deep.md") }?.edit("changed")

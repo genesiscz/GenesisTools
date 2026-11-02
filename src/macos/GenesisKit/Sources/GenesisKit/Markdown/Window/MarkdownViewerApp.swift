@@ -268,6 +268,11 @@ public enum MarkdownViewerMenu {
         command(view, "Actual Size", "markdown.view.actualSize", keymap: keymap)
         menu.addItem(submenu(view, title: "View"))
 
+        // The selected document's verbs, the same list its tab and its page offer on a right-click.
+        let document = NSMenu(title: "Document")
+        document.delegate = MarkdownDocumentMenu.shared
+        menu.addItem(submenu(document, title: "Document"))
+
         let go = NSMenu(title: "Go")
         keyed(go, "Back", #selector(MarkdownDocumentWindowController.goBack(_:)), "markdown.history.back", keymap: keymap)
         keyed(go, "Forward", #selector(MarkdownDocumentWindowController.goForward(_:)), "markdown.history.forward", keymap: keymap)
