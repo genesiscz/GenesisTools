@@ -27,13 +27,20 @@ export async function meetingAudioPath(record: MeetingRecord): Promise<string> {
     return evidence.audioPath;
 }
 
-/** Cuts `fromSec - padSec` to `toSec + padSec` of the recording into a WAV clip. Needs ffmpeg. */
+/** The tone `cutClip` mixes in before the asked spot, so the listener knows which words the question is about. */
+const TONE = { hz: 880, sec: 0.15, volume: 0.6 };
+
+/**
+ * Cuts `fromSec - padSec` to `toSec + padSec` of the recording into a WAV clip. Needs ffmpeg. With `toneAtSec` (a
+ * time in the recording) a short tone sounds at that moment of the clip.
+ */
 export async function cutClip(options: {
     audioPath: string;
     fromSec: number;
     toSec: number;
     padSec: number;
     outPath: string;
+    toneAtSec?: number;
 }): Promise<void> {
     if (!Bun.which("ffmpeg")) {
         throw new Error("ffmpeg is not installed (brew install ffmpeg); it cuts the clip to listen to.");
@@ -42,6 +49,23 @@ export async function cutClip(options: {
     const startSec = Math.max(0, options.fromSec - options.padSec);
     const lengthSec = options.toSec + options.padSec - startSec;
     mkdirSync(dirname(options.outPath), { recursive: true });
+    const toneMs =
+        options.toneAtSec === undefined ? undefined : Math.round(Math.max(0, options.toneAtSec - startSec) * 1000);
+    const tone =
+        toneMs === undefined
+            ? []
+            : [
+                  "-f",
+                  "lavfi",
+                  "-t",
+                  String(TONE.sec),
+                  "-i",
+                  `sine=frequency=${TONE.hz}`,
+                  "-filter_complex",
+                  `[1:a]volume=${TONE.volume},adelay=delays=${toneMs}:all=1[tone];[0:a][tone]amix=inputs=2:duration=first:normalize=0[out]`,
+                  "-map",
+                  "[out]",
+              ];
     const argv = [
         "ffmpeg",
         "-y",
@@ -53,6 +77,7 @@ export async function cutClip(options: {
         String(lengthSec),
         "-i",
         options.audioPath,
+        ...tone,
         "-c:a",
         "pcm_s16le",
         options.outPath,
@@ -89,9 +114,29 @@ export function clipPlayer(preferred: ListenPlayer, all: readonly ListenPlayer[]
     return [preferred, ...all.filter((name) => name !== preferred)].find((name) => CLIP_PLAYERS[name].available());
 }
 
-/** Starts the clip; the caller kills the process when the listener moves on. */
-export function playClip(player: ListenPlayer, path: string): Bun.Subprocess {
+/** A clip that plays now or after a delay; `stop` cancels it before it starts, or ends it while it plays. */
+export interface PlayingClip {
+    stop(): void;
+}
+
+/** Starts the clip after `delayMs`, so a question on screen is read before the audio starts. */
+export function playClip(player: ListenPlayer, path: string, delayMs = 0): PlayingClip {
     const argv = CLIP_PLAYERS[player].argv(path);
-    log.debug({ argv }, "clip playing");
-    return Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    let proc: Bun.Subprocess | undefined;
+    const start = (): void => {
+        log.debug({ argv }, "clip playing");
+        proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    };
+    const timer = delayMs > 0 ? setTimeout(start, delayMs) : undefined;
+
+    if (!timer) {
+        start();
+    }
+
+    return {
+        stop: () => {
+            clearTimeout(timer);
+            proc?.kill();
+        },
+    };
 }
