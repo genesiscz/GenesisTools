@@ -181,11 +181,12 @@ const realDeps: ReadDeps = {
 };
 
 /**
- * Excerpts a caching reader keeps (one per file and line window, each at most MAX_CHARS), and session folders whose
- * roots it keeps; past it the oldest goes.
+ * The most excerpts (one per file and line window, each at most MAX_CHARS) and session folders' roots a caching reader
+ * keeps in one round. A round is one widget snapshot, whose published cards cite far fewer; a round that grows past
+ * it starts the next one by itself, so a caller that never ends a round keeps at most twice this.
  */
-const CACHED_EXCERPTS = 128;
-const CACHED_ROOTS = 64;
+const ROUND_EXCERPTS = 1024;
+const ROUND_ROOTS = 256;
 
 /** What a file's text depends on: its size and modification time; null when no regular file is there. */
 function fileStamp(path: string): string | null {
@@ -193,18 +194,57 @@ function fileStamp(path: string): string | null {
     return stat?.isFile() ? `${stat.size}:${stat.mtimeMs}` : null;
 }
 
-/** Puts `key` last (the newest) in `map`, and drops the oldest entry once the map holds more than `limit`. */
-function remember<V>(map: Map<string, V>, key: string, value: V, limit: number): void {
-    map.delete(key);
-    map.set(key, value);
+/**
+ * A map that keeps what the current round used and what the round before it used; `nextRound` ends the current round
+ * and drops every entry it did not use. A caller that reads the same keys in the same order every round (the widget
+ * snapshot) finds every one of them again, however many there are. A least-recently-used map smaller than one round
+ * evicted, every round, the very entries the rest of the round read next, so it found none of them.
+ */
+class RoundCache<V> {
+    private current = new Map<string, V>();
+    private previous = new Map<string, V>();
 
-    if (map.size > limit) {
-        const oldest = map.keys().next();
+    constructor(private readonly limit: number) {}
 
-        if (!oldest.done) {
-            map.delete(oldest.value);
+    get(key: string): V | undefined {
+        const value = this.current.get(key);
+
+        if (value !== undefined) {
+            return value;
         }
+
+        const kept = this.previous.get(key);
+
+        if (kept !== undefined) {
+            this.previous.delete(key);
+            this.set(key, kept);
+        }
+
+        return kept;
     }
+
+    set(key: string, value: V): void {
+        if (!this.current.has(key) && this.current.size >= this.limit) {
+            this.nextRound();
+        }
+
+        this.current.set(key, value);
+    }
+
+    delete(key: string): void {
+        this.current.delete(key);
+        this.previous.delete(key);
+    }
+
+    nextRound(): void {
+        this.previous = this.current;
+        this.current = new Map();
+    }
+}
+
+/** A caching reader, and the end of its round: after `nextRound` it finds what the ended round read, and nothing else. */
+export interface CachingReadDeps extends ReadDeps {
+    nextRound: () => void;
 }
 
 /**
@@ -212,7 +252,8 @@ function remember<V>(map: Map<string, V>, key: string, value: V, limit: number):
  * excerpt is read again only when its file's size or modification time changed, and a folder's roots are looked up
  * again after FILES_TTL_MS, as a checkout's file list is. It keeps the excerpts, never a file's whole text, so a large
  * cited file costs one bounded read per change. The stamp is taken before the read, so a file changed during the read
- * gets a new stamp and is read again next time.
+ * gets a new stamp and is read again next time. The caller ends each round (`nextRound`, once per snapshot): a snapshot
+ * finds every excerpt the one before it read, however many cards cite them, and what that one did not read is gone.
  */
 export function cachingReadDeps({
     base = realDeps,
@@ -222,9 +263,9 @@ export function cachingReadDeps({
     base?: ReadDeps;
     stamp?: (path: string) => string | null;
     now?: () => number;
-} = {}): ReadDeps {
-    const excerpts = new Map<string, { stamp: string; text: string }>();
-    const roots = new Map<string, { at: number; roots: string[] }>();
+} = {}): CachingReadDeps {
+    const excerpts = new RoundCache<{ stamp: string; text: string }>(ROUND_EXCERPTS);
+    const roots = new RoundCache<{ at: number; roots: string[] }>(ROUND_ROOTS);
 
     return {
         ...base,
@@ -234,7 +275,6 @@ export function cachingReadDeps({
             const cached = excerpts.get(key);
 
             if (current !== null && cached?.stamp === current) {
-                remember(excerpts, key, cached, CACHED_EXCERPTS);
                 return cached.text;
             }
 
@@ -242,7 +282,7 @@ export function cachingReadDeps({
             const text = base.excerpt(path, window);
 
             if (current !== null) {
-                remember(excerpts, key, { stamp: current, text }, CACHED_EXCERPTS);
+                excerpts.set(key, { stamp: current, text });
             }
 
             return text;
@@ -255,8 +295,12 @@ export function cachingReadDeps({
             }
 
             const found = base.roots(cwd);
-            remember(roots, cwd, { at: now(), roots: found }, CACHED_ROOTS);
+            roots.set(cwd, { at: now(), roots: found });
             return found;
+        },
+        nextRound: () => {
+            excerpts.nextRound();
+            roots.nextRound();
         },
     };
 }
