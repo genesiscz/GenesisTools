@@ -467,39 +467,71 @@ struct MarkdownSourceEditor: NSViewRepresentable {
                                  bottom: view.frame.height > clip.height + 1 && clip.maxY >= view.frame.height - 2)
         }
 
-        /// The anchor's line back at the top after `change` (a range of the old text, replaced by `inserted` UTF-16
-        /// units). The line is looked for where the change moved it, then by its text nearest to there; a line that is
-        /// gone gives its place to the line now at that number.
-        func restore(in view: NSTextView, starts: [Int], oldStart: Int, change: NSRange, inserted: Int) {
+        /// How one change moved the anchor's line: where the line started in the text the change replaced, the range
+        /// it replaced there, and how many UTF-16 units took its place.
+        struct Shift: Equatable {
+            var oldStart: Int
+            var change: NSRange
+            var inserted: Int
+        }
+
+        /// The anchor's line back at the top. With `shift` the line is looked for where the change moved it; without
+        /// it (an anchor held from an earlier change, whose line number is of the text it was taken from) at its own
+        /// number. Then it is looked for by its text nearest to there; a line that is gone gives its place to the line
+        /// now at that number.
+        ///
+        /// Returns whether the place came back exactly: the line was found, or the change lies inside it (the same
+        /// line with new words, such as a task the page set, which keeps its offset), or a reader at the bottom is at
+        /// a bottom again. A line that is gone may come back with the rest of a half-written file, and a text too
+        /// short to scroll has no bottom to stay at, so those are not exact and `ReadingPlace` holds the anchor.
+        @discardableResult
+        func restore(in view: NSTextView, starts: [Int], shift: Shift?) -> Bool {
             guard let layout = view.layoutManager, let container = view.textContainer,
-                  let scroll = view.enclosingScrollView else { return }
+                  let scroll = view.enclosingScrollView else { return false }
             let clip = scroll.contentView.bounds
             var y: CGFloat
+            let exact: Bool
             if bottom {
                 layout.ensureLayout(for: container)
                 y = view.frame.height - clip.height
+                exact = y > 0
             } else {
                 var predicted = line
-                if oldStart < change.location {
-                    predicted = SourceEditing.line(at: oldStart, starts: starts)
-                } else if oldStart >= NSMaxRange(change) {
-                    predicted = SourceEditing.line(at: oldStart + inserted - change.length, starts: starts)
+                if let shift {
+                    if shift.oldStart < shift.change.location {
+                        predicted = SourceEditing.line(at: shift.oldStart, starts: starts)
+                    } else if shift.oldStart >= NSMaxRange(shift.change) {
+                        predicted = SourceEditing.line(at: shift.oldStart + shift.inserted - shift.change.length, starts: starts)
+                    }
                 }
                 predicted = min(max(0, predicted), starts.count - 1)
                 // One bridge of the storage for the whole search: `view.string` builds a new string on every read.
                 let string = view.string as NSString
                 var found: Int?
-                for distance in 0..<starts.count {
+                let length = (text as NSString).length
+                // The change lies inside the line and breaks no line: the line is still at `predicted`, with new words.
+                // Asked first, so a list of equal items does not move the reader to the next one when the top one
+                // changes.
+                if let shift, shift.change.location >= shift.oldStart, NSMaxRange(shift.change) <= shift.oldStart + length,
+                   (Self.text(of: predicted, starts: starts, in: string) as NSString).length
+                       == length + shift.inserted - shift.change.length {
+                    found = predicted
+                }
+                for distance in 0..<starts.count where found == nil {
                     for candidate in [predicted - distance, predicted + distance] where candidate >= 0 && candidate < starts.count {
                         if Self.text(of: candidate, starts: starts, in: string) == text { found = candidate; break }
                     }
-                    if found != nil { break }
                 }
+                exact = found != nil
                 y = Self.lineTop(found ?? predicted, starts: starts, in: view) + (found == nil ? 0 : offset)
+                // The whole text laid out, so a shorter text clamps the view now and not at the next layout pass: a
+                // held anchor waits only while the view stays where this restore left it.
+                if !exact { layout.ensureLayout(for: container) }
             }
             y = min(max(0, y), max(0, view.frame.height - clip.height))
             scroll.contentView.scroll(to: NSPoint(x: clip.minX, y: y))
             scroll.reflectScrolledClipView(scroll.contentView)
+            return exact
         }
 
         /// The selection after `change`: kept before it, moved with the text after it, collapsed where it overlapped.
@@ -525,6 +557,46 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             layout.ensureLayout(forCharacterRange: NSRange(location: 0, length: min(start + 1, length)))
             let glyph = min(layout.glyphIndexForCharacter(at: start), layout.numberOfGlyphs - 1)
             return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + view.textContainerInset.height
+        }
+    }
+
+    /// The reader's place across changes from outside, kept the way the page keeps its own (`gnAnchorHeld` in the
+    /// page script). A place that did not come back exactly (`ReadingAnchor.restore`) is held for the next change
+    /// while the view stays where that restore left it: a writer that empties or truncates the file before it writes
+    /// it again puts a short text in the editor, which clamps the view to the top, where `capture` finds no place, so
+    /// without the hold the reader's line was lost for good once the whole file came back. A scroll or a jump moves
+    /// the view and so ends the hold; the reader's own edit ends it too (`drop`).
+    struct ReadingPlace {
+        /// The anchor to put back after one change, and where its line started in the text that change replaces:
+        /// nil for a held anchor, whose line is of the text it was taken from.
+        struct Pending {
+            let anchor: ReadingAnchor
+            let oldStart: Int?
+        }
+
+        private(set) var held: ReadingAnchor?
+        /// Where the held anchor's restore left the view; any other offset means the reader or a jump moved it.
+        private var heldTop: CGFloat = 0
+
+        mutating func drop() { held = nil }
+
+        /// The place to put back after the coming change: the held one while the view has not moved since, else the
+        /// view's own top line in the text about to be replaced (`starts` are that text's lines).
+        mutating func capture(_ view: NSTextView, starts: [Int]) -> Pending? {
+            if let held, let clip = view.enclosingScrollView?.contentView.bounds, abs(clip.minY - heldTop) <= 1 {
+                return Pending(anchor: held, oldStart: nil)
+            }
+            held = nil
+            return ReadingAnchor.capture(view, starts: starts).map { Pending(anchor: $0, oldStart: starts[$0.line]) }
+        }
+
+        /// Puts `pending` back after `change` (a range of the replaced text, now `inserted` UTF-16 units; `starts`
+        /// are the new text's lines), and holds it when it did not come back exactly.
+        mutating func restore(_ pending: Pending, in view: NSTextView, starts: [Int], change: NSRange, inserted: Int) {
+            let shift = pending.oldStart.map { ReadingAnchor.Shift(oldStart: $0, change: change, inserted: inserted) }
+            let exact = pending.anchor.restore(in: view, starts: starts, shift: shift)
+            held = exact ? nil : pending.anchor
+            heldTop = view.enclosingScrollView?.contentView.bounds.minY ?? 0
         }
     }
 
@@ -664,9 +736,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         /// that differs is replaced, through the text view, so it is one step on the editor's undo stack and ⌘Z takes
         /// it back. Assigning `string` registered nothing, so ⌘Z after Replace All undid the typing before it.
         func replaceFromOutside(with text: String, in view: NSTextView) {
-            // Before anything changes: the reader's line, by the old text's lines.
-            let oldStarts = starts
-            let anchor = MarkdownSourceEditor.ReadingAnchor.capture(view, starts: oldStarts)
+            // Before anything changes: the reader's line, by the old text's lines, or the place an earlier change held.
+            let pending = place.capture(view, starts: starts)
             invalidateLineStarts()
             let sel = view.selectedRange()
             programmaticSelection = true
@@ -687,10 +758,13 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             let end = (text as NSString).length
             let inserted = (change.replacement as NSString).length
             view.setSelectedRange(MarkdownSourceEditor.ReadingAnchor.selection(sel, through: change.range, inserted: inserted, length: end))
-            if let anchor {
-                anchor.restore(in: view, starts: starts, oldStart: oldStarts[anchor.line], change: change.range, inserted: inserted)
+            if let pending {
+                place.restore(pending, in: view, starts: starts, change: change.range, inserted: inserted)
             }
         }
+
+        /// The reader's place across changes from outside (`replaceFromOutside`).
+        private(set) var place = MarkdownSourceEditor.ReadingPlace()
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let view, let report = parent.onSelectionChange else { return }
@@ -699,6 +773,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             invalidateLineStarts()
+            // The reader's own edit: a place held for a change from outside no longer names the reader's text.
+            if !replacingFromOutside { place.drop() }
             sync()
             offerCompletion()
         }

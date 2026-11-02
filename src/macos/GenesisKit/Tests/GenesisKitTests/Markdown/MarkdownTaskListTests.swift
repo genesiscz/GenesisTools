@@ -129,6 +129,39 @@ final class MarkdownTaskListTests: XCTestCase {
     - [ ] after
     """
 
+    /// A fence ends with the quote or list item it opened in, as CommonMark reads it: a box after a quoted fence that
+    /// was never closed is a box, and a fence without `>` after a quoted one opens code of its own.
+    func testAFenceEndsWithTheQuoteOrListItemItOpenedIn() throws {
+        let items = MarkdownTaskList.items(in: bytes(Self.fenceNote))
+        XCTAssertEqual(items.map(\.text), ["alpha", "beta", "gamma"])
+        XCTAssertEqual(items.map(\.line), [5, 10, 16])
+        let alpha = try target(Self.fenceNote, bodyLine: 5, item: "alpha", checked: true)
+        XCTAssertEqual(MarkdownTaskList.locate(alpha, in: bytes(Self.fenceNote)), .atLine(items[0]),
+                       "a click on alpha saves it instead of finding no item")
+    }
+
+    /// Fences inside quotes and list items, each ended by its container. `MarkdownTaskWebTests` checks that the page
+    /// draws boxes on exactly the lines the scanner names.
+    static let fenceNote = """
+    > ```
+    > - [ ] quoted code
+    >
+    > > - [ ] still quoted code
+
+    - [ ] alpha
+    - item
+      ```
+      - [ ] item code
+    not indented
+    - [ ] beta
+    > ```
+    > code
+    ```
+    - [ ] top code
+    ```
+    - [ ] gamma
+    """
+
     func testLineNumbersMatchThePageForCRLFAndABOM() {
         let note = "\u{FEFF}- [ ] first\r\n\r\n- [x] third\r\n"
         let items = MarkdownTaskList.items(in: bytes(note))

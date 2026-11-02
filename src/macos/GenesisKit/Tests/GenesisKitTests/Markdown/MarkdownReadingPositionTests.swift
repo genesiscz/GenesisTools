@@ -42,6 +42,7 @@ final class MarkdownReadingPositionTests: XCTestCase {
         window?.contentView = nil
         window = nil
         web = nil
+        source = nil
     }
 
     // MARK: The page
@@ -249,6 +250,9 @@ final class MarkdownReadingPositionTests: XCTestCase {
 
     // MARK: The source editor
 
+    /// The editor's own coordinator: the tests change the text through it, as a change from disk does.
+    private var source: MarkdownSourceEditor.Coordinator?
+
     private func editor(_ text: String) -> NSTextView {
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
         let view = NSTextView(usingTextLayoutManager: false)
@@ -265,6 +269,11 @@ final class MarkdownReadingPositionTests: XCTestCase {
         view.string = text
         if let layout = view.layoutManager, let container = view.textContainer { layout.ensureLayout(for: container) }
         view.sizeToFit()
+        let coordinator = MarkdownSourceEditor(text: .constant(text), font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                                               textColor: .white, background: .black).makeCoordinator()
+        coordinator.view = view
+        view.delegate = coordinator
+        source = coordinator
         return view
     }
 
@@ -281,14 +290,13 @@ final class MarkdownReadingPositionTests: XCTestCase {
         view.enclosingScrollView!.reflectScrolledClipView(clip)
     }
 
-    /// The change the editor makes when the file changed from outside, and the restore after it.
+    /// The file changed from outside: the editor's own replacement and the restore after it.
     private func replace(_ view: NSTextView, with text: String) {
-        let oldStarts = SourceEditing.lineStarts(view.string)
-        let anchor = MarkdownSourceEditor.ReadingAnchor.capture(view, starts: oldStarts)
-        let change = MarkdownSourceEditor.changedRange(old: view.string as NSString, new: text as NSString)
-        view.textStorage?.replaceCharacters(in: change.range, with: change.replacement)
-        anchor?.restore(in: view, starts: SourceEditing.lineStarts(view.string), oldStart: anchor.map { oldStarts[$0.line] } ?? 0,
-                        change: change.range, inserted: (change.replacement as NSString).length)
+        source?.replaceFromOutside(with: text, in: view)
+    }
+
+    private func topLine(_ view: NSTextView) -> MarkdownSourceEditor.ReadingAnchor? {
+        MarkdownSourceEditor.ReadingAnchor.capture(view, starts: SourceEditing.lineStarts(view.string))
     }
 
     private static let lines = (0..<300).map { "line \($0) of the source" }.joined(separator: "\n")
@@ -314,6 +322,73 @@ final class MarkdownReadingPositionTests: XCTestCase {
         replace(view, with: Self.lines + "\n" + (0..<30).map { "appended \($0)" }.joined(separator: "\n"))
         let clip = view.enclosingScrollView!.contentView.bounds
         XCTAssertEqual(clip.maxY, view.frame.height, accuracy: 1)
+    }
+
+    /// The writer truncates the file before it writes it again, and the editor reads the short text on the way: that
+    /// text clamps the view to the top, and the reader's line comes back once the file is whole, as on the page
+    /// (`testAHalfWrittenFileReadOnTheWayDoesNotLoseThePlace`).
+    func testTheEditorKeepsItsLineThroughAHalfWrittenFileReadOnTheWay() throws {
+        let view = editor(Self.lines)
+        scroll(view, to: top(of: 150, in: view) + 5)
+        replace(view, with: "line 0 of the source\nline 1 of the source")
+        XCTAssertEqual(view.enclosingScrollView!.contentView.bounds.minY, 0, "the short text cannot scroll")
+        XCTAssertEqual(source?.place.held?.text, "line 150 of the source", "the place waits for the next change")
+
+        let added = (0..<5).map { "added \($0)" }.joined(separator: "\n") + "\n"
+        replace(view, with: added + Self.lines)
+        let after = try XCTUnwrap(topLine(view), "the editor is no longer at the top")
+        XCTAssertEqual(after.text, "line 150 of the source")
+        XCTAssertEqual(after.line, 155)
+        XCTAssertEqual(after.offset, 5, accuracy: 0.5)
+        XCTAssertNil(source?.place.held, "back exactly, so nothing is held")
+    }
+
+    /// The writer empties the file first: a reader at the bottom is at the bottom again once the file is whole.
+    func testTheEditorAtTheBottomStaysThereThroughATextTooShortToScroll() {
+        let view = editor(Self.lines)
+        scroll(view, to: view.frame.height - 300)
+        replace(view, with: "")
+        replace(view, with: Self.lines + "\n" + (0..<30).map { "appended \($0)" }.joined(separator: "\n"))
+        let clip = view.enclosingScrollView!.contentView.bounds
+        XCTAssertGreaterThan(clip.minY, 0)
+        XCTAssertEqual(clip.maxY, view.frame.height, accuracy: 1)
+    }
+
+    /// A held place lasts only while the view stays put: the reader who scrolled meanwhile decides where the view is.
+    func testAHeldPlaceGivesWayToAReaderWhoScrolledMeanwhile() throws {
+        let view = editor(Self.lines)
+        scroll(view, to: top(of: 150, in: view) + 5)
+        let half = (0..<100).map { "line \($0) of the source" }.joined(separator: "\n")
+        replace(view, with: half)
+        XCTAssertEqual(source?.place.held?.text, "line 150 of the source", "line 150 is not in the half-written file")
+
+        scroll(view, to: top(of: 20, in: view))
+        replace(view, with: Self.lines)
+        XCTAssertEqual(try XCTUnwrap(topLine(view)).text, "line 20 of the source", "the reader's line, not the held one")
+        XCTAssertNil(source?.place.held)
+
+        // The reader's own edit ends a hold too.
+        scroll(view, to: top(of: 150, in: view) + 5)
+        replace(view, with: half)
+        XCTAssertNotNil(source?.place.held)
+        view.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+        XCTAssertNil(source?.place.held, "typing drops the held place")
+    }
+
+    /// A change inside the top line (a task the page set) keeps that line and its offset, instead of looking for the
+    /// old text elsewhere: the next equal item is not the reader's.
+    func testAChangeInsideTheTopLineKeepsItAndItsOffset() throws {
+        let tasks = (0..<300).map { _ in "- [ ] the same item" }.joined(separator: "\n")
+        let view = editor(tasks)
+        scroll(view, to: top(of: 150, in: view) + 5)
+        let starts = SourceEditing.lineStarts(tasks)
+        let checked = (tasks as NSString).replacingCharacters(in: NSRange(location: starts[150] + 3, length: 1), with: "x")
+        replace(view, with: checked)
+        let after = try XCTUnwrap(topLine(view))
+        XCTAssertEqual(after.line, 150)
+        XCTAssertEqual(after.text, "- [x] the same item")
+        XCTAssertEqual(after.offset, 5, accuracy: 0.5)
+        XCTAssertNil(source?.place.held)
     }
 
     func testTheSelectionMovesWithItsText() {

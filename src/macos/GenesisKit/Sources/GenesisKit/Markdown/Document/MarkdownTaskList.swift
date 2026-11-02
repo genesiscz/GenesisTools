@@ -117,11 +117,13 @@ enum MarkdownTaskList {
     /// A line starts a list item only when its indent, counted from the content of the list item it sits in (or from
     /// the margin), is under four columns, as CommonMark reads it. Four or more is indented code or the next line of a
     /// paragraph: text either way, never a box. So `    - [ ] alpha` under a heading is a code example, while the same
-    /// line under `- [ ] parent` is its nested task.
+    /// line under `- [ ] parent` is its nested task. A fence ends with the quote or list item it opened in, so a box
+    /// after a quoted code block that was never closed is still a box.
     static func items(in bytes: [UInt8]) -> [MarkdownTaskLine] {
         let lines = lines(bytes)
         var out: [MarkdownTaskLine] = []
-        var fence: (mark: UInt8, count: Int)?
+        // An open fence, the quote marks it sits in and the content column of the list item it sits in (0: none).
+        var fence: (mark: UInt8, count: Int, depth: Int, column: Int)?
         // The content columns of the open list items, innermost last, inside `depth` quote marks.
         var open: [Int] = []
         var depth = 0
@@ -130,8 +132,16 @@ enum MarkdownTaskList {
         for n in bodyStart(lines, bytes)..<lines.count {
             let line = bytes[lines[n]]
             if let opened = fence {
-                if let mark = fenceMark(line), mark.mark == opened.mark, mark.count >= opened.count, mark.bare { fence = nil }
-                continue
+                // A fence ends with the quote or list item it opened in, and the line is then read as a block of its
+                // own (`> ```` then a line without `>`: the quote, and its code, are over).
+                if belongs(line, toQuotes: opened.depth, column: opened.column) {
+                    if let mark = fenceMark(line), mark.mark == opened.mark, mark.count >= opened.count, mark.bare,
+                       lead(line).depth == opened.depth {
+                        fence = nil
+                    }
+                    continue
+                }
+                fence = nil
             }
             let lead = lead(line)
             guard lead.first < line.endIndex else {
@@ -151,7 +161,7 @@ enum MarkdownTaskList {
             }
             if lead.column - (open.last ?? 0) >= 4 { continue }
             if let opening {
-                fence = (opening.mark, opening.count)
+                fence = (opening.mark, opening.count, lead.depth, open.last ?? 0)
                 paragraph = false
                 continue
             }
@@ -191,6 +201,29 @@ enum MarkdownTaskList {
             if i < end, line[i] == space || line[i] == tab { i += 1 }
         }
         return (depth, column, i)
+    }
+
+    /// Whether a line inside a fence still belongs to the quote and list item the fence opened in, as CommonMark (and
+    /// the page) reads it: `depth` quote marks, then an indent of at least `column` unless nothing follows them. A
+    /// line with fewer quote marks ends the quote, a blank one too; a line with text that is not indented into the
+    /// item ends the item; a blank line inside a list item does not. More quote marks are the code's own text.
+    private static func belongs(_ line: ArraySlice<UInt8>, toQuotes depth: Int, column: Int) -> Bool {
+        var i = line.startIndex
+        let end = line.endIndex
+        if line.starts(with: bom) { i += bom.count }
+        var marks = 0
+        while true {
+            var indent = 0
+            while i < end, line[i] == space || line[i] == tab {
+                indent = line[i] == tab ? indent + 4 - indent % 4 : indent + 1
+                i += 1
+            }
+            if marks == depth { return i == end || indent >= column }
+            guard i < end, line[i] == quote else { return false }
+            marks += 1
+            i += 1
+            if i < end, line[i] == space || line[i] == tab { i += 1 }
+        }
     }
 
     /// The list marker at `first` (`-`, `*`, `+`, `1.`, `1)`, then a blank or the end of the line) as the column its
