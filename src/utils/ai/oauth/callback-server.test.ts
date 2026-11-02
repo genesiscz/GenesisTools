@@ -150,8 +150,10 @@ describe("loopback OAuth callback listener", () => {
         const listener = await listening();
         await fetch(callbackUrl(listener, "?code=first&state=session"));
         const second = await fetch(callbackUrl(listener, "?code=second&state=session")).catch((error: unknown) => {
-            // The one-shot server may already have closed after flushing the first response.
-            expect(error).toMatchObject({ code: "ConnectionRefused" });
+            // The one-shot server may already have closed after flushing the first response. Bun 1.4.2 names the
+            // refusal ConnectionRefused, Bun 1.4.4 ECONNREFUSED.
+            const code = error instanceof Error && "code" in error ? String(error.code) : "";
+            expect(["ConnectionRefused", "ECONNREFUSED"]).toContain(code);
             return null;
         });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -113,12 +113,18 @@ describe("resolveKeepPartners", () => {
             mkdirSync(noProject, { recursive: true });
             mkdirSync(cache, { recursive: true });
 
-            // The real command, run where the bug was reported: it fails, so the root must come from the fallback.
-            expect(spawnCacheCommand(["bun", "pm", "cache"], noProject)).toBeNull();
-
             await env.testing.withOverrides({ BUN_INSTALL_CACHE_DIR: cache }, () => {
+                // `bun pm cache` as Bun 1.4.2 and older run it here (the reported bug): it exits 1, so the root must
+                // come from the fallback.
+                const failsLikeOldBun = (argv: string[]) =>
+                    argv[0] === "bun" ? null : spawnCacheCommand(argv, noProject);
+                expect(resolveKeepPartners(["bun"], failsLikeOldBun)).toEqual([{ id: "bun", root: cache }]);
+
+                // The real command: Bun 1.4.3 and later answer outside a project too, and an answer that names an
+                // existing folder wins over the fallback.
+                const answered = spawnCacheCommand(["bun", "pm", "cache"], noProject)?.trim();
                 const got = resolveKeepPartners(["bun"], (argv) => spawnCacheCommand(argv, noProject));
-                expect(got).toEqual([{ id: "bun", root: cache }]);
+                expect(got).toEqual([{ id: "bun", root: answered && existsSync(answered) ? answered : cache }]);
             });
         } finally {
             rmSync(outer, { recursive: true, force: true });
