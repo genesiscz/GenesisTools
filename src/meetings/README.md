@@ -94,6 +94,12 @@ A confirmed term or join is also written to `~/.genesis-tools/meetings/correctio
 - `term`: a correct spelling the misheard-term check should know; `--spoken` lists how people say it.
 - `keep`: a word the misheard-term check must never flag.
 
+A `term` may list its spoken forms (`--spoken jenezetka --spoken jenezetkou` for JDZ): a whole-word spoken form is
+replaced by the term. Other words are compared with the terms and their spoken forms after the Czech ending is
+stripped (`jenezetkama` and `jenezetka` share `jenezet`). A level's `fuzzy: { apply, suggest }` (default 0.95 and
+0.8) decides what happens: at `apply` or above the word is replaced, from `suggest` up to `apply` `suggest` makes a
+term item with the score (rule `dictionary-fuzzy`), below nothing. `--meaning` stores what a term means.
+
 Levels merge in this order, a later one winning: global, the project, the meeting. Abbreviations expand at every
 mention by default (`every`); `first` expands only the first mention in a transcript, `off` none.
 

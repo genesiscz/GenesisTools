@@ -24,6 +24,8 @@ export interface CorrectionsApplied {
     joins: number;
     terms: number;
     fixes: number;
+    spoken: number;
+    fuzzy: number;
     expansions: number;
 }
 
@@ -38,7 +40,7 @@ function firstWord(text: string): { word: string; rest: string } {
  */
 export function applyCorrections(entries: TranscriptEntry[], corrections: TranscriptCorrections): CorrectionsApplied {
     let lines = entries.map((entry) => ({ ...entry }));
-    const counts = { labels: 0, ranges: 0, joins: 0, terms: 0, fixes: 0, expansions: 0 };
+    const counts = { labels: 0, ranges: 0, joins: 0, terms: 0, fixes: 0, spoken: 0, fuzzy: 0, expansions: 0 };
 
     for (const join of corrections.joins ?? []) {
         const index = lines.findIndex(
@@ -94,6 +96,8 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         const applied = applyDictionary(lines, corrections.dictionary);
         lines = applied.entries;
         counts.fixes = applied.fixes;
+        counts.spoken = applied.spoken;
+        counts.fuzzy = applied.fuzzy;
         counts.expansions = applied.expansions;
     }
 

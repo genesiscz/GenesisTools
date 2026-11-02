@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
+import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, type SpeakerHint, sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
@@ -156,29 +156,64 @@ function termItems(options: {
     }).filter((suspect) => !keep.has(suspect.heard.toLowerCase()));
     log.debug({ vocab: vocab.length, suspects: suspects.length, kept: keep.size }, "term suggestions");
 
-    return suspects.flatMap((suspect) => {
-        const best = suspect.candidates[0];
+    // R2.5: a word close to a term or its spoken form, below the score that replaces it silently.
+    const applyAt = (dictionary.fuzzy ?? DEFAULT_FUZZY).apply;
+    const fuzzy = new Map<
+        string,
+        { heard: string; value: string; score: number; atSec?: number; occurrences: number }
+    >();
 
-        if (!best) {
-            return [];
-        }
+    for (const match of fuzzyMatches(meeting.transcript, dictionary).filter((candidate) => candidate.score < applyAt)) {
+        const key = `${match.heard.toLowerCase()}|${match.value}`;
+        const seen = fuzzy.get(key);
+        fuzzy.set(key, {
+            heard: match.heard,
+            value: match.value,
+            score: match.score,
+            atSec: seen?.atSec ?? meeting.transcript[match.line]?.startSec,
+            occurrences: (seen?.occurrences ?? 0) + 1,
+        });
+    }
 
-        return [
-            {
-                kind: "term" as const,
-                status: "suggested" as const,
-                heard: suspect.heard,
-                proposed: best.term,
-                confidence: best.confidence / 100,
-                rules: ["phonetic", best.source],
-                evidence: {
-                    occurrences: suspect.occurrences,
-                    match: suspect.kind,
-                    candidates: suspect.candidates.map((candidate) => `${candidate.term} ${candidate.confidence} %`),
+    const fuzzyItems: NewItem[] = [...fuzzy.values()].map((match) => ({
+        kind: "term",
+        status: "suggested",
+        heard: match.heard,
+        proposed: match.value,
+        ...(match.atSec !== undefined ? { atSec: match.atSec } : {}),
+        confidence: Math.round(match.score * 100) / 100,
+        rules: ["dictionary-fuzzy"],
+        evidence: { occurrences: match.occurrences },
+    }));
+
+    return [
+        ...fuzzyItems,
+        ...suspects.flatMap((suspect) => {
+            const best = suspect.candidates[0];
+
+            if (!best) {
+                return [];
+            }
+
+            return [
+                {
+                    kind: "term" as const,
+                    status: "suggested" as const,
+                    heard: suspect.heard,
+                    proposed: best.term,
+                    confidence: best.confidence / 100,
+                    rules: ["phonetic", best.source],
+                    evidence: {
+                        occurrences: suspect.occurrences,
+                        match: suspect.kind,
+                        candidates: suspect.candidates.map(
+                            (candidate) => `${candidate.term} ${candidate.confidence} %`
+                        ),
+                    },
                 },
-            },
-        ];
-    });
+            ];
+        }),
+    ];
 }
 
 /** A line counts as one channel when that channel holds at least this share of it (rule E1). */

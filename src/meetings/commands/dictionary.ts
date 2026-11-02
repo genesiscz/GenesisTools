@@ -75,7 +75,7 @@ function scopeOf(project: string | undefined): DictionaryScope {
 async function add(
     value: string,
     substitution: string | undefined,
-    opts: { type?: string | boolean; project?: string; spoken?: string[] }
+    opts: { type?: string | boolean; project?: string; spoken?: string[]; meaning?: string }
 ): Promise<void> {
     const type = await resolveEnum({
         value: opts.type,
@@ -92,7 +92,12 @@ async function add(
         type === "fix" || type === "abbr"
             ? { type, value, substitution }
             : type === "term"
-              ? { type, value, ...(opts.spoken?.length ? { spoken: opts.spoken } : {}) }
+              ? {
+                    type,
+                    value,
+                    ...(opts.spoken?.length ? { spoken: opts.spoken } : {}),
+                    ...(opts.meaning ? { meaning: opts.meaning } : {}),
+                }
               : { type, value };
     const parsed = dictionaryEntrySchema.safeParse(candidate);
 
@@ -270,6 +275,7 @@ export function registerDictionaryCommand(program: Command): void {
             "the project's dictionary instead of the global one (a new name is added to the known projects)"
         )
         .option("--spoken <form>", "term: how people say it (repeatable)", collect)
+        .option("--meaning <text>", "term: what it means, shown after its first mention in Markdown")
         .action(add);
 
     dictionary

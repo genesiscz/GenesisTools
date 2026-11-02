@@ -437,7 +437,7 @@ async function transcript(
         const config = await new MeetingsConfigStore().read();
         const applied = applyCorrections(meeting.transcript, correctionsOf(record, config, opts));
         ui.dim(
-            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.expansions} expansions`
+            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions`
         );
 
         if (format === "json") {
