@@ -502,40 +502,45 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<string> {
 
 /**
  * The `tar -c` call that packs a folder, or only `files` of it (paths relative to the folder, `/` separators). A list
- * is packed under the folder's name with each file's parent folders and nothing else (`--no-recursion`, the names on
- * stdin), so the archive keeps the one top folder that unpack expects. Each name is taken as it is: a backslash stays
- * part of the name ({@link TAR_OPTIONS} `namesFromList`). `COPYFILE_DISABLE=1` keeps macOS bsdtar from adding
+ * is packed under the folder's name with each file's parent folders and nothing else (`--no-recursion`), so the
+ * archive keeps the one top folder that unpack expects. `COPYFILE_DISABLE=1` keeps macOS bsdtar from adding
  * AppleDouble entries.
+ *
+ * Every name reaches tar NUL-separated on stdin (`--null -T -`), never as an argument, and `-C` always gets an
+ * absolute path: a folder named `-x` as an argument is read as an option, and bsdtar reads an argument that starts
+ * with `-C` as a folder change and one that starts with `@` as an archive to copy in, even after `--` (a folder named
+ * `-Cx` packed into an empty archive with exit 0). With `--null` both tars take each listed name as it is: no option,
+ * no `-C` line, no unquoting (GNU tar also needs {@link TAR_OPTIONS} `namesFromList` for backslashes).
  */
 export function tarCreateCommand(
     source: string,
     files?: readonly string[]
-): { cmd: string[]; stdin?: Uint8Array; env: Record<string, string | undefined> } {
-    const childEnv = { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" };
+): { cmd: string[]; stdin: Uint8Array; env: Record<string, string | undefined> } {
+    const folder = resolve(source);
+    const top = basename(folder);
+    const names = [top];
 
-    if (!files) {
-        return { cmd: ["tar", "--no-xattrs", "-cf", "-", "-C", dirname(source), basename(source)], env: childEnv };
+    if (files) {
+        names.push(...[...parentFolders(files)].sort().map((parent) => `${top}/${parent}`));
+        names.push(...files.map((file) => `${top}/${file}`));
     }
 
-    const top = basename(source);
-    const names = [top, ...[...parentFolders(files)].sort().map((folder) => `${top}/${folder}`)];
-    names.push(...files.map((file) => `${top}/${file}`));
     return {
         cmd: [
             "tar",
             "--no-xattrs",
-            "--no-recursion",
+            ...(files ? ["--no-recursion"] : []),
             "--null",
             ...TAR_OPTIONS[tarFlavor()].namesFromList,
             "-cf",
             "-",
             "-C",
-            dirname(source),
+            dirname(folder),
             "-T",
             "-",
         ],
         stdin: Buffer.from(`${names.join("\0")}\0`),
-        env: childEnv,
+        env: { ...env.getProcessEnv(), COPYFILE_DISABLE: "1" },
     };
 }
 
@@ -615,7 +620,7 @@ export async function packDirectory({
             const writer = new SeekableZstdWriter({ write, frameBytes, threads, level, long, checksum });
             const tar = tarCreateCommand(source, files);
             const proc = Bun.spawn(tar.cmd, {
-                stdin: tar.stdin ?? "ignore",
+                stdin: tar.stdin,
                 stdout: "pipe",
                 stderr: "pipe",
                 env: tar.env,
@@ -686,7 +691,8 @@ function tarFlavor(): TarFlavor {
  *
  * `namesFromList`: GNU tar unquotes the names it reads with `-T` (`\\`, `\n`, `\b` and octal escapes), so a listed
  * file named `a\b` would be read as another name; `--no-unquote` takes each name as it is. bsdtar takes them as they
- * are.
+ * are. Neither reads a listed name as an option under `--null`: GNU tar documents that `--null` turns that off like
+ * `--verbatim-files-from` (which GNU tar before 1.29 does not know), and bsdtar's `--null` turns off its `-C` lines.
  */
 const TAR_OPTIONS: Record<TarFlavor, { extract: readonly string[]; namesFromList: readonly string[] }> = {
     bsdtar: { extract: process.platform === "darwin" ? ["--options", "tar:!mac-ext"] : [], namesFromList: [] },
@@ -712,7 +718,8 @@ export async function unpackArchive({
     destination: string;
 }): Promise<{ bytes: number; sha256: string }> {
     mkdirSync(destination, { recursive: true });
-    const proc = Bun.spawn(["tar", ...extractOptions(), "-kxf", "-", "-C", destination], {
+    // Absolute, so a destination named `-x` never reaches tar looking like an option.
+    const proc = Bun.spawn(["tar", ...extractOptions(), "-kxf", "-", "-C", resolve(destination)], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",

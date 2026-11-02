@@ -184,7 +184,7 @@ export async function sampleFolder(
     { bytes = 32 * 1024 * 1024, files }: { bytes?: number; files?: readonly string[] } = {}
 ): Promise<Uint8Array> {
     const tar = tarCreateCommand(path, files);
-    const proc = Bun.spawn(tar.cmd, { stdin: tar.stdin ?? "ignore", stdout: "pipe", stderr: "ignore", env: tar.env });
+    const proc = Bun.spawn(tar.cmd, { stdin: tar.stdin, stdout: "pipe", stderr: "ignore", env: tar.env });
     const chunks: Uint8Array[] = [];
     let total = 0;
 

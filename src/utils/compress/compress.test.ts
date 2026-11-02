@@ -1235,6 +1235,43 @@ describe("folder archives", () => {
         expect(readFileSync(join(into, "tree", "a\\empty"), "utf8")).toBe("backslash\n");
     });
 
+    it("packs, verifies and unpacks a folder and files whose names start with -, and bsdtar's -C and @ names", async () => {
+        const dir = scratch("dash-names");
+
+        // `-x` as a tar argument is an option; bsdtar reads `-Cx` as a folder change and `@x` as an archive, even after `--`.
+        for (const name of ["-x", "-Cx", "@x"]) {
+            const folder = join(dir, name);
+            mkdirSync(join(folder, "-sub"), { recursive: true });
+            writeFileSync(join(folder, "-y"), logText(100));
+            writeFileSync(join(folder, "-sub", "-C"), "dash\n");
+            const entries = [name, `${name}/-sub`, `${name}/-sub/-C`, `${name}/-y`];
+
+            const { record } = await compressPath({ source: folder, force: true, caller: "test" });
+            expect(
+                listArchive(record.target)
+                    .map((entry) => entry.path)
+                    .sort()
+            ).toEqual(entries.sort());
+            expect(verifyPath({ archive: record.target, against: folder }).ok).toBe(true);
+
+            const files = ["-y", "-sub/-C"];
+            const listed = await compressPath({
+                source: folder,
+                files,
+                target: join(dir, `${name}-listed.zst`),
+                force: true,
+                caller: "test",
+            });
+            expect(listed.record.files).toBe(2);
+            expect(verifyPath({ archive: listed.record.target, against: folder, files }).ok).toBe(true);
+
+            const into = join(dir, `restored${name}`);
+            await expandPath({ archive: record.target, into, caller: "test" });
+            expect(readFileSync(join(into, name, "-y"), "utf8")).toBe(logText(100));
+            expect(readFileSync(join(into, name, "-sub", "-C"), "utf8")).toBe("dash\n");
+        }
+    });
+
     it("records a pack's tar stream sha256, and unpack checks it against the newest record of the archive", async () => {
         const dir = scratch("pack-sha");
         const tree = makeTree(dir);
