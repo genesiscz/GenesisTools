@@ -1419,7 +1419,7 @@ describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
         expect(listBatches(paths)).toEqual([]);
     });
 
-    test("the daily keepalive refreshes a pending aside and a batch in its grace, never a decided request", () => {
+    test("the daily keepalive refreshes a pending aside, a batch in its grace and a failed one, never a decided request", () => {
         const requestsDir = dir("keepalive", "requests");
         const paths: TrashPaths = {
             batchesDir: dir("keepalive", "batches"),
@@ -1448,11 +1448,23 @@ describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
             });
         const inGrace = toTrash("keepalive-grace");
         const pastGrace = toTrash("keepalive-due", new Date(Date.now() - 3_600_000));
+        // Past its grace too, but the drain could not delete it: it stays in the trash, restorable, until drain --now.
+        const failed = toTrash("keepalive-failed", new Date(Date.now() - 3_600_000));
+        const failedRecord = join(paths.batchesDir, `${failed?.id ?? "x"}.json`);
+        writeFileSync(
+            failedRecord,
+            SafeJSON.stringify({
+                ...SafeJSON.parse(readFileSync(failedRecord, "utf8"), { strict: true }),
+                failed: { at: new Date().toISOString(), reason: "EACCES" },
+            })
+        );
+        expect(listBatches(paths).find((batch) => batch.id === failed?.id)?.failed?.reason).toBe("EACCES");
         const stored = {
             pending: pending.targets[0]?.stored ?? "",
             decided: decided.targets[0]?.stored ?? "",
             inGrace: inGrace?.items[0]?.stored ?? "",
             pastGrace: pastGrace?.items[0]?.stored ?? "",
+            failed: failed?.items[0]?.stored ?? "",
         };
 
         // Three days in /tmp, with no measurement pass or drainer since: every file is old.
@@ -1462,9 +1474,10 @@ describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
 
         const result = refreshWaitingRmData({ requestsDir, trashPaths: paths });
 
-        expect(result).toMatchObject({ requests: 1, batches: 1, files: 4, failed: 0 });
+        expect(result).toMatchObject({ requests: 1, batches: 2, files: 6, failed: 0 });
         expectFresh(stored.pending);
         expectFresh(stored.inGrace);
+        expectFresh(stored.failed);
         expectOld(stored.decided);
         expectOld(stored.pastGrace);
     });

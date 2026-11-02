@@ -736,7 +736,11 @@ function sharedRequests(request: RmRequest, approved: readonly ApproveEntry[]): 
         .filter((other) => other.shared.length > 0);
 }
 
-/** Marks the other requests decided with this one: fully shared ones approved, the rest keep their own paths. */
+/**
+ * Marks the other requests decided with this one: fully shared ones approved, the rest keep their own paths. Either
+ * way the other request records the shared paths as approved and the batch that holds them, so `restore <its id>`
+ * brings them back with every batch its own later approval makes.
+ */
 function settleShared(shared: readonly SharedRequest[], decidedBy: RmRequest, batchId: string | undefined): void {
     const decidedAt = new Date().toISOString();
 
@@ -754,17 +758,22 @@ function settleShared(shared: readonly SharedRequest[], decidedBy: RmRequest, ba
                 return null;
             }
 
+            const settled = {
+                ...fresh,
+                decided: {
+                    ...fresh.decided,
+                    approved: [...new Set([...(fresh.decided?.approved ?? []), ...paths])],
+                    denied: fresh.decided?.denied ?? [],
+                },
+                batchId: batchId ?? fresh.batchId,
+                batchIds: batchId ? [...requestBatchIds(fresh), batchId] : fresh.batchIds,
+            };
+
+            // A request that keeps paths of its own stays pending for them, undecided (no decidedAt or decidedVia):
+            // a later deny of it is the person's first decision, not a retry.
             return rest.length > 0
-                ? { ...fresh, targets: rest }
-                : {
-                      ...fresh,
-                      status: "approved",
-                      decidedAt,
-                      decidedVia: `request:${decidedBy.id}`,
-                      decided: { approved: [...paths], denied: [] },
-                      batchId: batchId ?? fresh.batchId,
-                      batchIds: batchId ? [...requestBatchIds(fresh), batchId] : fresh.batchIds,
-                  };
+                ? { ...settled, targets: rest }
+                : { ...settled, status: "approved", decidedAt, decidedVia: `request:${decidedBy.id}` };
         });
 
         if (update.kind === "busy") {
