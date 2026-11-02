@@ -178,27 +178,41 @@ export interface CompressPathPlan {
     files?: string[];
 }
 
-/** The first `bytes` of a folder's tar stream (of only `files` of it, when given): the sample its trial compresses. */
+/**
+ * The first `bytes` of a folder's tar stream (of only `files` of it, when given): the sample its trial compresses.
+ * Throws with tar's own error when tar fails before it wrote that much, instead of returning the short or empty
+ * stream it left.
+ */
 export async function sampleFolder(
     path: string,
     { bytes = 32 * 1024 * 1024, files }: { bytes?: number; files?: readonly string[] } = {}
 ): Promise<Uint8Array> {
     const tar = tarCreateCommand(path, files);
-    const proc = Bun.spawn(tar.cmd, { stdin: tar.stdin, stdout: "pipe", stderr: "ignore", env: tar.env });
+    const proc = Bun.spawn(tar.cmd, { stdin: tar.stdin, stdout: "pipe", stderr: "pipe", env: tar.env });
+    const stderr = new Response(proc.stderr).text();
     const chunks: Uint8Array[] = [];
     let total = 0;
+    let stopped = false;
 
     for await (const chunk of proc.stdout) {
         chunks.push(chunk);
         total += chunk.length;
 
         if (total >= bytes) {
+            stopped = true;
             proc.kill();
             break;
         }
     }
 
-    await proc.exited;
+    const exitCode = await proc.exited;
+    const message = (await stderr).trim();
+
+    // The kill above makes tar exit non-zero too; that one is the sample being complete.
+    if (!stopped && exitCode !== 0) {
+        throw new Error(`tar could not read ${path} (exit ${exitCode})${message ? `: ${message}` : ""}`);
+    }
+
     return Buffer.concat(chunks).subarray(0, bytes);
 }
 

@@ -329,7 +329,8 @@ export type TrialGoal = "ratio" | "speed" | "balanced";
 /**
  * Compresses a sample with several presets and reports saving and speed, then picks by goal: `ratio` = most saved,
  * `speed` = fastest that saves at least 90% of the best saving, `balanced` = best saving per CPU second among those
- * within 95% of the best saving.
+ * within 95% of the best saving. When no preset saves anything (media, random bytes), every goal picks the one that
+ * loses least. Throws on an empty sample or an empty preset list: there is nothing to measure.
  */
 export function tryPresets(
     sample: Uint8Array,
@@ -338,6 +339,14 @@ export function tryPresets(
         presets = ["fast", "text", "tree", "max"] as PresetName[],
     }: { goal?: TrialGoal; presets?: PresetName[] } = {}
 ): { results: TrialResult[]; pick: TrialResult } {
+    if (sample.length === 0) {
+        throw new Error("the sample is empty: there is nothing to compress");
+    }
+
+    if (presets.length === 0) {
+        throw new Error("no presets to try");
+    }
+
     const results = presets.map((name) => {
         const preset = PRESETS[name];
         const started = process.cpuUsage();
@@ -348,21 +357,28 @@ export function tryPresets(
             preset: name,
             level: preset.level,
             long: preset.long,
-            saving: 1 - compressed.length / Math.max(sample.length, 1),
+            saving: 1 - compressed.length / sample.length,
             mbPerSecond: sample.length / 1e6 / seconds,
         };
     });
 
-    const best = Math.max(...results.map((result) => result.saving));
+    const top = results.reduce((a, b) => (b.saving > a.saving ? b : a));
+
+    // 90% of a negative best saving lies above the best itself, so the filters below would keep no preset at all.
+    if (top.saving <= 0) {
+        return { results, pick: top };
+    }
+
+    // Each filter keeps `top` at least, since its saving is positive.
     const byGoal: Record<TrialGoal, () => TrialResult> = {
-        ratio: () => results.reduce((a, b) => (b.saving > a.saving ? b : a)),
+        ratio: () => top,
         speed: () =>
             results
-                .filter((result) => result.saving >= best * 0.9)
+                .filter((result) => result.saving >= top.saving * 0.9)
                 .reduce((a, b) => (b.mbPerSecond > a.mbPerSecond ? b : a)),
         balanced: () =>
             results
-                .filter((result) => result.saving >= best * 0.95)
+                .filter((result) => result.saving >= top.saving * 0.95)
                 .reduce((a, b) => (b.mbPerSecond * b.saving > a.mbPerSecond * a.saving ? b : a)),
     };
 
