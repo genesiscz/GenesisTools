@@ -16,11 +16,13 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { isDatalessFile, namesCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { looksLikeCookieJar, redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import {
+    afterReadRisk,
     type ChangeBytes,
     capBlob,
     commandEditsFiles,
@@ -1194,7 +1196,10 @@ export function silentReason({
     return "no change since this command began";
 }
 
-/** What the session change log receives: every file the call captured, before the render cap. */
+/**
+ * What the session change log receives: every file the call captured, before the render cap, except a file whose
+ * read could download it (`loggableCaptures`).
+ */
 export type EditRecorder = (payload: HookPayload, captures: CapturedEdit[], since: number) => void;
 
 export interface CapturedEdit {
@@ -1292,6 +1297,52 @@ export function capturedAfter(item: CapturedEdit): ChangeBytes {
     }
 
     return item.inRepository ? readAsGitStores(item.path) : readCapped(item.path);
+}
+
+/**
+ * Why reading a captured file's after-state could download it from a cloud provider, or `null` (`afterReadRisk`). A
+ * repository entry sits below a root that passed `underCloudRoot`, and git reports a link in a work tree as a link, so
+ * its own path and its blocks are enough, without a link walk per file of a codemod; a link is logged by its text.
+ */
+function afterStateRisk(item: CapturedEdit): string | null {
+    if (item.deleted) {
+        return null;
+    }
+
+    if (!item.inRepository) {
+        return afterReadRisk(item.path);
+    }
+
+    if (namesCloudRoot(item.path)) {
+        return "under a cloud storage folder, where a read can download it";
+    }
+
+    try {
+        const stat = lstatSync(item.path);
+        return !stat.isSymbolicLink() && isDatalessFile(stat) ? "a cloud placeholder that a read would download" : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The captures the session change log may read. The pre phase left a placeholder or a file under a cloud folder out of
+ * the capture, and the root pass still captures it when the command changed it; reading its after-state for the log
+ * downloaded it (eve on #669, 2026-11-02). Such a file is left out of the log, and the hook log names it.
+ */
+function loggableCaptures(captures: CapturedEdit[]): CapturedEdit[] {
+    return captures.filter((item) => {
+        const risk = afterStateRisk(item);
+
+        if (risk) {
+            hookDiag("Left a file out of the change log: reading its after-state could download it", {
+                path: item.path,
+                risk,
+            });
+        }
+
+        return risk === null;
+    });
 }
 
 const GIT_BATCH_TIMEOUT_MS = 5_000;
@@ -1863,7 +1914,7 @@ export function runDiffPost({
         blocks.push(block);
     }
 
-    record(payload, captures, since);
+    record(payload, loggableCaptures(captures), since);
     recordTouches(touches);
 
     try {

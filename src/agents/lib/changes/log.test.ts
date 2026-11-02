@@ -452,6 +452,27 @@ describe("scripted editors", () => {
         expect(rows.map((row) => row.path)).toEqual([output]);
     });
 
+    test("a named path under a cloud storage folder is never read, so the log cannot download it", () => {
+        const dir = mkdtempSync(join(tmpdir(), "changes-script-"));
+        const file = join(dir, "changes.jsonl");
+        const cloud = join(dir, "Library", "CloudStorage", "Provider-named");
+        const placeholder = join(cloud, "note.md");
+        const output = join(dir, "out.csv");
+        mkdirSync(cloud, { recursive: true });
+        writeFileSync(placeholder, "touched\n");
+        writeFileSync(output, "b,a\n");
+        const lines: string[] = [];
+        const sink = { hash: (bytes: Buffer) => bytes.toString("utf8"), log: (line: string) => lines.push(line) };
+        const event = { provider: "claude", session: "s1", turn: "t1", tool: "Bash", cwd: dir };
+        const command = `python3 transform.py ${placeholder} > ${output}`;
+
+        recordScriptedEdits(file, command, { ...event, since: Date.now() - 60_000 }, [], sink);
+
+        // The output is the positive control: the named pass ran and logged the file it may read.
+        expect(readJsonlRows<ChangeEvent>(file).rows.map((row) => row.path)).toEqual([output]);
+        expect(lines.join("\n")).toContain(`${placeholder} not logged: under a cloud storage folder`);
+    });
+
     test("a named path another chunk of the same command records is not logged twice", () => {
         const dir = mkdtempSync(join(tmpdir(), "changes-script-"));
         const file = join(dir, "changes.jsonl");
