@@ -7,7 +7,10 @@ import { genesisAppBundlePath, installedGenesisAppLauncher } from "@genesiscz/ut
 
 const { log } = logger.scoped("meetings-grants");
 
-const OPEN_PANE = toolCommand("macos", "permissions", "open", "--pane", "screen-recording");
+const OPEN_WINDOW = toolCommand("macos", "permissions", "ui");
+/** How long the permission window gets for the user to flip the switch, and how often the grant is read meanwhile. */
+const WINDOW_WAIT_MS = 180_000;
+const WINDOW_POLL_MS = 2_000;
 
 export interface GrantOutcome {
     granted: boolean;
@@ -34,10 +37,24 @@ function identityNow(): { identity: string; granted: boolean | undefined } {
  * desktop and the menu bar, so a recording never starts without it.
  * 1. Granted: go.
  * 2. Otherwise, in a terminal: ask macOS for that identity (its own prompt and the System Settings pane), wait for it.
- * 3. Still missing, GenesisTools.app installed: its permission window takes over.
+ * 3. Still missing, GenesisTools.app installed: its permission window opens, and the grant is read for 3 minutes.
  * 4. Not installed and the terminal has no grant: say so, and propose installing the app and granting it.
  * Without a terminal (the daemon) nothing prompts: the outcome says what to run.
  */
+/** Reads the grant until it is on or the deadline passes; the window returns at once, the user takes a while. */
+async function waitForGrant(timeoutMs: number): Promise<ReturnType<typeof identityNow>> {
+    const deadline = Date.now() + timeoutMs;
+    let now = identityNow();
+
+    while (!now.granted && Date.now() < deadline) {
+        await Bun.sleep(Math.min(WINDOW_POLL_MS, deadline - Date.now()));
+        now = identityNow();
+    }
+
+    log.info({ granted: now.granted, identity: now.identity }, "screen recording: permission window wait ended");
+    return now;
+}
+
 export async function ensureScreenRecording(options: { quiet?: boolean } = {}): Promise<GrantOutcome> {
     const first = identityNow();
 
@@ -47,8 +64,8 @@ export async function ensureScreenRecording(options: { quiet?: boolean } = {}): 
 
     const appInstalled = existsSync(genesisAppBundlePath());
     const installHint = appInstalled
-        ? `Grant it in the window: ${OPEN_PANE}`
-        : `GenesisTools.app is not installed, and this terminal has no grant. Install the app (${toolCommand("macos", "permissions", "build")}), then grant it: ${OPEN_PANE}`;
+        ? `Grant it in the GenesisTools permissions window: ${OPEN_WINDOW}`
+        : `GenesisTools.app is not installed, and this terminal has no grant. Install the app (${toolCommand("macos", "permissions", "build")}), then grant it: ${OPEN_WINDOW}`;
 
     if (options.quiet || !isInteractive()) {
         return {
@@ -68,8 +85,8 @@ export async function ensureScreenRecording(options: { quiet?: boolean } = {}): 
 
     if (appInstalled) {
         log.info("screen recording: opening the GenesisTools.app permission window");
-        await execToolInteractive(["macos", "permissions", "open", "--pane", "screen-recording"]);
-        const third = identityNow();
+        await execToolInteractive(["macos", "permissions", "ui"]);
+        const third = await waitForGrant(WINDOW_WAIT_MS);
 
         if (third.granted) {
             return { granted: true, identity: third.identity };

@@ -11,6 +11,7 @@ import {
     genesisAppBundlePath,
     genesisAppDisabledMarkerPath,
     genesisAppLauncherPath,
+    genesisAppWindowCommand,
 } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -529,7 +530,7 @@ export function registerPermissionsCommand(program: Command): void {
                 return;
             }
 
-            const opened = Bun.spawnSync(["open", "-a", bundle]);
+            const opened = Bun.spawnSync(genesisAppWindowCommand());
 
             if (opened.exitCode !== 0) {
                 ui.err(`could not open ${bundle} (exit ${opened.exitCode})`);
@@ -537,7 +538,7 @@ export function registerPermissionsCommand(program: Command): void {
                 return;
             }
 
-            ui.ok("GenesisTools window opened");
+            ui.ok("GenesisTools permissions window opened");
         });
 
     permissions
