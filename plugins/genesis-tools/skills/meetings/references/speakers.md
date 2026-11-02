@@ -1,8 +1,8 @@
 # Speaker attribution
 
-Status 2026-11-02 20:15. Martin reviewed the content rules: R1, R2, R3, R6 and R10 are confirmed, R7 is narrowed, R4,
-R5, R8 and R9 are rewritten after his questions. The evidence tiers E1 to E4 are new, measured on one meeting. Show a
-re-attribution as a suggestion until the user confirms the rule set.
+Status 2026-11-02 20:15. The user reviewed the content rules: R1, R2, R3, R6 and R10 are confirmed, R7 is narrowed,
+R4, R5, R8 and R9 are rewritten after the user's questions. The evidence tiers E1 to E4 are new, measured on one
+meeting. Show a re-attribution as a suggestion until the user confirms the rule set.
 
 A worked example with every number exists for a real client meeting. It holds real names, so it lives in the user's
 notes vault, not in this repository; ask the user for its path. Read it after this page, not instead of it.
@@ -13,9 +13,9 @@ Diarization groups audio into speaker numbers, and the source names each number 
 `meeting.json` every participant has an `origin`: `platform` (Teams named it), `llm` (Wispr's model guessed it) or
 `self`. A guessed label is a hypothesis, and one label can hold several voices, including the user's own.
 
-The most expensive mistake: treating the label that carries the user's name as "all of the user". In the example, the
-user's label held 2,619 words while the user's microphone recorded 11,646 tokens; most of the user's speech sat under
-another person's label.
+The most expensive mistake: treating the label that carries the user's name as "all of the user". In a measured
+meeting the user's microphone recorded four times the words of the user's label; most of the user's speech sat under
+other people's labels.
 
 ## Evidence tiers: physical facts first
 
@@ -25,8 +25,9 @@ wisprflow:<id>` (or `link`): the record, with the transcript, the people, the ca
 
 - **Three-pass (default):** `tools meetings evidence <meeting> --raw` gives the facts per line with no weights. Apply
   the tiers below and the content rules yourself, and store each finding with `tools meetings items add --kind
-  speaker-range ... --confidence <0..1> --reason "<the tiers and rules it rests on>"`. A stored finding under 60 %
-  that matters becomes a listen question at the next `tools meetings suggest`.
+  speaker-range ... --confidence <0..1> --reason "<the tiers and rules it rests on>"`. Store every line you can
+  attribute, interjections too ("Hm." under the label of a person who has left): they render with the right name.
+  Only the questions skip them.
 - **Automatic:** `tools meetings suggest <meeting> --rules evidence --attendance <platform>` applies the tiers and
   writes scored suggestion items. `tools meetings evidence <meeting>` shows why an item scored as it did.
 
@@ -39,9 +40,9 @@ platform cannot supply is skipped, never guessed.
 
 | Tier | Weight | Supplied by | What it decides |
 |---|---|---|---|
-| E1 channel | 10 | The recorder: Wispr's live segments tagged `mic` or `system`. The recording's own channels count only after the tool has calibrated, for that recording, which channel (if any) carries the microphone; a mono file, another recorder or an unclear calibration gives no energy evidence. Never assume a channel layout. | Raises a score, never decides alone. A line mostly on the user's microphone scores the user high (capped at 95 %); a line mostly on the speakers scores against the user. Echo (similar text on both channels at once) or loud speakers at the same moment lower it. |
+| E1 channel | 10 | The recorder: Wispr's live segments tagged `mic` or `system`. The recording's own channels count only after the tool has calibrated, for that recording, which channel (if any) carries the microphone; a mono file, another recorder or an unclear calibration gives no energy evidence. Never assume a channel layout. | Raises a score, never decides alone. Start from the tool's values (README, "audio energy"): 90 % or more of the energy on the microphone is the user at 0.85 (0.75 where the live segments said the call), 70 % to 90 % is the user at 0.55 (ask), under 50 % is not the user. Content rules can raise the user to 95 %, never higher. Echo (similar text on both channels at once) or loud speakers at the same moment lower it. |
 | E2 attendance | 6 | The platform provider: join and leave times, one row per join, so a person who comes back is attributable again. | A person who was not in the call did not speak. When one person is left, that person spoke. 5 s tolerance. |
-| E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. |
+| E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. An indicator that shows one person on most lines of the meeting (a pinned or stuck tile) is no evidence for that person: use it only where it changes. |
 | E4 live names | 2 | The recorder's live segments. | A weak hint. The name belongs to a live voice, not a person; at the start of a meeting and after a person leaves it is often stale. Drop it when E2 or E3 contradicts it. |
 
 ## Inputs the agent still gathers
@@ -54,9 +55,16 @@ platform cannot supply is skipped, never guessed.
 
 ## Content rules (for what E1 to E4 leave open)
 
-Score per candidate in the pool that E1 to E4 leave:
-`confidence = 50 + 50 * net / sum(weights that apply)` when `net > 0`. A candidate with `net <= 0` is excluded. The best
-candidate under 60 % is `[nejasné: mluvčí]`.
+Score per candidate in the pool that E1 to E4 leave. Tiers and rules go into one sum: `net` is the weights of every tier
+and rule that speaks for the candidate minus the weights of those against it, and `confidence = 50 + 50 * net /
+sum(weights that apply)` when `net > 0`. A candidate with `net <= 0` is excluded.
+
+Example: E1 is mixed and gives nothing; E3 shows Petr speaking (+5); R6 says Petr spoke three turns ago (+3); R8
+markers lean to Pavel (-2 for Petr). For Petr, `net = 5 + 3 - 2 = 6` over weights `5 + 3 + 2 = 10`, so 80 %.
+
+`tools meetings transcript --with-suggested` applies a stored range at 50 % or more (`global.suggest.applyAbove`) and
+shows a lower one as `[nejasné: "<label>"; 1) <name> NN %]`. Under 60 % (`listenBelow`) a range that matters is a
+question candidate (below).
 
 | Rule | Weight | Statement | Status |
 |---|---|---|---|
@@ -64,13 +72,13 @@ candidate under 60 % is `[nejasné: mluvčí]`.
 | R2 third person | 5 | A speaker who names X in the third person ("Pavel teďka říkal") is not X. | confirmed |
 | R3 vocative | 3, +1 per repeat | A speaker who addresses X ("Tomáši", "Petře") is not X. X gains score when the NEXT turn is long and on topic; each such case adds 1 (cap +3). A vocative can refer to something X said earlier ("co říkáš, Petře" after a line from someone else), so the turn just before is not proof. | confirmed, refined |
 | R4 overlap | 1 | Two turns that start in the same second under different labels may be two people. Weak: a 1-second timestamp cannot separate them, and in the example 6 such pairs were both on the user's microphone. Use it only with sub-second times from `live.ndjson`. | kept at weight 1, millisecond times only (decision 24) |
-| R5 inheritance | 2 | After a person leaves, the label they had tends to go to another voice for the rest of the call (see below). | example given |
+| R5 inheritance | 2 | After a person leaves, the label they had tends to go to another voice for the rest of the call (see below). It names no voice: score each line with E1 and the other rules. | example given |
 | R6 recency | 3 | A wrong label probably belongs to someone who spoke in the last ten turns. | confirmed |
 | R7 absence | 4 | "X tu není" or "X se omlouval" removes X. A statement like "já jsem nebyl u toho" proves nothing: it can mean another meeting. | narrowed |
 | R8 idiolect | 2 | Build a profile per person from lines that E1 to E3 already prove: marker words (Slovak "teďkom", "nazad", "aj"; fillers "ty vole", "hele", "jakoby"), and score an open line by how many of one person's markers it has. | generalised |
 | R9 the user | - | The user's lines come from E1. The user confirms only the mixed ones (25 % to 75 % `mic`) and content claims about the user. | rewritten |
 | R10 presence | 2 | A speaker who reports what X said "before X left" was present before X left. | confirmed |
-| R11 company | 3 | A speaker who dismisses a silent colleague ("Alen, klidně zdrhej") shares her company suffix. | proposed |
+| R11 company | 3 | A speaker who dismisses a silent colleague ("Jano, klidně běž") shares the colleague's company suffix. Only where the attendance shows suffixes. | proposed |
 | R12 role | 2 | The line fits the role the user named: code someone owns, the generator, the database design, business requirements. | proposed |
 | R13 farewell reply | 3 | A leave phrase is a departure only when another label answers it within about 15 s. | proposed |
 | R14 echo | 4 | A leave phrase with "taky" right after another label's leave phrase is a different person. | proposed |
@@ -80,10 +88,9 @@ candidate under 60 % is `[nejasné: mluvčí]`.
 
 ### R5 in one example
 
-The architect had label 4 and left at `37:55`. Label 4 kept speaking for another 384 lines. Wispr did not create a new
-label; the voices of the people still in the call (here mostly the user, then the analyst and others) were filed under
-label 4. So the stretch after a departure must be attributed line by line, never as one block. R5 only says: "this stretch
-needs work".
+Invented: the tester had label 3 and left at `22:10`. Label 3 kept speaking for another 200 lines. The source did not
+create a new label; the voices of the people still in the call were filed under label 3. So the stretch after a
+departure must be attributed line by line, never as one block. R5 only says: "this stretch needs work".
 
 ### R8 as a general rule
 
@@ -109,7 +116,10 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
    under 60 %.
 6. **Budget**: about 12 questions per meeting; the user can say "enough". The rest stay suggestions and render as
    `[nejasné: "<label>"; 1) Petr 55 % 2) Pavel]` (only the known confidence is shown).
-7. **Split**: when the user hears two voices in one range, ask per line inside it.
+7. **Split**: when the user hears two voices in one range, ask per line inside it. One line with two voices (a long
+   line at 40 % to 60 % microphone energy, or a turn whose last sentence answers its first) gets a range for the voice
+   that says most of it, and a question with a choice "<A>, then <B>" so the user can say where the second voice
+   starts.
 
 In the automatic mode the tool applies these rules (`tools meetings suggest`, then `tools meetings listen`). In the
 three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`. The
@@ -118,13 +128,14 @@ agent answers only what the listen round left open, in the chat round, with the 
 
 ## Joins and splits
 
-A turn that ends without punctuation and a next turn that starts in lower case within one second ("dot" | "áhnu") are
-one sentence. Join the word into the first turn, keep both timestamps, and attribute the whole sentence (E1 first).
+A turn that ends without punctuation and a next turn that starts in lower case within one second ("při" | "pravím")
+are one sentence. Store a `join` finding (SKILL.md, pass 2): the tool moves the word into the first turn and
+attributes the whole sentence (E1 first).
 
 ## What a diff of a re-attributed turn looks like
 
 ```diff
-- **Pavel Novák:** `1:40:53` Jo. Hele, tak já se ještě zavolám asi s Petrem a zeptám se ho na tohle, no, protože.
-+ **[Tomáš Dvořák: 99 %]:** `1:40:53` Jo. Hele, tak já se ještě zavolám asi s Petrem a zeptám se ho na tohle, no, protože.
-// E1: 100 % mic (live.ndjson), energy 100 % on the mic channel; the user is Tomáš. E2: Pavel left at 37:55.
+- **Pavel Novák:** `52:10` Dobře, tak já to ještě projdu s Petrem a pošlu vám to zítra.
++ **[Tomáš Dvořák: 99 %]:** `52:10` Dobře, tak já to ještě projdu s Petrem a pošlu vám to zítra.
+// E1: 100 % mic (live.ndjson), energy 100 % on the mic channel; the user is Tomáš. E2: Pavel left at 22:10.
 ```

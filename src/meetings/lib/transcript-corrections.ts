@@ -54,9 +54,8 @@ function unclearPassages(
           )
         : [];
 
+    // Questions first: a word is marked once, and a question's choices say more than a low term's own guess.
     return [
-        ...unaskedTerms,
-        ...unaskedRanges,
         ...open.flatMap((question): UnclearPassage[] => {
             const decided = record.items.filter((item) => question.decides.includes(item.id));
 
@@ -86,6 +85,8 @@ function unclearPassages(
                     : []
             );
         }),
+        ...unaskedTerms,
+        ...unaskedRanges,
     ];
 }
 
@@ -150,7 +151,13 @@ export function correctionsOf(
         ),
         terms: used.flatMap((item) =>
             item.kind === "term" && item.proposed && !item.meaning && !item.quote
-                ? [{ heard: item.heard, replacement: item.proposed }]
+                ? [
+                      {
+                          heard: item.heard,
+                          replacement: item.proposed,
+                          ...(item.scope === "line" && item.atSec !== undefined ? { atSec: item.atSec } : {}),
+                      },
+                  ]
                 : []
         ),
         marks: used.flatMap((item) =>

@@ -748,7 +748,11 @@ export function rawTermEvidence(options: {
 export interface TermFix {
     heard: string;
     replacement: string;
+    /** Fix only the line that starts here (within half a second). Absent, every line. */
+    atSec?: number;
 }
+
+const FIX_AT_SLACK_SEC = 0.5;
 
 export const FIX_SEPARATOR = "::";
 
@@ -811,12 +815,21 @@ export function applyFixes(
     const patterns = fixes.map((fix) => ({
         re: new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(fix.heard).replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}])`, "giu"),
         replacement: fix.replacement,
+        atSec: fix.atSec,
     }));
 
     const next = entries.map((entry) => {
         let text = entry.text;
 
-        for (const { re, replacement } of patterns) {
+        for (const { re, replacement, atSec } of patterns) {
+            const elsewhere =
+                atSec !== undefined &&
+                (entry.startSec === undefined || Math.abs(entry.startSec - atSec) > FIX_AT_SLACK_SEC);
+
+            if (elsewhere) {
+                continue;
+            }
+
             text = text.replace(re, () => {
                 replaced++;
                 return replacement;

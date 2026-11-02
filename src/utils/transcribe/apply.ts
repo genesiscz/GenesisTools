@@ -215,7 +215,10 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         counts.meanings = applied.meanings;
     }
 
-    // Open words last, so they are found as the reader sees the corrected line.
+    // Open words last, so they are found as the reader sees the corrected line. Each marker goes in as a placeholder
+    // too, so a later passage for the same words cannot mark the words inside it a second time.
+    const unclearMarked: string[] = [];
+
     for (const passage of corrections.unclear?.passages ?? []) {
         const heard = passage.heard;
 
@@ -225,19 +228,23 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
 
         // Whole words only: JavaScript's `\b` treats "í" or "ž" as a word edge, so the edges are spelled out.
         const escaped = heard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const word = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u");
+        const word = new RegExp(`(?<![\\p{L}\\p{N}\\uE000\\uE001])${escaped}(?![\\p{L}\\p{N}\\uE000\\uE001])`, "u");
 
         for (const line of lines) {
             if (inRange(line, passage) && word.test(line.text)) {
-                line.text = line.text.replace(word, unclearMarker(unclearLabel, heard, passage.readings));
+                const placeholder = `\uE001${unclearMarked.length}\uE001`;
+                unclearMarked.push(unclearMarker(unclearLabel, heard, passage.readings));
+                line.text = line.text.replace(word, placeholder);
                 counts.unclear += 1;
             }
         }
     }
 
-    if (marked.length > 0) {
+    if (marked.length > 0 || unclearMarked.length > 0) {
         for (const line of lines) {
-            line.text = line.text.replace(/\uE000(\d+)\uE000/g, (_, index: string) => marked[Number(index)] ?? "");
+            line.text = line.text
+                .replace(/\uE001(\d+)\uE001/g, (_, index: string) => unclearMarked[Number(index)] ?? "")
+                .replace(/\uE000(\d+)\uE000/g, (_, index: string) => marked[Number(index)] ?? "");
         }
     }
 
