@@ -5,6 +5,7 @@ import { sha256File } from "@genesiscz/utils/fs/hash";
 import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
 import { readExistingAncestorSync, type SourceStat, sameSource } from "./file";
 import { PRESETS } from "./presets";
+import { CompressRefusal, placeholderRefusal, scanSource } from "./source-scan";
 import { readZstdFramesSync, SeekableZstdWriter, type ZstdParams } from "./zstd";
 
 /** The suffix of a folder packed by {@link packDirectory}: `video_files` becomes `video_files.zst` (tar inside zstd). */
@@ -591,6 +592,11 @@ export function assertArchiveOutsideSource(source: string, archive: string): voi
  * from adding an AppleDouble `._name` entry per file, and without it bsdtar also skipped a real `._name` file. bsdtar
  * stores a file with holes as GNU sparse 1.0, which {@link TarLister} reads. Level, long mode, frame size and threads
  * that a caller leaves out come from the `tree` preset.
+ *
+ * A folder with cloud placeholders is refused before anything is written, unless `includePlaceholders`: a Dropbox stub
+ * reads as zeros, so its archive verifies byte for byte, and every caller that removes the folder after the check
+ * (`tools compress pack --remove-original`, folder retention for codex migrate-home and retired app bundles) would
+ * lose the real content. The check is here, at the one call every pack goes through, and not in one caller.
  */
 export async function packDirectory({
     source: inputSource,
@@ -601,6 +607,7 @@ export async function packDirectory({
     frameBytes = PRESETS.tree.frameBytes,
     threads = PRESETS.tree.threads,
     files,
+    includePlaceholders = false,
 }: ZstdParams & {
     source: string;
     archive?: string;
@@ -608,10 +615,21 @@ export async function packDirectory({
     threads?: number;
     /** Pack only these files of the folder: paths relative to it, `/` separators, no folders. */
     files?: readonly string[];
+    /** Pack cloud placeholders as they are (a stub's zeros, a dataless file's download); refused by default. */
+    includePlaceholders?: boolean;
 }): Promise<PackResult> {
     const source = resolve(inputSource);
     const archive = inputArchive ?? `${source}${FOLDER_ARCHIVE_SUFFIX}`;
     assertArchiveOutsideSource(source, archive);
+
+    if (!includePlaceholders) {
+        const { placeholders } = scanSource(source, files);
+
+        if (placeholders.length > 0) {
+            throw new CompressRefusal(placeholderRefusal(source, placeholders));
+        }
+    }
+
     const result: PackResult = { archive, tarBytes: 0, compressedBytes: 0, frames: 0, sha256: "" };
 
     await atomicWriteFileStreamed(

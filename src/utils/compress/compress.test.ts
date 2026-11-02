@@ -1137,6 +1137,32 @@ describe("folder archives", () => {
             expect(listed.record.files).toBe(normal.length);
             rmSync(`${tree}.zst`);
 
+            // The guard is in packDirectory, which every pack goes through: folder retention (codex migrate-home,
+            // retired app bundles) packs without a plan, and a stub's zeros would verify before the folder went.
+            await expect(packDirectory({ source: tree, archive: join(dir, "direct.zst") })).rejects.toThrow(
+                "21 cloud placeholders"
+            );
+            expect(existsSync(join(dir, "direct.zst"))).toBe(false);
+            const runs = join(dir, "runs");
+            mkdirSync(join(runs, "r1"), { recursive: true });
+            writeFileSync(join(runs, "r1", "stub.note"), Buffer.alloc(8192));
+            const stubMarked = Bun.spawnSync(
+                ["xattr", "-w", "com.dropbox.placeholder", "1", join(runs, "r1", "stub.note")],
+                { env: process.env }
+            );
+            expect(stubMarked.exitCode).toBe(0);
+            const now = new Date();
+            const old = (now.getTime() - 3 * 86_400_000) / 1000;
+            utimesSync(join(runs, "r1"), old, old);
+            const retained = await applyFolderRetention(planFolderRetention({ root: runs, keep: 0, now }), {
+                caller: "test",
+                minFreeBytes: 0,
+            });
+            expect(retained.failed.map((failure) => failure.reason)).toEqual([
+                expect.stringContaining("holds 1 cloud placeholder"),
+            ]);
+            expect(readdirSync(runs)).toEqual(["r1"]);
+
             const { record } = await compressPath({
                 source: tree,
                 includePlaceholders: true,
