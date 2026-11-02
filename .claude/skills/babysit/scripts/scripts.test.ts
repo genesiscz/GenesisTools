@@ -32,7 +32,7 @@ import { reviewBrief, reviewSpawnCommand } from "./review-brief";
 import { loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
 import { parseSwiftTargets, typecheckPackage } from "./swift-typecheck";
-import { buildOutputKind, judgeOwn, openPaths, ownBuildOutput, ownSessionDirs } from "./tmp-reclaim";
+import { buildOutputKind, isLiveQuarantine, judgeOwn, openPaths, ownBuildOutput, ownSessionDirs } from "./tmp-reclaim";
 import {
     conflictedFiles,
     higherVersionSide,
@@ -2554,20 +2554,26 @@ describe("round 7 review regressions", () => {
             [
                 "import {mock} from 'bun:test'; import * as fs from 'node:fs';",
                 "const original = {...fs};",
+                // killApply: the apply dies where it starts to delete its quarantine, as a killed apply does.
+                "const killApply = process.env.TMP_RECLAIM_FIXTURE_KILL_APPLY === '1';",
                 "mock.module('node:fs', () => ({...original, realpathSync: (p) => p === '/tmp' ? " +
                     SafeJSON.stringify(root) +
-                    " : original.realpathSync(p)}));",
+                    " : original.realpathSync(p), rmSync: (p, o) => { if (killApply && String(p).includes('/.tmp-reclaim-')) process.exit(9); return original.rmSync(p, o); }}));",
                 "mock.module(" +
                     SafeJSON.stringify(sessionModule) +
                     ", () => ({nativeSessionRoots: (kind) => kind === 'grok' ? " +
                     SafeJSON.stringify([native, managed]) +
-                    " : [], nativeTranscriptMaxDepth: () => 4}));",
+                    " : kind === 'claude' ? " +
+                    SafeJSON.stringify([join(home, ".claude", "projects")]) +
+                    " : [], nativeTranscriptMaxDepth: () => 4, nativeHomePath: (kind, ...segments) => " +
+                    SafeJSON.stringify(home) +
+                    " + '/.' + kind + (segments.length ? '/' + segments.join('/') : '')}));",
                 "const spawn = Bun.spawnSync; Bun.spawnSync = (args, opts) => {",
                 "if (args[0] !== 'lsof') throw new Error('unexpected command');",
                 "return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)}; };",
             ].join("\n")
         );
-        const execute = (args: string[]) =>
+        const execute = (args: string[], cwd?: string, extraEnv: Record<string, string> = {}) =>
             Bun.spawnSync(
                 [
                     process.execPath,
@@ -2579,10 +2585,11 @@ describe("round 7 review regressions", () => {
                     ...args,
                 ],
                 {
+                    cwd,
                     stdout: "pipe",
                     stderr: "pipe",
                     timeout: 5000,
-                    env: { ...env.getProcessEnv(), HOME: home, TMPDIR: root },
+                    env: { ...env.getProcessEnv(), HOME: home, TMPDIR: root, ...extraEnv },
                 }
             );
         return { dir, root, run, native, managed, execute };
@@ -2605,6 +2612,248 @@ describe("round 7 review regressions", () => {
         const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
         expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([dead]);
         expect(result.stdout.toString()).toContain('"live-session":2');
+    });
+
+    test("a quarantine is live only while the apply that named it runs", () => {
+        expect(isLiveQuarantine(".tmp-reclaim-4242-Ab12Cd", () => true)).toBe(true);
+        expect(isLiveQuarantine(".tmp-reclaim-4242-Ab12Cd", () => false)).toBe(false);
+        // A folder from before the pid was in the name is judged by age like any other entry.
+        expect(isLiveQuarantine(".tmp-reclaim-Ab12Cd", () => true)).toBe(false);
+        expect(isLiveQuarantine("scratch-4242-x", () => true)).toBe(false);
+    });
+
+    test("reclaim lists an orphaned quarantine and spares the one a running apply holds", () => {
+        const s = reclaimFixture();
+        const orphan = join(s.root, ".tmp-reclaim-999999999-Ab12Cd");
+        const legacy = join(s.root, ".tmp-reclaim-Ef34Gh");
+        const live = join(s.root, `.tmp-reclaim-${process.pid}-Ij56Kl`);
+        for (const folder of [orphan, legacy, live]) {
+            fs.mkdirSync(folder, { mode: 0o700 });
+            fs.writeFileSync(join(folder, "0-moved-entry"), "fixture");
+        }
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path).sort()).toEqual(
+            [orphan, legacy].sort()
+        );
+        expect(result.stdout.toString()).toContain('"live-quarantine":1');
+    });
+
+    test("reclaim takes a Claude session's scratch once its process exits, however recent its transcript", () => {
+        const s = reclaimFixture();
+        const running = "77777777-7777-4777-8777-777777777777";
+        const exited = "88888888-8888-4888-8888-888888888888";
+        const sessions = join(s.dir, "home", ".claude", "sessions");
+        const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
+        fs.mkdirSync(sessions, { recursive: true });
+        fs.mkdirSync(projects, { recursive: true });
+        fs.writeFileSync(
+            join(sessions, `${process.pid}.json`),
+            SafeJSON.stringify({ pid: process.pid, sessionId: running })
+        );
+        for (const id of [running, exited]) {
+            fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
+            fs.mkdirSync(join(s.root, "cc", "fixture-project", id), { recursive: true });
+            // A scratch folder that names its session by the first 8 hex digits only.
+            fs.mkdirSync(join(s.root, `scratch-${id.slice(0, 8)}`));
+        }
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path).sort()).toEqual(
+            [join(s.root, "cc", "fixture-project", exited), join(s.root, `scratch-${exited.slice(0, 8)}`)].sort()
+        );
+        expect(result.stdout.toString()).toContain('"live-session":2');
+    });
+
+    test("reclaim reads SwiftPM package caches as build output in a dead session, and still spares a real clone", () => {
+        const s = reclaimFixture();
+        // A running session shields every path with its first 8 hex digits, so each session needs its own.
+        const running = "91919191-9999-4999-8999-999999999991";
+        const swiftpmDead = "92929292-9999-4999-8999-999999999992";
+        const cloneDead = "93939393-9999-4999-8999-999999999993";
+        const sessions = join(s.dir, "home", ".claude", "sessions");
+        const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
+        fs.mkdirSync(sessions, { recursive: true });
+        fs.mkdirSync(projects, { recursive: true });
+        fs.writeFileSync(
+            join(sessions, `${process.pid}.json`),
+            SafeJSON.stringify({ pid: process.pid, sessionId: running })
+        );
+        const swiftpmBuild = (id: string) => {
+            const build = join(s.root, "cc", "fixture-project", id, "gk-build");
+            fs.mkdirSync(join(build, "checkouts", "pkg", ".git"), { recursive: true });
+            fs.writeFileSync(join(build, "checkouts", "pkg", ".git", "HEAD"), "ref: refs/heads/main\n");
+            fs.writeFileSync(join(build, "workspace-state.json"), "{}");
+        };
+        swiftpmBuild(running);
+        swiftpmBuild(swiftpmDead);
+        const clone = join(s.root, "cc", "fixture-project", cloneDead, "clone");
+        fs.mkdirSync(join(clone, ".git"), { recursive: true });
+        fs.writeFileSync(join(clone, ".git", "HEAD"), "ref: refs/heads/main\n");
+        fs.writeFileSync(join(clone, "work.txt"), "uncommitted");
+        for (const id of [running, swiftpmDead, cloneDead]) {
+            fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
+        }
+
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            join(s.root, "cc", "fixture-project", swiftpmDead),
+        ]);
+        expect(result.stdout.toString()).toContain('"live-session":1');
+        expect(result.stdout.toString()).toContain('"git-checkout":1');
+    });
+
+    test("reclaim reads a SwiftPM build with only repositories/ as build output when its clones borrow from there", () => {
+        const s = reclaimFixture();
+        const sessions = join(s.dir, "home", ".claude", "sessions");
+        const projects = join(s.dir, "home", ".claude", "projects", "fixture-cwd");
+        fs.mkdirSync(sessions, { recursive: true });
+        fs.mkdirSync(projects, { recursive: true });
+        fs.writeFileSync(
+            join(sessions, `${process.pid}.json`),
+            SafeJSON.stringify({ pid: process.pid, sessionId: "90909090-9999-4999-8999-999999999990" })
+        );
+        // Distinct first 8 hex digits: the running session above shields every path that holds its own.
+        const borrows = "94949494-9999-4999-8999-999999999994";
+        const noAlternates = "95959595-9999-4999-8999-999999999995";
+        const foreign = "96969696-9999-4999-8999-999999999996";
+        // A killed resolve leaves `repositories/` and `checkouts/` before SwiftPM writes any of its state files.
+        const interruptedBuild = (id: string, alternates: ((build: string) => string) | null) => {
+            const build = join(s.root, "cc", "fixture-project", id, "gk-build");
+            const objects = join(build, "repositories", "pkg-0a1b2c3d", "objects");
+            const git = join(build, "checkouts", "pkg", ".git");
+            fs.mkdirSync(objects, { recursive: true });
+            fs.mkdirSync(join(build, "elsewhere", "objects"), { recursive: true });
+            fs.mkdirSync(join(git, "objects", "info"), { recursive: true });
+            fs.writeFileSync(join(git, "HEAD"), "ref: refs/heads/main\n");
+
+            if (alternates) {
+                fs.writeFileSync(join(git, "objects", "info", "alternates"), `${alternates(build)}\n`);
+            }
+        };
+        interruptedBuild(borrows, (build) => join(build, "repositories", "pkg-0a1b2c3d", "objects"));
+        interruptedBuild(noAlternates, null);
+        interruptedBuild(foreign, (build) => join(build, "elsewhere", "objects"));
+        for (const id of [borrows, noAlternates, foreign]) {
+            fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
+        }
+
+        const result = s.execute(["--min-age-hours", "0"]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            join(s.root, "cc", "fixture-project", borrows),
+        ]);
+        expect(result.stdout.toString()).toContain('"git-checkout":2');
+    });
+
+    test("a killed apply's quarantine still reads a dead session's SwiftPM clones as build output, and the next apply deletes it", () => {
+        const s = reclaimFixture();
+        const dead = "97979797-9999-4999-8999-999999999997";
+        const swiftpmBuild = (build: string) => {
+            fs.mkdirSync(join(build, "checkouts", "pkg", ".git"), { recursive: true });
+            fs.writeFileSync(join(build, "checkouts", "pkg", ".git", "HEAD"), "ref: refs/heads/main\n");
+            fs.writeFileSync(join(build, "workspace-state.json"), "{}");
+        };
+        const planOf = (result: ReturnType<typeof s.execute>) => {
+            expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+            const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+            const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+            return { planPath, paths: plan.candidates.map((candidate: { path: string }) => candidate.path) };
+        };
+        const quarantines = () =>
+            fs
+                .readdirSync(s.root)
+                .filter((name) => name.startsWith(".tmp-reclaim-"))
+                .sort();
+        swiftpmBuild(join(s.root, "cc", "fixture-project", dead, "gk-build"));
+
+        const first = planOf(s.execute(["--min-age-hours", "0"]));
+        expect(first.paths).toEqual([join(s.root, "cc", "fixture-project", dead)]);
+        // The apply dies as it starts to delete its quarantine; the session folder keeps its cc/ place in there.
+        const killed = s.execute(["--apply", "--plan", first.planPath], undefined, {
+            TMP_RECLAIM_FIXTURE_KILL_APPLY: "1",
+        });
+        expect({ code: killed.exitCode, err: killed.stderr.toString() }).toEqual({ code: 9, err: "" });
+        expect(quarantines()).toHaveLength(1);
+        const orphan = join(s.root, quarantines()[0]);
+        const moved = join(orphan, "cc", "fixture-project", dead, "gk-build");
+        expect(fs.existsSync(join(moved, "checkouts", "pkg", ".git", "HEAD"))).toBe(true);
+        // The killed delete may already have taken SwiftPM's state files.
+        fs.rmSync(join(moved, "workspace-state.json"));
+
+        // Controls: a SwiftPM clone in a moved top-level entry, which was never judged as a session's, and a clone
+        // under cc/ that is not at SwiftPM's checkouts/<package>/.git.
+        const topLevel = join(s.root, ".tmp-reclaim-999999998-Ab12Cd");
+        const notCheckout = join(s.root, ".tmp-reclaim-999999997-Ab12Cd");
+        fs.mkdirSync(topLevel, { mode: 0o700 });
+        swiftpmBuild(join(topLevel, "0-moved-entry", "gk-build"));
+        fs.mkdirSync(notCheckout, { mode: 0o700 });
+        const plainClone = join(notCheckout, "cc", "fixture-project", "98989898-9999-4999-8999-999999999998", "clone");
+        fs.mkdirSync(join(plainClone, ".git"), { recursive: true });
+
+        const recovery = s.execute(["--min-age-hours", "0"]);
+        const second = planOf(recovery);
+        expect(second.paths).toEqual([orphan]);
+        expect(recovery.stdout.toString()).toContain('"git-checkout":2');
+
+        // The quarantine is deleted where it is, not moved into a new one: a recovery apply killed as well leaves it
+        // at its place, and the next dry run still lists it (nested in a new quarantine, its clones would leave cc/).
+        const killedAgain = s.execute(["--apply", "--plan", second.planPath], undefined, {
+            TMP_RECLAIM_FIXTURE_KILL_APPLY: "1",
+        });
+        expect({ code: killedAgain.exitCode, err: killedAgain.stderr.toString() }).toEqual({ code: 9, err: "" });
+        const third = planOf(s.execute(["--min-age-hours", "0"]));
+        expect(third.paths).toEqual([orphan]);
+
+        const applied = s.execute(["--apply", "--plan", third.planPath]);
+        expect({ code: applied.exitCode, err: applied.stderr.toString() }).toEqual({ code: 0, err: "" });
+        expect(applied.stdout.toString()).toContain("removed 1 of 1 planned entries");
+        expect(quarantines()).toEqual([basename(notCheckout), basename(topLevel)].sort());
+    });
+
+    test("an apply deletes the plan in /tmp/cc it ran and the expired ones, and keeps a fresh one", () => {
+        const s = reclaimFixture();
+        const plans = join(s.root, "cc");
+        fs.mkdirSync(plans);
+        const expired = join(plans, "tmp-reclaim-plan-1000.json");
+        const fresh = join(plans, "tmp-reclaim-plan-2000.json");
+        const other = join(plans, "notes.json");
+        for (const file of [expired, fresh, other]) {
+            fs.writeFileSync(file, "{}");
+        }
+        const hourAgo = new Date(Date.now() - 3_600_000);
+        fs.utimesSync(expired, hourAgo, hourAgo);
+        fs.utimesSync(other, hourAgo, hourAgo);
+        const applied = join(plans, "tmp-reclaim-plan-3000.json");
+        fs.writeFileSync(applied, SafeJSON.stringify({ createdAt: Date.now(), minAgeHours: 0, candidates: [] }));
+        const result = s.execute(["--apply", "--plan", applied]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        expect(fs.readdirSync(plans).sort()).toEqual(["notes.json", "tmp-reclaim-plan-2000.json"]);
+        // The plan folder is canonical (/private/tmp/cc on macOS): a plan named through a symlinked folder, as
+        // /tmp/cc is there, or by a relative path is the same file and goes too.
+        const linked = join(s.dir, "tmp-link");
+        fs.symlinkSync(s.root, linked);
+        for (const [name, plan, cwd] of [
+            ["tmp-reclaim-plan-4000.json", join(linked, "cc", "tmp-reclaim-plan-4000.json"), undefined],
+            ["tmp-reclaim-plan-5000.json", "tmp-reclaim-plan-5000.json", plans],
+        ] as const) {
+            fs.writeFileSync(
+                join(plans, name),
+                SafeJSON.stringify({ createdAt: Date.now(), minAgeHours: 0, candidates: [] })
+            );
+            const named = s.execute(["--apply", "--plan", plan], cwd);
+            expect({ plan, code: named.exitCode, err: named.stderr.toString() }).toEqual({ plan, code: 0, err: "" });
+            expect(fs.readdirSync(plans).sort()).toEqual(["notes.json", "tmp-reclaim-plan-2000.json"]);
+        }
     });
 
     test("reclaim --help and an unknown flag exit before any scan and write no plan", () => {
@@ -2931,7 +3180,7 @@ describe("round 8 review regressions", () => {
                         ",from+'\\n');return original.renameSync(from,to);}}));",
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
-                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                     "let reads=0; Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command'); reads++;",
                     "const failure=reads >= 3 && " + SafeJSON.stringify(mode) + " === 'failure';",
                     "const open=reads >= 3 ? " +
@@ -3056,7 +3305,7 @@ describe("round 10 review regressions", () => {
                         ":original.realpathSync(p)}));",
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
-                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                     "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)};};",
                 ].join("\n")
             );
@@ -3871,7 +4120,7 @@ describe("round 15 review regressions", () => {
                     ":original.realpathSync(p),renameSync:()=>{throw new Error('unsafe rename reached');}}));",
                 "mock.module(" +
                     SafeJSON.stringify(providers) +
-                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                 "Bun.spawnSync=()=>{original.writeFileSync(" +
                     SafeJSON.stringify(scanned) +
                     ",'scanned');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file\\n'),stderr:Buffer.alloc(0)};};",
@@ -4286,7 +4535,7 @@ describe("round 12 review regressions", () => {
                         " && code !== 'healthy') throw new Error('unsafe rename reached');return original.renameSync(from,to);}}));",
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
-                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                        ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                     "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file\\n'),stderr:Buffer.alloc(0)};};",
                 ].join("\n")
             );
@@ -4828,7 +5077,7 @@ describe("round 21 delivery and lifetime regressions", () => {
                     ":original.realpathSync(p),renameSync:()=>{throw new Error('deletion reached');}}));",
                 "mock.module(" +
                     SafeJSON.stringify(join(import.meta.dir, "../../../../src/utils/providers/session-paths.ts")) +
-                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));Bun.spawnSync=()=>{original.writeFileSync(" +
+                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));Bun.spawnSync=()=>{original.writeFileSync(" +
                     SafeJSON.stringify(scanned) +
                     ",'scan');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture\\n'),stderr:Buffer.alloc(0)};};",
             ].join("\n")
@@ -5692,7 +5941,7 @@ describe("round 31 exclusive reclaim quarantines", () => {
                 "mock.module('node:fs',()=>({...original,realpathSync:p=>p==='/tmp'?roots[0]:original.realpathSync(p),mkdtempSync:prefix=>{const path=original.mkdtempSync(prefix);created.push({path,mode:original.lstatSync(path).mode&511});save();return path;},renameSync:(from,to)=>{moves.push({from,to,mode:original.lstatSync(dirname(to)).mode&511});save();return original.renameSync(from,to);},rmSync:(path,opts)=>{cleanups.push(path);save();return original.rmSync(path,opts);}}));",
                 "mock.module(" +
                     SafeJSON.stringify(join(import.meta.dir, "../../../../src/utils/providers/session-paths.ts")) +
-                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4}));",
+                    ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                 "Bun.spawnSync=args=>{if(args[0]!=='lsof')throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture\\n'),stderr:Buffer.alloc(0)};};",
             ].join("\n")
         );
@@ -6160,6 +6409,39 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(judgeOwn(hub, options)).toBe("socket");
     });
 
+    /** What a killed own-session apply leaves in the session folder: mkdtemp's private folder with a moved triple. */
+    function plantQuarantine(path: string): string {
+        fs.mkdirSync(join(path, "0-arm64-apple-macosx", "debug"), { recursive: true });
+        fs.writeFileSync(join(path, "0-arm64-apple-macosx", "debug", "App.o"), "x");
+        fs.chmodSync(path, 0o700);
+        return path;
+    }
+
+    test("a quarantine a killed own-session apply left is listed whole, and taken once its pid is gone", () => {
+        const { dir } = plantSession();
+        const orphan = plantQuarantine(join(dir, ".tmp-reclaim-999999999-Ab12Cd"));
+        const legacy = plantQuarantine(join(dir, ".tmp-reclaim-Ef34Gh"));
+        const live = plantQuarantine(join(dir, `.tmp-reclaim-${process.pid}-Ij56Kl`));
+        // Not mkdtemp's: readable by others, or not directly in the session folder.
+        const shared = plantQuarantine(join(dir, ".tmp-reclaim-999999999-Mn78Op"));
+        fs.chmodSync(shared, 0o755);
+        const nested = plantQuarantine(join(dir, "pluggable", ".tmp-reclaim-999999999-Qr90St"));
+        const listed = ownBuildOutput(dir);
+        expect(listed.filter((path) => path.includes("/.tmp-reclaim-"))).toEqual([legacy, orphan, shared, live].sort());
+        Bun.sleepSync(20);
+        const options = { sessionDirs: [dir], open: [] as string[], minAgeMinutes: 0 };
+        for (const taken of [orphan, legacy]) {
+            const verdict = judgeOwn(taken, options);
+            expect(typeof verdict === "string" ? verdict : verdict.path).toBe(taken);
+        }
+        expect(judgeOwn(live, options)).toBe("live-quarantine");
+        expect(judgeOwn(shared, options)).toBe("not-build-output");
+        expect(judgeOwn(nested, options)).toBe("not-build-output");
+        expect(judgeOwn(orphan, { ...options, open: [join(orphan, "0-arm64-apple-macosx/debug/App.o")] })).toBe(
+            "open-file"
+        );
+    });
+
     test("the session is found by its full uuid only", () => {
         const { cc, dir } = plantSession();
         expect(ownSessionDirs(session, cc)).toEqual([dir]);
@@ -6246,6 +6528,36 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(result.stdout.toString()).toContain("removed 1 of 2 planned entries");
         expect(fs.existsSync(hub)).toBe(false);
         expect(fs.readFileSync(join(notesTriple, "kept.md"), "utf8")).toBe("a note");
+        expect(fs.existsSync(join(dir, "pluggable/b-notes/notes.md"))).toBe(true);
+    });
+
+    test("after a killed own-session apply, the next own-session plan frees its quarantine", () => {
+        const { dir } = plantInTmpCc();
+        const orphan = plantQuarantine(join(dir, ".tmp-reclaim-999999999-Ab12Cd"));
+        Bun.sleepSync(20);
+        // The dry run's own steps: list, then judge each entry.
+        const planned = ownBuildOutput(dir).flatMap((path) => {
+            const verdict = judgeOwn(path, { sessionDirs: [dir], open: [], minAgeMinutes: 0 });
+            return typeof verdict === "string" || verdict.path !== orphan ? [] : [verdict];
+        });
+        expect(planned.map((candidate) => candidate.path)).toEqual([orphan]);
+        const plan = join(dir, "..", "quarantine-plan.json");
+        fs.writeFileSync(
+            plan,
+            SafeJSON.stringify({
+                createdAt: Date.now(),
+                minAgeHours: 0,
+                candidates: planned,
+                ownSession: { id: session, dirs: [dir], minAgeMinutes: 0 },
+            })
+        );
+        const result = Bun.spawnSync(
+            [process.execPath, join(import.meta.dir, "tmp-reclaim.ts"), "--apply", "--plan", plan],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        expect(result.stderr.toString()).toBe("");
+        expect(result.stdout.toString()).toContain("removed 1 of 1 planned entries");
+        expect(fs.readdirSync(dir).filter((name) => name.startsWith(".tmp-reclaim-"))).toEqual([]);
         expect(fs.existsSync(join(dir, "pluggable/b-notes/notes.md"))).toBe(true);
     });
 });
