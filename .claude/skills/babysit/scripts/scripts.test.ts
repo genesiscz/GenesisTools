@@ -2734,6 +2734,8 @@ describe("round 7 review regressions", () => {
         const borrows = "94949494-9999-4999-8999-999999999994";
         const noAlternates = "95959595-9999-4999-8999-999999999995";
         const foreign = "96969696-9999-4999-8999-999999999996";
+        const fifo = "92929292-9999-4999-8999-999999999992";
+        const linked = "93939393-9999-4999-8999-999999999993";
         // A killed resolve leaves `repositories/` and `checkouts/` before SwiftPM writes any of its state files.
         const interruptedBuild = (id: string, alternates: ((build: string) => string) | null) => {
             const build = join(s.root, "cc", "fixture-project", id, "gk-build");
@@ -2747,14 +2749,27 @@ describe("round 7 review regressions", () => {
             if (alternates) {
                 fs.writeFileSync(join(git, "objects", "info", "alternates"), `${alternates(build)}\n`);
             }
+
+            return { build, alternatesPath: join(git, "objects", "info", "alternates") };
         };
         interruptedBuild(borrows, (build) => join(build, "repositories", "pkg-0a1b2c3d", "objects"));
         interruptedBuild(noAlternates, null);
         interruptedBuild(foreign, (build) => join(build, "elsewhere", "objects"));
-        for (const id of [borrows, noAlternates, foreign]) {
+        // The alternates read comes before scan walks the .git below it: a FIFO there blocked the synchronous read for
+        // good (no writer ever comes), past the scan's deadline, and a symlink led the read anywhere.
+        const piped = interruptedBuild(fifo, null);
+        expect(Bun.spawnSync(["mkfifo", piped.alternatesPath], { env: process.env }).exitCode).toBe(0);
+        const viaLink = interruptedBuild(linked, null);
+        fs.writeFileSync(
+            join(viaLink.build, "alternates"),
+            `${join(viaLink.build, "repositories", "pkg-0a1b2c3d", "objects")}\n`
+        );
+        fs.symlinkSync(join(viaLink.build, "alternates"), viaLink.alternatesPath);
+        for (const id of [borrows, noAlternates, foreign, fifo, linked]) {
             fs.writeFileSync(join(projects, `${id}.jsonl`), "{}\n");
         }
 
+        // execute's 5 s timeout is the deadline: a read that blocks on the FIFO ends there with no exit code.
         const result = s.execute(["--min-age-hours", "0"]);
         expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
         const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
@@ -2762,7 +2777,7 @@ describe("round 7 review regressions", () => {
         expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
             join(s.root, "cc", "fixture-project", borrows),
         ]);
-        expect(result.stdout.toString()).toContain('"git-checkout":2');
+        expect(result.stdout.toString()).toContain('"git-checkout":4');
     });
 
     test("a killed apply's quarantine still reads a dead session's SwiftPM clones as build output, and the next apply deletes it", () => {
