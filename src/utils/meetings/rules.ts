@@ -73,9 +73,11 @@ export enum MeetingRule {
      */
     LiveName = "E4",
     /**
-     * Energy. The audio's loudness per channel agrees with E1 (+0.05) or shows a loud call (-0.15). Used only when the
-     * channel layout was calibrated on this recording's tagged segments (`evidence.channels`); a mono file or an
-     * unknown layout leaves it out.
+     * Energy. The audio's loudness per channel agrees with E1 (+0.05) or shows a loud call (-0.15). A sure share beats
+     * the live segments, which are coarse: the microphone's 90 % or more is the user (0.85, or 0.75 where the segments
+     * said the call; E3 and E4 never overrule it), 10 % or less is never the user. Used only when the channel layout
+     * was calibrated on this recording's tagged segments (`evidence.channels`); a mono file or an unknown layout
+     * leaves it out.
      */
     Energy = "energy",
     /**

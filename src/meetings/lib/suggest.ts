@@ -348,6 +348,15 @@ const CALL_LOUD_SHARE = 0.4;
 const CALL_LOUD_PENALTY = 0.15;
 const ENERGY_AGREES_SHARE = 0.75;
 const ENERGY_AGREES_BONUS = 0.05;
+/**
+ * R4.3: the live segments are coarse (a short reply into the microphone inside a long call segment counts as the
+ * call's), so an energy share this sure of one channel beats them. It exists only with a calibrated layout.
+ */
+const ENERGY_MIC_SURE = 0.9;
+const ENERGY_CALL_SURE = 0.1;
+const ENERGY_SURE_CONFIDENCE = 0.85;
+/** The energy says the microphone while the segments said the call: both voices may be in the line. */
+const ENERGY_OVER_SEGMENTS_CONFIDENCE = 0.75;
 
 /**
  * How sure a microphone-won line is the user: the microphone's share, at most 0.95; less when the microphone heard
@@ -399,9 +408,24 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
     const muted = (name: string) => line.muted?.some((person) => sameName(person, name)) === true;
     const selfMuted = muted(selfName);
 
+    // R4.3: a sure energy share is the user's line whatever the segments, E3 or E4 say, and never the user's below.
+    const micSure = line.energyMic !== undefined && line.energyMic >= ENERGY_MIC_SURE;
+    const callSure = line.energyMic !== undefined && line.energyMic <= ENERGY_CALL_SURE;
+
+    if (micSure && line.winner !== SELF) {
+        return isSelfLabel
+            ? undefined
+            : {
+                  speaker: selfName,
+                  rules: [MeetingRule.Energy],
+                  confidence: ENERGY_OVER_SEGMENTS_CONFIDENCE,
+                  ...(line.micShare > 1 - CHANNEL_SHARE ? { listen: true } : {}),
+              };
+    }
+
     // Wispr records the microphone itself, so a user muted in the call can still be heard on it: RM never overrules a
     // line the microphone won, only one the call's sound won.
-    if (line.winner === SELF) {
+    if (line.winner === SELF && !callSure) {
         if (isSelfLabel) {
             return undefined;
         }
@@ -410,13 +434,14 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
         return {
             speaker: selfName,
             rules: mic.energyChecked ? [MeetingRule.Channel, MeetingRule.Energy] : [MeetingRule.Channel],
-            confidence: mic.confidence,
+            confidence: micSure ? Math.max(ENERGY_SURE_CONFIDENCE, mic.confidence) : mic.confidence,
             ...(mic.echo ? { echo: true } : {}),
             ...(line.micShare < CHANNEL_SHARE || mic.echo || mic.callLoud ? { listen: true } : {}),
         };
     }
 
-    // The call's sound won the line. Some microphone in it means two voices: listen before confirming.
+    // The call's sound won the line, or the energy says it did. Some microphone in it means two voices: listen.
+    const channel = line.winner === SELF ? MeetingRule.Energy : MeetingRule.Channel;
     const listen = line.micShare > 1 - CHANNEL_SHARE ? { listen: true } : {};
     const shown = speakingNames(line).filter((name) => !sameName(name, selfName) && !muted(name));
     const present = line.present?.filter((name) => !sameName(name, selfName) && !muted(name));
@@ -433,7 +458,7 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
     if (rmShown && !sameName(rmShown, line.label)) {
         return {
             speaker: rmShown,
-            rules: [MeetingRule.Channel, MeetingRule.Muted, MeetingRule.SpeakingIndicator],
+            rules: [channel, MeetingRule.Muted, MeetingRule.SpeakingIndicator],
             confidence: 0.9,
             ...listen,
         };
@@ -444,22 +469,22 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
         return agreed
             ? {
                   speaker: agreed,
-                  rules: [MeetingRule.Channel, ...rm, MeetingRule.SpeakingIndicator, MeetingRule.LiveName],
+                  rules: [channel, ...rm, MeetingRule.SpeakingIndicator, MeetingRule.LiveName],
                   confidence: selfMuted ? 0.85 : 0.8,
                   ...listen,
               }
-            : { candidates: present ?? shown, rules: [MeetingRule.Channel, ...rm], confidence: 0.6, ...listen };
+            : { candidates: present ?? shown, rules: [channel, ...rm], confidence: 0.6, ...listen };
     }
 
     if (labelMuted && !agreed) {
         const candidates = (present ?? shown).filter((name) => !sameName(name, line.label));
-        return { candidates, rules: [MeetingRule.Channel, MeetingRule.Muted], confidence: 0.5, ...listen };
+        return { candidates, rules: [channel, MeetingRule.Muted], confidence: 0.5, ...listen };
     }
 
     if (agreed && !sameName(agreed, line.label)) {
         return {
             speaker: agreed,
-            rules: [MeetingRule.Channel, MeetingRule.SpeakingIndicator, MeetingRule.LiveName],
+            rules: [channel, MeetingRule.SpeakingIndicator, MeetingRule.LiveName],
             confidence: 0.7,
             ...listen,
         };
@@ -474,7 +499,7 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
     if (labelAbsent && live && indicatorAgrees) {
         return {
             speaker: live,
-            rules: [MeetingRule.Channel, MeetingRule.LiveName, MeetingRule.Attendance],
+            rules: [channel, MeetingRule.LiveName, MeetingRule.Attendance],
             confidence: 0.6,
             ...listen,
         };
@@ -487,7 +512,7 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
     if (labelAbsent && line.liveName && stillHere[0]) {
         return {
             speaker: stillHere[0],
-            rules: [MeetingRule.Channel, MeetingRule.SpeakingIndicator, MeetingRule.Attendance],
+            rules: [channel, MeetingRule.SpeakingIndicator, MeetingRule.Attendance],
             confidence: 0.45,
             listen: true,
         };
