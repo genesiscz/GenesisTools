@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { suggestDictionary } from "./lib/dictionary-suggest";
 import { suggestItems } from "./lib/suggest";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
@@ -108,5 +109,37 @@ describe("suggestItems", () => {
                 rules: ["RA"],
             })
         );
+    });
+});
+
+describe("suggestDictionary", () => {
+    test("source rows become fix or term, twice-confirmed corrections become fix, known and ignored values are left out", () => {
+        const correction = {
+            at: "t",
+            meeting: "m",
+            kind: "term" as const,
+            heard: "Zushtent",
+            fixed: "Zustand",
+            item: "i1",
+        };
+        const suggestions = suggestDictionary({
+            dictionary: { abbrExpansion: "every", entries: [{ type: "term", value: "GenesisKit" }] },
+            sourceId: "wisprflow",
+            sourceWords: [
+                { value: "Tanstack", replacement: "TanStack" },
+                { value: "GenesisKit" },
+                { value: "MVNO" },
+                { value: "Ignored" },
+                { value: "transcript" },
+            ],
+            ignore: ["ignored"],
+            corrections: [correction, { ...correction, at: "t2" }, { ...correction, heard: "redakt", fixed: "Redux" }],
+        });
+
+        expect(suggestions).toEqual([
+            { entry: { type: "fix", value: "Zushtent", substitution: "Zustand" }, from: "confirmed 2 times" },
+            { entry: { type: "fix", value: "Tanstack", substitution: "TanStack" }, from: "wisprflow" },
+            { entry: { type: "term", value: "MVNO" }, from: "wisprflow" },
+        ]);
     });
 });

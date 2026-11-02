@@ -198,10 +198,20 @@ export class MeetingsConfigStore {
 
     /** Adds or replaces the entry for `entry.value` in one dictionary level. */
     async putDictionaryEntry(scope: DictionaryScope, entry: DictionaryEntry): Promise<MeetingsConfig> {
+        return this.putDictionaryEntries(scope, [entry]);
+    }
+
+    /** Adds or replaces several entries in one level, in one write. */
+    async putDictionaryEntries(scope: DictionaryScope, added: DictionaryEntry[]): Promise<MeetingsConfig> {
+        const values = new Set(added.map((entry) => entry.value));
+
         return this.update((raw) => {
             const level = dictionaryAt(raw, scope);
             const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
-            level.entries = [...entries.filter((existing) => existing.value !== entry.value), entry];
+            level.entries = [
+                ...entries.filter((existing) => typeof existing.value !== "string" || !values.has(existing.value)),
+                ...added,
+            ];
         });
     }
 

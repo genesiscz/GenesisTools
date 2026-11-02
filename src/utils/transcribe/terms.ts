@@ -53,7 +53,7 @@ const ENGLISH_WORDS_PATH = "/usr/share/dict/words";
 let englishWords: Set<string> | undefined;
 
 /** A real English word ("reject", "transcript") is what the speaker said, not a mishearing. */
-function isEnglishWord(word: string): boolean {
+export function isEnglishWord(word: string): boolean {
     if (!englishWords) {
         englishWords = existsSync(ENGLISH_WORDS_PATH)
             ? new Set(readFileSync(ENGLISH_WORDS_PATH, "utf8").toLowerCase().split("\n"))

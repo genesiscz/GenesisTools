@@ -27,6 +27,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `projects add <name>` | Add a known project |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |
 | `dictionary add <value> [substitution] --type fix\|abbr\|term\|keep [--project <name>]` | Add or replace an entry; a new project name is added to the known projects |
+| `dictionary suggest [--project <name>] [--apply 1,3\|all]` | Entries proposed from the source's own dictionary (Wispr Flow) and from corrections confirmed twice |
 | `dictionary expansion every\|first\|off [--project <name>]` | How abbreviations expand |
 | `dictionary remove <value> [--project <name>]` | Remove an entry |
 

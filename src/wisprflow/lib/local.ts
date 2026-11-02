@@ -248,16 +248,53 @@ export function pendingSpeakerRenames(): Array<{ id: string; title: string }> {
     );
 }
 
-/** The app's dictionary rows, with the replacement when the row has one. */
-export function dictionaryCandidates(): Array<{ value: string; replacement?: string }> {
+/** One row of the app's dictionary. */
+export interface DictionaryRow {
+    phrase: string;
+    replacement?: string;
+    uses: number;
+    manual: boolean;
+    snippet: boolean;
+    lastUsed?: string;
+}
+
+/** The app's dictionary, most used first. Snippets are text expansions, not spellings; `withSnippets` includes them. */
+export function dictionaryRows(options: { withSnippets?: boolean } = {}): DictionaryRow[] {
     return withDb((db) =>
         db
-            .query<{ phrase: string; replacement: string | null }, []>(
-                "SELECT phrase, replacement FROM Dictionary WHERE isDeleted = 0 AND isSnippet = 0"
+            .query<
+                {
+                    phrase: string;
+                    replacement: string | null;
+                    frequencyUsed: number | null;
+                    manualEntry: number | null;
+                    isSnippet: number | null;
+                    lastUsed: string | null;
+                },
+                []
+            >(
+                "SELECT phrase, replacement, frequencyUsed, manualEntry, isSnippet, lastUsed FROM Dictionary WHERE isDeleted = 0"
             )
             .all()
-            .map((row) => ({ value: row.phrase, ...(row.replacement ? { replacement: row.replacement } : {}) }))
+            .filter((row) => options.withSnippets || row.isSnippet !== 1)
+            .map((row) => ({
+                phrase: row.phrase,
+                ...(row.replacement ? { replacement: row.replacement } : {}),
+                uses: row.frequencyUsed ?? 0,
+                manual: row.manualEntry === 1,
+                snippet: row.isSnippet === 1,
+                ...(row.lastUsed ? { lastUsed: toIso(row.lastUsed) } : {}),
+            }))
+            .sort((x, y) => y.uses - x.uses)
     );
+}
+
+/** The app's dictionary rows, with the replacement when the row has one. */
+export function dictionaryCandidates(): Array<{ value: string; replacement?: string }> {
+    return dictionaryRows().map((row) => ({
+        value: row.phrase,
+        ...(row.replacement ? { replacement: row.replacement } : {}),
+    }));
 }
 
 /** The newest meeting the app has not ended: the one it is recording now, if any. */
