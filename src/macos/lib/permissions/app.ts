@@ -1726,9 +1726,15 @@ function retiredBundlePath(retiredRoot: string, stamp: string): string {
     return join(retiredRoot, stamp, `${GENESIS_APP_NAME}.app`);
 }
 
+/** The inode of a retired bundle's binary; null when it cannot be stat'ed, also when a pack removed it just now. */
 function retiredBinaryInode(retiredRoot: string, stamp: string): number | null {
     const binary = join(retiredBundlePath(retiredRoot, stamp), "Contents", "MacOS", GENESIS_APP_NAME);
-    return existsSync(binary) ? statSync(binary).ino : null;
+
+    try {
+        return statSync(binary).ino;
+    } catch {
+        return null;
+    }
 }
 
 /** Written beside a retired bundle (never inside it) once its resources share their blocks; the next pass skips it. */
@@ -1852,26 +1858,41 @@ export interface RetiredBundlesSummary {
 }
 
 /**
- * What `tools macos permissions retired` reports. `apply: false` reads only; `apply: true` shares under the build
- * lock, so it never races a build's pack of the same folders.
+ * What `tools macos permissions retired` reports. `apply: false` reads only; `apply: true` takes the whole snapshot
+ * and shares under the build lock, so it never races a build's pack of the same folders, and its counts describe the
+ * folders it shared. The detached share starts while its build still holds the lock: a snapshot before the lock read
+ * folders that build then packed.
  */
 export async function retiredBundlesSummary({ apply }: { apply: boolean }): Promise<RetiredBundlesSummary> {
-    const root = retiredRootFor(genesisAppDir());
-    const folders = listRetiredStamps(root) ?? [];
-    const running = readRunningExecutableInodes();
-    const pinnedSet =
-        running === null
-            ? null
-            : pinnedRetiredBundles({ entries: folders, running, inodeOf: (entry) => retiredBinaryInode(root, entry) });
-    const pinned = pinnedSet === null ? null : folders.filter((stamp) => pinnedSet.has(stamp));
-    const archives = existsSync(root) ? readdirSync(root).filter((name) => /^\d+\.zst$/.test(name)) : [];
-    const alreadyVisited = folders.length - retiredStampsToShare(root, folders).length;
-    const share = () => shareRetiredResources({ retiredRoot: root, installedBundle: genesisAppBundlePath(), apply });
-    const sharing = apply
-        ? await withFileLock(appBuildLockPath(), async () => share(), BUILD_LOCK_TIMEOUT_MS)
-        : share();
+    const summarize = (): RetiredBundlesSummary => {
+        const root = retiredRootFor(genesisAppDir());
+        const folders = listRetiredStamps(root) ?? [];
+        const running = readRunningExecutableInodes();
+        const pinnedSet =
+            running === null
+                ? null
+                : pinnedRetiredBundles({
+                      entries: folders,
+                      running,
+                      inodeOf: (entry) => retiredBinaryInode(root, entry),
+                  });
+        const pinned = pinnedSet === null ? null : folders.filter((stamp) => pinnedSet.has(stamp));
+        const alreadyVisited = folders.length - retiredStampsToShare(root, folders).length;
+        const sharing = shareRetiredResources({ retiredRoot: root, installedBundle: genesisAppBundlePath(), apply });
 
-    return { root, folders, pinned, archives, alreadyVisited, sharing };
+        return { root, folders, pinned, archives: retiredArchives(root), alreadyVisited, sharing };
+    };
+
+    return apply ? withFileLock(appBuildLockPath(), async () => summarize(), BUILD_LOCK_TIMEOUT_MS) : summarize();
+}
+
+/** The packed `<ms>.zst` copies under `root`; none when it is missing or went away during the read. */
+function retiredArchives(root: string): string[] {
+    try {
+        return readdirSync(root).filter((name) => /^\d+\.zst$/.test(name));
+    } catch {
+        return [];
+    }
 }
 
 const STALE_FACE_TERM_GRACE_MS = 500;

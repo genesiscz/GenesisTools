@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as apfs from "@genesiscz/utils/macos/apfs";
 import { getCloneId } from "@genesiscz/utils/macos/apfs";
+import * as genesisApp from "@genesiscz/utils/macos/genesis-app";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import * as prompts from "@genesiscz/utils/prompts/p";
@@ -33,6 +34,8 @@ import {
     readAppFaceProcesses,
     readRunningExecutableInodes,
     requireAppBuildSdk,
+    retiredBundlesSummary,
+    retiredRootFor,
     retiredStampsToShare,
     runningExecutableInodes,
     runStreaming,
@@ -1415,6 +1418,35 @@ describe.skipIf(skip.unlessMac)("shareBundleResources", () => {
         }
     });
 
+    it("a folder of the same bytes but other modes is entered, and each file and folder keeps its own mode", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
+        const res = (bundle: string, rel: string) => join(bundle, "Contents/Resources", rel);
+        const mode = (path: string) => statSync(path).mode & 0o777;
+
+        try {
+            const files = {
+                "Resources/sounds/a.wav": bytes(1),
+                "Resources/sounds/b.wav": bytes(2),
+                "Resources/web/index.html": bytes(3),
+            };
+            const installed = bundleIn(root, "installed", files);
+            const retired = bundleIn(root, "100", files);
+            chmodSync(res(retired, "sounds/b.wav"), 0o600);
+            chmodSync(res(retired, "web"), 0o700);
+
+            const report = shareBundleResources({ bundles: [installed, retired], apply: true });
+
+            expect(report).toMatchObject({ files: 6, shared: 3, errors: [] });
+            // Before, each folder matched as a whole, and the swap gave the retired copy the installed copy's modes.
+            expect(mode(res(retired, "sounds/b.wav"))).toBe(0o600);
+            expect(mode(res(retired, "web"))).toBe(0o700);
+            expect(sameClone(res(installed, "sounds/b.wav"), res(retired, "sounds/b.wav"))).toBe(true);
+            expect(sameClone(res(installed, "web/index.html"), res(retired, "web/index.html"))).toBe(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("a retired folder done once is marked and not walked again; a dry run marks nothing", () => {
         const root = mkdtempSync(join(tmpdir(), "gt-share-resources-"));
 
@@ -1601,6 +1633,49 @@ describe.skipIf(skip.unlessMac)("shareBundleResources", () => {
             expect(report).toMatchObject({ bundles: 3, files: 1, shared: 0, errors: [] });
         } finally {
             rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe.skipIf(skip.unlessMac)("retiredBundlesSummary", () => {
+    it("with apply, reads the retired folders once it holds the build lock, never the ones a build packs meanwhile", async () => {
+        const appDir = genesisApp.genesisAppDir();
+        const retiredRoot = retiredRootFor(appDir);
+        const installed = mkdtempSync(join(tmpdir(), "gt-retired-summary-"));
+        const binary = (stamp: string) =>
+            join(retiredRoot, stamp, "GenesisTools.app", "Contents", "MacOS", "GenesisTools");
+        // The installed app is only read; the real one stays out of the test.
+        const bundlePath = spyOn(genesisApp, "genesisAppBundlePath").mockReturnValue(
+            join(installed, "GenesisTools.app")
+        );
+
+        try {
+            for (const stamp of ["100", "200"]) {
+                mkdirSync(dirname(binary(stamp)), { recursive: true });
+                writeFileSync(binary(stamp), "x");
+            }
+
+            // The build that started the detached share still holds the lock, and packs folder 100 before it lets go.
+            // The promise rides in an object: withFileLock awaits what its callback returns, and the summary waits for
+            // this very lock.
+            const { pending } = await withFileLock(
+                join(appDir, "build.lock"),
+                async () => {
+                    const started = retiredBundlesSummary({ apply: true });
+                    rmSync(join(retiredRoot, "100"), { recursive: true, force: true });
+                    return { pending: started };
+                },
+                5000
+            );
+            const summary = await pending;
+
+            // Before, the folders were read before the lock: the summary named folder 100, which the build had packed.
+            expect(summary.folders).toEqual(["200"]);
+            expect(summary.sharing?.bundles).toBe(2);
+        } finally {
+            bundlePath.mockRestore();
+            rmSync(retiredRoot, { recursive: true, force: true });
+            rmSync(installed, { recursive: true, force: true });
         }
     });
 });

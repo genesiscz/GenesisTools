@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type Dirent, existsSync, readdirSync, readlinkSync, renameSync, rmSync, statSync } from "node:fs";
+import { type Dirent, existsSync, lstatSync, readdirSync, readlinkSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { dedupeFile, fileAllocatedSize } from "@genesiscz/utils/fs/disk-usage";
 import { sha256File } from "@genesiscz/utils/fs/hash";
@@ -39,6 +39,11 @@ interface Entry {
     size: number;
     /** Where a link points. */
     target?: string;
+    /**
+     * Permission bits and owner (`<mode>:<uid>:<gid>`) as listed. A folder's digest covers them: the folder swap puts
+     * the keeper's clone, with the keeper's modes and owner, in place of the whole folder.
+     */
+    access?: string;
     /**
      * A folder whose listing, or an entry in it, could not be read, or that holds an entry of another kind (a pipe, a
      * socket). Such a folder is never compared, replaced or counted as a whole; only its readable entries are.
@@ -350,7 +355,9 @@ function digestOf(entry: Entry, errors: Errors): string | null {
         return null;
     }
 
-    const hash = createHash("sha256");
+    // The folder's own access and each entry's: two folders of the same bytes but other modes or owners are not equal,
+    // so their files go one by one through dedupeFile, which keeps each target's mode and owner.
+    const hash = createHash("sha256").update(`.\0${entry.access ?? ""}\n`);
 
     for (const child of children) {
         const digest = digestOf(child, errors);
@@ -359,7 +366,7 @@ function digestOf(entry: Entry, errors: Errors): string | null {
             return null;
         }
 
-        hash.update(`${nameOf(child)}\0${child.kind}\0${digest}\n`);
+        hash.update(`${nameOf(child)}\0${child.kind}\0${child.access ?? ""}\0${digest}\n`);
     }
 
     entry.digest = hash.digest("hex");
@@ -407,16 +414,19 @@ function childrenOf(dir: Entry, errors: Errors): Entry[] {
             const path = join(dir.path, item.name);
 
             try {
-                if (item.isDirectory()) {
-                    return [{ path, kind: "dir", size: 0 }];
-                }
+                if (item.isDirectory() || item.isSymbolicLink() || item.isFile()) {
+                    const st = lstatSync(path);
+                    const access = `${(st.mode & 0o7777).toString(8)}:${st.uid}:${st.gid}`;
 
-                if (item.isSymbolicLink()) {
-                    return [{ path, kind: "link", size: 0, target: readlinkSync(path) }];
-                }
+                    if (item.isDirectory()) {
+                        return [{ path, kind: "dir", size: 0, access }];
+                    }
 
-                if (item.isFile()) {
-                    return [{ path, kind: "file", size: statSync(path).size }];
+                    if (item.isSymbolicLink()) {
+                        return [{ path, kind: "link", size: 0, target: readlinkSync(path), access }];
+                    }
+
+                    return [{ path, kind: "file", size: st.size, access }];
                 }
             } catch (error) {
                 errors.push({ path, message: messageOf(error) });
