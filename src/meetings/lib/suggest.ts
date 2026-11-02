@@ -536,7 +536,8 @@ function findingFor(options: {
         return { candidates, rules: [channel, MeetingRule.Muted], confidence: 0.5, ...listen };
     }
 
-    if (agreed && !sameName(agreed, line.label)) {
+    // A label the platform named after a person is its own voice id: E3 and E4 agreeing on another never move it.
+    if (agreed && !sameName(agreed, line.label) && !options.platformLabel) {
         return {
             speaker: agreed,
             rules: [channel, MeetingRule.SpeakingIndicator, MeetingRule.LiveName],

@@ -454,6 +454,33 @@ describe("a line no live segment covers", () => {
     });
 });
 
+describe("a label the platform named", () => {
+    test("keeps a call line when E3 and E4 agree on someone else; a label the transcriber named does not", () => {
+        const run = (origin: string) =>
+            suggestItems({
+                record,
+                meeting: {
+                    ...meeting,
+                    speakers: [{ speakerId: 1, name: "Bob Example", origin }],
+                    transcript: [line("Bob Example", 0, "Ano.", 1), line("Bob Example", 10, "Dobře.", 1)],
+                },
+                rules: ["evidence"],
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceWords: [],
+                evidence: {
+                    selfName: "Alice Example",
+                    segments: [{ startSec: 0, endSec: 5, channel: "system", liveName: "Rob Example" }],
+                    speaking: [{ tSec: 1, speaking: ["Rob Example"], muted: [] }],
+                    files: [],
+                },
+                now: "2026-11-02T15:00:00.000Z",
+            });
+
+        expect(run("platform")).toEqual([]);
+        expect(run("llm")).toEqual([expect.objectContaining({ speaker: "Rob Example", rules: ["E1", "E3", "E4"] })]);
+    });
+});
+
 describe("own label (R17)", () => {
     test("in a dialogue with a person's own label, the other voice E3 shows is the line's, and that person's live name loses", () => {
         const items = suggestItems({
