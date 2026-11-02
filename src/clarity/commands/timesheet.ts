@@ -135,7 +135,7 @@ export function registerTimesheetCommand(program: Command): void {
                 return;
             }
 
-            renderTimesheetTable(ts, ts.timeentries._results);
+            renderTimesheetTable(ts, ts.timeentries?._results ?? []);
         });
 
     ts.command("list")

@@ -87,25 +87,29 @@ class FakeClarity {
             numberOfNotes: period.numberOfNotes ?? 0,
             hasNotes: (period.numberOfNotes ?? 0) > 0,
             numberOfEntries: period.rows.length,
-            timeentries: {
-                _results: period.rows.map((row) => {
-                    const segments = Object.entries(row.actuals ?? {}).map(([date, value]) => ({
-                        start: `${date}T00:00:00`,
-                        finish: `${date}T00:00:00`,
-                        value,
-                    }));
+            // Clarity leaves the section out of a timesheet that has no rows at all.
+            timeentries:
+                period.rows.length === 0
+                    ? undefined
+                    : {
+                          _results: period.rows.map((row) => {
+                              const segments = Object.entries(row.actuals ?? {}).map(([date, value]) => ({
+                                  start: `${date}T00:00:00`,
+                                  finish: `${date}T00:00:00`,
+                                  value,
+                              }));
 
-                    return {
-                        _internalId: row.timeEntryId,
-                        taskId: row.taskId,
-                        taskCode: row.taskCode,
-                        taskName: row.taskName,
-                        actuals: row.actuals
-                            ? { segmentList: { total: segments.reduce((s, g) => s + g.value, 0), segments } }
-                            : undefined,
-                    };
-                }),
-            },
+                              return {
+                                  _internalId: row.timeEntryId,
+                                  taskId: row.taskId,
+                                  taskCode: row.taskCode,
+                                  taskName: row.taskName,
+                                  actuals: row.actuals
+                                      ? { segmentList: { total: segments.reduce((s, g) => s + g.value, 0), segments } }
+                                      : undefined,
+                              };
+                          }),
+                      },
         };
     }
 
@@ -205,7 +209,9 @@ function adoEntry(workItemId: number, date: string, minutes: number, comment: st
  * August 2026. P0 straddles the month start, P5 the month end, P1 lies fully inside, P2 holds Beta
  * hours equal to the replacement, P3 holds Alpha hours ADO no longer has, P4 is empty everywhere.
  */
-function augustPeriods(options: { p1Notes?: number; p2Unopened?: boolean; p1WithoutBeta?: boolean } = {}): Period[] {
+function augustPeriods(
+    options: { p1Notes?: number; p2Unopened?: boolean; p1WithoutBeta?: boolean; p1WithoutRows?: boolean } = {}
+): Period[] {
     const rows = (index: number, alpha?: Record<string, number>, beta?: Record<string, number>): Row[] => [
         { timeEntryId: 10_001 + index * 10, ...Alpha, actuals: alpha },
         { timeEntryId: 10_002 + index * 10, ...Beta, actuals: beta },
@@ -225,7 +231,7 @@ function augustPeriods(options: { p1Notes?: number; p2Unopened?: boolean; p1With
             end: "2026-08-09",
             timesheetId: 555001,
             numberOfNotes: options.p1Notes,
-            rows: options.p1WithoutBeta ? rows(1).slice(0, 1) : rows(1),
+            rows: options.p1WithoutRows ? [] : options.p1WithoutBeta ? rows(1).slice(0, 1) : rows(1),
         },
         {
             timePeriodId: 400002,
@@ -581,6 +587,21 @@ describe("CLI clarity fill", () => {
         expect(resultsLine(run)).toBe("Results: 4 updated, 3 note(s), 1 task(s) with no row");
     });
 
+    test("a week whose timesheet has no rows at all reports both tasks instead of crashing", async () => {
+        const active = useWorld({ periods: augustPeriods({ p1WithoutRows: true }) });
+
+        const run = await runCli(["--confirm"]);
+
+        expect(run.exitCode).toBe(1);
+        expect(writeSummary(active.clarity.writes)).toEqual(CliAugustWrites.filter((w) => !w.startsWith("555001/")));
+        expect(
+            run.lines.some((line) => line.includes("No time entry row for task Task Alpha in timesheet 555001"))
+        ).toBe(true);
+        expect(
+            run.lines.some((line) => line.includes("No time entry row for task Task Beta in timesheet 555001"))
+        ).toBe(true);
+    });
+
     test("an empty ADO month reports it and writes nothing", async () => {
         const active = useWorld({ entries: [] });
 
@@ -654,6 +675,15 @@ describe("dashboard fill preview", () => {
         ]);
         expect(active.clarity.writes).toEqual([]);
         expect(active.clarity.getTimesheetCalls).toEqual([555000, 555001, 555002, 555003, 555005, 555004]);
+    });
+
+    test("a week whose timesheet has no rows at all previews with no Clarity hours instead of failing", async () => {
+        useWorld({ periods: augustPeriods({ p1WithoutRows: true }) });
+
+        const preview = await getFillPreview(8, 2026);
+
+        expect(preview.diagnostics).toBeUndefined();
+        expect(preview.weeks?.map((w) => w.timesheetId)).toContain(555001);
     });
 
     test("an unmapped work item refuses the preview unless allowed, then shows under its week", async () => {
@@ -799,6 +829,17 @@ describe("dashboard fill execute", () => {
             "555001 T-ALPHA success 3h",
             "555001 T-BETA skipped 0h (No time entry for task in timesheet 555001)",
             "999999  error 0h (Timesheet 999999 not found)",
+        ]);
+    });
+
+    test("a week whose timesheet has no rows at all skips each task instead of failing the week", async () => {
+        useWorld({ periods: augustPeriods({ p1WithoutRows: true }) });
+
+        const result = await executeFill(8, 2026, [555001]);
+
+        expect(result.entries.map(entrySummary)).toEqual([
+            "555001 T-ALPHA skipped 0h (No time entry for task in timesheet 555001)",
+            "555001 T-BETA skipped 0h (No time entry for task in timesheet 555001)",
         ]);
     });
 

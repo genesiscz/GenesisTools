@@ -178,7 +178,7 @@ function planEntry({
     missingRows: MissingRowReporting;
 }): PlannedFillEntry {
     const periodFinishExclusive = exclusiveEnd(record.timePeriodFinish);
-    const timeEntry = record.timeentries._results.find(
+    const timeEntry = (record.timeentries?._results ?? []).find(
         (entry: TimeEntryRecord) => entry.taskId === fill.mapping.clarityTaskId
     );
     // A row with no actuals yet comes back without the series.

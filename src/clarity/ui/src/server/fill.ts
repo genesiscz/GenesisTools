@@ -232,7 +232,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
                 const matchedTaskCodes = new Set<string>();
 
                 for (const entry of wp.entries) {
-                    const te = ts.timeentries._results.find(
+                    const te = (ts.timeentries?._results ?? []).find(
                         (e: TimeEntryRecord) => e.taskCode === entry.clarityTaskCode
                     );
                     const totalSeconds = te?.actuals?.segmentList?.total ?? 0;
@@ -251,7 +251,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
                 }
 
                 // Add Clarity-only entries (tasks with hours in Clarity but no ADO mapping)
-                for (const te of ts.timeentries._results as TimeEntryRecord[]) {
+                for (const te of (ts.timeentries?._results ?? []) as TimeEntryRecord[]) {
                     if (matchedTaskCodes.has(te.taskCode)) {
                         continue;
                     }
@@ -284,7 +284,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
                 // Sum total from ALL Clarity timesheet entries (not just ADO-matched ones)
                 let weekClarityTotal = 0;
 
-                for (const te of ts.timeentries._results) {
+                for (const te of ts.timeentries?._results ?? []) {
                     weekClarityTotal += Math.round(((te as TimeEntryRecord).actuals?.segmentList?.total ?? 0) / 60);
                 }
 
