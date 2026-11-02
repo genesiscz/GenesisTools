@@ -19,6 +19,8 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { applyCorrections, type TranscriptCorrections, type UnclearPassage } from "@genesiscz/utils/transcribe/apply";
+import { DEFAULT_SPELL_PROVIDER, SPELL_PROVIDER_IDS } from "@genesiscz/utils/transcribe/languages/spell";
+import { openWordCheck, type WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
     entriesToSrt,
     entriesToVtt,
@@ -33,6 +35,7 @@ import {
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
+import { transcriptWords } from "@genesiscz/utils/transcribe/terms";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
@@ -113,7 +116,31 @@ function printItems(items: MeetingItem[]): void {
     out.println(table.toString());
 }
 
-async function suggest(ref: string, opts: { rules?: string; attendance?: string; json?: boolean }): Promise<void> {
+const WORD_CHECKS = [...SPELL_PROVIDER_IDS, "off"] as const;
+
+/** The word check for the term rules, or undefined when it is off or cannot run (said once, with the reason). */
+async function wordCheckFor(
+    choice: (typeof WORD_CHECKS)[number],
+    meeting: SourceMeeting
+): Promise<WordCheck | undefined> {
+    if (choice === "off") {
+        return undefined;
+    }
+
+    const opened = await openWordCheck({ provider: choice, words: transcriptWords(meeting.transcript) });
+
+    if (!opened.available) {
+        ui.warn(`The word check is off (${opened.reason}); the term rules skip every word with a Czech letter.`);
+        return undefined;
+    }
+
+    return opened.check;
+}
+
+async function suggest(
+    ref: string,
+    opts: { rules?: string; attendance?: string; wordCheck?: string; json?: boolean }
+): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -130,6 +157,18 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
         return;
     }
 
+    const wordCheckChoice = await resolveEnum({
+        value: opts.wordCheck,
+        fallback: DEFAULT_SPELL_PROVIDER,
+        values: WORD_CHECKS,
+        flag: "--word-check",
+        subcommand: ["suggest"],
+    });
+
+    if (!wordCheckChoice) {
+        return;
+    }
+
     try {
         // The platform, attendance and channel layout first, when the record lacks any of them.
         const collected =
@@ -142,6 +181,7 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
         const evidence = rules.includes("evidence")
             ? speakingEvidence(collected, await source.evidence(sourceMeetingId))
             : null;
+        const wordCheck = rules.includes("terms") ? await wordCheckFor(wordCheckChoice, meeting) : undefined;
         const fresh = suggestItems({
             record: collected,
             meeting,
@@ -153,8 +193,10 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
             energyMicShare: (await energyMicShareFor(store, collected, evidence)).share,
             listenBelow: config.global.suggest.listenBelow,
             points: meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [],
+            wordCheck,
             now: new Date().toISOString(),
         });
+        wordCheck?.dispose();
 
         if (fresh.length > 0) {
             await store.update(
@@ -684,6 +726,10 @@ export function registerItemCommands(program: Command): void {
         .description("Run the rules on the meeting's transcript and add what they find as suggested items")
         .option("--rules <list>", `which rule sets: ${SUGGEST_RULES.join(",")} (default all)`)
         .option("--attendance <teams|file>", "who was in the call and when (Teams), for rule RA")
+        .option(
+            "--word-check <provider>",
+            `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default ${DEFAULT_SPELL_PROVIDER})`
+        )
         .option("--json", "print the new items")
         .action(suggest);
 

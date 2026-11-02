@@ -5,6 +5,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
+import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
     PRESENCE_TOLERANCE_SEC,
     type Presence,
@@ -13,7 +14,13 @@ import {
     speakerStats,
 } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
-import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
+import {
+    buildVocabulary,
+    DEV_GLOSSARY,
+    findSuspectTerms,
+    findUnknownWords,
+    termsFromText,
+} from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
@@ -34,6 +41,8 @@ const CONFIDENCE = {
     answeredLeave: 0.75,
     unansweredLeave: 0.4,
     llmBonus: 0.1,
+    /** A word no dictionary layer knows and no term matches: probably misheard, but into what is open. */
+    unknownWord: 0.3,
 } as const;
 
 /** `Omit` applied to each member of a union, so each kind keeps its own fields. */
@@ -158,8 +167,9 @@ function termItems(options: {
     record: MeetingRecord;
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
+    wordCheck?: WordCheck;
 }): NewItem[] {
-    const { meeting, record, dictionary } = options;
+    const { meeting, record, dictionary, wordCheck } = options;
     const contextTexts = record.context.map((entry) => {
         if (entry.kind === "note") {
             return termsFromText(entry.ref, "context");
@@ -180,17 +190,32 @@ function termItems(options: {
         DEV_GLOSSARY.map((term) => ({ term, source: "glossary" })),
         options.sourceWords.map((word) => ({ term: word.replacement ?? word.value, source: "source" })),
         dictionaryTerms,
+        // People's names, whole and by part, so "Tomášem" is a name and not an unknown word.
+        record.participants.flatMap((person) =>
+            [person.name, ...person.name.split(/\s+/)].map((term) => ({ term, source: "participant" }))
+        ),
         ...contextTexts,
     ]);
     const keep = new Set(
         dictionary.entries.filter((entry) => entry.type === "keep").map((entry) => entry.value.toLowerCase())
     );
-    const suspects = findSuspectTerms({
-        entries: meeting.transcript,
-        vocab,
-        context: termsFromText(meeting.title, "title"),
-    }).filter((suspect) => !keep.has(suspect.heard.toLowerCase()));
-    log.debug({ vocab: vocab.length, suspects: suspects.length, kept: keep.size }, "term suggestions");
+    const context = termsFromText(meeting.title, "title");
+    const suspects = findSuspectTerms({ entries: meeting.transcript, vocab, context, wordCheck }).filter(
+        (suspect) => !keep.has(suspect.heard.toLowerCase())
+    );
+    const unknown = wordCheck
+        ? findUnknownWords({
+              entries: meeting.transcript,
+              vocab,
+              wordCheck,
+              context,
+              skip: new Set([...keep, ...suspects.map((suspect) => suspect.heard.toLowerCase())]),
+          })
+        : [];
+    log.debug(
+        { vocab: vocab.length, suspects: suspects.length, unknown: unknown.length, kept: keep.size },
+        "term suggestions"
+    );
 
     // R2.5: a word close to a term or its spoken form, below the score that replaces it silently.
     const applyAt = (dictionary.fuzzy ?? DEFAULT_FUZZY).apply;
@@ -251,6 +276,26 @@ function termItems(options: {
                     },
                 },
             ];
+        }),
+        ...unknown.map((word): NewItem => {
+            const best = word.candidates[0];
+
+            return {
+                kind: "term",
+                status: "suggested",
+                heard: word.heard,
+                ...(best ? { proposed: best.term } : {}),
+                ...(word.examples[0]?.atSec !== undefined ? { atSec: word.examples[0].atSec } : {}),
+                confidence: CONFIDENCE.unknownWord,
+                rules: [MeetingRule.UnknownWord],
+                evidence: {
+                    occurrences: word.occurrences,
+                    examples: word.examples,
+                    verdict: word.verdict,
+                    wordCheck: wordCheck?.provider,
+                    candidates: word.candidates.map((candidate) => `${candidate.term} ${candidate.confidence} %`),
+                },
+            };
         }),
     ];
 }
@@ -583,6 +628,8 @@ export function suggestItems(options: {
     listenBelow?: number;
     /** The summary's action items and decisions: a range that cites one matters more. */
     points?: SummaryPoint[];
+    /** Tells ordinary words from unknown ones for the term rules; without it they skip every Czech word. */
+    wordCheck?: WordCheck;
     now: string;
 }): MeetingItem[] {
     const { record, meeting } = options;

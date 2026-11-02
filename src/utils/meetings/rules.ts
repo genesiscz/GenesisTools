@@ -96,6 +96,13 @@ export enum MeetingRule {
      */
     SummaryName = "summary-name",
     /**
+     * Unknown word. No layer of the word check accepts the word (the spelling dictionary, the spoken word list and
+     * its rules, English loan stems) and no vocabulary term matches it. Its weak candidates, if any, give
+     * `proposed`; without one the item has no proposal and is asked as a free-text question. Owned by the term
+     * check (`@genesiscz/utils/transcribe/languages/word-check`).
+     */
+    UnknownWord = "unknown-word",
+    /**
      * User. The item was added by hand (`tools meetings items add`), for example a question the polisher wants
      * answered by ear. No rule scored it, so it has no confidence.
      */
