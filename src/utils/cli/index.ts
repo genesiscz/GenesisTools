@@ -8,6 +8,7 @@ export {
     formatMissingEnumHelp,
     isInteractive,
     markRequiredOptionsDeep,
+    PLAIN_OUTPUT_ENV,
     suggestCommand,
     suggestEnumFlag,
 } from "./executor";

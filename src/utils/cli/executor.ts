@@ -466,6 +466,20 @@ export interface ExecResult {
     truncated?: boolean;
 }
 
+/**
+ * Env overrides for a child whose stdout is parsed: no forced colour. A terminal GenesisTools opens sets
+ * CLICOLOR_FORCE=1 (`buildTerminalSpawnEnv`), a hub started from it inherits that, and gh then colours its JSON
+ * even into a pipe; NO_COLOR does not override it (measured with gh 2.100.0, 2026-11-02: every PR list of the hub
+ * failed with "unparsable gh output"). An undefined value removes the inherited variable.
+ */
+export const PLAIN_OUTPUT_ENV: Record<string, string | undefined> = {
+    CLICOLOR_FORCE: undefined,
+    FORCE_COLOR: undefined,
+    GH_FORCE_TTY: undefined,
+    CLICOLOR: "0",
+    NO_COLOR: "1",
+};
+
 export interface ExecutorOptions {
     /** Base command prefix (e.g., "git" → all calls prepend "git") */
     prefix?: string;
