@@ -4,11 +4,12 @@ import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { sendNotification } from "@genesiscz/utils/macos/notifications";
+import { type NotificationAction, sendNotification } from "@genesiscz/utils/macos/notifications";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { LiveRecording } from "@genesiscz/utils/meetings/sources";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 import { readRecorderState } from "./recorder";
 import { meetingSource } from "./sources";
@@ -41,12 +42,21 @@ function readAuto(store: MeetingStore): AutoRecording | undefined {
 type AutoRecordSettings = Awaited<ReturnType<MeetingsConfigStore["read"]>>["sources"]["wisprflow"]["autoRecord"];
 
 /** What the watcher reads and does, so a test can replace each part. */
+/** A notification the watcher posts. A click must do something: the body opens `open`, a button runs its command. */
+export interface WatchNote {
+    title: string;
+    message: string;
+    subtitle?: string;
+    open?: string;
+    actions?: NotificationAction[];
+}
+
 export interface WatchDeps {
     settings: () => Promise<AutoRecordSettings>;
     liveRecording: () => Promise<LiveRecording | null>;
     recorder: () => ReturnType<typeof readRecorderState>;
     run: (args: string[]) => Promise<{ success: boolean; exitCode: number | null; stderr: string }>;
-    notify: (title: string, message: string) => Promise<void>;
+    notify: (note: WatchNote) => Promise<void>;
 }
 
 function defaultDeps(store: MeetingStore): WatchDeps {
@@ -55,10 +65,8 @@ function defaultDeps(store: MeetingStore): WatchDeps {
         liveRecording: async () => (await meetingSource("wisprflow")).liveRecording(),
         recorder: () => readRecorderState(store),
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
-        notify: async (title, message) => {
-            await sendNotification({ title, message }).catch((err: unknown) =>
-                log.warn({ err }, "notification failed")
-            );
+        notify: async (note) => {
+            await sendNotification(note).catch((err: unknown) => log.warn({ err }, "notification failed"));
         },
     };
 }
@@ -125,10 +133,10 @@ export async function watchOnce(
 
     if (!result.success) {
         if (settings.notify) {
-            await deps.notify(
-                "Meeting not recorded",
-                result.stderr.split("\n").at(-1) || "The screen recording did not start."
-            );
+            await deps.notify({
+                title: "Meeting not recorded",
+                message: result.stderr.split("\n").at(-1) || "The screen recording did not start.",
+            });
         }
 
         // Remember the meeting, so a missing grant does not retry and notify every 15 s.
@@ -150,10 +158,22 @@ export async function watchOnce(
     );
 
     if (settings.notify) {
-        await deps.notify(
-            "Recording the screen",
-            `${live.title}: ${toolCommand("meetings", "record", "stop")} ends it.`
-        );
+        // Wispr names a meeting only after it ends, so a live one may have no title yet.
+        const title = live.title.trim() || `Wispr Flow meeting since ${localTime(live.startedAt).slice(11)}`;
+        await deps.notify({
+            title: "Recording the screen",
+            subtitle: title,
+            message: `Click to open its folder. ${toolCommand("meetings", "record", "stop")} ends it.`,
+            ...(meetingId ? { open: store.folder(meetingId) } : {}),
+            actions: [
+                {
+                    id: "stop",
+                    title: "Stop recording",
+                    execute: toolCommand("meetings", "record", "stop"),
+                    destructive: true,
+                },
+            ],
+        });
     }
 
     return "started";
