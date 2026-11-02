@@ -2470,6 +2470,51 @@ describe("the before-state: clones of the dirty files, and none for a command th
         expect(message).not.toContain("[redacted]");
     });
 
+    it("names a symlink past maxFiles that the call retargeted, though both targets hold the same bytes", () => {
+        // 🛑 The overflow's unchanged check followed both links: it read files outside the repository, called a
+        // retarget to an identical file no change, and a pair of links to FIFOs blocked the hook in the read.
+        const first = join(outside, "same-first.txt");
+        const second = join(outside, "same-second.txt");
+        const link = join(tree, "z-link.txt");
+        let path = "";
+
+        writeFileSync(first, "the same bytes\n");
+        symlinkSync(first, link);
+
+        // An editing command: past maxFiles the post phase reads on only for the change log of one.
+        const { current, dir } = pre("perl -pi -e 's/DIRTY/EDITED/' tracked.ts");
+
+        try {
+            // `tracked.ts` sorts first and takes the one rendered block, so the link falls past maxFiles.
+            writeFileSync(join(tree, "tracked.ts"), "one\nEDITED\nthree\n");
+            writeFileSync(second, "the same bytes\n");
+            rmSync(link);
+            symlinkSync(second, link);
+
+            // The positive control: read through the links, the captured copy and the live link agree.
+            expect(readFileSync(join(dir, "1", "z-link.txt")).equals(readFileSync(link))).toBe(true);
+
+            const decision = runDiffPost({
+                payload: current,
+                config: { ...plain, diff: { ...plain.diff, maxFiles: 1, fullDiff: "path" } },
+                record: () => {},
+            });
+            path = decision.stats?.fullDiff ?? "";
+
+            expect(decision.files).toEqual([join(tree, "tracked.ts")]);
+            expect(decision.message).toContain("1 more changed file(s) past diff.maxFiles 1");
+
+            const text = readFileSync(path, "utf8");
+
+            expect(text).toContain(`-${first}`);
+            expect(text).toContain(`+${second}`);
+        } finally {
+            for (const file of [first, second, path].filter(Boolean)) {
+                rmSync(file, { force: true });
+            }
+        }
+    });
+
     it("gives the change log a captured symlink's text as its before-state, never the file it points to", () => {
         // `capturedBefores` read a captured link through `readCapped`, which follows it: an absolute link put a
         // private file from outside the repository into the change log, and a relative one read the capture's own
