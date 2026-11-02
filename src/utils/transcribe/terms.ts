@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { similarityScore } from "@genesiscz/utils/fuzzy-match";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { MIN_STEM, stemOf } from "./languages/cs";
+import type { WordCheck, WordVerdict } from "./languages/word-check";
 import type { TranscriptEntry } from "./types";
 
 /**
@@ -54,6 +56,10 @@ const MIN_KEY_LENGTH = 4;
 /** A term this short matches too many ordinary words, so it must match almost exactly. */
 const SHORT_KEY = 4;
 const SHORT_KEY_MIN = 0.9;
+/** A dictionary word said fewer times than this in the subtitles is rare, and may still be a misheard term ("funkcionář"). */
+const RARE_COUNT = 200;
+/** A rare dictionary word must sound this much closer to a term than an unknown word does. */
+const RARE_MARGIN = 10;
 /** A longer run replaces a shorter one only when it scores clearly better. */
 const LONGER_RUN_MARGIN = 3;
 /** A term followed by at most this many letters is the term with a Czech case ending, not a mishearing. */
@@ -103,6 +109,7 @@ export const DEV_GLOSSARY = [
     "Next.js",
     "Expo",
     "Storybook",
+    "Figma",
     "Vitest",
     "Jest",
     "Playwright",
@@ -378,11 +385,18 @@ class TermIndex {
     private readonly byFirst = new Map<string, IndexedTerm[]>();
     private readonly known = new Set<string>();
     private readonly knownKeys = new Set<string>();
+    /** Czech stems of one-word terms: "Figmy" and "Figmě" are "Figma". */
+    private readonly knownStems = new Set<string>();
 
     constructor(vocab: VocabTerm[]) {
         for (const term of vocab.map(indexTerm)) {
             this.known.add(term.compact);
             this.knownKeys.add(term.key);
+
+            if (term.parts === 1 && stemOf(term.term).length >= MIN_STEM) {
+                this.knownStems.add(stemOf(term.term));
+            }
+
             const bucket = this.byFirst.get(term.key[0] ?? "") ?? [];
             bucket.push(term);
             this.byFirst.set(term.key[0] ?? "", bucket);
@@ -391,7 +405,7 @@ class TermIndex {
 
     /** True when the run is a term, or a term plus a short case ending ("Reduxu", "reducery"). */
     isKnown(run: RunKeys): boolean {
-        if (this.known.has(run.compact)) {
+        if (this.known.has(run.compact) || (run.words === 1 && this.knownStems.has(stemOf(run.run)))) {
             return true;
         }
 
@@ -411,11 +425,7 @@ class TermIndex {
     }
 
     score(run: RunKeys, context: Set<string>, minConfidence: number): Scored | undefined {
-        if (
-            run.key.length < MIN_KEY_LENGTH ||
-            CZECH_LETTERS.test(run.run) ||
-            (run.words === 1 && isEnglishWord(run.run))
-        ) {
+        if (run.key.length < MIN_KEY_LENGTH) {
             return undefined;
         }
 
@@ -484,6 +494,30 @@ function isSummaryName(candidate: TermCandidate | undefined): boolean {
     return candidate?.source === "summary" && /^\p{Lu}\p{Ll}+(?:\s+\p{Lu}\p{Ll}+)+$/u.test(candidate.term);
 }
 
+/** A word as the word check sees it: no sentence dot after it. */
+function bareWord(token: string): string {
+    return token.replace(/\.+$/u, "");
+}
+
+/**
+ * The confidence a run needs to be a suspect, or undefined when it is ordinary speech. With a word check, a single
+ * word is scored when no layer accepts it, or when it is a rare dictionary word. Without one, and for longer runs, a
+ * run with a Czech letter or a single English word is speech.
+ */
+function requiredConfidence(run: RunKeys, minConfidence: number, wordCheck?: WordCheck): number | undefined {
+    if (!wordCheck || run.words > 1) {
+        return CZECH_LETTERS.test(run.run) || (run.words === 1 && isEnglishWord(run.run)) ? undefined : minConfidence;
+    }
+
+    const verdict = wordCheck.verdict(bareWord(run.run));
+
+    if (verdict.class === "unknown") {
+        return minConfidence;
+    }
+
+    return verdict.class === "dictionary" && verdict.count < RARE_COUNT ? minConfidence + RARE_MARGIN : undefined;
+}
+
 /**
  * Every 1 to 3 word run that is not already a vocabulary term but sounds like one. A run that is a
  * known term is skipped whole, so its neighbours never glue onto it.
@@ -494,6 +528,8 @@ export function findSuspectTerms(options: {
     /** Terms the meeting's summary uses; a candidate among them gets a small bonus. */
     context?: VocabTerm[];
     minConfidence?: number;
+    /** Tells ordinary words from unknown ones, so a Czech word is scored only when no dictionary layer accepts it. */
+    wordCheck?: WordCheck;
 }): TermSuggestion[] {
     const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
     const context = new Set((options.context ?? []).map((t) => compact(t.term)));
@@ -507,7 +543,8 @@ export function findSuspectTerms(options: {
         if (!hit) {
             const keys = runKeys(run);
             const known = index.isKnown(keys);
-            hit = { known, scored: known ? undefined : index.score(keys, context, minConfidence) };
+            const needed = known ? undefined : requiredConfidence(keys, minConfidence, options.wordCheck);
+            hit = { known, scored: needed === undefined ? undefined : index.score(keys, context, needed) };
             cache.set(run, hit);
         }
 
@@ -568,6 +605,137 @@ export function findSuspectTerms(options: {
             candidates: scored.candidates,
         }))
         .sort((a, b) => b.candidates[0]!.confidence - a.candidates[0]!.confidence || b.occurrences - a.occurrences);
+}
+
+/** Every distinct word of a transcript, without a sentence dot: what a word check should check in one batch. */
+export function transcriptWords(entries: TranscriptEntry[]): Set<string> {
+    return new Set(entries.flatMap((entry) => words(entry.text).map(bareWord)));
+}
+
+/** A word no layer of the word check accepts and no vocabulary term matches: maybe misheard, maybe a new term. */
+export interface UnknownWord {
+    heard: string;
+    occurrences: number;
+    examples: TermExample[];
+    verdict: WordVerdict;
+    /** The vocabulary terms it sounds closest to, all below the suspect threshold. */
+    candidates: TermCandidate[];
+}
+
+/** An unknown word shorter than this is a stray syllable, unless it is in capitals ("OHP"). */
+const UNKNOWN_MIN_LENGTH = 4;
+/** The floor for the weak candidates of an unknown word. */
+const WEAK_MIN = DEFAULT_MIN_CONFIDENCE - CANDIDATE_SPREAD;
+
+/**
+ * Every word the word check calls unknown that is not a vocabulary term (inflected or not) and not already a
+ * suspect. Most-heard first.
+ */
+export function findUnknownWords(options: {
+    entries: TranscriptEntry[];
+    vocab: VocabTerm[];
+    wordCheck: WordCheck;
+    context?: VocabTerm[];
+    /** Lower-case words already reported as suspects. */
+    skip?: Set<string>;
+}): UnknownWord[] {
+    const context = new Set((options.context ?? []).map((t) => compact(t.term)));
+    const index = new TermIndex(options.vocab);
+    const found = new Map<string, UnknownWord>();
+    const passed = new Set<string>();
+
+    for (const [entryIndex, entry] of options.entries.entries()) {
+        for (const match of entry.text.matchAll(WORD_RE)) {
+            const word = bareWord(match[0]);
+            const key = word.toLowerCase();
+            // Cut off mid-way: "teoreti‐ teoretický", "sché…".
+            const cut = /^[\p{Pd}…]/u.test(entry.text.charAt(match.index + match[0].length));
+
+            if (passed.has(key) || cut) {
+                continue;
+            }
+
+            const seen = found.get(key);
+
+            if (seen) {
+                seen.occurrences++;
+
+                if (seen.examples.length < MAX_EXAMPLES) {
+                    seen.examples.push(exampleAt(options.entries, entryIndex, word));
+                }
+
+                continue;
+            }
+
+            const verdict = options.wordCheck.verdict(word);
+            const keys = runKeys(word);
+            const short = word.length < UNKNOWN_MIN_LENGTH && !/^\p{Lu}{2,}$/u.test(word);
+
+            if (verdict.class !== "unknown" || short || options.skip?.has(key) || index.isKnown(keys)) {
+                passed.add(key);
+                continue;
+            }
+
+            found.set(key, {
+                heard: word,
+                occurrences: 1,
+                examples: [exampleAt(options.entries, entryIndex, word)],
+                verdict,
+                candidates: index.score(keys, context, WEAK_MIN)?.candidates ?? [],
+            });
+        }
+    }
+
+    return [...found.values()].sort((a, b) => b.occurrences - a.occurrences || a.heard.localeCompare(b.heard));
+}
+
+/** The term part of a meeting's raw evidence: facts for an agent to judge, no confidence threshold of its own. */
+export interface RawTermEvidence {
+    wordCheck: { available: boolean; provider?: string; language?: string; reason?: string };
+    vocabulary: VocabTerm[];
+    /** Runs that sound like a vocabulary term, scored down to the weak-candidate floor, with each word's verdict. */
+    runs: Array<TermSuggestion & { words: Array<{ word: string; verdict?: WordVerdict }> }>;
+    unknown: UnknownWord[];
+}
+
+export function rawTermEvidence(options: {
+    entries: TranscriptEntry[];
+    vocab: VocabTerm[];
+    context?: VocabTerm[];
+    wordCheck?: WordCheck;
+    /** Why the word check is off, when it is. */
+    unavailable?: string;
+}): RawTermEvidence {
+    const { wordCheck } = options;
+    const suspects = findSuspectTerms({
+        entries: options.entries,
+        vocab: options.vocab,
+        context: options.context,
+        minConfidence: WEAK_MIN,
+        wordCheck,
+    });
+
+    return {
+        wordCheck: wordCheck
+            ? { available: true, provider: wordCheck.provider, language: wordCheck.language }
+            : { available: false, ...(options.unavailable ? { reason: options.unavailable } : {}) },
+        vocabulary: options.vocab,
+        runs: suspects.map((suspect) => ({
+            ...suspect,
+            words: suspect.heard
+                .split(" ")
+                .map((word) => ({ word, ...(wordCheck ? { verdict: wordCheck.verdict(bareWord(word)) } : {}) })),
+        })),
+        unknown: wordCheck
+            ? findUnknownWords({
+                  entries: options.entries,
+                  vocab: options.vocab,
+                  wordCheck,
+                  context: options.context,
+                  skip: new Set(suspects.map((suspect) => suspect.heard.toLowerCase())),
+              })
+            : [],
+    };
 }
 
 export interface TermFix {
