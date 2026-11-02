@@ -580,3 +580,75 @@ describe("shadowing", () => {
         expect(await run()).toBe(0);
     });
 });
+
+describe("the package exports map", () => {
+    /** The file a relative or `@genesiscz/utils/` specifier names, as Bun resolves an extensionless one. */
+    function moduleFile(base: string): string | null {
+        return (
+            [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")].find(
+                (candidate) => /\.tsx?$/.test(candidate) && existsSync(candidate)
+            ) ?? null
+        );
+    }
+
+    test("every tools-command module an exported entrypoint reaches is exported, with what it imports", async () => {
+        // A consumer that resolves through the map (a dashboard's bundled vite config) cannot load an entrypoint
+        // whose bare self-import names an unexported subpath; #677 moved the command names of `security` and `git`
+        // into src/utils/genesis-tools/tools/ and exported only `services` (eve on #678, 2026-11-02).
+        const dir = utilsPackageDir();
+        const pkg: { exports: Record<string, unknown> } = await Bun.file(join(dir, "package.json")).json();
+        const transpilers = { ts: new Bun.Transpiler({ loader: "ts" }), tsx: new Bun.Transpiler({ loader: "tsx" }) };
+        const toolsDir = join(dir, "genesis-tools", "tools");
+        const queue = Object.values(pkg.exports).flatMap((entry) => {
+            const target =
+                typeof entry === "string"
+                    ? entry
+                    : typeof entry === "object" && entry !== null && "bun" in entry && typeof entry.bun === "string"
+                      ? entry.bun
+                      : null;
+
+            // A wildcard entry (`./ui/components/*`) names no one file; its modules are reached by their importers.
+            return target && /\.tsx?$/.test(target) && existsSync(join(dir, target)) ? [join(dir, target)] : [];
+        });
+        const exported = (subpath: string) =>
+            `./${subpath}` in pkg.exports ||
+            Object.keys(pkg.exports).some((key) => key.endsWith("*") && `./${subpath}`.startsWith(key.slice(0, -1)));
+        const seen = new Set<string>();
+        const missing = new Set<string>();
+
+        expect(queue.length).toBeGreaterThan(50);
+
+        for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+            if (seen.has(file)) {
+                continue;
+            }
+
+            seen.add(file);
+
+            for (const { path, kind } of transpilers[file.endsWith(".tsx") ? "tsx" : "ts"].scanImports(
+                readFileSync(file, "utf8")
+            )) {
+                if (kind === "dynamic-import") {
+                    continue;
+                }
+
+                const own = path.startsWith(`${PACKAGE_NAME}/`) ? path.slice(PACKAGE_NAME.length + 1) : null;
+                const next = path.startsWith(".")
+                    ? moduleFile(join(file, "..", path))
+                    : own
+                      ? moduleFile(join(dir, own))
+                      : null;
+
+                if (own && !exported(own) && (own.startsWith("genesis-tools/tools/") || file.startsWith(toolsDir))) {
+                    missing.add(`${own} (imported by ${file.slice(dir.length + 1)})`);
+                }
+
+                if (next) {
+                    queue.push(next);
+                }
+            }
+        }
+
+        expect([...missing]).toEqual([]);
+    });
+});

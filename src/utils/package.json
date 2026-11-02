@@ -118,6 +118,11 @@
             "types": "./cli/current-command.ts",
             "default": "./cli/current-command.ts"
         },
+        "./cli/executor": {
+            "bun": "./cli/executor.ts",
+            "types": "./cli/executor.ts",
+            "default": "./cli/executor.ts"
+        },
         "./cli/genesis-tools": {
             "bun": "./cli/genesis-tools.ts",
             "types": "./cli/genesis-tools.ts",
@@ -233,10 +238,25 @@
             "types": "./fuzzy-tokens.ts",
             "default": "./fuzzy-tokens.ts"
         },
+        "./genesis-tools/tools/ai": {
+            "bun": "./genesis-tools/tools/ai.ts",
+            "types": "./genesis-tools/tools/ai.ts",
+            "default": "./genesis-tools/tools/ai.ts"
+        },
         "./genesis-tools/tools/services": {
             "bun": "./genesis-tools/tools/services.ts",
             "types": "./genesis-tools/tools/services.ts",
             "default": "./genesis-tools/tools/services.ts"
+        },
+        "./genesis-tools/tools/suggest": {
+            "bun": "./genesis-tools/tools/suggest.ts",
+            "types": "./genesis-tools/tools/suggest.ts",
+            "default": "./genesis-tools/tools/suggest.ts"
+        },
+        "./genesis-tools/tools/system": {
+            "bun": "./genesis-tools/tools/system.ts",
+            "types": "./genesis-tools/tools/system.ts",
+            "default": "./genesis-tools/tools/system.ts"
         },
         "./git": {
             "bun": "./git/index.ts",
