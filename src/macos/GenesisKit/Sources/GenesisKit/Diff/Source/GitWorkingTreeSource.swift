@@ -246,6 +246,21 @@ public struct GitWorkingTreeSource {
     /// Whether `note` (`DiffFile.skipped`) says the file was skipped only for its size, so it can be shown on request.
     public static func isLarge(_ note: String?) -> Bool { note?.hasPrefix(largePrefix) == true }
 
+    private static let binaryPrefix = "binary file, "
+
+    /// A binary skip carries the file's size: "binary file, 84 kB".
+    static func binaryNote(_ size: Int) -> String { binaryPrefix + ByteFormat.file(Int64(size)) }
+
+    /// The note of a file whose sides were skipped: a binary file changed on both sides shows both sizes
+    /// ("binary file, 80 kB → 84 kB"); otherwise the new side's note, else the old side's.
+    static func sidesNote(old: String?, new: String?) -> String? {
+        if let old, let new, old.hasPrefix(binaryPrefix), new.hasPrefix(binaryPrefix) {
+            let before = old.dropFirst(binaryPrefix.count), after = new.dropFirst(binaryPrefix.count)
+            return before == after ? new : "\(old) → \(after)"
+        }
+        return new ?? old
+    }
+
     /// The byte limit of a file: `maxShownBytes` when the reader asked to see it (`fullFiles`), else `maxBytes`.
     private static func limit(full: Bool) -> Int { full ? maxShownBytes : maxBytes }
     public static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -400,10 +415,12 @@ public struct GitWorkingTreeSource {
                 skipped: nil
             )
 
+            var oldNote: String?
+            var newNote: String?
             if entry.status != .added {
                 switch olds["\(plan.old):\(entry.oldPath ?? entry.path)"] {
                 case .text(let text): file.oldContents = text
-                case .skipped(let why): file.skipped = why
+                case .skipped(let why): oldNote = why
                 case nil: break
                 }
             }
@@ -412,10 +429,11 @@ public struct GitWorkingTreeSource {
                 let content = plan.new.map { news["\($0):\(entry.path)"] } ?? readWorkingFile(entry.path)
                 switch content {
                 case .text(let text): file.newContents = text
-                case .skipped(let why): file.skipped = why
+                case .skipped(let why): newNote = why
                 case nil: break
                 }
             }
+            file.skipped = Self.sidesNote(old: oldNote, new: newNote)
 
             let working = repo.appendingPathComponent(entry.path)
             if showsPicture(file, newOnDisk: plan.new == nil) {
@@ -509,7 +527,7 @@ public struct GitWorkingTreeSource {
             if exists {
                 switch readWorkingFile(path) {
                 case .text(let text): file.newContents = text
-                case .skipped(let why): file.skipped = why
+                case .skipped(let why): file.skipped = Self.sidesNote(old: file.skipped, new: why)
                 }
             }
             if file.skipped == nil, file.oldContents == file.newContents {
@@ -835,7 +853,7 @@ public struct GitWorkingTreeSource {
         }
 
         if bytes.prefix(8000).contains(0) {
-            return .skipped("binary file")
+            return .skipped(Self.binaryNote(size))
         }
 
         return .text(String(decoding: bytes, as: UTF8.self))
