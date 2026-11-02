@@ -12,7 +12,9 @@
 export async function writeStdout(text: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
         process.stdout.write(text, (error?: Error | null) => {
-            if (error) {
+            // EPIPE: the reader closed the pipe (`tools ts skeleton … | head`), so there is nobody left to deliver to.
+            // That is the reader's choice, not a failure of this tool; rejecting turned it into an unhandled crash.
+            if (error && !("code" in error && error.code === "EPIPE")) {
                 reject(error);
                 return;
             }
