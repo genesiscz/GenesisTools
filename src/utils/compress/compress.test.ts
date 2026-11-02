@@ -58,7 +58,7 @@ import { dailyPassLockPath, planDailyCompression, runDailyCompression } from "./
 import { compressFile, decompressFile, digestZstdContent, sourceUnchanged, verifyCompressedFile } from "./file";
 import { recordCompression, searchLedger } from "./ledger";
 import { CompressRefusal, compressPath, expandPath, planCompressPath, sampleFolder, verifyPath } from "./operations";
-import { PRESET_NAMES, PRESETS, resolvePreset, sniffSample } from "./presets";
+import { PRESET_NAMES, PRESETS, resolvePreset, sniffSample, tryPresets } from "./presets";
 import {
     applyFolderRetention,
     applyOldFileCompression,
@@ -1392,6 +1392,25 @@ describe("presets", () => {
             (await planCompressPath({ source: noisy, preset: PRESETS.binary, force: true })).refusal
         ).toBeUndefined();
         expect(readdirSync(dir).sort()).toEqual(["half.bin", "noisy.bin"]);
+    });
+
+    it("tries presets on a sample nothing compresses, and says what it could not sample instead of crashing", async () => {
+        // Random bytes grow under every preset: 90% of a negative best saving filtered every preset out ("reduce of
+        // empty array"), as a folder of media did in `tools compress try`.
+        const random = crypto.getRandomValues(new Uint8Array(64 * 1024));
+
+        for (const goal of ["balanced", "speed", "ratio"] as const) {
+            const { results, pick } = tryPresets(random, { goal, presets: ["fast", "text", "tree", "binary", "max"] });
+            expect(pick.saving).toBeLessThanOrEqual(0);
+            expect(pick.saving).toBe(Math.max(...results.map((result) => result.saving)));
+        }
+
+        expect(() => tryPresets(new Uint8Array(0))).toThrow("the sample is empty");
+        expect(() => tryPresets(random, { presets: [] })).toThrow("no presets to try");
+
+        // A folder tar cannot read once gave an empty sample with no word of why.
+        const missing = join(scratch("sample-missing"), "gone");
+        await expect(sampleFolder(missing)).rejects.toThrow(`tar could not read ${missing} (exit`);
     });
 
     it("pins each preset's measured level (scripts/benchmarks/compress/levels.ts, README.md Presets)", () => {

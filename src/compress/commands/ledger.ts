@@ -111,6 +111,16 @@ function runPresets(options: { json?: boolean }): void {
     out.println(table.toString());
 }
 
+/** The bytes `try` compresses, or what it could not sample: tar's error for a folder it could not read, an empty file. */
+async function trySample(path: string): Promise<{ sample: Uint8Array } | { error: string }> {
+    try {
+        const sample = statSync(path).isDirectory() ? await sampleFolder(path) : sampleFile(path, 8 * 1024 * 1024);
+        return sample.length > 0 ? { sample } : { error: `could not sample ${path}: it holds no bytes to compress` };
+    } catch (err) {
+        return { error: `could not sample ${path}: ${err instanceof Error ? err.message : err}` };
+    }
+}
+
 async function runTry(path: string, options: { goal?: string | boolean; json?: boolean }): Promise<void> {
     const goal = typeof options.goal === "string" ? options.goal : "balanced";
 
@@ -120,7 +130,21 @@ async function runTry(path: string, options: { goal?: string | boolean; json?: b
         return;
     }
 
-    const sample = statSync(path).isDirectory() ? await sampleFolder(path) : sampleFile(path, 8 * 1024 * 1024);
+    const sampled = await trySample(path);
+
+    if ("error" in sampled) {
+        process.exitCode = 1;
+
+        if (options.json) {
+            out.result({ path, error: sampled.error });
+        } else {
+            out.error(sampled.error);
+        }
+
+        return;
+    }
+
+    const { sample } = sampled;
     const { results, pick } = tryPresets(sample, {
         goal: goal as TrialGoal,
         presets: ["fast", "text", "tree", "binary", "max"],
