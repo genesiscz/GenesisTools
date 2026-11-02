@@ -72,10 +72,46 @@ describe("speakerStats", () => {
         const carol = stats.speakers.find((s) => s.label === "Carol Example")!;
 
         expect(carol.origin).toBe("llm");
-        expect(carol.leaves).toEqual([{ atSec: 10, text: "Hele, já už musím, mějte se.", continuesAtSec: 80 }]);
+        expect(carol.leaves).toEqual([
+            { atSec: 10, text: "Hele, já už musím, mějte se.", continuesAtSec: 80, confirmedBy: "Alice Example" },
+        ]);
         expect(stats.hints).toContainEqual(
             expect.objectContaining({ kind: "leave-then-continues", label: "Carol Example", strength: "strong" })
         );
+    });
+
+    test("R13: a goodbye another label answers is a departure; one nobody answers is only an intention", () => {
+        const stats = speakerStats([
+            line("Carol Example", 0, "Já už musím jít.", 2),
+            line("Alice Example", 4, "Jo, nic se neděje, čau.", 1),
+            line("Alice Example", 100, "Teď vás přetahuju a musím jít.", 1),
+            line("Bob Example", 140, "Ještě jedna věc.", 3),
+            line("Carol Example", 160, "Pokračuju já.", 2),
+            line("Alice Example", 200, "Dobře, tak končíme.", 1),
+        ]);
+        const leaves = (label: string) => stats.speakers.find((s) => s.label === label)!.leaves;
+
+        expect(leaves("Carol Example")).toEqual([
+            expect.objectContaining({ atSec: 0, confirmedBy: "Alice Example", continuesAtSec: 160 }),
+        ]);
+        // Alice's "čau" answers Carol's goodbye: it is not Alice leaving.
+        expect(leaves("Alice Example").map((leave) => leave.atSec)).toEqual([100]);
+        expect(leaves("Alice Example")[0]!.confirmedBy).toBeUndefined();
+        expect(stats.hints).toContainEqual(
+            expect.objectContaining({ kind: "leave-then-continues", label: "Alice Example", strength: "weak" })
+        );
+    });
+
+    test("R14: a 'taky' goodbye right after another label's goodbye names that label as someone else", () => {
+        const stats = speakerStats([
+            line("Alice Example", 0, "Já už musím jít.", 1),
+            line("Carol Example", 3, "Já se taky omlouvám, už musím jít.", 2),
+            line("Alice Example", 60, "Tak ještě shrnu.", 1),
+            line("Carol Example", 90, "A já dodám jednu věc.", 2),
+        ]);
+        const carol = stats.speakers.find((s) => s.label === "Carol Example")!;
+
+        expect(carol.leaves[0]!.echoOf).toEqual({ label: "Alice Example", atSec: 0 });
     });
 
     test("leave phrases match whole Czech words only", () => {

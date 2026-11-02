@@ -364,13 +364,19 @@ function hintText(hint: SpeakerHint): string {
     }
 
     if (hint.kind === "leave-then-continues") {
-        const leaves = hint.leaves
-            .map(
-                (leave) =>
-                    `${formatClock(leave.atSec)} "${truncateDisplay(leave.text, 60)}" (speaks again at ${formatClock(leave.continuesAtSec)})`
-            )
-            .join("; ");
-        return `${hint.label}: says goodbye and keeps speaking, so another voice follows each of: ${leaves}${note}`;
+        const leaves = hint.leaves.map((leave) => {
+            const said = `${formatClock(leave.atSec)} "${truncateDisplay(leave.text, 60)}" (speaks again at ${formatClock(leave.continuesAtSec)}`;
+
+            if (leave.echoOf) {
+                return `${said}; echoes ${leave.echoOf.label} at ${formatClock(leave.echoOf.atSec)}, so not that person)`;
+            }
+
+            return leave.confirmedBy
+                ? `${said}; ${leave.confirmedBy} answered the goodbye)`
+                : `${said}; nobody answered, maybe only an intention)`;
+        });
+        const joined = leaves.join("; ");
+        return `${hint.label}: says goodbye and keeps speaking, so another voice follows each of: ${joined}${note}`;
     }
 
     const at = hint.atSec === undefined ? "" : ` at ${formatClock(hint.atSec)}`;
