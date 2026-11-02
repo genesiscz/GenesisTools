@@ -257,8 +257,9 @@ final class WorktreeCleanupStore: ObservableObject {
     /// Shows `next`, sliding new rows in; `flash` marks the rows a fresh scan added or changed.
     private func apply(_ next: [CleanupRow], flash: Bool) {
         let before = Dictionary(rows.map { ($0.path, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first })
-        let moved = flash ? SWR.changed(before: before, after: next.map { ($0.path, "\($0.hashValue)") }) : []
-        withAnimation(SWR.animation) {
+        let after = next.map { ($0.path, "\($0.hashValue)") }
+        let moved = flash ? SWR.changed(before: before, after: after) : []
+        withAnimation(SWR.animation(before: before, after: after)) {
             rows = next
             changed = moved
         }

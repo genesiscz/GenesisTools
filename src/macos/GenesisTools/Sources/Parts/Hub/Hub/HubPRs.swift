@@ -1144,7 +1144,7 @@ final class PRsModel: ObservableObject {
             case .success(let list):
                 span.end("\(list.prs.count) prs")
                 let merged = (prs.filter { $0.project != project.project } + list.prs).sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
-                withAnimation(SWR.animation) {
+                withAnimation(Self.rowsAnimation(from: prs, to: merged)) {
                     prs = merged
                     if list.repos.contains(where: { ($0.count ?? 0) >= limit }) {
                         fullProjects.insert(project.project)
@@ -1181,9 +1181,18 @@ final class PRsModel: ObservableObject {
         extraRoots[key] = nil
         projectLimits[key] = nil
         fullProjects.remove(key)
-        withAnimation(SWR.animation) {
-            prs.removeAll { $0.project == key && $0.id != selectedID }
+        let kept = prs.filter { $0.project != key || $0.id == selectedID }
+        withAnimation(Self.rowsAnimation(from: prs, to: kept)) {
+            prs = kept
         }
+    }
+
+    /// The spring for a small change of the rows, nil (instant) for a page of them (`SWR.animation(before:after:)`).
+    private static func rowsAnimation(from old: [HubPR], to new: [HubPR]) -> Animation? {
+        SWR.animation(
+            before: Dictionary(old.map { ($0.id, $0.updatedAt ?? "") }, uniquingKeysWith: { first, _ in first }),
+            after: new.map { ($0.id, $0.updatedAt ?? "") }
+        )
     }
 
     /// One more page of the project a group shows.
@@ -1231,10 +1240,10 @@ final class PRsModel: ObservableObject {
             sorted.append(open)
         }
         let before = Dictionary(prs.map { ($0.id, $0.updatedAt ?? "") }, uniquingKeysWith: { first, _ in first })
-        let moved: Set<String> = flash && sameList
-            ? SWR.changed(before: before, after: sorted.map { ($0.id, $0.updatedAt ?? "") })
-            : []
-        withAnimation(SWR.animation) {
+        let after = sorted.map { ($0.id, $0.updatedAt ?? "") }
+        let moved: Set<String> = flash && sameList ? SWR.changed(before: before, after: after) : []
+        // A first paint or a big swap lands at once (`SWR.animation(before:after:)`).
+        withAnimation(SWR.animation(before: before, after: after)) {
             prs = sorted
             fullProjects = Set(list.repos.compactMap { repo in (repo.count ?? 0) >= limit ? repo.origin?.web : nil })
             changed = moved

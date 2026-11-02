@@ -50,6 +50,14 @@ public enum SWR {
         return gone + moved <= limit
     }
 
+    /// The animation for a refresh from `before` to `after`: the spring when `animates` says it is small, else nil (an
+    /// instant swap). A first paint of a cached page animated an insertion for each row in a lazy stack with pinned
+    /// headers: Activity spent 556 ms of main thread on 200 rows (2026-10-10), and the PRs list, painting 291 rows
+    /// while a link scrolled to its row, held the main thread 90 s (2026-11-02 23:57).
+    public static func animation<ID: Hashable>(before: [ID: String], after: [(ID, String)], limit: Int = 12) -> Animation? {
+        animates(before: before, after: after, limit: limit) ? animation : nil
+    }
+
     /// Fades a flash out after it showed: `clear` runs 1.6 s later unless a newer refresh replaced it.
     @MainActor
     public static func fade<ID: Hashable>(_ flashed: Set<ID>, current: @escaping @MainActor () -> Set<ID>?, clear: @escaping @MainActor () -> Void) {

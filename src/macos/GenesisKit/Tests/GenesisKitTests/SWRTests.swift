@@ -25,6 +25,16 @@ final class SWRTests: XCTestCase {
         XCTAssertFalse(SWR.animates(before: shown, after: [("r0", "1")], limit: 12))
     }
 
+    func testAFirstPaintOfManyRowsGetsNoAnimation() {
+        // The PRs list's cached page: 291 rows into an empty list must land at once, not as 291 insertions.
+        XCTAssertNil(SWR.animation(before: [String: String](), after: (0..<291).map { ("pr\($0)", "1") }))
+        let shown = Dictionary(uniqueKeysWithValues: (0..<20).map { ("r\($0)", "1") })
+        XCTAssertEqual(
+            SWR.animation(before: shown, after: shown.map { ($0.key, $0.value) } + [("n1", "1")]) == nil,
+            SWR.animation == nil,
+            "a small refresh gets the spring, or nil exactly when Reduce Motion is on")
+    }
+
     func testLoadReadsOffTheMainThread() async {
         let cache = DiskCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent("swr-\(UUID().uuidString)"), namespace: "rows")
         let missing = await cache.load([Int].self, key: "k")

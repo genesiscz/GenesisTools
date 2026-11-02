@@ -1297,7 +1297,8 @@ final class HubModel {
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     if self.worktrees != found {
-                        withAnimation(SWR.animation) { self.worktrees = found }
+                        // The cached page painted first: a scan that changed a few rows slides, a first paint lands at once.
+                        withAnimation(Self.worktreesAnimation(from: self.worktrees, to: found)) { self.worktrees = found }
                     }
                     self.loadingWorktrees = false
                     self.selectDefaultWorktree(found)
@@ -1578,7 +1579,7 @@ final class HubModel {
                 guard let self else { return }
                 let added = found.filter { row in !self.worktrees.contains { $0.path == row.path } }
                 if !added.isEmpty {
-                    withAnimation(SWR.animation) { self.worktrees += added }
+                    withAnimation(Self.worktreesAnimation(from: self.worktrees, to: self.worktrees + added)) { self.worktrees += added }
                 }
                 if !self.worktrees.contains(where: { $0.path == path }) {
                     // A folder inside a worktree (a link to `src/` of a checkout) selects that worktree.
@@ -1626,6 +1627,14 @@ final class HubModel {
 
     private var sessionRefresh: Task<Void, Never>?
 
+    /// The spring for a small change of the worktree rows, nil (instant) for a page of them.
+    private static func worktreesAnimation(from old: [HubWorktree], to new: [HubWorktree]) -> Animation? {
+        SWR.animation(
+            before: Dictionary(old.map { ($0.id, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first }),
+            after: new.map { ($0.id, "\($0.hashValue)") }
+        )
+    }
+
     /// Shows `rows`, sliding new ones in; over a list already on screen, the new and moved ones flash.
     @MainActor
     private func applySessions(_ rows: [HubSession], flash: Bool = true) {
@@ -1640,13 +1649,16 @@ final class HubModel {
         }
         guard fresh != sessions else { return }
         let before = Dictionary(sessions.map { ($0.id, "\($0.mtime)") }, uniquingKeysWith: { first, _ in first })
-        let moved = SWR.changed(before: before, after: fresh.map { ($0.id, "\($0.mtime)") })
+        let after = fresh.map { ($0.id, "\($0.mtime)") }
+        let moved = SWR.changed(before: before, after: after)
+        // A first paint or a big swap lands at once (`SWR.animation(before:after:)`).
+        let animation = SWR.animation(before: before, after: after)
         // A periodic refresh moves rows without the change flash: a row whose only news is a later time is not news.
         guard flash else {
-            withAnimation(SWR.animation) { sessions = fresh }
+            withAnimation(animation) { sessions = fresh }
             return
         }
-        withAnimation(SWR.animation) {
+        withAnimation(animation) {
             sessions = fresh
             changedSessions = moved
         }
