@@ -100,6 +100,20 @@ describe("findSuspectTerms with a word check", () => {
     });
 });
 
+describe("findSuspectTerms with a word check, longer runs", () => {
+    test("a run of dictionary words is speech, a run with a foreign word is still compared", () => {
+        const entries = [entry("Je to jako skripty a ten chess benefit.")];
+        const vocab = [
+            { term: "JavaScript", source: "glossary" },
+            { term: "čez benefit", source: "dictionary" },
+        ];
+        const words = check({ czech: ["Je", "to", "jako", "skripty", "a", "ten", "benefit"] });
+
+        expect(findSuspectTerms({ entries, vocab }).map((s) => s.heard)).toEqual(["chess benefit", "jako skripty"]);
+        expect(findSuspectTerms({ entries, vocab, wordCheck: words }).map((s) => s.heard)).toEqual(["chess benefit"]);
+    });
+});
+
 describe("findUnknownWords", () => {
     test("lists a word no layer accepts, and skips inflected terms, code, cut words and suspects", () => {
         const entries = [entry("Pak to proklizuje do Figmy a data.tile, teoreti- teoreti… a Zuštent.", 12)];
