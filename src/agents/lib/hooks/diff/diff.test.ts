@@ -69,6 +69,7 @@ import {
     blobHead,
     type CapturedEdit,
     captureChunks,
+    capturedAfter,
     capturedBefore,
     capturedBefores,
     commandLines,
@@ -2338,6 +2339,28 @@ describe("the before-state: clones of the dirty files, and none for a command th
         expect(message).toContain(`+${join(outside, "elsewhere.txt")}`);
     });
 
+    it("reads a captured symlink's old target by its text when it masks the patch, so a key outside hides nothing", () => {
+        // `gitPatch` read the head of each side to find a private key, and it opened the captured link: the old target,
+        // a key file outside the repository, was read, and the link's own text change was withheld as a key's rows.
+        const key = join(outside, "id_outside");
+
+        writeFileSync(key, "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n-----END OPENSSH PRIVATE KEY-----\n");
+        symlinkSync(key, join(tree, "key-link"));
+
+        const { current } = pre("bun /x/edit.ts");
+
+        writeFileSync(join(outside, "plain-target.txt"), "plain\n");
+        rmSync(join(tree, "key-link"));
+        symlinkSync(join(outside, "plain-target.txt"), join(tree, "key-link"));
+
+        const message = stripAnsi(runDiffPost({ payload: current, config: plain, record: () => {} }).message ?? "");
+
+        expect(message).toContain("Updated key-link (+1 -1)");
+        expect(message).toContain(`-${key}`);
+        expect(message).toContain(`+${join(outside, "plain-target.txt")}`);
+        expect(message).not.toContain("[redacted]");
+    });
+
     it("gives the change log a captured symlink's text as its before-state, never the file it points to", () => {
         // `capturedBefores` read a captured link through `readCapped`, which follows it: an absolute link put a
         // private file from outside the repository into the change log, and a relative one read the capture's own
@@ -2357,6 +2380,16 @@ describe("the before-state: clones of the dirty files, and none for a command th
 
         expect(edits.map((edit) => edit.before === null)).toEqual([false, false]);
         expect(capturedBefores(edits).map((bytes) => bytes.after?.toString("utf8"))).toEqual([secret, "tracked.ts"]);
+
+        // The after side too: a repository entry is its link text, so a retargeted link never logs the file it now
+        // points to. A path the command only named follows its link, as its copy did.
+        const after = (path: string, inRepository: boolean) =>
+            capturedAfter({ path, before: null, deleted: false, inRepository }).after?.toString("utf8");
+
+        expect(after(join(tree, "absolute.txt"), true)).toBe(secret);
+        expect(after(join(tree, "relative.txt"), true)).toBe("tracked.ts");
+        expect(after(join(tree, "absolute.txt"), false)).toBe("a private file outside the repository\n");
+        expect(capturedAfter({ path: join(tree, "absolute.txt"), before: null, deleted: true })).toEqual({});
     });
 
     it("a deleted symlink's capture does not cost the deleted files after it their renames", () => {
@@ -4996,8 +5029,25 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         const folder = mkdtempSync(join(tmpdir(), "read-head-"));
         try {
             expect(readHead(join(folder, "never-written.json"))).toBe("");
-            // A folder opens but cannot be read (EISDIR): not proven harmless.
+            // A folder is not a regular file and is never opened: not proven harmless.
             expect(readHead(folder)).toBeNull();
+        } finally {
+            rmSync(folder, { recursive: true, force: true });
+        }
+    });
+
+    it("reads a symlink as its link text, as git diffs it, and never opens the file it points to", () => {
+        const folder = mkdtempSync(join(tmpdir(), "read-head-link-"));
+        const target = join(folder, "outside.txt");
+
+        writeFileSync(target, "-----BEGIN OPENSSH PRIVATE KEY-----\n");
+        symlinkSync(target, join(folder, "link"));
+        symlinkSync(join(folder, "nowhere"), join(folder, "dangling"));
+
+        try {
+            expect(readHead(join(folder, "link"))).toBe(target);
+            // A dangling link is still a link with text, not a deleted side.
+            expect(readHead(join(folder, "dangling"))).toBe(join(folder, "nowhere"));
         } finally {
             rmSync(folder, { recursive: true, force: true });
         }
