@@ -422,8 +422,13 @@ function findingFor(options: {
 }): EvidenceFinding | undefined {
     const { line, selfName, isSelfLabel, ownLabelNearby } = options;
 
+    // No live segment covers the line, or two tie: only a sure energy share names its channel.
     if (line.micShare === undefined || !line.winner) {
-        return undefined;
+        const micSure = line.energyMic !== undefined && line.energyMic >= ENERGY_MIC_SURE;
+
+        return micSure && !isSelfLabel
+            ? { speaker: selfName, rules: [MeetingRule.Energy], confidence: ENERGY_OVER_SEGMENTS_CONFIDENCE }
+            : undefined;
     }
 
     // RM: a person muted through the whole line did not speak it.

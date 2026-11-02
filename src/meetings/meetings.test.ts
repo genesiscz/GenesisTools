@@ -416,6 +416,44 @@ describe("energy where the live segments are mixed", () => {
     });
 });
 
+describe("a line no live segment covers", () => {
+    test("a sure energy share names its channel; anything less leaves it to its label", () => {
+        const items = suggestItems({
+            record,
+            meeting: {
+                ...meeting,
+                transcript: [
+                    line("Carol Example", 0, "Hm."),
+                    line("Carol Example", 10, "Jo."),
+                    line("Alice Example", 20, "No."),
+                    line("Carol Example", 30, "Dobře."),
+                ],
+            },
+            rules: ["evidence"],
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            evidence: {
+                selfName: "Alice Example",
+                segments: [{ startSec: 30, endSec: 40, channel: "system", liveName: "Carol Example" }],
+                speaking: [],
+                files: [],
+            },
+            energyMicShare: (fromSec) => ({ 0: 0.97, 10: 0.6, 20: 0.97, 30: 0.05 })[fromSec],
+            now: "2026-11-02T15:00:00.000Z",
+        });
+
+        expect(items).toEqual([
+            expect.objectContaining({
+                fromSec: 0,
+                toSec: 0,
+                speaker: "Alice Example",
+                rules: ["energy"],
+                confidence: 0.75,
+            }),
+        ]);
+    });
+});
+
 describe("own label (R17)", () => {
     test("in a dialogue with a person's own label, the other voice E3 shows is the line's, and that person's live name loses", () => {
         const items = suggestItems({
@@ -625,7 +663,13 @@ describe("microphone scoring (R2.1)", () => {
             speaking: [],
             files: [],
         };
-        const agrees = suggestItems({ ...base, meeting: oneLine, evidence, energyMicShare: () => 0.9 });
+        // Only the first line: the second has no segment, and a sure share there would join the range.
+        const agrees = suggestItems({
+            ...base,
+            meeting: oneLine,
+            evidence,
+            energyMicShare: (fromSec) => (fromSec === 0 ? 0.9 : undefined),
+        });
         const loud = suggestItems({ ...base, meeting: oneLine, evidence, energyMicShare: () => 0.5 });
 
         expect(agrees[0]).toMatchObject({ confidence: 0.98, rules: ["E1", "energy"] });
