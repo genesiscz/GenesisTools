@@ -80,14 +80,25 @@ retried for the same meeting.
 ## Items
 
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
-confirmed items change a transcript (`--with-suggested` previews the rest).
+confirmed items change a transcript. `--with-suggested` previews the rest: it applies a suggested item at
+`global.suggest.applyAbove` (0.5) or more, and one with no confidence (a person's own); a lower one is marked unclear,
+as an open question is.
 
 - `speaker-range`: lines of a label that belong to someone else. RA (Teams attendance) names the people in the call
   as candidates, or the one person left; R1 and R5 mark a goodbye the label keeps talking after, R13 when another
   label answered it, R14 when it echoes another label's goodbye.
 - `speaker-range` from the `evidence` rules: E1, the audio channel (the user's microphone is always the user; a line
   where the microphone wins below 90 % asks to listen first), with E3 (the platform's speaking indicator) and E4 (its
-  live name, overruled when attendance says that person was not in the call).
+  live name, overruled when attendance says that person was not in the call). A range holds only consecutive lines of
+  its label that carry its finding; a line without one closes it.
+- The audio energy (only with a calibrated channel layout) beats the coarse live segments: 90 % or more on the
+  microphone is the user (0.85, or 0.75 where the segments said the call; E3 and E4 never overrule it), 10 % or less
+  is never the user. Where the segments are mixed (neither channel holds 90 %), 70 % or more is the user (0.55, to
+  ask) and under 50 % is not. A line no segment covers is the user only at 90 % or more.
+- The label's own voice: a label the platform named after a person keeps its call lines when E3 and E4 agree on
+  someone else, and keeps a mixed line whose person E3 alone shows speaking unless the microphone holds 80 % of the
+  energy. R17: when such a person talks under their own label within 10 s of another label's line, and E3 shows them
+  and one other present, the line is the other's (0.65).
 - `join`: a word cut between two lines ("dot" + "áhnu").
 - `term`: a misheard term and its proposed spelling.
 - `question`: something to decide by ear (`about`: speaker, term or text), with its time range, `choices` and the
