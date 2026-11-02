@@ -1107,6 +1107,23 @@ describe("folder archives", () => {
         expect(readFileSync(join(fileInto, "plain.txt"), "utf8")).toBe("plain text");
     });
 
+    it("refuses to publish a file restore over a target another process created after the existence check", async () => {
+        const dir = scratch("restore-race");
+        const plain = join(dir, "session.jsonl");
+        writeFileSync(plain, "history\n");
+        const file = await compressFile({ source: plain });
+        unlinkSync(plain);
+
+        // The restore wrote its temp copy and waits to publish it; the other restore published and took an append.
+        const restore = expandPath({ archive: file.target, caller: "test", removeArchive: true });
+        writeFileSync(plain, "history\nother process\n");
+
+        await expect(restore).rejects.toBeInstanceOf(CompressRefusal);
+        expect(readFileSync(plain, "utf8")).toBe("history\nother process\n");
+        expect(existsSync(file.target)).toBe(true);
+        expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    });
+
     it("uses the shared environment snapshot for tar sampling and packing", async () => {
         const dir = scratch("spawn-env");
         const tree = makeTree(dir);

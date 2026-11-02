@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, realpathSync, statfsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { sha256File } from "@genesiscz/utils/fs/hash";
+import { AtomicTargetExistsError } from "@genesiscz/utils/storage/atomic-file";
 import {
     compressFile,
     decompressFile,
@@ -442,8 +443,10 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
     const name = archiveBaseName(basename(archive));
     const target = join(into, name);
 
+    const refuseExisting = () => new CompressRefusal(`${target} already exists; refusing to overwrite it`);
+
     if (existsSync(target)) {
-        throw new CompressRefusal(`${target} already exists; refusing to overwrite it`);
+        throw refuseExisting();
     }
 
     const archiveBytes = statSync(archive).size;
@@ -496,7 +499,10 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
         outputSha256 = stream.sha256;
     } else {
         assertRoomFor({ outputDir: into, inputBytes: knownBytes ?? digestZstdContent(archive).bytes, keptShare: 1 });
-        const written = await decompressFile({ source: archive, target });
+        // The check above ran before the write: a restore in another process can publish the target meanwhile.
+        const written = await decompressFile({ source: archive, target }).catch((err: unknown) => {
+            throw err instanceof AtomicTargetExistsError ? refuseExisting() : err;
+        });
         restoredBytes = written.bytes;
         // The ledger knows the original's sha256 when this tool wrote the archive.
         const recorded = recordedInputSha256(archive);
