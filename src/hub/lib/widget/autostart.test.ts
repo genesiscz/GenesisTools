@@ -9,6 +9,7 @@ function deps(over: Partial<WidgetAutostartDeps>): { deps: Partial<WidgetAutosta
             platform: "darwin",
             showWidget: async () => true,
             bundle: () => "/Users/alice/Applications/GenesisTools.app",
+            widgetBuilt: () => true,
             widgetRunning: () => false,
             launch: (argv) => launched.push(argv),
             ...over,
@@ -35,11 +36,14 @@ describe("ensureWidgetRunning", () => {
         ]);
     });
 
-    test("a hidden widget, a running one, a missing app and another platform start nothing", async () => {
+    test("a hidden widget, a running one, a missing app, a build without the widget and another platform start nothing", async () => {
         for (const [over, result] of [
             [{ showWidget: async () => false }, "hidden"],
             [{ widgetRunning: () => true }, "running"],
             [{ bundle: () => null }, "no-app"],
+            [{ widgetBuilt: () => false }, "not-built"],
+            // The app check comes before the preference: a missing app answers "no-app" even when the widget is shown.
+            [{ bundle: () => null, widgetBuilt: () => false }, "no-app"],
             [{ platform: "linux" as NodeJS.Platform }, "not-macos"],
         ] as const) {
             const run = deps(over);
