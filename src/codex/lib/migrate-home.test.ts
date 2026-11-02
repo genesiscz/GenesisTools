@@ -7,12 +7,13 @@ import {
     mkdtempSync,
     readdirSync,
     readFileSync,
+    rmSync,
     statSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { listArchive } from "@genesiscz/utils/compress/tar";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -442,6 +443,43 @@ describe("migrateHome transcripts", () => {
         expect(existsSync(join(source, "sessions.migrated-20260909-221500"))).toBe(true);
         expect(existsSync(join(source, "sessions"))).toBe(false);
         expect(enumerateRollouts(join(destination, "sessions"))).toHaveLength(1);
+    });
+
+    test("an unreadable codex config stops --apply --archive-source before it backs up, copies or renames anything", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", []);
+        const source = makeHome(root, ".codex-alpha", [{ date: "2026-09-07", uuid: uuid("0062") }]);
+        const destinationBefore = treeFingerprint(destination);
+        const configPath = new Storage("codex").getConfigPath();
+        const saved = existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
+        mkdirSync(dirname(configPath), { recursive: true });
+        writeFileSync(configPath, "{ not json");
+
+        try {
+            await expect(
+                migrateHome({
+                    from: [source],
+                    to: destination,
+                    apply: true,
+                    archiveSource: true,
+                    backupRoot: join(root, "backups"),
+                    stamp: "20260909-221600",
+                    inspectOpenFiles: clear,
+                })
+            ).rejects.toThrow("Failed to parse config");
+        } finally {
+            if (saved === undefined) {
+                rmSync(configPath, { force: true });
+            } else {
+                writeFileSync(configPath, saved);
+            }
+        }
+
+        // The source still has its sessions, so a retry once the config is fixed has a source to migrate.
+        expect(existsSync(join(source, "sessions"))).toBe(true);
+        expect(existsSync(join(source, "sessions.migrated-20260909-221600"))).toBe(false);
+        expect(treeFingerprint(destination)).toBe(destinationBefore);
+        expect(existsSync(join(root, "backups"))).toBe(false);
     });
 });
 
