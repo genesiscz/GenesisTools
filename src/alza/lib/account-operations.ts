@@ -83,7 +83,19 @@ function accountOperation<S extends z.ZodObject>(def: {
     hidden?: boolean;
     run(ctx: AccountContext, input: z.infer<S>): Promise<OperationResult>;
 }): AccountOperation {
-    return { ...def, run: (ctx, args) => def.run(ctx, def.input.parse(args)).catch(signInErrors) };
+    const call = (ctx: AccountContext, input: z.infer<S>) => def.run(ctx, input).catch(signInErrors);
+    return {
+        ...def,
+        run: (ctx, args) => {
+            const input = def.input.parse(args);
+            // A diagnostic changes nothing, not even the visitor. Any other call may create the basket and take its cookie.
+            if (def.kind === "diagnostic") {
+                return call(ctx, input);
+            }
+
+            return ctx.session.withVisitor(() => call(ctx, input), { signedIn: Boolean(ctx.auth.readTokens()) });
+        },
+    };
 }
 
 const product = z

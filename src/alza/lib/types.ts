@@ -111,8 +111,14 @@ export interface CategoryInfo {
 
 export interface ListingPage {
     total?: number;
+    /** The last page read. */
     page: number;
     hasMore: boolean;
+    /**
+     * Where the next call continues: pass `page` and `skip` back. `skip` counts the matching products of that page
+     * already returned (non-zero when the limit cut the page). Absent when the listing ended.
+     */
+    next?: { page: number; skip: number };
     items: ProductSummary[];
 }
 

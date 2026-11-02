@@ -95,24 +95,39 @@ export function assertNoError(answer: { err?: number | null; msg?: string | null
     }
 }
 
-const userIds = new WeakMap<AccountContext, number>();
+/** One getUserData read with the current token; the id is saved only into the sign-in that token belongs to. */
+async function readUserData(ctx: AccountContext) {
+    const token = await ctx.auth.accessToken();
+    if (!token) {
+        throw new NotSignedInError();
+    }
 
-/** The numeric Alza user id the /api/users/{id} routes need: from the token file, else one getUserData read. */
+    const data = await ctx.api.json(userDataSchema, "/services/restservice.svc/v2/getUserData", { token });
+    if (data.user_id && data.user_id > 0) {
+        await ctx.auth.rememberUserId(data.user_id, token);
+    }
+
+    return data;
+}
+
+/**
+ * The numeric Alza user id the /api/users/{id} routes need: from the token file, else one getUserData read. Nothing
+ * is kept in memory: a long-lived MCP server would keep the id of an account the CLI signed out of, and send the next
+ * account's token to that account's routes.
+ */
 export async function userId(ctx: AccountContext): Promise<number> {
     requireSignedIn(ctx);
-    const stored = ctx.auth.readTokens()?.user_id ?? userIds.get(ctx);
+    const stored = ctx.auth.readTokens()?.user_id;
     if (stored) {
         return stored;
     }
 
-    const data = await ctx.api.json(userDataSchema, "/services/restservice.svc/v2/getUserData", { withToken: true });
+    const data = await readUserData(ctx);
     assertNotAnonymous(ctx, data, "the account read");
     if (!data.user_id || data.user_id < 1) {
         throw new NotSignedInError(`Alza did not name the signed-in account. ${SIGN_IN_HINT}`);
     }
 
-    userIds.set(ctx, data.user_id);
-    await ctx.auth.rememberUserId(data.user_id);
     return data.user_id;
 }
 
@@ -196,13 +211,12 @@ export async function accountStatus(
 
 /** After `auth.completeLogin`: one account read to learn the numeric user id the order and watchdog routes need. */
 export async function afterSignIn(ctx: AccountContext): Promise<{ userId?: number; userName?: string }> {
-    const data = await ctx.api.json(userDataSchema, "/services/restservice.svc/v2/getUserData", { withToken: true });
+    const data = await readUserData(ctx);
     if (!data.user_id || data.user_id < 1) {
         logger.warn("alza getUserData did not name the account right after sign-in");
         return {};
     }
 
-    await ctx.auth.rememberUserId(data.user_id);
     return { userId: data.user_id, userName: data.user_name ?? undefined };
 }
 

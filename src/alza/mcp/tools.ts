@@ -84,26 +84,15 @@ function toolFrom(def: {
 }
 
 /**
- * The catalog table and the account table over one account context. A non-diagnostic account call saves the visitor
- * even when it fails: a basket add can take a new visitor cookie and then fail on its follow-up read, and the server
- * closes without saving, so that cookie would be lost.
+ * The catalog table and the account table over one account context. Each non-diagnostic account operation saves the
+ * visitor itself, even when it fails (`VisitorSession.withVisitor`): a basket add can take a new visitor cookie and
+ * then fail on its follow-up read, and the server closes without saving, so that cookie would be lost.
  */
 export function alzaMcpTools(ctx: AccountContext, opts: AlzaToolsetOptions = {}): AlzaMcpTool[] {
     return [
         ...ALZA_OPERATIONS.map((op) => toolFrom({ ...op, kind: "read", run: (args) => op.run(ctx.api, args) })),
         ...ACCOUNT_OPERATIONS.filter((op) => opts.includeRaw || !op.hidden).map((op) =>
-            toolFrom({
-                ...op,
-                run: async (args) => {
-                    try {
-                        return await op.run(ctx, args);
-                    } finally {
-                        if (op.kind !== "diagnostic") {
-                            ctx.session.save();
-                        }
-                    }
-                },
-            })
+            toolFrom({ ...op, run: (args) => op.run(ctx, args) })
         ),
     ];
 }

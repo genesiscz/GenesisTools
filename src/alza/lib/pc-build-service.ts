@@ -107,7 +107,11 @@ export interface BuildReport {
     /** Category listing page loads (suggest only). */
     categoryPages: number;
     budget?: number;
-    withinBudget?: boolean;
+    /**
+     * suggest only: true when the total fits the budget, false when it is over even without the unpriced parts, null
+     * when a part has no price, so the real total and the fit are unknown.
+     */
+    withinBudget?: boolean | null;
     profile?: BuildProfile;
     allocation?: Partial<Record<PcRole, number>>;
 }
@@ -454,9 +458,23 @@ export class PcBuilder {
                         continue;
                     }
                     const candidate = toPart(role, product, true, "suggested");
+                    // The listing card may be stale: the product page is the authority on stock and price.
+                    if (candidate.inStock === false) {
+                        notes.push(`${role}: skipped ${card.code} (its product page says it cannot be bought now).`);
+                        rejected.add(card.code);
+                        continue;
+                    }
+
                     if (candidate.price === undefined) {
                         candidate.price = card.price;
+                    } else if (candidate.price > hardCap) {
+                        notes.push(
+                            `${role}: skipped ${card.code} (its product page price ${candidate.price} is above the ${hardCap} left in the budget).`
+                        );
+                        rejected.add(card.code);
+                        continue;
                     }
+
                     const relevant = checkBuild(toBuildParts([...parts, candidate]), {
                         psuHeadroom: input.psuHeadroom,
                     }).filter((v) => ruleIds.includes(v.rule));
@@ -608,6 +626,10 @@ export class PcBuilder {
         notes.push(...advisoryNotes(parts));
         if (s.total > input.budget) {
             notes.push(`Total ${s.total} exceeds the ${input.budget} budget by ${s.total - input.budget}.`);
+        } else if (s.totalIncomplete) {
+            notes.push(
+                `Budget fit unknown: the total ${s.total} leaves out the unpriced part(s) ${s.unpriced.join(", ")}.`
+            );
         }
         const ordered = SUGGEST_ORDER.flatMap((r) => parts.filter((p) => p.role === r));
         return {
@@ -617,7 +639,7 @@ export class PcBuilder {
             detailFetches,
             categoryPages,
             budget: input.budget,
-            withinBudget: s.total <= input.budget,
+            withinBudget: s.total > input.budget ? false : s.totalIncomplete ? null : true,
             profile,
             allocation,
             ...s,

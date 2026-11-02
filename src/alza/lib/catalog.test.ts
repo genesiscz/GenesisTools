@@ -9,6 +9,7 @@ import {
     cardToSummary,
     categoryListingPath,
     getDeals,
+    listCategory,
     parseListingCards,
     parsePrice,
     parseReviewDetail,
@@ -39,7 +40,8 @@ import {
     parseCzechNumber,
     type RulePart,
 } from "./pc-build";
-import { parsePcPart } from "./pc-build-format";
+import { alzaPcCatalog } from "./pc-build-catalog";
+import { buildReportMarkdown, parsePcPart } from "./pc-build-format";
 import { PcBuilder, type PcCatalog, type Product } from "./pc-build-service";
 import { geocodeUrl } from "./pickup";
 
@@ -307,6 +309,23 @@ describe("pc build: compatibility rules", () => {
         expect(checkDisplayOutput(pcPart("cpu", "C", CPU_AM5_IGPU), undefined).verdict).toBe("pass");
     });
 
+    test("a RAM kit without a module count is no pass on a board whose slot count is known", () => {
+        const kit = pcPart(
+            "ram",
+            "R",
+            P([
+                ["Provedení", "DIMM"],
+                ["Typ paměti", "DDR5"],
+            ])
+        );
+        const verdict = checkRamMotherboard([kit], pcPart("motherboard", "M", MB_AM5_ATX));
+        expect(verdict.verdict).toBe("warn");
+        expect(verdict.detail).toContain("module count unknown for R");
+        expect(
+            checkRamMotherboard([pcPart("ram", "R", RAM_DDR5_KIT)], pcPart("motherboard", "M", MB_AM5_ATX)).verdict
+        ).toBe("pass");
+    });
+
     test("PSU wattage: estimate, headroom and the GPU vendor's recommendation", () => {
         const cpu = pcPart("cpu", "C", CPU_AM5_IGPU);
         const gpu = pcPart("gpu", "G", GPU_RTX);
@@ -395,6 +414,47 @@ describe("deals", () => {
     });
 });
 
+describe("listing pages", () => {
+    const card = (id: number) =>
+        `<div class="box browsingitem canBuy" data-code="C${id}" data-id="${id}"><a class="name" href="/c-d${id}.htm">Card ${id}</a><span class="ads-pb__price-value">100,-</span></div>`;
+    const pages: Record<number, string> = {
+        1: `${[1, 2, 3, 4, 5].map(card).join("")}<a href="/18851284-p2.htm">2</a>`,
+        2: [6, 7, 8, 9, 10].map(card).join(""),
+    };
+    const listingHttp = () =>
+        new CannedHttp((req) => {
+            const n = Number(/-p(\d+)\.htm/.exec(req.url)?.[1] ?? 1);
+            return { status: 200, url: req.url, headers: {}, text: pages[n] ?? "" };
+        });
+
+    test("a limit that cuts a page continues inside it, so following next loses no product", async () => {
+        const api = new AlzaApi({ http: listingHttp() });
+        const seen: number[] = [];
+        let next: { page: number; skip: number } | undefined = { page: 1, skip: 0 };
+        const continuations: Array<{ page: number; skip: number } | undefined> = [];
+        while (next) {
+            const listing = await listCategory(api, { categoryId: 18851284, limit: 3, ...next });
+            seen.push(...listing.items.map((i) => i.id));
+            next = listing.next;
+            continuations.push(next);
+        }
+
+        expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        expect(continuations).toEqual([{ page: 1, skip: 3 }, { page: 2, skip: 1 }, { page: 2, skip: 4 }, undefined]);
+    });
+
+    test("the PC builder's catalog reads one listing page per call, however few cards are in stock", async () => {
+        const http = listingHttp();
+        const result = await alzaPcCatalog(new AlzaApi({ http })).searchProducts({
+            categoryId: 18851284,
+            inStock: true,
+            limit: 24,
+        });
+        expect(result.products.map((p) => p.code)).toEqual(["C1", "C2", "C3", "C4", "C5"]);
+        expect(http.requests.map((r) => r.url)).toEqual(["https://www.alza.cz/18851284.htm"]);
+    });
+});
+
 describe("price history", () => {
     test("the 30-day low includes the price carried in from before the window", () => {
         const at = (date: string, price: number | null) => ({ date, price, originalPrice: null });
@@ -418,7 +478,13 @@ describe("pickup geocoding", () => {
 });
 
 describe("pc build: suggest", () => {
-    const fake = (products: Record<string, { name: string; price: number; params: ProductParam[] }>) => {
+    /** `cardPrice` and an in-stock card on the listing, `price` and `inStock` on the product page. */
+    const fake = (
+        products: Record<
+            string,
+            { name: string; price: number; params: ProductParam[]; cardPrice?: number; inStock?: boolean }
+        >
+    ) => {
         const reads: string[] = [];
         const listings = new Map<number, string[]>();
         const product = (code: string): Product => ({
@@ -426,7 +492,7 @@ describe("pc build: suggest", () => {
             name: products[code]?.name ?? code,
             url: `https://example.com/${code}`,
             price: products[code]?.price,
-            inStock: true,
+            inStock: products[code]?.inStock ?? true,
             params: products[code]?.params,
         });
         const catalog: PcCatalog = {
@@ -435,7 +501,12 @@ describe("pc build: suggest", () => {
                 return product(code);
             },
             searchProducts: async ({ categoryId }) => ({
-                products: (listings.get(categoryId) ?? []).map((code) => ({ ...product(code), params: undefined })),
+                products: (listings.get(categoryId) ?? []).map((code) => ({
+                    ...product(code),
+                    price: products[code]?.cardPrice ?? products[code]?.price,
+                    inStock: true,
+                    params: undefined,
+                })),
             }),
             getCategoryFilters: async () => ({ brands: [] }),
         };
@@ -487,6 +558,32 @@ describe("pc build: suggest", () => {
         expect(reads.slice(0, 3)).toEqual(["MB4", "CPU5", "CPU4"]);
         expect(report.parts.find((p) => p.role === "cpu")?.code).toBe("CPU4");
         expect(report.verdicts.find((v) => v.rule === "cpu_socket_motherboard")?.verdict).toBe("pass");
+    });
+
+    test("the product page wins over a stale card: a part above the money left or not purchasable is skipped", async () => {
+        const { catalog, listings } = fake({
+            CPU4: { name: "AMD Ryzen 7 5800X", price: 5000, params: CPU_AM4 },
+            MBX: { name: "Board Pricey", price: 90000, cardPrice: 3200, params: MB_AM4_ATX },
+            MBY: { name: "Board Gone", price: 3100, inStock: false, params: MB_AM4_ATX },
+            MB4: { name: "Board Four", price: 2500, params: MB_AM4_ATX },
+        });
+        listings.set(PC_CATEGORY_IDS.motherboard, ["MBX", "MBY", "MB4"]);
+        const report = await new PcBuilder(catalog).suggest({ budget: 60000, fixedParts: [{ code: "CPU4" }] });
+        expect(report.parts.find((p) => p.role === "motherboard")?.code).toBe("MB4");
+        expect(report.notes.some((n) => n.startsWith("motherboard: skipped MBX (its product page price 90000"))).toBe(
+            true
+        );
+        expect(report.notes).toContain("motherboard: skipped MBY (its product page says it cannot be bought now).");
+    });
+
+    test("an unpriced fixed part leaves the budget fit unknown instead of within budget", async () => {
+        const { catalog } = fake({ CPU4: { name: "AMD Ryzen 7 5800X", price: 0, params: CPU_AM4 } });
+        const report = await new PcBuilder(catalog).suggest({ budget: 60000, fixedParts: [{ code: "CPU4" }] });
+        expect(report.totalIncomplete).toBe(true);
+        expect(report.withinBudget).toBeNull();
+        expect(buildReportMarkdown(report, "Build")).toContain(
+            "of a 60000 budget (budget fit unknown: unpriced parts)"
+        );
     });
 
     test("pc_build_suggest refuses a storefront that does not price in CZK", async () => {

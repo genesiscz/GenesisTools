@@ -5,6 +5,7 @@ import { parseIntArg, parseNumberArg, runOperation } from "./run";
 
 interface ListingFlags {
     page?: number;
+    skip?: number;
     limit?: number;
     brand?: number;
     min?: number;
@@ -16,6 +17,11 @@ interface ListingFlags {
 function addListingFlags(command: Command): Command {
     return command
         .option("--limit <n>", "How many products to return", parseIntArg)
+        .option(
+            "--skip <n>",
+            "Matching products of the first page to leave out (the `next` of the answer before)",
+            parseIntArg
+        )
         .option("--brand <id>", `Brand id (see \`${toolCommand("alza filters", "<category>")}\`)`, parseIntArg)
         .option("--min <price>", "Lowest price", parseNumberArg)
         .option("--max <price>", "Highest price", parseNumberArg)
@@ -26,6 +32,7 @@ function addListingFlags(command: Command): Command {
 function listingInput(flags: ListingFlags) {
     return {
         limit: flags.limit,
+        skip: flags.skip,
         brand_id: flags.brand,
         min_price: flags.min,
         max_price: flags.max,

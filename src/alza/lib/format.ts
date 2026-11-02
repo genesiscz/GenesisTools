@@ -57,12 +57,21 @@ function productLine(item: ProductSummary, index: number): string {
     return `${index + 1}. **${item.name}** \`${item.code}\` id ${item.id}\n   ${parts.filter(Boolean).join(" · ")}\n   ${item.url}`;
 }
 
+/** ", more exist (next: page 2, skip 20)": the continuation a caller passes back, empty when the listing ended. */
+export function moreText(page: Pick<ListingPage, "hasMore" | "next">): string {
+    if (page.next) {
+        return `, more exist (next: page ${page.next.page}${page.next.skip ? `, skip ${page.next.skip}` : ""})`;
+    }
+
+    return page.hasMore ? ", more pages exist" : "";
+}
+
 export function listingMarkdown(title: string, page: ListingPage): string {
     if (page.items.length === 0) {
         return `${title}: no products.`;
     }
 
-    const head = `${title}: ${page.items.length} shown${page.total ? ` of ${page.total}` : ""}${page.hasMore ? ", more pages exist" : ""}.`;
+    const head = `${title}: ${page.items.length} shown${page.total ? ` of ${page.total}` : ""}${moreText(page)}.`;
     return [head, "", ...page.items.map(productLine)].join("\n");
 }
 

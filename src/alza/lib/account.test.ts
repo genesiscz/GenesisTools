@@ -19,8 +19,10 @@ import {
     parseWatchdogDialog,
     parseWatchdogList,
     toOrderSummary,
+    userId,
 } from "./account";
-import { validateDocumentUrl } from "./account-extras";
+import { orderDocument, validateDocumentUrl } from "./account-extras";
+import { findAccountOperation } from "./account-operations";
 import { gridOrderSchema, type StoredTokens, watchdogDialogSchema, watchdogListSchema } from "./account-schemas";
 import { AlzaApi } from "./api";
 import { AlzaAuth, isExpiring, jwtExpiryMs, NotSignedInError, parseRedirect, pkceChallenge } from "./auth";
@@ -355,6 +357,107 @@ describe("account status", () => {
         const checked = await accountStatus(ctx, { transportInstalled: () => true });
         expect(http.requests).toHaveLength(1);
         expect(checked.check).toMatchObject({ ok: true, userName: "Alice" });
+        // The HTTP client keeps its own cookie jar across calls: the check must stay out of it too.
+        expect(http.requests[0]?.noCookies).toBe(true);
+        await findAccountOperation("cart_show").run(ctx, {});
+        expect(http.requests[1]?.noCookies).toBeUndefined();
+    });
+});
+
+describe("account identity", () => {
+    test("a user id is saved only into the sign-in whose token Alza named, and never kept for the next one", async () => {
+        const dir = tempDir("alza-user-id");
+        const tokensFile = join(dir, "tokens.json");
+        writeTokens(tokensFile, tokens("token-a", "refresh-a", "2099-01-01T00:00:00Z"));
+        const http = new CannedHttp((req) => {
+            if (req.headers?.authorization === "Bearer token-a") {
+                // Another process signs in to account B while account A's id is on its way.
+                writeTokens(tokensFile, tokens("token-b", "refresh-b", "2099-01-01T00:00:00Z"));
+                return ok(req, { user_id: 41 });
+            }
+
+            return ok(req, { user_id: 42 });
+        });
+        const ctx = accountContext(http, dir);
+        expect(await userId(ctx)).toBe(41);
+        expect(ctx.auth.readTokens()?.access_token).toBe("token-b");
+        expect(ctx.auth.readTokens()?.user_id).toBeUndefined();
+        expect(await userId(ctx)).toBe(42);
+        expect(http.requests.map((r) => r.headers?.authorization)).toEqual(["Bearer token-a", "Bearer token-b"]);
+        expect(ctx.auth.readTokens()?.user_id).toBe(42);
+    });
+});
+
+describe("sign-in completion", () => {
+    const signIn = (dir: string, during: () => Promise<void>) => {
+        const http = new CannedHttp(async (req) => {
+            if (req.url.endsWith("/.well-known/openid-configuration")) {
+                return { status: 404, url: req.url, headers: {}, text: "" };
+            }
+
+            await during();
+            return ok(req, { access_token: "fresh", refresh_token: "fresh-refresh", expires_in: 3600 });
+        });
+        return new AlzaAuth({
+            http,
+            storefront: STOREFRONTS.cz,
+            visitorId: VISITOR,
+            tokensFile: join(dir, "tokens.json"),
+            pendingFile: join(dir, "pending.json"),
+        });
+    };
+
+    test("a logout during the code exchange stays a logout", async () => {
+        const dir = tempDir("alza-login-logout");
+        const auth: AlzaAuth = signIn(dir, async () => {
+            await auth.logout();
+        });
+        await auth.startLogin();
+        await expect(auth.completeLogin("CODE")).rejects.toThrow(/cancelled while it completed/);
+        expect(existsSync(join(dir, "tokens.json"))).toBe(false);
+    });
+
+    test("a newer attempt during the exchange keeps its pending file; an untouched one signs in", async () => {
+        const dir = tempDir("alza-login-newer");
+        let newer = "";
+        const auth: AlzaAuth = signIn(dir, async () => {
+            await auth.startLogin();
+            newer = readFileSync(join(dir, "pending.json"), "utf8");
+        });
+        await auth.startLogin();
+        await expect(auth.completeLogin("CODE")).rejects.toThrow(/cancelled while it completed/);
+        expect(readFileSync(join(dir, "pending.json"), "utf8")).toBe(newer);
+
+        const plain = signIn(tempDir("alza-login-plain"), async () => {});
+        await plain.startLogin();
+        expect((await plain.completeLogin("CODE")).access_token).toBe("fresh");
+    });
+});
+
+describe("order documents", () => {
+    const DOCUMENT = "https://www.alza.cz/api/users/42/v1/orders/1058423434/documents/1";
+    const textAnswer = (during: () => void) =>
+        new CannedHttp((req) => {
+            during();
+            return { status: 200, url: req.url, headers: { "content-type": "text/plain" }, text: "invoice" };
+        });
+
+    test("a file created during the download is never replaced without overwrite", async () => {
+        const dir = tempDir("alza-document");
+        const output = join(dir, "invoice.txt");
+        const ctx = accountContext(
+            textAnswer(() => writeFileSync(output, "someone else's file")),
+            dir
+        );
+        await expect(orderDocument(ctx, { href: DOCUMENT, output })).rejects.toThrow(/created while the document/);
+        expect(readFileSync(output, "utf8")).toBe("someone else's file");
+
+        const replacing = accountContext(
+            textAnswer(() => {}),
+            dir
+        );
+        expect((await orderDocument(replacing, { href: DOCUMENT, output, overwrite: true })).bytes).toBe(7);
+        expect(readFileSync(output, "utf8")).toBe("invoice");
     });
 });
 
@@ -430,6 +533,33 @@ describe("MCP account tools", () => {
             true,
         ]);
         expect(["cart_add", "watchdog_add", "cart_show"].map(hint)).toEqual([false, false, false]);
+    });
+
+    test("two first basket adds share one visitor basket instead of each taking its own", async () => {
+        const dir = tempDir("alza-first-basket");
+        let issued = 0;
+        const http = new CannedHttp(async (req) => {
+            if (!req.url.includes("/basket/add")) {
+                return ok(req, { data: [] });
+            }
+
+            await Bun.sleep(5);
+            if (req.headers?.cookie?.includes("IDOX=")) {
+                return ok(req, { err: 0, data: { code: "AUPR65708" } });
+            }
+
+            issued++;
+            return ok(req, { err: 0, data: { code: "AUPR65708" } }, { "set-cookie": `IDOX=basket-${issued}; path=/` });
+        });
+        const add = findAccountOperation("cart_add");
+        await Promise.all([
+            add.run(accountContext(http, dir), { product: "AUPR65708" }),
+            add.run(accountContext(http, dir), { product: "AUPR65708" }),
+        ]);
+        expect(issued).toBe(1);
+        const adds = http.requests.filter((r) => r.url.includes("/basket/add"));
+        expect(adds.map((r) => r.headers?.cookie)).toEqual([undefined, "IDOX=basket-1"]);
+        expect(VisitorSession.load(join(dir, "visitor.json")).header()).toBe("IDOX=basket-1");
     });
 
     test("a basket add that fails after taking a visitor cookie still saves the cookie", async () => {

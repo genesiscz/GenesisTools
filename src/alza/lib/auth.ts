@@ -216,10 +216,14 @@ export class AlzaAuth {
         return (await this.refreshing).access_token;
     }
 
-    async rememberUserId(userId: number): Promise<void> {
+    /**
+     * Saves the user id that Alza named for `accessToken`, only while the file still holds that token: a logout, a
+     * sign-in to another account or a renewal in the meantime must not get this account's id.
+     */
+    async rememberUserId(userId: number, accessToken: string): Promise<void> {
         await this.withTokensLock(() => {
             const stored = this.readTokens();
-            if (!stored || stored.user_id === userId) {
+            if (!stored || stored.user_id === userId || stored.access_token !== accessToken) {
                 return;
             }
 
@@ -250,7 +254,7 @@ export class AlzaAuth {
             created_at: new Date().toISOString(),
             token_endpoint: discovery.token_endpoint,
         };
-        writeSecretFile(this.pendingFile, pending);
+        await this.withTokensLock(() => writeSecretFile(this.pendingFile, pending));
         logger.debug({ pendingFile: this.pendingFile }, "alza sign-in started");
         return { url: `${discovery.authorization_endpoint}?${params}` };
     }
@@ -292,7 +296,16 @@ export class AlzaAuth {
             logger.warn("alza sign-in returned no refresh token; the session ends when the access token expires");
         }
 
+        // The exchange ran without the lock: a logout or a newer attempt in the meantime removed or replaced the pending
+        // file, and this completion must neither sign the account back in nor delete the newer attempt.
         await this.withTokensLock(() => {
+            const current = readJsonFile(pendingLoginSchema, this.pendingFile);
+            if (!current || current.state !== pending.state || current.verifier !== pending.verifier) {
+                throw new Error(
+                    `The sign-in was cancelled while it completed (signed out, or a newer sign-in started). Start again: ${toolCommand("alza auth login")}`
+                );
+            }
+
             writeSecretFile(this.tokensFile, tokens);
             removeFile(this.pendingFile);
         });
@@ -300,7 +313,10 @@ export class AlzaAuth {
         return tokens;
     }
 
-    /** Forgets the tokens and any waiting sign-in. The visitor basket state stays. A refresh in flight cannot undo it. */
+    /**
+     * Forgets the tokens and any waiting sign-in. The visitor basket state stays. Neither a refresh nor a sign-in
+     * completion in flight can undo it.
+     */
     async logout(): Promise<{ removed: boolean }> {
         return this.withTokensLock(() => {
             const removedTokens = removeFile(this.tokensFile);
