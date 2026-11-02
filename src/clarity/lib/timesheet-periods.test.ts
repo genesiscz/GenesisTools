@@ -1,15 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveFillWeeks } from "@app/clarity/lib/fill-weeks";
-import {
-    findPeriodForDate,
-    findWeekForDate,
-    getTimesheetWeeks,
-    selectWeeksForDateArg,
-    type TimesheetWeek,
-    type TimesheetWeekReader,
-    taskSourceWeekOrder,
-    weeksTouchingMonth,
-} from "@app/clarity/lib/timesheet-weeks";
+import { loadTimesheetPeriods, type TimesheetWeek, type TimesheetWeekReader } from "@app/clarity/lib/timesheet-weeks";
 
 // Clarity periods are Monday weeks SPLIT AT MONTH BOUNDARIES, so 1-, 2-, 3- and 4-day periods exist,
 // and a period's finish date is EXCLUSIVE: the next period starts on it. Every id here is invented;
@@ -155,26 +145,18 @@ function fakeClarity() {
 // The one place these tests reach the period code. A refactor of the module changes this function
 // and nothing below it.
 async function load(api: TimesheetWeekReader, scope: { month?: number; year?: number } = {}) {
-    const { weeks, records, userId } = await getTimesheetWeeks(api, scope.month, scope.year);
+    const periods = await loadTimesheetPeriods(api, scope);
 
     return {
-        weeks,
-        records,
-        userId,
-        covering: (date: string, options: { requireTimesheet?: boolean } = {}) =>
-            options.requireTimesheet ? findWeekForDate(weeks, date) : findPeriodForDate(weeks, date),
-        touchingMonth: (year: number, month: number) => weeksTouchingMonth(weeks, year, month),
-        forDateArg: (arg: string) => selectWeeksForDateArg(weeks, arg),
-        taskSourceOrder: (preferred: TimesheetWeek | undefined) => taskSourceWeekOrder(weeks, preferred),
-        fillWeeks: async (dates: string[], options: { includeMonthWeeks?: boolean } = {}) => {
-            const resolved = await resolveFillWeeks({ api, dates, ...scope, ...options });
-
-            return {
-                weeks: resolved.weeks,
-                unresolvedDates: resolved.unresolvedDates,
-                clearingOnlyWeekIds: resolved.clearingOnlyWeekIds,
-            };
-        },
+        weeks: periods.weeks,
+        records: periods.records,
+        userId: periods.userId,
+        covering: (date: string, options: { requireTimesheet?: boolean } = {}) => periods.covering(date, options),
+        touchingMonth: (year: number, month: number) => periods.touchingMonth(year, month),
+        forDateArg: (arg: string) => periods.forDateArg(arg),
+        taskSourceOrder: (preferred: TimesheetWeek | undefined) => periods.taskSourceOrder(preferred),
+        fillWeeks: async (dates: string[], options: { includeMonthWeeks?: boolean } = {}) =>
+            periods.fillWeeks(dates, options),
     };
 }
 

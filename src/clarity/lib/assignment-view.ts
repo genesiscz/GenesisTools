@@ -9,13 +9,7 @@ import { getClarityApi } from "@app/clarity/lib/api";
 import { type AssignmentRows, buildAssignmentRows } from "@app/clarity/lib/assignments";
 
 import { listClarityTasks } from "@app/clarity/lib/tasks";
-import {
-    findWeekForDate,
-    getTimesheetWeeks,
-    hasTimesheetId,
-    type TimesheetWeek,
-    taskSourceWeekOrder,
-} from "@app/clarity/lib/timesheet-weeks";
+import { hasTimesheetId, loadTimesheetPeriods, midMonth, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
 import type { ClarityApi } from "@genesiscz/utils/clarity";
 
@@ -74,15 +68,15 @@ export async function buildAssignmentView(date: string): Promise<AssignmentView>
         minutesByWorkItem.set(entry.workItemId, (minutesByWorkItem.get(entry.workItemId) ?? 0) + entry.minutes);
     }
 
-    const { weeks } = await getTimesheetWeeks(clarityApi, month, year);
-    const preferred = findWeekForDate(weeks, `${year}-${String(month).padStart(2, "0")}-15`);
-    let tasks = await firstNonEmptyCatalogue(clarityApi, taskSourceWeekOrder(weeks, preferred));
+    const periods = await loadTimesheetPeriods(clarityApi, { month, year });
+    const preferred = periods.covering(midMonth(year, month), { requireTimesheet: true });
+    let tasks = await firstNonEmptyCatalogue(clarityApi, periods.taskSourceOrder(preferred));
 
     if (tasks.length === 0) {
         // A month whose timesheets exist but carry no rows yet has no catalogue of its own.
         // Widen past the month filter and take the newest period that does have rows.
-        const { weeks: anyWeek } = await getTimesheetWeeks(clarityApi);
-        tasks = await firstNonEmptyCatalogue(clarityApi, taskSourceWeekOrder(anyWeek, undefined));
+        const anyWeek = await loadTimesheetPeriods(clarityApi);
+        tasks = await firstNonEmptyCatalogue(clarityApi, anyWeek.taskSourceOrder(undefined));
     }
 
     const workItemApi = new Api(requireAdoConfig());

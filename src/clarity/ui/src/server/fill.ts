@@ -3,7 +3,6 @@ import { requireConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
 import { discoverFillWeeks, executeFillPlan, loadFillMonth, planFill, unmappedInPeriod } from "@app/clarity/lib/fill";
 import type { ExecuteFillResult, FillEntryResult } from "@app/clarity/lib/fill-utils";
-import { getTimesheetRecord } from "@app/clarity/lib/timesheet-weeks";
 import { requireAdoTimeLogConfig } from "@app/clarity/ui/src/server/ado-config";
 import type { TimeEntryRecord } from "@genesiscz/utils/clarity";
 
@@ -144,7 +143,8 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
         };
     }
 
-    const { weeks: discovered, unresolvedDates, userId, records } = await discoverFillWeeks(clarityApi, fill);
+    const { weeks: discovered, unresolvedDates, periods } = await discoverFillWeeks(clarityApi, fill);
+    const { userId } = periods;
     // Discovery lists the weeks carrying fill dates first; the preview shows the month in date order.
     const clarityWeeks = [...discovered].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
@@ -223,7 +223,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
     await Promise.all(
         weekPreviews.map(async (wp) => {
             try {
-                const ts = await getTimesheetRecord({ api: clarityApi, records, timesheetId: wp.timesheetId });
+                const ts = await periods.record(wp.timesheetId);
 
                 if (!ts) {
                     return;

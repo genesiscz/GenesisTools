@@ -5,7 +5,26 @@ import {
     replacementChangesActuals,
     requestedMonthActualSeconds,
 } from "@app/clarity/lib/fill-utils";
-import { resolveFillWeeks } from "@app/clarity/lib/fill-weeks";
+import { loadTimesheetPeriods, type TimesheetWeekReader } from "@app/clarity/lib/timesheet-weeks";
+
+/** The fill week lookup as these tests first knew it: one carousel walk, then the fill dates. */
+async function resolveFillWeeks({
+    api,
+    dates,
+    month,
+    year,
+    includeMonthWeeks,
+}: {
+    api: TimesheetWeekReader;
+    dates: string[];
+    month?: number;
+    year?: number;
+    includeMonthWeeks?: boolean;
+}) {
+    const periods = await loadTimesheetPeriods(api, { month, year });
+
+    return { ...periods.fillWeeks(dates, { includeMonthWeeks }), userId: periods.userId, records: periods.records };
+}
 
 function carouselEntry({
     id,

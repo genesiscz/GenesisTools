@@ -12,8 +12,13 @@ import {
     requestedMonthActualSeconds,
     type UnmappedEntry,
 } from "@app/clarity/lib/fill-utils";
-import { type ResolvedFillWeeks, resolveFillWeeks } from "@app/clarity/lib/fill-weeks";
-import type { TimesheetRecord, TimesheetWeekReader } from "@app/clarity/lib/timesheet-weeks";
+import {
+    type FillWeeks,
+    loadTimesheetPeriods,
+    type TimesheetPeriods,
+    type TimesheetRecord,
+    type TimesheetWeekReader,
+} from "@app/clarity/lib/timesheet-weeks";
 import {
     type ApiDebugInfo,
     type ClarityApi,
@@ -76,15 +81,15 @@ export async function loadFillMonth({
     };
 }
 
-/** Every opened timesheet week of the month, and the fill days no opened period covers. */
-export function discoverFillWeeks(api: TimesheetWeekReader, fill: FillMonth): Promise<ResolvedFillWeeks> {
-    return resolveFillWeeks({
-        api,
-        dates: fill.dates,
-        month: fill.month,
-        year: fill.year,
-        includeMonthWeeks: true,
-    });
+/** The month's timesheet periods, the opened weeks a fill writes, and the fill days no opened period covers. */
+export interface FillDiscovery extends FillWeeks {
+    periods: TimesheetPeriods;
+}
+
+export async function discoverFillWeeks(api: TimesheetWeekReader, fill: FillMonth): Promise<FillDiscovery> {
+    const periods = await loadTimesheetPeriods(api, { month: fill.month, year: fill.year });
+
+    return { periods, ...periods.fillWeeks(fill.dates, { includeMonthWeeks: true }) };
 }
 
 /** Unmapped minutes per work item inside one period, in first-seen order. */
@@ -251,7 +256,7 @@ export async function planFill({
 }: {
     api: Pick<ClarityApi, "getTimesheet">;
     fill: FillMonth;
-    discovery: ResolvedFillWeeks;
+    discovery: FillDiscovery;
     weeks: FillWeekSelection;
     missingRows: MissingRowReporting;
 }): Promise<FillPlan> {
@@ -259,7 +264,7 @@ export async function planFill({
 
     if (weeks === "discovered") {
         for (const week of discovery.weeks) {
-            let record = discovery.records.get(week.timesheetId);
+            let record = discovery.periods.records.get(week.timesheetId);
 
             try {
                 record ??= (await api.getTimesheet(week.timesheetId)).timesheets._results[0];
@@ -292,7 +297,7 @@ export async function planFill({
         }
     }
 
-    return { month: fill.month, year: fill.year, userId: discovery.userId, weeks: planned };
+    return { month: fill.month, year: fill.year, userId: discovery.periods.userId, weeks: planned };
 }
 
 export function readyWeeks(plan: FillPlan): ReadyFillWeek[] {

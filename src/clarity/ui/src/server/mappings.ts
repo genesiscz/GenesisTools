@@ -3,16 +3,19 @@ import { getConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
 import { MappingStore, parseMappingPayload } from "@app/clarity/lib/mapping-store";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
-import { getTimesheetWeeks as getTimesheetWeeksShared, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
+import { loadTimesheetPeriods, type TimesheetRecord, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
 import { invalidateAssignmentView } from "@app/clarity/ui/src/server/assignments";
 
 export type { TimesheetWeek };
 
-export async function getTimesheetWeeks(month?: number, year?: number): Promise<{ weeks: TimesheetWeek[] }> {
-    const api = getClarityApi();
+export async function getTimesheetWeeks(
+    month?: number,
+    year?: number
+): Promise<{ weeks: TimesheetWeek[]; userId?: number; records: Map<number, TimesheetRecord> }> {
+    const { weeks, userId, records } = await loadTimesheetPeriods(getClarityApi(), { month, year });
 
-    return getTimesheetWeeksShared(api, month, year);
+    return { weeks, userId, records };
 }
 
 export async function getMappings(): Promise<{ mappings: ClarityMapping[]; configured: boolean }> {

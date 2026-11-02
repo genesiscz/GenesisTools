@@ -12,11 +12,9 @@ import {
     removeTaskRows,
 } from "@app/clarity/lib/timesheet-rows";
 import {
-    findPeriodForDate,
-    getTimesheetWeeks,
     hasTimesheetId,
+    loadTimesheetPeriods,
     parseTimesheetArg,
-    selectWeeksForDateArg,
     type TimesheetWeek,
 } from "@app/clarity/lib/timesheet-weeks";
 import * as p from "@clack/prompts";
@@ -166,8 +164,7 @@ async function resolveWeeks({
         process.exit(1);
     }
 
-    const { weeks } = await getTimesheetWeeks(api, month, year);
-    const selected = selectWeeksForDateArg(weeks, date);
+    const selected = (await loadTimesheetPeriods(api, { month, year })).forDateArg(date);
 
     if (selected.length === 0) {
         out.error(`No Clarity period covers ${date}`);
@@ -346,8 +343,7 @@ async function readSourceCatalogue({ api, source }: { api: ClarityApi; source: s
             process.exit(1);
         }
 
-        const { weeks } = await getTimesheetWeeks(api, month, year);
-        const week = findPeriodForDate(weeks, source);
+        const week = (await loadTimesheetPeriods(api, { month, year })).covering(source);
 
         if (!week) {
             out.error(`No Clarity period covers --add-from ${source}`);
