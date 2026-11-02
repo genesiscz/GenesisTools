@@ -20,6 +20,7 @@ Two sources, and every command prints which one answered (on stderr):
 | `meetings list [query]` | List or search meetings (`--since`, `--until`, `--folder`, `--attendee`, `--limit`) |
 | `meetings show <meeting>` | Participants, folders, share link, summary and notes (`--format md\|json\|txt`) |
 | `meetings transcript <meeting>` | The transcript in speaker turns and paragraphs (`--format md\|txt\|json\|srt\|vtt`) |
+| `meetings speakers <meeting>` | Per label: turns, lines, words, spoken time and spans (`--gap 2m`), with hints at a label that may be several people and at a lone one-turn label (`--format table\|json`) |
 | `meetings export <meeting...> --dir <dir>` | `Summary.md`, `Transcript.md` and `meeting.json` per meeting |
 | `meetings series <meeting>` | Every recorded occurrence of a recurring meeting (MCP) |
 | `notes list [query]`, `notes show <id>` | Scratchpad notes |
