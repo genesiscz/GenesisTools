@@ -543,7 +543,7 @@ function itemKey(item: NewItem | MeetingItem): string {
         return questionKey(item);
     }
 
-    return `term|${item.heard.toLowerCase()}|${item.proposed}`;
+    return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}`;
 }
 
 /** Two independent rules agreeing never reach certainty: a person still confirms. */
