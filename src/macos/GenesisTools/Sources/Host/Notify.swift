@@ -399,6 +399,15 @@ private func clickHasRoute(userInfo: [AnyHashable: Any], actionIdentifier: Strin
     return [route?["open"], route?["execute"]].contains { ($0 as? String)?.isEmpty == false }
 }
 
+/// A click that only runs a command gives the focus back to the app it came from. A click that opens something
+/// must not: macOS lets an app bring another one forward only while it is active itself, so a face that gave the
+/// focus away first left Finder's window behind cmux ("the meeting notification didnt do anything", 2026-11-02).
+private func clickGivesFocusBack(userInfo: [AnyHashable: Any], actionIdentifier: String) -> Bool {
+    let route = (userInfo["routes"] as? [String: Any])?[actionIdentifier] as? [String: Any]
+    let opens = (route?["open"] as? String)?.isEmpty == false
+    return clickHasRoute(userInfo: userInfo, actionIdentifier: actionIdentifier) && !opens
+}
+
 /// When a notification was last clicked, for every face of the bundle: a click also sends the running relay a
 /// "reopen", which must not open a window on top of what the click did (LinkRelay.swift).
 func lastNotificationClickPath() -> String {
@@ -535,7 +544,7 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         writeReply(notificationId: notificationId, actionId: actionIdentifier, text: typed, userInfo: userInfo)
         // macOS brought the window face forward to deliver the click; a click that runs something
         // is about that, not about the hub.
-        if clickInWindowFace, clickHasRoute(userInfo: userInfo, actionIdentifier: actionIdentifier) {
+        if clickInWindowFace, clickGivesFocusBack(userInfo: userInfo, actionIdentifier: actionIdentifier) {
             BrowserURLForwarder.shared.yieldActivation()
         }
 
@@ -563,7 +572,7 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 completionHandler()
                 // macOS activates the face again when the handler completes, which can be after a
                 // long `execute`: arm the hand-back once more from here.
-                if clickInWindowFace, clickHasRoute(userInfo: userInfo, actionIdentifier: actionIdentifier) {
+                if clickInWindowFace, clickGivesFocusBack(userInfo: userInfo, actionIdentifier: actionIdentifier) {
                     BrowserURLForwarder.shared.yieldActivation()
                 }
 
