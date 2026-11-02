@@ -38,6 +38,10 @@ export const findingSchema = z.discriminatedUnion("kind", [
         at: clock,
         heard: text,
         proposed: text.optional(),
+        /** Shown after the heard words, which stay: a spoken path's identifier. */
+        meaning: text.optional(),
+        /** The heard words read a document line aloud: its exact text and the source, shown instead of them. */
+        quote: z.object({ text, source: text }).optional(),
         confidence,
         reason: text,
     }),
@@ -105,6 +109,8 @@ export function findingItems(findings: Finding[], items: MeetingItem[], now: str
                         atSec: finding.at,
                         heard: finding.heard,
                         ...(finding.proposed ? { proposed: finding.proposed } : {}),
+                        ...(finding.meaning ? { meaning: finding.meaning } : {}),
+                        ...(finding.quote ? { quote: finding.quote } : {}),
                     }
                   : {
                         ...base,

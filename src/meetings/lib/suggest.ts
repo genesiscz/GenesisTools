@@ -282,14 +282,52 @@ function termVocabulary(options: TermSources): VocabTerm[] {
 }
 
 /** The term part of `evidence --raw`: the same vocabulary as the term rules, with no threshold of their own. */
-export function rawTerms(options: TermSources & { wordCheck?: WordCheck; unavailable?: string }): RawTermEvidence {
-    return rawTermEvidence({
-        entries: options.meeting.transcript,
-        vocab: termVocabulary(options),
-        context: termsFromText(options.meeting.title, "title"),
-        wordCheck: options.wordCheck,
-        unavailable: options.unavailable,
-    });
+export function rawTerms(
+    options: TermSources & { wordCheck?: WordCheck; unavailable?: string }
+): RawTermEvidence & { documents: DocumentEvidence } {
+    return {
+        ...rawTermEvidence({
+            entries: options.meeting.transcript,
+            vocab: termVocabulary(options),
+            context: termsFromText(options.meeting.title, "title"),
+            wordCheck: options.wordCheck,
+            unavailable: options.unavailable,
+        }),
+        documents: documentEvidence(options),
+    };
+}
+
+/** The candidates the document rules see, as facts for an agent: where a line is read aloud, where an identifier is said. */
+interface DocumentEvidence {
+    readAloud: Array<{ atSec?: number; heard: string; doc: string; line: number; text: string; score: number }>;
+    identifiers: Array<{ atSec?: number; heard: string; identifier: string; matched: number }>;
+}
+
+function documentEvidence(options: TermSources): DocumentEvidence {
+    const docs = contextDocuments(options.record);
+    const entries = options.meeting.transcript;
+
+    return {
+        readAloud: findReadAloud({ entries, lines: docs.flatMap((doc) => docLines(doc.name, doc.text)) }).map(
+            (match) => ({
+                atSec: entries[match.entry]?.startSec,
+                heard: match.heard,
+                doc: match.doc,
+                line: match.line,
+                text: match.text,
+                score: match.score,
+            })
+        ),
+        identifiers: findSpokenIdentifiers({
+            entries,
+            identifiers: docs.flatMap((doc) => docIdentifiers(doc.text)),
+        }).map((match) => ({
+            atSec: entries[match.entry]?.startSec,
+            heard: match.heard,
+            identifier: match.identifier,
+            matched: match.matched,
+        })),
+    };
 }
 
 function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] {
