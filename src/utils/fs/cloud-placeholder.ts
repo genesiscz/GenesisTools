@@ -17,7 +17,11 @@ const CLOUD_ROOT = /[/\\]Library[/\\](?:CloudStorage|Mobile Documents)(?:[/\\]|$
 /** Links followed before the walk gives up, as the kernel does with ELOOP (MAXSYMLINKS is 32 on macOS). */
 const MAX_LINKS = 32;
 
-const SEPARATOR = /[/\\]/;
+/**
+ * The path separators of this platform. A backslash separates only on Windows; on macOS and Linux it is an ordinary
+ * filename character, and splitting on it made `/tmp/work\notes` the missing folder `/tmp/work`.
+ */
+const SEPARATOR = process.platform === "win32" ? /[/\\]/ : /\//;
 
 /**
  * Whether `path` lies under a folder a File Provider serves, where any read may reach the provider. Both the path as
@@ -25,13 +29,22 @@ const SEPARATOR = /[/\\]/;
  * `~/Library/CloudStorage`, and `stat`, `copyFileSync` and `git` all follow it.
  */
 export function underCloudRoot(path: string): boolean {
-    if (CLOUD_ROOT.test(path)) {
+    if (namesCloudRoot(path)) {
         return true;
     }
 
     const target = resolvedTarget(path);
 
-    return target !== null && CLOUD_ROOT.test(target);
+    return target !== null && namesCloudRoot(target);
+}
+
+/**
+ * Whether `path` as written names a cloud storage folder or a path below one, without touching the disk. Enough for a
+ * path below a folder `underCloudRoot` already passed when no symlink lies between them: git reports a link in a work
+ * tree as a link and never a path through it, and the capture's directory walks do not follow one.
+ */
+export function namesCloudRoot(path: string): boolean {
+    return CLOUD_ROOT.test(path);
 }
 
 /**

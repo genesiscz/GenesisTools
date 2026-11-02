@@ -27,6 +27,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib/spawn-counter";
 import { env } from "@genesiscz/utils/env";
+import { underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
@@ -1335,6 +1336,30 @@ describe("files the command NAMES rather than works in", () => {
         }
     });
 
+    it.skipIf(process.platform === "win32")(
+        "follows a link inside a folder whose name holds a backslash, which is one folder on macOS and Linux",
+        () => {
+            // The walk split every component on both slashes, so `work\notes` became `work` and `notes`, the missing
+            // `work` ended it, and a link from that folder into a cloud folder read as a local path.
+            const folder = join(outside, "work\\notes");
+            const cloudDir = join(outside, "Library", "CloudStorage", "Provider-slash");
+
+            mkdirSync(folder, { recursive: true });
+            mkdirSync(cloudDir, { recursive: true });
+            writeFileSync(join(cloudDir, "note.md"), "alpha\n");
+            writeFileSync(join(folder, "local.md"), "alpha\n");
+            symlinkSync(cloudDir, join(folder, "provider"));
+
+            try {
+                expect(underCloudRoot(join(folder, "provider", "note.md"))).toBe(true);
+                // The control: a local file in the same folder stays local.
+                expect(underCloudRoot(join(folder, "local.md"))).toBe(false);
+            } finally {
+                rmSync(folder, { recursive: true, force: true });
+            }
+        }
+    );
+
     // `isDatalessFile` is macOS only, so on Linux a sparse file is an ordinary file and is copied.
     it.skipIf(process.platform !== "darwin")(
         "never copies a named cloud placeholder, so a command that names one downloads nothing",
@@ -2392,6 +2417,46 @@ describe("the before-state: clones of the dirty files, and none for a command th
             expect(kept === null ? null : readFileSync(kept, "utf8")).toBe("kept\n");
         } finally {
             rmSync(nested, { recursive: true, force: true });
+        }
+    });
+
+    it("never clones or copies a dirty file below a cloud storage folder, nor a nested repository that holds one", () => {
+        // A repository at home holds `~/Library/CloudStorage/<provider>`. Its root passed the cloud check, and its dirty
+        // entries below that folder were cloned or copied, while the named-path pass refused the same file.
+        const cloudNote = join("Library", "CloudStorage", "Provider-home", "note.md");
+        const nested = join(tree, "nested");
+
+        mkdirSync(join(tree, dirname(cloudNote)), { recursive: true });
+        writeFileSync(join(tree, cloudNote), "alpha\n");
+        spawnSync("git", ["init", "-q", nested], { encoding: "utf8", env: process.env });
+        mkdirSync(join(nested, "Library", "CloudStorage", "Provider-nested"), { recursive: true });
+        writeFileSync(join(nested, "Library", "CloudStorage", "Provider-nested", "note.md"), "alpha\n");
+        writeFileSync(join(nested, "kept.ts"), "kept\n");
+
+        // `git clean -fdx` in `beforeEach` keeps a nested repository, so this one is removed here.
+        try {
+            const sources: string[] = [];
+            const { dir, result } = pre("bun /x/edit.ts", {
+                copyFile: (source, destination, mode) => {
+                    sources.push(source);
+                    copyFileSync(source, destination, mode);
+                },
+            });
+            const left = readFileSync(join(dir, "1.left"), "utf8").split("\n").filter(Boolean);
+            const skipped = result.skipped.join("\n");
+
+            expect(sources.filter((source) => source.includes("CloudStorage"))).toEqual([]);
+            expect(left).toEqual(expect.arrayContaining([cloudNote, "nested/"]));
+            expect(skipped).toContain("2 under a cloud storage folder, where a read can download them (");
+            expect(skipped).toContain(cloudNote);
+            expect(existsSync(join(dir, "1", cloudNote))).toBe(false);
+            expect(existsSync(join(dir, "1", "nested"))).toBe(false);
+            // The control: the ordinary dirty file beside them is still captured.
+            expect(sources).toContain(join(tree, "tracked.ts"));
+            expect(readFileSync(join(dir, "1", "tracked.ts"), "utf8")).toBe("one\nDIRTY\nthree\n");
+        } finally {
+            rmSync(nested, { recursive: true, force: true });
+            rmSync(join(tree, "Library"), { recursive: true, force: true });
         }
     });
 
