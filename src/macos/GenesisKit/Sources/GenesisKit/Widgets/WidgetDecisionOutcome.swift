@@ -43,7 +43,10 @@ struct WidgetDecisionOutcome: View {
                             Text(verbatim: choice.id).font(.system(size: 10.5, weight: .semibold, design: .rounded))
                                 .frame(width: 18, height: 18).background(
                                     Color.green.opacity(0.2), in: RoundedRectangle(cornerRadius: 5))
-                            Text(LiveWidgetView.choiceText(choice)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                            // Inline markdown, as the option rows drew it before the answer (`WidgetOptionRow`): an
+                            // option's `tools rm ask` is code, not words between two backticks.
+                            Text(WidgetOptionText.markdown(LiveWidgetView.choiceText(choice))).font(.system(size: 12))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     if let answer = card.answer, !answer.isEmpty {
