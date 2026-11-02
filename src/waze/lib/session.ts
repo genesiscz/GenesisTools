@@ -39,6 +39,11 @@ export interface WazeRequest {
     path: string;
     method?: "GET" | "POST";
     body?: unknown;
+    /**
+     * False: send once, without the fresh-token retry on a 403 or 429, because the caller's request budget has room for
+     * one more wire request only. Default true.
+     */
+    retry?: boolean;
 }
 
 export interface WazeResponse {
@@ -134,6 +139,7 @@ function pageRequestSource(req: WazeRequest): string {
         action: RECAPTCHA_ACTION,
         reuseMs: TOKEN_REUSE_MS,
         maxUses: TOKEN_MAX_USES,
+        retry: req.retry !== false,
     });
     return `async () => {
         const req = ${payload};
@@ -165,7 +171,7 @@ function pageRequestSource(req: WazeRequest): string {
         let result = await send(false);
         let retried = false;
         // 403: the token was refused (the first one in a fresh tab often is); 429: it was used up.
-        if (result.status === 403 || result.status === 429) {
+        if (req.retry && (result.status === 403 || result.status === 429)) {
             retried = true;
             result = await send(true);
         }

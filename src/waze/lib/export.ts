@@ -16,6 +16,11 @@ export interface ExportInput {
     alerts: CorridorAlert[];
     jams: CorridorJam[];
     generatedAt: number;
+    /**
+     * Why the reports may be incomplete (capped, failed or unasked tiles, reports Waze hides). GeoJSON, GPX and KML
+     * carry them in their own metadata; CSV has no place for them, so its caller reads them from the result.
+     */
+    warnings?: string[];
 }
 
 function xml(text: string): string {
@@ -87,11 +92,22 @@ export function toGeoJson(input: ExportInput): string {
             geometry: { type: "LineString", coordinates: jam.line.map((p) => [p.lon, p.lat]) },
         })),
     ];
+    const warnings = input.warnings ?? [];
     return SafeJSON.stringify(
-        { type: "FeatureCollection", generatedAt: new Date(input.generatedAt).toISOString(), features },
+        {
+            type: "FeatureCollection",
+            generatedAt: new Date(input.generatedAt).toISOString(),
+            ...(warnings.length > 0 ? { warnings } : {}),
+            features,
+        },
         null,
         2
     );
+}
+
+/** The warnings as one line of text for a GPX `<desc>` or a KML `<description>`, escaped; empty when there are none. */
+function warningsText(input: ExportInput): string {
+    return xml((input.warnings ?? []).join(" "));
 }
 
 export function toGpx(input: ExportInput): string {
@@ -102,9 +118,11 @@ export function toGpx(input: ExportInput): string {
         )
         .join("\n");
     const track = input.route.coords.map((p) => `      <trkpt lat="${p.lat}" lon="${p.lon}"/>`).join("\n");
+    const desc = warningsText(input);
+    // GPX 1.1 orders metadata as name, desc, ..., time.
     return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="GenesisTools waze" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata><name>${xml(`${input.from.label} → ${input.to.label}`)}</name><time>${new Date(input.generatedAt).toISOString()}</time></metadata>
+  <metadata><name>${xml(`${input.from.label} → ${input.to.label}`)}</name>${desc ? `<desc>${desc}</desc>` : ""}<time>${new Date(input.generatedAt).toISOString()}</time></metadata>
 ${waypoints}
   <trk>
     <name>${xml(input.route.name)}</name>
@@ -130,10 +148,11 @@ export function toKml(input: ExportInput): string {
         )
         .join("\n");
     const line = input.route.coords.map((p) => `${p.lon},${p.lat},0`).join(" ");
+    const description = warningsText(input);
     return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
-    <name>${xml(`${input.from.label} → ${input.to.label}`)}</name>
+    <name>${xml(`${input.from.label} → ${input.to.label}`)}</name>${description ? `\n    <description>${description}</description>` : ""}
     <Placemark><name>${xml(input.route.name)}</name><LineString><tessellate>1</tessellate><coordinates>${line}</coordinates></LineString></Placemark>
 ${placemarks}
 ${jams}

@@ -19,6 +19,11 @@ export interface TransportRequest {
     headers: Record<string, string>;
     timeoutMs: number;
     signal?: AbortSignal;
+    /**
+     * The body is read as it arrives and refused with FetchTooLargeError once it passes this many bytes, so an answer
+     * of any size costs at most this much memory. The timeout bounds time, not bytes.
+     */
+    maxBodyBytes: number;
 }
 
 /** One HTTP answer, redirects NOT followed: the fetcher follows them itself so headers stay with their origin. */

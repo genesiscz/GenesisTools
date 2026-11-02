@@ -84,7 +84,14 @@ export async function planRoute(opts: {
         });
         const routes = [...primary.routes];
         if (opts.vignette && opts.alternatives) {
-            const extra = await opts.client.userDrive({ from: opts.from, to: opts.to, withVignette: false, paths: 3 });
+            // The same departure as the primary: the renderer times every route from it.
+            const extra = await opts.client.userDrive({
+                from: opts.from,
+                to: opts.to,
+                withVignette: false,
+                paths: 3,
+                startTime: opts.startTime,
+            });
             routes.push(...extra.routes.filter((route) => !routes.some((known) => known.name === route.name)));
         }
 

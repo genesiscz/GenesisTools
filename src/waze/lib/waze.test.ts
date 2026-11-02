@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { z } from "zod";
 import {
     alertLabel,
     categoryOf,
@@ -9,9 +11,12 @@ import {
     normalizeAlert,
     normalizeJam,
 } from "./alerts";
+import { WazeClient } from "./client";
+import { WazeContext } from "./context";
 import { alertsOnLine, jamsOnLine } from "./corridor";
 import { liveMapDirectionsLink, navigateLink, searchLink } from "./deeplinks";
-import { toCsv } from "./export";
+import { exportTrip, toCsv } from "./export";
+import { coverageWarnings } from "./format";
 import {
     bboxAround,
     corridorTiles,
@@ -24,8 +29,11 @@ import {
     splitBBox,
     thinLine,
 } from "./geo";
+import { findOperation, USER_REPORTS_HIDDEN_NOTICE } from "./operations";
+import { planRoute } from "./routing";
+import type { WazeRequest, WazeResponse, WazeTransport } from "./session";
 import { WazeStore } from "./store";
-import type { LatLon, WazeAlert } from "./types";
+import type { Feed, FeedStats, LatLon, RouteAlternative, WazeAlert } from "./types";
 import { parseInterval, parseWhen } from "./when";
 
 /** A straight road heading east along latitude 50, about 7.2 km long. */
@@ -239,6 +247,11 @@ describe("links, times, exports", () => {
         expect(parseInterval("1h")).toBe(3_600_000);
         expect(parseInterval("soon")).toBeUndefined();
         expect(thinLine(ROAD, 2)).toEqual([ROAD[0], ROAD[2]]);
+        // A summary that asks for no points gets none, not the whole line; one point is the start.
+        expect(thinLine(ROAD, 0)).toEqual([]);
+        expect(thinLine(ROAD, -1)).toEqual([]);
+        expect(thinLine(ROAD, 1)).toEqual([ROAD[0]]);
+        expect(thinLine(ROAD, 10)).toEqual(ROAD);
     });
 
     test("csv quotes cells with commas", () => {
@@ -282,5 +295,184 @@ describe("history store", () => {
         } finally {
             store.close();
         }
+    });
+});
+
+/** A transport that answers every request from `answer` (an empty georss answer by default) and records it. */
+function fakeTransport(
+    opts: { hidden?: boolean; answer?: (req: WazeRequest) => WazeResponse } = {}
+): WazeTransport & { seen: WazeRequest[] } {
+    const seen: WazeRequest[] = [];
+    return {
+        seen,
+        request: async (req) => {
+            seen.push(req);
+            return opts.answer?.(req) ?? { status: 200, body: '{"alerts":[],"jams":[]}', retried: false };
+        },
+        info: () => ({
+            kind: "browser-tab",
+            port: 0,
+            browser: "test",
+            tabId: "tab",
+            reused: false,
+            keepTab: false,
+            userReportsHidden: opts.hidden,
+        }),
+        close: async () => {},
+    };
+}
+
+function road(name: string, withVignette: boolean): RouteAlternative {
+    return {
+        source: "waze",
+        name,
+        distanceM: 7000,
+        durationSec: 300,
+        isFastest: withVignette,
+        isToll: false,
+        withVignette,
+        coords: ROAD,
+    };
+}
+
+/** A client whose routes and feed are canned; it records the departure each route request asked for. */
+class TripClient extends WazeClient {
+    readonly drives: Array<{ withVignette: boolean; startTime?: number }> = [];
+
+    constructor(
+        private readonly stats: FeedStats,
+        hidden = false
+    ) {
+        super(fakeTransport({ hidden }), { minIntervalMs: 0 });
+    }
+
+    override async userDrive(opts: { withVignette: boolean; startTime?: number }) {
+        this.drives.push({ withVignette: opts.withVignette, startTime: opts.startTime });
+        return { routes: [road(opts.withVignette ? "D1" : "Old road", opts.withVignette)], departures: [] };
+    }
+
+    override async feed(): Promise<Feed> {
+        return { alerts: [], jams: [], stats: this.stats, fetchedAt: 1_000 };
+    }
+}
+
+/** A context over one client, never a browser tab. */
+class ClientContext extends WazeContext {
+    constructor(private readonly fake: WazeClient) {
+        super();
+    }
+
+    override client(): Promise<WazeClient> {
+        return Promise.resolve(this.fake);
+    }
+
+    override openedClient(): WazeClient {
+        return this.fake;
+    }
+}
+
+const WHOLE: FeedStats = { requests: 1, tiles: 1, capped: 0, failed: 0, skipped: 0 };
+
+describe("feed budget", () => {
+    test("a feed never sends more than its budget, retries included, and counts the boxes it left unasked", async () => {
+        // Every answer took the transport's fresh-token retry unless the request forbade it: two wire requests each.
+        const transport = fakeTransport({
+            answer: (req) => ({ status: 200, body: '{"alerts":[],"jams":[]}', retried: req.retry !== false }),
+        });
+        const client = new WazeClient(transport, { minIntervalMs: 0 });
+        const box = bboxAround({ lat: 50, lon: 14 }, 1000);
+        const feed = await client.feed({ boxes: [box, box, box, box], maxRequests: 5, concurrency: 1 });
+
+        expect(feed.stats).toEqual({ requests: 5, tiles: 3, capped: 0, failed: 0, skipped: 1 });
+        // The third box had room for one request only, so it went out without the retry.
+        expect(transport.seen.map((req) => req.retry)).toEqual([true, true, false]);
+    });
+
+    test("more first boxes than the budget do not raise it", async () => {
+        const transport = fakeTransport();
+        const client = new WazeClient(transport, { minIntervalMs: 0 });
+        const box = bboxAround({ lat: 50, lon: 14 }, 1000);
+        const feed = await client.feed({ boxes: [box, box, box], maxRequests: 2, concurrency: 1 });
+
+        expect(transport.seen).toHaveLength(2);
+        expect(feed.stats).toMatchObject({ requests: 2, tiles: 2, skipped: 1 });
+        expect(coverageWarnings(feed.stats)).toEqual([
+            "1 georss tiles were not asked (request budget spent): their area is missing.",
+        ]);
+    });
+});
+
+describe("operations", () => {
+    test("history and hotspots refuse what their published schema refuses", async () => {
+        const ctx = new WazeContext();
+        await expect(findOperation("history").run(ctx, { limit: -1 })).rejects.toThrow();
+        await expect(findOperation("hotspots").run(ctx, { limit: -1 })).rejects.toThrow();
+        await expect(findOperation("hotspots").run(ctx, { cellKm: 0 })).rejects.toThrow();
+        await expect(findOperation("hotspots").run(ctx, { sinceDays: -3 })).rejects.toThrow();
+    });
+
+    test("alternative routes are asked for the same departure as the primary", async () => {
+        const client = new TripClient(WHOLE);
+        const planned = await planRoute({
+            client,
+            from: ROAD[0] as LatLon,
+            to: ROAD[2] as LatLon,
+            vignette: true,
+            alternatives: true,
+            startTime: 1_800_000_000_000,
+        });
+
+        expect(planned.routes.map((route) => route.name)).toEqual(["D1", "Old road"]);
+        expect(client.drives).toEqual([
+            { withVignette: true, startTime: 1_800_000_000_000 },
+            { withVignette: false, startTime: 1_800_000_000_000 },
+        ]);
+    });
+
+    test("an export says when coverage is incomplete or reports are hidden, in its data and its metadata", async () => {
+        const client = new TripClient({ requests: 3, tiles: 2, capped: 1, failed: 0, skipped: 1 }, true);
+        const result = await findOperation("export").run(new ClientContext(client), {
+            from: "50,14",
+            to: "50,14.1",
+            format: "geojson",
+        });
+        const data = z
+            .object({ content: z.string(), complete: z.boolean(), warnings: z.array(z.string()), notice: z.string() })
+            .parse(result.data);
+
+        expect(data.complete).toBe(false);
+        expect(data.warnings).toEqual([
+            "1 georss tiles stayed at the 200-report cap: their area may miss reports.",
+            "1 georss tiles were not asked (request budget spent): their area is missing.",
+            USER_REPORTS_HIDDEN_NOTICE,
+        ]);
+        expect(data.notice).toBe(USER_REPORTS_HIDDEN_NOTICE);
+        // The text is the document itself, still valid JSON, with the warnings as a member.
+        expect(result.markdown).toBe(data.content);
+        expect(SafeJSON.parse(data.content, { strict: true })).toMatchObject({ warnings: data.warnings });
+
+        const input = {
+            from: { label: "A", lat: 50, lon: 14 },
+            to: { label: "B", lat: 50, lon: 14.1 },
+            route: road("D1", true),
+            alerts: [],
+            jams: [],
+            generatedAt: 0,
+            warnings: ["Part <missing> & capped."],
+        };
+        expect(exportTrip("gpx", input)).toContain("<desc>Part &lt;missing&gt; &amp; capped.</desc><time>");
+        expect(exportTrip("kml", input)).toContain("<description>Part &lt;missing&gt; &amp; capped.</description>");
+        expect(exportTrip("csv", input)).toBe(exportTrip("csv", { ...input, warnings: [] }));
+        expect(exportTrip("gpx", { ...input, warnings: [] })).not.toContain("<desc>");
+        expect(SafeJSON.parse(exportTrip("geojson", { ...input, warnings: [] }), { strict: true })).not.toHaveProperty(
+            "warnings"
+        );
+
+        const whole = await findOperation("export").run(new ClientContext(new TripClient(WHOLE)), {
+            from: "50,14",
+            to: "50,14.1",
+            format: "csv",
+        });
+        expect(whole.data).toMatchObject({ complete: true, warnings: [] });
     });
 });

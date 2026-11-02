@@ -52,7 +52,29 @@ export function statsLine(stats: FeedStats & { tilesPlanned?: number }): string 
         parts.push(`${stats.failed} failed (area missing)`);
     }
 
+    if (stats.skipped > 0) {
+        parts.push(`${stats.skipped} not asked, request budget spent (area missing)`);
+    }
+
     return parts.join(", ");
+}
+
+/** One sentence per way the feed's coverage is incomplete; empty when every tile answered whole. */
+export function coverageWarnings(stats: FeedStats): string[] {
+    const warnings: string[] = [];
+    if (stats.capped > 0) {
+        warnings.push(`${stats.capped} georss tiles stayed at the 200-report cap: their area may miss reports.`);
+    }
+
+    if (stats.failed > 0) {
+        warnings.push(`${stats.failed} georss tiles failed: their area is missing.`);
+    }
+
+    if (stats.skipped > 0) {
+        warnings.push(`${stats.skipped} georss tiles were not asked (request budget spent): their area is missing.`);
+    }
+
+    return warnings;
 }
 
 export function categoryColor(alert: Pick<WazeAlert, "category">, text: string): string {

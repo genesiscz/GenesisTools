@@ -14,6 +14,7 @@ import {
     Server,
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { type ToolEntry, toolCallResult } from "./tool-entry";
 import { ANNOTATE_IMAGE_INPUT_SCHEMA, type AnnotateImageArgs, handleAnnotateImage } from "./tools/annotate-image";
 import {
     HANDOFF_ACTION_DESCRIPTION,
@@ -66,6 +67,8 @@ import {
     QUESTION_UPDATE_DESCRIPTION,
     QUESTION_UPDATE_INPUT_SCHEMA,
 } from "./tools/question-update";
+
+export type { ToolAnswer, ToolEntry } from "./tool-entry";
 
 const log = logger.child({ component: "claude:mcp" });
 
@@ -172,13 +175,6 @@ export function serverInstructions({ askViaQuestionTool, inboxState }: Instructi
         "offer with seller and price, breadcrumbs). transport `auto` (default) retries once through a real Chrome " +
         "fingerprint when a Cloudflare or similar bot wall refuses plain fetch, and the result names the transport."
     );
-}
-
-export interface ToolEntry {
-    description: string;
-    inputSchema: Record<string, unknown>;
-    /** Returns the text content. `context.signal` aborts when the client cancels the call. */
-    handler: (args: Record<string, unknown>, context?: { signal?: AbortSignal }) => Promise<string>;
 }
 
 /** `inbox_send` exists only on a Mac with the native inbox: users without the app never see it. */
@@ -473,12 +469,12 @@ export async function createGenesisToolsServer(opts: {
         }
 
         try {
-            const text = await runCall(() =>
+            const answer = await runCall(() =>
                 entry.handler((request.params.arguments ?? {}) as Record<string, unknown>, {
                     signal: context.mcpReq.signal,
                 })
             );
-            return { content: [{ type: "text" as const, text }] };
+            return toolCallResult(answer);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             log.warn({ err, tool: request.params.name }, "mcp tool handler failed");

@@ -143,6 +143,14 @@ export function registerTripCommands(program: Command): void {
                     typeof data === "object" && data !== null && "content" in data && typeof data.content === "string"
                         ? data.content
                         : result.markdown;
+                // Incomplete coverage goes to stderr, so a file or a piped stdout stays a valid document.
+                const warnings =
+                    typeof data === "object" && data !== null && "warnings" in data && Array.isArray(data.warnings)
+                        ? data.warnings.filter((warning): warning is string => typeof warning === "string")
+                        : [];
+                for (const warning of warnings) {
+                    out.log.warn(warning);
+                }
                 if (flags.output) {
                     const path = resolve(flags.output);
                     writeFileSync(path, content);

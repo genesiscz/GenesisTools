@@ -60,6 +60,49 @@ export class WazeHttpError extends Error {
     }
 }
 
+/** A feed's request budget ran out before this tile was asked (or before its retry): its area is missing. */
+export class WazeBudgetError extends Error {
+    constructor(readonly maxRequests: number) {
+        super(`the feed's budget of ${maxRequests} georss requests is spent`);
+        this.name = "WazeBudgetError";
+    }
+}
+
+/**
+ * The wire requests one feed may still send, retries included, so the feed never sends more than `max`. An attempt
+ * holds room for two (the transport may retry once with a fresh token) and gives one back when it did not retry; with
+ * room for one only, it goes out without that retry. A request that throws keeps what it held, since it may have sent.
+ */
+export class WazeRequestBudget {
+    private held = 0;
+
+    constructor(readonly max: number) {}
+
+    /** Wire requests sent so far, plus the room held for requests still in flight. */
+    get used(): number {
+        return this.held;
+    }
+
+    /** Holds room for one attempt and says whether its fresh-token retry fits. Throws WazeBudgetError when none fits. */
+    take(): { retry: boolean } {
+        const left = this.max - this.held;
+        if (left < 1) {
+            throw new WazeBudgetError(this.max);
+        }
+
+        const retry = left >= 2;
+        this.held += retry ? 2 : 1;
+        return { retry };
+    }
+
+    /** Gives back the retry's room when the transport answered without retrying. */
+    settle(room: { retry: boolean }, retried: boolean): void {
+        if (room.retry && !retried) {
+            this.held -= 1;
+        }
+    }
+}
+
 export interface WazeSuggestion {
     name: string;
     address?: string;
@@ -136,10 +179,15 @@ export class WazeClient {
         }
     }
 
-    private async json(req: WazeRequest): Promise<unknown> {
+    /** `budget`: every wire attempt, the backoff retries below and the transport's own retry, is taken from it. */
+    private async json(req: WazeRequest, budget?: WazeRequestBudget): Promise<unknown> {
         for (let attempt = 0; ; attempt++) {
             await this.pace();
-            const response = await this.transport.request(req);
+            const room = budget?.take();
+            const response = await this.transport.request(room ? { ...req, retry: room.retry } : req);
+            if (room) {
+                budget?.settle(room, response.retried);
+            }
             const delays = RETRY_DELAYS_MS[response.status];
             if (delays && attempt < delays.length) {
                 const header = Number(response.retryAfter);
@@ -161,10 +209,11 @@ export class WazeClient {
         }
     }
 
-    /** One georss call for a box. */
+    /** One georss call for a box; with `budget`, its wire requests are taken from that feed's budget. */
     async georss(
         box: BBox,
-        types: FeedType[] = ["alerts", "traffic"]
+        types: FeedType[] = ["alerts", "traffic"],
+        budget?: WazeRequestBudget
     ): Promise<{ alerts: unknown[]; jams: unknown[] }> {
         const params = new URLSearchParams({
             top: box.top.toFixed(6),
@@ -174,7 +223,7 @@ export class WazeClient {
             env: geoEnvFor(bboxCenter(box)),
             types: types.join(","),
         });
-        const data = await this.json({ path: `/live-map/api/georss?${params}` });
+        const data = await this.json({ path: `/live-map/api/georss?${params}` }, budget);
         if (!isRecord(data)) {
             throw new Error("georss answered something that is not an object");
         }
@@ -188,7 +237,8 @@ export class WazeClient {
     /**
      * Alerts and jams for a set of boxes. A box whose answer reaches the 200-item cap is split into four and asked
      * again, up to `maxDepth` times, because a capped answer is filled with road closures first and drops police
-     * reports. Results are deduplicated by id.
+     * reports. Results are deduplicated by id. `maxRequests` is a hard limit on wire requests, the first boxes and every
+     * retry included: boxes past it are left unasked and counted in `stats.skipped`, never sent anyway.
      */
     async feed(opts: {
         boxes: BBox[];
@@ -199,8 +249,9 @@ export class WazeClient {
     }): Promise<Feed> {
         const types = opts.types ?? ["alerts", "traffic"];
         const maxDepth = opts.maxDepth ?? DEFAULT_SPLIT_DEPTH;
-        const maxRequests = Math.max(opts.boxes.length, opts.maxRequests ?? DEFAULT_MAX_REQUESTS);
-        const stats: FeedStats = { requests: 0, tiles: 0, capped: 0, failed: 0 };
+        const maxRequests = opts.maxRequests ?? DEFAULT_MAX_REQUESTS;
+        const budget = new WazeRequestBudget(maxRequests);
+        const stats: FeedStats = { requests: 0, tiles: 0, capped: 0, failed: 0, skipped: 0 };
         const alerts: WazeAlert[] = [];
         const jams: WazeJam[] = [];
         let firstError: unknown;
@@ -208,15 +259,20 @@ export class WazeClient {
         while (queue.length > 0) {
             const answers = await concurrentMap({
                 items: queue,
-                fn: (item) => this.georss(item.box, types),
+                fn: (item) => this.georss(item.box, types, budget),
                 concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY,
                 onError: (item, error) => {
+                    if (error instanceof WazeBudgetError) {
+                        stats.skipped++;
+                        return;
+                    }
+
                     firstError ??= error;
                     stats.failed++;
                     log.debug({ error, box: item.box, depth: item.depth }, "georss tile failed");
                 },
             });
-            stats.requests += queue.length;
+            stats.requests = budget.used;
             const nextQueue: typeof queue = [];
             for (const [item, answer] of answers) {
                 const capped =
@@ -248,6 +304,12 @@ export class WazeClient {
             log.debug({ error: firstError, failed: stats.failed }, "first georss tile failure");
             log.warn(
                 `${stats.failed} of ${stats.requests} georss tiles failed (${firstError instanceof Error ? firstError.message.slice(0, 80) : "unknown error"}); their area is missing from the answer`
+            );
+        }
+
+        if (stats.skipped > 0) {
+            log.warn(
+                `${stats.skipped} georss tiles were not asked: the budget of ${maxRequests} requests ran out; their area is missing from the answer`
             );
         }
 

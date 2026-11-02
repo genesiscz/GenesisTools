@@ -4,6 +4,7 @@ import { blockVerdict, detectChallenge } from "./lib/challenge";
 import { FetchBlockedError, Fetcher, FetchHttpError } from "./lib/fetcher";
 import { extractJsonLd, parsePrice } from "./lib/jsonld";
 import { fetchUrl } from "./lib/read";
+import { FetchTooLargeError, MAX_RESPONSE_BYTES, TRANSPORTS } from "./lib/transports";
 import type { HttpTransport, TransportName, TransportRequest, TransportResponse } from "./lib/types";
 
 const PROSE = "Readable prose sits in this paragraph, long enough to count as content, with commas and detail.";
@@ -288,5 +289,53 @@ describe("Fetcher transports", () => {
         await expect(
             fetchUrl(fetcher, { url: "https://shop.example/missing", mode: "raw", transport: "plain" })
         ).rejects.toBeInstanceOf(FetchHttpError);
+    });
+
+    test("every request carries the byte limit, and the plain transport stops a larger body as it streams", async () => {
+        const plain = fakeTransport("plain", { [url]: PAGE });
+        await new Fetcher({ transports: { plain } }).get({ url, transport: "plain" });
+        expect(plain.seen.map((request) => request.maxBodyBytes)).toEqual([MAX_RESPONSE_BYTES]);
+
+        const chunk = new Uint8Array(64 * 1024).fill(97);
+        let sentChunks = 0;
+        using server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const path = new URL(request.url).pathname;
+                if (path === "/declared") {
+                    return new Response(new Uint8Array(4096).fill(98), { headers: { "content-length": "4096" } });
+                }
+
+                if (path === "/small") {
+                    return new Response("small page");
+                }
+
+                // No length up front: only the streamed count can stop it.
+                return new Response(
+                    new ReadableStream({
+                        pull(controller) {
+                            sentChunks++;
+                            controller.enqueue(chunk);
+                            if (sentChunks >= 256) {
+                                controller.close();
+                            }
+                        },
+                    })
+                );
+            },
+        });
+        const transport = TRANSPORTS.plain({ chrome: {} });
+        const send = (path: string) =>
+            transport.send({
+                url: `${server.url}${path.slice(1)}`,
+                headers: {},
+                timeoutMs: 10_000,
+                maxBodyBytes: 1024,
+            });
+
+        await expect(send("/declared")).rejects.toBeInstanceOf(FetchTooLargeError);
+        await expect(send("/stream")).rejects.toBeInstanceOf(FetchTooLargeError);
+        expect(sentChunks).toBeLessThan(256);
+        expect((await send("/small")).body).toBe("small page");
     });
 });

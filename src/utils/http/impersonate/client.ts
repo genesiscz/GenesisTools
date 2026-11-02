@@ -89,6 +89,17 @@ export class ImpersonatedHttpError extends Error {
     }
 }
 
+/** The body passed the request's `maxBodyBytes`; the worker stopped the transfer before buffering the rest. */
+export class ImpersonatedBodyTooLargeError extends ImpersonatedHttpError {
+    constructor(
+        message: string,
+        readonly maxBodyBytes: number
+    ) {
+        super(message);
+        this.name = "ImpersonatedBodyTooLargeError";
+    }
+}
+
 function abortedError(method: string, url: string): ImpersonatedHttpError {
     return new ImpersonatedHttpError(`${method} ${url}: aborted`);
 }
@@ -170,6 +181,10 @@ export class ImpersonatedHttpClient {
         const ms = Math.round(performance.now() - started);
         if (reply.error) {
             logger.debug({ label: this.label, url: req.url, ms, error: reply.error }, "impersonated request failed");
+            if (reply.overLimit && req.maxBodyBytes !== undefined) {
+                throw new ImpersonatedBodyTooLargeError(`${method} ${req.url}: ${reply.error}`, req.maxBodyBytes);
+            }
+
             throw new ImpersonatedHttpError(`${method} ${req.url}: ${reply.error}`);
         }
 

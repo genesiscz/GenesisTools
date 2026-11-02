@@ -2,7 +2,7 @@ import { keepsHeaders } from "@app/mcp-web-reader/lib/fetch";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { blockVerdict, describeVerdict } from "./challenge";
-import { TRANSPORTS, type TransportOptions } from "./transports";
+import { MAX_RESPONSE_BYTES, TRANSPORTS, type TransportOptions } from "./transports";
 import type {
     BlockVerdict,
     FetchedPage,
@@ -65,6 +65,8 @@ export interface GetOptions {
     headers?: Record<string, string>;
     timeoutMs?: number;
     signal?: AbortSignal;
+    /** The largest body read, in bytes (default MAX_RESPONSE_BYTES); a larger answer throws FetchTooLargeError. */
+    maxBytes?: number;
 }
 
 export interface FetcherOptions {
@@ -191,6 +193,7 @@ export class Fetcher {
                 headers: keepsHeaders(start, current) ? (options.headers ?? {}) : {},
                 timeoutMs,
                 signal: options.signal,
+                maxBodyBytes: options.maxBytes ?? MAX_RESPONSE_BYTES,
             });
             log.debug(
                 {

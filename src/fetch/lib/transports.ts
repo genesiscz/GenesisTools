@@ -1,5 +1,55 @@
-import { ImpersonatedHttpClient } from "@genesiscz/utils/http/impersonate/client";
+import { ImpersonatedBodyTooLargeError, ImpersonatedHttpClient } from "@genesiscz/utils/http/impersonate/client";
 import type { HttpTransport, TransportName, TransportRequest, TransportResponse } from "./types";
+
+/**
+ * The largest response body a fetch reads, in bytes. No page a reader needs is this large, and the resident MCP server
+ * must not buffer an answer of any size because a caller asked for a few tokens of it.
+ */
+export const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+
+/** The response body passed the byte limit; the transfer was stopped before the rest was read. */
+export class FetchTooLargeError extends Error {
+    constructor(
+        readonly url: string,
+        readonly maxBytes: number
+    ) {
+        super(`The response of ${url} is larger than ${maxBytes} bytes; the transfer was stopped`);
+        this.name = "FetchTooLargeError";
+    }
+}
+
+/** The body as UTF-8 text, read chunk by chunk and refused once it passes `maxBytes`, so it is never buffered whole. */
+async function boundedText(response: Response, url: string, maxBytes: number): Promise<string> {
+    const declared = Number(response.headers.get("content-length") ?? Number.NaN);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+        await response.body?.cancel();
+        throw new FetchTooLargeError(url, maxBytes);
+    }
+
+    if (!response.body) {
+        return "";
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+            break;
+        }
+
+        bytes += value.byteLength;
+        if (bytes > maxBytes) {
+            await reader.cancel();
+            throw new FetchTooLargeError(url, maxBytes);
+        }
+
+        chunks.push(value);
+    }
+
+    return new TextDecoder().decode(Buffer.concat(chunks));
+}
 
 /** A desktop Chrome User-Agent for the plain transport. The chrome transport sends libcurl-impersonate's own, matching set. */
 const PLAIN_HEADERS = {
@@ -24,7 +74,11 @@ class PlainTransport implements HttpTransport {
             headers[name.toLowerCase()] = value;
         });
 
-        return { status: response.status, headers, body: await response.text() };
+        return {
+            status: response.status,
+            headers,
+            body: await boundedText(response, request.url, request.maxBodyBytes),
+        };
     }
 
     async close(): Promise<void> {}
@@ -52,15 +106,25 @@ class ChromeTransport implements HttpTransport {
     }
 
     async send(request: TransportRequest): Promise<TransportResponse> {
-        const response = await this.client.request({
-            url: request.url,
-            headers: request.headers,
-            timeoutMs: request.timeoutMs,
-            followRedirects: false,
-            signal: request.signal,
-        });
+        try {
+            // The worker stops the transfer past the limit, so the body is never buffered whole nor sent as one message.
+            const response = await this.client.request({
+                url: request.url,
+                headers: request.headers,
+                timeoutMs: request.timeoutMs,
+                followRedirects: false,
+                signal: request.signal,
+                maxBodyBytes: request.maxBodyBytes,
+            });
 
-        return { status: response.status, headers: response.headers, body: response.text };
+            return { status: response.status, headers: response.headers, body: response.text };
+        } catch (error) {
+            if (error instanceof ImpersonatedBodyTooLargeError) {
+                throw new FetchTooLargeError(request.url, error.maxBodyBytes);
+            }
+
+            throw error;
+        }
     }
 
     close(): Promise<void> {

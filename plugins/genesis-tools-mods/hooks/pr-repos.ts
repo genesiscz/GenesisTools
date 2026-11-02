@@ -30,8 +30,13 @@ export interface RepoMention {
 
 const LINK_URL = /(?:https?|genesis-tools):\/\/[^\s)<>"'`\]]+/g;
 
-/** `owner/repo#12` or `repo#12`: a PR number with its repository written at it. */
-export const QUALIFIED_PR = /(?<![\w/.@&#-])(?:([A-Za-z0-9][\w.-]*)\/)?([A-Za-z][\w.-]*\w)#(\d{1,6})\b/g;
+/**
+ * `owner/repo#12` or `repo#12`: a PR number with its repository written at it. After an owner, the name is any legal
+ * repository name, one character or digits alone included (`acme/x#12`, `acme/123#12`). Without one it starts with a
+ * letter and has two characters or more, so `C#1` or a bare `2#3` in prose is not read as a repository.
+ */
+export const QUALIFIED_PR =
+    /(?<![\w/.@&#-])(?:([A-Za-z0-9][\w.-]*)\/)?((?<=\/)[\w.-]*\w|[A-Za-z][\w.-]*\w)#(\d{1,6})\b/g;
 
 const ABSOLUTE = /(?:~\/|\/(?:Users|tmp|private|opt|var|Applications|Library|Volumes)\/)[^\s`'"()<>[\]|,;&?#]+/g;
 

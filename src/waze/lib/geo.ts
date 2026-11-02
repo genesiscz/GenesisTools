@@ -205,10 +205,21 @@ export function geoEnvFor(point: LatLon): "row" | "na" | "il" {
     return "row";
 }
 
-/** Thin a polyline to at most `max` points, always keeping the first and the last (for exports and MCP answers). */
+/**
+ * Thin a polyline to at most `max` points, keeping the first and the last (for exports and MCP answers). A limit under
+ * one gives no points (a summary that wants the route's facts without its line); a limit of one gives the first point.
+ */
 export function thinLine(line: LatLon[], max: number): LatLon[] {
-    if (line.length <= max || max < 2) {
+    if (!(max >= 1)) {
+        return [];
+    }
+
+    if (line.length <= max) {
         return line;
+    }
+
+    if (max < 2) {
+        return line.slice(0, 1);
     }
 
     const step = (line.length - 1) / (max - 1);

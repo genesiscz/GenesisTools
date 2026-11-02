@@ -56,7 +56,7 @@ export interface WazeJam {
 }
 
 export interface FeedStats {
-    /** georss requests sent, including the ones a split repeated. */
+    /** georss requests put on the wire: the ones a split repeated and every retry included. Never over the budget. */
     requests: number;
     /** Tiles whose answer was not split further (under the cap, or at the depth limit or request budget). */
     tiles: number;
@@ -64,6 +64,8 @@ export interface FeedStats {
     capped: number;
     /** Tiles whose request failed after the retry: their area is missing from the answer. */
     failed: number;
+    /** Tiles the request budget left unasked (or whose retry it cut short): their area is missing from the answer. */
+    skipped: number;
 }
 
 export interface Feed {

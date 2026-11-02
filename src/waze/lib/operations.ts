@@ -16,6 +16,7 @@ import {
     corridorJamsMarkdown,
     corridorJamsTable,
     corridorSummary,
+    coverageWarnings,
     dateTimeText,
     departuresMarkdown,
     durationText,
@@ -242,6 +243,33 @@ const recordInput = z.object({
     corridorM,
 });
 
+// Every operation parses its arguments with the schema it publishes as `input`, the same instance, because the CLI and
+// the MCP adapters call `run` directly: a looser copy inside `run` would let `--limit -1` reach SQLite's `LIMIT -1`.
+const venueInput = z.object({
+    id: z.string().min(1).describe('A Waze venue id such as "venues.10879468.108925751.271372"'),
+});
+
+const geocodeInput = z.object({
+    query: z.string().min(1).describe('A place name, or "lat,lon" for the reverse lookup'),
+});
+
+const linkInput = z.object({
+    to: place("Destination"),
+    from: place("Start (adds a live-map directions link)").optional(),
+    navigate: z.boolean().optional().describe("Start navigation at once (default true)"),
+});
+
+const historyInput = z.object({
+    limit: z.number().int().min(1).max(500).optional().describe("Most snapshots (default 20)"),
+});
+
+const hotspotsInput = z.object({
+    category: z.enum(ALERT_CATEGORIES).optional().describe("Category (default police)"),
+    sinceDays: z.number().min(0.1).optional().describe("Only reports from the last N days"),
+    cellKm: z.number().min(0.1).max(20).optional().describe("Grid cell size, km (default 1)"),
+    limit: z.number().int().min(1).max(100).optional().describe("Most places (default 15)"),
+});
+
 function parseAt(text: string | undefined): number | undefined {
     if (text === undefined) {
         return undefined;
@@ -264,6 +292,11 @@ export const USER_REPORTS_HIDDEN_NOTICE =
     "road closures only: police, accident, hazard and camera lists stay empty whatever is on the road. Closures, jams, " +
     "routes and ETAs are unaffected.";
 
+/** True when the open tab says Waze's live map hides user reports. */
+function reportsHidden(ctx: WazeContext): boolean {
+    return ctx.openedClient()?.transport.info().userReportsHidden === true;
+}
+
 /** Prepends the hidden-reports notice to a report-listing result when the open tab says Waze hides user reports. */
 function withReportsNotice(op: WazeOperation): WazeOperation {
     if (!op.listsReports) {
@@ -274,7 +307,7 @@ function withReportsNotice(op: WazeOperation): WazeOperation {
         ...op,
         async run(ctx, args) {
             const result = await op.run(ctx, args);
-            if (ctx.openedClient()?.transport.info().userReportsHidden !== true) {
+            if (!reportsHidden(ctx)) {
                 return result;
             }
 
@@ -516,9 +549,12 @@ const OPERATION_DEFS: WazeOperation[] = [
     },
     {
         name: "export",
-        description: "A trip's route with its reports and jams as GeoJSON, GPX, KML or CSV text.",
+        description:
+            "A trip's route with its reports and jams as GeoJSON, GPX, KML or CSV text. When coverage is incomplete (capped, failed or unasked tiles) or Waze hides user reports, `warnings` in the structured result say so, and GeoJSON, GPX and KML also carry them in their own metadata.",
         input: exportInput,
         usesBrowser: true,
+        // Not `listsReports`: that notice is prose put before the text, which would break the JSON or XML document.
+        // The notice goes into `warnings` and the document's metadata instead.
         async run(ctx, args) {
             const input = exportInput.parse(args);
             const format = input.format ?? "geojson";
@@ -529,6 +565,8 @@ const OPERATION_DEFS: WazeOperation[] = [
                 corridorM: input.corridorM,
                 types: input.types,
             });
+            const hidden = reportsHidden(ctx);
+            const warnings = [...coverageWarnings(result.stats), ...(hidden ? [USER_REPORTS_HIDDEN_NOTICE] : [])];
             const content = exportTrip(format, {
                 from: trip.from,
                 to: trip.to,
@@ -536,9 +574,20 @@ const OPERATION_DEFS: WazeOperation[] = [
                 alerts: result.alerts,
                 jams: result.jams,
                 generatedAt: result.fetchedAt,
+                warnings,
             });
             return {
-                data: { format, content, alerts: result.alerts.length, jams: result.jams.length },
+                data: {
+                    format,
+                    content,
+                    alerts: result.alerts.length,
+                    jams: result.jams.length,
+                    stats: result.stats,
+                    fetchedAt: result.fetchedAt,
+                    complete: warnings.length === 0,
+                    warnings,
+                    ...(hidden ? { notice: USER_REPORTS_HIDDEN_NOTICE } : {}),
+                },
                 markdown: content,
             };
         },
@@ -575,12 +624,10 @@ const OPERATION_DEFS: WazeOperation[] = [
         name: "venue",
         description:
             "One Waze venue by id (from venues): address, phone, services, opening hours and venues at the same address.",
-        input: z.object({
-            id: z.string().min(1).describe('A Waze venue id such as "venues.10879468.108925751.271372"'),
-        }),
+        input: venueInput,
         usesBrowser: true,
         async run(ctx, args) {
-            const { id } = z.object({ id: z.string().min(1) }).parse(args);
+            const { id } = venueInput.parse(args);
             if (id.startsWith("googlePlaces.")) {
                 throw new Error("Google place ids have no Waze venue card; use a venues.… id");
             }
@@ -619,10 +666,10 @@ const OPERATION_DEFS: WazeOperation[] = [
         name: "geocode",
         description:
             'Turn a place name into coordinates (Waze search, then OpenStreetMap), or "lat,lon" into a street address.',
-        input: z.object({ query: z.string().min(1).describe('A place name, or "lat,lon" for the reverse lookup') }),
+        input: geocodeInput,
         usesBrowser: true,
         async run(ctx, args) {
-            const { query } = z.object({ query: z.string().min(1) }).parse(args);
+            const { query } = geocodeInput.parse(args);
             const client = await ctx.client();
             const point = parseLatLon(query);
             if (point) {
@@ -644,16 +691,10 @@ const OPERATION_DEFS: WazeOperation[] = [
         name: "link",
         description:
             "Official Waze deep links (waze.com/ul) to navigate to a place, plus a live-map directions link when a start is given. No browser needed.",
-        input: z.object({
-            to: place("Destination"),
-            from: place("Start (adds a live-map directions link)").optional(),
-            navigate: z.boolean().optional().describe("Start navigation at once (default true)"),
-        }),
+        input: linkInput,
         usesBrowser: false,
         async run(_ctx, args) {
-            const input = z
-                .object({ to: z.string().min(1), from: z.string().min(1).optional(), navigate: z.boolean().optional() })
-                .parse(args);
+            const input = linkInput.parse(args);
             const links = await buildLinks(input);
             return {
                 data: links,
@@ -724,10 +765,10 @@ const OPERATION_DEFS: WazeOperation[] = [
     {
         name: "history",
         description: "Recorded snapshots, newest first, with report and police counts.",
-        input: z.object({ limit: z.number().int().min(1).max(500).optional().describe("Most snapshots (default 20)") }),
+        input: historyInput,
         usesBrowser: false,
         async run(ctx, args) {
-            const { limit } = z.object({ limit: z.number().int().optional() }).parse(args);
+            const { limit } = historyInput.parse(args);
             const store = ctx.readStore();
             const rows = store?.snapshots(limit ?? 20) ?? [];
             const counts = store?.counts() ?? { snapshots: 0, alerts: 0, police: 0 };
@@ -751,22 +792,10 @@ const OPERATION_DEFS: WazeOperation[] = [
         name: "hotspots",
         description:
             "From the recorded history: the places with the most distinct reports of a category (police by default) and the hours of day they cluster in.",
-        input: z.object({
-            category: z.enum(ALERT_CATEGORIES).optional().describe("Category (default police)"),
-            sinceDays: z.number().min(0.1).optional().describe("Only reports from the last N days"),
-            cellKm: z.number().min(0.1).max(20).optional().describe("Grid cell size, km (default 1)"),
-            limit: z.number().int().min(1).max(100).optional().describe("Most places (default 15)"),
-        }),
+        input: hotspotsInput,
         usesBrowser: false,
         async run(ctx, args) {
-            const input = z
-                .object({
-                    category: z.enum(ALERT_CATEGORIES).optional(),
-                    sinceDays: z.number().optional(),
-                    cellKm: z.number().optional(),
-                    limit: z.number().int().optional(),
-                })
-                .parse(args);
+            const input = hotspotsInput.parse(args);
             const category = input.category ?? "police";
             const sinceMs = input.sinceDays ? Date.now() - input.sinceDays * 86_400_000 : undefined;
             const store = ctx.readStore();
