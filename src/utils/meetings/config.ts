@@ -88,6 +88,11 @@ const playbackSchema = z.object({
     listen: listenSchema.prefault({}),
 });
 
+const renderSchema = z.object({
+    /** The word an open passage starts with in a transcript: `[nejasné: "<raw>"; 1) … 2) …]`. */
+    unclearLabel: z.string().trim().min(1).default("nejasné"),
+});
+
 export const meetingsConfigSchema = z.object({
     version: z.literal(1).default(1),
     global: z
@@ -95,6 +100,7 @@ export const meetingsConfigSchema = z.object({
             dictionary: dictionaryLevelSchema.prefault({}),
             capture: captureSchema.prefault({}),
             playback: playbackSchema.prefault({}),
+            render: renderSchema.prefault({}),
         })
         .prefault({}),
     /** The known projects. `--project` with a new name adds one here. */

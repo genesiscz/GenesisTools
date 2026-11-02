@@ -1,4 +1,4 @@
-import { applyDictionary, type ResolvedDictionary } from "./dictionary";
+import { applyDictionary, type DictionaryNotes, type ResolvedDictionary } from "./dictionary";
 import { applyFixes, type TermFix } from "./terms";
 import type { TranscriptEntry } from "./types";
 
@@ -15,6 +15,32 @@ export interface TranscriptCorrections {
     joins?: Array<{ atSec: number; speaker?: string }>;
     terms?: TermFix[];
     dictionary?: ResolvedDictionary;
+    /** How the dictionary writes expansions and meanings: `sup` for Markdown, `inline` (the default) elsewhere. */
+    notes?: DictionaryNotes;
+    /** Passages nobody decided yet: each is written as `[<label>: "<raw>"; 1) … 2) …]` instead of a guess. */
+    unclear?: { label: string; passages: UnclearPassage[] };
+}
+
+/**
+ * An open question in the transcript. With `speaker` it is the voice of that label's lines in the range; with `heard`
+ * it is those words in the range's lines. `readings` are the answers on offer.
+ */
+export interface UnclearPassage {
+    fromSec: number;
+    toSec: number;
+    speaker?: string;
+    heard?: string;
+    readings: string[];
+}
+
+/** `[nejasné: "Speaker 5"; 1) Alice 2) Carol]`: the raw text, then each reading, so the reader sees what is open. */
+export function unclearMarker(label: string, raw: string, readings: string[]): string {
+    const listed = readings.map((reading, index) => `${index + 1}) ${reading}`).join(" ");
+    return `[${label}: "${raw}"${listed ? `; ${listed}` : ""}]`;
+}
+
+function inRange(line: TranscriptEntry, passage: { fromSec: number; toSec: number }): boolean {
+    return line.startSec !== undefined && line.startSec >= passage.fromSec && line.startSec <= passage.toSec;
 }
 
 export interface CorrectionsApplied {
@@ -27,6 +53,8 @@ export interface CorrectionsApplied {
     spoken: number;
     fuzzy: number;
     expansions: number;
+    meanings: number;
+    unclear: number;
 }
 
 function firstWord(text: string): { word: string; rest: string } {
@@ -40,7 +68,18 @@ function firstWord(text: string): { word: string; rest: string } {
  */
 export function applyCorrections(entries: TranscriptEntry[], corrections: TranscriptCorrections): CorrectionsApplied {
     let lines = entries.map((entry) => ({ ...entry }));
-    const counts = { labels: 0, ranges: 0, joins: 0, terms: 0, fixes: 0, spoken: 0, fuzzy: 0, expansions: 0 };
+    const counts = {
+        labels: 0,
+        ranges: 0,
+        joins: 0,
+        terms: 0,
+        fixes: 0,
+        spoken: 0,
+        fuzzy: 0,
+        expansions: 0,
+        meanings: 0,
+        unclear: 0,
+    };
 
     for (const join of corrections.joins ?? []) {
         const index = lines.findIndex(
@@ -77,6 +116,18 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
     }
 
+    const unclearLabel = corrections.unclear?.label ?? "";
+
+    // An open speaker question replaces the source label it is about, before renames could hide it.
+    for (const passage of corrections.unclear?.passages ?? []) {
+        for (const line of lines) {
+            if (passage.speaker && line.speaker === passage.speaker && inRange(line, passage)) {
+                line.speaker = unclearMarker(unclearLabel, passage.speaker, passage.readings);
+                counts.unclear += 1;
+            }
+        }
+    }
+
     for (const line of lines) {
         const renamed = corrections.labels?.[line.speaker];
 
@@ -93,12 +144,29 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     }
 
     if (corrections.dictionary) {
-        const applied = applyDictionary(lines, corrections.dictionary);
+        const applied = applyDictionary(lines, corrections.dictionary, { notes: corrections.notes });
         lines = applied.entries;
         counts.fixes = applied.fixes;
         counts.spoken = applied.spoken;
         counts.fuzzy = applied.fuzzy;
         counts.expansions = applied.expansions;
+        counts.meanings = applied.meanings;
+    }
+
+    // Open words last, so they are found as the reader sees the corrected line.
+    for (const passage of corrections.unclear?.passages ?? []) {
+        const heard = passage.heard;
+
+        if (!heard) {
+            continue;
+        }
+
+        for (const line of lines) {
+            if (inRange(line, passage) && line.text.includes(heard)) {
+                line.text = line.text.replace(heard, unclearMarker(unclearLabel, heard, passage.readings));
+                counts.unclear += 1;
+            }
+        }
     }
 
     return { entries: lines, ...counts };
