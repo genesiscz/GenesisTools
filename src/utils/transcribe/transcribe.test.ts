@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { applyCorrections } from "./apply";
-import { applyDictionary, dictionaryLevelSchema, fuzzyMatches, mergeDictionaries, stemOf } from "./dictionary";
+import { applyDictionary, dictionaryLevelSchema, fuzzyMatches, mergeDictionaries } from "./dictionary";
 import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
+import { stemOf } from "./languages/cs";
 import { formatClock, parseClock } from "./render";
 import { LEAVE_PHRASES, type Presence, presenceSections, speakerStats } from "./speakers";
 import type { Participant, TranscriptEntry } from "./types";
