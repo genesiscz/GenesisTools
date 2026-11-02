@@ -1,4 +1,4 @@
-import { Executor } from "@genesiscz/utils/cli";
+import { Executor, PLAIN_OUTPUT_ENV } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import type { CommandRunner } from "./types";
 
@@ -23,7 +23,8 @@ export const spawnRunner: CommandRunner = async (cmd, { cwd, timeoutMs }) => {
     }
 
     try {
-        const res = await new Executor({ cwd }).exec(cmd, { timeout: timeoutMs });
+        // The output is parsed, so a colour forced by the parent's env must not reach the host CLI.
+        const res = await new Executor({ cwd, env: PLAIN_OUTPUT_ENV }).exec(cmd, { timeout: timeoutMs });
         return { code: res.exitCode, stdout: res.stdout, stderr: res.stderr };
     } catch (err) {
         logger.debug({ err, cmd }, "origins: command failed to run");
