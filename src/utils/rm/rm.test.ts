@@ -38,10 +38,12 @@ import {
     confirmByPerson,
     createAsideRequest,
     createRmRequest,
+    DIALOG_PROGRAM_PATHS,
     type DialogResult,
     type DialogSystem,
     defaultRmConfig,
     defaultTempRoots,
+    dialogEnvironment,
     disposalGraceMinutes,
     drainDue,
     drainerNeeded,
@@ -54,6 +56,7 @@ import {
     isInside,
     isRootActive,
     isTrashRootName,
+    isTrustedDialogProgram,
     itemGitState,
     ledgerAgent,
     listBatches,
@@ -121,6 +124,7 @@ import {
     sweepOrphans,
     sweepRmRequests,
     type TrashPaths,
+    takeOverLedgerMarker,
     targetChangeReason,
     totalRmLedger,
     trashItemName,
@@ -357,6 +361,23 @@ describe("folder stats", () => {
         expect(folderStats(folder, 4)).toMatchObject({ files: 4, capped: true });
         expect(folderStats(folder, 25)).toMatchObject({ files: 25 });
         expect(folderStats(folder, 25).capped).toBeUndefined();
+    });
+
+    test("a folder it may not list makes the walk unreadable, so its 0 files never reads as an empty folder", () => {
+        const folder = dir("unreadable-stats");
+        const locked = dir("unreadable-stats", "locked");
+        file(join(locked, "work.txt"));
+        chmodSync(locked, 0o000);
+
+        try {
+            expect(folderStats(locked)).toEqual({ files: 0, newestAt: null, unreadable: true });
+            expect(folderStats(folder)).toEqual({ files: 0, newestAt: null, unreadable: true });
+        } finally {
+            chmodSync(locked, 0o755);
+        }
+
+        expect(folderStats(folder)).toMatchObject({ files: 1 });
+        expect(folderStats(folder).unreadable).toBeUndefined();
     });
 });
 
@@ -1205,7 +1226,7 @@ describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
         }
     }
 
-    test("a move aside and a move into a trash batch with a grace refresh every file, and no grace leaves them", () => {
+    test("a move aside and a move into the trash never walk the moved tree: a large one would hold the deleting run", () => {
         const asideTree = oldTree("aside");
         expectOld(asideTree);
         const aside = moveAside({
@@ -1214,11 +1235,8 @@ describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
             batchId: "tmp-cleaner",
             root: dir("tmp-cleaner-aside"),
         });
-        const asideCopy = aside.moved[0]?.stored ?? "";
 
-        expectFresh(asideCopy);
-        // The cleaner removes an empty folder by its modification time alone.
-        expect(Date.now() - statSync(join(asideCopy, "empty")).mtimeMs).toBeLessThan(60_000);
+        expectOld(aside.moved[0]?.stored ?? "");
 
         const graced = moveToTrash([{ target: resolveTarget(oldTree("trash"), base), rule: "test" }], {
             config,
@@ -1226,16 +1244,68 @@ describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
             graceMinutes: 60,
             paths: trashPaths,
         });
-        expectFresh(graced?.items[0]?.stored ?? "");
+        expectOld(graced?.items[0]?.stored ?? "");
+    });
 
-        // No grace: drained at once and promising no restore, so the move does not walk it.
-        const drained = moveToTrash([{ target: resolveTarget(oldTree("trash-now"), base), rule: "test" }], {
-            config,
+    test("the request's measurement pass refreshes its aside copies in the background, empty folders included", async () => {
+        const requestsDir = dir("tmp-cleaner-measure", "requests");
+        const { request } = createAsideRequest({
+            aside: [{ target: resolveTarget(oldTree("measured"), base), verdict: VERDICT }],
+            inPlace: [],
             caller: AGENT,
-            graceMinutes: 0,
-            paths: trashPaths,
+            cwd: base,
+            reason: null,
+            requestsDir,
+            root: dir("tmp-cleaner-measure", "aside"),
         });
-        expectOld(drained?.items[0]?.stored ?? "");
+        const copy = request.targets[0]?.stored ?? "";
+        expectOld(copy);
+
+        expect(await measureRmRequest(request.id, { requestsDir })).toMatchObject({ measured: 1, busy: false });
+        expectFresh(copy);
+        // The cleaner removes an empty folder by its modification time alone.
+        expect(Date.now() - statSync(join(copy, "empty")).mtimeMs).toBeLessThan(60_000);
+    });
+
+    test("each drainer start refreshes the batches of the last 15 minutes still in their grace, never an older one", async () => {
+        const drainConfig = { ...config, trashRoot: join(base, "tmp-cleaner-drainer", "GenesisTools", "rm") };
+        const paths: TrashPaths = {
+            batchesDir: dir("tmp-cleaner-drainer", "batches"),
+            lockPath: join(base, "tmp-cleaner-drainer", "drainer.lock"),
+        };
+        const toTrash = (name: string, graceMinutes: number, now?: Date) =>
+            moveToTrash([{ target: resolveTarget(oldTree(name), base), rule: "test" }], {
+                config: drainConfig,
+                caller: AGENT,
+                graceMinutes,
+                paths,
+                now,
+                currentTrashRoot: () => drainConfig.trashRoot,
+            });
+        const made = toTrash("drainer-new", 60)?.items[0]?.stored ?? "";
+        // Made an hour ago and still in its grace: the daily keepalive's, not the drainer start's.
+        const older = toTrash("drainer-old", 90, new Date(Date.now() - 3_600_000))?.items[0]?.stored ?? "";
+        expectOld(made);
+        expectOld(older);
+        let clock = Date.now();
+        let sleeps = 0;
+
+        await runDrainer({
+            config: drainConfig,
+            paths,
+            now: () => new Date(clock),
+            sleep: async (ms) => {
+                if (sleeps++ === 0) {
+                    expectFresh(made);
+                    expectOld(older);
+                }
+
+                clock += ms;
+            },
+        });
+
+        expect(sleeps).toBeGreaterThan(0);
+        expect(listBatches(paths)).toEqual([]);
     });
 
     test("the daily keepalive refreshes a pending aside and a batch in its grace, never a decided request", () => {
@@ -1274,7 +1344,7 @@ describe("macOS tmp_cleaner: what waits in /tmp keeps fresh times", () => {
             pastGrace: pastGrace?.items[0]?.stored ?? "",
         };
 
-        // The moves refreshed them; three days in /tmp would age them again.
+        // Three days in /tmp, with no measurement pass or drainer since: every file is old.
         for (const copy of Object.values(stored)) {
             age(copy);
         }
@@ -1909,18 +1979,32 @@ describe("the dialog on each platform (PERSON_DIALOGS)", () => {
         caller: AGENT,
     };
 
-    /** A system with `programs` on PATH; `run` answers `result` and records the argv. Nothing real runs. */
-    function system(programs: string[], result: DialogResult, options: { display?: boolean } = {}) {
+    /**
+     * A system where the system-folder copies of `programs` are trusted; `run` answers `result` and records the argv,
+     * its environment and every path asked about. Nothing real runs.
+     */
+    function system(
+        programs: Array<keyof typeof DIALOG_PROGRAM_PATHS>,
+        result: DialogResult,
+        options: { display?: boolean } = {}
+    ) {
         const runs: string[][] = [];
+        const environments: Array<Record<string, string>> = [];
+        const asked: string[] = [];
+        const installed = new Set<string>(programs.map((program) => DIALOG_PROGRAM_PATHS[program][0]));
         const fake: DialogSystem = {
-            which: (program) => (programs.includes(program) ? `/usr/bin/${program}` : null),
-            run: (argv) => {
+            trusted: (path) => {
+                asked.push(path);
+                return installed.has(path);
+            },
+            run: (argv, environment) => {
                 runs.push(argv);
+                environments.push(environment);
                 return result;
             },
             hasDisplay: () => options.display ?? true,
         };
-        return { fake, runs };
+        return { fake, runs, environments, asked };
     }
 
     test("macOS: osascript, Cancel the default, and only the Approve button approves", () => {
@@ -1967,7 +2051,11 @@ describe("the dialog on each platform (PERSON_DIALOGS)", () => {
         expect(showPersonDialog(prompt, "win32", no.fake)).toBe(false);
 
         const [program, noProfile, command, script = ""] = yes.runs[0] ?? [];
-        expect([program, noProfile, command]).toEqual(["/usr/bin/powershell", "-NoProfile", "-Command"]);
+        expect([program, noProfile, command]).toEqual([
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "-NoProfile",
+            "-Command",
+        ]);
         expect(script).toContain("[System.Windows.Forms.MessageBox]::Show(");
         expect(script).toContain("'YesNo', 'Warning', 'Button2'");
         expect(script).not.toContain("$HOME");
@@ -1986,6 +2074,67 @@ describe("the dialog on each platform (PERSON_DIALOGS)", () => {
         expect(showPersonDialog(prompt, "freebsd", headless.fake)).toBeNull();
         expect([...none.runs, ...headless.runs]).toEqual([]);
         expect(Object.keys(PERSON_DIALOGS).sort()).toEqual(["darwin", "linux", "win32"]);
+    });
+
+    test("a dialog program comes from its system folder only, never from PATH: a fake zenity first on PATH is not asked", async () => {
+        const fakeBin = dir("dialog-fake-bin");
+        // Made, never run: an agent's stand-in that would exit 0 as if a person pressed Approve.
+        const fakeZenity = file(join(fakeBin, "zenity"), "#!/bin/sh\nexit 0\n");
+        chmodSync(fakeZenity, 0o755);
+        const shared = file(join(fakeBin, "osascript"), "#!/bin/sh\nexit 0\n");
+        chmodSync(shared, 0o777);
+        const linux = system(["zenity"], { exitCode: 0, stdout: "" });
+
+        await env.testing.withOverrides({ PATH: `${fakeBin}:${env.get("PATH") ?? ""}` }, () => {
+            expect(showPersonDialog(prompt, "linux", linux.fake)).toBe(true);
+        });
+
+        expect(linux.runs[0]?.[0]).toBe("/usr/bin/zenity");
+        expect(linux.asked.every((path) => path.startsWith("/usr/bin/") || path.startsWith("/bin/"))).toBe(true);
+        expect(linux.asked).not.toContain(fakeZenity);
+
+        for (const paths of Object.values(DIALOG_PROGRAM_PATHS)) {
+            for (const path of paths) {
+                expect(
+                    path.startsWith("/usr/bin/") ||
+                        path.startsWith("/bin/") ||
+                        /^C:\\(Windows|Program Files)\\/.test(path)
+                ).toBe(true);
+            }
+        }
+
+        // The trust check itself: a program this user owns (tests never run as root), or one anybody may write, is
+        // not trusted; the system's own shell is (a positive control: the check is not a blanket no); a folder is not.
+        expect(isTrustedDialogProgram(fakeZenity, "linux")).toBe(false);
+        expect(isTrustedDialogProgram(shared, "linux")).toBe(false);
+        expect(isTrustedDialogProgram("/bin/sh", process.platform)).toBe(true);
+        expect(isTrustedDialogProgram("/usr/bin", process.platform)).toBe(false);
+        expect(isTrustedDialogProgram(join(fakeBin, "missing"), "linux")).toBe(false);
+    });
+
+    test("a dialog program starts with the display, home and language variables only, and the system PATH", async () => {
+        const linux = system(["zenity"], { exitCode: 0, stdout: "" });
+        const windows = system(["powershell"], { exitCode: 0, stdout: "Yes" });
+
+        await env.testing.withOverrides(
+            {
+                PATH: "/tmp/agent-bin:/usr/bin",
+                LD_PRELOAD: "/tmp/agent-bin/approve.so",
+                GTK_MODULES: "agent-approve",
+                DISPLAY: ":7",
+                HOME: "/home/someone",
+            },
+            () => {
+                showPersonDialog(prompt, "linux", linux.fake);
+                showPersonDialog(prompt, "win32", windows.fake);
+            }
+        );
+
+        expect(linux.environments[0]).toMatchObject({ PATH: "/usr/bin:/bin", DISPLAY: ":7", HOME: "/home/someone" });
+        expect(linux.environments[0]).not.toHaveProperty("LD_PRELOAD");
+        expect(linux.environments[0]).not.toHaveProperty("GTK_MODULES");
+        expect(windows.environments[0]?.PATH).toBe("C:\\Windows\\System32;C:\\Windows");
+        expect(dialogEnvironment("/usr/bin:/bin")).not.toHaveProperty("LD_PRELOAD");
     });
 
     test("confirmByPerson takes the platform's dialog on Linux, and refuses with the reason when there is none", async () => {
@@ -2365,6 +2514,33 @@ describe("the ledger claim of an aside copy's size", () => {
         utimesSync(marker, old, old);
         recordRmMeasurement({ request, target, item, requestsDir });
         expect(lines()).toBe(2);
+    });
+
+    test("a takeover never removes a marker that changed hands after it was read; a dead claimant's is taken over", () => {
+        const requestsDir = dir("changed-marker-requests");
+        const request = { id: "chg001", caller: AGENT };
+        const target = { path: "/work/shop/changed", stored: "/aside/changed" };
+        const item = { path: target.path, location: target.stored, at: "", mtimeMs: 1, bytes: 9 };
+        const lines = () => readRmLedger().filter((entry) => entry.requestId === "chg001").length;
+        recordRmMeasurement({ request, target, item, requestsDir });
+        const measurements = join(rmMeasurementsDir(requestsDir), "chg001");
+        const marker = join(measurements, readdirSync(measurements).find((name) => name.endsWith(".ledger")) ?? "x");
+
+        // Read as the dead claimant 999999; a live pass (this test's parent) took the marker over since.
+        writeFileSync(marker, String(process.ppid));
+        expect(takeOverLedgerMarker(marker, "999999")).toBe(false);
+        expect(readFileSync(marker, "utf8")).toBe(String(process.ppid));
+
+        // That pass has written the line since.
+        writeFileSync(marker, "done");
+        expect(takeOverLedgerMarker(marker, "999999")).toBe(false);
+        expect(readFileSync(marker, "utf8")).toBe("done");
+
+        // Still the dead claimant's: the next pass takes it over and writes the line the dead one never wrote.
+        writeFileSync(marker, "999999");
+        recordRmMeasurement({ request, target, item, requestsDir });
+        expect(lines()).toBe(2);
+        expect(readFileSync(marker, "utf8")).toBe("done");
     });
 });
 
@@ -3116,6 +3292,38 @@ describe("the request sweep: a rule decides a pending request after it was asked
         expect(open?.ruled?.map((entry) => entry.path)).toEqual([covered]);
         expect(swept.ruled.some((entry) => entry.id === tracked.id)).toBe(false);
         expect(loadRmRequest(tracked.id, requestsDir)?.targets).toHaveLength(2);
+    });
+
+    test("a denied copy whose put-back failed is never a rule's: it waits for the person, the rest is still ruled", () => {
+        const inPlace = file(join(temp, "denied-a", "x.txt"));
+        const asideOriginal = file(join(temp, "denied-b", "y.txt"));
+        const asked = request(inPlace, asideOriginal);
+        const copy = asked.targets[1];
+        const parent = dirname(asideOriginal);
+        // The person denied the copy; its folder cannot be written now, so the put-back fails and it stays aside.
+        chmodSync(parent, 0o555);
+
+        try {
+            expect(returnAside(copy ? [copy] : [], null, asked.id).kept).toHaveLength(1);
+        } finally {
+            chmodSync(parent, 0o755);
+        }
+
+        saveRmRequest({ ...asked, decided: { approved: [], denied: [asideOriginal] } }, requestsDir);
+        const waiting = loadRmRequest(asked.id, requestsDir);
+
+        expect(waiting && ruleCoverage(waiting, contextFor(waiting)).map((entry) => entry.target.path)).toEqual([
+            inPlace,
+        ]);
+
+        sweepRmRequests({ contextFor, caller: null, dir: requestsDir, paths: sweepPaths, ids: [asked.id] });
+        const open = loadRmRequest(asked.id, requestsDir);
+
+        expect(open?.status).toBe("pending");
+        expect(open?.targets.map((target) => target.path)).toEqual([asideOriginal]);
+        expect(open?.ruled?.map((entry) => entry.path)).toEqual([inPlace]);
+        expect(existsSync(copy?.stored ?? "")).toBe(true);
+        expect(existsSync(inPlace)).toBe(false);
     });
 
     test("a request whose paths are all gone closes as gone; one an approval window holds is left alone", () => {

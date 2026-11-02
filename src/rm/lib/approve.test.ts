@@ -62,6 +62,7 @@ import { createRmProgram } from "../program";
 import {
     type ApprovalRowDeps,
     type ApproveEntry,
+    applyApprovalAnswer,
     approvalRows,
     approveDelete,
     denyRequest,
@@ -493,6 +494,49 @@ describe("approve in the window", () => {
                 listRmRequests({ all: true })
             ).map((denial) => denial.note)
         ).toEqual(["these are fixtures", "these are fixtures"]);
+    });
+
+    test("every ticked copy changed in the window: it stays pending, and the unticked one still goes home", () => {
+        const request = asideRequest("all-ticked-changed");
+        const [a, b] = request.targets;
+        if (!a?.stored || !b) {
+            throw new Error("expected two aside copies");
+        }
+        const openEntries = entriesOf(request);
+        // While the window was open, the ticked copy was replaced: the recheck refuses it.
+        renameSync(a.stored, join(base, "all-ticked-changed-old.txt"));
+        writeFileSync(a.stored, "replaced");
+        const choices = { selected: [a.path], disposal: "trash" as const, remember: "once" as const, note: null };
+        const println = spyOn(out, "println").mockImplementation(() => undefined);
+        const exitCode = process.exitCode;
+
+        try {
+            applyApprovalAnswer({
+                ctx: context(),
+                request,
+                openEntries,
+                blocked: [],
+                answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
+                selected: [a.path],
+                denyOf: () => null,
+                kickDrainer: () => {
+                    throw new Error("nothing moved, so no drain starts");
+                },
+            });
+            expect(process.exitCode).toBe(1);
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        expect(existsSync(b.path)).toBe(true);
+        expect(existsSync(a.stored)).toBe(true);
+        const saved = loadRmRequest(request.id);
+        expect(saved).toMatchObject({ status: "pending", decided: { approved: [], denied: [b.path] } });
+        expect(saved?.targets.map((target) => target.path)).toEqual([a.path]);
+        expect(
+            readRmLedger().some((entry) => entry.action === "approve" && entry.requestId === request.id && entry.person)
+        ).toBe(true);
     });
 });
 

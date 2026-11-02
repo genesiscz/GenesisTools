@@ -26,6 +26,8 @@ export interface FolderStats {
     newestAt: string | null;
     /** The walk stopped at its cap: `files` is a lower bound. */
     capped?: boolean;
+    /** A folder of the tree could not be listed (no permission, say): `files` counts only what was read. */
+    unreadable?: boolean;
 }
 
 /** A path to ask git about; `aside` when it was moved out of the way, so git sees its files deleted. */
@@ -242,13 +244,17 @@ function mtimeOf(path: string): number {
     }
 }
 
-/** How many files a folder holds and when the newest changed; the walk stops after `cap` entries. */
+/**
+ * How many files a folder holds and when the newest changed; the walk stops after `cap` entries. A folder it could
+ * not list makes the result `unreadable`, so 0 files from a folder it may not read never reads as an empty folder.
+ */
 export function folderStats(dir: string, cap = FOLDER_WALK_CAP): FolderStats {
     const stack = [dir];
     let seen = 0;
     let files = 0;
     let newest = 0;
     let capped = false;
+    let unreadable = false;
 
     while (stack.length > 0 && !capped) {
         const current = stack.pop() ?? dir;
@@ -278,10 +284,16 @@ export function folderStats(dir: string, cap = FOLDER_WALK_CAP): FolderStats {
                 handle.closeSync();
             }
         } catch (error) {
+            // A folder removed during the walk holds nothing now; any other failure hid what is inside.
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                unreadable = true;
+            }
+
             logger.debug({ error, dir: current }, "rm: could not list a folder for its stats");
         }
     }
 
     const stats: FolderStats = { files, newestAt: newest > 0 ? new Date(newest).toISOString() : null };
-    return capped || stack.length > 0 ? { ...stats, capped: true } : stats;
+    const walked = capped || stack.length > 0 ? { ...stats, capped: true } : stats;
+    return unreadable ? { ...walked, unreadable: true } : walked;
 }

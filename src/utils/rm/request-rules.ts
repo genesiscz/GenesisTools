@@ -50,7 +50,9 @@ export function ruledLine(rule: string, reason: string): string {
  * The targets of a pending delete request that the rule table allows now, judged as the session that asked (read
  * only). A path still in place is evaluated as it is. A copy set aside counts as its original path with the copy's
  * content (size, repositories, birthtime), and only when the default rule asked for it: a git rule that asked then
- * judged a work tree the copy has left. A path that came back, a lost copy and a gone path stay for a person.
+ * judged a work tree the copy has left. A path that came back, a lost copy and a gone path stay for a person. A path
+ * the person denied is never a rule's again: its copy waits for the put-back (`tools rm deny <id>` retries it), and a
+ * rule that allows the path now must not delete what the person said to keep.
  */
 export function ruleCoverage(
     request: RmRequest,
@@ -62,8 +64,13 @@ export function ruleCoverage(
     }
 
     const covered: RmCoveredTarget[] = [];
+    const denied = new Set(request.decided?.denied ?? []);
 
     for (const target of request.targets) {
+        if (denied.has(target.path)) {
+            continue;
+        }
+
         const state = targetLiveState(target, present);
         let judged: RmTarget;
         let content: RmTarget;

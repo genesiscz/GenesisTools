@@ -5,6 +5,7 @@ import {
     type DrainFailure,
     type DrainProgress,
     drainDue,
+    kickDrainer,
     listBatches,
     listRmRequests,
     loadRmRequest,
@@ -198,7 +199,13 @@ export function registerTrashCommands(program: Command): void {
                 return;
             }
 
-            sweepRequests(ctx);
+            const ruled = sweepRequests(ctx);
+
+            // A path the sweep moved waits out its grace in a new batch: the background drainer refreshes it against
+            // macOS tmp_cleaner (the move does not walk it) and drains it when it is due.
+            if (ruled.ruled.some((close) => close.ruled.some((entry) => entry.batchId !== undefined))) {
+                kickDrainer(config);
+            }
 
             const elapsed = createStopwatch();
             const onItem = (progress: DrainProgress) =>

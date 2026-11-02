@@ -1,6 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { keepFromTmpCleaner } from "@genesiscz/utils/fs/tmp-cleaner";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { processHoldsMark } from "@genesiscz/utils/process-identity";
@@ -112,10 +111,11 @@ export function moveAside(options: MoveAsideOptions): AsideResult {
             continue;
         }
 
-        // The rename kept the times inside the tree: macOS tmp_cleaner could delete it at its next run, long before
-        // a person decides. The daily keepalive (`refreshWaitingRmData`) carries it on while the request waits.
-        keepFromTmpCleaner(stored);
-        // The size comes from the request's measurement pass (`tools rm measure`), so the asking run does not wait.
+        // The rename kept the times inside the tree, so macOS tmp_cleaner could delete it at its next run, long
+        // before a person decides. The move does not walk the tree to refresh them: a large tree would hold the asking
+        // run. The request's measurement pass refreshes the copy in the background seconds later, and the daily
+        // keepalive (`refreshWaitingRmData`) carries it on while the request waits.
+        // The size comes from the same measurement pass (`tools rm measure`), so the asking run does not wait.
         result.moved.push({ ...requestTarget(input), stored });
         appendRmLedger({ action: "aside", path: input.target.path, stored, rule: input.verdict.rule, caller });
     }

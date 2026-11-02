@@ -210,9 +210,12 @@ agent, else the dialog). `tools rm config set approval code` asks the person the
 The dialog is one entry per platform in `PERSON_DIALOGS` (`src/utils/rm/approval.ts`), each with Cancel (or No) as
 the default button: `osascript` on macOS; `zenity --question`, else `kdialog --warningyesno`, on Linux with a display
 (`DISPLAY` or `WAYLAND_DISPLAY`); a Windows Forms message box through `powershell -NoProfile -Command` on Windows
-(the text goes in as base64, so a path is never read as PowerShell). With no dialog program `auto` refuses, since
-nothing there proves a person answered; the person then accepts the typed code by writing `"approval": "code"` into
-`~/.genesis-tools/rm/config.json` by hand.
+(the text goes in as base64, so a path is never read as PowerShell). Each program comes from its system folder only
+(`DIALOG_PROGRAM_PATHS`: `/usr/bin/osascript`; `zenity` or `kdialog` in `/usr/bin` or `/bin`; PowerShell under
+`C:\Windows` or `C:\Program Files`), owned by root and writable by nobody else, never from `PATH`, and it starts with
+the display, home and language variables only: an agent's `PATH`, `LD_PRELOAD` or `GTK_MODULES` cannot put a fake
+Approve in its place. With no dialog program `auto` refuses, since nothing there proves a person answered; the person
+then accepts the typed code by writing `"approval": "code"` into `~/.genesis-tools/rm/config.json` by hand.
 
 In Claude Code, run `! tools rm approve <id>` from the prompt.
 
