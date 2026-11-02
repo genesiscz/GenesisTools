@@ -23,6 +23,7 @@ import { DEFAULT_SPAN_GAP_SEC, type Presence, speakerStats } from "@genesiscz/ut
 import type { Command } from "commander";
 import pc from "picocolors";
 import { loadPresence } from "../lib/attendance";
+import { energyLeftShareFor } from "../lib/energy";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
@@ -137,6 +138,7 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
         const { source, sourceMeetingId } = await linkedSource(record);
         const meeting = await source.load(sourceMeetingId);
         const config = await new MeetingsConfigStore().read();
+        const evidence = rules.includes("evidence") ? await source.evidence(sourceMeetingId) : null;
         const fresh = suggestItems({
             record,
             meeting,
@@ -144,7 +146,8 @@ async function suggest(ref: string, opts: { rules?: string; attendance?: string;
             dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }),
             sourceWords: await source.dictionary(),
             presence: await presenceFor(record, meeting, opts.attendance),
-            evidence: rules.includes("evidence") ? await source.evidence(sourceMeetingId) : null,
+            evidence,
+            energyLeftShare: await energyLeftShareFor(store, record.id, evidence),
             now: new Date().toISOString(),
         });
 

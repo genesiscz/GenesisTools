@@ -326,3 +326,30 @@ describe("parseClock", () => {
         expect(parseClock(formatClock(5030))).toBe(5030);
     });
 });
+
+describe("lineEvidence fields (R2.1, R2.2)", () => {
+    test("each line carries its refined id, the winning voice id, the echo score and the energy share", () => {
+        const [first] = lineEvidence(
+            [{ speaker: "Bob Example", speakerId: 4, startSec: 0, text: "Pošlu to zítra." }],
+            {
+                segments: [
+                    { startSec: 0, endSec: 4, channel: "mic", voiceId: 1, text: "Pošlu to zítra." },
+                    {
+                        startSec: 0,
+                        endSec: 1,
+                        channel: "system",
+                        voiceId: 1002,
+                        liveName: "Bob Example",
+                        text: "pošlu to zítra",
+                    },
+                ],
+                speaking: [],
+            },
+            undefined,
+            () => 0.8
+        );
+
+        expect(first).toMatchObject({ refinedSpeakerId: 4, liveVoiceId: 1, energyLeft: 0.8, winner: SELF });
+        expect(first!.echo).toBe(1);
+    });
+});

@@ -193,6 +193,46 @@ interface EvidenceFinding {
     confidence: number;
     /** Both channels are in the line: a person should listen before confirming. */
     listen?: boolean;
+    /** The microphone heard the call's own words (rule R2.1 echo). */
+    echo?: boolean;
+}
+
+/** The microphone alone never proves the user spoke (Martin, 2026-11-02): loud speakers can reach it. */
+const MIC_ALONE_MAX = 0.95;
+const MIC_WITH_ENERGY_MAX = 0.98;
+const ECHO_SIMILARITY = 0.6;
+const ECHO_PENALTY = 0.3;
+/** The call's share of the energy at or above this while the microphone won: someone on the call was loud too. */
+const CALL_LOUD_SHARE = 0.4;
+const CALL_LOUD_PENALTY = 0.15;
+const ENERGY_AGREES_SHARE = 0.75;
+const ENERGY_AGREES_BONUS = 0.05;
+
+/**
+ * How sure a microphone-won line is the user: the microphone's share, at most 0.95; less when the microphone heard
+ * the call's own words (echo) or the call was loud at the same time; a little more when the energy agrees.
+ */
+function micConfidence(line: LineEvidence): {
+    confidence: number;
+    echo: boolean;
+    callLoud: boolean;
+    energyChecked: boolean;
+} {
+    const echo = (line.echo ?? 0) >= ECHO_SIMILARITY;
+    const callLoud = line.energyLeft !== undefined && 1 - line.energyLeft >= CALL_LOUD_SHARE;
+    const agrees = line.energyLeft !== undefined && line.energyLeft >= ENERGY_AGREES_SHARE;
+    let confidence = Math.min(MIC_ALONE_MAX, line.micShare ?? 0);
+
+    confidence -= echo ? ECHO_PENALTY : 0;
+    confidence -= callLoud ? CALL_LOUD_PENALTY : 0;
+    confidence += agrees ? ENERGY_AGREES_BONUS : 0;
+
+    return {
+        confidence: Math.max(0, Math.min(MIC_WITH_ENERGY_MAX, confidence)),
+        echo,
+        callLoud,
+        energyChecked: line.energyLeft !== undefined,
+    };
 }
 
 /** The names the platform showed speaking during a line, most often first. */
@@ -215,14 +255,18 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
     }
 
     if (line.winner === SELF) {
-        return isSelfLabel
-            ? undefined
-            : {
-                  speaker: selfName,
-                  rules: ["E1"],
-                  confidence: line.micShare,
-                  ...(line.micShare < CHANNEL_SHARE ? { listen: true } : {}),
-              };
+        if (isSelfLabel) {
+            return undefined;
+        }
+
+        const mic = micConfidence(line);
+        return {
+            speaker: selfName,
+            rules: mic.energyChecked ? ["E1", "energy"] : ["E1"],
+            confidence: mic.confidence,
+            ...(mic.echo ? { echo: true } : {}),
+            ...(line.micShare < CHANNEL_SHARE || mic.echo || mic.callLoud ? { listen: true } : {}),
+        };
     }
 
     // The call's sound won the line. Some microphone in it means two voices: listen before confirming.
@@ -267,6 +311,7 @@ function evidenceItems(options: {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
     presence?: Presence[];
+    energyLeftShare?: (fromSec: number, toSec: number) => number | undefined;
 }): NewItem[] {
     const selfName = options.evidence.selfName;
 
@@ -277,14 +322,20 @@ function evidenceItems(options: {
 
     // Teams attendance names the user by email; here the user is always `selfName`.
     const presence = options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay));
-    const lines = lineEvidence(options.meeting.transcript, options.evidence, presence);
+    const lines = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyLeftShare);
     const items: NewItem[] = [];
-    let open: { item: Extract<NewItem, { kind: "speaker-range" }>; key: string; shares: number[] } | undefined;
+    let open:
+        | { item: Extract<NewItem, { kind: "speaker-range" }>; key: string; shares: number[]; echoLines: number }
+        | undefined;
     const close = () => {
         if (open) {
             const mean = open.shares.reduce((sum, share) => sum + share, 0) / open.shares.length;
             open.item.confidence = Math.round(mean * 100) / 100;
-            open.item.evidence = { ...open.item.evidence, lines: open.shares.length };
+            open.item.evidence = {
+                ...open.item.evidence,
+                lines: open.shares.length,
+                ...(open.echoLines > 0 ? { echoLines: open.echoLines } : {}),
+            };
             items.push(open.item);
             open = undefined;
         }
@@ -311,6 +362,7 @@ function evidenceItems(options: {
             if (open && open.key === key && line.startSec - open.item.toSec < EVIDENCE_GAP_SEC) {
                 open.item.toSec = line.startSec;
                 open.shares.push(finding.confidence);
+                open.echoLines += finding.echo ? 1 : 0;
                 continue;
             }
 
@@ -318,6 +370,7 @@ function evidenceItems(options: {
             open = {
                 key,
                 shares: [finding.confidence],
+                echoLines: finding.echo ? 1 : 0,
                 item: {
                     kind: "speaker-range",
                     status: "suggested",
@@ -368,6 +421,8 @@ export function suggestItems(options: {
     sourceWords: DictionaryCandidate[];
     presence?: Presence[];
     evidence?: MeetingEvidence | null;
+    /** The microphone channel's share of the audio energy over a time range (R2.1), when the audio is at hand. */
+    energyLeftShare?: (fromSec: number, toSec: number) => number | undefined;
     now: string;
 }): MeetingItem[] {
     const { record, meeting } = options;
@@ -385,7 +440,14 @@ export function suggestItems(options: {
     }
 
     if (options.rules.includes("evidence") && options.evidence) {
-        found.push(...evidenceItems({ meeting, evidence: options.evidence, presence: options.presence }));
+        found.push(
+            ...evidenceItems({
+                meeting,
+                evidence: options.evidence,
+                presence: options.presence,
+                energyLeftShare: options.energyLeftShare,
+            })
+        );
     }
 
     if (options.rules.includes("terms")) {

@@ -1,3 +1,4 @@
+import { similarityScore } from "@genesiscz/utils/fuzzy-match";
 import type { Presence } from "./speakers";
 import type { TranscriptEntry } from "./types";
 
@@ -8,6 +9,10 @@ export interface EvidenceSegment {
     channel: "mic" | "system";
     /** The name the meeting platform showed while it was said (weak: it lags a few seconds behind the voice). */
     liveName?: string;
+    /** What the live recognizer heard, for the echo check. */
+    text?: string;
+    /** The live recognizer's voice id: its own clustering, separate from the refined transcript's speaker ids. */
+    voiceId?: number;
 }
 
 /** Who the meeting platform showed as speaking (and muted) at one moment. */
@@ -45,20 +50,62 @@ export interface LineEvidence {
     speaking: Record<string, number>;
     /** Who was in the call at the line's start (with attendance). */
     present?: string[];
+    /** The refined transcript's speaker id of the line. */
+    refinedSpeakerId?: number;
+    /** The live recognizer's voice id of the winning segment (its own clustering). */
+    liveVoiceId?: number;
+    /**
+     * The highest text similarity between a microphone segment and a call-sound segment in the line: near 1 means the
+     * microphone picked up the speakers (echo), so the microphone does not prove the user spoke.
+     */
+    echo?: number;
+    /** The left (microphone) channel's share of the audio energy in the line; undefined without audio or when quiet. */
+    energyLeft?: number;
+}
+
+function plainText(text: string): string {
+    return text
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+/** The highest similarity between any microphone and any call-sound segment text overlapping the line. */
+function echoScore(segments: EvidenceSegment[]): number | undefined {
+    const mic = segments
+        .filter((segment) => segment.channel === "mic" && segment.text)
+        .map((segment) => plainText(segment.text!));
+    const call = segments
+        .filter((segment) => segment.channel === "system" && segment.text)
+        .map((segment) => plainText(segment.text!));
+    let best: number | undefined;
+
+    for (const a of mic) {
+        for (const b of call) {
+            const score = similarityScore(a, b);
+            best = best === undefined ? score : Math.max(best, score);
+        }
+    }
+
+    return best;
 }
 
 /** E1 channel, E3 speaking indicator and E4 live name for every timed line, plus E2 attendance when given. */
 export function lineEvidence(
     entries: TranscriptEntry[],
     evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[] },
-    presence?: Presence[]
+    presence?: Presence[],
+    /** The microphone channel's share of the audio energy over a time range, when the audio is at hand. */
+    energyLeftShare?: (fromSec: number, toSec: number) => number | undefined
 ): LineEvidence[] {
     const timed = entries.filter((entry) => entry.startSec !== undefined && entry.text.trim());
 
     return timed.map((entry, index) => {
         const startSec = entry.startSec!;
         const endSec = Math.max(timed[index + 1]?.startSec ?? startSec + LAST_LINE_SEC, startSec + 1);
-        const overlap = new Map<string, { sec: number; liveName?: string }>();
+        const overlap = new Map<string, { sec: number; liveName?: string; voiceId?: number; longest: number }>();
+        const touching: EvidenceSegment[] = [];
 
         for (const segment of evidence.segments) {
             const sec = Math.min(endSec, segment.endSec) - Math.max(startSec, segment.startSec);
@@ -67,10 +114,20 @@ export function lineEvidence(
                 continue;
             }
 
+            touching.push(segment);
             const identity = segment.channel === "mic" ? SELF : (segment.liveName ?? "?");
             const seen = overlap.get(identity);
-            overlap.set(identity, { sec: (seen?.sec ?? 0) + sec, liveName: segment.liveName ?? seen?.liveName });
+            const longer = sec > (seen?.longest ?? 0);
+            overlap.set(identity, {
+                sec: (seen?.sec ?? 0) + sec,
+                liveName: segment.liveName ?? seen?.liveName,
+                voiceId: longer ? segment.voiceId : seen?.voiceId,
+                longest: longer ? sec : (seen?.longest ?? 0),
+            });
         }
+
+        const echo = echoScore(touching);
+        const energyLeft = energyLeftShare?.(startSec, endSec);
 
         const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
         const ranked = [...overlap.entries()].sort((a, b) => b[1].sec - a[1].sec);
@@ -110,6 +167,10 @@ export function lineEvidence(
             ...(winner && winner !== SELF && best?.liveName ? { liveName: best.liveName } : {}),
             speaking,
             ...(present ? { present: [...new Set(present)] } : {}),
+            ...(entry.speakerId !== undefined ? { refinedSpeakerId: entry.speakerId } : {}),
+            ...(best?.voiceId !== undefined ? { liveVoiceId: best.voiceId } : {}),
+            ...(echo !== undefined ? { echo } : {}),
+            ...(energyLeft !== undefined ? { energyLeft } : {}),
         };
     });
 }

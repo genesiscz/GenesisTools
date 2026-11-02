@@ -181,7 +181,7 @@ describe("evidence rule", () => {
                 toSec: 10,
                 speaker: "Alice Example",
                 rules: ["E1"],
-                confidence: 1,
+                confidence: 0.95,
             }),
             expect.objectContaining({
                 fromSec: 200,
@@ -309,5 +309,71 @@ describe("watchOnce", () => {
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("failed");
         expect(h.notes).toEqual(["Meeting not recorded"]);
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 15_000 })).toBe("idle");
+    });
+});
+
+describe("microphone scoring (R2.1)", () => {
+    const base = {
+        record,
+        rules: ["evidence" as const],
+        dictionary: { abbrExpansion: "every" as const, entries: [] },
+        sourceWords: [],
+        now: "2026-11-02T15:00:00.000Z",
+    };
+    const oneLine = {
+        ...meeting,
+        transcript: [line("Carol Example", 0, "Pošlu to zítra.", 2), line("Carol Example", 9, "Konec.", 2)],
+    };
+
+    test("an echo of the call's own words lowers the score and asks to listen", () => {
+        const items = suggestItems({
+            ...base,
+            meeting: oneLine,
+            evidence: {
+                selfName: "Alice Example",
+                segments: [
+                    { startSec: 0, endSec: 8, channel: "mic", text: "Pošlu to zítra." },
+                    { startSec: 0, endSec: 1, channel: "system", text: "pošlu to zítra", liveName: "Carol Example" },
+                ],
+                speaking: [],
+                files: [],
+            },
+        });
+
+        expect(items[0]).toMatchObject({
+            speaker: "Alice Example",
+            evidence: { echoLines: 1, note: expect.any(String) },
+        });
+        expect(items[0]!.confidence).toBeLessThan(0.6);
+    });
+
+    test("energy that agrees raises the score to at most 0.98; a loud call lowers it", () => {
+        const evidence = {
+            selfName: "Alice Example",
+            segments: [{ startSec: 0, endSec: 9, channel: "mic" as const }],
+            speaking: [],
+            files: [],
+        };
+        const agrees = suggestItems({ ...base, meeting: oneLine, evidence, energyLeftShare: () => 0.9 });
+        const loud = suggestItems({ ...base, meeting: oneLine, evidence, energyLeftShare: () => 0.5 });
+
+        expect(agrees[0]).toMatchObject({ confidence: 0.98, rules: ["E1", "energy"] });
+        expect(loud[0]!.confidence).toBe(0.8);
+        expect(loud[0]!.evidence).toMatchObject({ note: expect.any(String) });
+    });
+
+    test("the speaking indicator never counts against the user: Teams shows the user only as muted", () => {
+        const items = suggestItems({
+            ...base,
+            meeting: oneLine,
+            evidence: {
+                selfName: "Alice Example",
+                segments: [{ startSec: 0, endSec: 9, channel: "mic" }],
+                speaking: [{ tSec: 1, speaking: ["Carol Example"], muted: ["Alice Example"] }],
+                files: [],
+            },
+        });
+
+        expect(items[0]).toMatchObject({ speaker: "Alice Example", confidence: 0.95 });
     });
 });
