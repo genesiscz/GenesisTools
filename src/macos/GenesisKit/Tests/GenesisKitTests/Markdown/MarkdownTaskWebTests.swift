@@ -124,6 +124,16 @@ final class MarkdownTaskWebTests: XCTestCase {
         XCTAssertEqual(lines, [0, 1, 2, 4, 10, 15, 16, 21])
     }
 
+    /// A fence ends with the quote or list item it opened in, on the page as in the scanner, so the box after a quoted
+    /// code block saves instead of finding no item.
+    func testThePageAndTheScannerEndAFenceWithItsQuoteOrListItem() async throws {
+        let note = MarkdownTaskListTests.fenceNote
+        let (web, _) = try await page(view(note, tasks: Self.editable))
+        let lines = try await boxes(web).map { Int($0.split(separator: "|")[0]) ?? -1 }
+        XCTAssertEqual(lines, MarkdownTaskList.items(in: Array(note.utf8)).map(\.line))
+        XCTAssertEqual(lines, [5, 10, 16])
+    }
+
     func testALockedPageShowsDisabledBoxesWithTheReasonAndCanBeUnlockedInPlace() async throws {
         let (web, coordinator) = try await page(view(Self.note, tasks: .locked("A past version of the note.")))
         let locked = try await boxes(web)

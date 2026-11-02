@@ -75,7 +75,9 @@ struct MarkdownPathSuggestions: Equatable, Sendable {
     var truncated: Bool { total > entries.count }
 
     /// The row Return and Tab take while nobody moved the selection: the first one when there is something to match
-    /// (a typed name, or the recent files), none while the field names a folder, so Return shows that folder.
+    /// (a typed name, or the recent files), none while the field holds a folder with its closing slash, so Return
+    /// shows that folder. A folder named without the slash is a typed name: its own row comes first and Return goes
+    /// into it.
     var automaticIndex: Int? {
         guard !rows.isEmpty, !query.segment.isEmpty || !recents.isEmpty else { return nil }
         return 0
@@ -260,7 +262,7 @@ enum MarkdownPathCompletion {
     // MARK: The list
 
     /// The rows for `raw`. `recents` are paths, newest first, passed only while the field holds the folder it opened
-    /// with; `options.showsRecents` decides whether they show. `isCancelled` is asked before each folder read and
+    /// with; `options.showsRecents` decides whether they show. `isCancelled` is asked before the one folder read and
     /// while ranking a large folder, so a stale request starts no read and stops early (its rows are empty then).
     static func suggest(
         _ raw: String,
@@ -271,20 +273,16 @@ enum MarkdownPathCompletion {
         read: (String) -> [MarkdownPathEntry]? = MarkdownPathCompletion.read
     ) -> MarkdownPathSuggestions {
         var parsed = Self.query(raw, base: base)
-        guard !isCancelled() else { return MarkdownPathSuggestions(text: raw, query: parsed) }
-        var listing = read(parsed.folder)
-        // A path that names a folder without its closing slash (a pasted folder path, `..`): that folder's entries.
-        // A lone `.` stays a name, since it is how hidden files are asked for.
-        let namesFolder = parsed.segment == ".."
-            || listing?.contains(where: { $0.isFolder && $0.name == parsed.segment }) == true
-        if !parsed.segment.isEmpty, namesFolder {
-            guard !isCancelled() else { return MarkdownPathSuggestions(text: raw, query: parsed) }
-            let folder = URL(fileURLWithPath: parsed.folder).appendingPathComponent(parsed.segment).standardizedFileURL.path
-            if let inner = read(folder) {
-                parsed = MarkdownPathQuery(folder: folder, segment: "", head: parsed.head + parsed.segment + "/")
-                listing = inner
-            }
+        // `..` names the folder above, which no listing holds as an entry: that folder's entries. A folder named
+        // without its closing slash (typed, or a pasted folder path) stays a row of the folder it is in, first as the
+        // whole name, beside the other matches (`Plans/` and `Plans.md`), and Return or Tab goes into it. A lone `.`
+        // stays a name, since it is how hidden files are asked for.
+        if parsed.segment == ".." {
+            let folder = URL(fileURLWithPath: parsed.folder).appendingPathComponent("..").standardizedFileURL.path
+            parsed = MarkdownPathQuery(folder: folder, segment: "", head: parsed.head + "../")
         }
+        guard !isCancelled() else { return MarkdownPathSuggestions(text: raw, query: parsed) }
+        let listing = read(parsed.folder)
 
         var result = MarkdownPathSuggestions(text: raw, query: parsed)
         result.recents = options.showsRecents ? recentRows(recents) : []

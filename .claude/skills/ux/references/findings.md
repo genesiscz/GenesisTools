@@ -16,6 +16,8 @@ checklist.md or motion.md as well.
     own helper, declared later in the same script, which silently replaced it. A test now fails on any function the
     page script declares twice. Also first missed: typing in the top block changes its text, so the "block is gone"
     fallback pulled it to the edge on every keystroke; the same kind of block on the same line now keeps its offset.
+    The source editor missed the hold on the first try (review round 2): a truncate-then-rewrite still left it at the
+    top for good. It now holds its line the same way (`MarkdownSourceEditor.ReadingPlace`).
   - *Prose such as `UpgradePlan.md line 72` was a link to http://upgradeplan.md.* markdown-it's linkify
     reads `.md`, `.sh`, `.py`, `.rs` as country domains. Fix: such a schemaless name links only when the click's own
     resolver finds the file, and then as a relative link; otherwise it is text.

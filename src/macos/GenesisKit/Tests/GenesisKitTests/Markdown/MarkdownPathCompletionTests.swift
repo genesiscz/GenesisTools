@@ -51,11 +51,26 @@ final class MarkdownPathCompletionTests: XCTestCase {
     }
 
     func testAPathToAFolderListsThatFolderAndTabPutsAFolderInTheFieldWithItsSlash() throws {
-        // No closing slash: the folder's own entries, folders first, and Tab continues inside it.
-        let folder = MarkdownPathCompletion.suggest(root.path + "/notes", base: root)
+        // No closing slash: the folder is a row of the folder it is in, first, beside the other matches, and Return
+        // goes into it.
+        try "x".write(to: root.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        let named = MarkdownPathCompletion.suggest(root.path + "/notes", base: root)
+        XCTAssertEqual(named.query, MarkdownPathQuery(folder: root.path, segment: "notes", head: root.path + "/"))
+        XCTAssertEqual(names(named), ["notes/", "notes.md"], "the note beside the folder stays in the list")
+        XCTAssertEqual(named.automaticIndex, 0)
+        let notes = try XCTUnwrap(named.entries.first)
+        XCTAssertEqual(MarkdownPathCompletion.action(text: named.text, base: root, pick: .automatic(notes),
+                                                     query: named.query, reveal: false),
+                       .complete(root.path + "/notes/"), "Return goes into the folder")
+        XCTAssertEqual(MarkdownPathCompletion.action(text: named.text, base: root, pick: .automatic(notes),
+                                                     query: named.query, reveal: true),
+                       .reveal(URL(fileURLWithPath: root.path + "/notes")), "⌘Return shows it in the sidebar")
+
+        // With the slash: the folder's own entries, folders first, and Tab continues inside it.
+        let folder = MarkdownPathCompletion.suggest(root.path + "/notes/", base: root)
         XCTAssertEqual(folder.query, MarkdownPathQuery(folder: root.path + "/notes", segment: "", head: root.path + "/notes/"))
         XCTAssertEqual(names(folder), ["daily/", "drafts/", "plan.md"])
-        XCTAssertNil(folder.automaticIndex, "Return on a folder the field names shows that folder, it does not go into a row")
+        XCTAssertNil(folder.automaticIndex, "Return on a folder the field holds shows that folder, it does not go into a row")
 
         let daily = try XCTUnwrap(folder.entries.first)
         XCTAssertEqual(MarkdownPathCompletion.completion(of: daily, in: folder.query), root.path + "/notes/daily/")
@@ -208,17 +223,17 @@ final class MarkdownPathCompletionTests: XCTestCase {
         XCTAssertTrue(stale.entries.isEmpty, "a cancelled request stops")
         XCTAssertEqual(staleReads, 0, "a cancelled request starts no folder read")
 
-        // Cancelled after the first read: the folder the text names is not read as well.
-        var asked = 0
-        var laterReads = 0
-        _ = MarkdownPathCompletion.suggest(root.path + "/notes", base: root, isCancelled: {
-            asked += 1
-            return asked > 1
-        }, read: { folder in
-            laterReads += 1
+        // One read per request: a folder named without its slash is a row of its parent, and `..` reads only the
+        // folder above.
+        var folders: [String] = []
+        let reading: (String) -> [MarkdownPathEntry]? = { folder in
+            folders.append(folder)
             return MarkdownPathCompletion.read(folder)
-        })
-        XCTAssertEqual(laterReads, 1, "the parent was read, the named folder was not")
+        }
+        _ = MarkdownPathCompletion.suggest(root.path + "/notes", base: root, read: reading)
+        let up = MarkdownPathCompletion.suggest(root.path + "/notes/daily/..", base: root, read: reading)
+        XCTAssertEqual(folders, [root.path, root.path + "/notes"])
+        XCTAssertEqual(names(up), ["daily/", "drafts/", "plan.md"])
     }
 
     /// Fast typing over a slow folder: a request that asks for a folder while another request reads it waits for that
