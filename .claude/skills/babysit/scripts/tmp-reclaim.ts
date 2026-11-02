@@ -9,8 +9,10 @@
  * still be the same inode, still old enough, and still not open. A removal is a rename into a scratch folder in the
  * same root, then a delete of that folder, so a half-deleted tree never sits at its old path. That folder is
  * `.tmp-reclaim-<pid>-XXXXXX`; an apply killed before its final delete leaves it behind, and a later run lists it as
- * an ordinary candidate once its pid is gone (an older unnamed one once it is old enough). An apply then deletes the
- * plan it ran and every plan in `/tmp/cc` older than the 30 minutes a plan may be applied for.
+ * an ordinary candidate once its pid is gone (an older unnamed one once it is old enough). A session folder keeps its
+ * `cc/<project>/<session>` place inside that folder, so the later run still knows its SwiftPM clones (below), and the
+ * apply that removes a left-behind folder deletes it where it is. An apply then deletes the plan it ran and every
+ * plan in `/tmp/cc` older than the 30 minutes a plan may be applied for.
  *
  * Candidates are the top-level entries of /tmp and $TMPDIR, plus each `/tmp/cc/<project>/<session>` folder (agent
  * scratch). An entry is NEVER a candidate when:
@@ -21,7 +23,9 @@
  * - it is, contains, or lies within a canonical `--protect <path>`;
  * - it is a system or service entry (com.apple.*, launchd, tmux-*, ssh-*, the Claude harness folders, sockets);
  * - anything inside it is a socket or a FIFO (a live service), or a `.git` (a repository or worktree: remove those
- *   with `git worktree remove` / the worktree-lock release, never by deleting files);
+ *   with `git worktree remove` / the worktree-lock release, never by deleting files). The one exception is SwiftPM's
+ *   own dependency clone, `<scratch>/checkouts/<package>/.git`, in a dead session's folder, and in the `cc/` folder of
+ *   a left-behind apply folder, where only session folders judged that way were moved;
  * - a running process holds a file open inside it (lsof is refreshed before every removal; a failed listing stops apply);
  * - it is, holds or lies in the aside folder of a `tools rm` request that waits for a person (re-read right before
  *   every removal, own-session plans included);
@@ -55,6 +59,7 @@ import {
     realpathSync,
     renameSync,
     rmSync,
+    type Stats,
     writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -126,6 +131,11 @@ const SYSTEM_PREFIXES = ["com.apple.", "launchd", "tmux-", "ssh-", "claude-", "c
 const QUARANTINE_PREFIX = ".tmp-reclaim-";
 /** The whole name `mkdtempSync` gives that folder, with or without the pid. */
 const QUARANTINE_NAME = /^\.tmp-reclaim-(?:\d+-)?[A-Za-z0-9]{6}$/;
+/**
+ * The folder of a regular apply's quarantine that holds the session folders it moved, as `cc/<project>/<session>`.
+ * Every other moved entry is named `<n>-<name>`, so this name is never a moved entry.
+ */
+const QUARANTINE_SESSIONS = "cc";
 
 /** True while the apply that made this quarantine still runs; an orphan, an old unnamed one or another name is false. */
 export function isLiveQuarantine(name: string, alive: (pid: number) => boolean = isProcessAlive): boolean {
@@ -380,14 +390,46 @@ function isSessionScratch(path: string): boolean {
     return parts.length === 3 && parts[0] === "cc";
 }
 
+/** A regular apply's quarantine: a private (0700) folder of mkdtemp's name directly in /tmp, where session folders go. */
+function isRegularQuarantine(path: string, st: Stats): boolean {
+    return (
+        dirname(path) === roots[0] &&
+        QUARANTINE_NAME.test(basename(path)) &&
+        st.isDirectory() &&
+        (st.mode & 0o777) === 0o700
+    );
+}
+
+/**
+ * Which `.git` folders in a top-level entry are a dead session's SwiftPM dependency clones, which scan lets through:
+ * - in a session's scratch folder, one that isSwiftpmCheckoutGit proves SwiftPM made;
+ * - in a killed regular apply's quarantine, one of SwiftPM's shape `checkouts/<package>/.git` inside its `cc/` folder.
+ *   Apply moves only session folders there, each judged by the first rule just before the move, and the delete that
+ *   was killed may since have taken the state files that rule reads. A `.git` anywhere else in the quarantine (in a
+ *   moved top-level entry) still refuses it.
+ */
+function swiftpmClones(path: string, st: Stats): (gitPath: string) => boolean {
+    if (isSessionScratch(path)) {
+        return isSwiftpmCheckoutGit;
+    }
+
+    if (isRegularQuarantine(path, st)) {
+        const sessions = join(path, QUARANTINE_SESSIONS);
+        return (gitPath) => containsPath(sessions, gitPath) && basename(dirname(dirname(gitPath))) === "checkouts";
+    }
+
+    return () => false;
+}
+
 /**
  * Newest change time and size of a tree, symlinks not followed; null when the tree must not be touched.
- * `swiftpmCaches` lets SwiftPM's own dependency clones through: a dead session's build folder keeps them.
+ * `swiftpmClone` names the `.git` folders that are SwiftPM's own dependency clones (swiftpmClones); every other one
+ * refuses the tree.
  */
 function scan(
     path: string,
     rootDev: number,
-    swiftpmCaches = false
+    swiftpmClone: (gitPath: string) => boolean = () => false
 ): { newest: number; bytes: number } | { refuse: string } {
     const deadline = Date.now() + SCAN_BUDGET_MS;
     let newest = 0;
@@ -416,7 +458,7 @@ function scan(
             return { refuse: "socket" };
         }
 
-        if (basename(p) === ".git" && !(swiftpmCaches && isSwiftpmCheckoutGit(p))) {
+        if (basename(p) === ".git" && !swiftpmClone(p)) {
             return { refuse: "git-checkout" };
         }
 
@@ -504,7 +546,7 @@ export function judge(
     }
 
     const root = roots.find((r) => path.startsWith(`${r}/`)) ?? path;
-    const tree = scan(path, lstatSync(root).dev, isSessionScratch(path));
+    const tree = scan(path, lstatSync(root).dev, swiftpmClones(path, st));
 
     if ("refuse" in tree) {
         return tree.refuse;
@@ -1047,6 +1089,21 @@ function main(): void {
                 continue;
             }
 
+            // A killed apply's quarantine is out of the way already, so it is deleted where it is. Moved into this
+            // run's quarantine, its session folders would leave its `cc/` folder, and a second killed apply would
+            // strand their SwiftPM clones behind the `.git` guard.
+            const plannedSt = lstatSync(planned.path, { throwIfNoEntry: false });
+            if (!own && plannedSt && isRegularQuarantine(planned.path, plannedSt)) {
+                try {
+                    rmSync(planned.path, { recursive: true, force: true });
+                    removed++;
+                    freed += now.bytes;
+                } catch (error) {
+                    console.error(`could not delete ${planned.path}: ${String(error)}`);
+                }
+                continue;
+            }
+
             let trash = quarantines.get(root);
             if (!trash) {
                 trash = mkdtempSync(join(root, `${QUARANTINE_PREFIX}${process.pid}-`));
@@ -1054,7 +1111,14 @@ function main(): void {
             }
 
             try {
-                renameSync(planned.path, join(trash, `${removed}-${basename(planned.path)}`));
+                // A session folder keeps its `cc/<project>/<session>` place, so a run after a killed apply still
+                // knows its SwiftPM clones (swiftpmClones). Every other entry is `<n>-<name>`.
+                const target =
+                    !own && isSessionScratch(planned.path)
+                        ? join(trash, relative(root, planned.path))
+                        : join(trash, `${removed}-${basename(planned.path)}`);
+                mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+                renameSync(planned.path, target);
                 removed++;
                 freed += now.bytes;
             } catch (error) {
