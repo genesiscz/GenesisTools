@@ -424,6 +424,20 @@ export function formatLocalFileTimestamp(
     return `${formatLocalDate(d)}${separator}${h}-${m}-${s}${suffix}`;
 }
 
+/**
+ * ISO 8601 in the local zone with its offset, e.g. `2026-11-02T15:00:54.219+01:00`.
+ */
+export function formatLocalIso(date: Date | string | number): string {
+    const d = coerceDate(date);
+    const pad = (value: number, width = 2) => String(value).padStart(width, "0");
+    const offset = -d.getTimezoneOffset();
+    const sign = offset >= 0 ? "+" : "-";
+    const zone = `${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+
+    return `${formatLocalDate(d)}T${time}${zone}`;
+}
+
 export function formatLocalMonth(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }

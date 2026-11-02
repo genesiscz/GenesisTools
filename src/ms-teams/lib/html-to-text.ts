@@ -52,7 +52,7 @@ export function extractReplyToId(html: string): string | null {
     return id;
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
     return value
         .replace(/&nbsp;/gi, " ")
         .replace(/&lt;/gi, "<")

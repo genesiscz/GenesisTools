@@ -40,6 +40,11 @@ export function liveIndexedDbParent(home = homedir()): string {
     return join(liveWorkProfile(home), "IndexedDB");
 }
 
+/** The WebView's origin file system, where the Teams web client writes its rotating JSON log. */
+export function liveWebLogRoot(home = homedir()): string {
+    return join(liveWorkProfile(home), "File System");
+}
+
 export function liveIdbDir(): string {
     return join(liveIndexedDbParent(), "https_teams.microsoft.com_0.indexeddb.leveldb");
 }

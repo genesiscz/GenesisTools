@@ -2,6 +2,7 @@ import { describe, expect, it, test } from "bun:test";
 import {
     formatLocalDateTimeStamp,
     formatLocalFileTimestamp,
+    formatLocalIso,
     formatLocalMonth,
     getDatesInMonth,
     getDaysInPeriodInclusive,
@@ -80,6 +81,12 @@ describe("local timestamp formatting", () => {
     it("formats display timestamps using local date/time fields", () => {
         expect(formatLocalDateTimeStamp(d)).toBe("2026-05-14 20:49:03");
         expect(formatLocalDateTimeStamp(d, { seconds: false })).toBe("2026-05-14 20:49");
+    });
+
+    it("formats ISO with the local offset and names the same instant", () => {
+        const iso = formatLocalIso(d);
+        expect(iso).toMatch(/^2026-05-14T20:49:03\.120[+-]\d{2}:\d{2}$/);
+        expect(Date.parse(iso)).toBe(d.getTime());
     });
 
     it("formats filename-safe timestamps using local date/time fields", () => {

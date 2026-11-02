@@ -39,7 +39,8 @@ Needs Full Disk Access for your terminal (same as `tools macos messages`).
 | `members` | Roster of one chat |
 | `files ls` / `files download` | Attachments |
 | `calls` | Call history |
-| `meetings` | Meeting chats |
+| `meetings` (`meetings list`) | Meeting chats |
+| `meetings attendance [query]` | Who was in each call of a meeting chat, with join and leave times (`--id`, `--call`, `--json`) |
 | `mentions` | Activity feed |
 | `transcripts` | Cached call transcripts / recordings |
 | `mcp` | Stdio MCP server |
@@ -51,3 +52,12 @@ Natural query examples for `show`:
 - a raw thread id (`19:…@thread.v2` or `@unq.gbl.spaces`)
 
 `--with`, `--from`, `--to`, `--id` flags override the parsed query. Inline AMS images are extracted from the Teams Chromium disk cache into `~/.genesis-tools/ms-teams/media/` and embedded in md/html (the public `eu-api.asm.skype.com` URL is unauthenticated and returns 401). `--attachments` also tries HTTP downloads next to `--out`.
+
+## Meeting attendance
+
+`meetings attendance` answers who was in a meeting call at each moment. It joins two local sources:
+
+- The Teams web-client log, which New Teams writes as JSON files under `EBWebView/WV2Profile_tfw/File System/`. Its `participant added` / `participant removed` lines give each person's join and leave time, and its call-state lines give your own. The log rotates within about a day, so `sync` copies these facts into the SQLite store (`call_log_events`).
+- The `callEnded` system message in the meeting chat. It lists everyone who was in the call at any time, the organizer, and the call start and end. Its per-person durations all equal the call length, so they are not used.
+
+The times are what your client saw. A person who was already in the call when you joined shows `joinedAtExact: false` (their real join is earlier), and one who stayed after you left shows `leftAtExact: false`. A person known only from the `callEnded` message has no times. `--json` prints one provider-neutral record per call: `meeting`, `observer`, and `attendance` rows (`name`, `email`, `id`, `self`, `joinedAt`, `leftAt` as ISO 8601 with the local offset, `joinedAtExact`, `leftAtExact`, `source`).
