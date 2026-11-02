@@ -419,9 +419,10 @@ export function hostedMtimeFloor(input: {
 }
 
 /**
- * What the listing reads: the window with its SQL top-up, everything (`{}`), or nothing (null). The top-up (`newest`)
- * counts every session, so with a host filter it would miss older HOSTED ones; that read starts at the hosted pins'
- * floor instead, which keeps the refresh and the hydration bounded.
+ * What the listing reads first: the window with its SQL top-up, everything (`{}`), or nothing (null). The top-up
+ * (`newest`) counts every session, so with a host filter it would miss older HOSTED ones; that read starts at the
+ * hosted pins' floor instead, which keeps the refresh and the hydration bounded. A host-filtered read that falls
+ * short of `minRows` is widened to the oldest hosted pin by the caller.
  */
 function listingBounds(input: {
     windowFrom: number | undefined;
@@ -458,26 +459,39 @@ export async function listSessionRowsWithTimings(
     const hosted = hostedPins ? new Set(hostedPins.map(([sessionId]) => sessionId.toLowerCase())) : null;
     // The window and the top-up go down to the refresh and the SQL read; the filters below then keep exactly what
     // they kept before.
+    const hostedPinTimes = hostedPins ? hostedPins.map(([, pin]) => pin.at) : null;
     const bounds = listingBounds({
         windowFrom: opts.hours === undefined ? undefined : now - opts.hours * 60 * 60 * 1000,
         minRows: opts.minRows,
-        hostedPinTimes: hostedPins ? hostedPins.map(([, pin]) => pin.at) : null,
+        hostedPinTimes,
     });
-    const result =
-        bounds === null
-            ? null
-            : await prof.measureAsync("listing", () =>
-                  getSessionListing({
-                      excludeSubagents: opts.excludeSubagents ?? true,
-                      ...(opts.filePaths === undefined ? {} : { filePaths: opts.filePaths }),
-                      ...bounds,
-                      ...(opts.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: opts.maxDiscoveryAgeMs }),
-                      ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
-                  })
-              );
+    const readListing = (readBounds: { mtimeFrom?: number; newest?: number }) =>
+        prof.measureAsync("listing", () =>
+            getSessionListing({
+                excludeSubagents: opts.excludeSubagents ?? true,
+                ...(opts.filePaths === undefined ? {} : { filePaths: opts.filePaths }),
+                ...readBounds,
+                ...(opts.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: opts.maxDiscoveryAgeMs }),
+                ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
+            })
+        );
+    const keepHosted = (listed: SessionMetadataRecord[]): SessionMetadataRecord[] =>
+        hosted ? listed.filter((r) => hosted.has(recordSessionId(r).toLowerCase())) : listed;
+    let sessions = bounds === null ? [] : keepHosted((await readListing(bounds)).sessions);
+    // The minRows-th pin floor holds only while each newer hosted pin still has a transcript this listing keeps. A
+    // deleted transcript or a filePaths filter breaks that, so a read short of --min widens once to the oldest pin.
+    const oldestPin = hostedPinTimes === null ? null : hostedMtimeFloor({ pinTimes: hostedPinTimes });
+
+    if (
+        oldestPin !== null &&
+        bounds?.mtimeFrom !== undefined &&
+        bounds.mtimeFrom > oldestPin &&
+        sessions.length < (opts.minRows ?? 0)
+    ) {
+        sessions = keepHosted((await readListing({ mtimeFrom: oldestPin })).sessions);
+    }
+
     const listingMs = performance.now() - started;
-    const listed = result?.sessions ?? [];
-    const sessions = hosted ? listed.filter((r) => hosted.has(recordSessionId(r).toLowerCase())) : listed;
     const cutoff = opts.hours === undefined ? Number.NEGATIVE_INFINITY : now - opts.hours * 60 * 60 * 1000;
     const inWindow = sessions.filter((r) => r.mtime >= cutoff);
     const need = opts.minRows !== undefined ? Math.max(0, opts.minRows - inWindow.length) : 0;
