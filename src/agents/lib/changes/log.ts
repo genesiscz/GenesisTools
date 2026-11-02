@@ -159,8 +159,17 @@ function bashWriteIndex(session: string, maxBytes: number): Map<string, RmBashWr
 
         const write = bashWriteOf(row);
 
-        if (write) {
-            byPath.set(write.path, [...(byPath.get(write.path) ?? []), write.write]);
+        if (!write) {
+            continue;
+        }
+
+        // One array per path, appended in log order: a copy per row made N writes of one path cost O(N²).
+        const writes = byPath.get(write.path);
+
+        if (writes) {
+            writes.push(write.write);
+        } else {
+            byPath.set(write.path, [write.write]);
         }
     }
 
