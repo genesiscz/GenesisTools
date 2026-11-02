@@ -547,13 +547,14 @@ function evidenceItems(options: {
 
         for (const line of labelLines) {
             const finding = findingFor(line, selfName, isSelfLabel);
-            const key = finding
-                ? `${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}`
-                : "";
 
+            // A range holds only consecutive lines with its finding: a line without one stays its label's.
             if (!finding) {
+                close();
                 continue;
             }
+
+            const key = `${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}`;
 
             if (open && open.key === key && line.startSec - open.item.toSec < EVIDENCE_GAP_SEC) {
                 open.item.toSec = line.startSec;
