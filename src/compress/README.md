@@ -31,7 +31,8 @@ tools compress daily --dry-run                # what the once-a-day pass would c
   packs as a link and is not followed.
   The refusal names up to 20 of them and writes nothing: their real content lives in the cloud copy.
   `--include-placeholders` packs them as they are, for a legacy folder where the stub is all that is left, and
-  `--remove-original` then removes them after the check like any other file.
+  `--remove-original` then removes them after the check like any other file. The check runs inside `packDirectory`
+  too, so folder retention (codex migrate-home backups, retired app bundles) keeps a folder with a placeholder.
 - **A list of files.** `--files-from <list>` packs only the files the list names (one path per line, relative to the
   one folder given), with their parent folders, under the folder's name, and checks each one like a folder pack.
   `--remove-original` then removes only those files. A folder, a missing path, a path outside the folder or one
