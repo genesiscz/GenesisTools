@@ -1,18 +1,18 @@
 import { Api } from "@app/azure-devops/api";
 import { formatMinutes } from "@app/azure-devops/timelog-api";
 import { requireConfig as requireAdoConfig } from "@app/azure-devops/utils";
-import { type ClarityMapping, requireConfig, saveConfig } from "@app/clarity/config";
+import { type ClarityMapping, requireConfig } from "@app/clarity/config";
 import { type AssignmentView, buildAssignmentView } from "@app/clarity/lib/assignment-view";
 import {
     type AssignmentPair,
     type AssignmentRow,
-    applyAssignments,
     fillPairTitles,
     recommendedPairsFor,
     removeAssignments,
     serialiseAssignmentRow,
 } from "@app/clarity/lib/assignments";
 import { runInteractiveLinking } from "@app/clarity/lib/interactive-linking";
+import { MappingStore } from "@app/clarity/lib/mapping-store";
 import { assignReceipt, renderReceipt, unlinkReceipt } from "@app/clarity/lib/receipts";
 import { findTaskByName } from "@app/clarity/lib/tasks";
 import * as p from "@clack/prompts";
@@ -345,8 +345,7 @@ async function runAssign(date: string, options: MappingsOptions): Promise<void> 
     }
 
     const previousIds = config.mappings.map((mapping) => mapping.adoWorkItemId);
-    config.mappings = applyAssignments({ mappings: config.mappings, pairs });
-    await saveConfig(config);
+    await new MappingStore().upsert(config, pairs);
 
     if (options.format === "json") {
         out.result(
@@ -385,7 +384,7 @@ async function runAssign(date: string, options: MappingsOptions): Promise<void> 
 async function runUnlink(options: MappingsOptions): Promise<void> {
     const config = await requireConfig();
     const workItemIds = (options.unlink ?? []).map((raw) => parseWorkItemId(raw, "--unlink"));
-    const { mappings, removed } = removeAssignments({ mappings: config.mappings, workItemIds });
+    const { removed } = removeAssignments({ mappings: config.mappings, workItemIds });
 
     if (removed.length === 0) {
         out.println("No mappings match those work item ids.");
@@ -414,8 +413,7 @@ async function runUnlink(options: MappingsOptions): Promise<void> {
         }
     }
 
-    config.mappings = mappings;
-    await saveConfig(config);
+    await new MappingStore().remove(config, workItemIds);
 
     if (options.format === "json") {
         out.result(

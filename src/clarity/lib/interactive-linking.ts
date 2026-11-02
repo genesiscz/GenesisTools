@@ -1,8 +1,8 @@
 import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import { requireTimeLogConfig } from "@app/azure-devops/utils";
-import { getConfig, getMappingForWorkItem, requireConfig, saveConfig } from "@app/clarity/config";
+import { getConfig, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
-import { applyAssignments } from "@app/clarity/lib/assignments";
+import { MappingStore } from "@app/clarity/lib/mapping-store";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimelogWorkItems, type TimelogWorkItemGroup } from "@app/clarity/lib/timelog-workitems";
 import { getTimesheetWeeks, hasTimesheetId, type IdentifiedTimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
@@ -296,17 +296,15 @@ export async function runInteractiveLinking(): Promise<void> {
                 continue;
             }
 
-            freshConfig.mappings = applyAssignments({
-                mappings: freshConfig.mappings,
-                pairs: selected.map((wi) => ({
+            await new MappingStore().upsert(
+                freshConfig,
+                selected.map((wi) => ({
                     workItemId: wi.id,
                     task: chosenTask,
                     title: wi.title,
                     type: wi.type || undefined,
-                })),
-            });
-
-            await saveConfig(freshConfig);
+                }))
+            );
 
             for (const wi of selected) {
                 clack.log.success(`Linked: ADO #${wi.id} → ${chosenTask.taskName}`);

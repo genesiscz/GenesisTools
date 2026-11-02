@@ -281,15 +281,17 @@ describe("dashboard mappings", () => {
         ]);
     });
 
-    test("addMapping with the titles the client sends when Azure DevOps is unreachable overwrites the stored ones", async () => {
+    test("addMapping keeps the stored title and type when the client sends the Azure DevOps-unreachable placeholders, like the CLI", async () => {
         await seed();
 
         await addMapping(payload(510001, TaskTwo, "#510001", ""));
         await addMapping(payload(510002, TaskOne, "Work Item #510002"));
+        await addMapping(payload(510009, TaskOne, "#510009"));
 
         expect((await mappingsOnDisk()).map(brief)).toEqual([
-            '510001->700002 "#510001" ',
-            '510002->700001 "Work Item #510002" -',
+            '510001->700002 "Stored title one" Bug',
+            '510002->700001 "Stored title two" Task',
+            '510009->700001 "510009" -',
         ]);
     });
 

@@ -1,6 +1,7 @@
-import type { ClarityMapping } from "@app/clarity/config";
-import { getConfig, saveConfig } from "@app/clarity/config";
+import type { ClarityConfig, ClarityMapping } from "@app/clarity/config";
+import { getConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
+import { MappingStore, parseMappingPayload } from "@app/clarity/lib/mapping-store";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimesheetWeeks as getTimesheetWeeksShared, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
@@ -24,50 +25,22 @@ export async function getMappings(): Promise<{ mappings: ClarityMapping[]; confi
     return { mappings: config.mappings, configured: true };
 }
 
-function requireString(value: unknown, field: string): string {
-    if (typeof value !== "string" || value.trim() === "") {
-        throw new Error(`Invalid mapping payload: '${field}' must be a non-empty string`);
-    }
+const store = new MappingStore({ onChange: () => invalidateAssignmentView() });
 
-    return value;
-}
-
-function requireNumber(value: unknown, field: string): number {
-    if (typeof value !== "number" || Number.isNaN(value)) {
-        throw new Error(`Invalid mapping payload: '${field}' must be a number`);
-    }
-
-    return value;
-}
-
-export async function addMapping(data: Record<string, unknown>): Promise<{ success: boolean }> {
+async function configOrThrow(): Promise<ClarityConfig> {
     const config = await getConfig();
 
     if (!config) {
         throw new Error("Clarity not configured");
     }
 
-    const mapping: ClarityMapping = {
-        clarityTaskId: requireNumber(data.clarityTaskId, "clarityTaskId"),
-        clarityTaskName: requireString(data.clarityTaskName, "clarityTaskName"),
-        clarityTaskCode: requireString(data.clarityTaskCode, "clarityTaskCode"),
-        clarityInvestmentName: requireString(data.clarityInvestmentName, "clarityInvestmentName"),
-        clarityInvestmentCode: requireString(data.clarityInvestmentCode, "clarityInvestmentCode"),
-        adoWorkItemId: requireNumber(data.adoWorkItemId, "adoWorkItemId"),
-        adoWorkItemTitle: requireString(data.adoWorkItemTitle, "adoWorkItemTitle"),
-        adoWorkItemType: typeof data.adoWorkItemType === "string" ? data.adoWorkItemType : undefined,
-    };
+    return config;
+}
 
-    const existing = config.mappings.findIndex((m) => m.adoWorkItemId === mapping.adoWorkItemId);
+export async function addMapping(data: Record<string, unknown>): Promise<{ success: boolean }> {
+    const config = await configOrThrow();
 
-    if (existing >= 0) {
-        config.mappings[existing] = mapping;
-    } else {
-        config.mappings.push(mapping);
-    }
-
-    await saveConfig(config);
-    invalidateAssignmentView();
+    await store.upsert(config, [parseMappingPayload(data)]);
     return { success: true };
 }
 
@@ -87,38 +60,21 @@ export async function moveMapping(
         clarityInvestmentCode: string;
     }
 ): Promise<{ success: boolean }> {
-    const config = await getConfig();
+    const config = await configOrThrow();
 
-    if (!config) {
-        throw new Error("Clarity not configured");
-    }
-
-    const mapping = config.mappings.find((m) => m.adoWorkItemId === adoWorkItemId);
-
-    if (!mapping) {
-        throw new Error(`Mapping for work item ${adoWorkItemId} not found`);
-    }
-
-    mapping.clarityTaskId = target.clarityTaskId;
-    mapping.clarityTaskName = target.clarityTaskName;
-    mapping.clarityTaskCode = target.clarityTaskCode;
-    mapping.clarityInvestmentName = target.clarityInvestmentName;
-    mapping.clarityInvestmentCode = target.clarityInvestmentCode;
-
-    await saveConfig(config);
-    invalidateAssignmentView();
+    await store.move(config, adoWorkItemId, {
+        taskId: target.clarityTaskId,
+        taskName: target.clarityTaskName,
+        taskCode: target.clarityTaskCode,
+        investmentName: target.clarityInvestmentName,
+        investmentCode: target.clarityInvestmentCode,
+    });
     return { success: true };
 }
 
 export async function removeMapping(adoWorkItemId: number): Promise<{ success: boolean }> {
-    const config = await getConfig();
+    const config = await configOrThrow();
 
-    if (!config) {
-        throw new Error("Clarity not configured");
-    }
-
-    config.mappings = config.mappings.filter((m) => m.adoWorkItemId !== adoWorkItemId);
-    await saveConfig(config);
-    invalidateAssignmentView();
+    await store.remove(config, [adoWorkItemId]);
     return { success: true };
 }

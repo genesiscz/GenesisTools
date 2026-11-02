@@ -20,9 +20,12 @@ export interface AssignmentRows {
     unassigned: AssignmentRow[];
 }
 
+/** The Clarity task fields a mapping stores. */
+export type MappingTask = Pick<ClarityTask, "taskId" | "taskName" | "taskCode" | "investmentName" | "investmentCode">;
+
 export interface AssignmentPair {
     workItemId: number;
-    task: ClarityTask;
+    task: MappingTask;
     title?: string;
     type?: string;
 }
