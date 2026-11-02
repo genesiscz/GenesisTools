@@ -100,6 +100,8 @@ export function readEvidence(meetingId: string, selfName: string | undefined): M
                       startSec: line.startRecordingMs! / 1000,
                       endSec: line.endRecordingMs / 1000,
                       channel: source,
+                      ...(line.text?.trim() ? { text: line.text.trim() } : {}),
+                      ...(line.speaker?.id !== undefined ? { voiceId: line.speaker.id } : {}),
                       ...(source === "system" && line.speaker?.name
                           ? { liveName: participantName(line.speaker.name) }
                           : {}),
