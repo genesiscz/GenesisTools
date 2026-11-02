@@ -941,6 +941,28 @@ describe("the change-log object store maintenance", () => {
         expect(existsSync(s.loosePath(young))).toBe(true);
     });
 
+    test("a session whose id starts with _ keeps the blobs its rows name, loose and packed", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const [packed = ""] = s.write("packed, named by an underscore session\n");
+        s.row("_under", "/repo/packed.ts", packed, new Date(now.getTime() - 35 * DAY));
+        await maintainObjectStore({
+            now: new Date(now.getTime() - 10 * DAY),
+            root: s.store,
+            logsDir: s.agents,
+            settle: noSettle,
+        });
+        const [loose = ""] = s.write("loose, named by an underscore session\n");
+        s.row("_under", "/repo/loose.ts", loose, new Date(now.getTime() - DAY));
+        s.row("_under", "/repo/packed.ts", packed, new Date(now.getTime() - DAY));
+        s.age(loose, new Date(now.getTime() - 40 * DAY));
+
+        const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+
+        expect(report.dropped).toEqual({ loose: 0, packed: 0 });
+        expect(s.readable([loose, packed])).toEqual([loose, packed].sort());
+    });
+
     test("a row written during the pass that names a dropped blob gets the blob back", async () => {
         const now = new Date();
         const s = scratchStore();
