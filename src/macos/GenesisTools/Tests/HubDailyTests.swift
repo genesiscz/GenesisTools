@@ -145,8 +145,11 @@ final class HubDailyTests: XCTestCase {
         XCTAssertEqual(personal.cells.map(\.id), ["absent:five_hour", "window:seven_day"])
         XCTAssertEqual(work.cells.map(\.id), ["window:five_hour", "window:seven_day"])
 
+        XCTAssertEqual(HubForecastFormat.absentCell("five_hour"), "5h —", "the cell the row draws for the absent 5h")
         let personalText = try Self.read(row: personal)
-        XCTAssertTrue(personalText.contains("5h"), personalText)
+        // Text recognition reads the em dash as one of its look-alikes, so any dash after the 5h counts; a bare `5h`,
+        // a percent or another placeholder does not.
+        XCTAssertNotNil(personalText.range(of: #"5h\s*[—–―−-]"#, options: .regularExpression), personalText)
         XCTAssertTrue(personalText.contains("61%"), personalText)
         XCTAssertFalse(personalText.contains("5h 0"), personalText)
         let workText = try Self.read(row: work)
