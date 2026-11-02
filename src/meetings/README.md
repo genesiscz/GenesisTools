@@ -128,6 +128,21 @@ that reaches the threshold. "Enough for now" ends the round; the rest stay marke
 
 A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
 
+### Context documents: quotes and meanings
+
+The meeting's context files and notes feed two term rules (`@genesiscz/utils/transcribe/doc-match`). Each item is
+bound to its line (`atSec`), so it never changes the same words elsewhere.
+
+- `read-aloud`: a passage that says a document line in order, densely on both sides (a reader may skip its code
+  spans), with three prose words at least. The item's `quote` holds the line; the transcript shows its exact text
+  instead of the misheard words, as a quote block in Markdown and in quotation marks elsewhere, with the source
+  (`(čte z WikiProposals, ř. 33)`, from `global.render.readAloudLabel` and `lineLabel`). The dictionary does not
+  touch the quoted text.
+- `spoken-identifier`: two or more words that say a document identifier in order ("employee only" for
+  `employeesOnly`, "administration CMS schema" for `/administration/cms/schema`), or one path segment after "lomeno"
+  or a slash (`/{type}`). A comma between the words ends the run. The words stay; `meaning` names the identifier,
+  shown after them. An identifier is marked at its first mention and again after two minutes without one.
+
 ## The dictionary
 
 - `fix`: a misheard spelling, replaced at every whole-word match (`DTLčko` becomes `DTOčko`).

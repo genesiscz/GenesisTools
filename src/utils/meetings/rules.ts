@@ -111,6 +111,17 @@ export enum MeetingRule {
      */
     UnknownWord = "unknown-word",
     /**
+     * Read aloud. A passage says a line of a context document in order, densely on both sides (the reader may skip
+     * its code spans). The item carries the line as `quote`: the transcript shows the exact text with its source
+     * (`@genesiscz/utils/transcribe/doc-match`).
+     */
+    ReadAloud = "read-aloud",
+    /**
+     * Spoken identifier. Two or more words say a document identifier in order ("employee only" for `employeesOnly`),
+     * or one path segment follows "lomeno" or a slash. The words stay; the item's `meaning` names the identifier.
+     */
+    SpokenIdentifier = "spoken-identifier",
+    /**
      * Agent. An agent judged the item from the raw evidence (`tools meetings evidence --raw`) and the meeting's
      * context, and stored it with `items add` and a reason (`evidence.reason`). Its confidence is the agent's own.
      * It stays suggested, so a person still confirms it; a low one becomes a listen question like any other.

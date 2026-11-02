@@ -120,10 +120,14 @@ export function transcriptMarkdown(turns: Turn[], timestamps: boolean): string {
             const stamp =
                 timestamps && paragraph.startSec !== undefined ? ` \`${formatClock(paragraph.startSec)}\`` : "";
 
+            // A quote block a mark put in the text needs its own lines, also at the start of a paragraph.
+            const text = paragraph.text.replace(/\s*\n\n\s*/g, "\n\n").trim();
+            const gap = text.startsWith(">") ? "\n\n" : " ";
+
             if (index === 0) {
-                blocks.push(`**${turn.speaker}:**${stamp} ${paragraph.text}`);
+                blocks.push(`**${turn.speaker}:**${stamp}${gap}${text}`);
             } else {
-                blocks.push(`${stamp.trim()}${stamp ? " " : ""}${paragraph.text}`);
+                blocks.push(`${stamp.trim()}${stamp ? gap : ""}${text}`);
             }
         });
     }

@@ -14,6 +14,8 @@ export interface TranscriptCorrections {
     /** The line starting at `atSec` lost its first word to the line before; `speaker` says the voice of that line. */
     joins?: Array<{ atSec: number; speaker?: string }>;
     terms?: TermFix[];
+    /** Marks on one passage of one line: a meaning after it, or the document text it reads aloud. */
+    marks?: TranscriptMark[];
     dictionary?: ResolvedDictionary;
     /** How the dictionary writes expansions and meanings: `sup` for Markdown, `inline` (the default) elsewhere. */
     notes?: DictionaryNotes;
@@ -31,6 +33,28 @@ export interface UnclearPassage {
     speaker?: string;
     heard?: string;
     readings: string[];
+}
+
+/** A mark on the passage `heard` of the line that starts at `atSec`. */
+export interface TranscriptMark {
+    atSec: number;
+    heard: string;
+    /** Shown after the words: `lomeno type <sup>(`/{type}`)</sup>`. */
+    meaning?: string;
+    /** The passage reads this document text aloud: the text replaces the words, with its source. */
+    quote?: { text: string; source: string };
+}
+
+/** How a mark is written: a Markdown quote block and a superscript, or parentheses and quotation marks in plain text. */
+function writtenMark(mark: TranscriptMark, notes: DictionaryNotes): string {
+    if (mark.quote) {
+        return notes === "sup"
+            ? `\n\n> ${mark.quote.text} <sup>(${mark.quote.source})</sup>\n\n`
+            : `„${mark.quote.text}“ (${mark.quote.source})`;
+    }
+
+    const meaning = mark.meaning ?? "";
+    return notes === "sup" ? `${mark.heard} <sup>(\`${meaning}\`)</sup>` : `${mark.heard} (${meaning})`;
 }
 
 /** `[nejasné: "Speaker 5"; 1) Alice 2) Carol]`: the raw text, then each reading, so the reader sees what is open. */
@@ -54,6 +78,7 @@ export interface CorrectionsApplied {
     fuzzy: number;
     expansions: number;
     meanings: number;
+    marks: number;
     unclear: number;
 }
 
@@ -78,6 +103,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         fuzzy: 0,
         expansions: 0,
         meanings: 0,
+        marks: 0,
         unclear: 0,
     };
 
@@ -137,6 +163,29 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
     }
 
+    // Marks go in as placeholders before the fixes and the dictionary, so the document text a quote carries stays as
+    // written; the placeholders are filled in at the end.
+    const marked: string[] = [];
+
+    for (const mark of corrections.marks ?? []) {
+        const line = lines.find(
+            (entry) =>
+                entry.startSec !== undefined &&
+                Math.abs(entry.startSec - mark.atSec) <= JOIN_MATCH_SEC &&
+                entry.text.includes(mark.heard)
+        );
+        const at = line?.text.indexOf(mark.heard) ?? -1;
+
+        if (!line || at < 0) {
+            continue;
+        }
+
+        const placeholder = `\uE000${marked.length}\uE000`;
+        marked.push(writtenMark(mark, corrections.notes ?? "inline"));
+        line.text = `${line.text.slice(0, at)}${placeholder}${line.text.slice(at + mark.heard.length)}`;
+        counts.marks += 1;
+    }
+
     if (corrections.terms && corrections.terms.length > 0) {
         const fixed = applyFixes(lines, corrections.terms);
         lines = fixed.entries;
@@ -170,6 +219,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
                 line.text = line.text.replace(word, unclearMarker(unclearLabel, heard, passage.readings));
                 counts.unclear += 1;
             }
+        }
+    }
+
+    if (marked.length > 0) {
+        for (const line of lines) {
+            line.text = line.text.replace(/\uE000(\d+)\uE000/g, (_, index: string) => marked[Number(index)] ?? "");
         }
     }
 

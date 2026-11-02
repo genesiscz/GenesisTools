@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
+import { basename, extname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
+import { docIdentifiers, docLines, findReadAloud, findSpokenIdentifiers } from "@genesiscz/utils/transcribe/doc-match";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
@@ -168,8 +170,83 @@ function speakerItems(options: {
 interface TermSources {
     meeting: SourceMeeting;
     record: MeetingRecord;
+    /** How a quote names its source (`global.render`): "(čte z WikiProposals, ř. 33)". */
+    sourceLabels?: { readAloudLabel: string; lineLabel: string };
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
+}
+
+/** The text of each context file and note of a meeting, with a short name for a quote's source. */
+function contextDocuments(record: MeetingRecord): { name: string; text: string }[] {
+    return record.context.flatMap((entry) => {
+        if (entry.kind === "note") {
+            return [{ name: entry.title ?? entry.id, text: entry.ref }];
+        }
+
+        return entry.kind === "file" && existsSync(entry.ref)
+            ? [{ name: entry.title ?? basename(entry.ref, extname(entry.ref)), text: readFileSync(entry.ref, "utf8") }]
+            : [];
+    });
+}
+
+/**
+ * The passages read aloud from a context document (a quote of its line) and the spoken paths and identifiers (a
+ * meaning after the words). An identifier inside a quoted passage is left to the quote.
+ */
+function documentItems(options: TermSources): NewItem[] {
+    const docs = contextDocuments(options.record);
+
+    if (docs.length === 0) {
+        return [];
+    }
+
+    const entries = options.meeting.transcript;
+    const labels = options.sourceLabels ?? { readAloudLabel: "čte z", lineLabel: "ř." };
+    const quotes = findReadAloud({ entries, lines: docs.flatMap((doc) => docLines(doc.name, doc.text)) });
+    const spoken = findSpokenIdentifiers({ entries, identifiers: docs.flatMap((doc) => docIdentifiers(doc.text)) });
+    const inQuote = (entry: number, start: number, end: number) =>
+        quotes.some((quote) => quote.entry === entry && quote.start < end && start < quote.end);
+    const atSec = (entry: number) => entries[entry]?.startSec;
+
+    return [
+        ...quotes.flatMap((quote): NewItem[] => {
+            const at = atSec(quote.entry);
+            return at === undefined
+                ? []
+                : [
+                      {
+                          kind: "term",
+                          status: "suggested",
+                          heard: quote.heard,
+                          atSec: at,
+                          quote: {
+                              text: quote.text,
+                              source: `${labels.readAloudLabel} ${quote.doc}, ${labels.lineLabel} ${quote.line}`,
+                          },
+                          confidence: Math.min(0.95, quote.score),
+                          rules: [MeetingRule.ReadAloud],
+                          evidence: { doc: quote.doc, line: quote.line, shared: quote.shared },
+                      },
+                  ];
+        }),
+        ...spoken.flatMap((match): NewItem[] => {
+            const at = atSec(match.entry);
+            return at === undefined || inQuote(match.entry, match.start, match.end)
+                ? []
+                : [
+                      {
+                          kind: "term",
+                          status: "suggested",
+                          heard: match.heard,
+                          atSec: at,
+                          meaning: match.identifier,
+                          confidence: Math.min(0.9, 0.5 + 0.1 * match.matched),
+                          rules: [MeetingRule.SpokenIdentifier],
+                          evidence: { matched: match.matched, of: match.score },
+                      },
+                  ];
+        }),
+    ];
 }
 
 /** The terms a meeting's transcript should contain: glossary, source dictionary, own dictionary, names, context. */
@@ -270,6 +347,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     }));
 
     return [
+        ...documentItems(options),
         ...fuzzyItems,
         ...suspects.flatMap((suspect) => {
             const best = suspect.candidates[0];
@@ -712,7 +790,9 @@ function itemKey(item: NewItem | MeetingItem): string {
         return questionKey(item);
     }
 
-    return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}`;
+    // A quote or a meaning belongs to one place; a spelling fix to the word wherever it is heard.
+    const place = item.quote || item.meaning ? `|${item.meaning ?? ""}|${Math.round(item.atSec ?? 0)}` : "";
+    return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}${place}`;
 }
 
 /** Two independent rules agreeing never reach certainty: a person still confirms. */
@@ -758,6 +838,8 @@ export function suggestItems(options: {
     minPriority?: number;
     /** Tells ordinary words from unknown ones for the term rules; without it they skip every Czech word. */
     wordCheck?: WordCheck;
+    /** How a quote names its source (`global.render`). */
+    sourceLabels?: { readAloudLabel: string; lineLabel: string };
     now: string;
 }): MeetingItem[] {
     const { record, meeting } = options;

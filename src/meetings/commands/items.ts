@@ -183,6 +183,7 @@ async function suggest(
             minPriority: config.global.playback.listen.minPriority,
             points: meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [],
             wordCheck,
+            sourceLabels: config.global.render,
             now: new Date().toISOString(),
         });
         wordCheck?.dispose();
@@ -600,7 +601,7 @@ async function transcript(
         const config = await new MeetingsConfigStore().read();
         const applied = applyCorrections(meeting.transcript, correctionsOf(record, config, { ...opts, format }));
         ui.dim(
-            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.unclear} unclear marks`
+            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
         );
 
         if (format === "json") {

@@ -280,6 +280,37 @@ describe("applyCorrections", () => {
         ]);
         expect(applied).toMatchObject({ joins: 1, ranges: 1, terms: 1, expansions: 1 });
     });
+
+    test("a quote replaces the words it reads with the document text, untouched by the dictionary; a meaning follows its words", () => {
+        const spoken = [
+            line("Alice Example", 5, "Tak čtu: kapitola dva sekce UVČ, konec."),
+            line("Bob", 9, "To je lomeno type."),
+        ];
+        const marks = [
+            {
+                atSec: 5,
+                heard: "kapitola dva sekce UVČ",
+                quote: { text: "Kap. 2, sekce `UVČ`.", source: "čte z Notes, ř. 4" },
+            },
+            { atSec: 9, heard: "lomeno type", meaning: "/{type}" },
+        ];
+        const dictionary = {
+            abbrExpansion: "first" as const,
+            entries: [{ type: "fix" as const, value: "UVČ", substitution: "UIčko" }],
+        };
+        const md = applyCorrections(spoken, { marks, dictionary, notes: "sup" });
+        const txt = applyCorrections(spoken, { marks, dictionary });
+
+        expect(md.entries.map((e) => e.text)).toEqual([
+            "Tak čtu: \n\n> Kap. 2, sekce `UVČ`. <sup>(čte z Notes, ř. 4)</sup>\n\n, konec.",
+            "To je lomeno type <sup>(`/{type}`)</sup>.",
+        ]);
+        expect(txt.entries.map((e) => e.text)).toEqual([
+            "Tak čtu: „Kap. 2, sekce `UVČ`.“ (čte z Notes, ř. 4), konec.",
+            "To je lomeno type (/{type}).",
+        ]);
+        expect(md.marks).toBe(2);
+    });
 });
 
 describe("lineEvidence", () => {
