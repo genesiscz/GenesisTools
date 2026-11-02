@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { ensureWidgetRunning } from "@app/hub/lib/widget/autostart";
+import { ensureWatcher } from "@app/meetings/commands/watch";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import {
     attemptStaleTakeover,
@@ -106,6 +107,11 @@ export async function startDaemon(): Promise<void> {
     ensureWidgetRunning()
         .then((result) => log.info({ result }, "[daemon] widget at start"))
         .catch((err) => log.warn({ err }, "[daemon] widget start check failed"));
+
+    // The meetings watcher records the screen with Wispr Flow's recordings, when the user turned it on.
+    ensureWatcher()
+        .then((result) => log.info({ result }, "[daemon] meetings watcher at start"))
+        .catch((err) => log.warn({ err }, "[daemon] meetings watcher start failed"));
 
     const cleanup = () => {
         // Guarded: a daemon that lost its claim must not delete the winner's file.

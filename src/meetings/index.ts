@@ -5,6 +5,8 @@ import { registerEvidenceCommand } from "./commands/evidence";
 import { registerItemCommands } from "./commands/items";
 import { registerMeetingCommands } from "./commands/meeting";
 import { registerProjectsCommand } from "./commands/projects";
+import { registerRecordCommands } from "./commands/record";
+import { registerWatchCommands } from "./commands/watch";
 
 const program = new Command();
 program
@@ -15,6 +17,8 @@ program
 registerMeetingCommands(program);
 registerItemCommands(program);
 registerEvidenceCommand(program);
+registerRecordCommands(program);
+registerWatchCommands(program);
 registerProjectsCommand(program);
 registerDictionaryCommand(program);
 

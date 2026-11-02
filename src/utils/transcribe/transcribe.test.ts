@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { applyCorrections } from "./apply";
 import { applyDictionary, dictionaryLevelSchema, mergeDictionaries } from "./dictionary";
 import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
+import { formatClock, parseClock } from "./render";
 import { LEAVE_PHRASES, type Presence, speakerStats } from "./speakers";
 import type { Participant, TranscriptEntry } from "./types";
 
@@ -289,5 +290,16 @@ describe("lineEvidence", () => {
         const table = labelIdentityTable(lineEvidence(entries, { segments, speaking }));
 
         expect(Object.fromEntries(table.get("Bob Example")!)).toEqual({ [SELF]: 1, tie: 1, "?": 1 });
+    });
+});
+
+describe("parseClock", () => {
+    test("reads h:mm:ss, mm:ss and seconds, and refuses anything else", () => {
+        expect(parseClock("1:23:50")).toBe(5030);
+        expect(parseClock("23:50")).toBe(1430);
+        expect(parseClock("90")).toBe(90);
+        expect(parseClock("1:2:3:4")).toBeUndefined();
+        expect(parseClock("soon")).toBeUndefined();
+        expect(parseClock(formatClock(5030))).toBe(5030);
     });
 });

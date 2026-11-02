@@ -43,7 +43,9 @@ const captureSchema = z.object({
     idleFps: z.number().positive().default(0.1),
     /** The share of the screen that must change for a new frame (0 to 1). */
     threshold: z.number().min(0).max(1).default(0.02),
-    jpegQuality: z.number().min(0.1).max(1).default(0.6),
+    jpegQuality: z.number().min(0.1).max(1).default(0.75),
+    /** The longest side of a frame in pixels. Smaller text than this keeps is lost to OCR on a large display. */
+    resolutionCap: z.number().int().min(640).max(8192).default(2880),
     /** Frames and OCR older than this are deleted; the meeting record stays. */
     retentionDays: z.number().int().positive().default(30),
 });
@@ -219,6 +221,13 @@ export class MeetingsConfigStore {
     async setAbbrExpansion(scope: DictionaryScope, mode: AbbrExpansion): Promise<MeetingsConfig> {
         return this.update((raw) => {
             dictionaryAt(raw, scope).abbrExpansion = mode;
+        });
+    }
+
+    /** Turns Wispr Flow's autostart on or off, keeping its other settings. */
+    async setAutoRecord(enabled: boolean): Promise<MeetingsConfig> {
+        return this.update((raw) => {
+            objectAt(objectAt(objectAt(raw, "sources"), "wisprflow"), "autoRecord").enabled = enabled;
         });
     }
 
