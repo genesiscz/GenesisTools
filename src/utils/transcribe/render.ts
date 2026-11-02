@@ -73,6 +73,17 @@ export function formatClock(totalSec: number): string {
     return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/** `1:23:50`, `23:50` or `90` (seconds) to seconds; undefined for anything else. The inverse of `formatClock`. */
+export function parseClock(value: string): number | undefined {
+    const parts = value.trim().split(":");
+
+    if (parts.length > 3 || parts.some((part) => !/^\d+(\.\d+)?$/.test(part))) {
+        return undefined;
+    }
+
+    return parts.reduce((total, part) => total * 60 + Number(part), 0);
+}
+
 function pad(n: number, width = 2): string {
     return String(n).padStart(width, "0");
 }

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { suggestItems } from "./lib/suggest";
+import { type WatchDeps, watchOnce } from "./lib/watch";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
     return { speaker, startSec, text, speakerId };
@@ -224,5 +226,88 @@ describe("evidence rule after a leave", () => {
                 confidence: 0.45,
             }),
         ]);
+    });
+});
+
+describe("watchOnce", () => {
+    const settings = { enabled: true, liveWithinSec: 30, stopAfterSilenceSec: 120, notify: true };
+    const now = Date.parse("2026-11-02T15:10:00.000Z");
+    const live = {
+        sourceMeetingId: "w1",
+        title: "Planning",
+        startedAt: "2026-11-02T15:00:00.000Z",
+        liveChangedAt: "2026-11-02T15:09:55.000Z",
+    };
+    let stores = 0;
+
+    function harness(over: Partial<WatchDeps> = {}) {
+        stores += 1;
+        const runs: string[][] = [];
+        const notes: string[] = [];
+        let running = false;
+        const deps: Partial<WatchDeps> = {
+            settings: async () => settings,
+            liveRecording: async () => live,
+            recorder: () =>
+                running
+                    ? {
+                          running: true,
+                          state: { meetingId: "m1", pid: 1, startedAt: "", display: 1, frames: 0, bytes: 0 },
+                      }
+                    : { running: false },
+            run: async (args) => {
+                runs.push(args);
+                running = args[2] === "start";
+                return { success: true, exitCode: 0, stderr: "" };
+            },
+            notify: async (title) => {
+                notes.push(title);
+            },
+            ...over,
+        };
+        return { store: new MeetingStore(new Storage(`meetings-watch-${stores}`)), deps, runs, notes };
+    }
+
+    test("off: nothing happens", async () => {
+        const h = harness({ settings: async () => ({ ...settings, enabled: false }) });
+
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
+        expect(h.runs).toEqual([]);
+    });
+
+    test("a fresh Wispr recording starts one screen recording and a notification, then keeps it", async () => {
+        const h = harness();
+
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
+        expect(h.runs).toEqual([["meetings", "record", "start", "--source", "wisprflow:w1", "--yes"]]);
+        expect(h.notes).toEqual(["Recording the screen"]);
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 10_000 })).toBe("recording");
+    });
+
+    test("its own recording stops when Wispr goes silent; a recording a person started is left alone", async () => {
+        const h = harness();
+        await watchOnce(h.store, { deps: h.deps, now });
+
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("stopped");
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop"]);
+
+        const other = harness({
+            recorder: () => ({
+                running: true,
+                state: { meetingId: "by-hand", pid: 1, startedAt: "", display: 1, frames: 0, bytes: 0 },
+            }),
+        });
+        expect(await watchOnce(other.store, { deps: other.deps, now })).toBe("busy");
+        expect(other.runs).toEqual([]);
+    });
+
+    test("a start that failed (no grant) is not retried for the same meeting", async () => {
+        const h = harness({
+            run: async () => ({ success: false, exitCode: 1, stderr: "Screen Recording is not granted" }),
+        });
+
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("failed");
+        expect(h.notes).toEqual(["Meeting not recorded"]);
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 15_000 })).toBe("idle");
     });
 });

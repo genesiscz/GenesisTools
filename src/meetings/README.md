@@ -24,6 +24,11 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
 | `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary |
+| `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display 1]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
+| `record stop`, `record status` | Stop (it finishes its current 30 s piece) and write the summary into the meeting; what is recording |
+| `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of the screen around a transcript time |
+| `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
+| `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |
@@ -41,6 +46,27 @@ the record's `history`, and a change that would make the record invalid writes n
 Every command that creates or changes a meeting resolves its project in this order: `--project` (a new name joins
 the known projects), the meeting's own, one matching project (`projects.<name>.match`), a choice in a terminal, and
 without a terminal no project. `show` then says how to set it.
+
+## Recording
+
+`record start` checks Screen Recording first, by the classic route: granted already, then the macOS prompt for the
+identity that captures (GenesisTools.app when it is installed, else the terminal), then GenesisTools.app's own
+permission window, and without the app it says what to install and grant. Without a terminal (`--yes`, the daemon) it
+never prompts and only says what to run.
+
+The recorder runs peekaboo's change-aware live capture in 30 s pieces (`capture.activeFps`, `idleFps`, `threshold`
+in the config), converts each frame to JPEG under the meeting's `frames/`, and appends Vision OCR to `ocr.jsonl`.
+Frames stay on this Mac and never go into an export. When a source is linked, `record stop` stores its clock, so
+`screen --at` takes transcript times.
+
+### Autostart
+
+`tools meetings autostart on` sets `sources.wisprflow.autoRecord.enabled` and starts the watcher; the daemon starts
+it at every login while it is on. Every 15 s the watcher asks Wispr Flow for a meeting it has not ended whose live
+transcript changed in the last `liveWithinSec` (30). It then runs `record start --source wisprflow:<id> --yes` and
+posts a notification (`notify`, default on). It stops only the recordings it started, when Wispr Flow ends the
+meeting or stays silent for `stopAfterSilenceSec` (120). A start that failed (no grant) notifies once and is not
+retried for the same meeting.
 
 ## Items
 

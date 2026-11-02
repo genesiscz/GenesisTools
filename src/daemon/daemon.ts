@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { ensureWatcher } from "@app/meetings/commands/watch";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import {
     attemptStaleTakeover,
@@ -100,6 +101,11 @@ export async function startDaemon(): Promise<void> {
     await claimPidfile(pidFile);
 
     log.info({ pid: process.pid }, "[daemon] starting");
+
+    // The meetings watcher records the screen with Wispr Flow's recordings, when the user turned it on.
+    ensureWatcher()
+        .then((result) => log.info({ result }, "[daemon] meetings watcher at start"))
+        .catch((err) => log.warn({ err }, "[daemon] meetings watcher start failed"));
 
     const cleanup = () => {
         // Guarded: a daemon that lost its claim must not delete the winner's file.
