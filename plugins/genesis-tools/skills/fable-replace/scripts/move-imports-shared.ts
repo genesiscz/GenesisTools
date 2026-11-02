@@ -147,11 +147,42 @@ export const listProjectFiles = (cwd: string): string[] => {
     return files;
 };
 
+/**
+ * False only where git cannot find a repository from `cwd`: no GIT_DIR override, and no `.git`
+ * (a folder or a gitfile) or `HEAD` (a bare repository, or a git folder itself) in `cwd` or any
+ * folder above it. Git's own discovery looks for exactly those and stops earlier, never later
+ * (GIT_CEILING_DIRECTORIES, a file system boundary), so a false here is a git call that could
+ * only have failed.
+ */
+const gitMayFindRepository = (cwd: string): boolean => {
+    if (process.env.GIT_DIR !== undefined) {
+        return true;
+    }
+
+    for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+        if (fs.existsSync(path.join(dir, ".git")) || fs.existsSync(path.join(dir, "HEAD"))) {
+            return true;
+        }
+
+        if (path.dirname(dir) === dir) {
+            return false;
+        }
+    }
+};
+
 const scanProjectFiles = (cwd: string): string[] => {
+    // Outside a repository the git call can only fail, so it is not made. Every spawnSync is also a
+    // chance for Bun 1.4.2 to lose the child's exit in a long-lived process and spin until something
+    // kills it (oven-sh/bun#34069): the move tests plan about 50 moves in temp folders
+    // inside one test worker, and on 2026-11-02 three to five of those git calls hung in each of
+    // four PR runs.
+    //
     // `--show-cdup` keeps the cwd's spelling; `--show-toplevel` is the realpath, and a symlinked cwd
     // (macOS /tmp, /var) would then name every listed file by a path no move ever names.
-    const top = spawnSync("git", ["rev-parse", "--show-cdup"], { cwd, encoding: "utf8" });
-    if (top.status === 0) {
+    const top = gitMayFindRepository(cwd)
+        ? spawnSync("git", ["rev-parse", "--show-cdup"], { cwd, encoding: "utf8" })
+        : null;
+    if (top?.status === 0) {
         const root = path.resolve(cwd, top.stdout.trim());
         const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
             cwd: root,
