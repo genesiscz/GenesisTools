@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { parseByteSize, parseNonNegativeInt, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -39,6 +39,14 @@ export function registerVideoCommands(program: Command): void {
         .option("--jobs <n>", "Files encoded at once (the hardware encoder has few sessions)", "2")
         .option("--min-saving <percent>", "Discard an output that is less than this much smaller", "25")
         .option(
+            "--target-size <size>",
+            "Aim each output at this size (400MB, 1.5GB; a bare number is MB) instead of --quality; the audio is copied, the video gets the rest, and a missed size is corrected by up to two more passes"
+        )
+        .option(
+            "--height <px>",
+            "Scale a taller video down to this height; decode, scale and encode all run on the GPU"
+        )
+        .option(
             "--replace",
             'Put the result at the original path and move the original to the GenesisTools trash. An agent cannot replace a file the rm rules mark "ask": the result stays beside it. A bare trash restore refuses while the new file sits at the original path: move it to <name>.hevc.<ext> first. The summary prints the undo line, which never writes over an existing <name>.hevc.<ext>'
         )
@@ -52,6 +60,8 @@ export function registerVideoCommands(program: Command): void {
                     codec: string | boolean;
                     jobs: string;
                     minSaving: string;
+                    targetSize?: string;
+                    height?: string;
                     replace?: boolean;
                     dryRun?: boolean;
                     json?: boolean;
@@ -90,6 +100,27 @@ export function registerVideoCommands(program: Command): void {
                     return;
                 }
 
+                let targetBytes: number | undefined;
+                let height: number | undefined;
+
+                try {
+                    targetBytes =
+                        options.targetSize === undefined
+                            ? undefined
+                            : parseByteSize(options.targetSize, "--target-size");
+                    height = options.height === undefined ? undefined : parseNonNegativeInt(options.height, "--height");
+                } catch (error) {
+                    out.log.error(error instanceof Error ? error.message : String(error));
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (height !== undefined && (height < 144 || height % 2 !== 0)) {
+                    out.log.error("--height must be an even number of pixels, 144 or more.");
+                    process.exitCode = 1;
+                    return;
+                }
+
                 const unavailable = await encoderUnavailableReason(encoder);
 
                 if (unavailable) {
@@ -105,6 +136,8 @@ export function registerVideoCommands(program: Command): void {
                             paths,
                             encoder,
                             quality,
+                            targetBytes,
+                            height,
                             jobs,
                             minSavingPct,
                             replace: options.replace === true,

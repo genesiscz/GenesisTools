@@ -52,6 +52,12 @@ Flags and defaults:
   table in `src/utils/video/reencode.ts`.
 - `--jobs <n>`: 2. The hardware encoder has few sessions.
 - `--min-saving <percent>`: 25. A smaller saving discards the output.
+- `--target-size <size>`: aim each output at this size (`400MB`, `1.5GB`, a bare number is MB) instead of `--quality`.
+  The audio is copied, so the video gets the target minus the audio and a 1% container share. VideoToolbox misses an
+  average bitrate (a bare `-b:v` overshot by 36% on a talk recording), so the rate is capped and a result outside 90% to
+  103% of the target is encoded again with a corrected rate, at most twice. An input already in HEVC is a candidate too.
+- `--height <px>`: scale a taller video down to this height. Decode, `scale_vt` and the encode all stay on the GPU:
+  2 minutes of 1080p took 0.7 s of user CPU, against 11 s with ffmpeg's software scaler.
 - `--dry-run`: lists each file with its size and skip reason, writes nothing.
 - `--replace`: the result takes the original path; the original goes to the GenesisTools trash and the batch id is
   printed. An agent may not replace a file that the `tools rm` rules mark "ask": the verified result stays beside it

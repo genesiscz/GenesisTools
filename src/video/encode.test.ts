@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { parseByteSize } from "@genesiscz/utils/cli/parse";
 import {
     defaultRmConfig,
     identityOf,
@@ -25,6 +26,7 @@ import {
 import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
 import {
+    correctedKbps,
     decodeErrors,
     encodeArgs,
     ffmpegCommand,
@@ -32,6 +34,7 @@ import {
     judgeOutput,
     skipReason,
     type VideoEncoder,
+    videoKbpsForTarget,
 } from "@genesiscz/utils/video/reencode";
 import {
     collectInputs,
@@ -221,12 +224,72 @@ describe("encodeArgs", () => {
             "-encoders",
         ]);
 
-        const args = encodeArgs({ encoder, input: "/clips/a.mp4", output: "/clips/out.mp4", quality: 58 });
+        const args = encodeArgs({
+            encoder,
+            input: "/clips/a.mp4",
+            output: "/clips/out.mp4",
+            rate: { kind: "quality", quality: 58 },
+        });
         const ffmpeg = args.slice(4);
         expect(args.slice(0, 4)).toEqual(["nice", "-n", "10", "ffmpeg"]);
         expect(ffmpeg).toContain("-n");
         expect(ffmpeg).not.toContain("-y");
         expect(ffmpeg[ffmpeg.indexOf("-map") + 1]).toBe("0:V:0");
+    });
+});
+
+describe("size target and GPU scale", () => {
+    test("a resize keeps the frames on the GPU and a bitrate rate caps the encoder", () => {
+        const args = encodeArgs({
+            encoder,
+            input: "/clips/a.mp4",
+            output: "/clips/out.mp4",
+            rate: { kind: "bitrate", kbps: 420 },
+            height: 720,
+        });
+
+        expect(args).toContain("videotoolbox_vld");
+        expect(args[args.indexOf("-vf") + 1]).toBe("scale_vt=w=-2:h=720");
+        expect(args[args.indexOf("-b:v") + 1]).toBe("420k");
+        expect(args[args.indexOf("-maxrate") + 1]).toBe("420k");
+        expect(args).not.toContain("-q:v");
+        expect(args[args.indexOf("-c:a") + 1]).toBe("copy");
+    });
+
+    test("without a resize the command has no filter and no GPU frame format", () => {
+        const args = encodeArgs({ encoder, input: "/a.mp4", output: "/b.mp4", rate: { kind: "quality", quality: 58 } });
+
+        expect(args).not.toContain("-vf");
+        expect(args).not.toContain("videotoolbox_vld");
+    });
+
+    test("the video gets the target minus the copied audio and a container share", () => {
+        const input = facts({
+            durationSec: 6468.75,
+            streams: [
+                { type: "video", codec: "h264", attachedPicture: false, height: 1080 },
+                { type: "audio", codec: "aac", attachedPicture: false, bitRate: 128_000 },
+            ],
+        });
+
+        expect(videoKbpsForTarget({ facts: input, targetBytes: 400 * 1024 ** 2 })).toBe(385);
+        expect(videoKbpsForTarget({ facts: facts({ durationSec: null }), targetBytes: 1000 })).toBeNull();
+    });
+
+    test("a pass inside the band needs no correction, and a miss scales the rate by the video share", () => {
+        const target = 400_000_000;
+        const audio = 100_000_000;
+
+        expect(correctedKbps({ kbps: 400, targetBytes: target, outputBytes: 395_000_000, audio })).toBeNull();
+        // 296 MB with 100 MB of audio: the video took 196 MB of its 296 MB share (1% of the target goes to the container), so 400 becomes 604.
+        expect(correctedKbps({ kbps: 400, targetBytes: target, outputBytes: 296_000_000, audio })).toBe(604);
+    });
+
+    test("sizes parse with or without a unit, a bare number being megabytes", () => {
+        expect(parseByteSize("400", "--target-size")).toBe(400 * 1024 ** 2);
+        expect(parseByteSize("1.5GB", "--target-size")).toBe(1.5 * 1024 ** 3);
+        expect(parseByteSize("800k", "--target-size")).toBe(800 * 1024);
+        expect(() => parseByteSize("big", "--target-size")).toThrow("--target-size must be a size");
     });
 });
 
