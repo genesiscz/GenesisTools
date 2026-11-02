@@ -2617,12 +2617,17 @@ describe("highlighting is skipped when nothing would use it", () => {
 
         writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
 
-        expect(highlightRange({ path: file, range, config: batty, patch: rewrite })).toEqual([]);
+        try {
+            expect(highlightRange({ path: file, range, config: batty, patch: rewrite })).toEqual([]);
 
-        if (batPresent) {
-            // The positive control for this very assertion: same file, same range, same
-            // config, and the ONLY difference is a patch that has context.
-            expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
+            if (batPresent) {
+                // The positive control for this very assertion: same file, same range, same
+                // config, and the ONLY difference is a patch that has context.
+                expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
+            }
+        } finally {
+            // The repository is shared: a dirty file left here is in every later call's `git status`.
+            rmSync(file, { force: true });
         }
     });
 
@@ -2638,7 +2643,11 @@ describe("highlighting is skipped when nothing would use it", () => {
 
         writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
 
-        expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
+        try {
+            expect(highlightRange({ path: file, range, config: batty, patch: edited }).length).toBeGreaterThan(0);
+        } finally {
+            rmSync(file, { force: true });
+        }
     });
 
     it("still returns nothing when highlighting is off entirely", () => {
@@ -4000,6 +4009,56 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             rmSync(join(repo, "overflow-a.ts"), { force: true });
             rmSync(join(repo, "overflow-b.ts"), { force: true });
             rmSync(path, { force: true });
+        }
+    });
+
+    it("names no file past maxFiles that the call left as it found it, though it was written in the call's second", () => {
+        // 🛑 The stamp is whole seconds, so a dirty file written in the same second just BEFORE the call passes
+        // the mtime filter. The render path drops it on its empty patch; the overflow named it as changed. CI
+        // failed this way on every run (2026-11-02): a file an earlier test wrote 730 ms before the call.
+        const stale = join(repo, "window-stale.ts");
+        const first = join(repo, "window-a.ts");
+        const second = join(repo, "window-b.ts");
+        let path = "";
+
+        writeFileSync(stale, "written before the call\n");
+
+        try {
+            const current = begin(
+                { command: "perl -pi -e 1 window-a.ts window-b.ts", toolUseId: `call-window-${calls}` },
+                quiet
+            );
+            const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+            const stamp = Number(readFileSync(join(dir, "stamp"), "utf8"));
+
+            // Written at the very start of the call's own second, and the call began later in it.
+            utimesSync(stale, stamp, stamp);
+            writeFileSync(first, "alpha\n");
+            writeFileSync(second, "bravo\n");
+
+            // The positive control: the window admits the stale file, so only the hook keeps it out of the note.
+            const admitted = changedFiles({ root: repo, since: stamp * 1000, config: quiet }).map((file) => file.path);
+
+            expect(admitted).toContain(stale);
+
+            const decision = runDiffPost({
+                payload: current,
+                config: {
+                    ...DEFAULT_HOOKS_CONFIG,
+                    diff: { ...quiet, maxFiles: 1, fullDiff: "path" },
+                },
+            });
+            path = decision.stats?.fullDiff ?? "";
+            const text = readFileSync(path, "utf8");
+
+            expect(decision.files).toHaveLength(1);
+            expect(text).toContain("+bravo");
+            expect(text).not.toContain("window-stale.ts");
+            expect(decision.message).toContain("1 more changed file(s) past diff.maxFiles 1");
+        } finally {
+            for (const file of [stale, first, second, path].filter(Boolean)) {
+                rmSync(file, { force: true });
+            }
         }
     });
 

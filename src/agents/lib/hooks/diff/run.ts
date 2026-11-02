@@ -80,6 +80,30 @@ export interface DiffDecision {
 }
 
 /**
+ * The file holds exactly its captured before-state, so the call did not change it. The window opens at the whole
+ * second (`stamp`), so a dirty file written in that second just BEFORE the call passes the mtime filter. The render
+ * path drops it on its empty patch (`blockFrom`); past `maxFiles` there is no patch for every file, and the note named
+ * it as changed (CI, every run until 2026-11-02). A copy is at most `maxCaptureFileMB`, so the compare is two small
+ * reads and no `git` process.
+ */
+function sameAsBefore(before: string | null, file: ChangedFile): boolean {
+    if (before === null || file.deleted) {
+        return false;
+    }
+
+    try {
+        if (statSync(before).size !== statSync(file.path).size) {
+            return false;
+        }
+
+        return readFileSync(before).equals(readFileSync(file.path));
+    } catch {
+        // Not proven unchanged, so it is still named.
+        return false;
+    }
+}
+
+/**
  * Three sources for the before-state, in falling order of precision:
  * the captured copy, `/dev/null` for a file that did not exist, and `HEAD` for a file
  * that was clean when the command began. Passing a path that does not exist to
@@ -1546,6 +1570,10 @@ export function runDiffPost({
                     // file's earlier uncommitted edits off as this call's.
                     uncaptured += 1;
                     uncapturedFiles.push({ path: file.path, root });
+                    continue;
+                }
+
+                if (sameAsBefore(before, file)) {
                     continue;
                 }
 
