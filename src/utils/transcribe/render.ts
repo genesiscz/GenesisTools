@@ -112,13 +112,24 @@ export function suspectsCallout(suspects: TermSuggestion[], options: { tool: str
 }
 
 /** The turns as Markdown: a bold speaker per turn, one block per paragraph. */
-export function transcriptMarkdown(turns: Turn[], timestamps: boolean): string {
+export function transcriptMarkdown(
+    turns: Turn[],
+    timestamps: boolean,
+    options: {
+        /** A link that plays the moment; each timestamp gets it as `<sup>[play](…)</sup>`. */
+        playLink?: (startSec: number) => string | null;
+    } = {}
+): string {
     const blocks: string[] = [];
 
     for (const turn of turns) {
         turn.paragraphs.forEach((paragraph, index) => {
+            const at = paragraph.startSec;
+            const link = timestamps && at !== undefined ? options.playLink?.(at) : null;
             const stamp =
-                timestamps && paragraph.startSec !== undefined ? ` \`${formatClock(paragraph.startSec)}\`` : "";
+                timestamps && at !== undefined
+                    ? ` \`${formatClock(at)}\`${link ? `<sup>[play](${link})</sup>` : ""}`
+                    : "";
 
             // A quote block a mark put in the text needs its own lines, also at the start of a paragraph.
             const text = paragraph.text.replace(/\s*\n\n\s*/g, "\n\n").trim();

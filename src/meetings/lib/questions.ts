@@ -415,3 +415,11 @@ export function askedSpotSec(question: QuestionItem, transcript: TranscriptEntry
 
     return question.fromSec;
 }
+
+/**
+ * A question's number for people: `Q3` is the record's third question, in the order the questions were added. A
+ * polished transcript numbers its open questions the same way, so "Q3 b)" names one question in both.
+ */
+export function questionNumber(record: MeetingRecord, id: string): number {
+    return record.items.filter((item) => item.kind === "question").findIndex((item) => item.id === id) + 1;
+}

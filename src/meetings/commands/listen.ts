@@ -29,6 +29,7 @@ import {
     openQuestions,
     propagateAnswer,
     type QuestionItem,
+    questionNumber,
     skipQuestion,
     splitQuestion,
 } from "../lib/questions";
@@ -429,7 +430,7 @@ async function round(options: {
             }
 
             ui.header(
-                `${steps.length + 1}/${total}  ${question.id}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
+                `${steps.length + 1}/${total}  Q${questionNumber(current, question.id)} (${question.id})  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
             );
             const outcome = await options.ask(question);
 

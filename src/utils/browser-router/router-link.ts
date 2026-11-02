@@ -69,6 +69,7 @@ const ROUTING: RoutingTable = {
         },
     },
     finder: { reveal: {} },
+    "meetings-play": { play: {} },
     "claude-find": { decision: {}, text: {} },
 };
 

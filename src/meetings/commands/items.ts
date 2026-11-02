@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -580,6 +581,7 @@ async function transcript(
         withSuggested?: boolean;
         dictionary?: boolean;
         timestamps?: boolean;
+        playLinks?: boolean;
         frontmatter?: boolean;
     }
 ): Promise<void> {
@@ -645,7 +647,26 @@ async function transcript(
             );
         }
 
-        parts.push(`# ${record.title || "Untitled meeting"}`, transcriptMarkdown(turns, opts.timestamps === true));
+        const playLink = opts.playLinks
+            ? (atSec: number) =>
+                  routerLink({
+                      preset: "meetings-play",
+                      action: "play",
+                      data: { meeting: record.id, at: formatClock(atSec) },
+                      fallback: () => "",
+                  }).link
+            : undefined;
+
+        if (playLink && playLink(0) === null) {
+            ui.warn(
+                `No play links: switch the router preset on with "tools browser-router presets enable meetings-play".`
+            );
+        }
+
+        parts.push(
+            `# ${record.title || "Untitled meeting"}`,
+            transcriptMarkdown(turns, opts.timestamps === true || opts.playLinks === true, { playLink })
+        );
         out.print(`${parts.join("\n\n")}\n`);
     } catch (err) {
         fail(errorText(err));
@@ -750,5 +771,9 @@ export function registerItemCommands(program: Command): void {
         .option("--no-dictionary", "do not apply the dictionary")
         .option("--no-frontmatter", "md: omit the frontmatter")
         .option("--timestamps", "show the start time of each paragraph")
+        .option(
+            "--play-links",
+            "md: link each start time to its moment (router preset meetings-play); implies --timestamps"
+        )
         .action(transcript);
 }

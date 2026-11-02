@@ -4,7 +4,7 @@ import { applyDictionary, dictionaryLevelSchema, fuzzyMatches, mergeDictionaries
 import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
 import { importanceOf } from "./importance";
 import { stemOf } from "./languages/cs";
-import { formatClock, parseClock } from "./render";
+import { formatClock, groupTurns, parseClock, transcriptMarkdown } from "./render";
 import { LEAVE_PHRASES, type Presence, presenceSections, speakerStats } from "./speakers";
 import { citesPoint, keyWords, summaryPoints } from "./summary";
 import type { Participant, TranscriptEntry } from "./types";
@@ -322,6 +322,21 @@ describe("applyCorrections", () => {
             "To je lomeno type (/{type}).",
         ]);
         expect(md.marks).toBe(2);
+    });
+});
+
+describe("transcriptMarkdown", () => {
+    test("a play link follows each timestamp, and a quote at a paragraph's start gets its own lines", () => {
+        const turns = groupTurns([
+            line("Alice", 65, "Ahoj."),
+            line("Bob", 70, "\n\n> Kap. 2. <sup>(čte z Notes, ř. 4)</sup>\n\n"),
+        ]);
+        const md = transcriptMarkdown(turns, true, { playLink: (sec) => `https://example.com/play?at=${sec}` });
+
+        expect(md).toBe(
+            "**Alice:** `01:05`<sup>[play](https://example.com/play?at=65)</sup> Ahoj.\n\n" +
+                "**Bob:** `01:10`<sup>[play](https://example.com/play?at=70)</sup>\n\n> Kap. 2. <sup>(čte z Notes, ř. 4)</sup>"
+        );
     });
 });
 

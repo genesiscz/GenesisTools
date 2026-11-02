@@ -26,8 +26,18 @@ ONE file, `<date>-<Title>.polished.md`, next to the untouched raw export. Sectio
 7. **Transcript** (`<details>`): the polished turns.
 8. **Diffs** (`<details>`): one sub-section per kind (speakers, terms, quotes, removals), each a `diff` block with `//`
    lines for the evidence and the confidence.
-9. **Unresolved**: every `[nejasné: ...]` with its timestamp.
-10. **Open questions for the user**.
+9. **Unresolved**: every `[nejasné: ...]`, numbered `U1`, `U2`, … so the user can answer "U3 b)". Each entry: the
+   number, the timestamp, the asked words in **bold** with their sentence, then each reading on its own bullet line
+   (`- a) Filip Kalina 55 %`, `- b) …`, and a last "someone else" or "something else"), and `→ Q<n>` when a listen
+   question asks it.
+10. **Open questions for the user**: numbered `Q1`, `Q2`, …, where `Q<n>` is the record's n-th question item (the
+    number `tools meetings listen` shows in its header), then the questions that are not by ear, with their options as
+    bullets. Name the command: `tools meetings listen <meeting>`.
+
+Every inline timestamp outside the diff blocks links to its moment:
+`` `13:49`<sup>[play](https://genesis.tools/meetings/play?meeting=<meeting>&at=13%3A49)</sup> `` (router preset
+`meetings-play`, which runs `tools meetings play`). `tools meetings transcript --format md --play-links` writes them
+for the transcript.
 
 ## How to find term errors
 
