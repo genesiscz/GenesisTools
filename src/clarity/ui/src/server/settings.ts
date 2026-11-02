@@ -9,6 +9,7 @@ import { getConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
 import { saveSignIn } from "@app/clarity/lib/auth/client";
 import { curlAuthDriver } from "@app/clarity/lib/auth/curl-driver";
+import { authDrivers, findAuthDriver } from "@app/clarity/lib/auth/drivers";
 import { claritySessionStore } from "@app/clarity/lib/auth/session-store";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { type AuthStatus, pingAdo, pingClarity, pingTimelog, type ServiceAuthState } from "@app/clarity/lib/preflight";
@@ -74,6 +75,42 @@ export async function searchAdoWorkItems(
     const items = await searchWorkItems(config, query);
 
     return { items };
+}
+
+export interface UnaskedSignIn {
+    driver: string;
+    label: string;
+    identity: string;
+}
+
+/** Drivers that can sign in with no questions, and the account each would use. */
+export async function listUnaskedSignIns(): Promise<UnaskedSignIn[]> {
+    const offers = await Promise.all(
+        authDrivers()
+            .filter((d) => d.renew && d.identity)
+            .map(async (d) => ({ driver: d.id, label: d.label, identity: (await d.identity?.()) ?? null }))
+    );
+
+    return offers.filter((o): o is UnaskedSignIn => o.identity !== null);
+}
+
+export async function signInUnasked(driverId: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const driver = findAuthDriver(driverId);
+
+        if (!driver.renew) {
+            return { success: false, message: `The ${driver.label} sign-in needs a terminal.` };
+        }
+
+        const existing = await getConfig();
+        const auth = await driver.renew({ baseUrl: existing?.baseUrl });
+        const { resource } = await saveSignIn({ auth, driver, existing });
+        invalidateAssignmentView();
+
+        return { success: true, message: `Signed in${resource ? ` as ${resource.full_name}` : ""}` };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
 }
 
 export async function updateAuth(curl: string): Promise<{ success: boolean; message: string }> {

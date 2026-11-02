@@ -27,6 +27,7 @@ import { Route as ApiGranularStatusRouteImport } from './routes/api/granular-sta
 import { Route as ApiMappingsRouteImport } from './routes/api/mappings'
 import { Route as ApiMoveMappingRouteImport } from './routes/api/move-mapping'
 import { Route as ApiPostNoteRouteImport } from './routes/api/post-note'
+import { Route as ApiSignInUnaskedRouteImport } from './routes/api/sign-in-unasked'
 import { Route as ApiStatusRouteImport } from './routes/api/status'
 import { Route as ApiTeamMembersRouteImport } from './routes/api/team-members'
 import { Route as ApiTestConnectionRouteImport } from './routes/api/test-connection'
@@ -126,6 +127,11 @@ const ApiPostNoteRoute = ApiPostNoteRouteImport.update({
   path: '/api/post-note',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiSignInUnaskedRoute = ApiSignInUnaskedRouteImport.update({
+  id: '/api/sign-in-unasked',
+  path: '/api/sign-in-unasked',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiStatusRoute = ApiStatusRouteImport.update({
   id: '/api/status',
   path: '/api/status',
@@ -186,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
   '/api/post-note': typeof ApiPostNoteRoute
+  '/api/sign-in-unasked': typeof ApiSignInUnaskedRoute
   '/api/status': typeof ApiStatusRoute
   '/api/team-members': typeof ApiTeamMembersRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
@@ -214,6 +221,7 @@ export interface FileRoutesByTo {
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
   '/api/post-note': typeof ApiPostNoteRoute
+  '/api/sign-in-unasked': typeof ApiSignInUnaskedRoute
   '/api/status': typeof ApiStatusRoute
   '/api/team-members': typeof ApiTeamMembersRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
@@ -243,6 +251,7 @@ export interface FileRoutesById {
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
   '/api/post-note': typeof ApiPostNoteRoute
+  '/api/sign-in-unasked': typeof ApiSignInUnaskedRoute
   '/api/status': typeof ApiStatusRoute
   '/api/team-members': typeof ApiTeamMembersRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
@@ -273,6 +282,7 @@ export interface FileRouteTypes {
     | '/api/mappings'
     | '/api/move-mapping'
     | '/api/post-note'
+    | '/api/sign-in-unasked'
     | '/api/status'
     | '/api/team-members'
     | '/api/test-connection'
@@ -301,6 +311,7 @@ export interface FileRouteTypes {
     | '/api/mappings'
     | '/api/move-mapping'
     | '/api/post-note'
+    | '/api/sign-in-unasked'
     | '/api/status'
     | '/api/team-members'
     | '/api/test-connection'
@@ -329,6 +340,7 @@ export interface FileRouteTypes {
     | '/api/mappings'
     | '/api/move-mapping'
     | '/api/post-note'
+    | '/api/sign-in-unasked'
     | '/api/status'
     | '/api/team-members'
     | '/api/test-connection'
@@ -358,6 +370,7 @@ export interface RootRouteChildren {
   ApiMappingsRoute: typeof ApiMappingsRoute
   ApiMoveMappingRoute: typeof ApiMoveMappingRoute
   ApiPostNoteRoute: typeof ApiPostNoteRoute
+  ApiSignInUnaskedRoute: typeof ApiSignInUnaskedRoute
   ApiStatusRoute: typeof ApiStatusRoute
   ApiTeamMembersRoute: typeof ApiTeamMembersRoute
   ApiTestConnectionRoute: typeof ApiTestConnectionRoute
@@ -496,6 +509,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPostNoteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/sign-in-unasked': {
+      id: '/api/sign-in-unasked'
+      path: '/api/sign-in-unasked'
+      fullPath: '/api/sign-in-unasked'
+      preLoaderRoute: typeof ApiSignInUnaskedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/status': {
       id: '/api/status'
       path: '/api/status'
@@ -574,6 +594,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiMappingsRoute: ApiMappingsRoute,
   ApiMoveMappingRoute: ApiMoveMappingRoute,
   ApiPostNoteRoute: ApiPostNoteRoute,
+  ApiSignInUnaskedRoute: ApiSignInUnaskedRoute,
   ApiStatusRoute: ApiStatusRoute,
   ApiTeamMembersRoute: ApiTeamMembersRoute,
   ApiTestConnectionRoute: ApiTestConnectionRoute,
