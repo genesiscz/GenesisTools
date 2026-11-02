@@ -102,6 +102,10 @@ public final class FileTreeModel: ObservableObject {
     @Published public private(set) var root: URL
     private var expanded = Set<String>()
     private var children: [String: [FileTreeEntry]] = [:]
+    /// Hidden folders and files a reveal walked through (`.claude` in `CEZ/.claude/docs/x.md`). The listing skips
+    /// hidden items, so without these a revealed file under a dot-folder never got a row and "Show in Sidebar"
+    /// scrolled nowhere (2026-11-02). Only these show; every other hidden item stays hidden.
+    private var shownHidden = Set<String>()
     private var loading = Set<String>()
     /// Folders refreshed while their read was running: that read may predate the change.
     private var stale = Set<String>()
@@ -120,6 +124,19 @@ public final class FileTreeModel: ObservableObject {
     var reduceMotion = false
     /// The directory read. A test holds the first snapshot so a disk event can land before that snapshot is published.
     var listing: @Sendable (String) -> [FileTreeEntry] = { FileTreeListing.entries(of: $0) }
+    /// Lists names that start with a dot (`.claude`, `.github`); off, they show only on the way to a revealed file
+    /// (`shownHidden`). A change reads every open folder again.
+    public var showsHidden = false {
+        didSet {
+            guard oldValue != showsHidden else { return }
+            let hidden = showsHidden
+            listing = { FileTreeListing.entries(of: $0, includeHidden: hidden) }
+            // Nothing read yet (the host sets this before its first `setRoot`): the first read uses it already.
+            if !children.isEmpty || !loading.isEmpty {
+                reload()
+            }
+        }
+    }
     /// Off in a test that drives `diskChanged` itself: the real stream's own events would re-read the folder and hide
     /// whether the call under test did.
     var watchesDisk = true
@@ -188,6 +205,10 @@ public final class FileTreeModel: ObservableObject {
             folder = folder.deletingLastPathComponent()
         }
         guard folder.path == rootPath else { return }
+        let path = file.standardizedFileURL.path.nativeUTF8
+        for item in chain + [path] where (item as NSString).lastPathComponent.hasPrefix(".") {
+            shownHidden.insert(item)
+        }
         // Every tab selection reveals its note, and a rebuild walks every open folder's rows: only a folder that
         // opens now changes the tree (a read that lands rebuilds by itself).
         var opened = false
@@ -203,9 +224,9 @@ public final class FileTreeModel: ObservableObject {
         // A note another app wrote after its folder was read is not in that listing, so the reveal found no row and
         // did nothing (2026-10-15: notes saved at 05:30:49, "Show in Sidebar" on one at 05:33:14). Such a folder is
         // read again; the row arrives with the new listing.
-        let path = file.standardizedFileURL.path
         for (parent, child) in zip([rootPath] + chain.reversed(), chain.reversed() + [path]) {
-            if let listed = children[parent], !listed.contains(where: { $0.path == child }),
+            // A hidden child is never in a listing: `entries(in:)` adds it, so a relist would find nothing new.
+            if let listed = children[parent], !listed.contains(where: { $0.path == child }), !shownHidden.contains(child),
                FileManager.default.fileExists(atPath: child) {
                 relist(parent)
             }
@@ -320,11 +341,26 @@ public final class FileTreeModel: ObservableObject {
         }
     }
 
+    /// A read folder's listing plus the hidden items a reveal walked through (`shownHidden`), in the listing's order.
+    private func entries(in folder: String) -> [FileTreeEntry] {
+        guard let listed = children[folder] else { return [] }
+        let extra = shownHidden.filter { hidden in
+            (hidden as NSString).deletingLastPathComponent == folder && !listed.contains { $0.path == hidden }
+        }
+        guard !extra.isEmpty else { return listed }
+        let added = extra.compactMap { hidden -> FileTreeEntry? in
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: hidden, isDirectory: &isFolder) else { return nil }
+            return FileTreeEntry(path: hidden, name: (hidden as NSString).lastPathComponent.nativeUTF8, isFolder: isFolder.boolValue)
+        }
+        return FileTreeListing.sorted(listed + added)
+    }
+
     /// The flat list of what is visible: depth-first, an open folder's children right under it.
     private func rebuild() {
         var out: [FileTreeRow] = []
         func walk(_ path: String, depth: Int) {
-            for entry in children[path] ?? [] {
+            for entry in entries(in: path) {
                 let open = entry.isFolder && expanded.contains(entry.path)
                 out.append(FileTreeRow(
                     id: entry.path,
@@ -347,15 +383,16 @@ public final class FileTreeModel: ObservableObject {
 }
 
 public enum FileTreeListing {
-    /// One directory, folders first, then files, each in Finder's order; hidden files skipped.
-    /// Never throws: an unreadable folder lists as empty.
-    public static func entries(of path: String) -> [FileTreeEntry] {
+    /// One directory, folders first, then files, each in Finder's order; hidden files skipped unless `includeHidden`.
+    /// Finder's `.DS_Store` never lists. Never throws: an unreadable folder lists as empty.
+    public static func entries(of path: String, includeHidden: Bool = false) -> [FileTreeEntry] {
         let url = URL(fileURLWithPath: path)
         let keys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey]
-        guard let items = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else {
+        let options: FileManager.DirectoryEnumerationOptions = includeHidden ? [] : [.skipsHiddenFiles]
+        guard let items = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: options) else {
             return []
         }
-        let entries = items.map { item -> FileTreeEntry in
+        let entries = items.filter { $0.lastPathComponent != ".DS_Store" }.map { item -> FileTreeEntry in
             let values = try? item.resourceValues(forKeys: Set(keys))
             // A package (an .app, a .bundle) is one item, as in Finder.
             let folder = (values?.isDirectory ?? false) && !(values?.isPackage ?? false)
@@ -364,7 +401,12 @@ public enum FileTreeListing {
                 path: item.standardizedFileURL.path.nativeUTF8, name: item.lastPathComponent.nativeUTF8, isFolder: folder
             )
         }
-        return entries.sorted { left, right in
+        return sorted(entries)
+    }
+
+    /// Folders first, then files, each in Finder's order.
+    public static func sorted(_ entries: [FileTreeEntry]) -> [FileTreeEntry] {
+        entries.sorted { left, right in
             if left.isFolder != right.isFolder {
                 return left.isFolder
             }

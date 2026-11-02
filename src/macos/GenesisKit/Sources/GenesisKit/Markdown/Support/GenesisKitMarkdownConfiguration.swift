@@ -196,6 +196,8 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     @Published public var goToFiles: MarkdownGoToFiles { didSet { store(goToFiles.rawValue, "goToFiles") } }
     /// Names that start with a dot are listed from the first letter. Off: only once the typed name starts with a dot.
     @Published public var goToShowsHidden: Bool { didSet { store(goToShowsHidden, "goToShowsHidden") } }
+    /// The file sidebar lists names that start with a dot. Off: only those on the way to a note it reveals.
+    @Published public var treeShowsHidden: Bool { didSet { store(treeShowsHidden, "treeShowsHidden") } }
     /// The files opened lately head the list while the field still holds the folder it opened with.
     @Published public var goToRecents: Bool { didSet { store(goToRecents, "goToRecents") } }
     /// The folder the field holds when it opens.
@@ -272,6 +274,7 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         completeWhileTyping = bool("completeWhileTyping", true)
         goToFiles = string("goToFiles").flatMap(MarkdownGoToFiles.init(rawValue:)) ?? .notes
         goToShowsHidden = bool("goToShowsHidden", false)
+        treeShowsHidden = bool("treeShowsHidden", true)
         goToRecents = bool("goToRecents", true)
         goToStartsIn = string("goToStartsIn").flatMap(MarkdownGoToStart.init(rawValue:)) ?? .noteFolder
         goToOpensAs = string("goToOpensAs").flatMap(MarkdownGoToOpen.init(rawValue:)) ?? .tab
