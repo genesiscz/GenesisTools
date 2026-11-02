@@ -133,6 +133,7 @@ struct SettingsView: View {
     @AppStorage(ApprovalAttention.soundKey) private var approvalSound = ApprovalAttention.defaultSound
     @AppStorage(ApprovalAttention.notifyAfterKey) private var approvalNotifyAfter = ApprovalAttention.defaultNotifyAfter
     @AppStorage(ApprovalAttention.lingerKey) private var approvalLinger = ApprovalAttention.defaultLinger
+    @AppStorage(ApprovalAttention.confirmWithinKey) private var approvalConfirmWithin = ApprovalAttention.defaultConfirmWithin
 
     var body: some View {
         Form {
@@ -175,7 +176,12 @@ struct SettingsView: View {
                         Text(choice.title).tag(choice.seconds)
                     }
                 }
-                Text("A program that asks for the vault key or an AI account opens a request window. The window never takes the keyboard by itself, so this sound and notification tell you it is waiting. A delete request's window stays after your touch to say where the items went and to offer the restore command.")
+                Picker("Ask once more for an approval that comes", selection: $approvalConfirmWithin) {
+                    ForEach(ApprovalAttention.confirmWithinChoices) { choice in
+                        Text(choice.title).tag(choice.milliseconds)
+                    }
+                }
+                Text("A program that asks for the vault key or an AI account opens a request window. The window never takes the keyboard by itself, so this sound and notification tell you it is waiting. A delete request's window stays after your touch to say where the items went and to offer the restore command. A touch or a click that comes right as a window opens asks once more, so a finger already on the sensor cannot approve a request you have not read.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

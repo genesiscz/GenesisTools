@@ -78,49 +78,6 @@ private func gateEmit(decision: String, rememberSeconds: Int, method: String, re
     ])
 }
 
-/// Touch ID first, then the account password when biometrics are unavailable or the user picks
-/// the fallback. A cancel at either step is a deny. The vault window (VaultUnlock.swift) confirms with it too.
-func authenticate(reason: String, completion: @escaping (_ method: String?, _ failure: String) -> Void) {
-    let biometric = LAContext()
-    biometric.localizedFallbackTitle = "Use Password"
-    var unavailable: NSError?
-
-    guard biometric.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &unavailable) else {
-        let password = LAContext()
-        password.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, error in
-            DispatchQueue.main.async {
-                completion(ok ? "password" : nil, error?.localizedDescription ?? "password authentication failed")
-            }
-        }
-        return
-    }
-
-    biometric.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { ok, error in
-        DispatchQueue.main.async {
-            if ok {
-                completion("touch-id", "")
-                return
-            }
-
-            let code = (error as? LAError)?.code
-
-            // The user chose "Use Password", or the sensor is locked out: the password policy is
-            // the same question asked another way, not a second chance for a deny.
-            if code == .userFallback || code == .biometryLockout {
-                let password = LAContext()
-                password.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { ok, error in
-                    DispatchQueue.main.async {
-                        completion(ok ? "password" : nil, error?.localizedDescription ?? "password authentication failed")
-                    }
-                }
-                return
-            }
-
-            completion(nil, error?.localizedDescription ?? "Touch ID failed")
-        }
-    }
-}
-
 /// What the gate window shows, built from the CLI's request. Pure, so tests read it.
 struct GateWindowContent {
     var title: String
@@ -214,17 +171,23 @@ func approveGate(_ params: GateApproveParams) {
     func record(_ event: String, _ extra: [String: Any] = [:]) {
         GateAudit.write(gate: "ai-account", event: event, audit.merging(extra) { _, new in new })
     }
-    let biometric = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+    let reason = params.tokenKind == "api-key"
+        ? "give “\(params.client.name)” the API key of the \(params.provider) account \(params.account.name)"
+        : "allow “\(params.client.name)” to use the \(params.provider) account \(params.account.name)"
 
     DispatchQueue.main.async {
+        // Touch ID in the window, as in the rm window: a touch approves, "Use password…" is the fallback.
+        let verifier = ApprovalVerifier(reason: reason)
+        verifier.onEvent = { logClick("gate.approve \($0)") }
         let model = ApprovalDialogModel(
             title: content.title, purpose: content.purpose, symbol: "person.badge.key.fill", facts: content.facts,
             details: content.details, warning: content.warning,
             footnote: "Every decision is written to the gate audit log (tools ai gate audit).",
             rememberChoices: content.rememberChoices.count > 1 ? content.rememberChoices : [],
             rememberNote: content.rememberChoices.count > 1 ? nil : "Only once",
-            allowTitle: biometric ? "Allow with Touch ID" : "Allow…",
-            deadline: Date().addingTimeInterval(gateDeadlineSeconds), identifier: "gate-approve")
+            allowTitle: "Use password…",
+            deadline: Date().addingTimeInterval(gateDeadlineSeconds), identifier: "gate-approve", verifier: verifier,
+            hint: "Esc denies")
 
         // The NSAlert this replaces ran a modal loop on the main queue, so this timer never fired there.
         let deadline = DispatchWorkItem {
@@ -240,23 +203,12 @@ func approveGate(_ params: GateApproveParams) {
             gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: "denied in the approval window")
         }
 
-        model.onAllow = { choice in
+        model.onVerified = { method, choice in
             deadline.cancel()
             gatePresenter.close()
             let remember = choice?.seconds ?? 0
-            let reason = params.tokenKind == "api-key"
-                ? "give “\(params.client.name)” the API key of the \(params.provider) account \(params.account.name)"
-                : "allow “\(params.client.name)” to use the \(params.provider) account \(params.account.name)"
-
-            authenticate(reason: reason) { method, failure in
-                guard let method else {
-                    record("denied", ["detail": failure])
-                    gateEmit(decision: "deny", rememberSeconds: 0, method: "none", reason: failure)
-                }
-
-                record("allowed", ["method": method, "rememberSeconds": remember])
-                gateEmit(decision: "allow", rememberSeconds: remember, method: method, reason: "")
-            }
+            record("allowed", ["method": method, "rememberSeconds": remember])
+            gateEmit(decision: "allow", rememberSeconds: remember, method: method, reason: "")
         }
 
         record("prompted", ["shown": GateAudit.shown(title: content.title, purpose: content.purpose,
