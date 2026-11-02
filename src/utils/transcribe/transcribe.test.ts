@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { applyDictionary, dictionaryLevelSchema, mergeDictionaries } from "./dictionary";
 import { LEAVE_PHRASES, speakerStats } from "./speakers";
 import type { Participant, TranscriptEntry } from "./types";
 
@@ -90,5 +91,59 @@ describe("speakerStats", () => {
         const split = hints.find((h) => h.kind === "split-voice");
 
         expect(split).toMatchObject({ strength: "strong", join: { left: "dot", right: "áhnu", joined: "dotáhnu" } });
+    });
+});
+
+describe("dictionary", () => {
+    const mop = { type: "abbr", value: "MOP", substitution: "MOP (Obchodní partner podnikatel)" } as const;
+
+    test("an abbreviation's substitution must contain the abbreviation, and the error names the entry", () => {
+        const bad = dictionaryLevelSchema.safeParse({
+            entries: [mop, { type: "abbr", value: "MOO", substitution: "Moje Obchodní Oddělení" }],
+        });
+
+        expect(bad.success).toBe(false);
+        expect(bad.error?.issues[0]?.path).toEqual(["entries", 1, "substitution"]);
+        expect(bad.error?.issues[0]?.message).toContain('"MOO (Moje Obchodní Oddělení)"');
+        expect(dictionaryLevelSchema.safeParse({ entries: [mop] }).success).toBe(true);
+    });
+
+    test("a later level wins for its value and its expansion setting", () => {
+        const merged = mergeDictionaries([
+            { abbrExpansion: "every", entries: [mop, { type: "fix", value: "UVČ", substitution: "UI" }] },
+            { abbrExpansion: "first", entries: [{ type: "fix", value: "UVČ", substitution: "UIčko" }] },
+            undefined,
+        ]);
+
+        expect(merged.abbrExpansion).toBe("first");
+        expect(merged.entries).toContainEqual({ type: "fix", value: "UVČ", substitution: "UIčko" });
+        expect(merged.entries).toHaveLength(2);
+    });
+
+    const lines = [
+        line("Alice Example", 0, "MOP má nové UVČ."),
+        line("Bob Example", 5, "Ano, MOP (Obchodní partner podnikatel) i MOPy."),
+        line("Alice Example", 9, "Tak MOP dořešíme."),
+    ];
+    const fix = { type: "fix", value: "UVČ", substitution: "UIčko" } as const;
+
+    test("every mention: each whole-word MOP is expanded once, a written-out one and MOPy are left alone", () => {
+        const applied = applyDictionary(lines, { abbrExpansion: "every", entries: [mop, fix] });
+
+        expect(applied.entries.map((e) => e.text)).toEqual([
+            "MOP (Obchodní partner podnikatel) má nové UIčko.",
+            "Ano, MOP (Obchodní partner podnikatel) i MOPy.",
+            "Tak MOP (Obchodní partner podnikatel) dořešíme.",
+        ]);
+        expect(applied).toMatchObject({ fixes: 1, expansions: 2 });
+    });
+
+    test("first mention only, and off", () => {
+        const first = applyDictionary(lines, { abbrExpansion: "first", entries: [mop] });
+        const off = applyDictionary(lines, { abbrExpansion: "off", entries: [mop] });
+
+        expect(first.entries.map((e) => e.text)[2]).toBe("Tak MOP dořešíme.");
+        expect(first.expansions).toBe(1);
+        expect(off.entries).toEqual(lines);
     });
 });
