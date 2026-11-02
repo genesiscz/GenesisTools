@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { findingItems, findingProblem, findingsFileSchema } from "./lib/findings";
@@ -21,6 +24,7 @@ import {
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
 import { suggestItems } from "./lib/suggest";
+import { correctionsOf } from "./lib/transcript-corrections";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
@@ -240,6 +244,50 @@ describe("evidence ranges (R4.1)", () => {
             [0, 0],
             [20, 20],
         ]);
+    });
+});
+
+describe("--with-suggested (R4.2)", () => {
+    test("applies a suggested item at applyAbove or more and a person's own; a lower one is marked unclear", () => {
+        const range = (id: string, fromSec: number, speaker: string, confidence?: number) =>
+            meetingItemSchema.parse({
+                id,
+                kind: "speaker-range",
+                status: "suggested",
+                label: "Carol Example",
+                fromSec,
+                toSec: fromSec,
+                speaker,
+                ...(confidence === undefined ? {} : { confidence }),
+                rules: [confidence === undefined ? MeetingRule.User : MeetingRule.Channel],
+                suggestedAt: "2026-11-02T15:00:00.000Z",
+            });
+        const withItems = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                range("i1", 0, "Alice Example", 0.5),
+                range("i2", 10, "Bob Example", 0.44),
+                range("i3", 20, "Dave Example"),
+            ],
+        });
+        const entries = [
+            line("Carol Example", 0, "Já to udělám."),
+            line("Carol Example", 10, "Možná já."),
+            line("Carol Example", 20, "Já taky."),
+        ];
+        const config = meetingsConfigSchema.parse({});
+        const shown = (withSuggested: boolean) =>
+            applyCorrections(
+                entries,
+                correctionsOf(withItems, config, { withSuggested, dictionary: false, format: "txt" })
+            ).entries.map((entry) => entry.speaker);
+
+        expect(shown(true)).toEqual([
+            "Alice Example",
+            '[nejasné: "Carol Example"; 1) Bob Example 44 %]',
+            "Dave Example",
+        ]);
+        expect(shown(false)).toEqual(["Carol Example", "Carol Example", "Carol Example"]);
     });
 });
 
