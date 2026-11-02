@@ -92,6 +92,39 @@ export interface Presence {
     toSec: number;
 }
 
+/** Who is in the call over one stretch: one section per interval between two join or leave times. */
+export interface PresenceSection {
+    fromSec: number;
+    toSec: number;
+    present: string[];
+}
+
+/**
+ * Sections from the stays: a new section starts at every join and every leave, so a person who leaves and comes back
+ * is present in the sections of both stays. An open stay (still in the call) ends at the last known time.
+ */
+export function presenceSections(presence: Presence[]): PresenceSection[] {
+    const finite = presence.map((stay) => ({ ...stay, toSec: Number.isFinite(stay.toSec) ? stay.toSec : Number.NaN }));
+    const lastKnown = Math.max(
+        ...finite.flatMap((stay) => [stay.fromSec, Number.isNaN(stay.toSec) ? stay.fromSec : stay.toSec])
+    );
+    const stays = finite.map((stay) => ({ ...stay, toSec: Number.isNaN(stay.toSec) ? lastKnown : stay.toSec }));
+    const edges = [...new Set(stays.flatMap((stay) => [Math.max(0, stay.fromSec), stay.toSec]))].sort((a, b) => a - b);
+    const sections: PresenceSection[] = [];
+
+    for (let index = 1; index < edges.length; index += 1) {
+        const fromSec = edges[index - 1]!;
+        const toSec = edges[index]!;
+        const middle = (fromSec + toSec) / 2;
+        const present = [
+            ...new Set(stays.filter((stay) => middle >= stay.fromSec && middle <= stay.toSec).map((stay) => stay.name)),
+        ];
+        sections.push({ fromSec, toSec, present });
+    }
+
+    return sections;
+}
+
 /** Rule RA: attendance times are exact to a few seconds; a line this close to a join or leave still counts. */
 export const PRESENCE_TOLERANCE_SEC = 5;
 /** Rule R15: an attendee silent under their own label this long is probably heard under other labels. */

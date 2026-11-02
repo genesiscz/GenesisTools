@@ -9,7 +9,7 @@ import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcr
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { loadPresence } from "../lib/attendance";
+import { presenceFor } from "../lib/presence";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
 
@@ -59,14 +59,7 @@ async function evidence(
             return;
         }
 
-        const presence = opts.attendance
-            ? (
-                  await loadPresence(
-                      { title: record.calendar?.title ?? meeting.title, start: meeting.start },
-                      opts.attendance
-                  )
-              ).presence
-            : undefined;
+        const presence = await presenceFor(record, meeting, opts.attendance);
         const lines = lineEvidence(meeting.transcript, found, presence);
         const selfLabelWords = meeting.transcript
             .filter((entry) => found.selfName && sameName(entry.speaker, found.selfName))

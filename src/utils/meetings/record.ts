@@ -118,6 +118,17 @@ export const meetingRecordSchema = z.object({
     /** The meeting's own dictionary level, over the project's and the global one. */
     dictionary: dictionaryLevelSchema.optional(),
     items: z.array(meetingItemSchema).default([]),
+    /** Who was in the call and when (Teams), on the transcript clock. The user is stored under their own name. */
+    attendance: z
+        .object({
+            from: z.string(),
+            people: z.array(
+                z.object({ name: z.string(), self: z.boolean().optional(), fromSec: z.number(), toSec: z.number() })
+            ),
+        })
+        .optional(),
+    /** One section per interval between two joins or leaves, derived from `attendance`: who is present then. */
+    sections: z.array(z.object({ fromSec: z.number(), toSec: z.number(), present: z.array(z.string()) })).optional(),
     /** Written by `record stop`; its shape is owned by the recorder. */
     recording: z.record(z.string(), z.unknown()).optional(),
     /** One line per command that changed the record. Never rewritten. */
