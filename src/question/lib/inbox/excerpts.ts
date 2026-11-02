@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { checkoutsAt } from "@genesiscz/utils/git/local-checkouts";
@@ -15,6 +15,9 @@ const MAX_LINES = 40;
 const MAX_CHARS = 8_000;
 /** No decision points at more files than this; a runaway reply cannot make the loader read the disk forever. */
 const MAX_REFS = 12;
+/** A cited line further into its file than this is not read: one excerpt never reads more of the disk than this. */
+const MAX_READ_BYTES = 1024 * 1024;
+const READ_CHUNK_BYTES = 64 * 1024;
 
 const LANGUAGE: Record<string, string> = {
     ts: "typescript",
@@ -58,8 +61,18 @@ const FILES_TTL_MS = 60_000;
 /** A checkout with more files than this is not searched by suffix (a home folder, a monorepo of vendored trees). */
 const MAX_FILES = 200_000;
 
+/** Lines `from` to `to` of a file, counted from 1, both included. */
+interface LineWindow {
+    from: number;
+    to: number;
+}
+
 interface ReadDeps {
-    read: (path: string) => string;
+    /**
+     * Lines `from` to `to` of the file at `path`, joined and cut at MAX_CHARS. It reads from the start of the file no
+     * further than line `to`, and never past MAX_READ_BYTES, so a large file costs its first lines only.
+     */
+    excerpt: (path: string, window: LineWindow) => string;
     /** Whether a regular file is at `path`. */
     isFile: (path: string) => boolean;
     /** The folders a relative ref is tried against, most specific first: the session's folder, its checkout, the main checkout. */
@@ -103,18 +116,76 @@ function sessionRoots(cwd: string): string[] {
     return [...new Set([cwd, project, main].filter((root): root is string => Boolean(root)))];
 }
 
+/**
+ * The real `excerpt` reader: the file's head, chunk by chunk, until line `to` ends or `maxBytes` are read. A line
+ * the budget cuts is left out, so the excerpt ends at the last whole line before it, and the cut is logged.
+ */
+export function readExcerpt(
+    path: string,
+    { from, to, maxBytes = MAX_READ_BYTES }: LineWindow & { maxBytes?: number }
+): string {
+    if (to < from) {
+        return "";
+    }
+
+    const fd = openSync(path, "r");
+
+    try {
+        const total = fstatSync(fd).size;
+        const budget = Math.min(total, maxBytes);
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let newlines = 0;
+
+        while (newlines < to && size < budget) {
+            const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, budget - size));
+            const read = readSync(fd, chunk, 0, chunk.length, size);
+
+            if (read === 0) {
+                break;
+            }
+
+            const part = chunk.subarray(0, read);
+            chunks.push(part);
+            size += read;
+
+            for (let at = part.indexOf(10); at !== -1; at = part.indexOf(10, at + 1)) {
+                newlines++;
+            }
+        }
+
+        const lines = Buffer.concat(chunks, size).toString("utf8").split("\n");
+
+        if (newlines < to && size < total) {
+            log.debug(
+                { path, to, maxBytes, total },
+                "inbox: a cited line lies past the read budget; the excerpt ends before it"
+            );
+            lines.length = newlines;
+        }
+
+        return lines
+            .slice(from - 1, to)
+            .join("\n")
+            .slice(0, MAX_CHARS);
+    } finally {
+        closeSync(fd);
+    }
+}
+
 const realDeps: ReadDeps = {
-    read: (path) => readFileSync(path, "utf8"),
+    excerpt: (path, window) => readExcerpt(path, window),
     isFile: (path) => statSync(path, { throwIfNoEntry: false })?.isFile() ?? false,
     roots: sessionRoots,
     files: listFiles,
 };
 
-/** Files whose text a caching reader keeps, and session folders whose roots it keeps; past it the oldest goes. */
-const CACHED_FILES = 64;
+/**
+ * Excerpts a caching reader keeps (one per file and line window, each at most MAX_CHARS), and session folders whose
+ * roots it keeps; past it the oldest goes.
+ */
+const CACHED_EXCERPTS = 128;
 const CACHED_ROOTS = 64;
-/** A file longer than this is read every time rather than kept in memory. */
-const MAX_CACHED_CHARS = 256_000;
 
 /** What a file's text depends on: its size and modification time; null when no regular file is there. */
 function fileStamp(path: string): string | null {
@@ -137,9 +208,10 @@ function remember<V>(map: Map<string, V>, key: string, value: V, limit: number):
 }
 
 /**
- * `base` with a memory, for a caller that fills the same refs again every few seconds (the widget snapshot): a file
- * is read again only when its size or modification time changed, and a folder's roots are looked up again after
- * FILES_TTL_MS, as a checkout's file list is. The stamp is taken before the read, so a file changed during the read
+ * `base` with a memory, for a caller that fills the same refs again every few seconds (the widget snapshot): an
+ * excerpt is read again only when its file's size or modification time changed, and a folder's roots are looked up
+ * again after FILES_TTL_MS, as a checkout's file list is. It keeps the excerpts, never a file's whole text, so a large
+ * cited file costs one bounded read per change. The stamp is taken before the read, so a file changed during the read
  * gets a new stamp and is read again next time.
  */
 export function cachingReadDeps({
@@ -151,25 +223,26 @@ export function cachingReadDeps({
     stamp?: (path: string) => string | null;
     now?: () => number;
 } = {}): ReadDeps {
-    const texts = new Map<string, { stamp: string; text: string }>();
+    const excerpts = new Map<string, { stamp: string; text: string }>();
     const roots = new Map<string, { at: number; roots: string[] }>();
 
     return {
         ...base,
-        read: (path) => {
+        excerpt: (path, window) => {
+            const key = `${path}\0${window.from}\0${window.to}`;
             const current = stamp(path);
-            const cached = texts.get(path);
+            const cached = excerpts.get(key);
 
             if (current !== null && cached?.stamp === current) {
-                remember(texts, path, cached, CACHED_FILES);
+                remember(excerpts, key, cached, CACHED_EXCERPTS);
                 return cached.text;
             }
 
-            texts.delete(path);
-            const text = base.read(path);
+            excerpts.delete(key);
+            const text = base.excerpt(path, window);
 
-            if (current !== null && text.length <= MAX_CACHED_CHARS) {
-                remember(texts, path, { stamp: current, text }, CACHED_FILES);
+            if (current !== null) {
+                remember(excerpts, key, { stamp: current, text }, CACHED_EXCERPTS);
             }
 
             return text;
@@ -201,9 +274,9 @@ export interface ExcerptTrace {
  */
 export function tracedReadDeps(trace: ExcerptTrace): ReadDeps {
     return {
-        read: (path) => {
+        excerpt: (path, window) => {
             trace.probe(path);
-            return realDeps.read(path);
+            return realDeps.excerpt(path, window);
         },
         isFile: (path) => {
             trace.probe(path);
@@ -317,16 +390,9 @@ function fillRef(ref: InboxRef, cwd: string | undefined, deps: ReadDeps): InboxR
     }
 
     try {
-        const lines = deps.read(absolute).split("\n");
         const start = Math.max(1, ref.line - BEFORE);
-        const end = Math.min(
-            lines.length,
-            ref.endLine ? Math.min(ref.endLine, ref.line + MAX_LINES - 1) : ref.line + AFTER
-        );
-        const excerpt = lines
-            .slice(start - 1, end)
-            .join("\n")
-            .slice(0, MAX_CHARS);
+        const end = ref.endLine ? Math.min(ref.endLine, ref.line + MAX_LINES - 1) : ref.line + AFTER;
+        const excerpt = deps.excerpt(absolute, { from: start, to: end });
 
         return { ...base, excerpt: excerpt.length > 0 ? excerpt : null, startLine: start, missing: false };
     } catch (error) {
