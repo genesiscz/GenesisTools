@@ -49,6 +49,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
         },
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: claudeClassifyPath,
+        readChanges: () => null,
         roots: () => options.roots,
         read: async () => {
             throw new Error("fixture reader does not read transcripts");

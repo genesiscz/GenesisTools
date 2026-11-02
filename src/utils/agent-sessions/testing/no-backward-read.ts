@@ -24,3 +24,8 @@ export function classifiesNoPath(): null {
 export function noRowAnchors(): RowAnchorWalk {
     return () => ({ messageIds: [], toolCallIds: [], turnIds: [] });
 }
+
+/** `readChanges` for a test reader whose sessions record no file changes. */
+export function noSessionChanges(): null {
+    return null;
+}
