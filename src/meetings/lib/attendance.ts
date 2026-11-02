@@ -4,11 +4,16 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
-import type { Meeting } from "./types";
 
-const { log } = logger.scoped("wisprflow-attendance");
+/** The meeting the attendance is for: its title (the Teams chat is found by it) and its start (transcript second 0). */
+export interface AttendanceTarget {
+    title: string;
+    start: string;
+}
 
-/** A Teams call more than this far from the Wispr meeting's start is another occurrence of the meeting. */
+const { log } = logger.scoped("meetings-attendance");
+
+/** A Teams call more than this far from the meeting's start is another occurrence of the meeting. */
 const SAME_CALL_WITHIN_MS = 30 * 60_000;
 const TEAMS_TIMEOUT_MS = 60_000;
 
@@ -34,7 +39,7 @@ export interface LoadedPresence {
     note: string;
 }
 
-async function readCalls(spec: string, meeting: Meeting): Promise<{ raw: string; from: string }> {
+async function readCalls(spec: string, meeting: AttendanceTarget): Promise<{ raw: string; from: string }> {
     if (spec !== "teams") {
         if (!existsSync(spec)) {
             throw new Error(`--attendance ${spec}: no such file (or use --attendance teams)`);
@@ -67,10 +72,10 @@ function closestCall(calls: AttendanceCall[], startMs: number): AttendanceCall |
 }
 
 /**
- * Teams attendance for a Wispr meeting, on the transcript clock. Wispr's transcript second 0 is the meeting's
- * `start` (checked 2026-11-02: every confirmed goodbye fell within 4 s of a Teams leave time).
+ * Teams attendance for a meeting, on the transcript clock: second 0 is the meeting's `start` (checked 2026-11-02 for
+ * Wispr Flow: every confirmed goodbye fell within 4 s of a Teams leave time).
  */
-export async function loadPresence(meeting: Meeting, spec: string): Promise<LoadedPresence> {
+export async function loadPresence(meeting: AttendanceTarget, spec: string): Promise<LoadedPresence> {
     const { raw, from } = await readCalls(spec, meeting);
     const calls = attendanceSchema.parse(SafeJSON.parse(raw, { strict: true }));
     const startMs = Date.parse(meeting.start);

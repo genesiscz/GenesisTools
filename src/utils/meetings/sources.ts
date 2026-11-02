@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { MeetingCalendar, MeetingParticipant } from "./record";
 
 /** The sources a meeting's transcript can come from. A new source is one entry here and one implementation. */
@@ -12,6 +12,8 @@ export interface SourceMeeting {
     start: string;
     end?: string;
     participants: MeetingParticipant[];
+    /** The diarized speakers with their number and who named them (platform, llm, self). */
+    speakers: Participant[];
     transcript: TranscriptEntry[];
     /** The calendar event the source links the meeting to, when it has one. */
     calendar?: MeetingCalendar;

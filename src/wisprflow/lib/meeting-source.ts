@@ -49,6 +49,7 @@ function toSourceMeeting(meeting: Meeting): SourceMeeting {
             ...(person.isSelf ? { self: true } : {}),
             from: ["wisprflow"],
         })),
+        speakers: meeting.participants,
         transcript: meeting.transcript,
         calendar: calendarFor(meeting),
         folders: meeting.folders.map((folder) => folder.name),

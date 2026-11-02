@@ -16,6 +16,13 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `set <meeting> --project <name> \| --title <text>` | Change a field |
 | `link <meeting> wisprflow:<id>` | Attach a source's meeting to an existing record |
 | `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
+| `speakers stats <meeting> [--attendance teams\|<file>]` | Per label: origin, turns, spoken time, spans, with hints |
+| `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
+| `suggest <meeting> [--rules speakers,terms] [--attendance teams\|<file>]` | Run the rules and add what they find as suggested items |
+| `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
+| `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
+| `reject <meeting> <ids…>` | Reject items; they are never suggested again |
+| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |
@@ -32,6 +39,19 @@ the record's `history`, and a change that would make the record invalid writes n
 Every command that creates or changes a meeting resolves its project in this order: `--project` (a new name joins
 the known projects), the meeting's own, one matching project (`projects.<name>.match`), a choice in a terminal, and
 without a terminal no project. `show` then says how to set it.
+
+## Items
+
+A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
+confirmed items change a transcript (`--with-suggested` previews the rest).
+
+- `speaker-range`: lines of a label that belong to someone else. RA (Teams attendance) names the people in the call
+  as candidates, or the one person left; R1 and R5 mark a goodbye the label keeps talking after, R13 when another
+  label answered it, R14 when it echoes another label's goodbye.
+- `join`: a word cut between two lines ("dot" + "áhnu").
+- `term`: a misheard term and its proposed spelling.
+
+A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
 
 ## The dictionary
 
