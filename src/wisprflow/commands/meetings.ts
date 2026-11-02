@@ -2,16 +2,19 @@ import { join } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
+import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import {
+    formatClock,
     formatNeedsTimes,
     localTime,
     TRANSCRIPT_FORMATS,
     type TranscriptFormat,
 } from "@genesiscz/utils/transcribe/render";
+import { DEFAULT_SPAN_GAP_SEC, type SpeakerHint, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import {
     applyFixes,
     buildVocabulary,
@@ -347,6 +350,89 @@ function showMarkdown(meeting: Meeting, source: SourceName): string {
     return `${parts.join("\n\n")}\n`;
 }
 
+function hintText(hint: SpeakerHint): string {
+    if (hint.kind === "several-people") {
+        return `${hint.label}: ${hint.spans} spans far apart and ${Math.round(hint.share * 100)} % of the speech, maybe several people`;
+    }
+
+    const at = hint.atSec === undefined ? "" : ` at ${formatClock(hint.atSec)}`;
+    const spoken = hint.spokenSec > 0 ? `, ${Math.round(hint.spokenSec)} s` : "";
+    return `${hint.label}: one turn${spoken}${at} next to ${hint.neighbour}, maybe a split voice`;
+}
+
+async function speakers(
+    ref: string,
+    opts: { source?: string; format?: string | boolean; gap?: string }
+): Promise<void> {
+    const subcommand = ["meetings", "speakers"];
+    const format = await resolveEnum({
+        value: opts.format,
+        fallback: "table",
+        values: LIST_FORMATS,
+        flag: "--format",
+        subcommand,
+    });
+    const source = parseSource(opts.source, subcommand);
+    const gapSec = opts.gap === undefined ? DEFAULT_SPAN_GAP_SEC : parseDuration(opts.gap) / 1000;
+
+    if (!format || !source) {
+        return;
+    }
+
+    if (!(gapSec > 0)) {
+        fail(`--gap ${opts.gap} is not a duration (try 90s or 2m).`);
+        return;
+    }
+
+    let loaded: Awaited<ReturnType<typeof loadMeeting>>;
+
+    try {
+        const id = await resolveMeetingRef(ref, source);
+        loaded = await loadMeeting(id, { source, transcript: true });
+    } catch (err) {
+        fail(errorText(err));
+        return;
+    }
+
+    reportSource(loaded.source, loaded.notes);
+    const stats = speakerStats(loaded.data.transcript, { gapSec });
+    log.debug({ meeting: loaded.data.id, speakers: stats.speakers.length, hints: stats.hints.length }, "speaker stats");
+
+    if (format === "json") {
+        out.result(SafeJSON.stringify({ meeting: loaded.data.id, source: loaded.source, gapSec, ...stats }, null, 2));
+        return;
+    }
+
+    const table = createBoxTable(["SPEAKER", "#", "TURNS", "LINES", "WORDS", "SPOKEN", "FIRST–LAST", "SPANS"]);
+
+    for (const stat of stats.speakers) {
+        const range =
+            stat.firstSec === undefined || stat.lastSec === undefined
+                ? "—"
+                : `${formatClock(stat.firstSec)}–${formatClock(stat.lastSec)}`;
+        table.push([
+            pc.white(stat.label),
+            stat.speakerId === undefined ? "—" : String(stat.speakerId),
+            String(stat.turns),
+            String(stat.lines),
+            String(stat.words),
+            stats.timed ? formatClock(stat.spokenSec) : "—",
+            range,
+            stat.spans.map((span) => `${formatClock(span.fromSec)}–${formatClock(span.toSec)}`).join(", ") || "—",
+        ]);
+    }
+
+    out.println(table.toString());
+
+    if (!stats.timed) {
+        ui.dim("This source gives no time per line, so only counts are shown (try --source local).");
+    }
+
+    for (const hint of stats.hints) {
+        ui.warn(hintText(hint));
+    }
+}
+
 async function show(ref: string, opts: Record<string, unknown>): Promise<void> {
     const subcommand = ["meetings", "show"];
     const format = await resolveEnum({
@@ -516,6 +602,17 @@ export function registerMeetingsCommand(program: Command): void {
             collect
         )
         .action(transcript);
+
+    meetings
+        .command("speakers")
+        .argument("<meeting>", "meeting id, share link, or share slug")
+        .description(
+            "Per speaker label: turns, lines, words, spoken time and spans, with hints at mixed or split voices"
+        )
+        .option("--gap <duration>", "a pause shorter than this keeps two turns in one span", "2m")
+        .option("--source [source]", "auto | local | mcp")
+        .option("--format [format]", "table | json")
+        .action(speakers);
 
     meetings
         .command("export")
