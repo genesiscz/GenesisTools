@@ -6,22 +6,35 @@ import { act, useState } from "react";
 import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
 import { SERIES_COLOR } from "./charts";
 import { contrastRatio, parseCssColor, readableTextOn } from "./color";
-import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
+import { DataTable, type DataTableCell, Tabs, Timeline, tabHash, tabIdFromHash } from "./data";
 import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { type EditableColumn, type EditableRow, EditableTable, editableCellError, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
+import { LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
-import { Md, MdViewer } from "./md";
+import { MD_BODY_CLASS, MD_DOCUMENT_CLASS, Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
-import { CodeBlock, Collapse, FilterChips, SegmentedControl, StatGrid, statDeltaTone } from "./primitives";
+import {
+    Badge,
+    Card,
+    CodeBlock,
+    Collapse,
+    FilterChips,
+    Hero,
+    Page,
+    Section,
+    SegmentedControl,
+    StatGrid,
+    statDeltaTone,
+} from "./primitives";
 import { matchRoute } from "./router";
 import { moveItem, type SortableItem, SortableList, type SortableMove } from "./sortable";
-import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
+import { asciiTreeRows, Compare, JsonView, MappingList, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
 import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
 import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
-import { CapacityGrid, capacityStatus, Heatmap, Meter, meterTone, Sparkline, sparklinePath } from "./viz";
+import { CapacityGrid, capacityStatus, Heatmap, Meter, meterTone, SegmentBar, Sparkline, sparklinePath } from "./viz";
 import { Wizard, type WizardStep } from "./wizard";
 
 const mermaidRendered: string[] = [];
@@ -2365,6 +2378,518 @@ describe("round 11 editable error descriptions", () => {
             }
         } finally {
             await dom.unmount();
+        }
+    });
+});
+
+describe("design pages", () => {
+    test("asciiTreeRows: guides, a continued label, badges per sibling group, one comment column", () => {
+        const rows = asciiTreeRows([
+            {
+                label: "tools usage",
+                meta: "overview",
+                children: [
+                    {
+                        label: "limits",
+                        color: "#0af",
+                        meta: "now",
+                        children: [
+                            { label: "series", badge: "R1 R3", meta: "raw" },
+                            { label: "attribution", badge: "R14", meta: "who" },
+                        ],
+                    },
+                    { label: "spend daily\nweekly" },
+                    { label: "daemon", meta: "status" },
+                ],
+            },
+            { label: "tools sessions <id>", badge: "R2", meta: "one transcript:\nreport" },
+        ]);
+        const text = rows.map((r) => `${r.guide}${r.label}`);
+
+        expect(text).toEqual([
+            "tools usage",
+            "├─ limits",
+            "│  ├─ series",
+            "│  └─ attribution",
+            "├─ spend daily",
+            "│  weekly",
+            "└─ daemon",
+            "",
+            "tools sessions <id>",
+            "",
+        ]);
+        expect(rows[2].color).toBe("#0af");
+        expect(rows[2].badgeAt).toBe(rows[3].badgeAt);
+        expect(rows[2].badgeAt).toBe("│  └─ attribution".length + 2);
+        const nested = rows.filter((r) => r.meta && !r.root);
+        expect(new Set(nested.map((r) => r.metaAt)).size).toBe(1);
+        expect(rows[8].metaAt).toBeGreaterThanOrEqual(rows[8].badgeAt + 2 + 2);
+        expect(rows[9].meta).toBe("report");
+        expect(rows[9].metaAt).toBe(rows[8].metaAt);
+        expect(rows[7].blank).toBe(true);
+    });
+
+    test("asciiTreeRows: a note prints under its node's lines, and a continued comment line moves the shared column", () => {
+        const rows = asciiTreeRows([
+            {
+                label: "root",
+                children: [
+                    { label: "a\nmuch longer label", meta: "x\ny", note: "kept `note`" },
+                    { label: "bb", meta: "z", children: [{ label: "leaf" }] },
+                ],
+            },
+        ]);
+
+        expect(rows.map((r) => `${r.guide}${r.label}`)).toEqual([
+            "root",
+            "├─ a",
+            "│  much longer label",
+            "│  ",
+            "└─ bb",
+            "   └─ leaf",
+        ]);
+        expect(rows.map((r) => r.note)).toEqual([undefined, undefined, undefined, "kept `note`", undefined, undefined]);
+        expect(rows.map((r) => r.first)).toEqual([true, true, false, false, true, true]);
+        expect(rows.map((r) => r.depth)).toEqual([0, 1, 1, 1, 1, 2]);
+        const column = "│  much longer label".length + 2;
+        expect([rows[1].metaAt, rows[2].metaAt, rows[4].metaAt]).toEqual([column, column, column]);
+    });
+
+    test("TreeView ascii renders rows with the guides hidden from screen readers", async () => {
+        const dom = await mountDom(
+            <TreeView variant="ascii" nodes={[{ label: "root", children: [{ label: "leaf" }] }]} />
+        );
+        expect(dom.container.textContent).toContain("└─ leaf");
+        expect([...dom.container.querySelectorAll('[aria-hidden="true"]')].map((g) => g.textContent)).toEqual([
+            "",
+            "└─ ",
+        ]);
+        await dom.unmount();
+    });
+
+    test("TreeView ascii nests its rows in lists by depth, colours a top-level label and prints notes", async () => {
+        const dom = await mountDom(
+            <TreeView
+                variant="ascii"
+                nodes={[
+                    {
+                        label: "tools usage",
+                        color: "#0af",
+                        note: "the **root**",
+                        children: [{ label: "limits", children: [{ label: "series" }] }, { label: "daemon" }],
+                    },
+                    { label: "tools sessions" },
+                ]}
+            />
+        );
+        /** Each list item as "depth:label", read from the first row of the item. */
+        const outline = (list: Element, depth: number): string[] =>
+            [...list.children].flatMap((li) => {
+                const label = li.querySelector(':scope > div:not([aria-hidden]) > span:not([aria-hidden="true"])');
+                const nested = li.querySelector(":scope > ul");
+
+                return [`${depth}:${label?.textContent}`, ...(nested ? outline(nested, depth + 1) : [])];
+            });
+        const top = dom.container.querySelector('ul[role="list"]');
+
+        expect(top ? outline(top, 0) : []).toEqual([
+            "0:tools usage",
+            "1:limits",
+            "2:series",
+            "1:daemon",
+            "0:tools sessions",
+        ]);
+        const rootLabel = top?.querySelector<HTMLElement>(':scope > li > div > span:not([aria-hidden="true"])');
+        expect(rootLabel?.style.color).toBe("rgb(0, 170, 255)");
+        expect(dom.container.querySelector("strong")?.textContent).toBe("root");
+        expect(dom.container.textContent).toContain("the root");
+        await dom.unmount();
+    });
+
+    test("layoutLayerDiagram: weighted columns, row-major spans, buses, straight and curved arrows", () => {
+        const layout = layoutLayerDiagram({
+            width: 1200,
+            labelWidth: 180,
+            layers: [
+                {
+                    id: "top",
+                    label: "Top",
+                    nodes: [
+                        { id: "a", title: "A", weight: 140 },
+                        { id: "b", title: "B", weight: 835 },
+                    ],
+                },
+                {
+                    id: "grid",
+                    label: "Grid",
+                    bus: true,
+                    columns: [420, 175, 175, 175],
+                    rows: 2,
+                    nodeHeight: 59,
+                    rowGap: 12,
+                    nodes: [
+                        { id: "big", title: "Big", rowSpan: 2 },
+                        { id: "c1", title: "C1" },
+                        { id: "c2", title: "C2" },
+                        { id: "c3", title: "C3" },
+                        { id: "d1", title: "D1" },
+                    ],
+                },
+            ],
+            edges: [
+                { from: "a", to: "big" },
+                { from: "b", to: "c3" },
+                { to: "d1", x: 700 },
+                { from: "a", to: "nope" },
+            ],
+        });
+        const at = (id: string) => layout.nodes.find((n) => n.node.id === id);
+
+        expect(at("a")).toMatchObject({ x: 190, w: 140, y: 24, h: 64 });
+        expect(at("b")?.x).toBe(345);
+        expect(layout.bands.map((b) => [b.y, b.h])).toEqual([
+            [14, 84],
+            [128, 150],
+        ]);
+        expect(at("big")).toMatchObject({ x: 190, w: 420, h: 130 });
+        expect(at("c1")).toMatchObject({ x: 625, y: 138 });
+        expect(at("d1")).toMatchObject({ x: 625, y: 209 });
+        expect(layout.buses).toEqual([{ y: 113, x1: 200, x2: 1170 }]);
+        expect(layout.edges).toHaveLength(3);
+        expect(layout.edges.map((e) => [e.source?.node.id, e.target.node.id])).toEqual([
+            ["a", "big"],
+            ["b", "c3"],
+            [undefined, "d1"],
+        ]);
+        expect(layout.edges[0].d).toBe("M260 88 V 135");
+        expect(layout.edges[1].d).toBe("M762.5 88 C 762.5 111.5, 1092.5 111.5, 1092.5 135");
+        expect(layout.edges[2].d).toBe("M700 98 V 206");
+        expect(layout.height).toBe(128 + 150 + 12);
+    });
+
+    test("LayerDiagram draws offline SVG with a title and a spoken description", async () => {
+        const dom = await mountDom(
+            <LayerDiagram
+                title="Two bands"
+                layers={[
+                    { id: "u", label: "Up", nodes: [{ id: "x", title: "X", lines: ["one"] }] },
+                    { id: "d", label: "Down", nodes: [{ id: "y", title: "Y", dashed: true }] },
+                ]}
+                edges={[{ from: "x", to: "y" }]}
+            />
+        );
+        const svg = dom.container.querySelector("svg");
+        expect(svg?.getAttribute("role")).toBe("img");
+        expect(svg?.querySelector("title")?.textContent).toBe("Two bands");
+        expect(svg?.querySelector("desc")?.textContent).toBe("Up: X (one). Down: Y. Arrows: X to Y.");
+        expect(svg?.querySelectorAll("rect[stroke-dasharray]").length).toBe(1);
+        expect(dom.html()).not.toContain("http");
+        await dom.unmount();
+    });
+
+    test("LayerDiagram says what it draws: box lines, labelled and bus arrows, no arrow to a missing box, no key clash", async () => {
+        const errors: string[] = [];
+        const consoleError = console.error;
+        console.error = (...args: unknown[]) => {
+            errors.push(args.map(String).join(" "));
+        };
+
+        try {
+            const dom = await mountDom(
+                <LayerDiagram
+                    title="Bus"
+                    layers={[
+                        {
+                            id: "u",
+                            label: "Up",
+                            sub: ["same", "same"],
+                            nodes: [{ id: "x", title: "X", lines: ["-", "-"] }],
+                        },
+                        {
+                            id: "d",
+                            label: "Down",
+                            bus: true,
+                            nodes: [
+                                { id: "y", title: "Y" },
+                                { id: "z", title: "Z" },
+                            ],
+                        },
+                    ]}
+                    edges={[{ from: "x", to: "y", label: "--json" }, { to: "z" }, { from: "x", to: "gone" }]}
+                />
+            );
+            expect(dom.container.querySelector("desc")?.textContent).toBe(
+                "Up: X (-, -). Down: Y, Z. Arrows: X to Y (--json); the bus above Down to Z."
+            );
+            expect([...dom.container.querySelectorAll("text")].filter((t) => t.textContent === "-")).toHaveLength(2);
+            await dom.unmount();
+        } finally {
+            console.error = consoleError;
+        }
+
+        expect(errors.filter((e) => e.includes("same key"))).toEqual([]);
+    });
+
+    test("FilterChips single presses exactly one chip and names it in the live region", async () => {
+        const seen: string[][] = [];
+        const items = [
+            { id: "all", label: "All" },
+            { id: "a", label: "Alpha" },
+            { id: "b", label: "Beta" },
+        ];
+        const dom = await mountDom(<FilterChips single items={items} label="Filter" onChange={(v) => seen.push(v)} />);
+        const chips = [...dom.container.querySelectorAll('[role="group"] button')];
+        expect(chips.map((c) => c.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+        await dom.click(chips[2]);
+        expect(chips.map((c) => c.getAttribute("aria-pressed"))).toEqual(["false", "false", "true"]);
+        await dom.click(chips[2]);
+        expect(seen).toEqual([["b"], ["b"]]);
+        expect(dom.container.querySelector('[aria-live="polite"]')?.textContent).toBe("Filter: Beta");
+        await dom.unmount();
+    });
+
+    test("FilterChips single drops the All and None buttons, which would press every chip", async () => {
+        const items = [
+            { id: "a", label: "Alpha" },
+            { id: "b", label: "Beta" },
+        ];
+        const dom = await mountDom(
+            <>
+                <FilterChips single bulk items={items} label="One" />
+                <FilterChips bulk items={items} label="Many" />
+            </>
+        );
+        const buttons = (label: string) =>
+            [
+                ...(dom.container.querySelector(`[aria-label="${label}"]`)?.parentElement?.querySelectorAll("button") ??
+                    []),
+            ].map((b) => b.textContent);
+        expect(buttons("One")).toEqual(["Alpha", "Beta"]);
+        expect(buttons("Many")).toEqual(["Alpha", "Beta", "All", "None"]);
+        await dom.unmount();
+    });
+
+    test("hover moves run only without reduced motion: tilt, lift, StatGrid, Timeline, MappingList, SegmentBar, chips, theme", async () => {
+        const dom = await mountDom(
+            <>
+                <Card tilt={-1.5} title="Tilted" />
+                <Card lift title="Lifted" />
+                <SegmentBar segments={[{ label: "U1" }]} />
+                <MappingList layout="stacked" items={[{ label: "Window", from: "a", to: "b" }]} />
+                <FilterChips single label="Pick" items={[{ id: "a", label: "A" }]} />
+                <ThemeToggle variant="cycle" />
+                <Page look="document">
+                    <StatGrid stats={[{ value: "1", label: "one" }]} />
+                    <Timeline entries={[{ time: "U1", title: "One" }]} />
+                </Page>
+            </>
+        );
+        const tokens = [...dom.container.querySelectorAll("[class]")].flatMap((el) =>
+            (el.getAttribute("class") ?? "").split(/\s+/)
+        );
+        const moves = tokens.filter((t) => t.includes("hover:") && /(^|:)-?(translate|rotate|scale)-/.test(t));
+
+        expect(moves.length).toBeGreaterThanOrEqual(10);
+        expect(moves.filter((t) => !t.startsWith("motion-safe:"))).toEqual([]);
+        expect(tokens).toContain("rotate-[var(--tilt)]");
+        await dom.unmount();
+    });
+
+    test("the document look reaches Hero, Section, StatGrid and markdown; a plain Card keeps the dense look outside it", async () => {
+        const dom = await mountDom(
+            <Page look="document" footer="Footer `code`">
+                <Hero title="One root, utilities first" highlight="utilities first">
+                    <StatGrid stats={[{ value: "6→1", label: "roots", color: "#f00" }]} />
+                </Hero>
+                <Section id="tree" number="01" title="Tree" intro="Intro with `code`">
+                    <Card title="Plain">Body</Card>
+                </Section>
+            </Page>
+        );
+        const gradient = dom.container.querySelector("h1 span");
+        expect(gradient?.textContent).toBe("utilities first");
+        expect(gradient?.className).toContain("bg-clip-text");
+        expect(dom.container.querySelector("section#tree h2")?.textContent).toBe("01Tree");
+        expect(dom.container.querySelector("h1")?.className).toContain("font-display");
+        expect(dom.container.querySelector("footer .akit-md")).not.toBeNull();
+        expect(dom.container.innerHTML).toContain("border-bottom: 3px solid rgb(255, 0, 0)");
+        await dom.unmount();
+
+        const dense = await mountDom(<Card title="Plain">Body</Card>);
+        expect(dense.container.firstElementChild?.className).toBe("rounded-card border border-line bg-panel/60 p-4");
+        await dense.unmount();
+    });
+
+    test("Card parts: kicker, number, fields, lines, note, footer, edge", async () => {
+        const dom = await mountDom(
+            <Card
+                number={7}
+                title="Alert engine"
+                color="#f00"
+                edge="bottom"
+                fields={[{ k: "command", v: "`alerts list`" }]}
+                lines={["one", "two"]}
+                note="shipped"
+                footer={<Badge tag>U7</Badge>}
+            />
+        );
+        const card = dom.container.firstElementChild as HTMLElement;
+        expect(card.style.borderBottom).toBe("4px solid rgb(255, 0, 0)");
+        expect(dom.container.querySelector("dt")?.textContent).toBe("command");
+        expect(dom.container.querySelector("dd code")?.textContent).toBe("alerts list");
+        expect([...dom.container.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["one", "two"]);
+        expect(dom.container.textContent).toContain("7Alert engine");
+        expect(dom.container.textContent).toContain("shipped");
+        await dom.unmount();
+    });
+
+    test("SegmentBar sizes segments by weight and names them for screen readers", async () => {
+        const dom = await mountDom(
+            <SegmentBar
+                labels={["left", "right"]}
+                segments={[
+                    { label: "U1", sub: "M", weight: 2, color: "#0f0", title: "U1: first" },
+                    { label: "U2", weight: 1, tone: "warn" },
+                ]}
+            />
+        );
+        const cells = [...dom.container.querySelectorAll("li")] as HTMLElement[];
+        expect(cells.map((c) => c.style.flexGrow)).toEqual(["2", "1"]);
+        expect(cells[0].tabIndex).toBe(0);
+        expect(cells[1].hasAttribute("tabindex")).toBe(false);
+        expect(cells[0].textContent).toBe("U1M, U1: first");
+        expect(dom.container.textContent).toContain("leftright");
+        // jsdom lays nothing out, so the narrow-screen case is pinned by the class: the bar wraps, never clips a segment.
+        expect(dom.container.querySelector("ol")?.className.split(" ")).toContain("flex-wrap");
+        await dom.unmount();
+    });
+
+    test("MappingList: arrow rows say 'becomes', stacked rows say 'was' and 'now'", async () => {
+        const dom = await mountDom(
+            <>
+                <MappingList items={[{ from: "old", to: "new", note: "kept `forever`" }]} />
+                <MappingList layout="stacked" items={[{ label: "Window", from: "--range", to: "--since" }]} />
+            </>
+        );
+        const [arrow, stacked] = [...dom.container.querySelectorAll("li")];
+        expect(arrow.textContent).toBe("old→becomes newkept forever");
+        expect(stacked.textContent).toBe("Windowwas --rangenow --since");
+        // A long unbroken path may break anywhere and its column may shrink, so it wraps instead of spilling.
+        const values = [...dom.container.querySelectorAll("li > span")].filter((s) =>
+            ["old", "becomes new", "was --range", "now --since"].includes(s.textContent ?? "")
+        );
+        expect(values).toHaveLength(4);
+        for (const value of values) {
+            expect(value.className.split(" ")).toEqual(expect.arrayContaining(["min-w-0", "wrap-anywhere"]));
+        }
+        expect(stacked.className).toContain("grid-cols-[120px_minmax(0,1fr)]");
+        await dom.unmount();
+    });
+
+    test("Compare plain and Card tilt set their CSS custom properties", async () => {
+        const dom = await mountDom(
+            <>
+                <Compare plain weights={[2, 1]} items={[{ body: "a" }, { body: "b" }]} />
+                <Compare items={[{ title: "A", body: "a" }]} />
+                <Card tilt={-1.5} title="Tilted" />
+            </>
+        );
+        const [plain, boxed, card] = [...dom.container.querySelectorAll<HTMLElement>(":scope > *")];
+        expect(plain?.style.getPropertyValue("--tracks")).toBe("2fr 1fr");
+        expect(boxed?.style.getPropertyValue("--cols")).toBe("1");
+        expect(card?.style.getPropertyValue("--tilt")).toBe("-1.5deg");
+        await dom.unmount();
+    });
+
+    test("the document markdown styles every block element the dense markdown styles", async () => {
+        const styled = (cls: string) => new Set([...cls.matchAll(/\[&_([a-z0-9]+)/g)].map((m) => m[1]));
+        const documentTags = styled(MD_DOCUMENT_CLASS);
+        expect([...styled(MD_BODY_CLASS)].filter((tag) => !documentTags.has(tag))).toEqual([]);
+
+        const dom = await mountDom(
+            <Page look="document">
+                <Md>{"## Head\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n> quote\n\n---"}</Md>
+            </Page>
+        );
+        const body = dom.container.querySelector(".akit-md");
+        expect(body?.className.startsWith(MD_DOCUMENT_CLASS)).toBe(true);
+        expect(["h2", "table", "blockquote", "hr"].map((tag) => body?.querySelector(tag) !== null)).toEqual([
+            true,
+            true,
+            true,
+            true,
+        ]);
+        await dom.unmount();
+    });
+
+    test("Timeline in the document look prints a group heading once per run", async () => {
+        const dom = await mountDom(
+            <Page look="document">
+                <Timeline
+                    entries={[
+                        { time: "U1", title: "One", group: "Utilities", badge: "M", aside: "P1" },
+                        { time: "U2", title: "Two", group: "Utilities" },
+                        { time: "UI1", title: "Three", group: "UI", highlight: true, color: "#f0f" },
+                    ]}
+                />
+            </Page>
+        );
+        expect([...dom.container.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["Utilities", "UI"]);
+        expect(dom.container.textContent).toContain("U1OneMP1");
+        await dom.unmount();
+    });
+
+    test("a dense Timeline entry without a badge or an aside keeps the plain stamp block, so an empty stamp still collapses", async () => {
+        const dom = await mountDom(
+            <Timeline
+                entries={[
+                    { time: "", body: "Stamp-less" },
+                    { time: "09:00", title: "Plain" },
+                    { time: "U1", title: "Tagged", badge: "M", aside: "P1" },
+                ]}
+            />
+        );
+        const stamps = [...dom.container.querySelectorAll("li")].map((li) => li.querySelector(":scope > div"));
+        expect(stamps.slice(0, 2).map((s) => s?.outerHTML)).toEqual([
+            '<div class="font-mono text-xs text-dim"></div>',
+            '<div class="font-mono text-xs text-dim">09:00</div>',
+        ]);
+        expect(stamps[2]?.className).toContain("flex");
+        await dom.unmount();
+    });
+
+    test("ThemeToggle cycle steps system, light, dark", async () => {
+        const dom = await mountDom(<ThemeToggle variant="cycle" />);
+        const button = dom.container.querySelector("button");
+        const start = button?.textContent;
+        await dom.click(button);
+        await dom.click(button);
+        await dom.click(button);
+        expect(button?.textContent).toBe(start);
+        expect(["Theme: system", "Theme: light", "Theme: dark"]).toContain(start ?? "");
+        await dom.unmount();
+    });
+
+    test("the paper template: text 7:1, dim and tones 4.5:1 on bg and panel in both schemes", () => {
+        for (const scheme of ["light", "dark"] as const) {
+            const token = (name: string): string => templateToken("paper", name, scheme);
+
+            for (const surface of ["--bg", "--panel"]) {
+                expect({ scheme, surface, ok: contrastRatio(token("--text"), token(surface)) >= 7 }).toEqual({
+                    scheme,
+                    surface,
+                    ok: true,
+                });
+
+                for (const tone of ["--text-2", "--dim", "--ok", "--warn", "--err", "--info"]) {
+                    expect({ scheme, surface, tone, ok: contrastRatio(token(tone), token(surface)) >= 4.5 }).toEqual({
+                        scheme,
+                        surface,
+                        tone,
+                        ok: true,
+                    });
+                }
+            }
         }
     });
 });

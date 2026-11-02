@@ -5,6 +5,7 @@ import {
     renderMarkdown as renderMarkdownShared,
     safeMarked,
 } from "../../lib/markdown";
+import { usePageLook } from "./look";
 import { hydrateMermaidFences } from "./mermaid-core";
 
 /**
@@ -37,6 +38,32 @@ export const MD_BODY_CLASS =
     "[&_th]:bg-panel [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-line " +
     "[&_td]:px-2 [&_td]:py-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 " +
     "[&_hr]:my-4 [&_hr]:border-line";
+
+/**
+ * Markdown typography for the document look: the text keeps the size and colour
+ * of its container, inline code is plain mono with no box, bold runs in full ink.
+ * Headings take the display face at sizes relative to the container; tables,
+ * quotes and rules get the same structure as MD_BODY_CLASS on the document
+ * surfaces, because the CSS reset leaves those elements bare.
+ */
+export const MD_DOCUMENT_CLASS =
+    "akit-md max-w-none [&_strong]:font-bold [&_strong]:text-ink [&_a]:text-accent [&_a:hover]:underline " +
+    "[&_code]:font-mono [&_code]:text-[0.92em] [&_p+p]:mt-2.5 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:my-1.5 " +
+    "[&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded-card [&_pre]:border " +
+    "[&_pre]:border-line [&_pre]:bg-panel-2 [&_pre]:p-3 " +
+    "[&_h1]:mt-6 [&_h1]:mb-2 [&_h1]:font-display [&_h1]:text-[1.5em] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-ink " +
+    "[&_h2]:mt-6 [&_h2]:mb-2 [&_h2]:border-b [&_h2]:border-line [&_h2]:pb-1 [&_h2]:font-display [&_h2]:text-[1.25em] " +
+    "[&_h2]:font-bold [&_h2]:leading-snug [&_h2]:text-ink [&_h3]:mt-4 [&_h3]:mb-1.5 [&_h3]:font-display " +
+    "[&_h3]:text-[1.1em] [&_h3]:font-semibold [&_h3]:text-ink [&>:first-child]:mt-0 " +
+    "[&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-accent [&_blockquote]:pl-3.5 [&_blockquote]:text-dim " +
+    "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-line [&_th]:bg-panel-2 " +
+    "[&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_th]:text-ink [&_td]:border [&_td]:border-line " +
+    "[&_td]:px-2.5 [&_td]:py-1.5 [&_hr]:my-5 [&_hr]:border-line";
+
+const INLINE_DENSE_CLASS =
+    "[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-panel [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_a]:text-accent [&_a:hover]:underline";
+const INLINE_DOCUMENT_CLASS =
+    "[&_code]:font-mono [&_code]:text-[0.92em] [&_strong]:text-ink [&_a]:text-accent [&_a:hover]:underline";
 
 export interface MdProps {
     /** Markdown text to render. */
@@ -71,17 +98,24 @@ function MdHtml({ html, className }: { html: string; className: string }) {
 /** Render a markdown string (block-level). Fenced code is highlighted; ```mermaid fences render as diagrams. */
 export const Md = memo(function Md({ children, className }: MdProps) {
     const html = useMemo(() => renderMarkdown(children), [children]);
+    const look = usePageLook();
 
-    return <MdHtml html={html} className={`${MD_BODY_CLASS} ${className ?? ""}`} />;
+    return (
+        <MdHtml
+            html={html}
+            className={`${look === "document" ? MD_DOCUMENT_CLASS : MD_BODY_CLASS} ${className ?? ""}`}
+        />
+    );
 });
 
 /** Inline markdown (bold, code, links) with no block wrapper — for table cells and list items. */
 export const MdInline = memo(function MdInline({ children, className }: MdProps) {
     const html = useMemo(() => renderMarkdownInline(children), [children]);
+    const look = usePageLook();
 
     return (
         <span
-            className={`[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-panel [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_a]:text-accent [&_a:hover]:underline ${className ?? ""}`}
+            className={`${look === "document" ? INLINE_DOCUMENT_CLASS : INLINE_DENSE_CLASS} ${className ?? ""}`}
             // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping renderer in lib/markdown.ts
             dangerouslySetInnerHTML={{ __html: html }}
         />

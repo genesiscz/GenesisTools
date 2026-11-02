@@ -537,3 +537,78 @@ export function CapacityGrid({
         </div>
     );
 }
+
+// ─── SegmentBar ───
+
+export interface SegmentBarItem {
+    /** Text on the segment ("U1"). */
+    label: string;
+    /** Small second line on the segment ("M"). */
+    sub?: string;
+    /** Relative width (a size: 1, 2, 3). Default 1. */
+    weight?: number;
+    /** Fill (any CSS colour); wins over `tone`. */
+    color?: string;
+    tone?: Tone;
+    /** Full name for the hover card and screen readers ("U1: Contract and the first doors"). */
+    title?: string;
+}
+
+export interface SegmentBarProps {
+    segments: SegmentBarItem[];
+    /** Captions under the bar, spread from the left edge to the right ("utilities", "UI"). */
+    labels?: string[];
+    /** Accessible name of the bar. */
+    ariaLabel?: string;
+}
+
+function SegmentCell({ segment }: { segment: SegmentBarItem }) {
+    const tooltip = useTooltip(segment.title ? { title: segment.title } : null, {
+        placement: "top",
+        disabled: !segment.title,
+    });
+
+    return (
+        <li
+            {...tooltip}
+            tabIndex={segment.title ? 0 : undefined}
+            className="min-w-[52px] cursor-default px-1.5 py-2.5 text-center font-mono text-sm font-bold leading-[normal] text-canvas transition-[translate,filter] duration-200 motion-safe:hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
+            style={{
+                flexGrow: segment.weight ?? 1,
+                flexShrink: 1,
+                flexBasis: 0,
+                background: segment.color ?? TONE_COLOR[segment.tone ?? "info"],
+            }}
+        >
+            {segment.label}
+            {segment.sub ? <small className="block text-[13px] font-medium opacity-85">{segment.sub}</small> : null}
+            {segment.title ? <span className="sr-only">{`, ${segment.title}`}</span> : null}
+        </li>
+    );
+}
+
+/**
+ * One bar cut into proportional segments: a build order by size, a budget by
+ * line item, phases by length. Each segment carries a short label on its own
+ * fill; `labels` caption the two ends of the bar. When the segments cannot all
+ * keep their minimum width on one line (a phone), the bar wraps onto more lines
+ * instead of clipping the last ones.
+ */
+export function SegmentBar({ segments, labels, ariaLabel = "Segments" }: SegmentBarProps) {
+    return (
+        <div>
+            <ol aria-label={ariaLabel} className="mt-1.5 mb-2 flex flex-wrap gap-1 overflow-hidden rounded-[10px]">
+                {segments.map((segment, i) => (
+                    <SegmentCell key={`${segment.label}-${i}`} segment={segment} />
+                ))}
+            </ol>
+            {labels?.length ? (
+                <div className="mb-[18px] flex justify-between gap-3 font-mono text-sm font-medium leading-[normal] text-dim">
+                    {labels.map((label) => (
+                        <span key={label}>{label}</span>
+                    ))}
+                </div>
+            ) : null}
+        </div>
+    );
+}

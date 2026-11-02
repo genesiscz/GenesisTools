@@ -1,15 +1,18 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { plainSegment, withPlainSegment } from "./hash";
+import { usePageLook } from "./look";
 import { MdInline } from "./md";
 import {
     Badge,
     type BodyContent,
     type ChipItem,
     Chips,
+    type CssVarStyle,
     renderBody,
     TONE_BG,
     TONE_DOT,
     TONE_TEXT,
+    TONE_VAR,
     type Tone,
 } from "./primitives";
 
@@ -178,27 +181,153 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
 }
 
 export interface TimelineEntry {
+    /** The stamp: a time, a date or a step id ("U1"). */
     time: string;
     /** Optional headline; body-only entries (attribution stamp + paragraph) omit it. */
     title?: string;
     body?: BodyContent;
     tone?: Tone;
+    /** Marker and stamp colour (any CSS colour); wins over `tone`. */
+    color?: string;
+    /** Phase heading: printed above the first entry of each run of equal groups. */
+    group?: string;
+    /** Small boxed label after the title (a size, a status). */
+    badge?: string;
+    /** Right-aligned mono text on the title row (references, an owner). */
+    aside?: string;
+    /** Accent border and glow: the entries that come first or matter most. */
+    highlight?: boolean;
 }
 
 export interface TimelineProps {
     entries: TimelineEntry[];
+    /** Colour of the `aside` text (any CSS colour). Default the accent. */
+    asideColor?: string;
 }
 
-/** Vertical timeline with tone-colored markers. */
-export function Timeline({ entries }: TimelineProps) {
+function entryColor(entry: TimelineEntry): string {
+    return entry.color ?? TONE_VAR[entry.tone ?? "neutral"];
+}
+
+/** The rail's gradient: each entry's colour at its own height, so phases read down the rail. */
+function railGradient(entries: TimelineEntry[]): string {
+    if (entries.length === 0) {
+        return "var(--border)";
+    }
+
+    const stops = entries.map((entry, i) => `${entryColor(entry)} ${(((i + 0.5) / entries.length) * 100).toFixed(1)}%`);
+
+    return `linear-gradient(${stops.join(", ")})`;
+}
+
+/** Document look: boxed entries on a coloured rail, a stamp, title, badge and aside per row, and phase headings. */
+function DocumentTimeline({ entries, asideColor }: { entries: TimelineEntry[]; asideColor: string }) {
+    return (
+        <div className="relative pl-[34px]">
+            <div
+                aria-hidden="true"
+                className="absolute top-1.5 bottom-1.5 left-3 w-0.5 rounded-sm"
+                style={{ background: railGradient(entries) }}
+            />
+            <ol>
+                {entries.map((e, i) => {
+                    const color = entryColor(e);
+                    const heading = e.group !== undefined && e.group !== entries[i - 1]?.group ? e.group : null;
+                    const boxStyle: CssVarStyle = {
+                        "--entry-color": color,
+                        ...(e.highlight ? { borderColor: color, boxShadow: "var(--glow)" } : {}),
+                    };
+
+                    return (
+                        <li key={`${e.time}-${i}`}>
+                            {heading ? (
+                                <h3
+                                    className={`mb-3 font-display text-lg font-bold leading-[normal] text-ink ${i === 0 ? "" : "mt-[22px]"}`}
+                                >
+                                    {heading}
+                                </h3>
+                            ) : null}
+                            <div
+                                className="relative mb-2.5 rounded-card border border-line bg-panel px-4 py-3 transition-[translate,border-color] duration-200 motion-safe:hover:translate-x-[3px] hover:border-[var(--entry-color)]"
+                                style={boxStyle}
+                            >
+                                <span
+                                    aria-hidden="true"
+                                    className="absolute top-[17px] -left-7 h-3 w-3 rounded-full"
+                                    style={{ background: color, boxShadow: "0 0 0 4px var(--bg)" }}
+                                />
+                                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+                                    <span
+                                        className="min-w-12 font-mono text-base font-bold leading-[normal]"
+                                        style={{ color }}
+                                    >
+                                        {e.time}
+                                    </span>
+                                    {e.title ? (
+                                        <span className="font-display text-[16.5px] font-semibold leading-[normal] text-ink">
+                                            {e.title}
+                                        </span>
+                                    ) : null}
+                                    {e.badge ? (
+                                        <span className="rounded-md border border-line-2 px-[7px] py-0.5 font-mono text-[13px] font-semibold leading-[normal] text-ink-2">
+                                            {e.badge}
+                                        </span>
+                                    ) : null}
+                                    {e.aside ? (
+                                        <span
+                                            className="ml-auto font-mono text-sm font-medium leading-[normal]"
+                                            style={{ color: asideColor }}
+                                        >
+                                            {e.aside}
+                                        </span>
+                                    ) : null}
+                                </div>
+                                {e.body ? (
+                                    <div className="mt-1 text-[15px] text-ink-2">{renderBody(e.body)}</div>
+                                ) : null}
+                            </div>
+                        </li>
+                    );
+                })}
+            </ol>
+        </div>
+    );
+}
+
+/** Vertical timeline with tone-colored markers. In the document look the entries are boxed on a coloured rail. */
+export function Timeline({ entries, asideColor = "var(--accent)" }: TimelineProps) {
+    if (usePageLook() === "document") {
+        return <DocumentTimeline entries={entries} asideColor={asideColor} />;
+    }
+
     return (
         <ol className="relative ml-2 border-l border-line pl-6">
             {entries.map((e, i) => (
                 <li key={`${e.time}-${i}`} className="relative mb-6 last:mb-0">
+                    {e.group !== undefined && e.group !== entries[i - 1]?.group ? (
+                        <div className="mb-2 text-sm font-semibold text-ink">{e.group}</div>
+                    ) : null}
                     <span
-                        className={`absolute -left-[1.85rem] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-canvas ${TONE_DOT[e.tone ?? "neutral"]}`}
+                        className={`absolute -left-[1.85rem] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-canvas ${e.color ? "" : TONE_DOT[e.tone ?? "neutral"]}`}
+                        style={e.color ? { background: e.color } : undefined}
                     />
-                    <div className="font-mono text-xs text-dim">{e.time}</div>
+                    {/* The flex row only when a badge or an aside needs it: an empty stamp in a flex row stops
+                        the body's top margin from collapsing through it, so every stamp-less entry grew 4 px. */}
+                    {e.badge || e.aside ? (
+                        <div className="flex items-baseline gap-2 font-mono text-xs text-dim">
+                            <span style={e.color ? { color: e.color } : undefined}>{e.time}</span>
+                            {e.badge ? <Badge>{e.badge}</Badge> : null}
+                            {e.aside ? (
+                                <span className="ml-auto" style={{ color: asideColor }}>
+                                    {e.aside}
+                                </span>
+                            ) : null}
+                        </div>
+                    ) : (
+                        <div className="font-mono text-xs text-dim" style={e.color ? { color: e.color } : undefined}>
+                            {e.time}
+                        </div>
+                    )}
                     {e.title ? <div className={`font-medium ${TONE_TEXT[e.tone ?? "neutral"]}`}>{e.title}</div> : null}
                     {e.body ? <div className="mt-1 text-sm text-dim">{renderBody(e.body)}</div> : null}
                 </li>
@@ -346,14 +475,17 @@ export interface BulletsProps {
 /** List primitive with per-item tone, confidence badge, and sub-lines. */
 export function Bullets({ items, ordered = false }: BulletsProps) {
     const ListTag = ordered ? "ol" : "ul";
+    const isDocument = usePageLook() === "document";
 
     return (
-        <ListTag className={`my-2 space-y-1 pl-5 ${ordered ? "list-decimal" : "list-disc"}`}>
+        <ListTag
+            className={`pl-5 ${isDocument ? "mt-3.5 [&>li]:my-1.5" : "my-2 space-y-1"} ${ordered ? "list-decimal" : "list-disc"}`}
+        >
             {items.map((item, i) => {
                 const obj = typeof item === "string" ? { text: item } : item;
 
                 return (
-                    <li key={i} className={obj.tone ? TONE_TEXT[obj.tone] : "text-ink/90"}>
+                    <li key={i} className={obj.tone ? TONE_TEXT[obj.tone] : isDocument ? "text-ink-2" : "text-ink/90"}>
                         {obj.confidence !== undefined ? (
                             <span className="mr-1.5">
                                 <Badge tone={obj.tone ?? "neutral"}>{obj.confidence}%</Badge>

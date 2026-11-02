@@ -34,6 +34,25 @@
 :root {
     /* Faint stripe for alternating bands and row tints. */
     --wash: color-mix(in srgb, var(--text) 3.5%, transparent);
+    /* Secondary prose (intros, card bodies in the document look), a nested surface and a stronger rule.
+       A template may set exact values; these are mixes of its own tokens. */
+    --text-2: color-mix(in srgb, var(--text) 46%, var(--dim));
+    --panel-2: color-mix(in srgb, var(--panel) 72%, var(--border));
+    --border-2: color-mix(in srgb, var(--border) 72%, var(--dim));
+    /* Display face for document-look headings. */
+    --font-heading: var(--font-body);
+    /* Accent ring and soft drop for a raised or highlighted surface. */
+    --glow:
+        0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+        0 10px 30px -12px color-mix(in srgb, var(--accent) 35%, transparent);
+    /* Named categorical hues (HUE in the kit) for pages that colour by category, light and dark pairs. */
+    --hue-sky: light-dark(#0369a1, #38bdf8);
+    --hue-teal: light-dark(#0f766e, #2dd4bf);
+    --hue-lime: light-dark(#4d7c0f, #a3e635);
+    --hue-amber: light-dark(#a15c07, #f5b942);
+    --hue-rose: light-dark(#be123c, #fb7185);
+    --hue-slate: light-dark(#475569, #9aa7bd);
+    --hue-violet: light-dark(#6d28d9, #a78bfa);
     /* The hover card stays dark on dark in every theme: text 15:1, dim 7:1 on the card. */
     --tooltip-bg: #0f1115;
     --tooltip-text: #e8eaee;
@@ -63,7 +82,11 @@
     --color-warn: var(--warn);
     --color-err: var(--err);
     --color-info: var(--info);
+    --color-ink-2: var(--text-2);
+    --color-panel-2: var(--panel-2);
+    --color-line-2: var(--border-2);
     --font-sans: var(--font-body);
     --font-mono: var(--font-code);
+    --font-display: var(--font-heading);
     --radius-card: var(--radius);
 }
