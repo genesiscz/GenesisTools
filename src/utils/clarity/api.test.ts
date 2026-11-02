@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+import { ClarityApi, ClarityApiError, type UpdateTimeEntryRequest } from "@genesiscz/utils/clarity";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 // Invented tasks: 130 matches, served 25 at a time unless the request asks for a larger page.
@@ -13,6 +13,15 @@ const server = Bun.serve({
     port: 0,
     fetch(request) {
         const url = new URL(request.url);
+
+        if (url.pathname.includes("/timeEntries/")) {
+            return new Response(SafeJSON.stringify({ error: "boom" }), { status: 500 });
+        }
+
+        if (url.pathname.endsWith("/private/timesheet")) {
+            return new Response("forbidden", { status: 403 });
+        }
+
         const limit = Math.min(Number(url.searchParams.get("limit") ?? 25), 50);
         const offset = Number(url.searchParams.get("offset") ?? 0);
 
@@ -53,5 +62,52 @@ describe("ClarityApi.searchTasks", () => {
 
         expect(found).toHaveLength(130);
         expect(seen).toEqual(["0:50", "50:50", "100:50", "130:50"]);
+    });
+});
+
+describe("ClarityApiError", () => {
+    test("a failed write carries the status and the recorded exchange", async () => {
+        const api = new ClarityApi({ baseUrl: `http://localhost:${server.port}`, authToken: "t", sessionId: "s" });
+        const body: UpdateTimeEntryRequest = {
+            taskId: 3,
+            actuals: {
+                isFiscal: false,
+                curveType: "value",
+                dataType: "numeric",
+                _type: "tsv",
+                start: "2026-08-03T00:00:00",
+                finish: "2026-08-09T00:00:00",
+                segmentList: { total: 0, defaultValue: 0, segments: [] },
+            },
+        };
+
+        const error = await api.updateTimeEntryVerbose(1, 2, body).catch((err: unknown) => err);
+
+        if (!(error instanceof ClarityApiError)) {
+            throw error;
+        }
+
+        expect(error.status).toBe(500);
+        expect(error.message).toBe('Clarity API error 500: {"error":"boom"}');
+        expect(error.debug).toEqual({
+            url: `http://localhost:${server.port}/ppm/rest/v1/timesheets/1/timeEntries/2`,
+            method: "PUT",
+            requestBody: body,
+            responseStatus: 500,
+            responseBody: { error: "boom" },
+        });
+    });
+
+    test("a failed read carries the status and no exchange", async () => {
+        const api = new ClarityApi({ baseUrl: `http://localhost:${server.port}`, authToken: "t", sessionId: "s" });
+
+        const error = await api.getTimesheet(1).catch((err: unknown) => err);
+
+        if (!(error instanceof ClarityApiError)) {
+            throw error;
+        }
+
+        expect(error.status).toBe(403);
+        expect(error.debug).toBeUndefined();
     });
 });

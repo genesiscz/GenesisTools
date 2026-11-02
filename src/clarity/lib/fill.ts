@@ -14,7 +14,14 @@ import {
 } from "@app/clarity/lib/fill-utils";
 import { type ResolvedFillWeeks, resolveFillWeeks } from "@app/clarity/lib/fill-weeks";
 import type { TimesheetRecord, TimesheetWeekReader } from "@app/clarity/lib/timesheet-weeks";
-import type { ApiDebugInfo, ClarityApi, TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@genesiscz/utils/clarity";
+import {
+    type ApiDebugInfo,
+    type ClarityApi,
+    ClarityApiError,
+    type TimeEntryRecord,
+    type TimeSegment,
+    type TimeSeriesValue,
+} from "@genesiscz/utils/clarity";
 import { addDay, isDateInHalfOpenRange } from "@genesiscz/utils/date";
 
 /** One month of ADO time, grouped by Clarity task. */
@@ -390,7 +397,7 @@ export async function executeFillPlan({
                     status: "error",
                     totalSeconds: actuals.segmentList.total,
                     error: err instanceof Error ? err.message : String(err),
-                    debug: (err as Error & { debug?: ApiDebugInfo }).debug,
+                    debug: err instanceof ClarityApiError ? err.debug : undefined,
                 };
             }
 

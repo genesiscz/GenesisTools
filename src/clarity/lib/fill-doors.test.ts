@@ -2,7 +2,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } 
 import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeLogQueryEntry } from "@app/azure-devops/types";
 import type { ClarityConfig, ClarityMapping } from "@app/clarity/config";
-import type { ApiDebugInfo, ClarityApi, TimeSegment, UpdateTimeEntryRequest } from "@genesiscz/utils/clarity";
+import {
+    type ApiDebugInfo,
+    type ClarityApi,
+    ClarityApiError,
+    type TimeSegment,
+    type UpdateTimeEntryRequest,
+} from "@genesiscz/utils/clarity";
 import { addDay } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -138,9 +144,11 @@ class FakeClarity {
         };
 
         if (this.failWrite(timesheetId, timeEntryId)) {
-            const err = new Error("Clarity API error 500: boom");
-            (err as Error & { debug: ApiDebugInfo }).debug = { ...debug, responseStatus: 500, responseBody: "boom" };
-            throw err;
+            throw new ClarityApiError("Clarity API error 500: boom", 500, {
+                ...debug,
+                responseStatus: 500,
+                responseBody: "boom",
+            });
         }
 
         return { data: {}, debug };

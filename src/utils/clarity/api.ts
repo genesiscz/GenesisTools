@@ -19,6 +19,18 @@ export interface ClarityApiConfig {
     cookies?: string;
 }
 
+/** A request Clarity answered with an error. `debug` is set by the verbs that record the exchange. */
+export class ClarityApiError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly debug?: ApiDebugInfo
+    ) {
+        super(message);
+        this.name = "ClarityApiError";
+    }
+}
+
 /** A session, or a loader that produces one on the first request. */
 export type ClarityApiSource = ClarityApiConfig | (() => Promise<ClarityApiConfig>);
 
@@ -88,7 +100,7 @@ export class ClarityApi {
         const text = await response.text();
 
         if (!response.ok) {
-            throw new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
+            throw new ClarityApiError(`Clarity API error ${response.status}: ${text.slice(0, 500)}`, response.status);
         }
 
         if (text.trim() === "") {
@@ -100,7 +112,7 @@ export class ClarityApi {
         } catch {
             const isHtml = text.trimStart().startsWith("<");
             const hint = isHtml ? "Session expired — re-authenticate in Settings" : text.slice(0, 300);
-            throw new Error(`Clarity API returned non-JSON (${response.status}): ${hint}`);
+            throw new ClarityApiError(`Clarity API returned non-JSON (${response.status}): ${hint}`, response.status);
         }
     }
 
@@ -110,13 +122,16 @@ export class ClarityApi {
         const text = await response.text();
 
         if (!response.ok) {
-            throw new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
+            throw new ClarityApiError(`Clarity API error ${response.status}: ${text.slice(0, 500)}`, response.status);
         }
 
         // An expired session answers 200 with an HTML login page. Trusting `response.ok` alone
         // would report a write that never reached Clarity as a success.
         if (text.trimStart().startsWith("<")) {
-            throw new Error(`Clarity API returned a login page (${response.status}): session expired`);
+            throw new ClarityApiError(
+                `Clarity API returned a login page (${response.status}): session expired`,
+                response.status
+            );
         }
     }
 
@@ -240,9 +255,11 @@ export class ClarityApi {
         };
 
         if (!response.ok) {
-            const err = new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
-            (err as Error & { debug: ApiDebugInfo }).debug = debug;
-            throw err;
+            throw new ClarityApiError(
+                `Clarity API error ${response.status}: ${text.slice(0, 500)}`,
+                response.status,
+                debug
+            );
         }
 
         return { data: responseBody, debug };
@@ -267,7 +284,10 @@ export class ClarityApi {
 
         if (!response.ok) {
             const text = await response.text();
-            throw new Error(`Failed to post timesheet note (${response.status}): ${text.slice(0, 500)}`);
+            throw new ClarityApiError(
+                `Failed to post timesheet note (${response.status}): ${text.slice(0, 500)}`,
+                response.status
+            );
         }
     }
 
