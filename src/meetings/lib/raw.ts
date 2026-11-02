@@ -3,6 +3,7 @@ import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/s
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
+import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
 
 /**
  * The facts of a meeting for an agent to reason over (the polishing session's three-pass mode, decision 33 a): who
@@ -40,8 +41,8 @@ export interface RawMeeting {
         muted: string[];
         present: string[];
     }>;
-    /** The term part, filled by the term check (`rawTermEvidence`) once it exists. */
-    terms?: unknown;
+    /** The term part: the word check, the vocabulary, every run heard near a term, and the words no layer knows. */
+    terms?: RawTermEvidence;
     context: Array<{ kind: string; ref: string }>;
     summary?: { text: string; points: SummaryPoint[] };
 }
@@ -68,7 +69,7 @@ export function rawMeeting(options: {
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     points: SummaryPoint[];
-    terms?: unknown;
+    terms?: RawTermEvidence;
 }): RawMeeting {
     const { record, meeting, evidence } = options;
     const originOf = (label: string) =>

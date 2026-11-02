@@ -650,6 +650,10 @@ export function suggestItems(options: {
     listenBelow?: number;
     /** The summary's action items and decisions: a range that cites one matters more. */
     points?: SummaryPoint[];
+    /** At most this many questions, speakers and terms together (`playback.listen.budget`). */
+    questionBudget?: number;
+    /** No question under this priority (`playback.listen.minPriority`). */
+    minPriority?: number;
     /** Tells ordinary words from unknown ones for the term rules; without it they skip every Czech word. */
     wordCheck?: WordCheck;
     now: string;
@@ -734,7 +738,13 @@ export function suggestItems(options: {
     };
     const candidates = fresh.flatMap((item) => questionFor(item, context) ?? []);
 
-    for (const question of selectQuestions(candidates, taken)) {
+    // One budget for speakers and terms together: the most valuable first, none under the floor.
+    const worth = selectQuestions(candidates, taken)
+        .filter((question) => (question.priority ?? 0) >= (options.minPriority ?? 0))
+        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+        .slice(0, options.questionBudget ?? Number.POSITIVE_INFINITY);
+
+    for (const question of worth) {
         if (known.has(questionKey(question))) {
             continue;
         }

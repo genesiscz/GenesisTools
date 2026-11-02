@@ -19,8 +19,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { applyCorrections, type TranscriptCorrections, type UnclearPassage } from "@genesiscz/utils/transcribe/apply";
-import { DEFAULT_SPELL_PROVIDER, SPELL_PROVIDER_IDS } from "@genesiscz/utils/transcribe/languages/spell";
-import { openWordCheck, type WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
+import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
     entriesToSrt,
     entriesToVtt,
@@ -35,7 +34,6 @@ import {
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
-import { transcriptWords } from "@genesiscz/utils/transcribe/terms";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
@@ -47,6 +45,7 @@ import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { linkedSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
+import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice, wordCheckFor } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
 
@@ -116,22 +115,12 @@ function printItems(items: MeetingItem[]): void {
     out.println(table.toString());
 }
 
-const WORD_CHECKS = [...SPELL_PROVIDER_IDS, "off"] as const;
-
 /** The word check for the term rules, or undefined when it is off or cannot run (said once, with the reason). */
-async function wordCheckFor(
-    choice: (typeof WORD_CHECKS)[number],
-    meeting: SourceMeeting
-): Promise<WordCheck | undefined> {
-    if (choice === "off") {
-        return undefined;
-    }
+async function termWordCheck(choice: WordCheckChoice, meeting: SourceMeeting): Promise<WordCheck | undefined> {
+    const opened = await wordCheckFor(choice, meeting.transcript);
 
-    const opened = await openWordCheck({ provider: choice, words: transcriptWords(meeting.transcript) });
-
-    if (!opened.available) {
+    if (!opened.check && choice !== "off") {
         ui.warn(`The word check is off (${opened.reason}); the term rules skip every word with a Czech letter.`);
-        return undefined;
     }
 
     return opened.check;
@@ -159,7 +148,7 @@ async function suggest(
 
     const wordCheckChoice = await resolveEnum({
         value: opts.wordCheck,
-        fallback: DEFAULT_SPELL_PROVIDER,
+        fallback: DEFAULT_WORD_CHECK,
         values: WORD_CHECKS,
         flag: "--word-check",
         subcommand: ["suggest"],
@@ -181,7 +170,7 @@ async function suggest(
         const evidence = rules.includes("evidence")
             ? speakingEvidence(collected, await source.evidence(sourceMeetingId))
             : null;
-        const wordCheck = rules.includes("terms") ? await wordCheckFor(wordCheckChoice, meeting) : undefined;
+        const wordCheck = rules.includes("terms") ? await termWordCheck(wordCheckChoice, meeting) : undefined;
         const fresh = suggestItems({
             record: collected,
             meeting,
@@ -192,6 +181,8 @@ async function suggest(
             evidence,
             energyMicShare: (await energyMicShareFor(store, collected, evidence)).share,
             listenBelow: config.global.suggest.listenBelow,
+            questionBudget: config.global.playback.listen.budget,
+            minPriority: config.global.playback.listen.minPriority,
             points: meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [],
             wordCheck,
             now: new Date().toISOString(),
@@ -555,10 +546,13 @@ async function speakersRename(ref: string, label: string, name: string): Promise
 function unclearPassages(record: MeetingRecord, listenBelow: number): UnclearPassage[] {
     const open = openQuestions(record);
     const asked = new Set(open.flatMap((question) => question.decides));
-    // A low term not worth a question is still marked wherever it was heard.
+    // A low term the rules have a guess for is marked wherever it was heard, even unasked. An unknown word with no
+    // guess is often plain spoken Czech no dictionary has ("byznysák"): it stays text unless it is asked.
     const unaskedTerms = record.items.flatMap((item): UnclearPassage[] =>
         item.kind === "term" &&
         item.status === "suggested" &&
+        item.proposed !== undefined &&
+        !item.rules.includes(MeetingRule.UnknownWord) &&
         !asked.has(item.id) &&
         (item.confidence ?? 1) < listenBelow
             ? [
@@ -728,7 +722,7 @@ export function registerItemCommands(program: Command): void {
         .option("--attendance <teams|file>", "who was in the call and when (Teams), for rule RA")
         .option(
             "--word-check <provider>",
-            `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default ${DEFAULT_SPELL_PROVIDER})`
+            `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default ${DEFAULT_WORD_CHECK})`
         )
         .option("--json", "print the new items")
         .action(suggest);
