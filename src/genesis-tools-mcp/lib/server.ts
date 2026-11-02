@@ -169,7 +169,11 @@ export function serverInstructions({ askViaQuestionTool, inboxState }: Instructi
         "read a running macOS app's elements without raising or focusing anything. `control_workflow_run` is the " +
         "preferred way to act: a versioned plan run against fresh observations, each step verified before the next. " +
         "`control_run` takes a `control run` plan object inline and returns per-step results; its type/set/hotkey " +
-        "steps refuse while another app is frontmost."
+        "steps refuse while another app is frontmost.\n\n" +
+        `FETCH (capability \`fetch\`, read-only, the same core as \`${toolCommand("fetch")}\`): \`fetch_markdown\`, ` +
+        "`fetch_raw` and `fetch_jsonld` read a web page as Markdown, raw HTML or schema.org JSON-LD (products, every " +
+        "offer with seller and price, breadcrumbs). transport `auto` (default) retries once through a real Chrome " +
+        "fingerprint when a Cloudflare or similar bot wall refuses plain fetch, and the result names the transport."
     );
 }
 
@@ -303,6 +307,9 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     annotate: (name) => name.startsWith("annotate_"),
     jev: (name) => name.startsWith("jev_"),
     control: (name) => name.startsWith("control_"),
+    fetch: (name) => name.startsWith("fetch_"),
+    alza: (name) => name.startsWith("alza_"),
+    waze: (name) => name.startsWith("waze_"),
     usage: (name) => name.startsWith("usage_"),
 };
 
@@ -330,6 +337,9 @@ export function filterRegistryByCapabilities(
 const registries = new Map<string, Record<string, ToolEntry>>();
 let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
 let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
+let fetchModule: Promise<typeof import("@app/fetch/mcp/genesis-tools")> | undefined;
+let alzaModule: Promise<typeof import("@app/alza/mcp/genesis-tools")> | undefined;
+let wazeModule: Promise<typeof import("@app/waze/mcp/genesis-tools")> | undefined;
 let usageEntries: Promise<Record<string, ToolEntry>> | undefined;
 
 /**
@@ -351,6 +361,51 @@ function loadControlEntries(): Promise<Record<string, ToolEntry>> {
 }
 
 /**
+ * The fetch tools import the HTML converter and start a curl worker on their first chrome request, so they load
+ * only for a capability list that can expose them: unset (everything) or one naming `fetch`.
+ */
+function loadFetchEntries(): Promise<Record<string, ToolEntry>> {
+    fetchModule ??= import("@app/fetch/mcp/genesis-tools");
+    return fetchModule.then((module) => module.fetchToolEntries());
+}
+
+/**
+ * The Alza tools (an unofficial Alza.cz client with sign-in, basket and orders) are opt-in: they load only when the
+ * capability list names `alza`, never for an unset list, because most hosts have no use for a shop's 40 tools.
+ */
+function loadAlzaEntries(): Promise<Record<string, ToolEntry>> {
+    alzaModule ??= import("@app/alza/mcp/genesis-tools");
+    return alzaModule.then((module) => module.alzaToolEntries());
+}
+
+/**
+ * The Waze tools (live Waze reports read through a live-map tab in the user's Brave over CDP) are opt-in: they load only
+ * when the capability list names `waze`, never for an unset list, because they drive the user's real browser.
+ */
+function loadWazeEntries(): Promise<Record<string, ToolEntry>> {
+    wazeModule ??= import("@app/waze/mcp/genesis-tools");
+    return wazeModule.then((module) => module.wazeToolEntries());
+}
+
+/**
+ * Ends what a loaded group holds open (the fetch and Alza groups' Chrome workers, the Waze group's live-map tab). A
+ * group that never loaded holds nothing.
+ */
+async function closeLoadedGroups(): Promise<void> {
+    if (fetchModule) {
+        await (await fetchModule).closeFetchTools();
+    }
+
+    if (alzaModule) {
+        await (await alzaModule).closeAlzaTools();
+    }
+
+    if (wazeModule) {
+        await (await wazeModule).closeWazeTools();
+    }
+}
+
+/**
  * The usage tools import the limits store, the forecast and the rankers, so they load only for a capability list
  * that can expose them: unset (everything) or one naming `usage`.
  */
@@ -366,13 +421,19 @@ async function toolRegistry(
 ): Promise<Record<string, ToolEntry>> {
     const withJev = capabilities === undefined || capabilities.includes("jev");
     const withControl = capabilities === undefined || capabilities.includes("control");
+    const withFetch = capabilities === undefined || capabilities.includes("fetch");
+    const withAlza = capabilities?.includes("alza") ?? false;
+    const withWaze = capabilities?.includes("waze") ?? false;
     const withUsage = capabilities === undefined || capabilities.includes("usage");
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withUsage}`;
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}:${withAlza}:${withWaze}:${withUsage}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
             ...(withJev ? await loadJevEntries() : {}),
             ...(withControl ? await loadControlEntries() : {}),
+            ...(withFetch ? await loadFetchEntries() : {}),
+            ...(withAlza ? await loadAlzaEntries() : {}),
+            ...(withWaze ? await loadWazeEntries() : {}),
             ...(withUsage ? await loadUsageEntries() : {}),
             ...buildToolRegistry(context),
         };
@@ -410,6 +471,7 @@ export async function createGenesisToolsServer(opts: {
                 name,
                 description: t.description,
                 inputSchema: t.inputSchema as ListToolsResult["tools"][number]["inputSchema"],
+                ...(t.annotations ? { annotations: t.annotations } : {}),
             })),
         })
     );
@@ -451,4 +513,11 @@ export async function startMcpServer(): Promise<void> {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     log.info("genesis-tools MCP server started (stdio)");
+
+    // The stdio transport does not close on EOF, and an open child (the Waze group's browser tab) would keep the
+    // process alive after the host has gone, so stdin's end releases what the groups hold.
+    process.stdin.once("end", () => {
+        log.info("genesis-tools MCP server: stdin ended, closing loaded groups");
+        void closeLoadedGroups().finally(() => server.close());
+    });
 }
