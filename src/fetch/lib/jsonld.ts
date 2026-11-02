@@ -36,7 +36,7 @@ export interface JsonLdProduct {
     description: string | null;
     images: string[];
     rating: JsonLdRating | null;
-    /** From an AggregateOffer when the page has one, else computed from the offers. */
+    /** From an AggregateOffer when the page has one, else computed from the offers; null when they mix currencies. */
     priceRange: { low: number | null; high: number | null; currency: string | null; offerCount: number | null } | null;
     offers: JsonLdOffer[];
     properties: Array<{ name: string; value: string }>;
@@ -179,7 +179,10 @@ function readOffers(value: unknown): Pick<JsonLdProduct, "offers" | "priceRange"
                 currency: text(node.priceCurrency),
                 offerCount: parsePrice(node.offerCount),
             };
-            offers.push(...asArray(node.offers).filter(isObject).map(readOffer));
+            for (const offer of asArray(node.offers).filter(isObject)) {
+                offers.push(readOffer(offer));
+            }
+
             continue;
         }
 
@@ -187,17 +190,38 @@ function readOffers(value: unknown): Pick<JsonLdProduct, "offers" | "priceRange"
     }
 
     if (!priceRange && offers.length > 0) {
-        const prices = offers.map((offer) => offer.price).filter((price): price is number => price !== null);
-        const currencies = new Set(offers.map((offer) => offer.currency).filter((currency) => currency !== null));
-        priceRange = {
-            low: prices.length > 0 ? Math.min(...prices) : null,
-            high: prices.length > 0 ? Math.max(...prices) : null,
-            currency: currencies.size === 1 ? [...currencies][0] : null,
-            offerCount: offers.length,
-        };
+        priceRange = computedPriceRange(offers);
     }
 
     return { offers, priceRange };
+}
+
+/**
+ * The lowest and highest offer price, only while every priced offer states the same currency (or none states one).
+ * 100 CZK and 10 EUR have no common range, so mixed currencies give none; the offers themselves keep their prices.
+ * A loop, not `Math.min(...prices)`: a spread of a large offer list exceeds the argument limit.
+ */
+function computedPriceRange(offers: JsonLdOffer[]): JsonLdProduct["priceRange"] {
+    const priced = offers.filter((offer) => offer.price !== null);
+    const currencies = new Set(priced.map((offer) => offer.currency));
+
+    if (currencies.size > 1) {
+        return null;
+    }
+
+    let low: number | null = null;
+    let high: number | null = null;
+
+    for (const { price } of priced) {
+        if (price === null) {
+            continue;
+        }
+
+        low = low === null ? price : Math.min(low, price);
+        high = high === null ? price : Math.max(high, price);
+    }
+
+    return { low, high, currency: priced[0]?.currency ?? null, offerCount: offers.length };
 }
 
 function readRating(value: unknown): JsonLdRating | null {
@@ -278,11 +302,16 @@ export function readJsonLdNodes(html: string): { nodes: JsonObject[]; blocks: nu
             continue;
         }
 
-        const queue = asArray(parsed);
-        while (queue.length > 0) {
-            const node = queue.shift();
+        // An index walks the queue and children go in one at a time: `shift()` moves every remaining entry on each
+        // step, and a spread `push(...graph)` throws RangeError for a graph that fits well within the byte cap.
+        const queue: unknown[] = [parsed];
+        for (let next = 0; next < queue.length; next++) {
+            const node = queue[next];
             if (Array.isArray(node)) {
-                queue.push(...node);
+                for (const child of node) {
+                    queue.push(child);
+                }
+
                 continue;
             }
 
@@ -291,7 +320,9 @@ export function readJsonLdNodes(html: string): { nodes: JsonObject[]; blocks: nu
             }
 
             if (node["@graph"] !== undefined) {
-                queue.push(...asArray(node["@graph"]));
+                for (const child of asArray(node["@graph"])) {
+                    queue.push(child);
+                }
             }
 
             if (node["@type"] !== undefined) {

@@ -215,6 +215,34 @@ describe("JSON-LD extraction", () => {
         expect(data.products[0].priceRange).toEqual({ low: 12.5, high: 12.5, currency: "EUR", offerCount: 1 });
     });
 
+    test("offers in different currencies keep every offer but get no computed price range", () => {
+        const mixed = {
+            "@type": "Product",
+            name: "Kettle",
+            offers: [
+                { "@type": "Offer", price: 100, priceCurrency: "CZK" },
+                { "@type": "Offer", price: 10, priceCurrency: "EUR" },
+            ],
+        };
+        const page = html(`<script type="application/ld+json">${SafeJSON.stringify(mixed)}</script>`);
+        const [product] = extractJsonLd(page).products;
+
+        expect(product.priceRange).toBeNull();
+        expect(product.offers.map((offer) => [offer.price, offer.currency])).toEqual([
+            [100, "CZK"],
+            [10, "EUR"],
+        ]);
+    });
+
+    test("a @graph larger than a spread argument list still yields its product", () => {
+        // About 2 MB of HTML, a tenth of the 20 MiB a fetch accepts; a spread push of these entries throws RangeError.
+        const graph = `[${"0,".repeat(1_000_000)}{"@type":"Product","name":"Last"}]`;
+        const data = extractJsonLd(html(`<script type="application/ld+json">{"@graph":${graph}}</script>`));
+
+        expect(data.parseErrors).toBe(0);
+        expect(data.products.map((product) => product.name)).toEqual(["Last"]);
+    });
+
     test("prices in local formats parse", () => {
         expect(parsePrice("7 990,50")).toBe(7990.5);
         expect(parsePrice("1,234.50")).toBe(1234.5);
