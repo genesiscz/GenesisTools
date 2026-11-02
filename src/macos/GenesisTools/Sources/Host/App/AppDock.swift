@@ -54,8 +54,30 @@ package enum AppDock {
             _ = reopenHub(hubWindow)
         } else if HubSingleInstance.isRunningElsewhere {
             DispatchQueue.main.async { HubSingleInstance.handOff([]) }
-        } else if let executable = Bundle.main.executablePath {
+        } else if Bundle.main.bundlePath.hasSuffix(".app") {
             HubPerf.log("dock: no hub runs, starting one")
+            // Through Launch Services, then the focus handed over: since macOS 14 an app the user is not in comes
+            // forward only when the active app yields to it, and a plain child process opened the hub behind the
+            // permissions window ("it did open, but didnt forward it", 2026-11-02).
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.arguments = ["--hub"]
+            configuration.createsNewApplicationInstance = true
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { app, error in
+                DispatchQueue.main.async {
+                    if let error {
+                        HubPerf.log("dock: the hub did not start: \(error.localizedDescription)")
+                        return
+                    }
+                    guard let app else { return }
+                    NSApp.yieldActivation(to: app)
+                    app.activate()
+                    HubPerf.log("dock: the hub started as pid \(app.processIdentifier), focus handed to it")
+                }
+            }
+        } else if let executable = Bundle.main.executablePath {
+            // A build run outside its bundle (`.build/debug/GenesisTools`): Launch Services cannot start it.
+            HubPerf.log("dock: no hub runs, starting one outside a bundle")
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = ["--hub"]
