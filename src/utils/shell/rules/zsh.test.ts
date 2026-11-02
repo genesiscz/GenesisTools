@@ -171,6 +171,8 @@ describe("zsh-word-split", () => {
         expect(ids("out=$(files=$(git diff --name-only); echo x); git add $files")).toEqual([]);
         expect(ids("files=$(git diff --name-only) | cat; git add $files")).toEqual([]);
         expect(ids("files=README.md; zsh <<'EOF'\nfiles=$(git diff --name-only)\nEOF\ncat $files")).toEqual([]);
+        // A `( … )` on the first line of a heredoc body is still the innermost scope.
+        expect(ids("zsh <<'EOF'\n(files=$(git diff --name-only))\ngit add $files\nEOF")).toEqual([]);
         // Inside the subshell, and from the outer shell into a subshell, it still counts.
         expect(ids("(files=$(git diff --name-only); git add $files)")).toEqual([SPLIT]);
         expect(ids("files=$(git diff --name-only); (cd sub && git add $files)")).toEqual([SPLIT]);
@@ -209,6 +211,48 @@ describe("zsh-word-split", () => {
         ]);
     });
 
+    it("a quoted heredoc fed to zsh is a fresh shell: only an exported variable reaches it", () => {
+        const body = "zsh <<'EOF'\nfor f in $files; do echo $f; done\nEOF";
+
+        // Unexported, the variable is unset in the child.
+        expect(ids(`files=$(git diff --name-only); ${body}`)).toEqual([]);
+        expect(ids(`local files=$(git diff --name-only); ${body}`)).toEqual([]);
+        // Exported, it arrives as one string, and a later plain assignment changes what arrives.
+        expect(ids(`export files=$(git diff --name-only); ${body}`)).toEqual([SPLIT]);
+        expect(ids(`typeset -x files=$(git diff --name-only); ${body}`)).toEqual([SPLIT]);
+        expect(ids(`export files=README.md; files=$(git diff --name-only); ${body}`)).toEqual([SPLIT]);
+        expect(ids(`export files=$(git diff --name-only); files=README.md; ${body}`)).toEqual([]);
+    });
+
+    it("an option set outside a quoted zsh heredoc does not reach its body", () => {
+        const list = "files=$(git diff --name-only); git add $files";
+
+        expect(ids(`setopt shwordsplit; zsh <<'EOF'\n${list}\nEOF`)).toEqual([SPLIT]);
+        expect(ids(`emulate sh; zsh <<'EOF'\n${list}\nEOF`)).toEqual([SPLIT]);
+        expect(ids(`zsh -f <<'EOF'\n${list}\nEOF`)).toEqual([SPLIT]);
+        expect(ids(`zsh +y <<'EOF'\n${list}\nEOF`)).toEqual([SPLIT]);
+        // The outer code after the option, an option set in the body, a split form, or a flag that
+        // starts the child with splitting on all pass.
+        expect(ids(`setopt shwordsplit; ${list}; zsh <<'EOF'\necho hi\nEOF`)).toEqual([]);
+        expect(ids(`setopt shwordsplit; zsh <<'EOF'\nsetopt shwordsplit; ${list}\nEOF`)).toEqual([]);
+        expect(ids("setopt shwordsplit; zsh <<'EOF'\nfiles=$(git diff --name-only); git add ${(f)files}\nEOF")).toEqual(
+            []
+        );
+        expect(ids(`zsh -o shwordsplit <<'EOF'\n${list}\nEOF`)).toEqual([]);
+        expect(ids(`zsh -o SH_WORD_SPLIT <<'EOF'\n${list}\nEOF`)).toEqual([]);
+        expect(ids(`zsh -fy <<'EOF'\n${list}\nEOF`)).toEqual([]);
+        expect(ids(`zsh --sh-word-split <<'EOF'\n${list}\nEOF`)).toEqual([]);
+        expect(ids(`zsh --emulate sh <<'EOF'\n${list}\nEOF`)).toEqual([]);
+    });
+
+    it("an unquoted heredoc fed to zsh passes: the outer shell expands its `$x` into the text first", () => {
+        expect(ids("zsh <<EOF\nfiles=$(git diff --name-only)\nfor f in $files; do echo $f; done\nEOF")).toEqual([]);
+        expect(ids("files=$(git diff --name-only); zsh <<EOF\ngit add $files\nEOF")).toEqual([]);
+        expect(ids('zsh <<"EOF"\nfiles=$(git diff --name-only)\nfor f in $files; do echo $f; done\nEOF')).toEqual([
+            SPLIT,
+        ]);
+    });
+
     it("option text in data, an option set later or in a subshell, and a bash heredoc leave the zsh code checked", () => {
         const list = "files=$(git diff --name-only); git add $files";
 
@@ -217,6 +261,7 @@ describe("zsh-word-split", () => {
         expect(ids(`git commit -m "emulate sh"; ${list}`)).toEqual([SPLIT]);
         expect(ids(`${list}; setopt shwordsplit`)).toEqual([SPLIT]);
         expect(ids(`(setopt shwordsplit); ${list}`)).toEqual([SPLIT]);
+        expect(ids(`setopt shwordsplit | cat; ${list}`)).toEqual([SPLIT]);
         expect(ids(`zsh <<'EOF'\nsetopt shwordsplit\nEOF\n${list}`)).toEqual([SPLIT]);
         expect(ids(`bash <<'EOF'\necho hi\nEOF\n${list}`)).toEqual([SPLIT]);
         expect(ids(`${list}\nbash <<'EOF'\nfor f in $files; do echo $f; done\nEOF`)).toEqual([SPLIT]);
@@ -224,6 +269,9 @@ describe("zsh-word-split", () => {
         // The bash body itself still passes, and so does code after an option set in the same shell.
         expect(ids("bash <<'EOF'\nfiles=$(git diff --name-only)\nfor f in $files; do echo $f; done\nEOF")).toEqual([]);
         expect(ids(`(setopt shwordsplit; ${list})`)).toEqual([]);
+        // zsh runs the last element of a pipeline in the current shell, and a piped use inherits the option.
+        expect(ids(`echo x | setopt shwordsplit; ${list}`)).toEqual([]);
+        expect(ids(`setopt shwordsplit; ${list} | cat`)).toEqual([]);
     });
 
     it("a single value by construction passes", () => {
@@ -290,12 +338,11 @@ describe("zsh-word-split", () => {
     });
 
     const zshIt = it.skipIf(skip.unlessZsh);
+    const zsh = zshPath ?? "/bin/zsh";
+    const run = (command: string) =>
+        Bun.spawnSync([zsh, "-f", "-c", command], { env: process.env }).stdout.toString().trim();
 
     zshIt("the corrected command really splits in zsh, where the original ran once", () => {
-        const run = (command: string) =>
-            Bun.spawnSync([zshPath ?? "/bin/zsh", "-f", "-c", command], { env: process.env })
-                .stdout.toString()
-                .trim();
         const loop = "files=$(printf 'a\\nb\\nc\\n' | head -40); n=0; for f in $files; do n=$((n+1)); done; echo $n";
         const args = 'list="a b"; count() { echo $#; }; count $list';
         const mapped =
@@ -309,6 +356,17 @@ describe("zsh-word-split", () => {
         // A path with a space survives the per-line split; `${=files}` would have made it 3.
         expect(run(mapped)).toBe("1");
         expect(run(only(mapped, SPLIT)?.suggestion ?? "")).toBe("2");
+    });
+
+    zshIt("a quoted zsh heredoc starts fresh: no outer option, no unexported variable, an exported one unsplit", () => {
+        const command = [
+            "setopt shwordsplit; files=$(printf 'a\\nb\\n'); export out=$(printf 'a\\nb\\n')",
+            `${zsh} -f <<'EOF'`,
+            'n=0; for f in $out; do n=$((n+1)); done; echo "${files-unset} $n"',
+            "EOF",
+        ].join("\n");
+
+        expect(run(command)).toBe("unset 1");
     });
 });
 
