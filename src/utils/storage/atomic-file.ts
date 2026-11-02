@@ -6,6 +6,7 @@ import {
     copyFileSync,
     existsSync,
     fsyncSync,
+    linkSync,
     lstatSync,
     mkdirSync,
     openSync,
@@ -201,6 +202,58 @@ export function atomicWriteFileSync(path: string, data: string | Uint8Array, opt
 /** What {@link atomicWriteFileStreamed} hands its producer: appends bytes to the temp file. */
 export type AtomicChunkWriter = (bytes: Uint8Array) => void;
 
+export interface AtomicStreamOptions extends Pick<AtomicWriteOptions, "mode"> {
+    /**
+     * Publish only while nothing holds the name, and throw {@link AtomicTargetExistsError} otherwise. A rename
+     * replaces whatever another process published under the name while this one was writing (a restored file that
+     * already took appends); a hard link fails with EEXIST instead.
+     */
+    exclusive?: boolean;
+}
+
+/** An exclusive write found the name taken: another writer published first, and its file was left as it was. */
+export class AtomicTargetExistsError extends Error {
+    constructor(
+        readonly path: string,
+        options?: ErrorOptions
+    ) {
+        super(`${path} already exists; the exclusive write left it as it was`, options);
+        this.name = "AtomicTargetExistsError";
+    }
+}
+
+/**
+ * Gives the finished temp file the target's name without replacing a file another writer published there. A
+ * filesystem without hard links (FAT, exFAT, some network shares) falls back to a checked rename, which can still
+ * lose to a writer that publishes between the check and the rename.
+ */
+function publishExclusive(tmp: string, path: string): void {
+    try {
+        linkSync(tmp, path);
+    } catch (err) {
+        const taken = err instanceof Error && "code" in err && err.code === "EEXIST";
+
+        if (!taken && !existsSync(path)) {
+            renameTempOver(tmp, path);
+            return;
+        }
+
+        removeTempFile(tmp);
+        throw new AtomicTargetExistsError(path, { cause: err });
+    }
+
+    removeTempFile(tmp);
+}
+
+function renameTempOver(tmp: string, path: string): void {
+    try {
+        renameSync(tmp, path);
+    } catch (err) {
+        removeTempFile(tmp);
+        throw new Error(`Atomic rename failed: ${tmp} → ${path}`, { cause: err });
+    }
+}
+
 /**
  * {@link atomicWriteFileSync} for output too large to hold in memory (the archive of a multi-GB folder): the producer
  * appends chunks to a temp file in the target's folder, which is fsync'd and renamed over the target only after the
@@ -210,7 +263,7 @@ export type AtomicChunkWriter = (bytes: Uint8Array) => void;
 export async function atomicWriteFileStreamed(
     path: string,
     produce: (write: AtomicChunkWriter) => Promise<void> | void,
-    options?: Pick<AtomicWriteOptions, "mode">
+    options?: AtomicStreamOptions
 ): Promise<void> {
     assertTestSafePath(path, "write");
 
@@ -247,12 +300,12 @@ export async function atomicWriteFileStreamed(
         throw err;
     }
 
-    try {
-        renameSync(tmp, path);
-    } catch (err) {
-        removeTempFile(tmp);
-        throw new Error(`Atomic rename failed: ${tmp} → ${path}`, { cause: err });
+    if (options?.exclusive) {
+        publishExclusive(tmp, path);
+        return;
     }
+
+    renameTempOver(tmp, path);
 }
 
 /**

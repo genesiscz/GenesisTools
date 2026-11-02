@@ -21,7 +21,7 @@ import { existsSync } from "node:fs";
 import { appendFile, chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
-import { CompressRefusal, expandPath } from "@genesiscz/utils/compress/operations";
+import { expandPath } from "@genesiscz/utils/compress/operations";
 import { ZSTD_SUFFIX } from "@genesiscz/utils/compress/zstd";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -102,6 +102,11 @@ async function enforceMode(path: string, mode: number): Promise<void> {
  * them, and the next pass would compress that remainder over the archive. The restore is checked against the
  * ledger's record of the compression, and the archive goes only after the plain file holds every byte. A failed
  * restore throws, and the append is skipped rather than written beside the archive.
+ *
+ * Two proxy processes can resume one transcript at once, and the append queue orders writes inside one process only.
+ * `expandPath` publishes the restore exclusively, so the slower restore never replaces the file the faster one
+ * published and appended to; it fails instead (a refusal, or the archive the winner removed is gone), and this
+ * process appends to the winner's file.
  */
 async function restoreRetired(file: string): Promise<void> {
     const archive = `${file}${ZSTD_SUFFIX}`;
@@ -114,8 +119,10 @@ async function restoreRetired(file: string): Promise<void> {
         await expandPath({ archive, removeArchive: true, caller: "ai-proxy-transcripts" });
         logger.info({ file }, "ai-proxy transcripts: restored a compressed transcript its session writes again");
     } catch (err) {
-        // Another process restored it first: the plain file already holds the history.
-        if (err instanceof CompressRefusal && existsSync(file)) {
+        // Another process restored it first: the plain file already holds the history. Publication is atomic, so a
+        // plain file that exists now is a whole restore, never a partial one.
+        if (existsSync(file)) {
+            logger.debug({ err, file }, "ai-proxy transcripts: another process restored the transcript first");
             return;
         }
 

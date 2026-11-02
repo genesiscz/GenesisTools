@@ -206,7 +206,11 @@ export function sourceUnchanged(path: string, before: SourceStat): boolean {
     }
 }
 
-/** Writes the decompressed content of a zstd file to `target` through a temp file and a rename. */
+/**
+ * Writes the decompressed content of a zstd file to a new `target` through a temp file. The publication is exclusive:
+ * when another process created `target` meanwhile (a concurrent restore whose file already took appends), it throws
+ * `AtomicTargetExistsError` and leaves that file as it was.
+ */
 export async function decompressFile({ source, target }: { source: string; target: string }): Promise<ContentDigest> {
     const hasher = new Bun.CryptoHasher("sha256");
     let bytes = 0;
@@ -220,7 +224,7 @@ export async function decompressFile({ source, target }: { source: string; targe
                 bytes += frame.length;
             }
         },
-        { mode: statSync(source).mode & 0o777 }
+        { mode: statSync(source).mode & 0o777, exclusive: true }
     );
 
     return { bytes, sha256: hasher.digest("hex") };

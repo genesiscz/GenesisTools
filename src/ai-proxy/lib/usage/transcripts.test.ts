@@ -1,10 +1,11 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { existsSync, fsyncSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { transcriptOnDisk } from "@app/ai-proxy/lib/sessions/view";
 import { applyOldFileCompression, planOldFileCompression } from "@genesiscz/utils/compress/retention";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import {
     appendTranscriptLines,
     parseResponseBody,
@@ -244,5 +245,37 @@ describe("appendTranscriptLines", () => {
         // The next pass compresses the whole history, not the entries written after the first one.
         await dailyPass();
         expect(readWholeTextSync(`${file}.zst`)).toBe(all);
+    });
+
+    it("keeps the exchange of a second proxy process that restored and appended while this one was restoring", async () => {
+        const shared = transcriptFile(day, "two-proxies-session");
+        appendTranscriptLines(shared, day, ['{"n":1}']);
+        await transcriptAppendsSettled();
+        await dailyPass();
+        expect([existsSync(shared), existsSync(`${shared}.zst`)]).toEqual([false, true]);
+
+        // The other process passes the same absence check, publishes its restore, removes the archive and appends,
+        // all after this process wrote its restored copy and before that copy gets the plain name.
+        let otherProcessRan = false;
+        const fsync = spyOn(atomicWriteIo, "fsyncSync").mockImplementation((fd) => {
+            if (!otherProcessRan) {
+                otherProcessRan = true;
+                writeFileSync(shared, '{"n":1}\n{"other":1}\n');
+                rmSync(`${shared}.zst`);
+            }
+
+            fsyncSync(fd);
+        });
+
+        try {
+            appendTranscriptLines(shared, day, ['{"n":2}']);
+            await transcriptAppendsSettled();
+        } finally {
+            fsync.mockRestore();
+        }
+
+        expect(otherProcessRan).toBe(true);
+        expect(readFileSync(shared, "utf8")).toBe('{"n":1}\n{"other":1}\n{"n":2}\n');
+        expect(existsSync(`${shared}.zst`)).toBe(false);
     });
 });
