@@ -1,8 +1,11 @@
 import { readFileSync, statSync } from "node:fs";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { SessionToolCall, SessionTranscript, SessionTurn } from "@genesiscz/utils/session-changes/types";
 import { applyPatch, parsePatch, reversePatch } from "diff";
+import type { SessionChangesRead } from "../types";
+import { findCodexRollout } from "./codex-locate";
 
 const { log } = logger.scoped("session-changes");
 
@@ -253,4 +256,13 @@ function readCurrent(path: string): string | null {
         log.debug({ error, path }, "no current file for a codex change");
         return null;
     }
+}
+
+/** `NativeSessionReader.readChanges` for Codex: the rollout of thread `sessionId` in any Codex home, and its patch items. */
+export function codexSessionChanges(sessionId: string): SessionChangesRead | null {
+    const transcriptPath = findCodexRollout(sessionId);
+
+    return transcriptPath
+        ? { transcriptPath, transcript: parseCodexRollout(sessionId, readWholeTextSync(transcriptPath)) }
+        : null;
 }
