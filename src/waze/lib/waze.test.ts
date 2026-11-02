@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import {
     alertLabel,
@@ -31,9 +34,9 @@ import {
 } from "./geo";
 import { findOperation, USER_REPORTS_HIDDEN_NOTICE } from "./operations";
 import { planRoute } from "./routing";
-import type { WazeRequest, WazeResponse, WazeTransport } from "./session";
+import { BrowserTabTransport, LIVE_MAP_URL, type WazeRequest, type WazeResponse, type WazeTransport } from "./session";
 import { WazeStore } from "./store";
-import type { Feed, FeedStats, LatLon, RouteAlternative, WazeAlert } from "./types";
+import type { Feed, FeedStats, LatLon, RouteAlternative, WazeAlert, WazeJam } from "./types";
 import { parseInterval, parseWhen } from "./when";
 
 /** A straight road heading east along latitude 50, about 7.2 km long. */
@@ -474,5 +477,174 @@ describe("operations", () => {
             format: "csv",
         });
         expect(whole.data).toMatchObject({ complete: true, warnings: [] });
+    });
+
+    test("a radius snapshot records the jams the jams operation lists, not the ones in the corners of its feed box", async () => {
+        const box = bboxAround({ lat: 50, lon: 14 }, 1000);
+        const jam = (id: string, point: LatLon): WazeJam => ({
+            id,
+            level: 3,
+            lengthM: 200,
+            speedKmh: 10,
+            updatedAt: 1_000,
+            line: [point],
+        });
+        // The corner is inside the feed box but about 1.4 km from the center, outside the 1 km radius.
+        const feed: Feed = {
+            alerts: [],
+            jams: [
+                jam("inside", { lat: 50.001, lon: 14.001 }),
+                jam("corner", { lat: box.top - 1e-4, lon: box.right - 1e-4 }),
+            ],
+            stats: WHOLE,
+            fetchedAt: 1_000,
+        };
+        const store = WazeStore.open(":memory:");
+
+        try {
+            const ctx = new MemoryStoreContext(new FeedClient(feed), store);
+            const listed = await findOperation("jams").run(ctx, { area: "50,14", radiusKm: 1 });
+            const recorded = await findOperation("record").run(ctx, { area: "50,14", radiusKm: 1 });
+
+            const listedIds = z.object({ jams: z.array(z.object({ id: z.string() })) }).parse(listed.data).jams;
+            expect(listedIds.map((listedJam) => listedJam.id)).toEqual(["inside"]);
+            expect(z.object({ snapshot: z.object({ jams: z.number() }) }).parse(recorded.data).snapshot.jams).toBe(1);
+        } finally {
+            store.close();
+        }
+    });
+});
+
+/** A client whose feed is canned. */
+class FeedClient extends WazeClient {
+    constructor(private readonly canned: Feed) {
+        super(fakeTransport(), { minIntervalMs: 0 });
+    }
+
+    override async feed(): Promise<Feed> {
+        return this.canned;
+    }
+}
+
+/** A context over one client and an in-memory history store. */
+class MemoryStoreContext extends ClientContext {
+    constructor(
+        fake: WazeClient,
+        private readonly memory: WazeStore
+    ) {
+        super(fake);
+    }
+
+    override store(): WazeStore {
+        return this.memory;
+    }
+}
+
+/**
+ * A browser's DevTools endpoint on a free local port: `/json/version`, `/json/list`, and page and browser sockets.
+ * Every `Runtime.evaluate` answers `onEvaluate()`, `Target.createTarget` adds a tab, `Target.closeTarget` is recorded.
+ */
+function fakeDevTools(opts: { tabs: string[]; onEvaluate: () => unknown }) {
+    const tabs = [...opts.tabs];
+    const closed: string[] = [];
+    const call = z.object({ id: z.number(), method: z.string(), params: z.record(z.string(), z.unknown()).optional() });
+    const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(req, srv) {
+            const { pathname } = new URL(req.url);
+            if (pathname.startsWith("/devtools/")) {
+                return srv.upgrade(req) ? undefined : new Response("upgrade failed", { status: 400 });
+            }
+
+            const socket = (path: string) => `ws://127.0.0.1:${srv.port}/devtools/${path}`;
+            if (pathname === "/json/version") {
+                return Response.json({ Browser: "FakeBrowser/1.0", webSocketDebuggerUrl: socket("browser/fake") });
+            }
+
+            if (pathname === "/json/list") {
+                const list = tabs.map((id) => ({ id, type: "page", title: "Waze", url: LIVE_MAP_URL }));
+                return Response.json(list.map((tab) => ({ ...tab, webSocketDebuggerUrl: socket(`page/${tab.id}`) })));
+            }
+
+            return new Response("not found", { status: 404 });
+        },
+        websocket: {
+            message(ws, raw) {
+                const { id, method, params } = call.parse(SafeJSON.parse(String(raw), { strict: true }));
+                let result: unknown = {};
+                if (method === "Runtime.evaluate") {
+                    result = { result: { value: opts.onEvaluate() } };
+                } else if (method === "Target.createTarget") {
+                    const created = `temp-${tabs.length}`;
+                    tabs.push(created);
+                    result = { targetId: created };
+                } else if (method === "Target.closeTarget") {
+                    closed.push(String(params?.targetId));
+                }
+
+                ws.send(SafeJSON.stringify({ id, result }));
+            },
+        },
+    });
+    return { port: Number(server.port), closed, stop: () => server.stop(true) };
+}
+
+describe("live map tab", () => {
+    const keptFile = toolDataDir("waze", "tab.json");
+
+    /** Opens the tab transport against a fake browser whose live map never gets ready, and reports what it touched. */
+    async function failedOpen(opts: { kept?: string; persistKeptTab?: boolean }) {
+        // Each readiness check moves the clock past the 30 s deadline, so the open gives up at once.
+        let skew = 0;
+        const devtools = fakeDevTools({
+            tabs: opts.kept ? [opts.kept] : [],
+            onEvaluate: () => {
+                skew += 31_000;
+                return false;
+            },
+        });
+        mkdirSync(dirname(keptFile), { recursive: true });
+        const keptBefore = opts.kept ? SafeJSON.stringify({ port: devtools.port, targetId: opts.kept }) : undefined;
+        if (keptBefore) {
+            writeFileSync(keptFile, keptBefore);
+        } else {
+            rmSync(keptFile, { force: true });
+        }
+
+        const realNow = Date.now.bind(Date);
+        const clock = spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+
+        try {
+            await expect(
+                BrowserTabTransport.open({ port: devtools.port, keepTab: true, persistKeptTab: opts.persistKeptTab })
+            ).rejects.toThrow("did not load its reCAPTCHA script");
+        } finally {
+            clock.mockRestore();
+            devtools.stop();
+        }
+
+        return {
+            closed: devtools.closed,
+            keptBefore,
+            keptAfter: existsSync(keptFile) ? readFileSync(keptFile, "utf8") : undefined,
+        };
+    }
+
+    test("a diagnostic open that fails leaves a reused kept tab open and tab.json as it was", async () => {
+        const doctor = await failedOpen({ kept: "kept-tab", persistKeptTab: false });
+
+        expect(doctor.closed).toEqual([]);
+        expect(doctor.keptAfter).toBe(doctor.keptBefore);
+    });
+
+    test("a failed open still closes the doctor's temporary tab, and a normal run still drops a kept tab that never loads", async () => {
+        const doctor = await failedOpen({ persistKeptTab: false });
+        expect(doctor.closed).toEqual(["temp-0"]);
+        expect(doctor.keptAfter).toBeUndefined();
+
+        const normal = await failedOpen({ kept: "kept-tab" });
+        expect(normal.closed).toEqual(["kept-tab"]);
+        expect(normal.keptAfter).toBe("{}");
     });
 });

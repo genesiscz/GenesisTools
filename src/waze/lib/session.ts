@@ -194,12 +194,15 @@ function isResponse(value: unknown): value is WazeResponse {
 export class BrowserTabTransport implements WazeTransport {
     private constructor(
         private readonly page: Page,
-        private details: TransportInfo
+        private details: TransportInfo,
+        /** False for a diagnostic: it never writes the kept-tab file and never closes a kept tab it reused. */
+        private readonly persistKeptTab: boolean
     ) {}
 
     /**
      * Opens (or reuses a kept) background tab on the live map and waits until its reCAPTCHA script can mint tokens.
-     * Never touches another tab. `persistKeptTab: false` (doctor) never writes the kept-tab file.
+     * Never touches another tab. `persistKeptTab: false` (doctor) never writes the kept-tab file and leaves a reused
+     * kept tab open, also when the live map does not get ready.
      */
     static async open(
         opts: { port?: number; keepTab?: boolean; persistKeptTab?: boolean } = {}
@@ -225,15 +228,20 @@ export class BrowserTabTransport implements WazeTransport {
             target = await createBackgroundTab(port);
         }
 
+        const persistKeptTab = opts.persistKeptTab !== false;
         const page = new Page(new Conn(localDebuggerUrl(target, port)), target);
-        const transport = new BrowserTabTransport(page, {
-            kind: "browser-tab",
-            port,
-            browser: version,
-            tabId: target.id,
-            reused,
-            keepTab: opts.keepTab === true,
-        });
+        const transport = new BrowserTabTransport(
+            page,
+            {
+                kind: "browser-tab",
+                port,
+                browser: version,
+                tabId: target.id,
+                reused,
+                keepTab: opts.keepTab === true,
+            },
+            persistKeptTab
+        );
         try {
             await transport.waitUntilReady();
         } catch (error) {
@@ -241,7 +249,7 @@ export class BrowserTabTransport implements WazeTransport {
             throw error;
         }
 
-        if (opts.keepTab && opts.persistKeptTab !== false) {
+        if (opts.keepTab && persistKeptTab) {
             writeKeptTab({ port, targetId: target.id });
         }
 
@@ -329,10 +337,15 @@ export class BrowserTabTransport implements WazeTransport {
         return value;
     }
 
+    /**
+     * Lets go of the tab and closes it, unless it is kept: `keepTab` without `persist: false`, or a kept tab that a
+     * transport which may not persist (doctor) reused. Closing a reused kept tab clears the kept-tab file.
+     */
     async close(opts: { persist?: boolean } = {}): Promise<void> {
         this.page.close();
-        if (this.details.keepTab && opts.persist !== false) {
-            log.debug({ tabId: this.details.tabId }, "waze tab kept");
+        const reusedByDiagnostic = this.details.reused && !this.persistKeptTab;
+        if ((this.details.keepTab && opts.persist !== false) || reusedByDiagnostic) {
+            log.debug({ tabId: this.details.tabId, reusedByDiagnostic }, "waze tab kept");
             return;
         }
 
