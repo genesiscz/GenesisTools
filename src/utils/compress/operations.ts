@@ -437,12 +437,13 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
  * holds the newer content. Undefined when that record carries none (a pack recorded before 2026-11-01, or one written
  * by an older checkout), so such an archive is not checked. A record matches by the file its target names, with
  * symlinks resolved, so `cd /tmp; unpack tree.zst` finds the record of `pack /tmp/tree` (the working folder is
- * `/private/tmp` on macOS). A relative target (an older checkout recorded `-o` as typed) names no known folder and
- * matches nothing.
+ * `/private/tmp` on macOS). The ledger is searched by the real file's name, so a symlink of another name
+ * (`restore.log.zst` to `notes.log.zst`) finds the record too. A relative target (an older checkout recorded `-o` as
+ * typed) names no known folder and matches nothing.
  */
 function recordedInputSha256(archive: string): string | undefined {
     const wanted = realpathSync(archive);
-    return searchLedger({ path: basename(archive) })
+    return searchLedger({ path: basename(wanted) })
         .filter(
             (record) => isAbsolute(record.target) && existsSync(record.target) && realpathSync(record.target) === wanted
         )

@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, type Stats, statSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
 import { isZstdPath, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
 import { readWholeTextSync, storedFilePath } from "@genesiscz/utils/fs/read-lines";
@@ -140,13 +140,13 @@ export async function readSource({
         return readAtCommit({ path, commit, ctx });
     }
 
-    const stored = storedFilePath(path);
+    const found = storedFile(path);
 
-    if (!stored) {
+    if (!found) {
         throw new TransclusionError(`file not found: ${path}`);
     }
 
-    const stat = statSync(stored);
+    const { stored, stat } = found;
 
     if (stat.isDirectory()) {
         throw new TransclusionError(`${path} is a folder, not a file`);
@@ -165,8 +165,33 @@ export async function readSource({
         throw new TransclusionError(`${path} is ${formatMb(bytes)}; the limit is ${formatMb(MAX_SOURCE_BYTES)}`);
     }
 
-    const text = compressed ? readWholeTextSync(stored) : await Bun.file(stored).text();
+    // The shared reader opens `<stored>.zst` when the daily pass retires a plain file after the stat. It keeps a
+    // leading BOM, which Bun.file().text() dropped, so the BOM is dropped here, from both forms.
+    const text = readWholeTextSync(stored).replace(/^﻿/, "");
     return { text, provenance: await worktreeProvenance(path, ctx) };
+}
+
+/**
+ * The file that holds `path` now (`path` itself or its `.zst`) and its stat. The daily pass writes the `.zst` before
+ * it removes the plain file, so a plain file that is gone by the stat was retired after the lookup, and a second
+ * lookup finds its `.zst`.
+ */
+function storedFile(path: string): { stored: string; stat: Stats } | undefined {
+    for (let lookup = 0; lookup < 2; lookup++) {
+        const stored = storedFilePath(path);
+
+        if (!stored) {
+            return undefined;
+        }
+
+        const stat = statSync(stored, { throwIfNoEntry: false });
+
+        if (stat) {
+            return { stored, stat };
+        }
+    }
+
+    return undefined;
 }
 
 async function readAtCommit({
