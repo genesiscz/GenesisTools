@@ -84,8 +84,9 @@ export function readJsonlForward(
 
         let position = from;
         let carry: Buffer = Buffer.alloc(0);
-        // One buffer for every read; nothing keeps a view of it past its iteration.
-        const chunk = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, size));
+        // One buffer for every read, sized to the bytes left from `from`: a warm read of a few appended bytes in a large
+        // transcript must not allocate a whole chunk. Nothing keeps a view of it past its iteration.
+        const chunk = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, size - from));
         let oversizedStart: number | undefined;
         const skipped = (start: number, end: number) => {
             const message = `Oversized row at bytes ${start}-${end} exceeded ${MAX_ROW_BYTES} bytes; skipped`;

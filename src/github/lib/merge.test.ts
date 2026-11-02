@@ -1810,16 +1810,35 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         replyFailsFor?: string[];
         /** The submit of the batched review fails with this message. */
         submitError?: string;
+        /** Drafts another writer put into the batched review after it started. */
+        foreignDrafts?: number;
     }) {
         const calls: string[] = [];
         let pending = options.pending;
+        /** The comment ids the batch's replies got, in order; the review holds them plus the foreign drafts. */
+        const replied: string[] = [];
         const client: ReviewCommentClient = {
             async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
                 const op =
-                    /(viewer|node|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview|submitPullRequestReview|deletePullRequestReview)\b/.exec(
+                    /(viewer|reviewComments|node|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview|submitPullRequestReview|deletePullRequestReview)\b/.exec(
                         query
                     )?.[1] ?? "?";
                 calls.push(`${op}${variables.reviewId ? `@${variables.reviewId}` : ""}`);
+
+                if (
+                    op === "addPullRequestReviewThreadReply" &&
+                    !options.replyFailsFor?.includes(String(variables.threadId))
+                ) {
+                    replied.push(`C_reply${replied.length + 1}`);
+                }
+
+                if (op === "reviewComments") {
+                    const foreign = Array.from({ length: options.foreignDrafts ?? 0 }, (_, i) => ({
+                        id: `C_user${i}`,
+                    }));
+                    const nodes = [...replied.map((id) => ({ id })), ...foreign];
+                    return { node: { comments: { totalCount: nodes.length, nodes } } } as T;
+                }
 
                 if (
                     op === "addPullRequestReviewThreadReply" &&
@@ -1865,7 +1884,7 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
                         },
                     },
                     addPullRequestReviewThreadReply: {
-                        addPullRequestReviewThreadReply: { comment: { id: "C_2", url: "u2" } },
+                        addPullRequestReviewThreadReply: { comment: { id: replied.at(-1) ?? "C_2", url: "u2" } },
                     },
                     submitPullRequestReview: {
                         submitPullRequestReview: { pullRequestReview: { id: "REV_new", url: "rev-url" } },
@@ -1907,8 +1926,33 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
             "addPullRequestReview",
             "addPullRequestReviewThreadReply@REV_new",
             "addPullRequestReviewThreadReply@REV_new",
+            "reviewComments@REV_new",
             "submitPullRequestReview@REV_new",
         ]);
+    });
+
+    test("a draft another writer put into the batched review keeps it pending, and nothing is published", async () => {
+        const { client, calls } = fakeClient({ foreignDrafts: 1 });
+        const result = await postRepliesAsOneReview(
+            {
+                owner: "acme",
+                repo: "web",
+                number: 7,
+                replies: [
+                    { threadId: "PRRT_1", body: "a" },
+                    { threadId: "PRRT_2", body: "b" },
+                ],
+            },
+            client
+        );
+
+        expect(result.posted.map((p) => p.commentId)).toEqual(["C_reply1", "C_reply2"]);
+        expect(result.reviewUrl).toBeUndefined();
+        expect(result.submitFailed?.reviewId).toBe("REV_new");
+        expect(result.submitFailed?.error).toContain("1 draft comment(s) this batch did not write");
+        expect(calls.at(-1)).toBe("reviewComments@REV_new");
+        expect(calls.some((call) => call.startsWith("submitPullRequestReview"))).toBe(false);
+        expect(calls.some((call) => call.startsWith("deletePullRequestReview"))).toBe(false);
     });
 
     test("batched replies refuse while the viewer holds a pending review, and write nothing", async () => {
