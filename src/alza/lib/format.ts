@@ -67,8 +67,9 @@ export function moreText(page: Pick<ListingPage, "hasMore" | "next">): string {
 }
 
 export function listingMarkdown(title: string, page: ListingPage): string {
+    // A filtered listing can spend its page budget with no match and still have pages left: keep the continuation.
     if (page.items.length === 0) {
-        return `${title}: no products.`;
+        return `${title}: no products${moreText(page)}.`;
     }
 
     const head = `${title}: ${page.items.length} shown${page.total ? ` of ${page.total}` : ""}${moreText(page)}.`;

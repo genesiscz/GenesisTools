@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
     ImpersonatedHttpClient,
     type ImpersonatedRequest,
     type ImpersonatedResponse,
 } from "@genesiscz/utils/http/impersonate/client";
+import { Command } from "commander";
+import { registerCatalogCommands } from "../commands/catalog";
 import { AlzaApi } from "./api";
 import {
     cardToSummary,
@@ -16,6 +18,7 @@ import {
     productIdFromRef,
     toReview,
 } from "./catalog";
+import { listingMarkdown } from "./format";
 import { lowestBeforeLatest } from "./history";
 import { findOperation } from "./operations";
 import {
@@ -452,6 +455,64 @@ describe("listing pages", () => {
         });
         expect(result.products.map((p) => p.code)).toEqual(["C1", "C2", "C3", "C4", "C5"]);
         expect(http.requests.map((r) => r.url)).toEqual(["https://www.alza.cz/18851284.htm"]);
+    });
+
+    test("an empty filtered page that spent its page budget still names where to continue", () => {
+        const spent = { page: 20, hasMore: true, next: { page: 21, skip: 0 }, items: [] };
+        expect(listingMarkdown('Search "tester"', spent)).toBe(
+            'Search "tester": no products, more exist (next: page 21).'
+        );
+        expect(listingMarkdown('Search "tester"', { page: 1, hasMore: false, items: [] })).toBe(
+            'Search "tester": no products.'
+        );
+    });
+});
+
+describe("search command", () => {
+    // `bun test` inherits the terminal's stdin, so a bare flag would open the picker: pin it to non-interactive.
+    let realIsTty: boolean | undefined;
+    beforeEach(() => {
+        realIsTty = process.stdin.isTTY;
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true, writable: true });
+    });
+    afterEach(() => {
+        process.exitCode = 0;
+        Object.defineProperty(process.stdin, "isTTY", { value: realIsTty, configurable: true, writable: true });
+    });
+
+    test("--sort is a closed set: an unknown or a bare value names the orders and exits 1 before any request", async () => {
+        let stderr = "";
+        const stderrSpy = spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+            stderr += String(chunk);
+            return true;
+        });
+        const requestSpy = spyOn(ImpersonatedHttpClient.prototype, "request").mockImplementation(async (req) =>
+            noNetwork(req)
+        );
+        let requests = -1;
+        try {
+            for (const argv of [
+                ["search", "tester", "--sort", "bogus"],
+                ["search", "tester", "--sort"],
+            ]) {
+                process.exitCode = 0;
+                const program = new Command().exitOverride();
+                registerCatalogCommands(program);
+                await program.parseAsync(argv, { from: "user" });
+                expect(process.exitCode).toBe(1);
+            }
+
+            requests = requestSpy.mock.calls.length;
+        } finally {
+            stderrSpy.mockRestore();
+            requestSpy.mockRestore();
+        }
+
+        expect(requests).toBe(0);
+        expect(stderr).toContain(
+            '--sort does not accept "bogus". Possible: relevance, price-asc, price-desc, newest, rating'
+        );
+        expect(stderr).toContain("--sort requires a value.");
     });
 });
 
