@@ -370,9 +370,10 @@ function rangesText(ranges: PresenceRange[]): string {
                 range.fromSec === range.toSec
                     ? formatClock(range.fromSec)
                     : `${formatClock(range.fromSec)}–${formatClock(range.toSec)}`;
-            return `${span} (${range.lines} ${range.lines === 1 ? "line" : "lines"})`;
+            const present = range.present ? `, present: ${range.present.join(", ") || "nobody"}` : "";
+            return `${span} (${range.lines} ${range.lines === 1 ? "line" : "lines"}${present})`;
         })
-        .join(", ");
+        .join("; ");
 }
 
 function hintText(hint: SpeakerHint): string {

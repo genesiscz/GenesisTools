@@ -152,6 +152,11 @@ export interface PresenceRange {
     fromSec: number;
     toSec: number;
     lines: number;
+    /**
+     * Who was in the call during the range: the candidates for whose voice it is. A range ends where someone joins
+     * or leaves, so the list holds for the whole range. Set on `absent-speaker` ranges.
+     */
+    present?: string[];
 }
 
 export type SpeakerHint =
@@ -475,17 +480,21 @@ function presentAt(presence: Presence[], sec: number): Presence[] {
     );
 }
 
-function toRanges(times: number[]): PresenceRange[] {
+/** Close times form one range; with `presence`, a range also ends where the set of people in the call changes. */
+function toRanges(times: number[], presence?: Presence[]): PresenceRange[] {
     const ranges: PresenceRange[] = [];
+    const poolAt = (sec: number) => [...new Set(presentAt(presence ?? [], sec).map((stay) => stay.name))].sort();
 
     for (const sec of times) {
         const last = ranges.at(-1);
+        const present = presence ? poolAt(sec) : undefined;
+        const samePool = present === undefined || last?.present?.join("\n") === present.join("\n");
 
-        if (last && sec - last.toSec < PRESENCE_RANGE_GAP_SEC) {
+        if (last && sec - last.toSec < PRESENCE_RANGE_GAP_SEC && samePool) {
             last.toSec = sec;
             last.lines += 1;
         } else {
-            ranges.push({ fromSec: sec, toSec: sec, lines: 1 });
+            ranges.push({ fromSec: sec, toSec: sec, lines: 1, ...(present ? { present } : {}) });
         }
     }
 
@@ -513,7 +522,12 @@ function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presen
             const absent = timesOf((sec) => presentAt(stays, sec).length === 0);
 
             if (absent.length > 0) {
-                hints.push({ kind: "absent-speaker", label: stat.label, strength: "strong", ranges: toRanges(absent) });
+                hints.push({
+                    kind: "absent-speaker",
+                    label: stat.label,
+                    strength: "strong",
+                    ranges: toRanges(absent, presence),
+                });
             }
         }
 
