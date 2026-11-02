@@ -751,6 +751,97 @@ const PRINTS_ITS_INPUT = new Set([
     "rg",
 ]);
 
+// sed options that change neither what it prints nor where it reads: anything else (`-n`, `-i`, `-f`, `-z`) may.
+const SED_PLAIN_OPTIONS = new Set(["-E", "-r", "-u", "--regexp-extended", "--unbuffered", "--posix"]);
+
+// Whether a sed with these arguments prints every line it reads from the pipe with the error text still in it. Its
+// script must be one or more `s` commands whose pattern is fixed text: no `.`, bracket, repetition or class, which
+// could match, and with `g` erase, the whole message. Every other program can drop the line (`d`, `q`, an address
+// with `!d`) or blank it (`s/.*//`), and a file operand makes sed read the file instead of the pipe.
+function sedKeepsLines(args: string[]): boolean {
+    const scripts: string[] = [];
+    const operands: string[] = [];
+
+    for (let k = 0; k < args.length; k++) {
+        const arg = args[k];
+
+        if (arg === "-e" || arg === "--expression") {
+            scripts.push(args[++k] ?? "");
+        } else if (arg.startsWith("--expression=")) {
+            scripts.push(arg.slice("--expression=".length));
+        } else if (/^-e./.test(arg)) {
+            scripts.push(arg.slice(2));
+        } else if (arg.startsWith("-") && arg !== "-") {
+            if (!SED_PLAIN_OPTIONS.has(arg)) {
+                return false;
+            }
+        } else {
+            operands.push(arg);
+        }
+    }
+
+    if (scripts.length === 0) {
+        scripts.push(operands.shift() ?? "");
+    }
+
+    return operands.every((operand) => operand === "-") && scripts.every(fixedSubstitutions);
+}
+
+// `s/<fixed text>/<anything>/[gpiI0-9]`, one or more, apart by `;`, new lines or blanks. A backslash before a letter,
+// a digit or `+?{}` is a class, a back-reference or a BRE repetition, so it is not fixed text either.
+function fixedSubstitutions(script: string): boolean {
+    let i = 0;
+    let commands = 0;
+
+    // The text up to the next unescaped `delim`, or null when it never closes.
+    const until = (delim: string): string | null => {
+        const start = i;
+
+        for (; i < script.length; i++) {
+            if (script[i] === "\\") {
+                i++;
+            } else if (script[i] === delim) {
+                return script.slice(start, i++);
+            }
+        }
+
+        return null;
+    };
+
+    while (i < script.length) {
+        if (/[\s;]/.test(script[i])) {
+            i++;
+            continue;
+        }
+
+        const delim = script[i + 1];
+
+        if (script[i] !== "s" || delim === undefined || /[\s\\]/.test(delim)) {
+            return false;
+        }
+
+        i += 2;
+        const pattern = until(delim);
+        const replacement = pattern === null ? null : until(delim);
+        const flags = /^[gpiI0-9]*/.exec(script.slice(i))?.[0] ?? "";
+        i += flags.length;
+
+        if (
+            pattern === null ||
+            replacement === null ||
+            pattern === "" ||
+            /(?<!\\)[.[\]*+?{}]|\\[A-Za-z0-9+?{}]/.test(pattern.replace(/\\\\/g, "")) ||
+            (i < script.length && !/[\s;]/.test(script[i]))
+        ) {
+            return false;
+        }
+
+        commands += 1;
+    }
+
+    return commands > 0;
+}
+
 function printsItsInput(scan: ShellScan, element: Span): boolean {
     const { words } = wordsFrom(scan, element.start);
     const cmd = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
@@ -772,7 +863,7 @@ function printsItsInput(scan: ShellScan, element: Span): boolean {
     }
 
     if (word === "sed") {
-        return !/n/.test(short) && !args.includes("--quiet") && !args.includes("--silent");
+        return sedKeepsLines(args);
     }
 
     if (word === "tail") {

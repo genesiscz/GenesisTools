@@ -1,7 +1,7 @@
 // git shapes that destroy work or someone else's commits.
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import {
     commandTokenIndex,
     commandWord,
@@ -170,6 +170,8 @@ interface Words {
     args: string[];
     /** Every file stdout goes to: zsh's MULTIOS writes each of `> a > b`, and bash truncates `a`. */
     stdout: StdoutTarget[];
+    /** Every file any output redirection opens, stderr's (`2> err.log`) too. */
+    writes: string[];
 }
 
 // A word cut where the shell cuts it: before an unquoted `>` that follows text, so `main:a.ts>a.ts` is the object
@@ -205,6 +207,7 @@ function wordsOf(text: string): Words {
     const words = (text.match(RAW_WORD) ?? []).flatMap((word) => (word.includes(">") ? redirectionParts(word) : word));
     const args: string[] = [];
     const stdout: StdoutTarget[] = [];
+    const writes: string[] = [];
 
     for (let k = 0; k < words.length; k++) {
         // A word that starts with `#` opens a comment to the end of the line.
@@ -223,12 +226,16 @@ function wordsOf(text: string): Words {
         // `>& <file>` writes stdout and stderr to the file; `>&2`, `>& 2` and `>&-` name a descriptor.
         const file = !m[2].endsWith("&") || !/^(\d+|-)$/.test(target ?? "");
 
-        if (["", "1", "&"].includes(m[1]) && m[2].startsWith(">") && file && target !== undefined) {
-            stdout.push({ file: target, appends: m[2].startsWith(">>") });
+        if (m[2].startsWith(">") && file && target !== undefined) {
+            writes.push(target);
+
+            if (["", "1", "&"].includes(m[1])) {
+                stdout.push({ file: target, appends: m[2].startsWith(">>") });
+            }
         }
     }
 
-    return { args, stdout };
+    return { args, stdout, writes };
 }
 
 // The words after a token up to the end of its element, in the original text.
@@ -461,11 +468,61 @@ function cdTarget(scan: ShellScan, statement: Span): string | null {
     return null;
 }
 
+// Commands that write no file, so a statement of them between a fresh worktree's add and its revert makes no work the
+// revert can lose. git counts only for the reads in GIT_READS.
+const WRITES_NOTHING: ReadonlySet<string> = new Set([
+    "cd",
+    "pushd",
+    "popd",
+    "echo",
+    "printf",
+    "pwd",
+    "true",
+    ":",
+    "ls",
+    "cat",
+    "test",
+    "[",
+    "sleep",
+]);
+const GIT_READS: ReadonlySet<string> = new Set(["status", "rev-parse", "log"]);
+
+// Whether a statement surely writes no file: every part of its pipeline is a command from WRITES_NOTHING or a git
+// read without `--output`, with no redirection into a file other than /dev/null, and no substitution runs another
+// command (`echo "$(touch a.ts)"`).
+function writesNothing(scan: ShellScan, statement: Span): boolean {
+    if (/\$\(|`|[<>]\(/.test(originalSlice(scan, statement.start, elementEnd(statement)))) {
+        return false;
+    }
+
+    return splitPipeline(statement).every((element) => {
+        const tokens = tokenize(element);
+        const cmd = commandTokenIndex(tokens, scan.command);
+        const { args, writes } = wordsOf(originalSlice(scan, element.start, elementEnd(element)));
+
+        if (cmd === -1 || writes.some((file) => samePath(file) !== "/dev/null")) {
+            return false;
+        }
+
+        if (commandWord(tokens[cmd].text) !== "git") {
+            return WRITES_NOTHING.has(commandWord(tokens[cmd].text));
+        }
+
+        const call = gitCall(element, scan.command);
+        return (
+            call !== null &&
+            GIT_READS.has(call.tokens[call.sub].text) &&
+            !args.some((arg) => arg.startsWith("--output"))
+        );
+    });
+}
+
 // `git worktree add … <dir>; … cd <dir> … <revert>`: the statement of the add, or -1. A new worktree holds no
-// uncommitted work. A `;` in the chain lets the revert run in an old folder when the add failed. A `||` skips the cd
-// on success or runs the revert only after a failure, and a subshell or group ends its own cd: no fresh worktree.
-// The revert itself must write the folder the shell is in: a `-C`, `--git-dir`, `--work-tree`, an assignment or a
-// wrapper in front of git points it at another tree.
+// uncommitted work, provided nothing between the add and the revert writes a file (`echo work > a.ts` would make the
+// work the revert discards). A `;` in the chain lets the revert run in an old folder when the add failed. A `||`
+// skips the cd on success or runs the revert only after a failure, and a subshell or group ends its own cd: no fresh
+// worktree. The revert itself must write the folder the shell is in: a `-C`, `--git-dir`, `--work-tree`, an
+// assignment or a wrapper in front of git points it at another tree.
 function freshWorktreeAdd(scan: ShellScan, inv: GitInvocation): number {
     if (gitPlace(scan, inv) !== "") {
         return -1;
@@ -488,6 +545,10 @@ function freshWorktreeAdd(scan: ShellScan, inv: GitInvocation): number {
 
         for (let c = w + 1; c < inv.statement; c++) {
             const target = cdTarget(scan, inv.unit[c]);
+
+            if (!writesNothing(scan, inv.unit[c])) {
+                return -1;
+            }
 
             if (target !== null) {
                 inside = samePath(target) === samePath(dir);
@@ -588,9 +649,10 @@ function onlyCreates(scan: ShellScan, revert: Revert): boolean {
 // Whether the index of the repository git finds from `folder` may hold one of `paths`. A checkout from a ref also
 // resets each path's index entry, and an entry staged and then deleted from the working tree exists nowhere else.
 // No repository means git refuses the checkout. The index is searched as bytes: versions 2 and 3 spell each entry's
-// whole path with a NUL after it, and a sparse index a folder's path with a `/`. A version 4 index shortens paths and
-// a split index keeps them in a shared file, so those, an unreadable index and a `.git` file that names no git dir
-// may hold every path. Case is ignored, as a case-insensitive volume does.
+// whole path with a NUL after it, and a sparse index a folder's path with a `/`. A path names a folder too: an absent
+// `lib` (or `lib/`) resets every entry under `lib/`, so any entry that spells `lib/` counts. A version 4 index
+// shortens paths and a split index keeps them in a shared file, so those, an unreadable index and a `.git` file that
+// names no git dir may hold every path. Case is ignored, as a case-insensitive volume does.
 function indexMayHold(folder: string, paths: string[]): boolean {
     try {
         const real = realpathSync(folder);
@@ -644,6 +706,7 @@ function indexMayHold(folder: string, paths: string[]): boolean {
                 isAbsolute(name) ||
                 /[^\x20-\x7e]/.test(name) ||
                 entries.includes(`${name}\0`) ||
+                entries.includes(`${name}/`) ||
                 folders.some((_, k) => entries.includes(`${folders.slice(0, k + 1).join("/")}/\0`))
             );
         });
@@ -790,6 +853,74 @@ interface Saves {
     stashed: string[];
 }
 
+// Whether `cp <source> … <dest>` leaves a copy of `source` apart from it. cp refuses to copy a file onto itself and
+// the statement after it still runs, so `cp a.ts a.ts`, `cp a.ts ./a.ts`, `cp a.ts .` and `cp sub/a.ts sub` save
+// nothing. The copy lands at `dest`, or at `dest/<name>` when `dest` is a folder (or may be one). In a known folder a
+// target is the source when both resolve to one path (case-folded, as on a case-insensitive volume) or both exist as
+// one file (a symlink or a hard link). Without one, two relative spellings are unsure when some folder makes them one
+// path (mayMeet), and an absolute and a relative one with the same last name are unsure since the shell may stand
+// where the absolute one points; only an absolute target that does not exist yet is surely a new file. A word the
+// shell expands is unsure too, and an unsure copy saves nothing.
+function keepsCopy(folder: string | null, source: string, dest: string): boolean {
+    const from = literalPath(source);
+    const to = literalPath(dest);
+
+    if (from === null || to === null) {
+        return false;
+    }
+
+    const f = posix.normalize(from);
+    const base = posix.basename(f);
+    const located = (path: string) => (isAbsolute(path) ? path : folder === null ? null : resolve(folder, path));
+    const place = located(to);
+    const mayBeFolder =
+        /(?:^|\/)\.{0,2}$/.test(to) || place === null || statSync(place, { throwIfNoEntry: false })?.isDirectory();
+    const targets = mayBeFolder ? [to, posix.join(to, base)] : [to];
+
+    return targets.every((target) => {
+        const a = located(from);
+        const b = located(target);
+
+        if (a !== null && b !== null) {
+            const left = statSync(a, { throwIfNoEntry: false });
+            const right = statSync(b, { throwIfNoEntry: false });
+            const oneFile =
+                left !== undefined && right !== undefined && left.dev === right.dev && left.ino === right.ino;
+            return a.toLowerCase() !== b.toLowerCase() && !oneFile;
+        }
+
+        const t = posix.normalize(target);
+
+        if (!isAbsolute(f) && !isAbsolute(t)) {
+            return !mayMeet(f, t);
+        }
+
+        if (posix.basename(t).toLowerCase() !== base.toLowerCase()) {
+            return true;
+        }
+
+        return isAbsolute(t) && lstatSync(t, { throwIfNoEntry: false }) === undefined;
+    });
+}
+
+// Whether two relative paths can name one file from some folder, case-folded. After the leading `..` of each, the
+// path that climbs more must be the other one with exactly the extra climb's worth of folders in front: `../repo/a.ts`
+// is `a.ts` from a folder named repo, while `../../bak/a.fixed.ts` is never `src/a.ts`.
+function mayMeet(p: string, q: string): boolean {
+    const parts = (path: string) => {
+        const segments = path
+            .toLowerCase()
+            .split("/")
+            .filter((segment) => segment !== "" && segment !== ".");
+        const up = segments.findIndex((segment) => segment !== "..");
+        const climb = up === -1 ? segments.length : up;
+        return { climb, rest: segments.slice(climb) };
+    };
+    const [low, high] = [parts(p), parts(q)].sort((x, y) => x.climb - y.climb);
+    const extra = high.climb - low.climb;
+    return high.rest.length === low.rest.length + extra && high.rest.slice(extra).join("/") === low.rest.join("/");
+}
+
 // The paths a statement saves whole for this revert: `cp <path>… <copy>`, `git stash push … [--] <path>…` and
 // `git diff [HEAD] [--] <path>… > <file>`, run in the revert's place.
 function savedPaths(scan: ShellScan, statement: Span, revert: Revert, place: string): Saves {
@@ -809,9 +940,11 @@ function savedPaths(scan: ShellScan, statement: Span, revert: Revert, place: str
             const args = wordsAfter(scan, tokens[cmd], element).args;
             const end = args.indexOf("--");
             const operands = end === -1 ? args.filter((a) => !a.startsWith("-")) : args.slice(end + 1);
+            const dest = operands[operands.length - 1];
 
-            if (place === "" && operands.length > 1 && samePath(operands[operands.length - 1]) !== "/dev/null") {
-                kept.push(...operands.slice(0, -1));
+            if (place === "" && operands.length > 1 && samePath(dest) !== "/dev/null") {
+                const folder = knownFolder(scan, revert.inv);
+                kept.push(...operands.slice(0, -1).filter((source) => keepsCopy(folder, source, dest)));
             }
 
             continue;
@@ -1042,7 +1175,9 @@ export const gitCheckoutInFreshWorktree: ShellRule = {
     why:
         "The matched text runs from the `git worktree add` to the checkout or restore. A worktree the same command " +
         "just added holds no uncommitted work, so the revert loses nothing there, and with `&&` from the add to the " +
-        "revert the guard says nothing. The only risk is the `;` or new line on the way: when the add fails (most " +
+        "revert the guard says nothing. A statement on the way that can write a file (a redirection, a substitution or " +
+        "any command but cd, echo, ls and the like) can make work there, so the revert is blocked. The only other " +
+        "risk is the `;` or new line on the way: when the add fails (most " +
         "often because the folder already exists), the steps after it still run, and the revert overwrites an old " +
         "folder that can hold work. Join the add, the `cd` and the revert with `&&`.",
     wrong: "git worktree add /tmp/w/x main; cd /tmp/w/x && git checkout abc -- a.ts",
