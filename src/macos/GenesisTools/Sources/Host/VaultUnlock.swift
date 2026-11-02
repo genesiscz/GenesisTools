@@ -809,6 +809,12 @@ func unlockVault(_ params: VaultUnlockParams) {
     let content = VaultWindowContent.build(params, caller: caller, session: session)
     let biometric = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
 
+    // A host that stops a slow child kills its whole process group: T3 Code gives a provider probe 10 to 20 s, and the
+    // window closed with it before anyone could answer. In a group of its own the window stays, and an allow it
+    // remembers serves the program's next start. The key itself never reaches a caller that is gone
+    // (`VaultRecipient.releaseRejection`).
+    if setpgid(0, 0) != 0 { logClick("vault.unlock could not leave the caller's process group: errno \(errno)") }
+
     DispatchQueue.main.async {
         let model = ApprovalDialogModel(
             title: content.title, purpose: content.purpose, command: content.command, symbol: "key.fill", facts: content.facts,
@@ -825,8 +831,29 @@ func unlockVault(_ params: VaultUnlockParams) {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + deadlineSeconds, execute: deadline)
 
+        // Once the caller exits, only a remembered allow can still help: say so, or close a window that cannot remember.
+        var callerGone = false
+        let callerExit = DispatchSource.makeProcessSource(identifier: caller.pid, eventMask: .exit, queue: .main)
+        let markCallerGone = {
+            guard !callerGone, !model.answered else { return }
+            callerGone = true
+            callerExit.cancel()
+            guard rememberable else {
+                deadline.cancel()
+                vaultPresenter.close()
+                vaultAudit("denied", params: params, caller: caller, session: session, detail: "the caller exited before an answer")
+                vaultDeny("the caller exited before an answer")
+            }
+            model.refresh(items: model.items,
+                          summary: "“\(tool)” has exited. Pick how long to remember the allow, and its next start gets the key.")
+        }
+        callerExit.setEventHandler(handler: markCallerGone)
+        callerExit.resume()
+        if kill(caller.pid, 0) != 0, errno == ESRCH { markCallerGone() }
+
         model.onDeny = {
             deadline.cancel()
+            callerExit.cancel()
             vaultPresenter.close()
             vaultAudit("denied", params: params, caller: caller, session: session, detail: "denied in the window")
             vaultDeny("denied in the approval window")
@@ -835,8 +862,13 @@ func unlockVault(_ params: VaultUnlockParams) {
         model.onAllow = { choice in
             // From the click on, Touch ID has the time the caller allows (180 s), not the window's deadline.
             deadline.cancel()
+            callerExit.cancel()
             vaultPresenter.close()
             let remember = choice?.seconds ?? 0
+            if callerGone, choice == nil || choice?.seconds == 0 {
+                vaultAudit("denied", params: params, caller: caller, session: session, detail: "allowed once after the caller exited")
+                vaultDeny("the caller exited before an answer")
+            }
             authenticate(reason: "give “\(tool)” the GenesisTools vault key") { method, failure in
                 DispatchQueue.main.async {
                     guard let method else {
