@@ -1,3 +1,5 @@
+import { listClarityTasks } from "@app/clarity/lib/tasks";
+import type { ClarityTask } from "@app/clarity/lib/types";
 import type { TimesheetAppResponse, TimesheetResponse } from "@genesiscz/utils/clarity";
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -321,7 +323,7 @@ interface TimesheetWeeks {
 }
 
 /** The day a month's own period is looked up by: the middle, which no split period misses. */
-export function midMonth(year: number, month: number): string {
+function midMonth(year: number, month: number): string {
     return `${year}-${String(month).padStart(2, "0")}-15`;
 }
 
@@ -599,4 +601,47 @@ export async function loadTimesheetPeriods(
     const { weeks, userId, records } = await getTimesheetWeeks(api, scope.month, scope.year);
 
     return new TimesheetPeriods({ weeks, records, userId, month: scope.month, year: scope.year, api });
+}
+
+/**
+ * The first period in the given order that actually carries task rows. A month's own timesheet can
+ * exist with no catalogue yet, so the search has to fall through to another period.
+ */
+async function firstNonEmptyCatalogue(api: TimesheetWeekReader, candidates: TimesheetWeek[]): Promise<ClarityTask[]> {
+    for (const candidate of candidates) {
+        if (!hasTimesheetId(candidate)) {
+            continue;
+        }
+
+        const tasks = await listClarityTasks({ api, timesheetId: candidate.timesheetId });
+
+        if (tasks.length > 0) {
+            return tasks;
+        }
+    }
+
+    return [];
+}
+
+/**
+ * The Clarity task catalogue for a month: the mid-month week's rows, else the newest other week of
+ * the month that has rows, else the newest week of the current window that has them.
+ */
+export async function loadTaskCatalogue(
+    api: TimesheetWeekReader,
+    { month, year }: { month: number; year: number }
+): Promise<ClarityTask[]> {
+    const periods = await loadTimesheetPeriods(api, { month, year });
+    const preferred = periods.covering(midMonth(year, month), { requireTimesheet: true });
+    const tasks = await firstNonEmptyCatalogue(api, periods.taskSourceOrder(preferred));
+
+    if (tasks.length > 0) {
+        return tasks;
+    }
+
+    // A month whose timesheets exist but carry no rows yet has no catalogue of its own.
+    // Widen past the month filter and take the newest period that does have rows.
+    const current = await loadTimesheetPeriods(api);
+
+    return firstNonEmptyCatalogue(api, current.taskSourceOrder(undefined));
 }

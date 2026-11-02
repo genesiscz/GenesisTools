@@ -3,21 +3,35 @@ import { type WorkItemNode, walkAncestorsBatched } from "@app/azure-devops/lib/a
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import { parseRelations } from "@app/azure-devops/relations";
+import type { TimeLogApi } from "@app/azure-devops/timelog-api";
+import type { WorkItemFull } from "@app/azure-devops/types";
 import { requireConfig as requireAdoConfig } from "@app/azure-devops/utils";
 import { requireConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
 import { type AssignmentRows, buildAssignmentRows } from "@app/clarity/lib/assignments";
-
-import { listClarityTasks } from "@app/clarity/lib/tasks";
-import { hasTimesheetId, loadTimesheetPeriods, midMonth, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
+import { loadTaskCatalogue, type TimesheetWeekReader } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import type { ClarityApi } from "@genesiscz/utils/clarity";
 
 export interface AssignmentView extends AssignmentRows {
     tasks: ClarityTask[];
     chains: Map<number, WorkItemNode[]>;
     month: number;
     year: number;
+}
+
+/** The work item read the ancestor walk needs. */
+export interface WorkItemReader {
+    getWorkItems(
+        ids: number[],
+        options: { comments: boolean }
+    ): Promise<Map<number, Pick<WorkItemFull, "title" | "rawFields" | "relations">>>;
+}
+
+/** The clients the view reads through. Each defaults to the configured one. */
+export interface AssignmentViewClients {
+    clarityApi?: TimesheetWeekReader;
+    timeLogApi?: TimeLogApi;
+    workItemApi?: WorkItemReader;
 }
 
 export function parseMonthArg(date: string): { month: number; year: number } {
@@ -31,34 +45,14 @@ export function parseMonthArg(date: string): { month: number; year: number } {
 }
 
 /**
- * The first period in the given order that actually carries task rows. A month's own timesheet can
- * exist with no catalogue yet, so the search has to fall through to another period.
- */
-async function firstNonEmptyCatalogue(api: ClarityApi, candidates: TimesheetWeek[]): Promise<ClarityTask[]> {
-    for (const candidate of candidates) {
-        if (!hasTimesheetId(candidate)) {
-            continue;
-        }
-
-        const tasks = await listClarityTasks({ api, timesheetId: candidate.timesheetId });
-
-        if (tasks.length > 0) {
-            return tasks;
-        }
-    }
-
-    return [];
-}
-
-/**
  * Assemble everything the assignment surfaces need: the month's work items split into mapped and
  * unmapped, the Clarity task catalogue, and a tree-based recommendation per work item. Shared by
  * the CLI and the dashboard so both answer identically.
  */
-export async function buildAssignmentView(date: string): Promise<AssignmentView> {
+export async function buildAssignmentView(date: string, clients: AssignmentViewClients = {}): Promise<AssignmentView> {
     const clarityConfig = await requireConfig();
-    const clarityApi = getClarityApi();
-    const timeLogApi = getTimeLogApi();
+    const clarityApi = clients.clarityApi ?? getClarityApi();
+    const timeLogApi = clients.timeLogApi ?? getTimeLogApi();
     const { month, year } = parseMonthArg(date);
 
     const monthExport = await exportMonth(timeLogApi, month, year, timeLogApi.user.userId);
@@ -68,18 +62,8 @@ export async function buildAssignmentView(date: string): Promise<AssignmentView>
         minutesByWorkItem.set(entry.workItemId, (minutesByWorkItem.get(entry.workItemId) ?? 0) + entry.minutes);
     }
 
-    const periods = await loadTimesheetPeriods(clarityApi, { month, year });
-    const preferred = periods.covering(midMonth(year, month), { requireTimesheet: true });
-    let tasks = await firstNonEmptyCatalogue(clarityApi, periods.taskSourceOrder(preferred));
-
-    if (tasks.length === 0) {
-        // A month whose timesheets exist but carry no rows yet has no catalogue of its own.
-        // Widen past the month filter and take the newest period that does have rows.
-        const anyWeek = await loadTimesheetPeriods(clarityApi);
-        tasks = await firstNonEmptyCatalogue(clarityApi, anyWeek.taskSourceOrder(undefined));
-    }
-
-    const workItemApi = new Api(requireAdoConfig());
+    const tasks = await loadTaskCatalogue(clarityApi, { month, year });
+    const workItemApi = clients.workItemApi ?? new Api(requireAdoConfig());
     const chains = await walkAncestorsBatched({
         ids: [...minutesByWorkItem.keys()],
         fetchMany: async (ids) => {

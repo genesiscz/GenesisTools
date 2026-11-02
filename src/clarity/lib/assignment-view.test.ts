@@ -1,14 +1,14 @@
-import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeLogQueryEntry } from "@app/azure-devops/types";
 import { type ClarityMapping, saveConfig, storage } from "@app/clarity/config";
+import { buildAssignmentView } from "@app/clarity/lib/assignment-view";
 import type { TimesheetWeekReader } from "@app/clarity/lib/timesheet-weeks";
-import type { ClarityApi } from "@genesiscz/utils/clarity";
 
-// buildAssignmentView with every client faked: Clarity (carousel and catalogues), TimeLog (the
-// month's hours) and the Azure DevOps work item reads (the ancestor chains). The config with the
+// buildAssignmentView with every client injected as a fake: Clarity (carousel and catalogues),
+// TimeLog (the month's hours) and the Azure DevOps work item reads (the ancestor chains). The config with the
 // stored mappings is the sandboxed file. Every id is invented.
 
 interface SyntheticPeriod {
@@ -231,49 +231,14 @@ interface Fakes {
     workItems: ReturnType<typeof fakeWorkItems>;
 }
 
-let active: Fakes | null = null;
-
-const realClarityApi = { ...(await import("@app/clarity/lib/api")) };
-const realTimeLogClient = { ...(await import("@app/azure-devops/lib/timelog-client")) };
-const realAdoUtils = { ...(await import("@app/azure-devops/utils")) };
-const realAdoApi = { ...(await import("@app/azure-devops/api")) };
-
-mock.module("@app/clarity/lib/api", () => ({
-    ...realClarityApi,
-    getClarityApi: (...args: Parameters<typeof realClarityApi.getClarityApi>) =>
-        active ? (active.clarity.api as unknown as ClarityApi) : realClarityApi.getClarityApi(...args),
-}));
-mock.module("@app/azure-devops/lib/timelog-client", () => ({
-    ...realTimeLogClient,
-    getTimeLogApi: (...args: Parameters<typeof realTimeLogClient.getTimeLogApi>) =>
-        active ? active.timeLog.api : realTimeLogClient.getTimeLogApi(...args),
-}));
-mock.module("@app/azure-devops/utils", () => ({
-    ...realAdoUtils,
-    requireConfig: (...args: Parameters<typeof realAdoUtils.requireConfig>) =>
-        active ? { org: "https://dev.azure.com/sample-org", project: "Sample" } : realAdoUtils.requireConfig(...args),
-}));
-mock.module("@app/azure-devops/api", () => ({
-    ...realAdoApi,
-    Api: new Proxy(realAdoApi.Api, {
-        construct(target, args) {
-            return active ? active.workItems.api : Reflect.construct(target, args);
-        },
-    }),
-}));
-
-const { buildAssignmentView } = await import("@app/clarity/lib/assignment-view");
-
 // The one place these tests reach buildAssignmentView. A refactor of how it gets its clients
 // changes this function and nothing below it.
 async function view(date: string, fakes: Fakes) {
-    active = fakes;
-
-    try {
-        return await buildAssignmentView(date);
-    } finally {
-        active = null;
-    }
+    return buildAssignmentView(date, {
+        clarityApi: fakes.clarity.api,
+        timeLogApi: fakes.timeLog.api,
+        workItemApi: fakes.workItems.api,
+    });
 }
 
 const AugustHours = [
@@ -303,7 +268,6 @@ beforeAll(() => {
 });
 
 afterEach(() => {
-    active = null;
     const path = storage.getConfigPath();
 
     if (existsSync(path)) {
