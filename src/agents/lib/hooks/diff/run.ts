@@ -193,9 +193,24 @@ export function withheldPatch(patch: string): string {
 /**
  * The first 256 KB of a file: enough to find a storage-state file's `"cookies"` or a key's BEGIN line. "" for a file
  * that does not exist (a deleted side), null for one that exists but could not be read, which the caller fails closed on.
+ *
+ * A symlink is its link text, which is what git diffs on either side. Opening one followed it: a captured link to a
+ * file outside the repository read that file, and a link to a FIFO blocked the hook until a writer came. Anything but
+ * a regular file (a FIFO, a socket, a folder) is not opened at all, and reads as null.
  */
 export function readHead(path: string): string | null {
     try {
+        const stat = lstatSync(path);
+
+        if (stat.isSymbolicLink()) {
+            return readlinkSync(path, "utf8");
+        }
+
+        if (!stat.isFile()) {
+            hookDiag("A changed path is not a regular file; its patch is masked as a cookie jar", { path });
+            return null;
+        }
+
         const fd = openSync(path, "r");
         try {
             const buffer = Buffer.alloc(HEAD_BYTES);
@@ -454,7 +469,7 @@ export function renamesIn({
         // `hash-object` follows a link, and a captured one dangles or leaves the repository: the first that would
         // not open ended the run, and every copy after it lost its rename. A link pairs with nothing anyway,
         // because the fresh side is hashed through its link too.
-        if (!isCapturedLink(copy)) {
+        if (!isLink(copy)) {
             copies.push({ file, copy });
         }
     }
@@ -1168,6 +1183,11 @@ export interface CapturedEdit {
      * before-state lives in git: the repo root and the commit the command started on.
      */
     gitBase?: { root: string; base: string };
+    /**
+     * An entry of a repository's `git status`, read as git stores it on both sides: a symlink is its link text. A path
+     * the command only named follows its link, as its copy did (`captureNamed` copies the target).
+     */
+    inRepository?: boolean;
 }
 
 /** One captured file's before-state; see `capturedBefores`. */
@@ -1176,11 +1196,11 @@ export function capturedBefore(item: CapturedEdit): ChangeBytes {
 }
 
 /**
- * Whether a captured copy is a symlink. The capture stores a repository's symlink as a link (`cloneTree`), and a
- * reader that opens one follows it: out of the repository for an absolute target, against the capture folder for
- * a relative one. Only `git diff --no-index` reads a link as git stores it, by its text.
+ * Whether `path`, a captured copy or a repository entry, is a symlink. The capture stores a repository's symlink as a
+ * link (`cloneTree`), and a reader that opens one follows it: out of the repository for an absolute target, against
+ * the capture folder for a relative one. git reads a link as it stores it, by its text.
  */
-function isCapturedLink(path: string): boolean {
+function isLink(path: string): boolean {
     try {
         return lstatSync(path).isSymbolicLink();
     } catch {
@@ -1189,11 +1209,11 @@ function isCapturedLink(path: string): boolean {
 }
 
 /**
- * A captured copy's bytes as git stores them: a symlink is its link text, so the change log never keeps a file
- * outside the repository as a before-state (`readCapped` follows the link). A path that is gone reads as nothing.
+ * A path's bytes as git stores them: a symlink is its link text, so the change log never keeps a file outside the
+ * repository as a before- or after-state (`readCapped` follows the link). A path that is gone reads as nothing.
  */
-function readCapturedCopy(path: string): ChangeBytes {
-    if (!isCapturedLink(path)) {
+function readAsGitStores(path: string): ChangeBytes {
+    if (!isLink(path)) {
         return readCapped(path);
     }
 
@@ -1214,7 +1234,7 @@ function readCapturedCopy(path: string): ChangeBytes {
  * keep. A codemod over N clean files used to start N `git show` processes inside the hook budget.
  */
 export function capturedBefores(items: CapturedEdit[]): ChangeBytes[] {
-    const results: ChangeBytes[] = items.map((item) => (item.before ? readCapturedCopy(item.before) : {}));
+    const results: ChangeBytes[] = items.map((item) => (item.before ? readAsGitStores(item.before) : {}));
     const byRoot = new Map<string, number[]>();
 
     items.forEach((item, index) => {
@@ -1236,6 +1256,18 @@ export function capturedBefores(items: CapturedEdit[]): ChangeBytes[] {
     }
 
     return results;
+}
+
+/**
+ * The bytes a captured file has after the command. A repository entry is read as git stores it, so a retargeted link
+ * logs its new text beside its old one, never the file it now points to; a named path follows its link.
+ */
+export function capturedAfter(item: CapturedEdit): ChangeBytes {
+    if (item.deleted) {
+        return {};
+    }
+
+    return item.inRepository ? readAsGitStores(item.path) : readCapped(item.path);
 }
 
 const GIT_BATCH_TIMEOUT_MS = 5_000;
@@ -1599,6 +1631,7 @@ export function runDiffPost({
                 path: file.path,
                 before,
                 deleted: file.deleted,
+                inRepository: true,
                 ...(before === null && !file.untracked && !leftOut ? { gitBase: { root, base } } : {}),
             });
 
@@ -2071,7 +2104,7 @@ function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: 
             const befores = capturedBefores(chunk);
             const touched = chunk.map((item, index) => {
                 const before = befores[index] ?? {};
-                const after = item.deleted ? {} : readCapped(item.path);
+                const after = capturedAfter(item);
                 return {
                     path: item.path,
                     before: before.after,
