@@ -1,6 +1,11 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { type WarmupContext, WarmupFailure, type WarmupOutcome } from "@genesiscz/utils/ai/providers/account-features";
+import {
+    snapshotOfAccount,
+    type WarmupContext,
+    WarmupFailure,
+    type WarmupOutcome,
+} from "@genesiscz/utils/ai/providers/account-features";
 import type { Cached } from "@genesiscz/utils/ai/usage-poll/shared-cache";
 import { snapshotsCacheKey, USAGE_CACHE_TTL, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
@@ -26,15 +31,19 @@ export interface AnthropicWarmupDeps {
     loadLongLived?: (accountName: string) => Promise<LongLivedTokens | undefined>;
     sendLongLived?: (token: string) => Promise<TokenVerdict>;
     /** The account's last cached reading (read-only), to skip a warmup that has nothing to start. */
-    lastUsage?: (accountName: string) => Promise<UsageResponse | undefined>;
+    lastUsage?: (account: AccountEntry) => Promise<UsageResponse | undefined>;
 }
 
-async function defaultLastUsage(accountName: string): Promise<UsageResponse | undefined> {
+/**
+ * Matched by the account's id, never by its name alone: a replacement account that reused the name of a
+ * deleted one would inherit its absent 5-hour window and running weekly reset, and send nothing for days.
+ */
+async function defaultLastUsage(account: AccountEntry): Promise<UsageResponse | undefined> {
     const cached = await usagePollStorage().getCacheFile<Cached<AccountUsageSnapshot>>(
         snapshotsCacheKey(ANTHROPIC_SUB),
         USAGE_CACHE_TTL
     );
-    return previousUsageOf(cached?.accounts.find((snapshot) => snapshot.accountName === accountName));
+    return previousUsageOf(snapshotOfAccount(cached?.accounts, account));
 }
 
 /**
@@ -120,7 +129,7 @@ export async function anthropicWarmup(
 ): Promise<WarmupOutcome> {
     const loadLongLived = deps.loadLongLived ?? defaultLoadLongLived;
     const sendLongLived = deps.sendLongLived ?? sendLongLivedInferencePing;
-    const last = await (deps.lastUsage ?? defaultLastUsage)(account.name).catch((error: unknown) => {
+    const last = await (deps.lastUsage ?? defaultLastUsage)(account).catch((error: unknown) => {
         logger.debug({ account: account.name, error }, "[warmup] usage cache unreadable; warming up anyway");
         return undefined;
     });
