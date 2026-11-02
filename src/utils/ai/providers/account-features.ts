@@ -256,6 +256,25 @@ export interface AccountUsageSnapshot {
     native?: unknown;
 }
 
+/**
+ * The row of one provider's snapshot list that belongs to this account.
+ *
+ * By id first: a rename keeps the id, so a snapshot recorded under the old name still belongs to this
+ * account. The name is the fallback for a row written before the writers carried an id, so the fallback
+ * REQUIRES an absent id: a row whose id is set and different belongs to another account, and matching it
+ * by name let a deleted account's usage, plan and absent windows show up under a replacement that reused
+ * the name, until the next poll overwrote it.
+ */
+export function snapshotOfAccount<Row extends Pick<AccountUsageSnapshot, "accountId" | "accountName">>(
+    rows: readonly Row[] | undefined,
+    account: Pick<AccountEntry, "id" | "name">
+): Row | undefined {
+    return (
+        rows?.find((row) => row.accountId !== "" && row.accountId === account.id) ??
+        rows?.find((row) => !row.accountId && row.accountName === account.name)
+    );
+}
+
 export interface UsagePollOptions {
     /** Never rotate a token. */
     probe?: boolean;
@@ -462,6 +481,13 @@ export interface AccountUsageFeature {
      * refusal, so the round and the resolver never disagree about what "no credential" is.
      */
     missingCredential?(account: AccountEntry): MissingCredential | undefined;
+    /**
+     * A row read back from this provider's own cache (`snapshots:<provider>`), brought to the current shape
+     * from its `native` payload, which only that cache still holds. The core runs it on every read of that
+     * cache, so a row served without a request, and the all-provider `snapshots.json` it is written into,
+     * carry the current shape before the next live poll replaces the row. Absent means no upgrade is needed.
+     */
+    upgradeCached?(snapshot: AccountUsageSnapshot): AccountUsageSnapshot;
 }
 
 export interface WarmupContext {

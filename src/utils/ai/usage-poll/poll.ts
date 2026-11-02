@@ -158,6 +158,25 @@ function visibleAccounts(all: readonly AccountEntry[], providerId: string, filte
     );
 }
 
+/**
+ * One provider's own cache (`snapshots:<provider>`), each row through the plugin's `upgradeCached`. Every
+ * read of that cache goes through here, so a row served without a request is in the current shape, and
+ * `pollAccounts` writes it so into `snapshots.json` for the readers that only open that file.
+ */
+export async function readCachedSnapshots(
+    usage: Pick<AccountUsageFeature, "upgradeCached">,
+    key: string
+): Promise<Cached<AccountUsageSnapshot> | null> {
+    const cached = await usagePollStorage().getCacheFile<Cached<AccountUsageSnapshot>>(key, USAGE_CACHE_TTL);
+    const upgrade = usage.upgradeCached;
+
+    if (!cached || !upgrade) {
+        return cached ?? null;
+    }
+
+    return { ...cached, accounts: cached.accounts.map((row) => upgrade(row)) };
+}
+
 async function pollProvider(
     entry: UsagePlugin,
     allAccounts: readonly AccountEntry[],
@@ -176,8 +195,7 @@ async function pollProvider(
         provider: providerId,
         ops: SNAPSHOT_OPS,
         fetchAll: ({ orgBlocked, previous }) => __fetchProviderSnapshots(entry, accounts, opts, orgBlocked, previous),
-        getCache: async (key) =>
-            (await storage.getCacheFile<Cached<AccountUsageSnapshot>>(key, USAGE_CACHE_TTL)) ?? null,
+        getCache: (key) => readCachedSnapshots(entry.usage, key),
         putCache: (key, value) => storage.putCacheFile(key, value, USAGE_CACHE_TTL),
         withLock: (key, fn) => storage.withFileLock({ file: usageCacheFilePath(key), fn, timeout: 10_000 }),
         recordHistory: (snapshots) => recordSnapshots(snapshots),
