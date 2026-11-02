@@ -138,6 +138,8 @@ struct RmApproveFolderStats: Decodable {
     var newestAt: String?
     /// The walk stopped at its cap: `files` is a floor ("2,000+ files").
     var capped: Bool?
+    /// A folder of the tree could not be listed: `files` counts only what the walk read, so 0 proves nothing.
+    var unreadable: Bool?
 }
 
 struct RmApproveRemember: Decodable {
@@ -323,12 +325,16 @@ struct RmWindowContent {
         return ByteFormat.file(bytes)
     }
 
-    /// "12 files, newest 2 hours ago." for a folder with stats; nothing for an empty one (its chip says so).
+    /// "12 files, newest 2 hours ago." for a folder with stats; nothing for an empty one (its chip says so). A walk
+    /// that could not list a folder says so, and its count is a floor like a capped one.
     static func folderDetail(_ stats: RmApproveFolderStats?, now: Date) -> String? {
-        guard let stats, stats.files > 0 else { return nil }
+        guard let stats else { return nil }
+        let unreadable = stats.unreadable == true
+        if stats.files == 0 { return unreadable ? "Some folders inside could not be read." : nil }
         let newest = stats.newestAt.flatMap(parseDate).map { ", newest \(ago($0, now: now))" } ?? ""
-        let count = stats.capped == true ? "\(stats.files.formatted(.number.locale(Locale(identifier: "en_US"))))+ files" : Plural.count(stats.files, "file")
-        return "\(count)\(newest)."
+        let floor = stats.capped == true || unreadable
+        let count = floor ? "\(stats.files.formatted(.number.locale(Locale(identifier: "en_US"))))+ files" : Plural.count(stats.files, "file")
+        return "\(count)\(newest)\(unreadable ? "; some folders inside could not be read" : "")."
     }
 
     /// One row. `cwd` is the asking session's folder (the row's folder reads relative to it); `project` is the
@@ -381,12 +387,13 @@ struct RmWindowContent {
     }
 
     /// A folder known to hold nothing: the CLI says `empty`, or a walk that read the whole tree found no file. A walk
-    /// that stopped at its cap (`capped`) counted only the entries it read, so its 0 files proves nothing.
+    /// that stopped at its cap (`capped`) or could not list a folder (`unreadable`) counted only the entries it read,
+    /// so its 0 files proves nothing.
     static func emptyFolder(_ item: RmApproveItem) -> Bool {
         guard item.kind == "dir" else { return false }
         if item.empty == true { return true }
         guard let stats = item.folderStats else { return false }
-        return stats.files == 0 && stats.capped != true
+        return stats.files == 0 && stats.capped != true && stats.unreadable != true
     }
 
     /// "same name as its folder" (`ReservineBack/ReservineBack`) or "same name as the repository" (a `shop-web` folder

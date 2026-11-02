@@ -15,7 +15,7 @@ import { rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { createStopwatch, formatCount } from "@genesiscz/utils/format";
 import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
-import { keepFromTmpCleaner } from "@genesiscz/utils/fs/tmp-cleaner";
+import { keepFromTmpCleaner, type TmpCleanerRefresh } from "@genesiscz/utils/fs/tmp-cleaner";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
@@ -360,11 +360,8 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
             }
 
             // Restorable until drainAfter, but the rename kept the times inside the tree, so macOS tmp_cleaner could
-            // delete it first. A batch with no grace is drained at once and promises no restore.
-            if (options.graceMinutes > 0) {
-                keepFromTmpCleaner(item.stored);
-            }
-
+            // delete it first. The move does not walk the tree to refresh them (a large tree would hold this run):
+            // every move starts the drainer, whose start refreshes a new batch in the background (`keepNewBatches`).
             item.bytes = request.bytes ?? measureBytes(item.stored);
             appendRmLedger({
                 action: "move",
@@ -1229,26 +1226,36 @@ function lockHeld(lockPath: string, content: string, alive: ClaimAlive): boolean
  * changed since it was read (a new holder took it). Exported for the race test in rm.test.ts.
  */
 export function removeStaleLock(lockPath: string, seen: string, alive: ClaimAlive = isProcessAliveSince): boolean {
+    return removeStaleClaimFile(lockPath, seen, (content) => lockHeld(lockPath, content, alive));
+}
+
+/**
+ * The one fenced takeover of a claim file (a single-holder lock here, a ledger marker in `measure.ts`): under the
+ * path's claim arbiter, the file is read again and removed only when it still holds `seen` and `held` still says
+ * nobody owns it. Two processes that both read a dead claimant can then never remove each other's new claim. True
+ * when the name is free to take; false when another process takes it over right now, or it changed since it was read.
+ */
+export function removeStaleClaimFile(path: string, seen: string, held: (content: string) => boolean): boolean {
     try {
-        return withPathArbitrationSync(lockPath, () => {
-            const now = readLock(lockPath);
+        return withPathArbitrationSync(path, () => {
+            const now = readLock(path);
 
             if (now === null) {
                 return true;
             }
 
-            if (now !== seen || lockHeld(lockPath, now, alive)) {
-                logger.debug({ lockPath, seen, now }, "rm: the lock changed hands while it was checked");
+            if (now !== seen || held(now)) {
+                logger.debug({ path, seen, now }, "rm: the claim changed hands while it was checked");
                 return false;
             }
 
-            logger.debug({ lockPath, holder: now }, "rm: taking over a dead holder's lock");
-            unlinkSync(lockPath);
+            logger.debug({ path, holder: now }, "rm: taking over a dead claimant's file");
+            unlinkSync(path);
             return true;
         });
     } catch (error) {
         if (isArbitrationBusy(error)) {
-            logger.debug({ lockPath }, "rm: another process is taking the lock over");
+            logger.debug({ path }, "rm: another process is taking the claim over");
             return false;
         }
 
@@ -1286,12 +1293,53 @@ export interface DrainerOptions {
     requestsWaiting?: () => boolean;
 }
 
+/** How long after it was made a batch is refreshed by each drainer start: longer than the drainer's longest sleep. */
+const KEEP_NEW_BATCH_MS = 15 * 60_000;
+
+/**
+ * Refreshes the batches made in the last 15 minutes that `tools rm restore` can still bring back (in their grace, or
+ * incomplete) against macOS tmp_cleaner. A move does not walk the tree it moved, since a large tree would hold the
+ * deleting run: every move starts the drainer instead, and each drainer start and loop runs this in the background.
+ * `done` keeps one drainer from walking a batch twice. An older batch, and a file this could not refresh (which
+ * `keepFromTmpCleaner` logs), is the daily keepalive's (`refreshWaitingRmData`).
+ */
+function keepNewBatches(options: { paths: TrashPaths; now: Date; done: Set<string> }): void {
+    const now = options.now.getTime();
+    const result: TmpCleanerRefresh & { batches: number } = { batches: 0, files: 0, fresh: 0, emptyDirs: 0, failed: 0 };
+
+    for (const batch of listBatches(options.paths)) {
+        const young = now - Date.parse(batch.createdAt) < KEEP_NEW_BATCH_MS;
+        const restorable = batch.incomplete === true || Date.parse(batch.drainAfter) > now;
+
+        if (!young || !restorable || options.done.has(batch.id)) {
+            continue;
+        }
+
+        options.done.add(batch.id);
+        result.batches++;
+
+        for (const item of batch.items) {
+            // Real time: the times must hold against the real cleaner's next run, whatever clock the caller passed.
+            const refresh = keepFromTmpCleaner(item.stored);
+            result.files += refresh.files;
+            result.fresh += refresh.fresh;
+            result.emptyDirs += refresh.emptyDirs;
+            result.failed += refresh.failed;
+        }
+    }
+
+    if (result.batches > 0) {
+        logger.debug(result, "rm: the drainer refreshed new batches against macOS tmp_cleaner");
+    }
+}
+
 /**
  * The background drainer. Every start drains the due batches at once: claims keep two drainers off one batch, so
- * a new batch never waits for a drainer that sleeps toward a later one. Then one drainer at a time (the lock) sweeps
- * the requests (at start and every `sweep.everyMinutes`), sleeps until the next batch is due or the next sweep (at
- * most 10 minutes, so a restore or a new batch is noticed), and exits when no batch waits and either no request
- * waits or none has for `sweep.lingerMinutes`.
+ * a new batch never waits for a drainer that sleeps toward a later one, and refreshes the new batches against
+ * macOS tmp_cleaner (`keepNewBatches`), also when another drainer holds the lock. Then one drainer at a time (the
+ * lock) sweeps the requests (at start and every `sweep.everyMinutes`), sleeps until the next batch is due or the next
+ * sweep (at most 10 minutes, so a restore or a new batch is noticed), and exits when no batch waits and either no
+ * request waits or none has for `sweep.lingerMinutes`.
  */
 export async function runDrainer(options: DrainerOptions): Promise<DrainResult> {
     const paths = options.paths ?? defaultTrashPaths();
@@ -1306,6 +1354,8 @@ export async function runDrainer(options: DrainerOptions): Promise<DrainResult> 
 
     const onFailure = options.onFailure;
     add(await drainDue({ config: options.config, paths, now: now(), onFailure }));
+    const kept = new Set<string>();
+    keepNewBatches({ paths, now: now(), done: kept });
     const release = acquireDrainerLock(paths.lockPath);
 
     if (!release) {
@@ -1327,6 +1377,8 @@ export async function runDrainer(options: DrainerOptions): Promise<DrainResult> 
             }
 
             add(await drainDue({ config: options.config, paths, now: now(), onFailure }));
+            // The sweep above may have made a batch, and a run whose own drainer start lost the lock may have too.
+            keepNewBatches({ paths, now: now(), done: kept });
             // A failed batch waits for a person's forced drain, not for this loop.
             const waiting = listBatches(paths).filter((batch) => !batch.incomplete && !batch.failed);
             const at = now().getTime();

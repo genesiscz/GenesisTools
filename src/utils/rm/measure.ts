@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { type WalkError, walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import { keepFromTmpCleaner } from "@genesiscz/utils/fs/tmp-cleaner";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { processHoldsMark } from "@genesiscz/utils/process-identity";
@@ -20,7 +21,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { type FolderStats, folderStats } from "./item-facts";
 import { appendRmLedger } from "./ledger";
 import { loadRmRequest, type RmRequest, type RmRequestTarget, rmRequestsDir } from "./requests";
-import { acquireDrainerLock } from "./trash";
+import { acquireDrainerLock, removeStaleClaimFile } from "./trash";
 
 /**
  * The size facts of one request path, measured once and kept beside the request, so `tools rm approve` shows them
@@ -140,8 +141,9 @@ function ledgerMarker(id: string, location: string, requestsDir: string): string
 /**
  * Claims the ledger line of `location` for this process: the marker is created with O_EXCL and holds this pid until
  * the line is written, then `done`. A marker of a process that died before it wrote the line is taken over, so a
- * crash between the claim and the write never loses the line. False when the line is written, or a live process
- * writes it now.
+ * crash between the claim and the write never loses the line; the takeover is fenced (`takeOverLedgerMarker`), so two
+ * passes that both read the dead pid never both write it. False when the line is written, or a live process writes
+ * it now.
  */
 function claimLedgerLine(marker: string): boolean {
     mkdirSync(dirname(marker), { recursive: true });
@@ -155,16 +157,33 @@ function claimLedgerLine(marker: string): boolean {
         } catch (error) {
             const holder = readMarker(marker);
 
-            if (holder === LEDGER_DONE || processHoldsMark(Number(holder), marker) || claimInProgress(marker, holder)) {
+            if (markerHeld(marker, holder)) {
                 return false;
             }
 
             logger.debug({ marker, holder, error }, "rm: taking over the ledger line of a process that died");
-            unlinkQuietly(marker);
+
+            if (!takeOverLedgerMarker(marker, holder)) {
+                return false;
+            }
         }
     }
 
     return false;
+}
+
+/** The line is written (`done`), a live process holds the claim, or an empty marker is a claim in progress. */
+function markerHeld(marker: string, holder: string): boolean {
+    return holder === LEDGER_DONE || processHoldsMark(Number(holder), marker) || claimInProgress(marker, holder);
+}
+
+/**
+ * Removes the marker of a claimant that died, read as `seen`, only when it still holds `seen` and nobody holds it
+ * now, under the marker's claim arbiter (`removeStaleClaimFile`). Unfenced, a pass that read the dead pid removed the
+ * claim another pass had just taken over, and both wrote the line. True when the marker may be created again.
+ */
+export function takeOverLedgerMarker(marker: string, seen: string): boolean {
+    return removeStaleClaimFile(marker, seen, (now) => markerHeld(marker, now));
 }
 
 /** How long an empty marker counts as a claim in progress; the open and the pid write are microseconds apart. */
@@ -430,8 +449,11 @@ export interface MeasureRequestResult {
 }
 
 /**
- * The measurement pass `tools rm` starts when it opens a delete request: each path that has no fresh entry is walked
- * and saved at once, so `approve` reads what is done even while the pass still runs. One pass per request at a time.
+ * The measurement pass `tools rm` starts in the background when it opens a delete request: each aside copy gets
+ * fresh times against macOS tmp_cleaner first (the aside move does not walk it, so a large tree never holds the
+ * asking run), then each path that has no fresh entry is walked and saved at once, so `approve` reads what is done
+ * even while the pass still runs. One pass per request at a time. A copy this pass could not refresh is logged, and
+ * the daily keepalive (`refreshWaitingRmData`) tries it again.
  */
 export async function measureRmRequest(
     id: string,
@@ -454,6 +476,12 @@ export async function measureRmRequest(
 
     try {
         for (const target of request.targets) {
+            if (target.stored) {
+                // Real time, not `options.now`: the times must hold against the real cleaner's next run.
+                const refresh = keepFromTmpCleaner(target.stored);
+                logger.debug({ id, stored: target.stored, ...refresh }, "rm: aside copy refreshed against tmp_cleaner");
+            }
+
             // Each path reads its own file only: a pass over N paths reads N files, not N times the folder.
             const own = loadRmMeasurementOf(id, target, requestsDir);
             const fresh = freshMeasurement(own ? { requestId: id, items: [own] } : null, target);

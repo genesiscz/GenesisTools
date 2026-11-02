@@ -655,7 +655,12 @@ export function applyApprovalAnswer(input: {
     });
 
     if (ready.length === 0) {
-        process.exitCode = 1;
+        // Every ticked path changed while the person decided, so nothing moves and those stay pending. The unticked
+        // ones are still the person's answer: their copies go home, and the decision and its person check are saved.
+        const unticked = denied.map((entry) => entry.wanted);
+        pending.push(...stillAside(unticked, putBack(unticked, ctx.caller, id)));
+        saveApproved({ request, answer, approved: [], denied, pending, ctx });
+        exitPendingFor(id, pending);
         return;
     }
 
