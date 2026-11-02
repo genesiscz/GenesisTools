@@ -1,14 +1,7 @@
 import { data, isError, type Kit, text, withKit } from "@app/scripts/lib/kit";
 import { logger } from "@genesiscz/utils/logger";
-import type {
-    CalendarEvent,
-    Folder,
-    Meeting,
-    MeetingSummary,
-    Participant,
-    ScratchpadNote,
-    TranscriptEntry,
-} from "./types";
+import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote } from "./types";
 
 const { log } = logger.scoped("wisprflow-mcp");
 

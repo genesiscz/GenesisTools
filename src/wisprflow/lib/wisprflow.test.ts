@@ -4,13 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
+import { groupTurns } from "@genesiscz/utils/transcribe/render";
+import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "@genesiscz/utils/transcribe/terms";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { completeTranscript, parseLive } from "./live";
 import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
-import { groupTurns, renderSrt } from "./render";
+import { renderSrt } from "./render";
 import { fillSpeakerMentions, resolveSpeakers } from "./speakers";
-import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "./terms";
-import type { Meeting, TranscriptEntry } from "./types";
+import type { Meeting } from "./types";
 
 function entry(speaker: string, startSec: number, text: string): TranscriptEntry {
     return { speaker, startSec, text };

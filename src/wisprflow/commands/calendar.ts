@@ -2,11 +2,11 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
+import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { listLocalCalendar, localAvailable } from "../lib/local";
 import { listMcpUpcoming, searchMcpCalendar } from "../lib/mcp";
-import { localTime } from "../lib/render";
 import type { CalendarEvent, SourceName } from "../lib/types";
 import { errorText, fail, parseSource, reportSource, resolveEnum } from "./shared";
 

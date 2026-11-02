@@ -4,9 +4,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { speakerLabel } from "@genesiscz/utils/transcribe/speakers";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { completeTranscript, type LiveLine, parseLive } from "./live";
-import { fillSpeakerMentions, resolveSpeakers, speakerLabel } from "./speakers";
-import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote, TranscriptEntry } from "./types";
+import { fillSpeakerMentions, resolveSpeakers } from "./speakers";
+import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote } from "./types";
 
 const { log } = logger.scoped("wisprflow-local");
 

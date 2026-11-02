@@ -6,24 +6,12 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import type { Command } from "commander";
-import pc from "picocolors";
-import { dictionaryPhrases, listLocalMeetings, localAvailable } from "../lib/local";
-import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
-import { writeGuarded } from "../lib/output";
 import {
     formatNeedsTimes,
     localTime,
-    meetingFrontmatter,
-    type RenderOptions,
-    renderMarkdown,
-    renderSrt,
-    renderText,
-    renderVtt,
     TRANSCRIPT_FORMATS,
     type TranscriptFormat,
-} from "../lib/render";
-import { loadMeeting, resolveMeetingRef } from "../lib/source";
+} from "@genesiscz/utils/transcribe/render";
 import {
     applyFixes,
     buildVocabulary,
@@ -36,7 +24,21 @@ import {
     type TermSuggestion,
     termsFromFile,
     termsFromText,
-} from "../lib/terms";
+} from "@genesiscz/utils/transcribe/terms";
+import type { Command } from "commander";
+import pc from "picocolors";
+import { dictionaryPhrases, listLocalMeetings, localAvailable } from "../lib/local";
+import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
+import { writeGuarded } from "../lib/output";
+import {
+    meetingFrontmatter,
+    type RenderOptions,
+    renderMarkdown,
+    renderSrt,
+    renderText,
+    renderVtt,
+} from "../lib/render";
+import { loadMeeting, resolveMeetingRef } from "../lib/source";
 import type { Meeting, MeetingSummary, SourceChoice, SourceName } from "../lib/types";
 import { errorText, fail, parseSource, reportSource, resolveEnum, TOOL } from "./shared";
 
