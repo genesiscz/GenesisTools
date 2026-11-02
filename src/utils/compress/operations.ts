@@ -9,7 +9,7 @@ import {
     sourceUnchanged,
     verifyCompressedFile,
 } from "./file";
-import { type LedgerRecord, recordCompression, searchLedger } from "./ledger";
+import { type LedgerOp, type LedgerRecord, recordCompression, searchLedger } from "./ledger";
 import {
     type CompressPreset,
     DEFAULT_MIN_SAVING,
@@ -34,6 +34,9 @@ import {
     verifyArchiveAgainstFolder,
 } from "./tar";
 import { ZSTD_SUFFIX, zstdContentBytes } from "./zstd";
+
+/** The ledger operations that write an archive, with the sha256 of what it decompresses to. */
+const ARCHIVE_WRITES: ReadonlySet<LedgerOp> = new Set(["pack", "compress"]);
 
 /** Room kept free on top of the expected output, so a compression never fills the disk to the last byte. */
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
@@ -395,13 +398,19 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
  * symlinks resolved, so `cd /tmp; unpack tree.zst` finds the record of `pack /tmp/tree` (the working folder is
  * `/private/tmp` on macOS). The ledger is searched by the real file's name, so a symlink of another name
  * (`restore.log.zst` to `notes.log.zst`) finds the record too. A relative target (an older checkout recorded `-o` as
- * typed) names no known folder and matches nothing.
+ * typed) names no known folder and matches nothing. Only a `pack` or a `compress` says what the archive decompresses
+ * to: a restore that wrote the archive (`unpack tree.zst.zst` gives `tree.zst`) records no such hash, and as the
+ * newest record it would turn the check off.
  */
 function recordedInputSha256(archive: string): string | undefined {
     const wanted = realpathSync(archive);
     return searchLedger({ path: basename(wanted) })
         .filter(
-            (record) => isAbsolute(record.target) && existsSync(record.target) && realpathSync(record.target) === wanted
+            (record) =>
+                ARCHIVE_WRITES.has(record.op) &&
+                isAbsolute(record.target) &&
+                existsSync(record.target) &&
+                realpathSync(record.target) === wanted
         )
         .at(-1)?.inputSha256;
 }
