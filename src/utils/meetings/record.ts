@@ -8,6 +8,7 @@ import { dictionaryLevelSchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
+import { MEETING_PLATFORM_IDS } from "./platform";
 
 const { log } = logger.scoped("meetings-record");
 
@@ -154,6 +155,8 @@ export const meetingRecordSchema = z.object({
         .optional(),
     /** One section per interval between two joins or leaves, derived from `attendance`: who is present then. */
     sections: z.array(z.object({ fromSec: z.number(), toSec: z.number(), present: z.array(z.string()) })).optional(),
+    /** The call platform: set from the source (Wispr's `meta.platform`) or by hand; it picks the attendance reader. */
+    platform: z.enum(MEETING_PLATFORM_IDS).optional(),
     /** What was measured about the recording itself. */
     evidence: z
         .object({

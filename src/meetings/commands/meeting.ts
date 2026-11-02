@@ -11,6 +11,7 @@ import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
 import { errorText, fail, TOOL } from "../lib/shared";
@@ -52,6 +53,7 @@ async function create(
             ui.ok(
                 `${created ? "Created" : "Already there:"} ${record.id}${record.project ? ` (project ${record.project})` : ""}`
             );
+            await collectAndReport(store, record);
             return;
         }
 
@@ -227,8 +229,9 @@ async function set(ref: string, opts: { project?: string; title?: string }): Pro
 
 async function link(ref: string, sourceRef: string, opts: { project?: string }): Promise<void> {
     try {
+        const store = new MeetingStore();
         const { record } = await linkSource({
-            store: new MeetingStore(),
+            store,
             config: new MeetingsConfigStore(),
             sourceRef,
             meetingRef: ref,
@@ -237,6 +240,7 @@ async function link(ref: string, sourceRef: string, opts: { project?: string }):
             createdBy: "link",
         });
         ui.ok(`${record.id}: linked ${sourceRef}`);
+        await collectAndReport(store, record);
     } catch (err) {
         fail(errorText(err));
     }

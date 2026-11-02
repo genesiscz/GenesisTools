@@ -10,6 +10,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { energyMicShareFor } from "../lib/energy";
+import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
@@ -53,7 +54,7 @@ async function evidence(
 
         const source = await meetingSource(sourceId);
         const meeting = await source.load(block.meetingId);
-        const found = await source.evidence(block.meetingId);
+        const found = speakingEvidence(record, await source.evidence(block.meetingId));
 
         if (!found) {
             fail(`${source.label} keeps no speaker evidence for this meeting on this Mac.`);
