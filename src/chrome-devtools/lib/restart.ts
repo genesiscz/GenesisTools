@@ -11,8 +11,11 @@
  *    launching by hand. Naming the profile up front avoids that window entirely.
  * 3. `restart` never checked what it produced, so proving the browser was fine
  *    meant reaching for curl and AppleScript afterwards.
+ * 4. One check was not enough: a relaunch that loaded a framework an update-on-quit
+ *    then removed answered CDP once and died a second later, after `restart` had
+ *    printed `up:` (2026-11-02). The check now runs twice.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -350,4 +353,85 @@ export function formatVerification(v: RestartVerification, opts: { appName: stri
     }
 
     return lines;
+}
+
+/** How long after the first check the second one runs. The 2026-11-02 relaunch died about 1 s after it started. */
+export const SECOND_CHECK_AFTER_MS = 3_000;
+
+export interface TwiceVerification {
+    /** The last check that ran: the second one whenever the first found the port answering. */
+    verification: RestartVerification;
+    /** The port answered the first check and not the second: the relaunched browser died. */
+    diedAfterAnswering: boolean;
+}
+
+/** `verifyRestart`, then again after `afterMs` when the first check found the port answering. */
+export async function verifyRestartTwice(opts: {
+    port: number;
+    version: (port: number) => Promise<string | null>;
+    targets: (port: number) => Promise<Target[]>;
+    sleep?: (ms: number) => Promise<void>;
+    afterMs?: number;
+}): Promise<TwiceVerification> {
+    const first = await verifyRestart(opts);
+
+    if (!first.cdpReachable) {
+        return { verification: first, diedAfterAnswering: false };
+    }
+
+    await (opts.sleep ?? ((ms: number) => Bun.sleep(ms)))(opts.afterMs ?? SECOND_CHECK_AFTER_MS);
+    const second = await verifyRestart(opts);
+
+    return { verification: second, diedAfterAnswering: !second.cdpReachable };
+}
+
+export function diagnosticReportsDir(home = env.paths.getHome()): string {
+    return join(home, "Library", "Logs", "DiagnosticReports");
+}
+
+/**
+ * The newest macOS crash report of the app or its Helpers written at or after `sinceMs`, or null. ReportCrash can
+ * take a few seconds to write one, so null right after a crash is not proof there is none.
+ */
+export function newestCrashReport(opts: { appName: string; sinceMs: number; dir?: string }): string | null {
+    const dir = opts.dir ?? diagnosticReportsDir();
+
+    if (!existsSync(dir)) {
+        return null;
+    }
+
+    const prefixes = [`${opts.appName}-`, `${opts.appName} Helper`];
+    let newest: { path: string; mtimeMs: number } | null = null;
+
+    for (const name of readdirSync(dir)) {
+        if (!name.endsWith(".ips") || !prefixes.some((prefix) => name.startsWith(prefix))) {
+            continue;
+        }
+
+        const path = join(dir, name);
+        const { mtimeMs } = statSync(path);
+
+        if (mtimeMs >= opts.sinceMs && (!newest || mtimeMs > newest.mtimeMs)) {
+            newest = { path, mtimeMs };
+        }
+    }
+
+    return newest?.path ?? null;
+}
+
+/** What `restart` prints when the relaunched browser answered once and then died. */
+export function formatDiedAfterAnswering(opts: {
+    port: number;
+    appName: string;
+    afterMs: number;
+    crashReport: string | null;
+    relaunch: string;
+}): string[] {
+    return [
+        `verify: port ${opts.port} answered, then stopped answering within ${Math.round(opts.afterMs / 1000)}s — the relaunched ${opts.appName} died.`,
+        opts.crashReport
+            ? `  crash report: ${opts.crashReport}`
+            : `  no crash report yet; macOS writes it within a few seconds: ls -t ${diagnosticReportsDir()} | rg '^${opts.appName}'`,
+        `  relaunch: ${opts.relaunch}`,
+    ];
 }

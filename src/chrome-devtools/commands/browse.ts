@@ -10,6 +10,7 @@ import {
     defaultBackgroundLaunch,
     launchCdpBrowser,
 } from "../lib/launch.ts";
+import { currentPlatform } from "../lib/platform.ts";
 import {
     BROWSER_APPS,
     BROWSERS,
@@ -22,15 +23,26 @@ import {
     quitBrowser,
 } from "../lib/resolve-attach.ts";
 import {
+    formatDiedAfterAnswering,
     formatVerification,
     isSafeProfileDirectory,
+    newestCrashReport,
     QUIT_DEADLINE_MS,
     QUIT_NOTICE_EVERY_MS,
     resolveLastUsedProfile,
     restartSucceeded,
+    SECOND_CHECK_AFTER_MS,
     slowQuitNote,
-    verifyRestart,
+    verifyRestartTwice,
 } from "../lib/restart.ts";
+import {
+    appBundleOf,
+    formatUpdateWait,
+    readBundleState,
+    runningUpdater,
+    updaterPattern,
+    waitForUpdateOnQuit,
+} from "../lib/update-on-quit.ts";
 import { portOf, resolvePort, suggest, withPort } from "./shared.ts";
 
 /**
@@ -284,6 +296,11 @@ page targets exist, and whether a picker is still open.`
                 );
             }
 
+            // A browser can install a staged update while it quits; read the bundle first so the wait below can tell.
+            const executable = currentPlatform() === "darwin" ? browserExecutable({ browser: def }) : null;
+            const appPath = executable ? appBundleOf(executable) : null;
+            const bundleBefore = appPath ? readBundleState(appPath) : null;
+
             out.log.info(`quitting ${name} (tabs come back via session restore)...`);
             const quitStartedAt = Date.now();
             const q = await quitBrowser({
@@ -320,6 +337,22 @@ page targets exist, and whether a picker is still open.`
                 process.exit(1);
             }
 
+            if (appPath && bundleBefore) {
+                const pattern = updaterPattern(id);
+                const wait = await waitForUpdateOnQuit({
+                    before: bundleBefore,
+                    deps: {
+                        readState: () => readBundleState(appPath),
+                        updater: () => (pattern ? runningUpdater(pattern) : null),
+                    },
+                });
+
+                for (const line of formatUpdateWait(wait, { appName: name })) {
+                    out.log.info(line);
+                }
+            }
+
+            const relaunchedAt = Date.now();
             let result: { browser: string; pages: number };
             try {
                 result = await launchCdpBrowser({
@@ -347,11 +380,34 @@ page targets exist, and whether a picker is still open.`
                 process.exit(1);
             }
 
-            out.log.info(`up: ${describeEndpointBrowser(result.browser, id)} on ${port} (${result.pages} pages)`);
+            // Read-only end-state check, run twice: a browser that answered once can still die a second later
+            // (an update-on-quit removed the framework it loaded), and `up:` is printed only after both.
+            const { verification, diedAfterAnswering } = await verifyRestartTwice({
+                port,
+                version: browserVersion,
+                targets,
+            });
 
-            // Read-only end-state check. Before this, proving a restart had worked
-            // meant running curl /json/version and an AppleScript window walk by hand.
-            const verification = await verifyRestart({ port, version: browserVersion, targets });
+            if (diedAfterAnswering) {
+                const lines = formatDiedAfterAnswering({
+                    port,
+                    appName: name,
+                    afterMs: SECOND_CHECK_AFTER_MS,
+                    crashReport: newestCrashReport({ appName: name, sinceMs: relaunchedAt - 1_000 }),
+                    relaunch: suggest(["restart", "--browser", id, "--port", String(port)]),
+                });
+
+                for (const line of lines) {
+                    out.log.error(line);
+                }
+
+                process.exit(1);
+            }
+
+            if (verification.cdpReachable) {
+                out.log.info(`up: ${describeEndpointBrowser(result.browser, id)} on ${port} (${result.pages} pages)`);
+            }
+
             for (const line of formatVerification(verification, { appName: name })) {
                 out.log.info(line);
             }

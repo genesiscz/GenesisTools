@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { processFixture } from "./__tests__/process-fixture";
 import type { Target } from "./cdp.ts";
@@ -9,6 +12,7 @@ import {
     isProfilePickerTarget,
     isSafeProfileDirectory,
     localStatePath,
+    newestCrashReport,
     parseLastUsedProfile,
     QUIT_DEADLINE_MS,
     resolveLastUsedProfile,
@@ -16,7 +20,9 @@ import {
     slowQuitNote,
     userDataDirFor,
     verifyRestart,
+    verifyRestartTwice,
 } from "./restart.ts";
+import { type BundleState, formatUpdateWait, parseShortVersion, waitForUpdateOnQuit } from "./update-on-quit.ts";
 
 const HOME = "/home/tester";
 
@@ -418,5 +424,130 @@ describe("end-state verification", () => {
         expect(text).toContain("osascript");
         expect(text).toContain("Who's using");
         expect(text).toContain("Brave Browser");
+    });
+});
+
+describe("update on quit", () => {
+    const OLD: BundleState = { version: "156.1.98.60", mtimeMs: 1_000 };
+    const NEW: BundleState = { version: "156.1.98.63", mtimeMs: 5_000 };
+
+    /** A fake clock: `sleep` moves it, so a 60 s cap costs no real time. */
+    function clock() {
+        let t = 0;
+
+        return {
+            now: () => t,
+            sleep: async (ms: number) => {
+                t += ms;
+            },
+        };
+    }
+
+    test("an install that swaps the version after the exit holds the relaunch until it settles", async () => {
+        const c = clock();
+        // The old bundle for 1.5 s, missing for 1 s while the install moves it, then the new one.
+        const readState = (): BundleState =>
+            c.now() < 1_500 ? OLD : c.now() < 2_500 ? { version: null, mtimeMs: null } : NEW;
+
+        const r = await waitForUpdateOnQuit({ before: OLD, deps: { readState, updater: () => null, ...c } });
+
+        expect(r.settled).toBe(true);
+        expect(r.changed).toBe(true);
+        expect(r.after).toEqual(NEW);
+        // Stable for 3 s counted from the swap at 2.5 s, not from the exit.
+        expect(r.waitedMs).toBeGreaterThanOrEqual(5_500);
+        expect(formatUpdateWait(r, { appName: "Brave Browser" }).join("\n")).toContain(
+            "Brave Browser updated 156.1.98.60 -> 156.1.98.63 while quitting"
+        );
+    });
+
+    test("a quit with no update waits only the stable window and prints nothing", async () => {
+        const c = clock();
+        const r = await waitForUpdateOnQuit({ before: OLD, deps: { readState: () => OLD, updater: () => null, ...c } });
+
+        expect(r).toMatchObject({ settled: true, changed: false });
+        expect(r.waitedMs).toBe(3_000);
+        expect(formatUpdateWait(r, { appName: "Brave Browser" })).toEqual([]);
+    });
+
+    test("a running updater holds the relaunch, and the cap ends the wait with a warning", async () => {
+        const c = clock();
+        const updater = "/Users/x/Library/Application Support/BraveSoftware/BraveUpdater/BraveUpdater --install";
+        const r = await waitForUpdateOnQuit({
+            before: OLD,
+            deps: { readState: () => OLD, updater: () => updater, ...c },
+            timeoutMs: 60_000,
+        });
+
+        expect(r.settled).toBe(false);
+        expect(r.waitedMs).toBe(60_000);
+        expect(formatUpdateWait(r, { appName: "Brave Browser" }).join("\n")).toContain("still being updated after 60s");
+    });
+
+    test("the version comes from Info.plist's CFBundleShortVersionString", () => {
+        const plist =
+            "<dict><key>CFBundleName</key><string>Brave Browser</string>" +
+            "<key>CFBundleShortVersionString</key>\n\t<string>156.1.98.63</string></dict>";
+        expect(parseShortVersion(plist)).toBe("156.1.98.63");
+        expect(parseShortVersion("<dict></dict>")).toBeNull();
+    });
+});
+
+describe("second check after the relaunch", () => {
+    test("a port that answered once and then refused is a dead browser, not a restart", async () => {
+        let calls = 0;
+        const r = await verifyRestartTwice({
+            port: 9222,
+            version: async () => (++calls === 1 ? "Brave/156.0.8078.48" : null),
+            targets: async () => [target({ id: "a" })],
+            sleep: async () => {},
+        });
+
+        expect(calls).toBe(2);
+        expect(r.diedAfterAnswering).toBe(true);
+        expect(restartSucceeded(r.verification)).toBe(false);
+    });
+
+    test("a browser that answers both checks passes, and a dead port is checked once", async () => {
+        const alive = await verifyRestartTwice({
+            port: 9222,
+            version: async () => "Brave/156.0.8078.80",
+            targets: async () => [target({ id: "a" })],
+            sleep: async () => {},
+        });
+        expect(alive.diedAfterAnswering).toBe(false);
+        expect(restartSucceeded(alive.verification)).toBe(true);
+
+        let calls = 0;
+        const dead = await verifyRestartTwice({
+            port: 9222,
+            version: async () => {
+                calls++;
+
+                return null;
+            },
+            targets: async () => [],
+            sleep: async () => {},
+        });
+        expect(calls).toBe(1);
+        expect(dead.diedAfterAnswering).toBe(false);
+    });
+
+    test("the crash report named is the newest of the app or its Helpers since the relaunch", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-crash-"));
+        const write = (name: string, atSec: number) => {
+            writeFileSync(join(dir, name), "{}");
+            utimesSync(join(dir, name), atSec, atSec);
+        };
+
+        write("Brave Browser-2026-11-02-100000.ips", 1_000);
+        write("Brave Browser-2026-11-02-172237.0002.ips", 2_000);
+        write("Brave Browser Helper-2026-11-02-172237.ips", 2_001);
+        write("Google Chrome-2026-11-02-172240.ips", 2_005);
+
+        expect(newestCrashReport({ appName: "Brave Browser", sinceMs: 1_500_000, dir })).toBe(
+            join(dir, "Brave Browser Helper-2026-11-02-172237.ips")
+        );
+        expect(newestCrashReport({ appName: "Brave Browser", sinceMs: 3_000_000, dir })).toBeNull();
     });
 });
