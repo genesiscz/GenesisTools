@@ -60,7 +60,10 @@ provider, so a new provider is a list of members to fill in and no feature parse
   `indexesFile` on 2026-10-31, and `readers/fixtures/session-paths.json` pins its cases for TS and Swift; Claude's
   folder layout is in `readers/claude-paths.ts`), and `rowAnchors` (the ids a row carries: uuid, message id, tool call
   ids, the open Codex turn). `followSessionContinuations` (`session-backward.ts`) walks `continuedIn` to the live
-  id, so `tools claude cmux focus`, `send` and decision delivery reach a continued session.
+  id, so `tools claude cmux focus`, `send` and decision delivery reach a continued session. Added 2026-11-02 03:35:
+  `readChanges` (a session's file changes for `loadSessionChanges` in `src/utils/session-changes/`, found by id:
+  `readers/claude-changes.ts`, `codexSessionChanges` in `readers/codex-changes.ts`; Grok answers null, so its sessions
+  are judged from the change log alone).
 - **What a feature gets is normalized**: `NativeHistoryEntry` (role, text, timestamp, tool, paths). Logic over it
   (decision answers in `src/question/lib/decisions/chat-answers.ts`, a reply's decision blocks) is provider-neutral
   and never names a JSONL field such as `"type":"assistant"`, `response_item`, `continued-in` or `chat_history`.

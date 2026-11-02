@@ -349,6 +349,73 @@ describe("runDiffPost", () => {
         expect(kept?.gitBase).toBeUndefined();
     });
 
+    it("leaves a changed file under a cloud storage folder out of the change log, whose read would download it", () => {
+        const cloud = join(repo, "Library", "CloudStorage", "Provider-log");
+        const note = join(cloud, "note.md");
+        const control = join(repo, "cloud-control.ts");
+
+        mkdirSync(cloud, { recursive: true });
+        // Dirty before the command, so the pre phase leaves it out of the capture, as it does a placeholder.
+        writeFileSync(note, "alpha\n");
+
+        try {
+            const current = begin({ command: `perl -pi -e 's/a/b/' cloud-control.ts ${note}` }, plain.diff);
+            writeFileSync(note, "bravo\n");
+            writeFileSync(control, "made\n");
+            let logged: string[] = [];
+            runDiffPost({
+                payload: current,
+                config: plain,
+                record: (_payload, captures) => {
+                    logged = captures.map((item) => item.path);
+                },
+            });
+
+            // The control file is the positive case: the recorder ran and got the command's other file.
+            expect(logged).toContain(control);
+            expect(logged).not.toContain(note);
+        } finally {
+            rmSync(join(repo, "Library"), { recursive: true, force: true });
+            rmSync(control, { force: true });
+        }
+    });
+
+    it("hands the change log the call's exact start, so a file born earlier in the same second is not the call's", () => {
+        // 🛑 `tools rm` counts a file as made by a Bash call when it was born at or after the row's `began`. The row
+        // took the whole-second `stamp`, so a person's file born earlier in that second, which the call only changed,
+        // passed as the call's own and could be deleted with no request.
+        const earlier = join(repo, "born-before.ts");
+
+        writeFileSync(earlier, "a person's file\n");
+
+        try {
+            const born = lstatSync(earlier).birthtimeMs;
+            const current = begin({ command: `perl -pi -e 's/person/agent/' ${earlier}` }, plain.diff);
+            const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+            const started = Number(readFileSync(join(dir, "started-ms"), "utf8"));
+
+            // The stamp's second is the one the file was born in, as when the call follows it within the second.
+            writeFileSync(join(dir, "stamp"), String(Math.floor(born / 1000)));
+            writeFileSync(earlier, "an agent's edit\n");
+
+            let window: { since: number; began?: number } | undefined;
+            runDiffPost({
+                payload: current,
+                config: plain,
+                record: (_payload, _captures, seen) => {
+                    window = seen;
+                },
+            });
+
+            // The positive control: the rounded start admits the earlier file, which is what the row used to carry.
+            expect(window?.since).toBeLessThanOrEqual(born);
+            expect(window?.began).toBe(started);
+            expect(window?.began).toBeGreaterThan(born);
+        } finally {
+            rmSync(earlier, { force: true });
+        }
+    });
+
     it("git before-states come back per file, in order, with a missing path empty", () => {
         const base = { root: repo, base: "HEAD" };
         const read = capturedBefores([
@@ -663,6 +730,24 @@ describe("the diffs that went missing on 2026-11-01", () => {
     it("follows cd ~ to the home folder, as the shell expands it", () => {
         expect(commandDirs("cd ~ && bun x", repo)).toEqual([repo, homedir()]);
         expect(commandDirs("cd ~/; bun x", repo)).toEqual([repo, homedir()]);
+        // An unquoted `~` in an assignment is expanded when the shell assigns it.
+        expect(commandDirs("W=~; cd $W && bun x", repo)).toEqual([repo, homedir()]);
+    });
+
+    it("reads a quoted ~ as a folder named ~, which the shell does not expand", () => {
+        const tilde = join(other, "~", "sub");
+
+        mkdirSync(tilde, { recursive: true });
+
+        try {
+            // The folder called `~` is the positive control: it is followed, the home folder is not.
+            expect(commandDirs(`cd "~/sub" && bun x`, other)).toEqual([other, tilde]);
+            expect(commandDirs(`cd '~' && bun x`, repo)).toEqual([repo]);
+            expect(commandDirs(`cd "~" && bun x`, repo)).toEqual([repo]);
+            expect(commandDirs(`W='~/sub'; cd "$W" && bun x`, other)).toEqual([other, tilde]);
+        } finally {
+            rmSync(join(other, "~"), { recursive: true, force: true });
+        }
     });
 
     it("diffs a relative edit after `cd <repo>;` in the repository the command moved to", () => {
@@ -1573,6 +1658,30 @@ describe("files the command NAMES rather than works in", () => {
         ).toContain(theirs);
     });
 
+    it("keeps a separator inside a quoted variable path as part of the path, never a cut-short sibling", () => {
+        const cut = join(vault, "cut");
+
+        writeFileSync(cut, "x");
+
+        try {
+            for (const name of ["cut;b", "cut&b", "cut(b)"]) {
+                const path = join(vault, name);
+
+                writeFileSync(path, "x");
+                expect(namedArguments(`V=${vault}; sed -i '' s/x/y/ "$V/${name}"`, [vault])).toContain(path);
+                expect(namedArguments(`V=${vault}; cat "$V/${name}"`, [vault])).toEqual([path]);
+                rmSync(path, { force: true });
+            }
+
+            // Inside a longer quoted word the `$V` is not where the word starts, so nothing is read from it.
+            expect(namedArguments(`V=${vault}; echo "see $V/cut;b"`, [vault])).toEqual([]);
+            // The negative control: an unquoted `;` does end the word.
+            expect(namedArguments(`V=${vault}; cat $V/cut;b`, [vault])).toEqual([cut]);
+        } finally {
+            rmSync(cut, { force: true });
+        }
+    });
+
     it("refuses a reference whose braces do not match, which the shell reads as a different path", () => {
         expect(namedArguments(`V=${vault}; cat "$V}/wrapup.md"`, [vault])).toEqual([]);
         expect(namedArguments(`V=${vault}; cat "\${V/wrapup.md"`, [vault])).toEqual([]);
@@ -2359,6 +2468,51 @@ describe("the before-state: clones of the dirty files, and none for a command th
         expect(message).toContain(`-${key}`);
         expect(message).toContain(`+${join(outside, "plain-target.txt")}`);
         expect(message).not.toContain("[redacted]");
+    });
+
+    it("names a symlink past maxFiles that the call retargeted, though both targets hold the same bytes", () => {
+        // 🛑 The overflow's unchanged check followed both links: it read files outside the repository, called a
+        // retarget to an identical file no change, and a pair of links to FIFOs blocked the hook in the read.
+        const first = join(outside, "same-first.txt");
+        const second = join(outside, "same-second.txt");
+        const link = join(tree, "z-link.txt");
+        let path = "";
+
+        writeFileSync(first, "the same bytes\n");
+        symlinkSync(first, link);
+
+        // An editing command: past maxFiles the post phase reads on only for the change log of one.
+        const { current, dir } = pre("perl -pi -e 's/DIRTY/EDITED/' tracked.ts");
+
+        try {
+            // `tracked.ts` sorts first and takes the one rendered block, so the link falls past maxFiles.
+            writeFileSync(join(tree, "tracked.ts"), "one\nEDITED\nthree\n");
+            writeFileSync(second, "the same bytes\n");
+            rmSync(link);
+            symlinkSync(second, link);
+
+            // The positive control: read through the links, the captured copy and the live link agree.
+            expect(readFileSync(join(dir, "1", "z-link.txt")).equals(readFileSync(link))).toBe(true);
+
+            const decision = runDiffPost({
+                payload: current,
+                config: { ...plain, diff: { ...plain.diff, maxFiles: 1, fullDiff: "path" } },
+                record: () => {},
+            });
+            path = decision.stats?.fullDiff ?? "";
+
+            expect(decision.files).toEqual([join(tree, "tracked.ts")]);
+            expect(decision.message).toContain("1 more changed file(s) past diff.maxFiles 1");
+
+            const text = readFileSync(path, "utf8");
+
+            expect(text).toContain(`-${first}`);
+            expect(text).toContain(`+${second}`);
+        } finally {
+            for (const file of [first, second, path].filter(Boolean)) {
+                rmSync(file, { force: true });
+            }
+        }
     });
 
     it("gives the change log a captured symlink's text as its before-state, never the file it points to", () => {
@@ -5643,7 +5797,7 @@ describe("the misfires of 2026-10-14", () => {
         const theirs = begin({
             toolUseId: "sib-agent",
             command: `bun /x/fix.ts ${target}`,
-            raw: { agent_id: "agent-x" },
+            agentId: "agent-x",
         });
         const mine = begin({ command: "bun run codemod" });
 
@@ -5882,7 +6036,7 @@ describe("the misfires of 2026-10-14", () => {
             const started = begin({
                 toolUseId: "bg-agent-call",
                 command: `bun /x/long.ts ${target}`,
-                raw: { agent_id: "agent-sub" },
+                agentId: "agent-sub",
             });
             const deferred = runDiffPost({
                 payload: {
@@ -5902,10 +6056,10 @@ describe("the misfires of 2026-10-14", () => {
             const main = begin({ command: "true", transcriptPath: transcript });
             expect(flushDeferred({ payload: main, config: plain })).toEqual([]);
 
-            const other = begin({ command: "true", transcriptPath: transcript, raw: { agent_id: "agent-other" } });
+            const other = begin({ command: "true", transcriptPath: transcript, agentId: "agent-other" });
             expect(flushDeferred({ payload: other, config: plain })).toEqual([]);
 
-            const own = begin({ command: "true", transcriptPath: transcript, raw: { agent_id: "agent-sub" } });
+            const own = begin({ command: "true", transcriptPath: transcript, agentId: "agent-sub" });
             const flushed = flushDeferred({ payload: own, config: plain });
 
             expect(flushed.map((item) => item.task?.id)).toEqual(["bgagent1"]);

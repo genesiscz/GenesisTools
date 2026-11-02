@@ -46,8 +46,8 @@ struct LiveRunningPartsProbe: RunningPartsProbing {
 
 /// A part the user sees holds a lock file while it is up, so any face can ask the kernel whether it runs. A process
 /// scan sees only faces, and a face can run with nothing on screen: the widget with "Show the widget" off, the feature
-/// settings face with its window closed and Clicky off (it stays to host the widget's Dictation and Focus runtime). The
-/// kernel drops the lock when the process ends.
+/// settings face with its window closed and Clicky off (it stays to host the widget's Dictation and Focus runtime), the
+/// bare launch while it delivers a notification click or a link. The kernel drops the lock when the process ends.
 @MainActor
 package enum PartPresence {
     /// The widget's edge panels ("Show the widget" on), in `--widget`.
@@ -56,6 +56,9 @@ package enum PartPresence {
     package static let clicky = "clicky"
     /// The feature settings window open, in `--features`.
     package static let settingsWindow = "settings-window"
+    /// The permissions window open, in the bare launch (`--window`). Without it that process is delivering a
+    /// notification click, a link or a file, or starting the hub, with nothing on screen.
+    package static let permissionsWindow = "permissions-window"
 
     private static var descriptors: [String: Int32] = [:]
 

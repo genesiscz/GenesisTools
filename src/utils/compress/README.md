@@ -47,6 +47,7 @@ uses `node:zlib`'s one-frame compressor, the only API that takes parameters (che
 | The same search again and again over finished files, their lines kept | `ripgrepFilesCached`, `ripgrepDigestPath` | `search.ts` |
 | Pack, list, unpack, verify a folder | `packDirectory`, `listArchive`, `unpackArchive`, `verifyArchiveAgainstFolder` | `tar.ts` |
 | One safe compress or restore with a ledger entry | `planCompressPath`, `compressPath`, `expandPath`, `verifyPath` | `operations.ts` |
+| What a source holds: its bytes and its cloud placeholders (every pack refuses those) | `scanSource`, `placeholderRefusal`, `CompressRefusal` | `source-scan.ts` |
 | Keep N folders, pack older, cap archives | `planFolderRetention`, `applyFolderRetention` | `retention.ts` |
 | Compress day-stamped files once their day is over | `planOldFileCompression`, `applyOldFileCompression` | `retention.ts` |
 | The daily pass (day files, ai-proxy transcripts, hang captures) | `runDailyCompression`, `dailyTargets` | `daily.ts` |
@@ -71,10 +72,10 @@ and ctime, so a same-length copy renamed over it with the old mtime is not taken
 The daily pass starts at most once per day per log folder: the logger calls `startDailyCompressionOnce` when it opens
 a day's file, which costs one `existsSync` of `.daily-compress-<day>` and, for the first process of the day, one
 exclusive create and a detached low-priority `bun src/utils/compress/daily-pass.ts`. Off in tests and with
-`GENESIS_TOOLS_NO_DAILY_COMPRESS=1`. `tools compress daily --dry-run` shows what it would do. A pass holds
-`<logs>/.daily-compress.lock` while it runs, so a second one (`tools compress daily` beside the detached pass its logger
-started) does nothing and says so. Before it compresses, the process runs the `tools rm` keepalive against macOS
-tmp_cleaner (`refreshWaitingRmData`, `src/rm/README.md`).
+`GENESIS_TOOLS_NO_DAILY_COMPRESS=1`. `tools compress daily --dry-run` shows what it would do. Before it compresses,
+the process runs the `tools rm` keepalive against macOS tmp_cleaner (`refreshWaitingRmData`, `src/rm/README.md`). A pass
+holds `<logs>/.daily-compress.lock` while it runs, so a second one (`tools compress daily` beside the detached pass its
+logger started) does nothing and says so.
 
 ## Compressing a stream, verified
 

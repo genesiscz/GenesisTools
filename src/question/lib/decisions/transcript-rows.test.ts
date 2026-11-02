@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -129,6 +129,26 @@ describe("transcriptRows", () => {
 
         expect(third.scanned).toEqual({ from: second.offset, to: second.offset });
         expect(reads).toEqual([0, first.offset]);
+    });
+
+    test("a read of appended bytes sizes its buffer to them, not to the whole file", async () => {
+        const { transcript, deps } = fixture();
+        writeFileSync(transcript, said("a1", `❓ DECISION 1: Port?\n${"x".repeat(256 * 1024)}`));
+        const first = await transcriptRows({ transcript, deps });
+        const appended = said("a2", "❓ DECISION 2: Name?");
+        appendFileSync(transcript, appended);
+
+        const allocations = spyOn(Buffer, "allocUnsafe");
+        try {
+            const second = await transcriptRows({ transcript, deps });
+            expect(second.scanned.from).toBe(first.offset);
+            expect(second.asks.map((ask) => ask.number)).toEqual([1, 2]);
+            const sizes = allocations.mock.calls.map(([size]) => size);
+            expect(sizes.length).toBeGreaterThan(0);
+            expect(Math.max(...sizes)).toBeLessThanOrEqual(Buffer.byteLength(appended));
+        } finally {
+            allocations.mockRestore();
+        }
     });
 
     test("a row still being written is read once it is whole", async () => {

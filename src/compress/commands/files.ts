@@ -204,15 +204,30 @@ async function runUnpack(
     }
 }
 
-function runVerify(archive: string, options: { against?: string; filesFrom?: string; json?: boolean }): void {
+/**
+ * `tools compress verify`. Only a failure of the archive itself reads "does not decode": a list file that does not
+ * read and a refused list (a path outside the folder, a file that is not there) name their own cause, since the
+ * archive is fine in both cases.
+ */
+export function runVerify(archive: string, options: { against?: string; filesFrom?: string; json?: boolean }): void {
     if (options.filesFrom && !options.against) {
         out.error("--files-from needs --against <folder>: the folder the listed paths are relative to.");
         process.exitCode = 1;
         return;
     }
 
+    let files: string[] | undefined;
+
     try {
-        const files = options.filesFrom ? readFileList(options.filesFrom) : undefined;
+        files = options.filesFrom ? readFileList(options.filesFrom) : undefined;
+    } catch (err) {
+        process.exitCode = 1;
+        log.debug({ err, filesFrom: options.filesFrom }, "compress verify: the file list did not read");
+        out.error(`${options.filesFrom}: the file list does not read (${err instanceof Error ? err.message : err})`);
+        return;
+    }
+
+    try {
         const result = verifyPath({ archive, against: options.against, files });
 
         if (!result.ok) {
@@ -234,7 +249,11 @@ function runVerify(archive: string, options: { against?: string; filesFrom?: str
     } catch (err) {
         process.exitCode = 1;
         log.debug({ err, archive }, "compress verify failed");
-        out.error(`${archive}: does not decode (${err instanceof Error ? err.message : err})`);
+        out.error(
+            err instanceof CompressRefusal
+                ? `${archive}: ${err.message}`
+                : `${archive}: does not decode (${err instanceof Error ? err.message : err})`
+        );
     }
 }
 

@@ -2,8 +2,11 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
 import { findCodexRollout, isCodexRolloutPath } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readClaudeTranscriptFolded } from "./fold";
@@ -17,6 +20,7 @@ import {
     gitBlobOid,
     type LoggedChange,
     lastChangedTurns,
+    loadSessionChanges,
     mergeTurnFiles,
     parseClaudeTranscript,
     pathExclusion,
@@ -918,6 +922,31 @@ describe("parseCodexRollout", () => {
             [to, ["exec-mv", "exec-up"]],
             [from, ["exec-mv"]],
         ]);
+    });
+
+    it("reaches loadSessionChanges only through each provider's reader, which finds the rollout by id", async () => {
+        // A required member of every reader: a new provider answers here, and this module parses no transcript.
+        for (const kind of ACCOUNT_PROVIDER_ALIASES) {
+            expect([kind, typeof resolveHistoryProvider(kind).reader.readChanges]).toEqual([kind, "function"]);
+        }
+
+        expect(resolveHistoryProvider("grok").reader.readChanges("thread-reader")).toBeNull();
+
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-changes-"));
+        const day = join(home, "sessions", "2026", "11", "02");
+        const path = join(day, "rollout-2026-11-02T09-00-00-thread-reader.jsonl");
+        mkdirSync(day, { recursive: true });
+        writeFileSync(path, rollout);
+
+        await env.testing.withOverrides({ CODEX_HOME: home }, () => {
+            const loaded = loadSessionChanges({ sessionId: "thread-reader" });
+            const read = resolveHistoryProvider("codex").reader.readChanges("thread-reader");
+
+            expect(loaded.transcriptPath).toBe(path);
+            expect(read?.transcript.calls.map((call) => call.id)).toEqual(
+                parseCodexRollout("thread-reader", rollout).calls.map((call) => call.id)
+            );
+        });
     });
 });
 

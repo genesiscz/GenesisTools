@@ -14,6 +14,7 @@ import {
     unlinkSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -159,7 +160,9 @@ export function namedOids({
     let names: string[];
 
     try {
-        names = readdirSync(logsDir).filter((name) => !name.startsWith("_"));
+        // Every folder is asked for its change log, a session id that starts with "_" included (safeSessionId takes
+        // one). The store's own `_objects` and other folders without a change log are skipped below as absent logs.
+        names = readdirSync(logsDir);
     } catch (error) {
         if (!isAbsent(error)) {
             throw new Error(`cannot list the change logs in ${logsDir}, so the objects they name are unknown`, {
@@ -603,7 +606,7 @@ function restoreFrom({ root, retired, oids }: { root: string; retired: string; o
 
     const read = spawnSync("git", ["--git-dir", root, "cat-file", "--batch"], {
         input: `${absent.join("\n")}\n`,
-        env: { ...process.env, GIT_ALTERNATE_OBJECT_DIRECTORIES: join(retired, "objects") },
+        env: { ...env.getProcessEnv(), GIT_ALTERNATE_OBJECT_DIRECTORIES: join(retired, "objects") },
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: 1024 * 1024 * 1024,
     });

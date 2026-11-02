@@ -143,6 +143,11 @@ enum HubForecastFormat {
         ["five_hour": "5h"][bucket] ?? bucket
     }
 
+    /// The digest row's cell for a window the account has no limit for: `5h —` where the other rows show `5h 70%`.
+    static func absentCell(_ bucket: String) -> String {
+        "\(absentLabel(bucket)) —"
+    }
+
     static func absentNote(_ bucket: String) -> String {
         "No \(absentLabel(bucket)) limit on this account"
     }
@@ -268,7 +273,7 @@ struct HubForecastRow: View {
                         .foregroundColor(window.beforeReset ? ReviewPalette.modified : (window.stale ? ReviewPalette.dim.opacity(0.7) : ReviewPalette.dim))
                         .instantTooltip(window.detail())
                 case .absent(let bucket):
-                    Text(verbatim: "\(HubForecastFormat.absentLabel(bucket)) —")
+                    Text(verbatim: HubForecastFormat.absentCell(bucket))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(ReviewPalette.dim.opacity(0.7))
                         .instantTooltip(HubForecastFormat.absentNote(bucket))

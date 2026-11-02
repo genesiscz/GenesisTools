@@ -319,6 +319,37 @@ mutation($reviewId: ID!) {
   deletePullRequestReview(input: {pullRequestReviewId: $reviewId}) { pullRequestReview { id } }
 }`;
 
+const REVIEW_COMMENTS = `
+query reviewComments($reviewId: ID!) {
+  node(id: $reviewId) {
+    ... on PullRequestReview { comments(first: 100) { totalCount nodes { id } } }
+  }
+}`;
+
+/**
+ * How many comments in the batch's review the batch did not write. GitHub gives a person one pending review per PR,
+ * and every draft writer adds to it (a `publish: false` send from this module, the GitHub page), so a draft written
+ * between our start and our submit lands in our review, and submitting would publish it.
+ */
+async function foreignComments(
+    client: ReviewCommentClient,
+    reviewId: string,
+    posted: ReadonlyArray<{ commentId: string }>
+): Promise<number> {
+    const data = await client.graphql<{
+        node: { comments?: { totalCount: number; nodes: Array<{ id: string }> } } | null;
+    }>(REVIEW_COMMENTS, { reviewId });
+    const comments = data.node?.comments;
+    if (!comments) {
+        throw new Error(`review ${reviewId} is no longer there`);
+    }
+
+    const ours = new Set(posted.map((comment) => comment.commentId));
+    const listed = comments.nodes.filter((node) => !ours.has(node.id)).length;
+    // Past the first 100 the count is what is left to tell.
+    return Math.max(listed, comments.totalCount - posted.length);
+}
+
 export interface ThreadReply {
     /** The review thread (a `PRRT_…` node id). */
     threadId: string;
@@ -331,8 +362,9 @@ export interface OneReviewRepliesResult {
     posted: Array<{ threadId: string; commentId: string; url: string }>;
     failed: Array<{ threadId: string; error: string }>;
     /**
-     * Set when the replies landed but the submit call failed. The review may still be pending with the posted replies
-     * as drafts, or the submit may have gone through; it is never deleted here, because a retry would duplicate them.
+     * Set when the replies landed but the review was not submitted: the submit call failed (the submit may still have
+     * gone through), or the review also held drafts the batch did not write, so it was left pending rather than
+     * publish them. It is never deleted here, because a retry would duplicate the replies.
      */
     submitFailed?: { reviewId: string; error: string };
 }
@@ -389,7 +421,10 @@ export function batchOutcome(
  * Posts replies to several threads of one PR as ONE review. A reply sent alone is a review of its own, and GitHub's
  * conversation tab lists each one as a separate entry under the thread excerpt; one review lists them once.
  * Refuses while the viewer holds a pending review, because submitting would publish its drafts too. Every thread is
- * checked to belong to the PR before anything is written.
+ * checked to belong to the PR before anything is written. A draft written elsewhere after the review started lands in
+ * it too (one pending review per person), so the review is read back before the submit, and one that holds a comment
+ * the batch did not write is left pending (`submitFailed`). Only a draft in the moment between that read and the
+ * submit can still slip through.
  */
 export async function postRepliesAsOneReview(
     input: { owner: string; repo: string; number: number; replies: ThreadReply[] },
@@ -455,6 +490,28 @@ export async function postRepliesAsOneReview(
             { pr: input.number, failed: result.failed.length },
             "github: no batched reply landed; deleted the empty review"
         );
+        return result;
+    }
+
+    try {
+        const foreign = await foreignComments(client, reviewId, result.posted);
+        if (foreign > 0) {
+            logger.warn(
+                { pr: input.number, reviewId, foreign },
+                "github: drafts the batch did not write entered its review; left it pending"
+            );
+            result.submitFailed = {
+                reviewId,
+                error: `the review also holds ${foreign} draft comment(s) this batch did not write, so it was left pending rather than publish them`,
+            };
+            return result;
+        }
+    } catch (error) {
+        logger.warn({ error, pr: input.number, reviewId }, "github: could not read the batched review back");
+        result.submitFailed = {
+            reviewId,
+            error: `could not check the review for other drafts before submitting it: ${error instanceof Error ? error.message : String(error)}`,
+        };
         return result;
     }
 

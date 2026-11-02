@@ -156,6 +156,15 @@ describe("parseHookPayload", () => {
         expect(payload?.nativeDiffFiles).toEqual(["/repo/a.ts"]);
     });
 
+    it("reads the subagent that made the call in either spelling; the main agent has none", () => {
+        const base = { hook_event_name: "PostToolUse", tool_name: "Bash", cwd: "/repo", session_id: "s1" };
+
+        expect(parseHookPayload(SafeJSON.stringify({ ...base, agent_id: "sub-1" }))?.agentId).toBe("sub-1");
+        expect(parseHookPayload(SafeJSON.stringify({ ...base, agentId: "sub-2" }))?.agentId).toBe("sub-2");
+        expect(parseHookPayload(SafeJSON.stringify({ ...base, agent_id: "" }))?.agentId).toBeUndefined();
+        expect(parseHookPayload(SafeJSON.stringify(base))?.agentId).toBeUndefined();
+    });
+
     it("returns null for input that is not JSON", () => {
         expect(parseHookPayload("not json")).toBeNull();
     });

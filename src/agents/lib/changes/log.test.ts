@@ -174,6 +174,28 @@ describe("the Bash writes a session recorded", () => {
         expect(Date.parse(write?.ended ?? "")).toBeGreaterThanOrEqual(Date.parse(began));
     });
 
+    test("a path rewritten in 40,000 rows keeps every write in order, in linear time", () => {
+        const session = `bash-writes-many-${process.pid}`;
+        const log = sessionChangesPath(session);
+        const rows = 40_000;
+        const at = (index: number) => new Date(Date.UTC(2026, 10, 1) + index * 1000).toISOString();
+        mkdirSync(dirname(log), { recursive: true });
+        writeFileSync(
+            log,
+            `${Array.from({ length: rows }, (_, index) => row(session, "/w/out.log", "bash", at(index))).join("\n")}\n`
+        );
+
+        const started = performance.now();
+        const writes = bashWriteLookup(session)("/w/out.log");
+        const elapsed = performance.now() - started;
+
+        expect(writes).toHaveLength(rows);
+        expect(writes[0]).toEqual({ ended: at(0) });
+        expect(writes.at(-1)).toEqual({ ended: at(rows - 1) });
+        // Measured 2026-11-02: 13 ms in place, 893 ms when each row copied the path's list (N²/2 copies).
+        expect(elapsed).toBeLessThan(400);
+    });
+
     test("only the log's last maxBytes are read, from the first whole row on", () => {
         const session = `bash-writes-cap-${process.pid}`;
         const log = sessionChangesPath(session);
@@ -187,6 +209,29 @@ describe("the Bash writes a session recorded", () => {
         expect(lookup("/w/recent.txt")).toHaveLength(1);
         expect(lookup("/w/old.txt")).toEqual([]);
         expect(bashWriteLookup(session)("/w/old.txt")).toHaveLength(1);
+    });
+
+    test("50,000 Bash rows of one path index in linear time, in log order", () => {
+        const session = `bash-writes-hot-${process.pid}`;
+        const log = sessionChangesPath(session);
+        mkdirSync(dirname(log), { recursive: true });
+        const rows = 50_000;
+        const hot = row(session, "/w/hot.txt", "bash", "2026-11-01T10:00:00.000Z", "2026-11-01T09:59:59.000Z");
+        const last = row(session, "/w/hot.txt", "bash", "2026-11-01T11:00:00.000Z", "2026-11-01T10:59:59.000Z");
+        writeFileSync(
+            log,
+            `${Array(rows - 1)
+                .fill(hot)
+                .join("\n")}\n${last}\n`
+        );
+        const started = performance.now();
+        const writes = bashWriteLookup(session, { maxBytes: 16 * 1024 * 1024 })("/w/hot.txt");
+        const ms = performance.now() - started;
+
+        expect(writes).toHaveLength(rows);
+        expect(writes.at(-1)).toEqual({ began: "2026-11-01T10:59:59.000Z", ended: "2026-11-01T11:00:00.000Z" });
+        // A copy of the path's list per row took 2.2 s here (O(N²)); one list appended to takes about 20 ms.
+        expect(ms).toBeLessThan(750);
     });
 
     test("a lookup made after the log grew sees the new row; one made before keeps what it read", () => {
@@ -427,6 +472,27 @@ describe("scripted editors", () => {
             .split("\n")
             .map((line) => SafeJSON.parse(line) as { path: string });
         expect(rows.map((row) => row.path)).toEqual([output]);
+    });
+
+    test("a named path under a cloud storage folder is never read, so the log cannot download it", () => {
+        const dir = mkdtempSync(join(tmpdir(), "changes-script-"));
+        const file = join(dir, "changes.jsonl");
+        const cloud = join(dir, "Library", "CloudStorage", "Provider-named");
+        const placeholder = join(cloud, "note.md");
+        const output = join(dir, "out.csv");
+        mkdirSync(cloud, { recursive: true });
+        writeFileSync(placeholder, "touched\n");
+        writeFileSync(output, "b,a\n");
+        const lines: string[] = [];
+        const sink = { hash: (bytes: Buffer) => bytes.toString("utf8"), log: (line: string) => lines.push(line) };
+        const event = { provider: "claude", session: "s1", turn: "t1", tool: "Bash", cwd: dir };
+        const command = `python3 transform.py ${placeholder} > ${output}`;
+
+        recordScriptedEdits(file, command, { ...event, since: Date.now() - 60_000 }, [], sink);
+
+        // The output is the positive control: the named pass ran and logged the file it may read.
+        expect(readJsonlRows<ChangeEvent>(file).rows.map((row) => row.path)).toEqual([output]);
+        expect(lines.join("\n")).toContain(`${placeholder} not logged: under a cloud storage folder`);
     });
 
     test("a named path another chunk of the same command records is not logged twice", () => {
@@ -873,6 +939,28 @@ describe("the change-log object store maintenance", () => {
         expect(s.readable([renamed, stale, young, orphan, packedOld])).toEqual([renamed, young].sort());
         expect(s.count()).toMatchObject({ loose: 1, packs: 1, packed: 1 });
         expect(existsSync(s.loosePath(young))).toBe(true);
+    });
+
+    test("a session whose id starts with _ keeps the blobs its rows name, loose and packed", async () => {
+        const now = new Date();
+        const s = scratchStore();
+        const [packed = ""] = s.write("packed, named by an underscore session\n");
+        s.row("_under", "/repo/packed.ts", packed, new Date(now.getTime() - 35 * DAY));
+        await maintainObjectStore({
+            now: new Date(now.getTime() - 10 * DAY),
+            root: s.store,
+            logsDir: s.agents,
+            settle: noSettle,
+        });
+        const [loose = ""] = s.write("loose, named by an underscore session\n");
+        s.row("_under", "/repo/loose.ts", loose, new Date(now.getTime() - DAY));
+        s.row("_under", "/repo/packed.ts", packed, new Date(now.getTime() - DAY));
+        s.age(loose, new Date(now.getTime() - 40 * DAY));
+
+        const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+
+        expect(report.dropped).toEqual({ loose: 0, packed: 0 });
+        expect(s.readable([loose, packed])).toEqual([loose, packed].sort());
     });
 
     test("a row written during the pass that names a dropped blob gets the blob back", async () => {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
 import { filterRegistryByCapabilities } from "./server";
+import { entryFromMcpTool, toolCallResult } from "./tool-entry";
 
 /**
  * The capability filter is a separation boundary, not a convenience: `question_ask` is the
@@ -29,7 +30,11 @@ const ALL = registry(
     "question_update",
     "annotate_image",
     "jev_live",
-    "question_tokens"
+    "question_tokens",
+    "fetch_markdown",
+    "fetch_jsonld",
+    "alza_search_products",
+    "waze_police"
 );
 
 afterEach(() => {
@@ -87,6 +92,9 @@ describe("filterRegistryByCapabilities", () => {
         ]);
         expect(withCapabilities("annotate")).toEqual(["annotate_image"]);
         expect(withCapabilities("jev")).toEqual(["jev_live"]);
+        expect(withCapabilities("fetch")).toEqual(["fetch_jsonld", "fetch_markdown"]);
+        expect(withCapabilities("alza")).toEqual(["alza_search_products"]);
+        expect(withCapabilities("waze")).toEqual(["waze_police"]);
     });
 
     test("an unset filter leaves every tool enabled", () => {
@@ -128,5 +136,31 @@ describe("the control capability", () => {
             "control_run",
             "control_workflow_run",
         ]);
+    });
+});
+
+describe("a standalone server's tool in the shared registry", () => {
+    test("keeps the structured result the tool's own server sends, and an error result throws", async () => {
+        const claims = { result: { claims: [{ id: "c1", detailAction: "claim_detail" }] } };
+        const entry = entryFromMcpTool({
+            description: "claims",
+            inputSchema: { type: "object" },
+            call: async () => ({ content: [{ type: "text", text: "1 claim" }], structuredContent: claims }),
+        });
+        const answer = await entry.handler({});
+
+        expect(answer).toEqual({ text: "1 claim", structuredContent: claims });
+        expect(toolCallResult(answer)).toEqual({
+            content: [{ type: "text", text: "1 claim" }],
+            structuredContent: claims,
+        });
+        expect(toolCallResult("plain")).toEqual({ content: [{ type: "text", text: "plain" }] });
+
+        const failing = entryFromMcpTool({
+            description: "x",
+            inputSchema: { type: "object" },
+            call: async () => ({ isError: true, content: [{ type: "text", text: "Error: signed out" }] }),
+        });
+        await expect(failing.handler({})).rejects.toThrow("Error: signed out");
     });
 });

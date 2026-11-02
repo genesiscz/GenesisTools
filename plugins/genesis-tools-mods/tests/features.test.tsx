@@ -96,6 +96,7 @@ import { bareDescription } from "../hooks/model-label";
 import {
     checkoutOf,
     forgetRepoMentions,
+    mentionsIn,
     namesIn,
     projectOfPath,
     repoLookupClock,
@@ -1561,6 +1562,12 @@ test("links: a bare PR number takes the repository the reply means, not only the
         "#13 -> https://github.com/acme/web/pull/13, in acme/web: the nearest repository the reply names"
     );
     expect(note).toContain("#14 -> https://github.com/acme/api/pull/14, in acme/api: the session's checkout");
+
+    // A full link whose label carries the title, parentheses and all, stays as written and is no PR the mod linked.
+    const full =
+        "- **The PR:** [#7 (fix(web, hooks): the mod's seven, and more)](https://github.com/acme/web/pull/7), branch `feat/x`.\n";
+    expect(await linkLine(one, full)).toBe(full);
+    expect(takeLinkedPullRequestNote()).toBeUndefined();
 });
 
 /** A session working in two checkouts, acme/Toolbox (its folder) and acme/Playground; titles per `repo#n`. */
@@ -1818,6 +1825,16 @@ test("links: a one-checkout session links a bare number in its checkout as befor
             { kind: "github", host: "enterprise.example", path: "acme/web" },
         ])
     ).toEqual([]);
+});
+
+test("links: an owner-qualified PR reference takes any legal repository name, a bare one needs a word", () => {
+    expect(mentionsIn("acme/x#12 and acme/123#13")).toEqual([
+        { start: 0, project: { kind: "github", host: "github.com", path: "acme/x" }, number: 12 },
+        { start: 14, project: { kind: "github", host: "github.com", path: "acme/123" }, number: 13 },
+    ]);
+    expect(mentionsIn("web#12")).toEqual([{ start: 0, name: "web", number: 12 }]);
+    // Without an owner, a one-letter or all-digit word is prose (`C#1`, `2#3`), not a repository.
+    expect(mentionsIn("C#1 and 2#3 and a/b/c#4")).toEqual([]);
 });
 
 test("links: PR answers are shared through one file per owner/repo#n, a PR for hours and a missing one briefly", async () => {

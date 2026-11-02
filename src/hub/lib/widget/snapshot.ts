@@ -257,6 +257,11 @@ export interface WidgetSources {
     rosterStatus?(): { loading: boolean; error?: string };
     /** The lines a decision card's refs cite, for a card the snapshot publishes; else `widgetExcerpts` reads them. */
     excerpts?(refs: readonly InboxRef[], cwd: string | undefined): InboxRef[];
+    /**
+     * Called once per snapshot, before the published cards' refs are read: the excerpt reader keeps what the snapshot
+     * before read, for this one, and forgets everything else.
+     */
+    excerptRound?(): void;
 }
 /** The cut-offs the badges count against, applied to every item before it is grouped. */
 export interface WidgetInboxWindow {
@@ -689,6 +694,7 @@ export const realWidgetSources: WidgetSources = {
     inboxData: readInboxData,
     events: (ids) => readWidgetDecisionEvents({ ids }),
     excerpts: widgetExcerpts,
+    excerptRound: () => widgetExcerptReads.nextRound(),
 };
 
 /** Refreshes both catalogs the Widget reads: indexed sessions and the agent roster, which the sessions scope excludes. */
@@ -1815,6 +1821,7 @@ export async function widgetSnapshot({
         notifications.sessions.flatMap((session) => [session.unreadItem?.id, session.pendingItem?.id])
     );
     const left = new Map<string, number>();
+    sources.excerptRound?.();
     const visibleCards = selectedCards
         .reverse()
         .filter((card) => {

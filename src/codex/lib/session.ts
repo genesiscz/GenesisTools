@@ -43,7 +43,7 @@ const log = logger.child({ component: "codex:session" });
 export interface RpcClient {
     request<T>(method: string, params?: unknown): Promise<T>;
     notify(method: string, params?: unknown): Promise<void>;
-    /** Settles once the answer to the server request `id` is on the wire (`AppServerClient.answered`). */
+    /** Resolves once the answer to the server request `id` is on the wire, rejects when its write failed (`AppServerClient.answered`). */
     answered(id: RpcId): Promise<void>;
     close(): Promise<void>;
 }

@@ -2,6 +2,7 @@ import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import {
+    appendFileSync,
     chmodSync,
     closeSync,
     existsSync,
@@ -25,9 +26,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import * as zlib from "node:zlib";
 import { createZstdCompress, constants as zlibConstants } from "node:zlib";
 import { env } from "@genesiscz/utils/env";
 import { fileFlags, SF_DATALESS } from "@genesiscz/utils/fs/cloud-placeholder";
+import * as hash from "@genesiscz/utils/fs/hash";
 import {
     readFirstLines,
     readLastLines,
@@ -68,6 +71,7 @@ import {
 import { ripgrepDigestPath, ripgrepFiles, ripgrepFilesCached } from "./search";
 import {
     assertArchiveOutsideSource,
+    changedSinceCheck,
     listArchive,
     packDirectory,
     TarLister,
@@ -915,7 +919,15 @@ describe("folder archives", () => {
         expect(raw.includes("GNU.sparse.major=1")).toBe(process.platform === "darwin");
         expect(raw.includes("._plain.txt")).toBe(false);
         const check = verifyArchiveAgainstFolder({ archive: packed.archive, source: tree });
-        expect(check).toEqual({ ok: true, entries: 11, missing: [], mismatched: [], extra: [] });
+        expect({ ...check, seen: check.seen.size }).toEqual({
+            ok: true,
+            entries: 11,
+            missing: [],
+            mismatched: [],
+            extra: [],
+            seen: 11,
+        });
+        expect(changedSinceCheck(check)).toEqual([]);
 
         const out = join(dir, "restored");
         await unpackArchive({ archive: packed.archive, destination: out });
@@ -1038,6 +1050,48 @@ describe("folder archives", () => {
         }
     });
 
+    it("decodes the frames of a 2 GiB window one at a time, so four decoders never ask for 8 GiB at once", async () => {
+        const dir = scratch("long-window-serial");
+        const parts = ["one\n", "two\n", "three\n", "four\n", "five\n"];
+        const file = join(dir, "long.zst");
+        writeFileSync(file, Buffer.concat(await Promise.all(parts.map((part) => longWindowZstd(Buffer.from(part))))));
+        const zstdDecompress = zlib.zstdDecompress;
+        let started = 0;
+        let running = 0;
+        let most = 0;
+        // Only frames with a long window go through node:zlib; Bun's decoder takes the others.
+        function counted(buffer: zlib.InputType, callback: zlib.CompressCallback): void;
+        function counted(buffer: zlib.InputType, options: zlib.ZstdOptions, callback: zlib.CompressCallback): void;
+        function counted(
+            buffer: zlib.InputType,
+            second: zlib.ZstdOptions | zlib.CompressCallback,
+            third?: zlib.CompressCallback
+        ): void {
+            const callback = typeof second === "function" ? second : third;
+            started += 1;
+            running += 1;
+            most = Math.max(most, running);
+            zstdDecompress(buffer, typeof second === "function" ? {} : second, (err, result) => {
+                running -= 1;
+                callback?.(err, result);
+            });
+        }
+        const decode = spyOn(zlib, "zstdDecompress").mockImplementation(
+            Object.assign(counted, { __promisify__: zstdDecompress.__promisify__ })
+        );
+        const read: string[] = [];
+
+        try {
+            for await (const frame of readZstdFrames(file)) {
+                read.push(Buffer.from(frame).toString());
+            }
+        } finally {
+            decode.mockRestore();
+        }
+
+        expect([read.join(""), started, most]).toEqual([parts.join(""), parts.length, 1]);
+    });
+
     it("restores files and folders into missing nested destinations", async () => {
         const dir = scratch("new-destination");
         const tree = makeTree(dir);
@@ -1125,6 +1179,32 @@ describe("folder archives", () => {
             const listed = await compressPath({ source: tree, files: normal, force: true, caller: "test" });
             expect(listed.record.files).toBe(normal.length);
             rmSync(`${tree}.zst`);
+
+            // The guard is in packDirectory, which every pack goes through: folder retention (codex migrate-home,
+            // retired app bundles) packs without a plan, and a stub's zeros would verify before the folder went.
+            await expect(packDirectory({ source: tree, archive: join(dir, "direct.zst") })).rejects.toThrow(
+                "21 cloud placeholders"
+            );
+            expect(existsSync(join(dir, "direct.zst"))).toBe(false);
+            const runs = join(dir, "runs");
+            mkdirSync(join(runs, "r1"), { recursive: true });
+            writeFileSync(join(runs, "r1", "stub.note"), Buffer.alloc(8192));
+            const stubMarked = Bun.spawnSync(
+                ["xattr", "-w", "com.dropbox.placeholder", "1", join(runs, "r1", "stub.note")],
+                { env: process.env }
+            );
+            expect(stubMarked.exitCode).toBe(0);
+            const now = new Date();
+            const old = (now.getTime() - 3 * 86_400_000) / 1000;
+            utimesSync(join(runs, "r1"), old, old);
+            const retained = await applyFolderRetention(planFolderRetention({ root: runs, keep: 0, now }), {
+                caller: "test",
+                minFreeBytes: 0,
+            });
+            expect(retained.failed.map((failure) => failure.reason)).toEqual([
+                expect.stringContaining("holds 1 cloud placeholder"),
+            ]);
+            expect(readdirSync(runs)).toEqual(["r1"]);
 
             const { record } = await compressPath({
                 source: tree,
@@ -1233,6 +1313,86 @@ describe("folder archives", () => {
         const into = join(dir, "restored");
         await expandPath({ archive: record.target, into, caller: "test" });
         expect(readFileSync(join(into, "tree", "a\\empty"), "utf8")).toBe("backslash\n");
+
+        // Names whose backslashes a split on both separators would read as `..` or an empty part: they round-trip too.
+        const names = ["a\\..\\b", "x\\\\y"];
+
+        for (const name of names) {
+            writeFileSync(join(tree, name), `${name}\n`);
+        }
+
+        const odd = await compressPath({
+            source: tree,
+            files: names,
+            target: join(dir, "odd", "tree.zst"),
+            removeOriginal: true,
+            force: true,
+            caller: "test",
+        });
+        const oddInto = join(dir, "odd-restored");
+        await expandPath({ archive: odd.record.target, into: oddInto, caller: "test" });
+
+        for (const name of names) {
+            expect(readFileSync(join(oddInto, "tree", name), "utf8")).toBe(`${name}\n`);
+        }
+    });
+
+    it("keeps the archive and the originals when a file changes after its sha256 matched, in a pack and in retention", async () => {
+        const dir = scratch("late-write");
+        const tree = makeTree(dir);
+        const sha256File = hash.sha256File;
+        // Another process appends to a file the moment after the check hashed it, while later files are still hashed.
+        const lateWrite = (file: string) =>
+            spyOn(hash, "sha256File").mockImplementation((path) => {
+                const digest = sha256File(path);
+
+                if (path === file) {
+                    appendFileSync(file, "late\n");
+                }
+
+                return digest;
+            });
+
+        for (const files of [undefined, ["top.txt", "a/empty"]]) {
+            const target = join(dir, files ? "listed.zst" : "whole.zst");
+            const probe = lateWrite(join(tree, "top.txt"));
+
+            try {
+                await expect(
+                    compressPath({ source: tree, files, target, removeOriginal: true, force: true, caller: "test" })
+                ).rejects.toThrow("changed while it was packed");
+            } finally {
+                probe.mockRestore();
+            }
+
+            expect(readFileSync(join(tree, "top.txt"), "utf8")).toEndWith("late\n");
+            expect(existsSync(join(tree, "a", "empty"))).toBe(true);
+            expect(existsSync(target)).toBe(true);
+        }
+
+        const runs = join(dir, "runs");
+        mkdirSync(join(runs, "r1"), { recursive: true });
+        writeFileSync(join(runs, "r1", "data.jsonl"), logText(20));
+        const now = new Date();
+        const old = (now.getTime() - 3 * 86_400_000) / 1000;
+        utimesSync(join(runs, "r1"), old, old);
+        const probe = lateWrite(join(runs, "r1", "data.jsonl"));
+        let report: Awaited<ReturnType<typeof applyFolderRetention>>;
+
+        try {
+            report = await applyFolderRetention(planFolderRetention({ root: runs, keep: 0, now }), {
+                caller: "test",
+                minFreeBytes: 0,
+            });
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(report.failed.map((failure) => failure.reason)).toEqual([
+            "the folder changed while it was checked (1 entries)",
+        ]);
+        expect(readdirSync(runs)).toEqual(["r1"]);
+        expect(readFileSync(join(runs, "r1", "data.jsonl"), "utf8")).toEndWith("late\n");
     });
 
     it("packs, verifies and unpacks a folder and files whose names start with -, and bsdtar's -C and @ names", async () => {
@@ -1288,6 +1448,16 @@ describe("folder archives", () => {
         const { id: _id, inputSha256: _sha, ...oldShape } = record;
         recordCompression({ ...oldShape, inputSha256: "0".repeat(64) });
         const into = join(dir, "tampered");
+        await expect(expandPath({ archive, into, caller: "test" })).rejects.toThrow("another sha256");
+        expect(existsSync(join(into, "tree"))).toBe(false);
+        // A restore that wrote the archive (the outer `tree.zst.zst` decompressed) says nothing of its content.
+        recordCompression({
+            ...oldShape,
+            op: "decompress",
+            source: `${archive}.zst`,
+            target: archive,
+            outputSha256: record.outputSha256,
+        });
         await expect(expandPath({ archive, into, caller: "test" })).rejects.toThrow("another sha256");
         expect(existsSync(join(into, "tree"))).toBe(false);
 
@@ -1879,7 +2049,35 @@ describe("day logs", () => {
         writeFileSync(today, `${logText(30)}\ntoday only\n`);
         const lines = logText(50).split("\n");
         const exists = fs.existsSync;
-        // The daily pass (another process) removes the plain file the moment after a reader found it.
+        // readTextChunks looks nothing up: its open decides. The daily pass removes the plain file between the
+        // reader's Bun.file(), which opens nothing yet, and the stream's open, which then fails with ENOENT.
+        writeFileSync(plain, logText(50));
+        await compressFile({ source: plain, frameBytes: 1024 });
+        const bunFile = Bun.file;
+        let retired = 0;
+        const handle = spyOn(Bun, "file").mockImplementation((name, options) => {
+            // The reader names its file by a string path.
+            const file = bunFile(String(name), options);
+
+            if (name === plain && exists(plain)) {
+                unlinkSync(plain);
+                retired += 1;
+            }
+
+            return file;
+        });
+        const chunks: Buffer[] = [];
+
+        try {
+            for await (const chunk of readTextChunks(plain)) {
+                chunks.push(Buffer.from(chunk));
+            }
+        } finally {
+            handle.mockRestore();
+        }
+
+        expect([retired, exists(plain), Buffer.concat(chunks).toString()]).toEqual([1, false, logText(50)]);
+        // rg is handed the plain name, so the daily pass removes the plain file the moment after ripgrepFiles found it.
         const retiredAfterLookup = async <T>(read: () => Promise<T>): Promise<T> => {
             writeFileSync(plain, logText(50));
             await compressFile({ source: plain, frameBytes: 1024 });
@@ -1899,17 +2097,6 @@ describe("day logs", () => {
                 probe.mockRestore();
             }
         };
-
-        const text = await retiredAfterLookup(async () => {
-            const chunks: Buffer[] = [];
-
-            for await (const chunk of readTextChunks(plain)) {
-                chunks.push(Buffer.from(chunk));
-            }
-
-            return Buffer.concat(chunks).toString();
-        });
-        expect(text).toBe(logText(50));
 
         const rg = ripgrepBinary();
 

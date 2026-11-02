@@ -1248,6 +1248,9 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         return report;
     }
 
+    // Read before anything is written: an unreadable codex config throws here, and thrown after the copy, the
+    // names, the Desktop merge and the source renames it hid the report of a run that had already changed the homes.
+    const backupPolicy = await readBackupPolicy();
     const backupBase = options.backupRoot ?? defaultBackupRoot();
     const backupRoot = join(backupBase, stamp);
     mkdirSync(backupRoot, { recursive: true });
@@ -1336,7 +1339,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         }
     }
 
-    report.backupRetention = await retainBackups(backupBase, new Date(), await readBackupPolicy());
+    report.backupRetention = await retainBackups(backupBase, new Date(), backupPolicy);
     return report;
 }
 

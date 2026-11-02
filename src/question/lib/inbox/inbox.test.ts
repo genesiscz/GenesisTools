@@ -529,6 +529,40 @@ describe("cachingReadDeps", () => {
         fillExcerpts([ref("a.ts", 1)], "/w/app", deps);
         expect(rootLookups).toBe(2);
     });
+
+    test("a snapshot that cites more files than a small cache holds finds them all, and a file one left out goes", () => {
+        // 300 cards citing 300 distinct unchanged files, filled in the same order every snapshot (eve on #676): a
+        // least-recently-used cache of fewer entries evicted each file just before the snapshot read it again.
+        const paths = Array.from({ length: 300 }, (_, index) => `/w/app/f${index}.ts`);
+        const reads: string[] = [];
+        const deps = cachingReadDeps({
+            base: {
+                excerpt: (path) => {
+                    reads.push(path);
+                    return `text of ${path}`;
+                },
+                isFile: (path) => paths.includes(path),
+                roots: (cwd) => [cwd],
+                files: () => null,
+            },
+            stamp: () => "1",
+        });
+        const snapshot = (cited: string[]) => {
+            deps.nextRound();
+            return cited.map((path) => fillExcerpts([ref(path, 1)], "/w/app", deps)[0]?.excerpt);
+        };
+
+        snapshot(paths);
+        const again = snapshot(paths);
+        expect(reads).toHaveLength(300);
+        expect(again[299]).toBe("text of /w/app/f299.ts");
+
+        // What a snapshot does not read is gone for the next one: f0, left out once, is read again when a card cites
+        // it once more, and every other file is still found.
+        snapshot(paths.slice(1));
+        snapshot(paths);
+        expect(reads).toEqual([...paths, "/w/app/f0.ts"]);
+    });
 });
 
 describe("readExcerpt", () => {

@@ -1,6 +1,18 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { dirname } from "node:path";
+import { transcriptOnDisk } from "@app/ai-proxy/lib/sessions/view";
+import { applyOldFileCompression, planOldFileCompression } from "@genesiscz/utils/compress/retention";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { parseResponseBody, readRequestTags, transcriptFile } from "./transcripts";
+import {
+    appendTranscriptLines,
+    parseResponseBody,
+    readRequestTags,
+    transcriptAppendsSettled,
+    transcriptFile,
+    transcriptsRoot,
+} from "./transcripts";
 
 function sse(frames: object[]): string {
     return `${frames.map((frame) => `data: ${SafeJSON.stringify(frame)}`).join("\n\n")}\n\ndata: [DONE]\n\n`;
@@ -187,5 +199,50 @@ describe("transcriptFile", () => {
         expect(transcriptFile("2026-07-25")).toEndWith("/2026-07-25/_untagged.jsonl");
         // A session name can never escape the day directory: separators collapse to dashes.
         expect(transcriptFile("2026-07-25", "../../etc/passwd")).toEndWith("/2026-07-25/..-..-etc-passwd.jsonl");
+    });
+});
+
+describe("appendTranscriptLines", () => {
+    // In the test sandbox's ai-proxy folder, under a day no other test writes.
+    const day = "2026-10-10";
+    const file = transcriptFile(day, "resumed-realtime-session");
+
+    afterAll(() => {
+        rmSync(dirname(file), { recursive: true, force: true });
+    });
+
+    /** The daily pass over the transcripts folder, the day long past and every file quiet. */
+    const dailyPass = async () => {
+        const plan = planOldFileCompression({
+            root: transcriptsRoot(),
+            recursive: true,
+            dayOf: (relative) => /^(\d{4}-\d{2}-\d{2})\/[^/]+\.jsonl$/.exec(relative)?.[1],
+            firstPlainDay: "2026-10-11",
+            quietMs: 0,
+            // A second ahead: a file written within the current millisecond has an mtime after Date.now().
+            now: new Date(Date.now() + 1000),
+        });
+        await applyOldFileCompression(plan, { caller: "test", releaseGraceMs: 0 });
+    };
+
+    it("puts a transcript the daily pass compressed back before a resumed session appends, so no entry is lost", async () => {
+        appendTranscriptLines(file, day, ['{"n":1}', '{"n":2}']);
+        await transcriptAppendsSettled();
+        await dailyPass();
+        expect([existsSync(file), existsSync(`${file}.zst`)]).toEqual([false, true]);
+
+        // The session went quiet past the pass, then wrote again and finished.
+        appendTranscriptLines(file, day, ['{"n":3}']);
+        appendTranscriptLines(file, day, ['{"n":4}']);
+        await transcriptAppendsSettled();
+
+        const all = '{"n":1}\n{"n":2}\n{"n":3}\n{"n":4}\n';
+        expect(transcriptOnDisk(file)).toBe(file);
+        expect(readFileSync(file, "utf8")).toBe(all);
+        expect(existsSync(`${file}.zst`)).toBe(false);
+
+        // The next pass compresses the whole history, not the entries written after the first one.
+        await dailyPass();
+        expect(readWholeTextSync(`${file}.zst`)).toBe(all);
     });
 });

@@ -4,6 +4,7 @@ import {
     absentLimitKindLabel,
     absentLimitText,
     type LimitWindow,
+    snapshotOfAccount,
 } from "@genesiscz/utils/ai/providers/account-features";
 import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-money";
 import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
@@ -20,22 +21,7 @@ import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache
  * while the DB holds a per-bucket time series.
  */
 export function lastSnapshotFor(cache: SnapshotsCache | null, account: AccountEntry): AccountUsageSnapshot | undefined {
-    const rows = cache?.providers[account.provider]?.accounts;
-
-    if (!rows || rows.length === 0) {
-        return undefined;
-    }
-
-    // By id first: a rename keeps the id, so a snapshot recorded under the old name
-    // still belongs to this account. The name is the fallback for a row written
-    // before the writers carried an id, so the fallback REQUIRES an absent id: a row
-    // whose id is set and different belongs to another account, and matching it by name
-    // let a deleted account's usage and plan show up under a replacement that reused the
-    // name, until the next poll overwrote it.
-    return (
-        rows.find((row) => row.accountId !== "" && row.accountId === account.id) ??
-        rows.find((row) => !row.accountId && row.accountName === account.name)
-    );
+    return snapshotOfAccount(cache?.providers[account.provider]?.accounts, account);
 }
 
 /** One labelled row under "Last usage" in `tools ai accounts show`. */

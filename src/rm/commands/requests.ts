@@ -318,6 +318,8 @@ interface BatchRead {
     changed: string[];
     /** Requests with nothing left but lost aside copies: closed as gone here, never a failure. */
     closedLost: number;
+    /** Requests the sweep before the window closed (a rule decided every path, or nothing was left): done, too. */
+    swept: number;
 }
 
 /** Locks each of `ids` for the whole call (one open in another window is left out), oldest request first. */
@@ -371,7 +373,7 @@ function changedRow(
  * only while every row still names the object it named when it was held back.
  */
 function readBatch(queue: readonly HeldBack[], ctx: RunContext, kick: BatchDeps["kickDrainer"]): BatchRead {
-    const read: BatchRead = { parts: [], heldBack: [], changed: [], closedLost: 0 };
+    const read: BatchRead = { parts: [], heldBack: [], changed: [], closedLost: 0, swept: 0 };
     const inPlaceOwner = new Map<string, string>();
     const asidePaths = new Set<string>();
 
@@ -381,6 +383,7 @@ function readBatch(queue: readonly HeldBack[], ctx: RunContext, kick: BatchDeps[
         const request = loadRmRequest(id);
 
         if (swept.ruled.some((close) => close.closed) || swept.gone.includes(id)) {
+            read.swept++;
             continue;
         }
 
@@ -559,12 +562,13 @@ export async function approveMany(
         let queue: HeldBack[] = lockBatch(ids, releases).map((id) => ({ id, pinned: new Map() }));
         const notDecided: string[] = [];
         let opened = false;
-        let closedLost = 0;
+        // Requests closed before any window (lost copies, or the sweep's rule or gone close): done, not a failure.
+        let settled = 0;
 
         while (queue.length > 0) {
             const read = readBatch(queue, ctx, batchDeps.kickDrainer);
             notDecided.push(...read.changed);
-            closedLost += read.closedLost;
+            settled += read.closedLost + read.swept;
             const answer = await decideBatch(read.parts, ctx, batchDeps);
             opened ||= answer !== null;
             queue = read.heldBack;
@@ -580,7 +584,7 @@ export async function approveMany(
             }
         }
 
-        if (!opened && closedLost === 0) {
+        if (!opened && settled === 0) {
             out.println(pc.red("Nothing to approve."));
             process.exitCode = 1;
             return;

@@ -229,6 +229,29 @@ export async function pollAnthropicAccount(
 }
 
 /**
+ * A cached row in the current shape. A build before 2026-11-01 wrote a header reading of an account
+ * without a 5-hour limit with a fabricated `{ 0, null }` five_hour window in `limits` and no
+ * `absentLimits`; its `native` reading still tells (`fiveHourState`), so the window moves from `limits`
+ * to `absentLimits` the way `pollAnthropicAccount` writes it now. A current row is returned unchanged:
+ * the poll derives both lists from the same reading, so a row without `absentLimits` has none.
+ */
+export function upgradeCachedSnapshot(snapshot: AccountUsageSnapshot): AccountUsageSnapshot {
+    if (snapshot.absentLimits !== undefined) {
+        return snapshot;
+    }
+
+    const absentLimits = absentLimitsOf(previousUsageOf(snapshot));
+
+    if (absentLimits.length === 0) {
+        return snapshot;
+    }
+
+    const absent = new Set(absentLimits.map((limit) => limit.key));
+
+    return { ...snapshot, limits: snapshot.limits.filter((window) => !absent.has(window.key)), absentLimits };
+}
+
+/**
  * The inverse of `snapshotBase`: a snapshot back into the `AccountUsage` row every
  * claude-only reader still speaks (`tools claude start`, the doctor, the dev-dashboard
  * aggregator, the TUI presenter). `native` carries the untouched `UsageResponse`, so this
@@ -238,6 +261,7 @@ export function snapshotToAccountUsage(snapshot: AccountUsageSnapshot): AccountU
     const refreshExpiresAt = snapshot.auth?.refreshExpiresAt
         ? new Date(snapshot.auth.refreshExpiresAt).getTime()
         : undefined;
+    const { absentLimits } = upgradeCachedSnapshot(snapshot);
 
     return {
         accountName: snapshot.accountName,
@@ -251,7 +275,7 @@ export function snapshotToAccountUsage(snapshot: AccountUsageSnapshot): AccountU
         ...(snapshot.plan?.contradictedAt === undefined ? {} : { planContradictedAt: snapshot.plan.contradictedAt }),
         ...(refreshExpiresAt === undefined || Number.isNaN(refreshExpiresAt) ? {} : { refreshExpiresAt }),
         ...(snapshot.native === undefined ? {} : { usage: snapshot.native as UsageResponse }),
-        ...(snapshot.absentLimits === undefined ? {} : { absentLimits: snapshot.absentLimits }),
+        ...(absentLimits === undefined ? {} : { absentLimits }),
         ...(snapshot.error === undefined ? {} : { error: snapshot.error }),
         ...(snapshot.stale === undefined
             ? {}
@@ -313,4 +337,5 @@ export const anthropicUsage: AccountUsageFeature = {
     // the gated read anyway.
     pollsWhileGated: (account, gate) =>
         longLivedCredentialUsable(account.credentials) && !isQuotaHeaderFailure(gate.reason),
+    upgradeCached: upgradeCachedSnapshot,
 };

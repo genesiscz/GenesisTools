@@ -13,22 +13,48 @@ import {
     type Span,
     splitPipeline,
     tokenize,
+    wordsFrom,
 } from "@genesiscz/utils/shell/scan";
 
+/** `tools rm` or `src/rm/index.ts` in a scanned statement: the words after it are the CLI's arguments. */
+const RM_CLI = /(?:^|[\s;&|(])((?:\S*\/)?tools\s+rm|\S*[\\/]rm[\\/]index\.ts)(?=\s|$)/g;
+/** The root flags that take the next word as their value (`--reason "two words"`, `--keep 1d`). */
+const RM_VALUE_FLAGS: ReadonlySet<string> = new Set(["--reason", "--keep"]);
 /**
- * The verbs that let a request through, trust a folder, change settings, or end every batch's grace period
- * (`drain --now` deletes what a person approved with "Move to the trash" and other sessions' batches at once).
+ * The verbs that let a request through, trust a folder, or change settings, word by word. Each runs only with an
+ * operand: alone or with help first, Commander prints the help or the verb asks for an id.
  */
-const RM_USER_VERBS = String.raw`(?:(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b${String.raw`(?=\s+(?!--help\b|-h\b)[^\s;&|)])`}|drain\b[^;&|\n]*?\s--now\b)`;
+const RM_USER_VERBS: ReadonlyArray<readonly string[]> = [
+    ["approve"],
+    ["roots", "add"],
+    ["config", "set"],
+    ["profile", "set"],
+    ["profile", "remove"],
+];
+
 /**
- * Root flags may stand between `rm` and the verb, and Commander still runs the verb (`tools rm -v approve x`,
- * `tools rm -- approve x`), so the rule skips them: `--reason` and `--keep` with their value, any other `-` token.
+ * Whether the words after `tools rm`, as the shell passes them, run a verb that is the person's. Root flags may stand
+ * before the verb, and Commander still runs it (`tools rm -v approve x`, `tools rm -- approve x`): `--reason` and
+ * `--keep` with their value, any other `-` word. `drain --now` ends every batch's grace period (it deletes what a person
+ * approved with "Move to the trash" and other sessions' batches at once).
  */
-const RM_ROOT_FLAGS = String.raw`(?:(?:--(?:reason|keep)(?:\s+|=)\S+|-\S+)\s+)*`;
-/** The `tools rm` verbs that let a request through, trust a folder, or change settings: a person's to run. */
-const RM_USER_VERB = new RegExp(
-    String.raw`(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+${RM_ROOT_FLAGS}${RM_USER_VERBS}|[\\/]rm[\\/]index\.ts\s+${RM_ROOT_FLAGS}${RM_USER_VERBS}`
-);
+function runsUserVerb(args: string[]): boolean {
+    let at = 0;
+
+    while (at < args.length && /^-./.test(args[at])) {
+        at += RM_VALUE_FLAGS.has(args[at]) ? 2 : 1;
+    }
+
+    const rest = args.slice(at);
+
+    if (rest[0] === "drain") {
+        return rest.some((word) => /^--now(?:=|$)/.test(word));
+    }
+
+    const verb = RM_USER_VERBS.find((words) => words.every((word, k) => rest[k] === word));
+    const operand = verb ? rest[verb.length] : undefined;
+    return operand !== undefined && operand !== "--help" && operand !== "-h";
+}
 
 /** `tools rm approve <one id>` in the statement, for the suggestion: the agent's verb with the same id. */
 const RM_APPROVE_ONE = /((?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+)approve(\s+[a-z0-9]{4,12})(?=\s*(?:$|[;&|)]))/;
@@ -51,24 +77,28 @@ export const rmUserVerbs: ShellRule = {
         "Martin, 2026-10-27: agents delete their own things freely, and anything more is confirmed by the user with " +
         "a command the agent cannot run.",
     detect(scan): ShellMatch | null {
-        // The scanned statements, not the raw command: quoted text is blanked there (except a body the shell runs,
-        // such as bash -c '...'), so a script or a message that only mentions the verb is not blocked.
+        // The scanned statements find the command: quoted text is blanked there (except a body the shell runs, such as
+        // bash -c '...'), so a script or a message that only mentions the verb is not blocked. Its arguments are read
+        // from the original command: the scan blanks a quoted operand or verb too (`approve 'k7m2qd'`), and the shell
+        // runs it the same.
         for (const statements of scan.units) {
             for (const statement of statements) {
-                const match = RM_USER_VERB.exec(statement.text);
+                for (const match of statement.text.matchAll(RM_CLI)) {
+                    const end = statement.start + (match.index ?? 0) + match[0].length;
 
-                if (!match) {
-                    continue;
+                    if (!runsUserVerb(wordsFrom(scan, end).words)) {
+                        continue;
+                    }
+
+                    const index = end - (match[1] ?? "").length;
+                    const one = RM_APPROVE_ONE.exec(scan.command);
+                    const suggestion = one ? scan.command.replace(RM_APPROVE_ONE, "$1ask$2") : undefined;
+                    return {
+                        matched: originalSlice(scan, index, statement.start + statement.text.length),
+                        index,
+                        ...(suggestion ? { suggestion } : {}),
+                    };
                 }
-
-                const lead = match[0].length - match[0].trimStart().length;
-                const one = RM_APPROVE_ONE.exec(scan.command);
-                const suggestion = one ? scan.command.replace(RM_APPROVE_ONE, "$1ask$2") : undefined;
-                return {
-                    matched: match[0].trim(),
-                    index: statement.start + match.index + lead,
-                    ...(suggestion ? { suggestion } : {}),
-                };
             }
         }
 

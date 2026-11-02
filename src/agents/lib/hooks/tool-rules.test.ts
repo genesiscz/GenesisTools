@@ -47,6 +47,16 @@ describe("rm-user-verbs", () => {
         "bun src/rm/index.ts drain --now",
         "tools rm approve --session aaaaaaaa",
         "tools rm approve k7m2qd --help",
+        // A quoted operand, verb or flag runs the same: the scan blanks it, so the words are read as the shell reads them.
+        "tools rm approve 'k7m2qd'",
+        'tools rm approve "k7m2qd"',
+        "tools rm roots add '/tmp/x'",
+        "tools rm config set 'trash-root' '/tmp/GenesisTools/other'",
+        "tools rm profile remove 'ci'",
+        "tools rm drain '--now'",
+        "tools rm 'approve' k7m2qd",
+        "tools rm --reason 'two words' approve 'k7m2qd'",
+        `bash -c "tools rm approve 'k7m2qd'"`,
     ];
 
     it.each(caught)("blocks %j", (command) => {
@@ -74,6 +84,7 @@ describe("rm-user-verbs", () => {
         "tools rm approve -h",
         "tools rm approve",
         "tools rm config set --help",
+        "tools rm approve '--help'",
     ];
 
     it.each(allowed)("leaves %j alone", (command) => {
@@ -138,6 +149,8 @@ describe("rm-use-tools-rm", () => {
         "xargs --arg-file list.txt rm",
         "xargs --max-a 1 rm",
         "xargs --null --no-run-if-empty rm",
+        // A line continuation between an option and its value is not a quoted value.
+        "printf '%s\\n' victim | xargs -n \\\n1 rm -f",
     ])("blocks %j", (command) => {
         expect(ids(command)).toContain("rm-use-tools-rm");
     });

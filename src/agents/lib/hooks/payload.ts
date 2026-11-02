@@ -34,6 +34,11 @@ export interface HookPayload {
     notificationMessage?: string;
     /** UserPromptSubmit: the prompt text. */
     prompt?: string;
+    /**
+     * The subagent that made the call (Claude's `agent_id`); absent for the main agent. The main agent and its
+     * subagents share one session, so capture attribution and a background task's owner both key on it.
+     */
+    agentId?: string;
     raw: Record<string, unknown>;
 }
 
@@ -164,6 +169,8 @@ export function parseHookPayload(text: string): HookPayload | null {
         notificationType: str(raw.notificationType) ?? str(raw.notification_type),
         notificationMessage: str(raw.message),
         prompt: str(raw.prompt),
+        // An empty id is the main agent's, as no id is.
+        agentId: (str(raw.agentId) ?? str(raw.agent_id)) || undefined,
         raw,
     };
 }

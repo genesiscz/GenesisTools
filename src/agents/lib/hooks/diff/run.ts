@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import {
     closeSync,
+    constants,
     existsSync,
+    fstatSync,
     lstatSync,
     openSync,
     readdirSync,
@@ -16,11 +18,13 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { isDatalessFile, namesCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { looksLikeCookieJar, redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import {
+    afterReadRisk,
     type ChangeBytes,
     capBlob,
     commandEditsFiles,
@@ -87,6 +91,11 @@ export interface DiffDecision {
  * path drops it on its empty patch (`blockFrom`); past `maxFiles` there is no patch for every file, and the note named
  * it as changed (CI, every run until 2026-11-02). A copy is at most `maxCaptureFileMB`, so the compare is two small
  * reads and no `git` process.
+ *
+ * Both sides are read as git reads them, like `readHead` and `readAsGitStores`: a symlink is its link text, so a
+ * retargeted link is a change even when both targets hold the same bytes, and a link is never followed out of the
+ * repository. Anything but a regular file (a FIFO, a socket, a folder) is not opened: a FIFO blocks the read until a
+ * writer comes, and the hook with it.
  */
 function sameAsBefore(before: string | null, file: ChangedFile): boolean {
     if (before === null || file.deleted) {
@@ -94,14 +103,41 @@ function sameAsBefore(before: string | null, file: ChangedFile): boolean {
     }
 
     try {
-        if (statSync(before).size !== statSync(file.path).size) {
+        const was = lstatSync(before);
+        const now = lstatSync(file.path);
+
+        if (was.isSymbolicLink() || now.isSymbolicLink()) {
+            return (
+                was.isSymbolicLink() &&
+                now.isSymbolicLink() &&
+                readlinkSync(before, { encoding: "buffer" }).equals(readlinkSync(file.path, { encoding: "buffer" }))
+            );
+        }
+
+        if (!was.isFile() || !now.isFile() || was.size !== now.size) {
             return false;
         }
 
-        return readFileSync(before).equals(readFileSync(file.path));
+        const copy = readRegularFile(before);
+        const live = readRegularFile(file.path);
+        return copy !== null && live !== null && copy.equals(live);
     } catch {
         // Not proven unchanged, so it is still named.
         return false;
+    }
+}
+
+/**
+ * A regular file's bytes, or null for anything else. The open neither follows a link nor waits for a FIFO's writer,
+ * so a path swapped after the caller's `lstat` is refused rather than read out of the repository or blocked on.
+ */
+function readRegularFile(path: string): Buffer | null {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+
+    try {
+        return fstatSync(fd).isFile() ? readFileSync(fd) : null;
+    } finally {
+        closeSync(fd);
     }
 }
 
@@ -667,13 +703,12 @@ function backgroundTaskOf(payload: HookPayload): DeferredCall | null {
     }
 
     const folder = join(`claude-${process.getuid?.() ?? 0}`, basename(dirname(transcript)), payload.sessionId, "tasks");
-    const agent = payload.raw.agent_id ?? payload.raw.agentId;
 
     for (const base of new Set(["/private/tmp", "/tmp", tmpdir()])) {
         const output = join(base, folder, `${id}.output`);
 
         if (existsSync(output)) {
-            return { id, output, ...(typeof agent === "string" ? { agent } : {}) };
+            return { id, output, ...(payload.agentId ? { agent: payload.agentId } : {}) };
         }
     }
 
@@ -901,8 +936,7 @@ export function flushDeferred({
     const parent = dirname(callDir(payload.harness, session, call));
     // The main agent and its subagents share one session folder. A task is printed only to a later call of the agent
     // that started it, or a subagent's background test run lands in the main agent's output (2026-11-01).
-    const agent = payload.raw.agent_id ?? payload.raw.agentId;
-    const caller = typeof agent === "string" ? agent : undefined;
+    const caller = payload.agentId;
     const decisions: DiffDecision[] = [];
     let spent = 0;
     let names: string[];
@@ -959,7 +993,8 @@ export function flushDeferred({
                     // the spread) and the agent that made the call carry over, never this later call's tool fields.
                     toolInput: undefined,
                     toolResponse: undefined,
-                    raw: deferred.agent ? { agent_id: deferred.agent } : {},
+                    agentId: deferred.agent,
+                    raw: {},
                 },
                 config,
                 record,
@@ -1194,8 +1229,22 @@ export function silentReason({
     return "no change since this command began";
 }
 
-/** What the session change log receives: every file the call captured, before the render cap. */
-export type EditRecorder = (payload: HookPayload, captures: CapturedEdit[], since: number) => void;
+/**
+ * The two starts of a call. `since` is the whole second of `stamp` (mtime comparisons find the call's changes with
+ * it), so it can be up to a second before the call. `began` is the exact start (`started-ms`), absent when the pre
+ * phase left none: `tools rm` counts a file born at or after it as made by the call, so a rounded start would hand it
+ * a file born earlier in the same second.
+ */
+export interface CallWindow {
+    since: number;
+    began?: number;
+}
+
+/**
+ * What the session change log receives: every file the call captured, before the render cap, except a file whose
+ * read could download it (`loggableCaptures`).
+ */
+export type EditRecorder = (payload: HookPayload, captures: CapturedEdit[], window: CallWindow) => void;
 
 export interface CapturedEdit {
     path: string;
@@ -1292,6 +1341,52 @@ export function capturedAfter(item: CapturedEdit): ChangeBytes {
     }
 
     return item.inRepository ? readAsGitStores(item.path) : readCapped(item.path);
+}
+
+/**
+ * Why reading a captured file's after-state could download it from a cloud provider, or `null` (`afterReadRisk`). A
+ * repository entry sits below a root that passed `underCloudRoot`, and git reports a link in a work tree as a link, so
+ * its own path and its blocks are enough, without a link walk per file of a codemod; a link is logged by its text.
+ */
+function afterStateRisk(item: CapturedEdit): string | null {
+    if (item.deleted) {
+        return null;
+    }
+
+    if (!item.inRepository) {
+        return afterReadRisk(item.path);
+    }
+
+    if (namesCloudRoot(item.path)) {
+        return "under a cloud storage folder, where a read can download it";
+    }
+
+    try {
+        const stat = lstatSync(item.path);
+        return !stat.isSymbolicLink() && isDatalessFile(stat) ? "a cloud placeholder that a read would download" : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The captures the session change log may read. The pre phase left a placeholder or a file under a cloud folder out of
+ * the capture, and the root pass still captures it when the command changed it; reading its after-state for the log
+ * downloaded it (eve on #669, 2026-11-02). Such a file is left out of the log, and the hook log names it.
+ */
+function loggableCaptures(captures: CapturedEdit[]): CapturedEdit[] {
+    return captures.filter((item) => {
+        const risk = afterStateRisk(item);
+
+        if (risk) {
+            hookDiag("Left a file out of the change log: reading its after-state could download it", {
+                path: item.path,
+                risk,
+            });
+        }
+
+        return risk === null;
+    });
 }
 
 const GIT_BATCH_TIMEOUT_MS = 5_000;
@@ -1863,7 +1958,7 @@ export function runDiffPost({
         blocks.push(block);
     }
 
-    record(payload, captures, since);
+    record(payload, loggableCaptures(captures), { since, ...(Number.isFinite(started) ? { began: started } : {}) });
     recordTouches(touches);
 
     try {
@@ -2108,7 +2203,7 @@ export function captureChunks(
  * hashed and dropped one bounded chunk at a time instead of all held at once. Tests never touch the
  * home directory. Never throws.
  */
-function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: number): void {
+function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], { since, began }: CallWindow): void {
     try {
         if (!payload.sessionId || isTestProcess() || !commandEditsFiles(payload.command)) {
             return;
@@ -2124,8 +2219,9 @@ function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: 
             tool: payload.tool,
             ...(payload.toolUseId ? { toolUseId: payload.toolUseId } : {}),
             cwd: payload.cwd,
-            // tools rm counts a file as made by this command only when it was born after this.
-            ...(Number.isFinite(since) ? { began: new Date(since).toISOString() } : {}),
+            // tools rm counts a file as made by this command only when it was born after this: the exact start,
+            // never the rounded `since`, which is up to a second earlier.
+            ...(began !== undefined && Number.isFinite(began) ? { began: new Date(began).toISOString() } : {}),
         };
 
         captureChunks(captures).forEach((chunk, at) => {

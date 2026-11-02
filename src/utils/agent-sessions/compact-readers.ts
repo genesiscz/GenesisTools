@@ -1,4 +1,4 @@
-import { deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
+import { deferredReadChanges, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
 import { nativeSessionRoots, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
 import { readCompatibilityTranscript } from "./reader-compat";
 import { createClaudeHistoryOperations } from "./readers/claude";
@@ -37,6 +37,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
     classifyPath: claudeClassifyPath,
+    readChanges: deferredReadChanges(import.meta, "./readers/claude-changes", "claudeSessionChanges"),
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
     // which comes from an earlier row, never enters the searched text).
     lineLocalRecords: true,
@@ -57,6 +58,7 @@ export const codexHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     classifyPath: codexClassifyPath,
+    readChanges: deferredReadChanges(import.meta, "./readers/codex-changes", "codexSessionChanges"),
     searchMetadata: true,
     // Metadata comes from the first header plus the state sidecars; a record never replays a header.
     scanKeepsMetadata: true,
@@ -72,6 +74,8 @@ export const grokHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,
     classifyPath: grokClassifyPath,
+    // No Grok transcript parser reads file changes: a Grok session is judged from the change log alone.
+    readChanges: () => null,
     searchMetadata: true,
     ...createGrokHistoryOperations(),
     readStatistics: readGrokStatistics,

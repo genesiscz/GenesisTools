@@ -1,3 +1,4 @@
+import type { SessionChangesRead } from "@genesiscz/utils/agent-sessions/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
 import type { TranscriptLocator } from "./parts";
@@ -67,6 +68,23 @@ function lazyExport<T>(
 export function deferredWindowTurns(meta: ImportMeta, module: string, exportName: string): WindowTurns {
     const impl = lazyExport(meta, module, exportName, isWindowTurns, "window-turns function");
     return (values) => impl()(values);
+}
+
+/** One session's changes as a reader reads them, the shape of `NativeSessionReader.readChanges`. */
+type ReadChanges = (sessionId: string) => SessionChangesRead | null;
+
+function isReadChanges(value: unknown): value is ReadChanges {
+    return typeof value === "function" && value.length <= 1;
+}
+
+/**
+ * A reader's change-reading function, loaded beside the caller on the first call: the change parsers it reaches (the
+ * Claude tool-call parser, Codex's patch replay over the `diff` package) are needed by the hub and `tools agents
+ * changes` only, never by a hook that loads a reader.
+ */
+export function deferredReadChanges(meta: ImportMeta, module: string, exportName: string): ReadChanges {
+    const impl = lazyExport(meta, module, exportName, isReadChanges, "change reader");
+    return (sessionId) => impl()(sessionId);
 }
 
 /**

@@ -1,7 +1,14 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import type { SessionTranscript } from "@genesiscz/utils/session-changes/types";
 import type { DailyStats, HistoryFileStatistics, SessionMetadataRecord, TokenUsage } from "./cache-types";
+
+/** One session's file changes as its transcript records them (`NativeSessionReader.readChanges`), and that transcript. */
+export interface SessionChangesRead {
+    transcriptPath: string;
+    transcript: SessionTranscript;
+}
 
 export type AgentKind = AccountProviderAlias;
 
@@ -421,6 +428,14 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * tool call id and turn id), oldest row first. Stateful: a Codex row names its turn only where the turn starts.
      */
     rowAnchors(): RowAnchorWalk;
+    /**
+     * The file changes one session's transcript records, normalized for `@genesiscz/utils/session-changes` (its turns
+     * and tool calls with the paths each wrote), and the transcript it read; null when this provider has no transcript
+     * for `sessionId`. Claude reads its main and sub-agent transcripts, Codex its rollout's patch items. No Grok parser
+     * reads file changes, so its reader answers null and a Grok session is judged from the change log alone.
+     * `loadSessionChanges` asks each provider in turn and never parses a transcript itself.
+     */
+    readChanges(sessionId: string): SessionChangesRead | null;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext
