@@ -16,6 +16,8 @@ public enum NotificationLedger {
         case suppressed
         /// A delivered card was taken away on purpose (a countdown's card once its session went cold).
         case withdrawn
+        /// A person clicked the card or one of its buttons; `action` names which, `did` what the click ran.
+        case clicked
     }
 
     public static var path: String {
