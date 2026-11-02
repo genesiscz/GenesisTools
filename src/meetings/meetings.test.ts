@@ -399,6 +399,21 @@ describe("energy where the live segments are mixed", () => {
         expect(at(items, 10)).toBeUndefined();
         expect(at(items, 20)).toBeUndefined();
     });
+
+    test("a platform label whose person E3 alone shows speaking keeps a mixed line the energy is not sure of", () => {
+        const labelled = {
+            ...lines,
+            speakers: [{ speakerId: 1, name: "Carol Example", origin: "platform" }],
+        };
+        const shown = { ...evidence, speaking: [{ tSec: 10, speaking: ["Carol Example"], muted: [] }] };
+        const energyMicShare = () => 0.6;
+
+        expect(at(suggestItems({ ...base, meeting: labelled, evidence: shown, energyMicShare }), 10)).toBeUndefined();
+        expect(at(suggestItems({ ...base, meeting: labelled, evidence, energyMicShare }), 10)).toMatchObject({
+            speaker: "Alice Example",
+            rules: ["E1", "energy"],
+        });
+    });
 });
 
 describe("own label (R17)", () => {
