@@ -6,15 +6,30 @@ interface StdinSink {
     end(): unknown;
 }
 
-/** Copies the host's stdin to claude line by line through `rewrite`, then closes claude's stdin. */
-export async function pumpLines(
-    source: ReadableStream<Uint8Array>,
-    sink: StdinSink,
-    rewrite: (line: string) => string
-): Promise<void> {
-    const reader = source.getReader();
+/**
+ * Copies the host's stdin to the child line by line through `rewrite`, then closes the child's stdin. `signal` stops
+ * the copy: it cancels the pending read, so a host that keeps its end of stdin open cannot hold this process alive,
+ * and it drops a partial last line, because the child that would read it is gone.
+ */
+export async function pumpLines(input: {
+    source: ReadableStream<Uint8Array>;
+    sink: StdinSink;
+    rewrite: (line: string) => string;
+    signal?: AbortSignal;
+}): Promise<void> {
+    const { sink, rewrite, signal } = input;
+    const reader = input.source.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    const stop = () => {
+        reader.cancel().catch((error: unknown) => logger.debug({ error }, "[embed] stdin cancel failed"));
+    };
+
+    signal?.addEventListener("abort", stop, { once: true });
+
+    if (signal?.aborted) {
+        stop();
+    }
 
     try {
         for (;;) {
@@ -38,11 +53,12 @@ export async function pumpLines(
 
         buffer += decoder.decode();
 
-        if (buffer) {
+        if (buffer && !signal?.aborted) {
             sink.write(rewrite(buffer));
             sink.flush();
         }
     } finally {
+        signal?.removeEventListener("abort", stop);
         reader.releaseLock();
         sink.end();
     }
@@ -149,12 +165,18 @@ export async function runBinaryDirect(
             proc.kill(pendingSignal);
         }
 
-        if (input.stdinLines && isStdinSink(proc.stdin)) {
-            pumpLines(deps.stdin(), proc.stdin, input.stdinLines).catch((error) => {
-                logger.warn({ error }, "[embed] stdin pump failed");
-            });
-        }
-
+        const stopPump = new AbortController();
+        const pump =
+            input.stdinLines && isStdinSink(proc.stdin)
+                ? pumpLines({
+                      source: deps.stdin(),
+                      sink: proc.stdin,
+                      rewrite: input.stdinLines,
+                      signal: stopPump.signal,
+                  }).catch((error) => {
+                      logger.warn({ error }, "[embed] stdin pump failed");
+                  })
+                : undefined;
         const relay =
             input.relayStdout && proc.stdout instanceof ReadableStream
                 ? relayBytes(proc.stdout, deps.stdout()).catch((error) => {
@@ -162,6 +184,10 @@ export async function runBinaryDirect(
                   })
                 : undefined;
         const code = await proc.exited;
+        // The host may keep its end of stdin open after the child is gone, and a read left pending on it would keep
+        // this launcher alive (the Codex embed cancels its host reader for the same reason).
+        stopPump.abort();
+        await pump;
         await relay;
         return code;
     } finally {

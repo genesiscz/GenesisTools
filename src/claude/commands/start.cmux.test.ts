@@ -247,13 +247,43 @@ describe("steer priority rewrite", () => {
         });
         const written: string[] = [];
         let ended = false;
-        await pumpLines(
+        await pumpLines({
             source,
-            { write: (chunk: string) => written.push(chunk), flush: () => undefined, end: () => (ended = true) },
-            rewriteSteerLine
-        );
+            sink: { write: (chunk: string) => written.push(chunk), flush: () => undefined, end: () => (ended = true) },
+            rewrite: rewriteSteerLine,
+        });
 
         expect(written.join("")).toBe(text.replaceAll('"now"', '"next"'));
+        expect(ended).toBe(true);
+    });
+
+    test("a child that exits while the host keeps stdin open cancels the pending read and closes its stdin", async () => {
+        let cancelled = false;
+        let ended = false;
+        const signals = new EventEmitter();
+        const deps: DirectRunDeps = {
+            spawn: () => ({
+                exitCode: 0,
+                exited: Promise.resolve(0),
+                kill: () => undefined,
+                stdin: { write: () => undefined, flush: () => undefined, end: () => (ended = true) },
+            }),
+            signals: {
+                on: (name: string, listener: (...args: unknown[]) => void) => signals.on(name, listener),
+                off: (name: string, listener: (...args: unknown[]) => void) => signals.off(name, listener),
+            } as DirectRunDeps["signals"],
+            // Never closes: the host keeps its end of the pipe open after the child is gone.
+            stdin: () =>
+                new ReadableStream<Uint8Array>({
+                    cancel: () => {
+                        cancelled = true;
+                    },
+                }),
+            stdout: () => ({ write: () => undefined, flush: () => undefined }),
+        };
+
+        expect(await runClaudeBinaryDirect({ argv: ["fixture"], env: {}, steer: "next" }, deps)).toBe(0);
+        expect(cancelled).toBe(true);
         expect(ended).toBe(true);
     });
 });
