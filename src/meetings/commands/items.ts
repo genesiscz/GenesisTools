@@ -14,6 +14,7 @@ import {
     nextId,
     QUESTION_TOPICS,
 } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { applyCorrections, type TranscriptCorrections, type UnclearPassage } from "@genesiscz/utils/transcribe/apply";
@@ -299,7 +300,7 @@ async function addQuestion(
                     ...(opts.heard ? { heard: opts.heard } : {}),
                     choices: list(opts.choices),
                     decides,
-                    rules: ["user"],
+                    rules: [MeetingRule.User],
                     suggestedAt: new Date().toISOString(),
                 })
             );

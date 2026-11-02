@@ -1,11 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, type SpeakerHint, sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
+import { arrivalItems } from "./arrival";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -60,7 +62,7 @@ function speakerItems(options: {
                           ? { candidates: range.present }
                           : {}),
                     confidence: CONFIDENCE.attendance,
-                    rules: ["RA"],
+                    rules: [MeetingRule.Attendance],
                     evidence: { lines: range.lines, reason: `${hint.label} was not in the call` },
                 });
             }
@@ -76,7 +78,7 @@ function speakerItems(options: {
                     toSec: range.toSec,
                     speaker,
                     confidence: CONFIDENCE.attendance,
-                    rules: ["RA"],
+                    rules: [MeetingRule.Attendance],
                     evidence: { lines: range.lines, reason: `only ${hint.person} was in the call` },
                 });
             }
@@ -92,7 +94,12 @@ function speakerItems(options: {
                     fromSec: leave.continuesAtSec,
                     toSec: until,
                     confidence: Math.min(1, base + (hint.strength === "strong" ? CONFIDENCE.llmBonus : 0)),
-                    rules: ["R1", "R5", ...(leave.confirmedBy ? ["R13"] : []), ...(leave.echoOf ? ["R14"] : [])],
+                    rules: [
+                        MeetingRule.LeavePhrase,
+                        MeetingRule.ContinuesAfterLeave,
+                        ...(leave.confirmedBy ? [MeetingRule.FarewellAnswered] : []),
+                        ...(leave.echoOf ? [MeetingRule.EchoedFarewell] : []),
+                    ],
                     evidence: {
                         leaveAt: leave.atSec,
                         said: leave.text,
@@ -183,7 +190,7 @@ function termItems(options: {
         proposed: match.value,
         ...(match.atSec !== undefined ? { atSec: match.atSec } : {}),
         confidence: Math.round(match.score * 100) / 100,
-        rules: ["dictionary-fuzzy"],
+        rules: [MeetingRule.DictionaryFuzzy],
         evidence: { occurrences: match.occurrences },
     }));
 
@@ -204,8 +211,9 @@ function termItems(options: {
                     proposed: best.term,
                     ...(suspect.examples[0]?.atSec !== undefined ? { atSec: suspect.examples[0].atSec } : {}),
                     confidence: best.confidence / 100,
-                    rules: ["phonetic", best.source, ...(suspect.needsConfirmation ? ["summary-name"] : [])],
+                    rules: [MeetingRule.PhoneticTerm, ...(suspect.needsConfirmation ? [MeetingRule.SummaryName] : [])],
                     evidence: {
+                        source: best.source,
                         occurrences: suspect.occurrences,
                         examples: suspect.examples,
                         match: suspect.kind,
@@ -292,6 +300,12 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
         return undefined;
     }
 
+    // RM: a person muted through the whole line did not speak it.
+    const muted = (name: string) => line.muted?.some((person) => sameName(person, name)) === true;
+    const selfMuted = muted(selfName);
+
+    // Wispr records the microphone itself, so a user muted in the call can still be heard on it: RM never overrules a
+    // line the microphone won, only one the call's sound won.
     if (line.winner === SELF) {
         if (isSelfLabel) {
             return undefined;
@@ -300,7 +314,7 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
         const mic = micConfidence(line);
         return {
             speaker: selfName,
-            rules: mic.energyChecked ? ["E1", "energy"] : ["E1"],
+            rules: mic.energyChecked ? [MeetingRule.Channel, MeetingRule.Energy] : [MeetingRule.Channel],
             confidence: mic.confidence,
             ...(mic.echo ? { echo: true } : {}),
             ...(line.micShare < CHANNEL_SHARE || mic.echo || mic.callLoud ? { listen: true } : {}),
@@ -309,29 +323,66 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
 
     // The call's sound won the line. Some microphone in it means two voices: listen before confirming.
     const listen = line.micShare > 1 - CHANNEL_SHARE ? { listen: true } : {};
-    const shown = speakingNames(line).filter((name) => !sameName(name, selfName));
-    const present = line.present?.filter((name) => !sameName(name, selfName));
+    const shown = speakingNames(line).filter((name) => !sameName(name, selfName) && !muted(name));
+    const present = line.present?.filter((name) => !sameName(name, selfName) && !muted(name));
     const live =
-        line.liveName && (!present || present.some((name) => sameName(name, line.liveName!)))
+        line.liveName && !muted(line.liveName) && (!present || present.some((name) => sameName(name, line.liveName!)))
             ? line.liveName
             : undefined;
     const agreed = live && shown[0] && sameName(shown[0], live) ? live : undefined;
+    const labelMuted = !isSelfLabel && muted(line.label);
+    // RM with E3: once the muted are out, the one person the indicator shows among those present said it.
+    const onlyShown = present && shown.length > 0 ? shown.filter((name) => present.some((p) => sameName(p, name))) : [];
+    const rmShown = (isSelfLabel ? selfMuted : labelMuted) && onlyShown.length === 1 ? onlyShown[0] : undefined;
+
+    if (rmShown && !sameName(rmShown, line.label)) {
+        return {
+            speaker: rmShown,
+            rules: [MeetingRule.Channel, MeetingRule.Muted, MeetingRule.SpeakingIndicator],
+            confidence: 0.9,
+            ...listen,
+        };
+    }
 
     if (isSelfLabel) {
+        const rm = selfMuted ? [MeetingRule.Muted] : [];
         return agreed
-            ? { speaker: agreed, rules: ["E1", "E3", "E4"], confidence: 0.8, ...listen }
-            : { candidates: present ?? shown, rules: ["E1"], confidence: 0.6, ...listen };
+            ? {
+                  speaker: agreed,
+                  rules: [MeetingRule.Channel, ...rm, MeetingRule.SpeakingIndicator, MeetingRule.LiveName],
+                  confidence: selfMuted ? 0.85 : 0.8,
+                  ...listen,
+              }
+            : { candidates: present ?? shown, rules: [MeetingRule.Channel, ...rm], confidence: 0.6, ...listen };
+    }
+
+    if (labelMuted && !agreed) {
+        const candidates = (present ?? shown).filter((name) => !sameName(name, line.label));
+        return { candidates, rules: [MeetingRule.Channel, MeetingRule.Muted], confidence: 0.5, ...listen };
     }
 
     if (agreed && !sameName(agreed, line.label)) {
-        return { speaker: agreed, rules: ["E1", "E3", "E4"], confidence: 0.7, ...listen };
+        return {
+            speaker: agreed,
+            rules: [MeetingRule.Channel, MeetingRule.SpeakingIndicator, MeetingRule.LiveName],
+            confidence: 0.7,
+            ...listen,
+        };
     }
 
     // RA: the label's own person was not in the call, so the platform's live name is the best guess left.
     const labelAbsent = present !== undefined && !present.some((name) => sameName(name, line.label));
 
-    if (labelAbsent && live) {
-        return { speaker: live, rules: ["E1", "E4", "RA"], confidence: 0.6, ...listen };
+    // E4 is the weakest: when the speaking indicator shows people and not the live name, E4 loses.
+    const indicatorAgrees = shown.length === 0 || shown.some((name) => sameName(name, live ?? ""));
+
+    if (labelAbsent && live && indicatorAgrees) {
+        return {
+            speaker: live,
+            rules: [MeetingRule.Channel, MeetingRule.LiveName, MeetingRule.Attendance],
+            confidence: 0.6,
+            ...listen,
+        };
     }
 
     // The live name belongs to someone who had left: a live voice id keeps its last name after the person goes.
@@ -339,7 +390,12 @@ function findingFor(line: LineEvidence, selfName: string, isSelfLabel: boolean):
     const stillHere = shown.filter((name) => present?.some((person) => sameName(person, name)));
 
     if (labelAbsent && line.liveName && stillHere[0]) {
-        return { speaker: stillHere[0], rules: ["E1", "E3", "RA"], confidence: 0.45, listen: true };
+        return {
+            speaker: stillHere[0],
+            rules: [MeetingRule.Channel, MeetingRule.SpeakingIndicator, MeetingRule.Attendance],
+            confidence: 0.45,
+            listen: true,
+        };
     }
 
     return undefined;
@@ -462,6 +518,25 @@ function itemKey(item: NewItem | MeetingItem): string {
     return `term|${item.heard.toLowerCase()}|${item.proposed}`;
 }
 
+/** Two independent rules agreeing never reach certainty: a person still confirms. */
+const AGREEING_MAX = 0.95;
+
+/** One item from two rules that found the same thing: both rules, and 1 - (1 - a)(1 - b) as the confidence. */
+function agreeing(first: NewItem, second: NewItem): NewItem {
+    const a = first.confidence;
+    const b = second.confidence;
+    const confidence =
+        a === undefined || b === undefined
+            ? (a ?? b)
+            : Math.min(AGREEING_MAX, Math.round((1 - (1 - a) * (1 - b)) * 100) / 100);
+    return {
+        ...first,
+        rules: [...new Set([...first.rules, ...second.rules])],
+        ...(confidence === undefined ? {} : { confidence }),
+        evidence: { ...second.evidence, ...first.evidence },
+    };
+}
+
 /**
  * New suggestions for a meeting from its source transcript. An item the record already holds (in any status) is not
  * suggested again, so a rejected one stays rejected.
@@ -501,6 +576,12 @@ export function suggestItems(options: {
                 evidence: options.evidence,
                 presence: options.presence,
                 energyMicShare: options.energyMicShare,
+            }),
+            ...arrivalItems({
+                entries: meeting.transcript,
+                lines: lineEvidence(meeting.transcript, options.evidence, options.presence),
+                presence: options.presence,
+                speakingReadings: options.evidence.speaking,
             })
         );
     }
@@ -509,11 +590,20 @@ export function suggestItems(options: {
         found.push(...termItems(options));
     }
 
+    // Two rules that reach the same item (same label, range and speaker) agree: one item with both, scored higher.
+    const merged = new Map<string, NewItem>();
+
+    for (const item of found) {
+        const key = itemKey(item);
+        const seen = merged.get(key);
+        merged.set(key, seen ? agreeing(seen, item) : item);
+    }
+
     const known = new Set(record.items.map(itemKey));
     const fresh: MeetingItem[] = [];
     const taken = [...record.items];
 
-    for (const item of found) {
+    for (const item of merged.values()) {
         const key = itemKey(item);
 
         if (known.has(key)) {
