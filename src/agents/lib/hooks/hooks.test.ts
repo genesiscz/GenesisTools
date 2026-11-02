@@ -9,6 +9,7 @@ import {
     readFileSync,
     readlinkSync,
     realpathSync,
+    renameSync,
     rmSync,
     statSync,
     symlinkSync,
@@ -1808,6 +1809,51 @@ describe("the decision log is bounded", () => {
         rmSync(`${path}.1`);
         writeFileSync(path, '{"n":4}\n');
         expect(readDecisionLog(path, { missingOk: false }).records).toEqual([{ n: 4 }]);
+
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("hooks log reads both generations again when a writer rotates between the two reads", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-log-read-rotate-"));
+        const path = join(dir, "agents-hooks.jsonl");
+        // Reads `.1`, then rotates the way `rotate()` does (the current log over `.1`, a new current log), so the
+        // second read sees only the new generation.
+        const rotatingOnce = (afterRead: () => void) => {
+            let rotated = false;
+
+            return (file: string): string => {
+                if (rotated || file !== `${path}.1`) {
+                    return readFileSync(file, "utf8");
+                }
+
+                rotated = true;
+
+                try {
+                    return readFileSync(file, "utf8");
+                } finally {
+                    afterRead();
+                }
+            };
+        };
+
+        writeFileSync(`${path}.1`, '{"n":1}\n');
+        writeFileSync(path, '{"n":2}\n');
+
+        const read = rotatingOnce(() => {
+            renameSync(path, `${path}.1`);
+            writeFileSync(path, '{"n":3}\n');
+        });
+
+        // Without the retry this was n 1 and n 3: the rotated n 2 was in neither text read.
+        expect(readDecisionLog(path, { missingOk: false }, read).records).toEqual([{ n: 2 }, { n: 3 }]);
+
+        // No `.1` yet and nothing new after the rotation: the second read finds no current log, and the records
+        // are all in the `.1` the rotation just made, which is no reason to throw ENOENT.
+        rmSync(`${path}.1`);
+        writeFileSync(path, '{"n":4}\n');
+        const fresh = rotatingOnce(() => renameSync(path, `${path}.1`));
+
+        expect(readDecisionLog(path, { missingOk: false }, fresh).records).toEqual([{ n: 4 }]);
 
         rmSync(dir, { recursive: true, force: true });
     });

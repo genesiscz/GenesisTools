@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { gitRules } from "./git";
 import { detectShellViolations, type ShellViolation } from "./index";
 
@@ -359,7 +360,8 @@ describe("git-checkout-overwrites-file: a checkout from another ref", () => {
 
     it("the gate stops the checkout in a real shell when the status fails or lists an ignored file", () => {
         const repo = mkdtempSync(join(tmpdir(), "git-gate-"));
-        const sh = (script: string) => Bun.spawnSync(["/bin/sh", "-c", script], { cwd: repo, env: process.env });
+        const sh = (script: string) =>
+            Bun.spawnSync(["/bin/sh", "-c", script], { cwd: repo, env: env.getProcessEnv() });
 
         sh("git init -q && echo a.ts > .gitignore && echo local > a.ts");
 
@@ -443,6 +445,35 @@ describe("git-checkout-overwrites-file: a fresh worktree and the command's own s
         ]) {
             expect(ids(`git worktree add /tmp/new-wt main && cd /tmp/new-wt && ${revert}`)).toEqual([CHECKOUT]);
         }
+    });
+
+    it("blocks when a statement between the add and the checkout can write the work it would discard", () => {
+        for (const between of [
+            "echo valuable > a.ts",
+            "printf x 2> a.ts",
+            "cp /tmp/x a.ts",
+            "bun run fix",
+            'echo "$(touch a.ts)"',
+            "echo x | tee a.ts",
+            "git apply /tmp/p.patch",
+            "git log -p --output=a.ts",
+        ]) {
+            const command = `git worktree add /tmp/new-wt main && cd /tmp/new-wt && ${between} && git checkout -- a.ts`;
+            expect(ids(command)).toEqual([CHECKOUT]);
+        }
+
+        expect(
+            ids(
+                "git worktree add /tmp/new-wt main && echo w > /tmp/new-wt/a.ts; cd /tmp/new-wt && git checkout -- a.ts"
+            )
+        ).toEqual([CHECKOUT]);
+
+        // Reads on the way write nothing, so the fresh worktree still holds no work.
+        expect(
+            ids(
+                "git worktree add /tmp/w/x main && cd /tmp/w/x && pwd && ls -la > /dev/null && git status --short 2>&1 && git checkout abc -- a.ts"
+            )
+        ).toEqual([]);
     });
 
     it("is a context note when a ; can let the checkout run in an old folder (case 89), from the add on", () => {
@@ -767,7 +798,7 @@ describe("git-checkout-overwrites-file: paths that do not exist only create file
         writeFileSync(join(repo, "lib", "deep.ts"), "work");
         Bun.spawnSync(["/bin/sh", "-c", "git init -q && git add staged.ts lib/deep.ts"], {
             cwd: repo,
-            env: process.env,
+            env: env.getProcessEnv(),
         });
         // Staged, then deleted from the working tree: the index entry is the only copy of the work.
         rmSync(join(repo, "staged.ts"));
@@ -781,9 +812,17 @@ describe("git-checkout-overwrites-file: paths that do not exist only create file
             expect(ids(command, repo)).toEqual([CHECKOUT]);
         }
 
+        // An absent folder resets every entry under it: lib/deep.ts is staged, and lib is gone from the tree.
+        rmSync(join(repo, "lib"), { recursive: true, force: true });
+
+        for (const command of ["git checkout HEAD -- lib", "git checkout main -- lib/", "git checkout main -- LIB"]) {
+            expect(ids(command, repo)).toEqual([CHECKOUT]);
+        }
+
         // A path the index does not hold, and a restore or show, which leave the index alone, still only create.
         for (const command of [
             "git checkout main -- missing.ts",
+            "git checkout main -- li",
             "git restore --source main staged.ts",
             "git show main:staged.ts > staged.ts",
         ]) {
@@ -894,6 +933,44 @@ describe("git-checkout-overwrites-saved-file", () => {
         expect(ids("echo a.ts | xargs git checkout --")).toEqual([CHECKOUT]);
         expect(ids("cp a.ts /dev/null && git checkout -- a.ts")).toEqual([CHECKOUT]);
         expect(ids('git diff a.ts > "/dev/null"; git checkout -- a.ts')).toEqual([CHECKOUT]);
+    });
+
+    it("blocks when the copy is the file itself, which cp refuses, so nothing was saved", () => {
+        for (const command of [
+            "cp a.ts a.ts; git checkout -- a.ts",
+            "cp a.ts ./a.ts; git checkout -- a.ts",
+            "cp ./a.ts A.ts; git checkout -- a.ts",
+            "cp a.ts .; git checkout -- a.ts",
+            "cp a.ts ./; git checkout -- a.ts",
+            "cp sub/a.ts sub; git checkout -- sub/a.ts",
+            "cp sub/../a.ts a.ts; git checkout -- a.ts",
+            // Without a known folder a climb or an absolute source may land back on the file.
+            "cp a.ts ../repo/a.ts; git checkout -- a.ts",
+            "cp /repo/a.ts .; git checkout -- /repo/a.ts",
+            'cp a.ts "$D"; git checkout -- a.ts',
+        ]) {
+            expect(ids(command)).toEqual([CHECKOUT]);
+        }
+
+        // Several sources: each must leave a copy apart from itself.
+        expect(ids("cp a.ts b.ts .; git checkout -- a.ts")).toEqual([CHECKOUT]);
+
+        const dir = mkdtempSync(join(tmpdir(), "git-rule-copy-"));
+        mkdirSync(join(dir, "sub"));
+        writeFileSync(join(dir, "a.ts"), "work");
+        symlinkSync(join(dir, "a.ts"), join(dir, "link.ts"));
+
+        try {
+            // In a known folder: an absolute spelling of the same file, and a symlink to it.
+            expect(ids(`cp a.ts ${join(dir, "a.ts")}; git checkout -- a.ts`, dir)).toEqual([CHECKOUT]);
+            expect(ids("cp a.ts link.ts; git checkout -- a.ts", dir)).toEqual([CHECKOUT]);
+            // A copy beside it, into a folder, or to a new absolute file is a save.
+            for (const copy of ["bak.ts", "sub", "sub/", join(dir, "sub", "a.ts")]) {
+                expect(ids(`cp a.ts ${copy}; git checkout -- a.ts`, dir)).toEqual([SAVED]);
+            }
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     it("blocks when a stash pop, drop or clear took the saved entry off the list before the revert", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { env } from "@genesiscz/utils/env";
 import { detectShellViolations } from "./rules";
 import {
     commandTokenIndex,
@@ -474,7 +475,7 @@ describe("scanShell", () => {
         expect(suggestions.length).toBeGreaterThanOrEqual(commands.length);
         // One zsh for all of them: each in a function of its own, so the first error names its line.
         const script = suggestions.map((suggestion, k) => `f${k}() {\n${suggestion}\n}`).join("\n");
-        const result = Bun.spawnSync(["zsh", "-n", "-c", script], { env: process.env });
+        const result = Bun.spawnSync(["zsh", "-n", "-c", script], { env: env.getProcessEnv() });
 
         expect([result.exitCode, result.stderr.toString()]).toEqual([0, ""]);
     });

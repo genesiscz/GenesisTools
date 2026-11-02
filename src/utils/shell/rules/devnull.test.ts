@@ -473,6 +473,18 @@ describe("stderr-discarded-then-counted-covered: a sibling whose error never rea
             "| cut -c1-10",
             "| tail -n +2",
             "| sed -n 1p",
+            "| sed 'd'",
+            "| sed q",
+            "| sed 's/.*//'",
+            "| sed 's/[a-z]//g'",
+            "| sed 's/\\w//g'",
+            "| sed 's/x\\+//'",
+            "| sed -e 's/a/b/' -e d",
+            "| sed -f fix.sed",
+            "| sed 's/a/b/' notes.txt",
+            "| sed -i.bak s/a/b/ notes.txt",
+            "| sed -z s/a/b/",
+            "| sed 's/a/b/w out.txt'",
             "| head > /tmp/o",
         ]) {
             expect(tags(`ls ./nope 2>&1 ${tail}; find ./nope 2>/dev/null | wc -l`)).toEqual([`${COUNT}:block`]);
@@ -497,6 +509,15 @@ describe("stderr-discarded-then-counted-covered: a sibling whose error never rea
             `${COVERED}:context`,
         ]);
         expect(tags("ls ~/x 2>&1 | grep -v total; ls ~/x 2>/dev/null | wc -l")).toEqual([`${COVERED}:context`]);
+
+        // sed keeps the error line when its program only swaps fixed text, whatever the delimiter or the count.
+        for (const sed of [
+            "sed 's/^/  /'",
+            "sed -E -e 's|/tmp||g' -e 's/a;b/c/'",
+            "sed --expression='s/x/y/2;s.a.b.'",
+        ]) {
+            expect(tags(`ls ~/x 2>&1 | ${sed}; ls ~/x 2>/dev/null | wc -l`)).toEqual([`${COVERED}:context`]);
+        }
     });
 
     it("a capture keeps only stdout: the sibling's stderr still shows", () => {

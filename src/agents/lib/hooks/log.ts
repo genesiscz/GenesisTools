@@ -299,13 +299,49 @@ export interface DecisionLogRead {
     skipped: number;
 }
 
+/** How many times {@link readDecisionLog} reads both generations again when a rotation moved them mid-read. */
+const SNAPSHOT_TRIES = 3;
+
+/** The inode of `<path>.1`, or null when there is none: a rotation renames the current log over it. */
+function rotatedInode(path: string): bigint | null {
+    return statSync(`${path}.1`, { bigint: true, throwIfNoEntry: false })?.ino ?? null;
+}
+
 /**
  * Every record of a hooks log, oldest first: the generation a rotation moved to `<path>.1`, then `<path>`, so the
  * newest records a reader asks for are still there right after a rotation. A generation that does not exist (ENOENT)
  * is empty; with `missingOk: false` the read still throws when neither exists. Any other error throws, so a folder or
  * file that refuses the read is never reported as an empty log.
+ *
+ * A writer can rotate between the two reads: `<path>` then becomes `<path>.1`, and the records it held are in neither
+ * text read. So the inode of `<path>.1` is taken before and after, and a change reads both again, up to
+ * {@link SNAPSHOT_TRIES} times. `read` is the file reader (a test passes one that rotates between the reads).
  */
-export function readDecisionLog(path: string, { missingOk }: { missingOk: boolean }): DecisionLogRead {
+export function readDecisionLog(
+    path: string,
+    { missingOk }: { missingOk: boolean },
+    read: (file: string) => string = (file) => readFileSync(file, "utf8")
+): DecisionLogRead {
+    for (let attempt = 1; ; attempt++) {
+        const before = rotatedInode(path);
+        const snapshot = readGenerations(path, missingOk, read);
+
+        if (attempt === SNAPSHOT_TRIES || rotatedInode(path) === before) {
+            if (snapshot.missing !== null) {
+                throw snapshot.missing;
+            }
+
+            return snapshot.log;
+        }
+    }
+}
+
+/** One read of `<path>.1` then `<path>`; `missing` is the ENOENT to throw when neither exists and it is not ok. */
+function readGenerations(
+    path: string,
+    missingOk: boolean,
+    read: (file: string) => string
+): { log: DecisionLogRead; missing: unknown } {
     const records: Record<string, unknown>[] = [];
     let skipped = 0;
     let missing: unknown = null;
@@ -315,7 +351,7 @@ export function readDecisionLog(path: string, { missingOk }: { missingOk: boolea
         let text: string;
 
         try {
-            text = readFileSync(file, "utf8");
+            text = read(file);
         } catch (err) {
             if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
                 throw err;
@@ -340,11 +376,7 @@ export function readDecisionLog(path: string, { missingOk }: { missingOk: boolea
         }
     }
 
-    if (found === 0 && !missingOk) {
-        throw missing;
-    }
-
-    return { records, skipped };
+    return { log: { records, skipped }, missing: found === 0 && !missingOk ? missing : null };
 }
 
 /** One line per hook run. A log failure must never break the tool call. */
