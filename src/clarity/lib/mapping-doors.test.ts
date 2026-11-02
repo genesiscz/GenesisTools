@@ -52,7 +52,8 @@ class UnreachableAdoApi {
 
 mock.module("@app/clarity/lib/assignment-view", () => ({
     ...realAssignmentView,
-    buildAssignmentView: async (date: string) => (active ? View : realAssignmentView.buildAssignmentView(date)),
+    buildAssignmentView: async (...args: Parameters<typeof realAssignmentView.buildAssignmentView>) =>
+        active ? View : realAssignmentView.buildAssignmentView(...args),
 }));
 mock.module("@app/azure-devops/utils", () => ({
     ...realAdoUtils,
