@@ -11,6 +11,7 @@ final class PartQuitTests: XCTestCase {
     private let widget = PartPresence.widget
     private let clicky = PartPresence.clicky
     private let window = PartPresence.settingsWindow
+    private let permissions = PartPresence.permissionsWindow
 
     /// By default the widget's panels show and Clicky is on, with the settings window closed.
     private func snapshot(_ faces: [(Int32, String)], up: Set<String>? = nil) -> RunningPartsSnapshot {
@@ -60,7 +61,8 @@ final class PartQuitTests: XCTestCase {
     // MARK: Which parts the question names
 
     func testTheQuestionNamesEveryOtherRunningPartInOrder() {
-        let running = snapshot([(400, "--window"), (300, "--hub"), (own, "--widget"), (200, "--features")])
+        let running = snapshot([(400, "--window"), (300, "--hub"), (own, "--widget"), (200, "--features")],
+                               up: [widget, clicky, permissions])
 
         guard case .ask(let question) = PartQuit.plan(face: "--widget", snapshot: running, behavior: .ask) else {
             return XCTFail("expected a question")
@@ -102,6 +104,28 @@ final class PartQuitTests: XCTestCase {
         for behavior in QuitBehavior.allCases {
             XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: running, behavior: behavior), .quitThis, "\(behavior)")
         }
+    }
+
+    /// The bare launch starts with no window: a notification click, a link or a file it delivers, or the hub it starts,
+    /// and a routed command can keep it running after its card closed (eve on #667). With its window closed it is no
+    /// part: ⌘Q does not ask about "Permissions", and Quit All leaves the delivery running. Its open window is named.
+    func testABareLaunchIsNamedOnlyWhileItsPermissionsWindowIsOpen() {
+        let faces: [(Int32, String)] = [(own, "--widget"), (400, "--window")]
+
+        for behavior in QuitBehavior.allCases {
+            XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: snapshot(faces, up: [widget]), behavior: behavior),
+                           .quitThis, "\(behavior): a bare launch with no window")
+        }
+        let delivering = snapshot(faces + [(300, "--hub")], up: [widget])
+        XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: delivering, behavior: .ask),
+                       .ask(QuitQuestion(thisName: "Widget", otherNames: ["Hub"])))
+        XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: delivering, behavior: .allParts),
+                       .quitAll(otherPids: [300]), "Quit All never stops a delivery in progress")
+
+        let open = snapshot(faces, up: [widget, permissions])
+        XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: open, behavior: .ask),
+                       .ask(QuitQuestion(thisName: "Widget", otherNames: ["Permissions"])))
+        XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: open, behavior: .allParts), .quitAll(otherPids: [400]))
     }
 
     /// Clicky's status item shows, greyed, in every live settings face; a Clicky nobody turned on is no part.

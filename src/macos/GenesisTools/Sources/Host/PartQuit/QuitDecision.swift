@@ -70,9 +70,9 @@ package enum PartQuit {
 
     /// A part a face shows only while it is up (PartPresence). A face with rows here is named by its rows that are up,
     /// in this order ("Clicky and Settings"), because its quit ends all of them. With none up it is a background
-    /// process (the widget with "Show the widget" off, the settings face with no window and Clicky off): the question
-    /// never names it, it never makes ⌘Q ask, and Quit All leaves it running. A face with no rows is a window and is
-    /// named while its process runs.
+    /// process (the widget with "Show the widget" off, the settings face with no window and Clicky off, the bare
+    /// launch delivering a click or a link): the question never names it, it never makes ⌘Q ask, and Quit All leaves
+    /// it running. A face with no rows is a window and is named while its process runs.
     struct FacePresence: Equatable, Sendable {
         let id: String
         let face: String
@@ -82,6 +82,9 @@ package enum PartQuit {
         FacePresence(id: PartPresence.widget, face: "--widget", name: "Widget"),
         FacePresence(id: PartPresence.clicky, face: "--features", name: "Clicky"),
         FacePresence(id: PartPresence.settingsWindow, face: "--features", name: "Settings"),
+        // The bare launch starts with no window and often never shows one: it delivers a notification click, a link
+        // or a file, or starts the hub, and a routed command can keep it running after its card closed.
+        FacePresence(id: PartPresence.permissionsWindow, face: "--window", name: "Permissions"),
     ]
 
     /// The face of a process from its arguments after the executable, or nil for a process the question never names:

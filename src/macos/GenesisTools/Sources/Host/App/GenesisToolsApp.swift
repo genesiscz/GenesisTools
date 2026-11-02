@@ -40,6 +40,8 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     /// A local file this face handed to the browser. A bare launch that Launch Services made only to
     /// deliver it has nothing left to show, like a link or notification click.
     private var documentHandedOff = false
+    /// Drops the permissions window's presence when the window closes.
+    private var windowCloseObserver: NSObjectProtocol?
 
     /// A local `.html` file Launch Services handed to this face, or launched it for (LocalFileHandoff).
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -159,6 +161,15 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
+        // The ⌘Q question of the widget and Clicky names this face "Permissions" only while this window is open
+        // (Host/PartQuit): without it the process delivers a click or a link, and nothing called Permissions shows.
+        MainActor.assumeIsolated { PartPresence.hold(PartPresence.permissionsWindow) }
+        if let windowCloseObserver { NotificationCenter.default.removeObserver(windowCloseObserver) }
+        windowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { PartPresence.release(PartPresence.permissionsWindow) }
+        }
 
         // A rebuild reopens a window that was behind another app with `--window --no-activate`.
         if !CommandLine.arguments.contains("--no-activate") {
