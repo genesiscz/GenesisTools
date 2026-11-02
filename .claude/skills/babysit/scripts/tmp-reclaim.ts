@@ -65,6 +65,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { claudeSessionsDir, liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import { env } from "@genesiscz/utils/env";
+import { readBoundedRegularFileSync } from "@genesiscz/utils/fs/bounded-read";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { nativeSessionRoots, nativeTranscriptMaxDepth } from "@genesiscz/utils/providers/session-paths";
@@ -126,6 +127,8 @@ const SESSION_UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 const PLAN_MAX_AGE_MS = 30 * 60_000;
 const SCAN_BUDGET_MS = 20_000;
+/** A SwiftPM clone's alternates names one object store, so a larger file is no clone SwiftPM made. */
+const ALTERNATES_MAX_BYTES = 64 * 1024;
 const SYSTEM_PREFIXES = ["com.apple.", "launchd", "tmux-", "ssh-", "claude-", "cc-socks", "powerlog", ".X"];
 /** An apply's scratch folder for the entries it removes: `.tmp-reclaim-<pid>-XXXXXX` (before 2026-11-01 without pid). */
 const QUARANTINE_PREFIX = ".tmp-reclaim-";
@@ -357,7 +360,12 @@ function isSwiftpmCheckoutGit(gitPath: string): boolean {
     return names.includes("repositories") && borrowsObjectsFrom(gitPath, join(scratch, "repositories"));
 }
 
-/** True when a clone borrows objects (`objects/info/alternates`) and every store it borrows from lies inside `dir`. */
+/**
+ * True when a clone borrows objects (`objects/info/alternates`) and every store it borrows from lies inside `dir`.
+ * scan() asks before it walks the `.git` below, so its FIFO and socket refusal has not seen the alternates yet: the
+ * read is nonblocking, takes only a regular file (never a symlink, a FIFO or a device) and at most
+ * ALTERNATES_MAX_BYTES, so a planted FIFO there cannot hang a dry run or an apply past SCAN_BUDGET_MS.
+ */
 function borrowsObjectsFrom(gitPath: string, dir: string): boolean {
     try {
         if (!lstatSync(dir).isDirectory()) {
@@ -366,7 +374,13 @@ function borrowsObjectsFrom(gitPath: string, dir: string): boolean {
 
         const real = realpathSync(dir);
         const objects = join(gitPath, "objects");
-        const stores = readFileSync(join(objects, "info", "alternates"), "utf8")
+        const stores = readBoundedRegularFileSync(join(objects, "info", "alternates"), {
+            maxBytes: ALTERNATES_MAX_BYTES,
+            tooLarge: "the alternates file is not a small regular file",
+            grew: "the alternates file grew while it was read",
+            noFollow: true,
+        })
+            .toString("utf8")
             .split("\n")
             .map((line) => line.trim())
             .filter((line) => line !== "" && !line.startsWith("#"));
