@@ -913,6 +913,26 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertFalse(text.contains("Context"), text)
     }
 
+    /// A settled decision's outcome draws the picked option's inline markdown, as its row did before the answer (eve
+    /// on #676): decision 31 answered with a) shows `tools rm ask` as code, never with its two backticks.
+    func testASettledDecisionDrawsThePickedOptionsMarkdown() throws {
+        var answered = Self.letterCard(key + "0")
+        answered["status"] = "sent"
+        answered["option"] = "a"
+        let card = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(withJSONObject: answered))
+        let size = CGSize(width: Self.widgetWidth, height: 140)
+        let view = WidgetDecisionOutcome(card: card) { _ in }
+            .padding(10)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.colorScheme, .dark)
+        let rep = try KitShots.render(view, size: size, name: "outcome-markdown")
+        let text = try recognizedText(try XCTUnwrap(rep.cgImage)).replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(text.contains("empty it now"), text)
+        XCTAssertTrue(text.contains("one tools rm ask approval"), "the code span reads as its words: \(text)")
+        XCTAssertFalse(text.contains("`"), "no backtick is drawn: \(text)")
+    }
+
     /// The render check of 2026-11-01: decision 31's card and its open overview entry, as the hub sent them before
     /// (bare letters, the reasoning as Context; the overview without the description, as before the setting) and now.
     /// `WIDGET_DECISION_SHOTS=<folder>` writes `letters-<surface>-<before|after>-graphite.png`.
