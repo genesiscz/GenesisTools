@@ -68,20 +68,21 @@ rejects as not a video, containers that cannot hold HEVC, and earlier `.hevc` ou
 playable video and every audio track.
 
 A result is kept only when it is at least `--min-saving` smaller, its duration is within 0.5 s of the input, its video
-is HEVC, it has every audio track the input had, and a full hardware decode (`ffmpeg -v error -xerror`) prints
-nothing. Otherwise the output is discarded and the input stays. The original's device, inode, size and modification
-time are read before the probe; a result is installed only while the original still matches them, so an edit during
-the encode, or another run's replace, discards the result and the original is never trashed for a stale encode. Each ffmpeg (the encoder check, the encode and the
-decode check) runs under `nice -n 10`; background QoS (`taskpolicy -b`) starved the jobs on a loaded Mac, so it is not
-used.
+is HEVC, it has every audio track the input had, and a full hardware decode (`ffmpeg -v error -xerror`) of the video and
+every audio track prints nothing. Otherwise the output is discarded and the input stays. The original's device, inode,
+size and modification time are read before the probe; a result is installed only while the original still matches them,
+so an edit during the encode, or another run's replace, discards the result and the original is never trashed for a
+stale encode. Each ffmpeg (the encoder check, the encode and the decode check) runs under `nice -n 10`; background QoS
+(`taskpolicy -b`) starved the jobs on a loaded Mac, so it is not used.
 
 Each encode is written into a new hidden folder beside its input (`.<name>.<ext>.hevc-XXXXXX`), which only that run
 uses and removes when it finishes. The folder walk skips hidden folders, ffmpeg runs with `-n` so it never writes over
 a file, and the result takes its final name only when nothing is there yet. Two runs on the same folder therefore never
 touch each other's files. The encode maps the first playable video stream (`0:V:0`), never a cover picture.
 
-The command exits 1 when any file failed (ffmpeg, the replace, or a probe that could not run: no ffprobe, a timeout,
-a file this process cannot read); skipped and discarded files exit 0.
+The command exits 1 when any file failed (ffmpeg, the replace, a probe that could not run: no ffprobe, a timeout,
+a file this process cannot read, or a file that was gone when its turn came); skipped and discarded files exit 0. A
+failed file never stops the others: every file gets its row.
 
 ### Undo a replace
 

@@ -495,13 +495,24 @@ export function probeFailureRow({
 async function encodeOne({ input, options }: { input: string; options: EncodeOptions }): Promise<EncodeRow> {
     const { encoder } = options;
     const started = performance.now();
-    const source = snapshotSource(input);
+    const seconds = () => (performance.now() - started) / 1000;
+    let source: SourceSnapshot;
+
+    try {
+        source = snapshotSource(input);
+    } catch (error) {
+        // Gone or unreadable since the walk: this file's row fails, the other workers and their rows carry on.
+        logger.warn({ input, error }, "The input could not be read when its turn came");
+        return {
+            ...emptyRow(input, 0),
+            status: "failed",
+            reason: `cannot read the input: ${messageOf(error)}`,
+            seconds: seconds(),
+        };
+    }
+
     const row = emptyRow(input, source.size);
-    const finish = (patch: Partial<EncodeRow>): EncodeRow => ({
-        ...row,
-        ...patch,
-        seconds: (performance.now() - started) / 1000,
-    });
+    const finish = (patch: Partial<EncodeRow>): EncodeRow => ({ ...row, ...patch, seconds: seconds() });
 
     if (isEarlierOutput({ input, encoder })) {
         return finish({ reason: `an earlier .${encoder.codec} output` });

@@ -25,6 +25,7 @@ import {
 import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
 import {
+    decodeErrors,
     encodeArgs,
     ffmpegCommand,
     findEncoder,
@@ -674,6 +675,69 @@ describe("probe failures", () => {
             expect(exitCodeFor(rows)).toBe(0);
         }
     );
+
+    test("an input gone before its turn fails its own row, and every other row still comes back", async () => {
+        const dir = tempDir();
+        const first = join(dir, "first.txt");
+        const gone = join(dir, "gone.mp4");
+        writeFileSync(first, "not a container");
+        writeFileSync(gone, "x");
+
+        // The walk saw both files; the second goes while the first is in work, before its worker reads it.
+        const pending = encodeVideos(encodeOptions({ paths: [first, gone] }));
+        rmSync(gone);
+        const rows = await pending;
+
+        expect(rows.map((row) => row.status)).toEqual(["skipped", "failed"]);
+        expect(rows[1]).toMatchObject({ input: gone, inputBytes: 0 });
+        expect(rows[1]?.reason).toMatch(/^cannot read the input: ENOENT/);
+        expect(exitCodeFor(rows)).toBe(1);
+    });
+});
+
+/**
+ * Two clips with two AAC tracks; in `damaged` the second track's packets after the first 40 are noise, so the
+ * stream probe reads it as clean and only a decode of that track fails. Null when this ffmpeg cannot make them.
+ */
+function secondTrackFixture(): { clean: string; damaged: string } | null {
+    if (Bun.which("ffmpeg") === null) {
+        return null;
+    }
+
+    const dir = tempDir();
+    const clean = join(dir, "clean.mkv");
+    const damaged = join(dir, "damaged.mkv");
+    const sources = [
+        ["-f", "lavfi", "-i", "testsrc2=size=160x120:rate=10:duration=2"],
+        ["-f", "lavfi", "-i", "sine=frequency=440:duration=2"],
+        ["-f", "lavfi", "-i", "sine=frequency=660:duration=2"],
+    ].flat();
+    const tracks = ["-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "mpeg4", "-c:a", "aac", "-shortest"];
+    const made = Bun.spawnSync(["ffmpeg", "-v", "error", ...sources, ...tracks, "-fflags", "+bitexact", clean], {
+        stderr: "pipe",
+        env: process.env,
+    });
+    // From the 41st packet on, about every fourth byte of the second audio track is changed.
+    const noise = "noise=amount=if(gt(n\\,40)\\,4\\,0)";
+    const broken =
+        made.exitCode === 0 &&
+        Bun.spawnSync(["ffmpeg", "-v", "error", "-i", clean, "-map", "0", "-c", "copy", "-bsf:a:1", noise, damaged], {
+            stderr: "pipe",
+            env: process.env,
+        }).exitCode === 0;
+    return broken ? { clean, damaged } : null;
+}
+
+describe("decodeErrors", () => {
+    const fixture = secondTrackFixture();
+
+    test.skipIf(fixture === null)("decodes every audio track the encode kept, not only ffmpeg's pick", async () => {
+        const software: VideoEncoder = { ...encoder, decodeArgs: [] };
+        const clips = fixture ?? { clean: "", damaged: "" };
+
+        expect(await decodeErrors({ encoder: software, path: clips.clean })).toBe("");
+        expect(await decodeErrors({ encoder: software, path: clips.damaged })).toContain("aac");
+    });
 });
 
 describe("undoCommand", () => {
