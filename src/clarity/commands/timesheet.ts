@@ -6,8 +6,7 @@ import { out } from "@genesiscz/utils/logger";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { requireConfig } from "../config.js";
-import { ClarityClient } from "../lib/auth/client.js";
+import { getClarityApi } from "../lib/api.js";
 
 function formatSeconds(seconds: number): string {
     const hours = seconds / 3600;
@@ -106,7 +105,7 @@ export function registerTimesheetCommand(program: Command): void {
         .description("Show timesheet with time entries")
         .option("--format <format>", "Output format: table|json", "table")
         .action(async (timesheetIdStr: string, options: { format: string }) => {
-            const api = new ClarityClient(await requireConfig());
+            const api = getClarityApi();
 
             const timesheetId = parseInt(timesheetIdStr, 10);
 
@@ -144,7 +143,7 @@ export function registerTimesheetCommand(program: Command): void {
         .option("--period <id>", "Clarity time period ID (find via the Clarity web UI)", parseInt)
         .option("--format <format>", "Output format: table|json", "table")
         .action(async (options: { period?: number; format: string }) => {
-            const api = new ClarityClient(await requireConfig());
+            const api = getClarityApi();
 
             if (!options.period) {
                 out.error("--period <timePeriodId> is required. Find it via the Clarity web UI.");
@@ -189,7 +188,7 @@ export function registerTimesheetCommand(program: Command): void {
     ts.command("submit <timesheetId>")
         .description("Submit a timesheet for approval")
         .action(async (timesheetIdStr: string) => {
-            const api = new ClarityClient(await requireConfig());
+            const api = getClarityApi();
 
             const timesheetId = parseInt(timesheetIdStr, 10);
 
@@ -227,7 +226,7 @@ export function registerTimesheetCommand(program: Command): void {
     ts.command("revert <timesheetId>")
         .description("Revert a submitted timesheet to allow edits")
         .action(async (timesheetIdStr: string) => {
-            const api = new ClarityClient(await requireConfig());
+            const api = getClarityApi();
 
             const timesheetId = parseInt(timesheetIdStr, 10);
 

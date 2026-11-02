@@ -1,6 +1,7 @@
 import { Api } from "@app/azure-devops/api";
 import { AzureDevOpsCacheManager } from "@app/azure-devops/cache-manager";
-import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
+import { convertToMinutes, formatMinutes, getTodayDate } from "@app/azure-devops/timelog-api";
 import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import { runInteractiveAddClack } from "@app/azure-devops/timelog-prompts-clack";
 import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inquirer";
@@ -130,7 +131,7 @@ Or use interactive mode:
                     process.exit(1);
                 }
 
-                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                const api = getTimeLogApi({ config, user });
 
                 // Validate time type exists
                 const validType = await api.validateTimeType(options.type);

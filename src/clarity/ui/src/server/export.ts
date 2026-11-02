@@ -1,7 +1,8 @@
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
 import { exportMonth, type MonthExport } from "@app/azure-devops/lib/timelog/export";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
+import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import {
     getTimelogWorkItems,
@@ -35,8 +36,7 @@ function createTimeLogApi(adoConfig: AzureConfigWithTimeLog): TimeLogApi {
         throw new Error(`Organization ID missing from config. Re-run: ${toolCommand("azure-devops configure")} <url>`);
     }
 
-    const user = adoConfig.timelog!.defaultUser!;
-    return new TimeLogApi(adoConfig.orgId, adoConfig.projectId, adoConfig.timelog!.functionsKey, user);
+    return getTimeLogApi({ config: adoConfig });
 }
 
 async function enrichExportEntries(

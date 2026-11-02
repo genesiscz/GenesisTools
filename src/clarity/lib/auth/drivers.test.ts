@@ -36,12 +36,11 @@ describe("clarity auth drivers", () => {
         expect((await chooseAuthDriver(undefined, "elsewhere"))?.id).toBe("curl");
     });
 
-    test("a 401 surfaces as it is when the saved driver cannot renew", async () => {
+    test("a 401 surfaces as it is for a session passed in, which never renews", async () => {
         const client = new ClarityClient({
             baseUrl: `http://localhost:${server.port}`,
             authToken: "token",
             sessionId: "test",
-            auth: { driver: "curl" },
         });
 
         await expect(client.getTimesheetApp(0)).rejects.toThrow("Clarity API error 401");

@@ -1,6 +1,7 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
-import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
-import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
+import { formatMinutes } from "@app/azure-devops/timelog-api";
+import { getClarityApi } from "@app/clarity/lib/api";
 import type { ClarityApi, TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@genesiscz/utils/clarity";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -11,7 +12,7 @@ import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { requireConfig } from "../config.js";
-import { ClarityClient } from "../lib/auth/client.js";
+
 import { buildPeriodComment } from "../lib/comment-builder.js";
 import { checkUnmapped } from "../lib/fill-guard.js";
 import {
@@ -174,15 +175,9 @@ export function registerFillCommand(program: Command): void {
             }
 
             const clarityConfig = await requireConfig();
-            const clarityApi = new ClarityClient(clarityConfig);
-            const adoConfig = requireTimeLogConfig();
-            const adoUser = requireTimeLogUser(adoConfig);
-            const adoApi = new TimeLogApi(
-                adoConfig.orgId!,
-                adoConfig.projectId,
-                adoConfig.timelog!.functionsKey,
-                adoUser
-            );
+            const clarityApi = getClarityApi();
+            const adoApi = getTimeLogApi();
+            const adoUser = adoApi.user;
 
             out.println(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
 

@@ -1,7 +1,7 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { requireConfig } from "@app/clarity/config";
-import { ClarityClient } from "@app/clarity/lib/auth/client";
+import { getClarityApi } from "@app/clarity/lib/api";
 import { checkUnmapped } from "@app/clarity/lib/fill-guard";
 import {
     buildFillMap,
@@ -69,7 +69,7 @@ export interface FillPreviewResult {
 
 export async function getFillPreview(month: number, year: number, allowUnmapped = false): Promise<FillPreviewResult> {
     const clarityConfig = await requireConfig();
-    const clarityApi = new ClarityClient(clarityConfig);
+    const clarityApi = getClarityApi();
     const { config: adoConfig, user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
@@ -336,7 +336,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
 }
 
 export async function postTimesheetNote(timesheetId: number, noteText: string, userId: number): Promise<void> {
-    const clarityApi = new ClarityClient(await requireConfig());
+    const clarityApi = getClarityApi();
 
     await clarityApi.createTimesheetNote(timesheetId, noteText, userId);
 }
@@ -348,7 +348,7 @@ export async function executeFill(
     allowUnmapped = false
 ): Promise<ExecuteFillResult> {
     const clarityConfig = await requireConfig();
-    const clarityApi = new ClarityClient(clarityConfig);
+    const clarityApi = getClarityApi();
     const { user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);

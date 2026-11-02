@@ -19,17 +19,33 @@ export interface ClarityApiConfig {
     cookies?: string;
 }
 
+/** A session, or a loader that produces one on the first request. */
+export type ClarityApiSource = ClarityApiConfig | (() => Promise<ClarityApiConfig>);
+
 const SEARCH_PAGE_SIZE = 100;
 const SEARCH_MAX_PAGES = 50;
 
 export class ClarityApi {
-    protected config: ClarityApiConfig;
+    private readonly source: ClarityApiSource;
+    private current: Promise<ClarityApiConfig> | null = null;
 
-    constructor(config: ClarityApiConfig) {
-        this.config = config;
+    constructor(source: ClarityApiSource) {
+        this.source = source;
     }
 
-    /** Called once when a request answers 401. Return true after `config` holds a fresh session. */
+    /** The session every request uses. A loader runs once, on the first request. */
+    protected session(): Promise<ClarityApiConfig> {
+        this.current ??= typeof this.source === "function" ? this.source() : Promise.resolve(this.source);
+
+        return this.current;
+    }
+
+    /** Replace the session, e.g. after `renewAuth()` signed in again. */
+    protected replaceSession(config: ClarityApiConfig): void {
+        this.current = Promise.resolve(config);
+    }
+
+    /** Called once when a request answers 401. Return true after `replaceSession()` got a fresh session. */
     protected async renewAuth(): Promise<boolean> {
         return false;
     }
@@ -46,7 +62,8 @@ export class ClarityApi {
     }
 
     private async sendOnce(path: string, options: RequestInit): Promise<Response> {
-        const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
+        const config = await this.session();
+        const url = `${config.baseUrl}/ppm/rest/v1${path}`;
         const signal = options.signal ?? AbortSignal.timeout(30_000);
 
         return fetch(url, {
@@ -56,11 +73,11 @@ export class ClarityApi {
             headers: {
                 Accept: "application/json, text/plain, */*",
                 "Content-Type": "application/json",
-                authToken: this.config.authToken,
+                authToken: config.authToken,
                 "Cache-Control": "no-cache",
                 "x-api-force-patch": "true",
                 "x-api-full-response": "true",
-                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
+                Cookie: config.cookies || `sessionId=${config.sessionId}`,
                 ...(options.headers as Record<string, string>),
             },
         });
@@ -200,7 +217,7 @@ export class ClarityApi {
         body: UpdateTimeEntryRequest
     ): Promise<{ data: unknown; debug: ApiDebugInfo }> {
         const path = `/timesheets/${timesheetId}/timeEntries/${timeEntryId}`;
-        const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
+        const url = `${(await this.session()).baseUrl}/ppm/rest/v1${path}`;
         const bodyStr = SafeJSON.stringify(body);
 
         const response = await this.send(path, { method: "PUT", body: bodyStr });

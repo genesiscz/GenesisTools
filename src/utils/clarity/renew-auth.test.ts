@@ -21,7 +21,7 @@ class RenewingApi extends ClarityApi {
 
     protected override async renewAuth(): Promise<boolean> {
         this.renewals++;
-        this.config = { ...this.config, authToken: "fresh" };
+        this.replaceSession({ ...(await this.session()), authToken: "fresh" });
 
         return true;
     }

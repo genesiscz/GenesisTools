@@ -7,7 +7,8 @@ import {
     readEntryWorkItemTitle,
     setEntryWorkItemTitle,
 } from "@app/azure-devops/lib/timelog/entry-fields";
-import { convertToMinutes, formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
+import { convertToMinutes, formatMinutes } from "@app/azure-devops/timelog-api";
 import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { TimeLogImportFile } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
@@ -61,7 +62,7 @@ export function registerImportSubcommand(parent: Command): void {
                 process.exit(1);
             }
 
-            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+            const api = getTimeLogApi({ config, user });
 
             // Validate time types
             const types = await api.getTimeTypes();

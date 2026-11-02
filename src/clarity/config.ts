@@ -15,8 +15,9 @@ const MappingSchema = z.object({
 
 const ClarityConfigSchema = z.object({
     baseUrl: z.url(),
-    authToken: z.string(),
-    sessionId: z.string(),
+    /** The session, only while the file session store keeps it here (lib/auth/session-store.ts). */
+    authToken: z.string().optional(),
+    sessionId: z.string().optional(),
     cookies: z.string().optional(),
     resourceId: z.number().optional(),
     uniqueName: z.string().optional(),

@@ -10,10 +10,11 @@
 import { Api } from "@app/azure-devops/api";
 import { AzAuthError, isAuthError } from "@app/azure-devops/cli.utils";
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { type ClarityConfig, getConfig as getClarityConfig } from "@app/clarity/config";
-import { ClarityClient, isClarityAuthError } from "@app/clarity/lib/auth/client";
+import { getClarityApi } from "@app/clarity/lib/api";
+import { isClarityAuthError } from "@app/clarity/lib/auth/client";
 
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
@@ -61,7 +62,7 @@ export async function pingClarity(config: ClarityConfig | null): Promise<Service
     }
 
     try {
-        await new ClarityClient(config).getTimesheetApp();
+        await getClarityApi().getTimesheetApp();
         return { status: "ok" };
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -89,8 +90,7 @@ export async function pingTimelog(config: AzureConfigWithTimeLog | null): Promis
         ({ userId: "preflight", userName: "preflight", userEmail: "preflight@local" } as TimeLogUser);
 
     try {
-        const api = new TimeLogApi(config.orgId ?? "", config.projectId, functionsKey, user);
-        await api.getAllTimeTypes();
+        await getTimeLogApi({ config, user }).getAllTimeTypes();
         return { status: "ok" };
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

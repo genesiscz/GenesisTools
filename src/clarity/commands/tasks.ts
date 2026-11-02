@@ -1,6 +1,6 @@
-import { requireConfig } from "@app/clarity/config";
+import { getClarityApi } from "@app/clarity/lib/api";
 import { parseMonthArg } from "@app/clarity/lib/assignment-view";
-import { ClarityClient } from "@app/clarity/lib/auth/client";
+
 import { renderReceipt, rowWriteReceipt } from "@app/clarity/lib/receipts";
 import { mergeSearchHits, searchPrefixes } from "@app/clarity/lib/task-search";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
@@ -96,7 +96,7 @@ export function registerTasksCommand(parent: Command): void {
                 process.exit(1);
             }
 
-            const api = await connect();
+            const api = getClarityApi();
             const selected = await resolveWeeks({ api, date, timesheetId: timesheet.id });
 
             if (options.search) {
@@ -117,10 +117,6 @@ export function registerTasksCommand(parent: Command): void {
 
             await runCatalogue({ api, selected, date, options });
         });
-}
-
-async function connect(): Promise<ClarityApi> {
-    return new ClarityClient(await requireConfig());
 }
 
 /**
