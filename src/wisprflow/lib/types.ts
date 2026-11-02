@@ -1,26 +1,11 @@
+import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+
 export type SourceName = "local" | "mcp";
 export type SourceChoice = SourceName | "auto";
 
 export interface Folder {
     id: string;
     name: string;
-}
-
-export interface Participant {
-    /** The diarization speaker number, when this person was assigned to one. */
-    speakerId?: number;
-    name: string;
-    origin?: string;
-    isSelf?: boolean;
-}
-
-export interface TranscriptEntry {
-    id?: string;
-    /** Seconds from the start of the recording, when the source records it. */
-    startSec?: number;
-    speakerId?: number;
-    speaker: string;
-    text: string;
 }
 
 export interface MeetingSummary {

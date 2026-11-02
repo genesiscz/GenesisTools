@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { speakerLabel } from "./speakers";
-import type { Participant, TranscriptEntry, TranscriptGap } from "./types";
+import { speakerLabel } from "@genesiscz/utils/transcribe/speakers";
+import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import type { TranscriptGap } from "./types";
 
 /** One line of the app's `live.ndjson`: the unrefined transcript written while the meeting runs. */
 export interface LiveLine {

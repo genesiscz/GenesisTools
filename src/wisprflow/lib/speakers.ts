@@ -1,5 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { Participant } from "./types";
+import { speakerLabel } from "@genesiscz/utils/transcribe/speakers";
+import type { Participant } from "@genesiscz/utils/transcribe/types";
 
 interface SpeakerPerson {
     name?: string;
@@ -54,21 +55,7 @@ export function resolveSpeakers(raw: string | null | undefined): Participant[] {
     return participants.sort((a, b) => (a.speakerId ?? 0) - (b.speakerId ?? 0));
 }
 
-export function speakerLabel(participants: Participant[], speakerId: number | undefined): string {
-    const named = participants.find((p) => p.speakerId === speakerId);
-
-    if (named) {
-        return named.name;
-    }
-
-    return speakerId === undefined ? "Unknown" : `Speaker ${speakerId}`;
-}
-
 /** The app writes speakers into its summary and notes as `<@speaker:N>`; the MCP resolves them server-side. */
 export function fillSpeakerMentions(text: string, participants: Participant[]): string {
     return text.replace(/<@speaker:(\d+)>/g, (_, id: string) => speakerLabel(participants, Number(id)));
-}
-
-export function firstName(name: string): string {
-    return name.split(/\s+/)[0] ?? name;
 }
