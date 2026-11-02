@@ -65,11 +65,18 @@ mock.module("@genesiscz/utils/agent-sessions/session-backward", () => ({
     },
 }));
 
-const pins = new Map<string, { account: string | null; host?: { kind: string; id: string } }>();
+const pins = new Map<
+    string,
+    { account: string | null; host?: { kind: string; id: string }; provider?: string; at?: number }
+>();
 const cmuxRefs = new Map<string, { surfaceId: string | null; at: number }>();
 
 mock.module("@genesiscz/utils/agent-sessions/pins", () => ({
-    loadPins: async () => pins,
+    // A pin with no `provider` is Claude's, as in the real journal.
+    loadPins: async (options: { provider?: string } = {}) =>
+        options.provider === undefined
+            ? pins
+            : new Map([...pins].filter(([, pin]) => pin.provider === undefined || pin.provider === options.provider)),
 }));
 
 mock.module("@genesiscz/utils/cmux/session-refs", () => ({
@@ -84,6 +91,7 @@ import {
     CRITICAL_THRESHOLD_MS,
     computeCacheStatus,
     GROK_CACHE_TTL_MS,
+    hostedMtimeFloor,
     listSessionRows,
     listSessionRowsWithTimings,
 } from "./session-rows";
@@ -647,7 +655,7 @@ describe("listSessionRows", () => {
         ];
         tails.set("/tmp/hosted.jsonl", [OPUS_LINE]);
         tails.set("/tmp/plain.jsonl", [OPUS_LINE]);
-        pins.set("HOSTED-ID", { account: "work", host: { kind: "t3", id: "thread-1" } });
+        pins.set("HOSTED-ID", { account: "work", host: { kind: "t3", id: "thread-1" }, at: NOW - 10 * MIN });
         pins.set("plain-id", { account: "work" });
 
         const rows = await listSessionRows({ hours: 6, now: NOW });
@@ -666,19 +674,45 @@ describe("listSessionRows", () => {
             record({ filePath: "/tmp/plain-b.jsonl", sessionId: "plain-b", mtime: NOW - 6 * MIN }),
             record({ filePath: "/tmp/old-t3.jsonl", sessionId: "old-t3", mtime: NOW - 30 * 60 * MIN }),
         ];
-        pins.set("old-t3", { account: "work", host: { kind: "t3", id: "thread-2" } });
+        // Its SessionStart pin came a minute before its transcript's last write.
+        pins.set("old-t3", { account: "work", host: { kind: "t3", id: "thread-2" }, at: NOW - 30 * 60 * MIN - MIN });
+        // A Codex session T3 ran is newer, but it is not in this Claude listing, so it must not raise the floor.
+        pins.set("codex-t3", { account: "work", host: { kind: "t3", id: "thread-3" }, provider: "codex", at: NOW });
         listingCalls.length = 0;
 
         const rows = await listSessionRows({ hours: 6, minRows: 1, host: "t3", now: NOW });
 
         expect(rows.map((row) => row.sessionId)).toEqual(["old-t3"]);
-        // The SQL top-up counts every session, so the window must not go down to the read with a host filter.
+        // The SQL top-up counts every session, so it does not go down with a host filter. The read is still bounded:
+        // it starts at the pin of the newest hosted session the top-up needs, not at the start of the history.
         expect(listingCalls.at(-1)).not.toHaveProperty("newest");
-        expect(listingCalls.at(-1)).not.toHaveProperty("mtimeFrom");
+        expect(listingCalls.at(-1)?.mtimeFrom).toBe(NOW - 30 * 60 * MIN - MIN);
 
         listingCalls.length = 0;
         await listSessionRows({ hours: 6, host: "t3", now: NOW });
-        expect(listingCalls.at(-1)).toHaveProperty("mtimeFrom");
+        expect(listingCalls.at(-1)?.mtimeFrom).toBe(NOW - 6 * 60 * MIN);
+
+        listingCalls.length = 0;
+        await listSessionRows({ host: "t3", now: NOW });
+        expect(listingCalls.at(-1)?.mtimeFrom).toBe(NOW - 30 * 60 * MIN - MIN);
+
+        // No session ran on that host: nothing to read at all.
+        listingCalls.length = 0;
+        expect(await listSessionRows({ hours: 6, minRows: 5, host: "other", now: NOW })).toEqual([]);
+        expect(listingCalls).toEqual([]);
+    });
+
+    test("the hosted floor is the minRows-th newest pin, the oldest pin without a window, and the window without --min", () => {
+        const pinTimes = [NOW - 50 * MIN, NOW - 10 * MIN, NOW - 30 * MIN];
+        const windowFrom = NOW - 20 * MIN;
+
+        expect(hostedMtimeFloor({ pinTimes, windowFrom, minRows: 2 })).toBe(NOW - 30 * MIN);
+        expect(hostedMtimeFloor({ pinTimes, windowFrom, minRows: 9 })).toBe(NOW - 50 * MIN);
+        // The window reaches further back than the pin the top-up needs.
+        expect(hostedMtimeFloor({ pinTimes, windowFrom, minRows: 1 })).toBe(windowFrom);
+        expect(hostedMtimeFloor({ pinTimes, windowFrom })).toBe(windowFrom);
+        expect(hostedMtimeFloor({ pinTimes })).toBe(NOW - 50 * MIN);
+        expect(hostedMtimeFloor({ pinTimes: [], windowFrom, minRows: 2 })).toBeNull();
     });
 
     test("rows with equal clocks keep a deterministic order across polls", async () => {

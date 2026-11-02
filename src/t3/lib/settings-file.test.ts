@@ -1,13 +1,17 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { embedLauncher } from "@app/ai/lib/embed/registry";
 import { type AccountEntry, accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { removeRecursive } from "@genesiscz/utils/fs";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { makeTempDir } from "@genesiscz/utils/paths";
+import { checkNamedAccount } from "../commands/providers";
 import { upsertFor } from "../commands/shared";
+import { checkInstances } from "./doctor";
 import { T3_HOSTS, t3HostFor } from "./hosts";
 import {
     buildInstance,
@@ -19,7 +23,15 @@ import {
     syncAccounts,
 } from "./instances";
 import { scanObject, scanRoot } from "./json-splice";
-import { parseLauncherCheckout, renderLauncher, writeLauncher } from "./launchers";
+import {
+    installLaunchers,
+    LauncherCollisionError,
+    type LauncherSpec,
+    parseLauncherAccount,
+    parseLauncherCheckout,
+    renderLauncher,
+    writeLauncher,
+} from "./launchers";
 import { planUpserts, SettingsChangedError, upsertInstances } from "./settings-file";
 
 // Modelled on a real T3 Code settings.json: two-space indent, a trailing newline, an integer-like key, a number
@@ -368,5 +380,84 @@ describe("launchers", () => {
         expect(first.path).toBe(join(binDir, "claude-tools@work"));
         expect(statSync(first.path).mode & 0o777).toBe(0o755);
         expect([first.status, second.status, moved.status]).toEqual(["created", "unchanged", "updated"]);
+    });
+
+    it("refuses two accounts on one launcher file, and a file that pins another account, before any write", () => {
+        const binDir = makeTempDir("t3-bin-");
+        tempDirs.push(binDir);
+        const checkout = "/opt/GenesisTools";
+        const install = (accounts: LauncherSpec[]) => installLaunchers({ binDir, checkout, accounts });
+
+        // `work laptop` and `work-laptop` both become claude-tools@work-laptop.
+        expect(() =>
+            install([
+                { alias: "claude", account: "work laptop" },
+                { alias: "claude", account: "work-laptop" },
+            ])
+        ).toThrow(LauncherCollisionError);
+        expect(readdirSync(binDir)).toEqual([]);
+
+        install([{ alias: "claude", account: "work laptop" }]);
+        const pinned = join(binDir, "claude-tools@work-laptop");
+        expect(() => install([{ alias: "claude", account: "work-laptop" }])).toThrow(LauncherCollisionError);
+        expect(() => writeLauncher({ binDir, spec: { alias: "claude", account: "work-laptop" }, checkout })).toThrow(
+            LauncherCollisionError
+        );
+        expect(parseLauncherAccount(readFileSync(pinned, "utf8"), "claude")).toBe("work laptop");
+
+        // The same account again, and the same name under another agent, are no collision.
+        const again = install([
+            { alias: "claude", account: "work laptop" },
+            { alias: "codex", account: "work-laptop" },
+        ]);
+        expect(again.filter((result) => result.spec.account !== null).map((result) => result.status)).toEqual([
+            "unchanged",
+            "created",
+        ]);
+    });
+});
+
+describe("proxy instances", () => {
+    it("providers add and doctor refuse a proxy target only where the embed launcher serves no ai-proxy", async () => {
+        const served = await Promise.all(
+            ACCOUNT_PROVIDER_ALIASES.map(async (alias) => [alias, (await embedLauncher(alias)).servesProxy] as const)
+        );
+        expect(served).toEqual([
+            ["claude", true],
+            ["codex", false],
+            ["grok", false],
+        ]);
+
+        const errors = spyOn(out, "error").mockImplementation(() => undefined);
+
+        try {
+            for (const [alias, servesProxy] of served) {
+                expect(checkNamedAccount({ alias, runnable: [], servesProxy }, "proxy:work/openai")).toBe(servesProxy);
+            }
+
+            expect(errors).toHaveBeenCalledTimes(2);
+            expect(String(errors.mock.calls[0]?.[0])).not.toContain("proxy:<account>/<provider>");
+        } finally {
+            errors.mockRestore();
+        }
+
+        const findings = await checkInstances({
+            instances: {
+                "gt-claude-proxy-work-openai": buildInstance(undefined, request({ account: "proxy:work/openai" })),
+                "gt-codex-proxy-work-openai": buildInstance(
+                    undefined,
+                    request({ alias: "codex", account: "proxy:work/openai", host: T3_HOSTS["codex-app-server"] })
+                ),
+            },
+            accounts: [],
+            settingsFlags: [],
+        });
+        const accountFindings = findings.filter((finding) => !finding.message.startsWith("binary "));
+
+        expect(accountFindings.map(({ level, subject }) => `${level} ${subject}`)).toEqual([
+            "ok gt-claude-proxy-work-openai",
+            "err gt-codex-proxy-work-openai",
+        ]);
+        expect(accountFindings[1]?.message).toContain("ai-proxy target");
     });
 });

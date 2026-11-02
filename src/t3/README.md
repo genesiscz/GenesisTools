@@ -20,6 +20,8 @@ exec '<checkout>/tools' claude embed -- "$@"
 The embed command reads the account from `TOOLS_<ALIAS>_EMBED_ACCOUNT`, which the T3 Code instance sets. Each
 `--account claude:work` also writes `claude-tools@work`, which exports that variable itself. The default checkout is
 the one whose `tools` is on PATH (the main checkout); a worktree needs `--checkout`. The same content is a no-op.
+Two accounts whose file names come out equal (`work laptop` and `work-laptop` are both `@work-laptop`), or a launcher
+that already pins another account, refuse the whole install, and nothing is written.
 
 ## Provider instances
 
@@ -33,6 +35,9 @@ tools t3 providers doctor [--settings <path>] [--bin-dir <dir>] [--json]
 - `add` writes one instance `gt-<alias>-<account slug>`: the agent's T3 driver (`claudeAgent`, `codex`, `grok`, from
   the embed launcher's host protocol), `config.binaryPath` = the env-driven launcher, and the embed variable in
   `environment`. `--steer next` adds `TOOLS_CLAUDE_EMBED_STEER=next` (Claude only); `--steer off` removes it.
+- `proxy:<account>/<provider>` works only for an agent whose embed launcher serves the ai-proxy
+  (`EmbedLauncher.servesProxy`; Claude today). `add` refuses it for Codex and Grok, and `doctor` reports such an
+  instance, because it could never start.
 - `sync` writes one instance per enabled account: Claude accounts with a long-lived token, every Codex (`openai-sub`)
   and Grok (`grok-sub`) account. It asks first in a terminal and needs `--yes` elsewhere. It never removes an instance.
 - `doctor` only reads. It checks every launcher (present, executable, current form, an existing checkout) and every

@@ -244,4 +244,9 @@ test("an embed launch takes the account before -- and passes everything after it
     });
     expect(splitEmbedArgv([...head, "--", "app-server", "--", "x"])?.native).toEqual(["app-server", "--", "x"]);
     expect(splitEmbedArgv([...head, "work"])).toBeNull();
+    // An account literally named `embed` is the operand, not a second verb.
+    expect(splitEmbedArgv([...head, "embed", "--", "app-server"])).toEqual({
+        account: "embed",
+        native: ["app-server"],
+    });
 });

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { embedLauncher } from "@app/ai/lib/embed/registry";
 import { parseEmbedAccountRequest } from "@genesiscz/utils/ai/account-env";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
@@ -93,11 +94,24 @@ export interface ProvidersAddOptions extends PathFlags {
     json?: boolean;
 }
 
-async function resolveAccountValue(
-    alias: HarnessId,
-    options: ProvidersAddOptions,
-    runnable: readonly AccountEntry[]
-): Promise<string | null> {
+/** What `providers add` may write for one agent: the accounts its embed launcher runs, and whether it serves proxy. */
+export interface AddTarget {
+    alias: HarnessId;
+    runnable: readonly AccountEntry[];
+    /** `EmbedLauncher.servesProxy` of the agent's launcher. */
+    servesProxy: boolean;
+}
+
+/** The account values an agent's instance can take, for a message: the runnable names, auto, and proxy if served. */
+function accountChoices(target: AddTarget): string {
+    const choices = ["auto", ...target.runnable.map((account) => account.name)];
+
+    return target.servesProxy ? `${choices.join(", ")}, or proxy:<account>/<provider>` : choices.join(", ");
+}
+
+async function resolveAccountValue(target: AddTarget, options: ProvidersAddOptions): Promise<string | null> {
+    const { alias, runnable } = target;
+
     if (options.account) {
         return options.account.trim();
     }
@@ -105,7 +119,7 @@ async function resolveAccountValue(
     const names = runnable.map((account) => account.name);
 
     if (!isInteractive()) {
-        out.error(`--account is required: ${["auto", ...names].join(", ")}, or proxy:<account>/<provider>.`);
+        out.error(`--account is required: ${accountChoices(target)}.`);
         out.println(suggestCommand(toolCommand("t3"), { add: ["--account", names[0] ?? "auto"] }));
         return null;
     }
@@ -157,9 +171,20 @@ async function resolveSteer(
     return null;
 }
 
-/** Refuses an account the agent's embed launcher cannot run (`embedRunnable`), so no instance fails at its launch. */
-function checkNamedAccount(alias: HarnessId, value: string, runnable: readonly AccountEntry[]): boolean {
+/**
+ * Refuses an account the agent's embed launcher cannot run (`embedRunnable`), and a proxy target for a launcher that
+ * serves no ai-proxy (`EmbedLauncher.servesProxy`), so no instance fails at its launch.
+ */
+export function checkNamedAccount(target: AddTarget, value: string): boolean {
+    const { alias, runnable } = target;
     const request = parseEmbedAccountRequest(value);
+
+    if (request.kind === "proxy" && !target.servesProxy) {
+        out.error(
+            `${toolCommand(alias, "embed")} cannot run proxy:${request.target}: its embed launcher serves no ai-proxy target, so the instance could never start. Use ${accountChoices(target)}.`
+        );
+        return false;
+    }
 
     if (request.kind !== "account") {
         return true;
@@ -170,9 +195,7 @@ function checkNamedAccount(alias: HarnessId, value: string, runnable: readonly A
     }
 
     out.error(
-        `No ${harnessPluginId(alias)} account "${request.name}" that ${alias} can run in T3 Code (enabled, not gate-only, with the credentials its launcher needs). Runnable: ${
-            runnable.map((account) => account.name).join(", ") || "(none)"
-        }, or auto, or proxy:<account>/<provider>.`
+        `No ${harnessPluginId(alias)} account "${request.name}" that ${alias} can run in T3 Code (enabled, not gate-only, with the credentials its launcher needs). Use ${accountChoices(target)}.`
     );
 
     return false;
@@ -189,11 +212,15 @@ export async function providersAddCommand(aliasArg: string, options: ProvidersAd
 
     const paths = resolvePaths(options);
     const host = await t3HostFor(alias);
-    const runnable = (await loadAccounts()).filter((entry) => embedRunnable(entry, alias, host));
-    const account = await resolveAccountValue(alias, options, runnable);
+    const target: AddTarget = {
+        alias,
+        runnable: (await loadAccounts()).filter((entry) => embedRunnable(entry, alias, host)),
+        servesProxy: (await embedLauncher(alias)).servesProxy,
+    };
+    const account = await resolveAccountValue(target, options);
     const steer = await resolveSteer(alias, host, options.steer);
 
-    if (account === null || steer === null || !checkNamedAccount(alias, account, runnable)) {
+    if (account === null || steer === null || !checkNamedAccount(target, account)) {
         process.exitCode = 1;
         return;
     }

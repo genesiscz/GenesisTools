@@ -122,5 +122,7 @@ export async function runGrokEmbed(input: EmbedLaunchInput, deps: GrokEmbedDeps 
 export const grokEmbed: EmbedLauncher = {
     alias: "grok",
     hostProtocol: "acp",
+    // runGrokEmbed refuses a `proxy:<account>/<provider>` request.
+    servesProxy: false,
     run: (input) => runGrokEmbed(input),
 };

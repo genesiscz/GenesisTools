@@ -46,7 +46,10 @@ providers
 providers
     .command("add <alias>")
     .description("Add or update one instance gt-<alias>-<account> (alias: claude, codex, grok)")
-    .option("--account <value>", "account name, auto, or proxy:<account>/<provider>")
+    .option(
+        "--account <value>",
+        "account name, auto, or proxy:<account>/<provider> (only for an agent whose embed launcher serves the ai-proxy)"
+    )
     .option("--display-name <text>", "name T3 Code shows (default: <Agent> (<account>))")
     .option("--steer [mode]", "next | off: steer at the next boundary (Claude only)")
     .option("--settings <path>", SETTINGS_HELP)

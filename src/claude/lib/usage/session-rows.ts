@@ -390,6 +390,57 @@ export interface SessionRowTimings {
     records: number;
 }
 
+/**
+ * The oldest transcript mtime a host-filtered listing must read, or null when no session ran on that host. The
+ * SessionStart hook writes a pin before the session writes its transcript, so a hosted transcript is at least as new
+ * as its pin. Every hosted transcript is then at least as new as the oldest hosted pin, and the `minRows` newest
+ * hosted transcripts are at least as new as the `minRows`-th newest hosted pin.
+ */
+export function hostedMtimeFloor(input: {
+    pinTimes: readonly number[];
+    windowFrom?: number;
+    minRows?: number;
+}): number | null {
+    if (input.pinTimes.length === 0) {
+        return null;
+    }
+
+    const newestFirst = [...input.pinTimes].sort((a, b) => b - a);
+
+    if (input.windowFrom === undefined) {
+        return newestFirst[newestFirst.length - 1];
+    }
+
+    if (input.minRows === undefined || input.minRows <= 0) {
+        return input.windowFrom;
+    }
+
+    return Math.min(input.windowFrom, newestFirst[Math.min(input.minRows, newestFirst.length) - 1]);
+}
+
+/**
+ * What the listing reads: the window with its SQL top-up, everything (`{}`), or nothing (null). The top-up (`newest`)
+ * counts every session, so with a host filter it would miss older HOSTED ones; that read starts at the hosted pins'
+ * floor instead, which keeps the refresh and the hydration bounded.
+ */
+function listingBounds(input: {
+    windowFrom: number | undefined;
+    minRows: number | undefined;
+    hostedPinTimes: readonly number[] | null;
+}): { mtimeFrom?: number; newest?: number } | null {
+    if (input.hostedPinTimes === null) {
+        return input.windowFrom === undefined ? {} : { mtimeFrom: input.windowFrom, newest: input.minRows };
+    }
+
+    const floor = hostedMtimeFloor({
+        pinTimes: input.hostedPinTimes,
+        windowFrom: input.windowFrom,
+        minRows: input.minRows,
+    });
+
+    return floor === null ? null : { mtimeFrom: floor };
+}
+
 export async function listSessionRowsWithTimings(
     opts: ListSessionRowsOptions = {}
 ): Promise<{ rows: SessionRow[]; timings: SessionRowTimings }> {
@@ -397,35 +448,36 @@ export async function listSessionRowsWithTimings(
     const started = performance.now();
     const now = opts.now ?? Date.now();
     const readPins = (): Promise<Map<string, SessionPin>> => loadPins({ readOnly: true }).catch(() => new Map());
-    // The host lives in the pin journal only, so a host filter reads it before the window is cut.
-    const hostPins = opts.host === undefined ? null : await readPins();
-    const hosted = hostPins
-        ? new Set(
-              [...hostPins]
-                  .filter(([, pin]) => pin.host?.kind === opts.host)
-                  .map(([sessionId]) => sessionId.toLowerCase())
-          )
-        : null;
-    // The SQL top-up (`newest`) counts every session, so it cannot find older HOSTED ones: a host filter with
-    // `minRows` reads the whole index and tops up below, after the filter.
-    const pushWindowDown = opts.hours !== undefined && !(hosted !== null && opts.minRows !== undefined);
-    const result = await prof.measureAsync("listing", () =>
-        getSessionListing({
-            excludeSubagents: opts.excludeSubagents ?? true,
-            ...(opts.filePaths === undefined ? {} : { filePaths: opts.filePaths }),
-            // The window and the top-up go down to the refresh and the SQL read; the filters
-            // below then keep exactly what they kept before.
-            ...(pushWindowDown && opts.hours !== undefined
-                ? { mtimeFrom: now - opts.hours * 60 * 60 * 1000, newest: opts.minRows }
-                : {}),
-            ...(opts.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: opts.maxDiscoveryAgeMs }),
-            ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
-        })
-    );
+    // The host lives in the pin journal only, so a host filter reads it before the window is cut. The listing is
+    // Claude's, so only Claude pins count: a newer Codex pin would raise the read's floor past an older Claude one.
+    const hostPins =
+        opts.host === undefined
+            ? null
+            : await loadPins({ readOnly: true, provider: "claude" }).catch(() => new Map<string, SessionPin>());
+    const hostedPins = hostPins ? [...hostPins].filter(([, pin]) => pin.host?.kind === opts.host) : null;
+    const hosted = hostedPins ? new Set(hostedPins.map(([sessionId]) => sessionId.toLowerCase())) : null;
+    // The window and the top-up go down to the refresh and the SQL read; the filters below then keep exactly what
+    // they kept before.
+    const bounds = listingBounds({
+        windowFrom: opts.hours === undefined ? undefined : now - opts.hours * 60 * 60 * 1000,
+        minRows: opts.minRows,
+        hostedPinTimes: hostedPins ? hostedPins.map(([, pin]) => pin.at) : null,
+    });
+    const result =
+        bounds === null
+            ? null
+            : await prof.measureAsync("listing", () =>
+                  getSessionListing({
+                      excludeSubagents: opts.excludeSubagents ?? true,
+                      ...(opts.filePaths === undefined ? {} : { filePaths: opts.filePaths }),
+                      ...bounds,
+                      ...(opts.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: opts.maxDiscoveryAgeMs }),
+                      ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
+                  })
+              );
     const listingMs = performance.now() - started;
-    const sessions = hosted
-        ? result.sessions.filter((r) => hosted.has(recordSessionId(r).toLowerCase()))
-        : result.sessions;
+    const listed = result?.sessions ?? [];
+    const sessions = hosted ? listed.filter((r) => hosted.has(recordSessionId(r).toLowerCase())) : listed;
     const cutoff = opts.hours === undefined ? Number.NEGATIVE_INFINITY : now - opts.hours * 60 * 60 * 1000;
     const inWindow = sessions.filter((r) => r.mtime >= cutoff);
     const need = opts.minRows !== undefined ? Math.max(0, opts.minRows - inWindow.length) : 0;
