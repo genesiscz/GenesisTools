@@ -96,6 +96,9 @@ function withConfidence(readings: string[], confidence: number | undefined): str
     );
 }
 
+/** A join's time and the start of the line after the cut differ by at most this much (as `applyCorrections` matches it). */
+const JOIN_SLACK_SEC = 0.5;
+
 /**
  * What a transcript applies: renames, then the confirmed items, then the dictionary. With `withSuggested` a suggested
  * item is applied too when its confidence reaches `global.suggest.applyAbove` (one with no confidence, a person's
@@ -117,15 +120,33 @@ export function correctionsOf(
         ? unclearPassages(record, { below: applyAbove, applied: applies })
         : unclearPassages(record, { below: config.global.suggest.listenBelow });
 
+    const ranges = used.flatMap((item) =>
+        item.kind === "speaker-range" && item.speaker
+            ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker }]
+            : []
+    );
+    // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line
+    // after it, because joins apply before ranges and that range would no longer reach it.
+    const voiceAt = (label: string, atSec: number) =>
+        ranges.find(
+            (range) =>
+                range.label === label &&
+                range.fromSec - JOIN_SLACK_SEC <= atSec &&
+                atSec <= range.toSec + JOIN_SLACK_SEC
+        )?.speaker;
+
     return {
         labels: record.speakers.labels,
-        ranges: used.flatMap((item) =>
-            item.kind === "speaker-range" && item.speaker
-                ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker }]
-                : []
-        ),
+        ranges,
         joins: used.flatMap((item) =>
-            item.kind === "join" ? [{ atSec: item.atSec, ...(item.speaker ? { speaker: item.speaker } : {}) }] : []
+            item.kind === "join"
+                ? [
+                      {
+                          atSec: item.atSec,
+                          ...(item.speaker ? { speaker: voiceAt(item.speaker, item.atSec) ?? item.speaker } : {}),
+                      },
+                  ]
+                : []
         ),
         terms: used.flatMap((item) =>
             item.kind === "term" && item.proposed ? [{ heard: item.heard, replacement: item.proposed }] : []
