@@ -34,6 +34,40 @@ Cancellation terminates the owned process group and removes only that generation
 Completed generations are retained. The original input is not modified. The widget imports originals to
 durable storage before starting preparation.
 
+## Shrink: let the tool pick the settings
+
+```sh
+tools video shrink ./talk.mp4 --to 400MB              # measure, show, ask, encode, check
+tools video shrink ./talk.mp4 --to 400MB --compare    # also write and open a 2x2 comparison video
+tools video shrink ./talk.mp4 --to 400MB --yes        # take the recommendation without asking
+tools video shrink ./talk.mp4 --preview-only --json   # only the measurements
+```
+
+`tools video shrink <file>` does what otherwise takes an evening of ffmpeg runs:
+
+1. **Plan.** It reads the file, works out the video bitrate a `--to` size leaves, and picks the picture height
+   (`--height auto`): the tallest standard height that still gets 0.015 bits per pixel. A 108 min 1080p talk at 400 MB
+   gets 0.007 at 1080p and 0.017 at 720p, so it goes to 720p, which also scored higher at the same size. With
+   `--audio auto`, audio that would take more than 15% of the target is re-encoded to AAC 96 kbit/s, which gives the
+   video about 30 kbit/s more.
+2. **Sample.** From the source's own packet sizes it finds the hardest, a median and the easiest 10 s (`--window`),
+   away from the first and last 5%, and cuts each as a lossless reference.
+3. **Preview.** Each preset (`fast`, `compatible`, `small`) encodes each window at the plan's bitrate, and each result
+   is scored against its reference with VMAF and SSIM (the encode scaled back with bicubic, the same for every
+   preset). The table shows the mean and the worst window, the predicted size and the predicted encode time.
+4. **Recommend.** The best score wins, but a faster preset within 1 VMAF point takes its place, and `small` (AV1)
+   must lead by 1.5 points, since AV1 plays in fewer places. Without libvmaf it ranks by SSIM in decibels.
+5. **Compare** (`--compare`). The hardest window as a 2x2 video, `<name>.compare.mp4` beside the input: the source,
+   then each preset, left to right and top to bottom. It opens in the default player.
+6. **Encode.** A picker in a terminal (the recommendation first), `--yes`, or `--preset`. The encode is
+   `tools video encode` with the size correction, progress and decode check.
+7. **Check.** The result is scored on the same windows, next to the sample scores, so you see that the full encode
+   kept what the preview promised.
+
+`--preset <name>` previews and encodes only that preset; `--no-preview` skips the samples. `--replace` puts the
+result at the original path. `--format json` prints one report, `jsonl` streams the plan, every window score and the
+result as lines.
+
 ## Re-encode
 
 ```sh
@@ -51,7 +85,7 @@ Presets, measured on a 10 s clip of a 720p talk recording at 420 kbit/s (2026-11
 - `fast`: `hevc`, the GPU, with a 20 s GOP, two B-frames and no frame coarser than QP 36. SSIM 0.982. Fastest and
   almost no CPU, but visibly softer at low bitrates.
 - `compatible`: `x264` slow, two passes for a size target. SSIM 0.993. Plays everywhere; on that clip it took about a
-  third of the time x265 took.
+  third of the time x265 took. (`--codec x265` uses preset medium: slow cost 2.4 to 2.6 times the time for no gain.)
 - `small`: `av1`, SVT-AV1 preset 5. SSIM 0.995, the best per byte; older devices may not decode AV1.
 
 Flags and defaults:
@@ -65,13 +99,15 @@ Flags and defaults:
 - `--jobs <n>`: 2. The hardware encoder has few sessions.
 - `--min-saving <percent>`: 25. A smaller saving discards the output.
 - `--target-size <size>`: aim each output at this size (`400MB`, `1.5GB`, a bare number is MB) instead of `--quality`.
-  The audio is copied, so the video gets the target minus the audio and a 1% container share. VideoToolbox misses an
+  The video gets the target minus the audio and a 1% container share. VideoToolbox misses an
   average bitrate, so a result outside 90% to 103% of the target is encoded again with a corrected rate, at most twice.
   x264 and x265 run two passes instead, which land within a few percent. An input already in the target codec is a
   candidate too. A bitrate cap (`-maxrate`) is not used: on VideoToolbox it starved the picture (SSIM 0.859).
-- `--height <px>`: scale a taller video down to this height. With `hevc`, decode, `scale_vt` and the encode all stay on
-  the GPU: 2 minutes of 1080p took 0.7 s of user CPU, against 11 s with ffmpeg's software scaler. The CPU encoders
-  scale with Lanczos, which keeps slide text sharper.
+- `--height <px>`: scale a taller video down to this height, with Lanczos on the CPU for every encoder. `hevc` still
+  decodes and encodes on the GPU. The GPU scaler (`scale_vt`) was dropped: at the same bitrate it scored VMAF 76.7
+  against 90.1 for Lanczos, for 0.6 s less CPU per 10 s of 1080p.
+- `--audio <mode>`: `auto` (default; copy, but AAC 96 kbit/s when copied audio would take over 15% of
+  `--target-size`), `copy`, or an AAC bitrate in kbit/s (`96`, `128k`).
 - `--progress`: report each encode while it runs, from ffmpeg's `-progress` output. In a terminal it is a clack bar;
   without one, a line per 10%. With `--format json` the progress events are JSON lines on stderr and stdout stays one
   document; with `--format jsonl` stdout carries `{"type":"progress",...}` lines and a `{"type":"row",...}` line for

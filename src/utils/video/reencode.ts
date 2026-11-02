@@ -4,6 +4,14 @@ import { audioStreamCount, hasAudio, type MediaFacts, type MediaStream, primaryV
 /** How the encoder spends bits: a constant quality, or an average bitrate that a size target asks for. */
 export type VideoRate = { kind: "quality"; quality: number } | { kind: "bitrate"; kbps: number };
 
+/** What happens to the audio tracks: copied as they are, or re-encoded to AAC at a bitrate per track. */
+export type AudioPlan = { kind: "copy" } | { kind: "aac"; kbps: number };
+
+/** `--audio`: decide per file (`auto`), always copy, or always re-encode at this many kbit/s. */
+export type AudioRequest = "auto" | "copy" | number;
+
+const COPY_AUDIO: AudioPlan = { kind: "copy" };
+
 /** One run of a two-pass encode: pass 1 only writes the statistics file that pass 2 reads. */
 export interface EncodePass {
     index: 1 | 2;
@@ -74,11 +82,11 @@ export const VIDEO_ENCODERS = {
             "-tag:v",
             "hvc1",
         ],
-        // Decode, scale and encode all stay on the GPU: 0.7 s of user CPU for 2 min of 1080p, against 11 s with the
-        // software scaler (measured 2026-11-02).
+        // Decode and encode on the GPU, scale on the CPU: against the 1080p source, Lanczos scored VMAF 90.1 where the GPU
+        // scaler (scale_vt) scored 76.7 at the same bitrate, for 0.6 s more CPU per 10 s of 1080p (measured 2026-11-02).
         scale: {
-            decodeArgs: ["-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"],
-            filter: (height) => `scale_vt=w=-2:h=${height}`,
+            decodeArgs: ["-hwaccel", "videotoolbox"],
+            filter: (height) => `scale=-2:${height}:flags=lanczos`,
         },
         twoPass: false,
     },
@@ -106,7 +114,7 @@ export const VIDEO_ENCODERS = {
     },
     x265: {
         codec: "x265",
-        label: "HEVC on the CPU (x265 slow): the same quality as x264 here, about five times slower",
+        label: "HEVC on the CPU (x265 medium): about the quality of x264 slow, several times slower",
         ffmpegName: "libx265",
         streamCodec: "hevc",
         defaultQuality: 26,
@@ -119,7 +127,8 @@ export const VIDEO_ENCODERS = {
             "-c:v",
             "libx265",
             "-preset",
-            "slow",
+            // slow measured no better than medium with aq-mode=3 on a talk recording, for 2.4 to 2.6 times the time.
+            "medium",
             ...(rate.kind === "quality" ? ["-crf", String(rate.quality)] : ["-b:v", `${rate.kbps}k`]),
             "-x265-params",
             [
@@ -337,17 +346,19 @@ export function encodeArgs({
     height,
     progress = false,
     pass,
+    audio = COPY_AUDIO,
 }: {
     encoder: VideoEncoder;
     input: string;
     output: string;
     rate: VideoRate;
-    /** Scale to this height on the GPU; undefined keeps the size. */
+    /** Scale to this height (the encoder's `scale` decides how); undefined keeps the size. */
     height?: number;
     /** Write `key=value` progress blocks to stdout, for `ffmpegProgressReader`. */
     progress?: boolean;
     /** One run of a two-pass encode; pass 1 writes only its statistics, to the null muxer. */
     pass?: EncodePass;
+    audio?: AudioPlan;
 }): string[] {
     return ffmpegCommand([
         "-nostdin",
@@ -365,7 +376,7 @@ export function encodeArgs({
         ...encoder.videoArgs(rate, pass),
         ...(pass?.index === 1
             ? ["-an", "-f", "null", "-"]
-            : ["-c:a", "copy", "-movflags", "+faststart+use_metadata_tags", output]),
+            : [...audioArgs(audio), "-movflags", "+faststart+use_metadata_tags", output]),
     ]);
 }
 
@@ -417,21 +428,86 @@ const CONTAINER_SHARE = 0.01;
 /** A video rate below this is not worth encoding; the target is too small for the duration. */
 export const MIN_TARGET_VIDEO_KBPS = 80;
 
-/** Bytes the copied audio tracks take over the whole duration. */
-export function audioBytes(facts: MediaFacts): number {
+/** Re-encoded audio at this rate per track is plenty for speech and keeps music acceptable. */
+export const AUTO_AUDIO_KBPS = 96;
+/** `auto` re-encodes the audio when the copied tracks would take more than this share of a size target. */
+const AUDIO_SHARE_LIMIT = 0.15;
+
+/** Reads `--audio`: `auto`, `copy`, or a bitrate in kbit/s (`96`, `96k`). */
+export function parseAudioRequest(value: string, flag = "--audio"): AudioRequest {
+    if (value === "auto" || value === "copy") {
+        return value;
+    }
+
+    const kbps = Number(value.replace(/k$/i, ""));
+
+    if (!Number.isInteger(kbps) || kbps < 16 || kbps > 512) {
+        throw new Error(
+            `${flag} takes auto, copy or an AAC bitrate in kbit/s from 16 to 512 (96, 128k), not "${value}".`
+        );
+    }
+
+    return kbps;
+}
+
+function audioArgs(plan: AudioPlan): string[] {
+    return plan.kind === "copy" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", `${plan.kbps}k`];
+}
+
+/**
+ * The audio plan for one file. `auto` copies, except under a size target where the copied tracks would take more than
+ * 15% of it and run above 96 kbit/s: then AAC at 96 kbit/s leaves the video more bits (a 128 kbit/s track is 26% of a
+ * 400 MB, 108 min file).
+ */
+export function planAudio({
+    facts,
+    request,
+    targetBytes,
+}: {
+    facts: MediaFacts;
+    request: AudioRequest;
+    targetBytes?: number;
+}): AudioPlan {
+    if (typeof request === "number") {
+        return { kind: "aac", kbps: request };
+    }
+
+    if (request === "copy" || targetBytes === undefined || !hasAudio(facts)) {
+        return COPY_AUDIO;
+    }
+
+    const audio = facts.streams.filter((stream) => stream.type === "audio");
+    const aboveAuto = audio.every((stream) => (stream.bitRate ?? UNKNOWN_AUDIO_BPS) > AUTO_AUDIO_KBPS * 1000);
+    const share = audioBytes(facts) / targetBytes;
+    return aboveAuto && share > AUDIO_SHARE_LIMIT ? { kind: "aac", kbps: AUTO_AUDIO_KBPS } : COPY_AUDIO;
+}
+
+/** Bytes the audio tracks take over the whole duration, copied (the default) or re-encoded by `plan`. */
+export function audioBytes(facts: MediaFacts, plan: AudioPlan = COPY_AUDIO): number {
     const bitsPerSec = facts.streams
         .filter((stream) => stream.type === "audio")
-        .reduce((sum, stream) => sum + (stream.bitRate ?? UNKNOWN_AUDIO_BPS), 0);
+        .reduce(
+            (sum, stream) => sum + (plan.kind === "aac" ? plan.kbps * 1000 : (stream.bitRate ?? UNKNOWN_AUDIO_BPS)),
+            0
+        );
     return ((facts.durationSec ?? 0) * bitsPerSec) / 8;
 }
 
-/** The video bitrate that fills `targetBytes` next to the copied audio, or null without a duration. */
-export function videoKbpsForTarget({ facts, targetBytes }: { facts: MediaFacts; targetBytes: number }): number | null {
+/** The video bitrate that fills `targetBytes` next to the audio, or null without a duration. */
+export function videoKbpsForTarget({
+    facts,
+    targetBytes,
+    audio = COPY_AUDIO,
+}: {
+    facts: MediaFacts;
+    targetBytes: number;
+    audio?: AudioPlan;
+}): number | null {
     if (!facts.durationSec || facts.durationSec <= 0) {
         return null;
     }
 
-    const videoBytes = targetBytes * (1 - CONTAINER_SHARE) - audioBytes(facts);
+    const videoBytes = targetBytes * (1 - CONTAINER_SHARE) - audioBytes(facts, audio);
     return Math.floor((videoBytes * 8) / facts.durationSec / 1000);
 }
 
