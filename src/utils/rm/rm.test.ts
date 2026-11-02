@@ -592,6 +592,60 @@ describe("trash", () => {
         expect(existsSync(second.path)).toBe(true);
     });
 
+    /** Moves `target` while the rename that publishes the claim as `<id>.json` throws ENOSPC `failures` times. */
+    function moveWhilePublishFails(target: ReturnType<typeof resolveTarget>, failures: number) {
+        const rename = fs.renameSync;
+        let failed = 0;
+        const spy = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+            if (failed < failures && /\.json\.restoring-\d+$/.test(String(from)) && String(to).endsWith(".json")) {
+                failed++;
+                throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+            }
+
+            return rename(from, to);
+        });
+
+        try {
+            moveToTrash([{ target, rule: "test" }], { config, caller: AGENT, graceMinutes: 60, paths: trashPaths });
+        } catch (error) {
+            return { thrown: error, failed };
+        } finally {
+            spy.mockRestore();
+        }
+
+        return { thrown: null, failed };
+    }
+
+    test("a publish that throws after the move hands the record back, so the same process restores the batch", () => {
+        const target = resolveTarget(file(join(dir("publish-fails"), "moved")), base);
+        const { thrown, failed } = moveWhilePublishFails(target, 1);
+
+        expect(failed).toBe(1);
+        expect(thrown).toBeInstanceOf(RmPartialMoveError);
+        const partial = thrown instanceof RmPartialMoveError ? thrown : null;
+        expect(partial?.message).toContain("no space left on device");
+        expect(partial?.batch.items.map((item) => item.original)).toEqual([target.path]);
+        expect(existsSync(target.path)).toBe(false);
+        expect(restoreBatch(partial?.batch.id ?? "", { config, paths: trashPaths }).restored).toEqual([target.path]);
+        expect(existsSync(target.path)).toBe(true);
+    });
+
+    test("a record that cannot be handed back stays this process's claim and still names the batch", () => {
+        const target = resolveTarget(file(join(dir("publish-and-handback-fail"), "moved")), base);
+        const { thrown, failed } = moveWhilePublishFails(target, 2);
+
+        expect(failed).toBe(2);
+        expect(thrown).toBeInstanceOf(RmPartialMoveError);
+        const id = thrown instanceof RmPartialMoveError ? thrown.batch.id : "";
+        const claim = join(trashPaths.batchesDir, `${id}.json.restoring-${process.pid}`);
+        expect(existsSync(claim)).toBe(true);
+        expect(() => restoreBatch(id, { config, paths: trashPaths })).toThrow(/still moving/);
+
+        // What the orphan sweep or a restore does once this process is gone: the claim becomes the record.
+        renameSync(claim, join(trashPaths.batchesDir, `${id}.json`));
+        expect(restoreBatch(id, { config, paths: trashPaths }).restored).toEqual([target.path]);
+    });
+
     test("assertInsideTrash refuses anything outside the trash or above item depth", () => {
         expect(() => assertInsideTrash(join(base, "repo"), config, "item")).toThrow(/not inside a trash/);
         expect(() => assertInsideTrash(join(config.trashRoot, "batch"), config, "item")).toThrow(/not inside a trash/);

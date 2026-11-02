@@ -166,8 +166,14 @@ export function judgeOutput({
 }
 
 /**
+ * The streams a re-encode carries over: the first playable video (`0:V:0`, never a cover picture, the stream
+ * `skipReason` judged) and every audio track. The decode check maps the same ones, so it decodes each kept track.
+ */
+const KEPT_STREAMS = ["-map", "0:V:0", "-map", "0:a?"] as const;
+
+/**
  * The ffmpeg command line, under `nice`; the output keeps the input's container. `-n` refuses to write over an
- * existing file, and `0:V:0` is the first playable video, never a cover picture (the stream `skipReason` judged).
+ * existing file.
  */
 export function encodeArgs({
     encoder,
@@ -188,10 +194,7 @@ export function encodeArgs({
         ...encoder.decodeArgs,
         "-i",
         input,
-        "-map",
-        "0:V:0",
-        "-map",
-        "0:a?",
+        ...KEPT_STREAMS,
         "-map_metadata",
         "0",
         ...encoder.videoArgs(quality),
@@ -203,7 +206,10 @@ export function encodeArgs({
     ]);
 }
 
-/** Decodes the whole file and returns what ffmpeg printed; empty means clean. */
+/**
+ * Decodes the whole file and returns what ffmpeg printed; empty means clean. Without the maps ffmpeg would decode one
+ * audio track of its own choosing, and a damaged second track would pass.
+ */
 export async function decodeErrors({
     encoder,
     path,
@@ -214,7 +220,18 @@ export async function decodeErrors({
     signal?: AbortSignal;
 }): Promise<string> {
     const result = await boundedCommand({
-        command: ffmpegCommand(["-v", "error", "-xerror", ...encoder.decodeArgs, "-i", path, "-f", "null", "-"]),
+        command: ffmpegCommand([
+            "-v",
+            "error",
+            "-xerror",
+            ...encoder.decodeArgs,
+            "-i",
+            path,
+            ...KEPT_STREAMS,
+            "-f",
+            "null",
+            "-",
+        ]),
         timeoutMs: 30 * 60_000,
         signal,
     });

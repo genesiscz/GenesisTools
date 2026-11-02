@@ -276,7 +276,8 @@ export interface MoveOptions {
  * `<id>.json` only once the moves are over. Until then the drain cannot see the batch, a restore refuses it, and
  * the orphan sweep keeps its folder; a crash leaves the claim, which the sweep gives back as an incomplete record
  * that a restore reads and the drain never deletes. Returns the batch, or null when nothing moved. A step that throws
- * after an item reached the trash throws `RmPartialMoveError`, which carries the published batch.
+ * after an item reached the trash throws `RmPartialMoveError`, which carries the published batch; when the publish
+ * itself throws, the claim is handed back as `<id>.json` (`publishOrHandBack`) and the error carries that batch.
  */
 export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptions): TrashBatch | null {
     if (requests.length === 0) {
@@ -380,7 +381,9 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
         failure = { error };
     } finally {
         // Also on a throw: what reached the trash is on the published record, whatever stopped the loop.
-        published = publishBatch(batch, { paths, claim, config: options.config });
+        const publish = publishOrHandBack(batch, { paths, claim, config: options.config });
+        published = publish.published;
+        failure ??= publish.failure;
     }
 
     if (failure) {
@@ -449,7 +452,7 @@ function publishBatch(
     batch: TrashBatch,
     context: { paths: TrashPaths; claim: string; config: RmConfig }
 ): TrashBatch | null {
-    const items = batch.items.filter((item) => existsSync(item.stored) || isBrokenLink(item.stored));
+    const items = itemsInTrash(batch);
 
     if (items.length === 0) {
         unlinkSync(context.claim);
@@ -471,6 +474,46 @@ function publishBatch(
     writeBatch(published, context.paths, context.claim);
     renameSync(context.claim, batchFile(context.paths, batch.id));
     return published;
+}
+
+function itemsInTrash(batch: TrashBatch): TrashItem[] {
+    return batch.items.filter((item) => existsSync(item.stored) || isBrokenLink(item.stored));
+}
+
+/**
+ * `publishBatch`, and when it throws after items reached the trash, the error with those items. The claim still holds
+ * a record a restore reads (the incomplete one written before the moves, or the finished one when only its rename
+ * failed); it becomes `<id>.json`, so a restore in this process finds it. A publish that throws with nothing moved
+ * throws on.
+ */
+function publishOrHandBack(
+    batch: TrashBatch,
+    context: { paths: TrashPaths; claim: string; config: RmConfig }
+): { published: TrashBatch | null; failure: { error: unknown } | null } {
+    try {
+        return { published: publishBatch(batch, context), failure: null };
+    } catch (error) {
+        const items = itemsInTrash(batch);
+
+        if (items.length === 0) {
+            throw error;
+        }
+
+        logger.warn({ batch: batch.id, error }, "rm: the batch record could not be published");
+
+        try {
+            renameSync(context.claim, batchFile(context.paths, batch.id));
+        } catch (handBackError) {
+            // It stays this process's claim: a restore or the orphan sweep gives it back once the process has exited.
+            logger.warn(
+                { batch: batch.id, claim: context.claim, error: handBackError },
+                "rm: the record stays claimed"
+            );
+        }
+
+        const { id, createdAt, drainAfter, caller } = batch;
+        return { published: { id, createdAt, drainAfter, caller, items }, failure: { error } };
+    }
 }
 
 /** A volume with no writable private trash: the step's error becomes RmTrashUnavailableError, so the path stays. */
