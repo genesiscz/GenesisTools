@@ -1363,8 +1363,20 @@ export interface DrainerOptions {
 const KEEP_NEW_BATCH_MS = 15 * 60_000;
 
 /**
- * Refreshes the batches made in the last 15 minutes that `tools rm restore` can still bring back (in their grace, or
- * incomplete) against macOS tmp_cleaner. A move does not walk the tree it moved, since a large tree would hold the
+ * True while `tools rm restore` can still bring the batch back: in its grace, incomplete (never drained), or failed
+ * (the drain could not delete it, and only a forced drain tries again, so it stays in the trash for good). Both
+ * keepalives against macOS tmp_cleaner refresh exactly these batches (`keepNewBatches`, `refreshWaitingRmData`).
+ */
+export function isRestorableBatch(
+    batch: Pick<TrashBatch, "incomplete" | "failed" | "drainAfter">,
+    now: number
+): boolean {
+    return batch.incomplete === true || batch.failed !== undefined || Date.parse(batch.drainAfter) > now;
+}
+
+/**
+ * Refreshes the batches made in the last 15 minutes that `tools rm restore` can still bring back (`isRestorableBatch`)
+ * against macOS tmp_cleaner. A move does not walk the tree it moved, since a large tree would hold the
  * deleting run: every move starts the drainer instead, and each drainer start and loop runs this in the background.
  * `done` keeps one drainer from walking a batch twice. An older batch, and a file this could not refresh (which
  * `keepFromTmpCleaner` logs), is the daily keepalive's (`refreshWaitingRmData`).
@@ -1375,9 +1387,8 @@ function keepNewBatches(options: { paths: TrashPaths; now: Date; done: Set<strin
 
     for (const batch of listBatches(options.paths)) {
         const young = now - Date.parse(batch.createdAt) < KEEP_NEW_BATCH_MS;
-        const restorable = batch.incomplete === true || Date.parse(batch.drainAfter) > now;
 
-        if (!young || !restorable || options.done.has(batch.id)) {
+        if (!young || !isRestorableBatch(batch, now) || options.done.has(batch.id)) {
             continue;
         }
 

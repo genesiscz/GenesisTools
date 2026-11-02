@@ -1675,6 +1675,67 @@ describe("every batch of a request", () => {
         expect(done?.batchId).toBe("20261101-110000-1-bbbb");
     });
 
+    test("a request that shares one path with an approved one and keeps another restores both batches", () => {
+        const shared = file(join(base, "partly-shared", "shared.txt"));
+        const own = file(join(base, "partly-shared", "own.txt"));
+        const target = (path: string) => ({
+            path,
+            kind: "file" as const,
+            rule: "default",
+            reason: "no rule allows it",
+        });
+        const input = { kind: "delete" as const, caller: AGENT, cwd: base, reason: null };
+        const first = createRmRequest({ ...input, targets: [target(shared)] });
+        const second = createRmRequest({ ...input, targets: [target(shared), target(own)] });
+        const choices = answer.choices;
+        const { batch: firstBatch } = approveDelete({
+            ctx: context(),
+            request: first,
+            approved: entriesOf(first),
+            denied: [],
+            choices,
+        });
+        const partly = loadRmRequest(second.id);
+        const firstId = firstBatch?.id ?? "";
+
+        // The shared path left with the first request's batch; the second keeps only its own path, still undecided.
+        expect(firstId).not.toBe("");
+        expect(partly?.status).toBe("pending");
+        expect(partly?.targets.map((t) => t.path)).toEqual([own]);
+        expect(partly?.decided?.approved).toEqual([shared]);
+        expect(partly?.decidedAt).toBeUndefined();
+        expect(partly ? requestBatchIds(partly) : []).toEqual([firstId]);
+
+        if (!partly) {
+            throw new Error("expected the second request to stay pending");
+        }
+
+        const entries = entriesOf(partly);
+        const { batch: secondBatch } = approveDelete({
+            ctx: context(),
+            request: partly,
+            approved: entries,
+            denied: [],
+            choices,
+        });
+        saveApproved({
+            request: partly,
+            answer,
+            approved: entries,
+            denied: [],
+            pending: [],
+            batchId: secondBatch?.id,
+            ctx: context(),
+        });
+        const done = loadRmRequest(second.id);
+
+        // `restore <second id>` reads these batches: before, it found only the second and left the shared path gone.
+        expect(done?.status).toBe("approved");
+        expect(done ? requestBatchIds(done) : []).toEqual([firstId, secondBatch?.id ?? ""]);
+        expect(done?.decided?.approved.sort()).toEqual([own, shared].sort());
+        expect([shared, own].map((path) => existsSync(path))).toEqual([false, false]);
+    });
+
     test("a request saved before batchIds reads its one batch", () => {
         expect(requestBatchIds({ batchId: "20261031-170802-1-6ce5" })).toEqual(["20261031-170802-1-6ce5"]);
         expect(requestBatchIds({})).toEqual([]);
@@ -1813,6 +1874,44 @@ describe("a rule that covers a request now", () => {
         expect(request.targets.every((target) => !existsSync(target.stored ?? ""))).toBe(true);
         expect(lines.filter((line) => line.includes("refused: rule tmp-small"))).toHaveLength(2);
         expect(lines.some((line) => line.includes("deleted without a request"))).toBe(true);
+    });
+
+    test("approve of several requests the sweep closes (a rule, or gone) opens no window and exits 0", async () => {
+        const ruledOne = asideRequest("ruled-many-a");
+        const ruledTwo = asideRequest("ruled-many-b");
+        const gone = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            targets: [{ path: join(base, "ruled-many-gone", "never.txt"), kind: "file", rule: "default", reason: "x" }],
+        });
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            lines.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+        let code: typeof process.exitCode;
+        process.exitCode = 0;
+
+        try {
+            await approveMany([ruledOne.id, ruledTwo.id, gone.id], ruled(), {
+                ask: async () => {
+                    throw new Error("no window may open for requests the sweep closed");
+                },
+                kickDrainer: () => undefined,
+            });
+            code = process.exitCode;
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        // Before, the sweep's closes counted as nothing done: "Nothing to approve." and exit 1 after the work was done.
+        expect(code).toBe(0);
+        expect(lines).not.toContain("Nothing to approve.");
+        expect([ruledOne.id, ruledTwo.id].map((id) => loadRmRequest(id)?.status)).toEqual(["ruled", "ruled"]);
+        expect(loadRmRequest(gone.id)?.status).not.toBe("pending");
     });
 
     test("ask on a request a rule covers starts the drainer for the rule's batch, and no window opens", async () => {
