@@ -19,9 +19,14 @@ const unreadableTails = new Set<string>();
 mock.module("@app/claude/lib/history/search", () => ({
     getSessionListing: async (options: Record<string, unknown> = {}) => {
         listingCalls.push(options);
+        // Like the SQL read: the sessions from `mtimeFrom` on, plus the `newest` N whatever their age.
+        const from = typeof options.mtimeFrom === "number" ? options.mtimeFrom : Number.NEGATIVE_INFINITY;
+        const newest = typeof options.newest === "number" ? options.newest : 0;
+        const topUp = new Set([...listing.sessions].sort((a, b) => b.mtime - a.mtime).slice(0, newest));
+        const sessions = listing.sessions.filter((session) => session.mtime >= from || topUp.has(session));
         return {
-            sessions: listing.sessions,
-            total: listing.sessions.length,
+            sessions,
+            total: sessions.length,
             subagents: 0,
             indexed: 0,
             staleRemoved: 0,
@@ -685,6 +690,7 @@ describe("listSessionRows", () => {
         expect(rows.map((row) => row.sessionId)).toEqual(["old-t3"]);
         // The SQL top-up counts every session, so it does not go down with a host filter. The read is still bounded:
         // it starts at the pin of the newest hosted session the top-up needs, not at the start of the history.
+        expect(listingCalls).toHaveLength(1);
         expect(listingCalls.at(-1)).not.toHaveProperty("newest");
         expect(listingCalls.at(-1)?.mtimeFrom).toBe(NOW - 30 * 60 * MIN - MIN);
 
@@ -700,6 +706,23 @@ describe("listSessionRows", () => {
         listingCalls.length = 0;
         expect(await listSessionRows({ hours: 6, minRows: 5, host: "other", now: NOW })).toEqual([]);
         expect(listingCalls).toEqual([]);
+    });
+
+    test("--min widens past a newer hosted pin whose transcript is gone, so an older hosted row still fills it", async () => {
+        listing.sessions = [
+            record({ filePath: "/tmp/plain-a.jsonl", sessionId: "plain-a", mtime: NOW - 5 * MIN }),
+            record({ filePath: "/tmp/old-t3.jsonl", sessionId: "old-t3", mtime: NOW - 30 * 60 * MIN }),
+        ];
+        pins.set("old-t3", { account: "work", host: { kind: "t3", id: "thread-2" }, at: NOW - 30 * 60 * MIN - MIN });
+        // A newer T3 session whose transcript was deleted: its pin stays in the journal and sets the first floor.
+        pins.set("gone-t3", { account: "work", host: { kind: "t3", id: "thread-4" }, at: NOW - 10 * 60 * MIN });
+        listingCalls.length = 0;
+
+        const rows = await listSessionRows({ hours: 6, minRows: 1, host: "t3", now: NOW });
+
+        expect(rows.map((row) => row.sessionId)).toEqual(["old-t3"]);
+        // The first read stops at the newer pin and keeps no hosted row; the second starts at the oldest pin.
+        expect(listingCalls.map((call) => call.mtimeFrom)).toEqual([NOW - 10 * 60 * MIN, NOW - 30 * 60 * MIN - MIN]);
     });
 
     test("the hosted floor is the minRows-th newest pin, the oldest pin without a window, and the window without --min", () => {
