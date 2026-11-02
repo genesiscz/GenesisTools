@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -11,8 +12,6 @@ import {
     type MeetingItem,
     type MeetingRecord,
     MeetingStore,
-    meetingItemSchema,
-    nextId,
     QUESTION_TOPICS,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -26,7 +25,6 @@ import {
     formatClock,
     groupTurns,
     localTime,
-    parseClock,
     TRANSCRIPT_FORMATS,
     type TranscriptFormat,
     transcriptMarkdown,
@@ -36,8 +34,10 @@ import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/
 import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { z } from "zod";
 import { collectAndReport } from "../lib/collect";
 import { energyMicShareFor } from "../lib/energy";
+import { FINDING_KINDS, findingItems, findingProblem, findingSchema, findingsFileSchema } from "../lib/findings";
 import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
 import { openQuestions } from "../lib/questions";
@@ -249,45 +249,64 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
     printItems(listed);
 }
 
-/** `items add --listen`: a question of the polisher's own, answered later by ear with `listen`. */
-async function addQuestion(
-    ref: string,
-    opts: {
-        listen?: boolean;
-        from: string;
-        to: string;
-        about?: string;
-        question: string;
-        heard?: string;
-        choices?: string;
-        decides?: string;
-    }
-): Promise<void> {
-    if (!opts.listen) {
-        fail(`Only questions can be added by hand: pass --listen. The other kinds come from ${TOOL} suggest.`);
-        return;
-    }
+interface AddOptions {
+    kind?: string;
+    listen?: boolean;
+    fromFile?: string;
+    from?: string;
+    to?: string;
+    at?: string;
+    label?: string;
+    speaker?: string;
+    heard?: string;
+    proposed?: string;
+    about?: string;
+    question?: string;
+    choices?: string;
+    decides?: string;
+    confidence?: string;
+    reason?: string;
+}
 
-    const fromSec = parseClock(opts.from);
-    const toSec = parseClock(opts.to);
+function commaList(value: string | undefined): string[] | undefined {
+    return value === undefined
+        ? undefined
+        : value
+              .split(",")
+              .map((part) => part.trim())
+              .filter(Boolean);
+}
 
-    if (fromSec === undefined || toSec === undefined || toSec < fromSec) {
-        fail(`--from and --to need transcript times (37:43, 1:02:10 or seconds), --from first.`);
-        return;
-    }
+/** The finding the flags describe, in the shape a `--from-file` entry has, before validation. */
+function findingFromFlags(opts: AddOptions): Record<string, unknown> {
+    const kind = opts.listen ? "question" : (opts.kind ?? "question");
+    const fields: Record<string, unknown> = {
+        kind,
+        from: opts.from,
+        to: opts.to,
+        at: opts.at,
+        label: opts.label,
+        speaker: opts.speaker,
+        heard: opts.heard,
+        proposed: opts.proposed,
+        about: opts.about,
+        question: opts.question,
+        choices: commaList(opts.choices),
+        decides: commaList(opts.decides),
+        confidence: opts.confidence === undefined ? undefined : Number(opts.confidence),
+        reason: opts.reason,
+    };
+    return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+}
 
-    const about = await resolveEnum({
-        value: opts.about,
-        fallback: "speaker",
-        values: QUESTION_TOPICS,
-        flag: "--about",
-        subcommand: ["items", "add"],
-    });
-
-    if (!about) {
-        return;
-    }
-
+/**
+ * `items add`: an agent's finding (a speaker range or a term, with a confidence and a reason) or a question to answer
+ * by ear. `--from-file` adds a whole batch in one write; a batch with one bad entry adds nothing.
+ */
+async function addItems(ref: string, own: AddOptions, command: Command): Promise<void> {
+    // The parent `items` has a `--kind` filter of its own, and Commander gives a shared flag to the parent.
+    const parentKind = command.parent?.opts<{ kind?: string }>().kind;
+    const opts: AddOptions = { ...own, ...(own.kind === undefined && parentKind ? { kind: parentKind } : {}) };
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -295,41 +314,57 @@ async function addQuestion(
         return;
     }
 
-    const list = (value?: string) =>
-        (value ?? "")
-            .split(",")
-            .map((part) => part.trim())
-            .filter(Boolean);
-    const decides = list(opts.decides);
-    const unknown = decides.filter((id) => !record.items.some((item) => item.id === id));
+    let raw: unknown;
 
-    if (unknown.length > 0) {
-        fail(`${record.id} has no item ${unknown.join(", ")} (${TOOL} items ${record.id})`);
+    try {
+        raw = opts.fromFile
+            ? SafeJSON.parse(readFileSync(opts.fromFile, "utf8"), { strict: true })
+            : [findingFromFlags(opts)];
+    } catch (err) {
+        fail(`--from-file ${opts.fromFile}: ${errorText(err)}`);
+        return;
+    }
+
+    const parsed = findingsFileSchema.safeParse(raw);
+
+    if (!parsed.success) {
+        // The union's own message says only "Invalid input"; the entries' schema names the field.
+        const entries = Array.isArray(raw) ? raw : [raw];
+        const issue = z.array(findingSchema).safeParse(entries).error?.issues[0] ?? parsed.error.issues[0];
+        const where = issue?.path.length ? ` at ${issue.path.join(".")}` : "";
+        fail(`Not a finding${where}: ${issue?.message ?? "invalid"}. Kinds: ${FINDING_KINDS.join(", ")}.`);
+        return;
+    }
+
+    const problems = parsed.data.flatMap((finding, index) => {
+        const problem = findingProblem(finding, record.items);
+        return problem ? [`#${index + 1} (${finding.kind}) ${problem}`] : [];
+    });
+
+    if (problems.length > 0) {
+        fail(`Nothing added: ${problems.join("; ")}`);
         return;
     }
 
     try {
-        let id = "";
-        await store.update(record.id, { command: "items add", change: opts.question }, (current) => {
-            id = nextId("i", current.items);
-            current.items.push(
-                meetingItemSchema.parse({
-                    id,
-                    kind: "question",
-                    status: "suggested",
-                    about,
-                    fromSec,
-                    toSec,
-                    question: opts.question,
-                    ...(opts.heard ? { heard: opts.heard } : {}),
-                    choices: list(opts.choices),
-                    decides,
-                    rules: [MeetingRule.User],
-                    suggestedAt: new Date().toISOString(),
-                })
-            );
+        let added: MeetingItem[] = [];
+        await store.update(record.id, { command: "items add", change: `${parsed.data.length} findings` }, (current) => {
+            added = findingItems(parsed.data, current.items, new Date().toISOString());
+            current.items.push(...added);
         });
-        ui.ok(`${id} added to ${record.id}. Answer it: ${TOOL} listen ${record.id} --item ${id}`);
+
+        if (added.length === 1 && added[0]!.kind === "question") {
+            ui.ok(
+                `${added[0]!.id} added to ${record.id}. Answer it: ${TOOL} listen ${record.id} --item ${added[0]!.id}`
+            );
+            return;
+        }
+
+        ui.ok(
+            added.length === 1
+                ? `${added[0]!.id} added to ${record.id}.`
+                : `${added.length} items added to ${record.id} (${added[0]?.id} to ${added.at(-1)?.id}).`
+        );
     } catch (err) {
         fail(errorText(err));
     }
@@ -737,19 +772,29 @@ export function registerItemCommands(program: Command): void {
         .action(items)
         .command("add")
         .argument("<meeting>", MEETING_REF)
-        .description(`Add a question to answer by ear (${toolCommand("meetings", "listen")})`)
-        .option("--listen", "the item is a question answered by listening (the only kind added by hand)")
-        .requiredOption("--from <time>", "start of the range: 37:43, 1:02:10 or seconds")
-        .requiredOption("--to <time>", "end of the range")
-        .option("--about [topic]", `${QUESTION_TOPICS.join(" | ")} (default speaker)`)
-        .requiredOption("--question <text>", "what to decide, as the listener reads it")
+        .description(
+            `Add an agent's finding (a speaker range or a term, with a confidence and a reason) or a question for ${toolCommand("meetings", "listen")}`
+        )
+        .option("--kind <kind>", `${FINDING_KINDS.join(" | ")} (default question)`)
+        .option("--listen", "same as --kind question")
+        .option("--from-file <json>", "a batch: an array of findings in the shape the flags make (see the README)")
+        .option("--from <time>", "range start: 37:43, 1:02:10 or seconds (speaker-range, question)")
+        .option("--to <time>", "range end (speaker-range, question)")
+        .option("--at <time>", "term: where it is heard")
+        .option("--label <label>", "speaker-range: the source's label of those lines")
+        .option("--speaker <name>", "speaker-range: who it really is")
         .option(
             "--heard <words>",
-            "about a term or text: the words in question, marked in the transcript until answered"
+            "term: the words as the transcript has them; question: the words marked until answered"
         )
-        .option("--choices <list>", "comma-separated answers to offer")
-        .option("--decides <ids>", "comma-separated items the answer confirms or rejects")
-        .action(addQuestion);
+        .option("--proposed <text>", "term: the right spelling, when known")
+        .option("--about [topic]", `question: ${QUESTION_TOPICS.join(" | ")} (default speaker)`)
+        .option("--question <text>", "question: what to decide, as the listener reads it")
+        .option("--choices <list>", "question: comma-separated answers to offer")
+        .option("--decides <ids>", "question: comma-separated items the answer confirms or rejects")
+        .option("--confidence <0..1>", "how sure the finding is (required for speaker-range and term)")
+        .option("--reason <text>", "why: the facts and context it rests on (required for speaker-range and term)")
+        .action(addItems);
 
     for (const [name, status] of [
         ["confirm", "confirmed"],

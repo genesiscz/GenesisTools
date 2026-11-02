@@ -6,6 +6,7 @@ import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
+import { findingItems, findingProblem, findingsFileSchema } from "./lib/findings";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { selectQuestions } from "./lib/question-select";
@@ -801,5 +802,51 @@ describe("a term with no spelling yet", () => {
         const ledger = answerQuestion(meetingRecord, "i2", { answer: "prolistuje", now });
         expect(meetingRecord.items[0]).toMatchObject({ status: "confirmed", proposed: "prolistuje" });
         expect(ledger).toEqual([expect.objectContaining({ heard: "proklizuje", fixed: "prolistuje" })]);
+    });
+});
+
+describe("an agent's findings (items add)", () => {
+    const now = "2026-11-02T15:00:00.000Z";
+
+    test("a range and a term carry the agent rule, its confidence and its reason; a question without one is the user's", () => {
+        const parsed = findingsFileSchema.parse([
+            {
+                kind: "speaker-range",
+                from: "38:12",
+                to: 2300,
+                label: "Speaker 5",
+                speaker: "Fil Example",
+                confidence: 0.85,
+                reason: "names Bob in the third person",
+            },
+            { kind: "term", at: "1:02", heard: "proklizuje", confidence: 0.4, reason: "no dictionary knows it" },
+            { kind: "question", from: 10, to: 20, question: "Who?" },
+        ]);
+        const [range, term, question] = findingItems(parsed, [], now);
+        expect(range).toMatchObject({
+            id: "i1",
+            kind: "speaker-range",
+            fromSec: 2292,
+            toSec: 2300,
+            rules: ["agent"],
+            confidence: 0.85,
+            evidence: { reason: "names Bob in the third person" },
+        });
+        expect(term).toMatchObject({ id: "i2", atSec: 62, rules: ["agent"] });
+        expect(term).not.toHaveProperty("proposed");
+        expect(question).toMatchObject({ id: "i3", kind: "question", rules: ["user"] });
+    });
+
+    test("a range or a term without a reason, a bad time, or a question deciding a missing item is refused", () => {
+        expect(findingsFileSchema.safeParse([{ kind: "term", at: 5, heard: "x", confidence: 0.5 }]).success).toBe(
+            false
+        );
+        expect(findingsFileSchema.safeParse([{ kind: "question", from: "soon", to: 5, question: "?" }]).success).toBe(
+            false
+        );
+        const [late] = findingsFileSchema.parse({
+            findings: [{ kind: "question", from: 5, to: 9, question: "?", decides: ["i9"] }],
+        });
+        expect(findingProblem(late!, [])).toContain("i9");
     });
 });
