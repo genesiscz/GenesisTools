@@ -228,8 +228,9 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
 }
 
 /**
- * Prints a finished daily pass. Exit status 1 when the agents-objects step failed or found another pass holding its
- * lock, in the JSON form too: a script reads the status, not the text.
+ * Prints a finished daily pass. Exit status 1 when a file of a target did not compress (its plain file is kept), or
+ * when the agents-objects step failed or found another pass holding its lock, in the JSON form too: a script reads
+ * the status, not the text.
  */
 export function reportDailyPass({ compression, objectStore }: DailyPassReport, json: boolean): void {
     const summary = compression.map(({ target, report }) => ({
@@ -240,7 +241,7 @@ export function reportDailyPass({ compression, objectStore }: DailyPassReport, j
         failed: report.failed,
     }));
 
-    if (!objectStore || objectStore.skipped === "locked") {
+    if (summary.some((item) => item.failed.length > 0) || !objectStore || objectStore.skipped === "locked") {
         process.exitCode = 1;
     }
 

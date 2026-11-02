@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
 import {
+    closeSync,
     existsSync,
     linkSync,
     mkdirSync,
+    openSync,
     readdirSync,
     readFileSync,
+    readSync,
     renameSync,
     rmSync,
     statSync,
@@ -40,6 +43,11 @@ const GARBAGE_AGE_MS = DAY_MS;
 const PACK_TIMEOUT_MS = 30 * 60_000;
 const GIT_TIMEOUT_MS = 2 * 60_000;
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+/**
+ * One read of a change log. A log grows without a bound while its session lives, so it is read in chunks of this size
+ * and never held whole: memory stays one chunk plus the row that crosses its end.
+ */
+export const CHANGE_LOG_CHUNK_BYTES = 1024 * 1024;
 /**
  * The index first: a reader that lists packs stops finding the pack once the index goes, and one that has it open keeps
  * reading it. A pack comes back in the reverse order, so the store never lists an index without its pack.
@@ -168,7 +176,7 @@ export function namedOids({
     for (const name of names) {
         const path = join(logsDir, name, "changes.jsonl");
         const from = offsets?.get(path) ?? 0;
-        let body: Buffer;
+        let end: number;
 
         try {
             const stat = statSync(path);
@@ -179,7 +187,33 @@ export function namedOids({
                 continue;
             }
 
-            body = readFileSync(path);
+            end = readRowsFrom(path, from, (line) => {
+                if (!line.includes('Oid":"')) {
+                    return;
+                }
+
+                let row: { ts?: unknown; path?: unknown; beforeOid?: unknown; afterOid?: unknown };
+
+                try {
+                    row = SafeJSON.parse(line, { strict: true });
+                } catch (error) {
+                    log.debug({ error, path }, "bad change-log row");
+                    return;
+                }
+
+                if (typeof row.ts !== "string" || row.ts < sinceIso) {
+                    return;
+                }
+
+                named.rows++;
+                const hint = typeof row.path === "string" ? row.path.replaceAll("\n", " ") : "";
+
+                for (const oid of [row.beforeOid, row.afterOid]) {
+                    if (typeof oid === "string" && OID.test(oid)) {
+                        named.oids.set(oid, hint);
+                    }
+                }
+            });
         } catch (error) {
             if (isAbsent(error)) {
                 continue;
@@ -190,44 +224,52 @@ export function namedOids({
             });
         }
 
-        const end = body.lastIndexOf(0x0a) + 1;
         named.offsets.set(path, Math.max(from, end));
         named.logs++;
-
-        if (end <= from) {
-            continue;
-        }
-
-        for (const line of body.subarray(from, end).toString("utf8").split("\n")) {
-            if (!line.includes('Oid":"')) {
-                continue;
-            }
-
-            let row: { ts?: unknown; path?: unknown; beforeOid?: unknown; afterOid?: unknown };
-
-            try {
-                row = SafeJSON.parse(line, { strict: true });
-            } catch (error) {
-                log.debug({ error, path }, "bad change-log row");
-                continue;
-            }
-
-            if (typeof row.ts !== "string" || row.ts < sinceIso) {
-                continue;
-            }
-
-            named.rows++;
-            const hint = typeof row.path === "string" ? row.path.replaceAll("\n", " ") : "";
-
-            for (const oid of [row.beforeOid, row.afterOid]) {
-                if (typeof oid === "string" && OID.test(oid)) {
-                    named.oids.set(oid, hint);
-                }
-            }
-        }
     }
 
     return named;
+}
+
+/**
+ * Hands `onRow` every complete row of a change log from byte `from` on, read in chunks of `CHANGE_LOG_CHUNK_BYTES`,
+ * and returns the end of the last complete row. The bytes before `from` are never read, so a later read costs what
+ * the log gained. A row is cut at "\n" only and decoded whole, so a character across two chunks stays one character;
+ * a last row without its "\n" is one a hook is still writing, left for the read that starts at the returned end.
+ */
+function readRowsFrom(path: string, from: number, onRow: (line: string) => void): number {
+    const fd = openSync(path, "r");
+    const chunk = Buffer.allocUnsafe(CHANGE_LOG_CHUNK_BYTES);
+    let carry = Buffer.alloc(0);
+    let position = from;
+    let end = from;
+
+    try {
+        for (;;) {
+            const read = readSync(fd, chunk, 0, chunk.length, position);
+
+            if (read === 0) {
+                return end;
+            }
+
+            position += read;
+            const bytes = carry.length > 0 ? Buffer.concat([carry, chunk.subarray(0, read)]) : chunk.subarray(0, read);
+            let start = 0;
+            let newline = bytes.indexOf(0x0a);
+
+            while (newline !== -1) {
+                onRow(bytes.toString("utf8", start, newline));
+                start = newline + 1;
+                newline = bytes.indexOf(0x0a, start);
+            }
+
+            // Copied: the chunk is reused by the next read.
+            carry = Buffer.from(bytes.subarray(start));
+            end = position - carry.length;
+        }
+    } finally {
+        closeSync(fd);
+    }
 }
 
 interface LooseObject {
@@ -342,6 +384,24 @@ function packIndexOids(idx: string): Set<string> {
 }
 
 /**
+ * Proves a pack's content, which its index alone does not: `git verify-pack` inflates every object, resolves every
+ * delta, hashes the result against the index, and checks the pack's own checksum. `show-index` reads only the index,
+ * so a pack damaged after its index was written passes it.
+ */
+function verifyPack(root: string, base: string): void {
+    const run = spawnSync("git", ["--git-dir", root, "verify-pack", `${base}.idx`], {
+        encoding: "utf8",
+        timeout: PACK_TIMEOUT_MS,
+    });
+
+    if (run.status !== 0) {
+        throw new Error(
+            `the new pack ${base} does not read back (git verify-pack: ${run.stderr.trim() || run.error?.message || run.status}); nothing was removed`
+        );
+    }
+}
+
+/**
  * One pack of these objects. Each oid goes in with its file's path, so `pack-objects` sorts versions of one file side
  * by side for the delta search: 227 MB against 557 MB without the paths, for the same 138,500 blobs (2026-11-01).
  */
@@ -368,6 +428,14 @@ function writePack(root: string, objects: ReadonlyMap<string, string>): string {
 
     return join(root, "objects", "pack", `pack-${hash}`);
 }
+
+/**
+ * The pack writer a pass calls, swappable so a test can damage a pack between its write and its check: no real disk
+ * damages a pack on demand.
+ */
+export const objectStoreIo: { writePack: (root: string, objects: ReadonlyMap<string, string>) => string } = {
+    writePack,
+};
 
 /** Moves `path` to the same place under `retired`: readers stop finding it, and its bytes can still come back. */
 function retire(root: string, retired: string, path: string): boolean {
@@ -590,6 +658,39 @@ function restoreFrom({ root, retired, oids }: { root: string; retired: string; o
     return blobs.length;
 }
 
+/**
+ * The oids a pack this pass just wrote holds, once its index lists every kept object and its content reads back
+ * (`verifyPack`). Otherwise it throws before any loose copy or older pack goes, and a pack that did not exist before
+ * the pass is removed: everything it holds is still loose or in an older pack. A pack of the same name that was
+ * already there stays, since an older pass wrote it.
+ */
+function checkNewPack(
+    root: string,
+    base: string,
+    keep: ReadonlyMap<string, string>,
+    before: readonly PackFile[]
+): Set<string> {
+    try {
+        const inPack = packIndexOids(`${base}.idx`);
+        const lost = [...keep.keys()].filter((oid) => !inPack.has(oid));
+
+        if (lost.length > 0) {
+            throw new Error(`the new pack ${base} lacks ${lost.length} of ${keep.size} objects; nothing was removed`);
+        }
+
+        verifyPack(root, base);
+        return inPack;
+    } catch (error) {
+        if (!before.some((pack) => pack.base === base)) {
+            for (const extension of PACK_EXTENSIONS) {
+                unlinkQuietly(`${base}${extension}`);
+            }
+        }
+
+        throw error;
+    }
+}
+
 function unlinkQuietly(path: string): boolean {
     try {
         unlinkSync(path);
@@ -780,17 +881,10 @@ async function pass({
     const retired = join(maintenanceDir(root), `retired-${process.pid}-${now.getTime()}`);
 
     if (rewrite) {
-        const base = keep.size > 0 ? writePack(root, keep) : null;
+        const base = keep.size > 0 ? objectStoreIo.writePack(root, keep) : null;
 
         if (base) {
-            const inPack = packIndexOids(`${base}.idx`);
-            const lost = [...keep.keys()].filter((oid) => !inPack.has(oid));
-
-            if (lost.length > 0) {
-                throw new Error(
-                    `the new pack ${base} lacks ${lost.length} of ${keep.size} objects; nothing was removed`
-                );
-            }
+            const inPack = checkNewPack(root, base, keep, packs.packs);
 
             for (const object of loose.objects) {
                 if (inPack.has(object.oid)) {

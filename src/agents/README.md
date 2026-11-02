@@ -626,12 +626,16 @@ tools compress daily             # the daily pass now: the logs, then agents-obj
 - **What stays:** every blob a row of the last 30 days names, in one pack that `pack-objects` builds
   from that list, with the row's path as the delta hint (1.14 GiB of loose objects pack to 227 MB;
   a later pass reuses the deltas and takes seconds). A loose copy goes only when the new pack's own
-  index lists it. A loose blob no row names stays while it is younger than 30 days (a hook writes
+  index lists it and `git verify-pack` reads every object of the pack back (5 s for the 195 MB pack
+  on 2026-11-02); a new pack that fails either check is removed and the step stops with nothing
+  else removed. A loose blob no row names stays while it is younger than 30 days (a hook writes
   the blob before its row; `changes --store-blobs` writes blobs a reader then asks for).
 - **Why 30 days:** `tools agents blame` reads 30 days by default (`OBJECT_RETENTION_DAYS`, shared).
   An older row keeps its file list, and its diff shows as `missing-blob`.
 - **Racing hooks:** dropped objects move aside first; 20 s later (longer than a hook's budget) the
-  rows written meanwhile are read, and any object they name comes back. One step at a time
+  rows written meanwhile are read, and any object they name comes back. A change log is read in
+  1 MiB chunks, and that second read starts where the first stopped, so memory stays one chunk
+  however long a session's log grows. One step at a time
   (`gt-maintenance/lock` in the store). The store gets `gc.auto=0` and `gc.pruneExpire=never` when it
   is made and on every pass, so no git command can start a gc that prunes it.
 - **Fail closed:** a change log that exists but cannot be read (a permission or I/O error) stops the
@@ -639,7 +643,7 @@ tools compress daily             # the daily pass now: the logs, then agents-obj
   both files are hard-linked under `gt-maintenance/retired-*` before the store's copies go, the
   index first. The next step's recovery puts back a pack a dead step left half moved, and keeps the
   moved-aside folder while an object it holds does not read back. `tools compress daily` exits 1
-  when the step failed or found its lock held, with `--json` too.
+  when the step failed or found its lock held, or when a log file did not compress, with `--json` too.
 
 ## Proving a change
 
