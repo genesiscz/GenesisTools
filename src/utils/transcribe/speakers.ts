@@ -51,7 +51,34 @@ export const LEAVE_PHRASES: readonly RegExp[] = [
     "na shledanou",
     "bye|goodbye|see you",
     "(?:i have to|i need to|gotta) (?:go|drop|leave|run)",
+    "musím odejít",
+    "musím na (?:další )?(?:call|schůzku|meeting|poradu)",
+    "mám (?:další )?(?:call|schůzku|meeting)",
+    "odpojuju se|odpojím se",
+    "odcházím|zdrhám|padám|zmizím",
+    "zatím (?:čau|ahoj)",
+    // Slovak.
+    "musím (?:ísť|bežať|končiť)",
+    "idem (?:preč|už)",
+    "majte sa|maj sa|lúčim sa|dovidenia",
+    "i'll drop|i'm dropping|dropping off|i'm off|(?:i have to )?hop off",
 ].map(wholeWords);
+
+/**
+ * A bare greeting ("čau", "tak ahoj", "čaute"). It is a goodbye only when it ends the label's run and another label
+ * answers it; otherwise it is someone arriving ("Čau." at 00:21).
+ */
+const CLOSING_GREETING = wholeWords("(?:tak |zatím )?(?:čau|ahoj|čaute)");
+/** Rule R13: another label answers a departure with one of these within `FAREWELL_REPLY_WITHIN_SEC`. */
+const FAREWELL_REPLY = wholeWords("čau|ahoj|čaute|měj(?:te)? se|maj(?:te)? sa|nic se neděje|díky|dík|bye|see you");
+const FAREWELL_REPLY_WITHIN_SEC = 15;
+/** Rule R14: "taky" in a leave phrase right after another label's leave phrase is a second person leaving. */
+const ECHO = wholeWords("taky|také|i já|já taky|tiež|aj ja|me too");
+const ECHO_WITHIN_SEC = 15;
+
+function isLeavePhrase(text: string): boolean {
+    return LEAVE_PHRASES.some((phrase) => phrase.test(text));
+}
 
 /** Who named a label: the meeting platform (evidence), a language model (a guess), the user, or nobody known. */
 export type SpeakerOrigin = "platform" | "llm" | "self" | "unknown";
@@ -67,6 +94,10 @@ export interface SpeakerLeave {
     atSec: number;
     text: string;
     continuesAtSec: number;
+    /** R13: the label that answered with a farewell. Without one, the phrase may be only an intention to leave. */
+    confirmedBy?: string;
+    /** R14: the other label's leave phrase this one echoes ("já taky"), so the speaker here is not that person. */
+    echoOf?: { label: string; atSec: number };
 }
 
 export interface SpeakerStat {
@@ -216,6 +247,7 @@ export function speakerStats(
         run.toSec = endOf(index) ?? run.toSec;
     });
 
+    const runEnds = new Set(runs.map((run) => run.lines.at(-1)!));
     const byLabel = new Map<string, SpeakerStat>();
 
     lines.forEach((entry, index) => {
@@ -246,11 +278,35 @@ export function speakerStats(
             stat.lastSec = endOf(index);
         }
 
-        if (entry.startSec === undefined || !LEAVE_PHRASES.some((phrase) => phrase.test(entry.text))) {
+        if (entry.startSec === undefined) {
             return;
         }
 
         const leftAt = entry.startSec;
+        const reply = lines.find(
+            (other) =>
+                other.speaker !== entry.speaker &&
+                other.startSec !== undefined &&
+                other.startSec > leftAt &&
+                other.startSec - leftAt <= FAREWELL_REPLY_WITHIN_SEC &&
+                (FAREWELL_REPLY.test(other.text) || CLOSING_GREETING.test(other.text))
+        );
+        // A "čau" that answers another label's goodbye is a reply, not this label leaving.
+        const answers = lines.some(
+            (other) =>
+                other.speaker !== entry.speaker &&
+                other.startSec !== undefined &&
+                other.startSec <= leftAt &&
+                leftAt - other.startSec <= FAREWELL_REPLY_WITHIN_SEC &&
+                isLeavePhrase(other.text)
+        );
+        const greetingGoodbye =
+            runEnds.has(index) && CLOSING_GREETING.test(entry.text) && reply !== undefined && !answers;
+
+        if (!isLeavePhrase(entry.text) && !greetingGoodbye) {
+            return;
+        }
+
         const later = lines.find(
             (other, otherIndex) =>
                 otherIndex > index &&
@@ -259,9 +315,28 @@ export function speakerStats(
                 other.startSec - leftAt >= LEAVE_CONTINUES_AFTER_SEC
         );
 
-        if (later?.startSec !== undefined) {
-            stat.leaves.push({ atSec: leftAt, text: entry.text.trim(), continuesAtSec: later.startSec });
+        if (later?.startSec === undefined) {
+            return;
         }
+
+        const echoed = ECHO.test(entry.text)
+            ? lines
+                  .slice(0, index)
+                  .findLast(
+                      (other) =>
+                          other.speaker !== entry.speaker &&
+                          other.startSec !== undefined &&
+                          leftAt - other.startSec <= ECHO_WITHIN_SEC &&
+                          isLeavePhrase(other.text)
+                  )
+            : undefined;
+        stat.leaves.push({
+            atSec: leftAt,
+            text: entry.text.trim(),
+            continuesAtSec: later.startSec,
+            ...(reply ? { confirmedBy: reply.speaker } : {}),
+            ...(echoed?.startSec !== undefined ? { echoOf: { label: echoed.speaker, atSec: echoed.startSec } } : {}),
+        });
     });
 
     for (const run of runs) {
@@ -290,7 +365,14 @@ export function speakerStats(
         const strength = strengthFor(stat.origin);
 
         if (stat.leaves.length > 0) {
-            hints.push({ kind: "leave-then-continues", label: stat.label, strength, leaves: stat.leaves });
+            // R13: a goodbye nobody answered is probably only an intention to leave.
+            const confirmed = stat.leaves.some((leave) => leave.confirmedBy || leave.echoOf);
+            hints.push({
+                kind: "leave-then-continues",
+                label: stat.label,
+                strength: confirmed ? strength : "weak",
+                leaves: stat.leaves,
+            });
         }
 
         const share = totalSpoken > 0 ? stat.spokenSec / totalSpoken : 0;
