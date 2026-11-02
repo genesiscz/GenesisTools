@@ -262,6 +262,10 @@ Several requests at once: `tools rm approve <id> <id> ...` (or `--session <id pr
 window with the rows of all of them and asks the person once. The set is fixed before the window opens, so a request
 an agent makes meanwhile never rides along; a request open in another window, a root request, a request with nothing
 left and one with unfinished recovery are left out with a line each. An in-place path two requests name is one row.
+A request that acts on another copy of a path already in the window (an aside copy beside the live path) waits for
+a second window, oldest request first, and is read again after the person answers the first. One whose path holds
+another object by then, or that still waits after a window nobody answered, is left out with the
+`tools rm approve <ids>` command that decides it, and the exit code is 1.
 With no id, on a terminal outside an agent, `tools rm approve` opens a picker: tick requests, then approve them in one
 window, deny them (another session's requests after one person check, with an optional note the agent reads), or
 close the ticked ones nothing is left of.
