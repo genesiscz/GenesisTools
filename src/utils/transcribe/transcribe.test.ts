@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyDictionary, dictionaryLevelSchema, mergeDictionaries } from "./dictionary";
-import { LEAVE_PHRASES, speakerStats } from "./speakers";
+import { LEAVE_PHRASES, type Presence, speakerStats } from "./speakers";
 import type { Participant, TranscriptEntry } from "./types";
 
 function line(speaker: string, startSec: number | undefined, text: string, speakerId?: number): TranscriptEntry {
@@ -112,6 +112,43 @@ describe("speakerStats", () => {
         const carol = stats.speakers.find((s) => s.label === "Carol Example")!;
 
         expect(carol.leaves[0]!.echoOf).toEqual({ label: "Alice Example", atSec: 0 });
+    });
+
+    test("RA: a label speaking while its person is out of the call, and a voice when one person is left", () => {
+        const presence: Presence[] = [
+            { name: "alice@example.com", self: true, fromSec: 0, toSec: 400 },
+            { name: "Example Carol (QT)", fromSec: 100, toSec: 300 },
+            { name: "Bob Example", fromSec: 0, toSec: 350 },
+        ];
+        const stats = speakerStats(
+            [
+                line("Carol Example", 20, "Ahoj, jsem tu?", 2),
+                line("Bob Example", 50, "Začneme.", 3),
+                line("Carol Example", 150, "Teď už tu jsem.", 2),
+                line("Bob Example", 200, "Dobře.", 3),
+                line("Carol Example", 380, "A ještě jedna věc.", 2),
+            ],
+            { presence }
+        );
+
+        expect(stats.hints[0]).toEqual({
+            kind: "absent-speaker",
+            label: "Carol Example",
+            strength: "strong",
+            ranges: [
+                { fromSec: 20, toSec: 20, lines: 1 },
+                { fromSec: 380, toSec: 380, lines: 1 },
+            ],
+        });
+        expect(stats.hints).toContainEqual(
+            expect.objectContaining({
+                kind: "sole-attendee",
+                label: "Carol Example",
+                person: "alice@example.com",
+                self: true,
+            })
+        );
+        expect(stats.hints.some((h) => h.label === "Bob Example" && h.kind === "absent-speaker")).toBe(false);
     });
 
     test("leave phrases match whole Czech words only", () => {

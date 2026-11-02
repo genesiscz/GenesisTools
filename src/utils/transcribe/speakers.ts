@@ -80,6 +80,23 @@ function isLeavePhrase(text: string): boolean {
     return LEAVE_PHRASES.some((phrase) => phrase.test(text));
 }
 
+/**
+ * One person's time in the call, on the transcript clock (seconds from the start of the recording). From a meeting
+ * platform's attendance (Teams), so it is evidence, not a guess. A person who rejoined has one entry per stay.
+ */
+export interface Presence {
+    name: string;
+    /** The recording user; a platform may name them by email only. */
+    self?: boolean;
+    fromSec: number;
+    toSec: number;
+}
+
+/** Rule RA: attendance times are exact to a few seconds; a line this close to a join or leave still counts. */
+export const PRESENCE_TOLERANCE_SEC = 5;
+/** Lines of one label closer than this form one range in an attendance hint. */
+const PRESENCE_RANGE_GAP_SEC = 60;
+
 /** Who named a label: the meeting platform (evidence), a language model (a guess), the user, or nobody known. */
 export type SpeakerOrigin = "platform" | "llm" | "self" | "unknown";
 
@@ -130,7 +147,26 @@ export interface SplitJoin {
     joined: string;
 }
 
+/** Consecutive lines that break an attendance rule. */
+export interface PresenceRange {
+    fromSec: number;
+    toSec: number;
+    lines: number;
+}
+
 export type SpeakerHint =
+    /** RA: the label speaks while that person was not in the call. */
+    | { kind: "absent-speaker"; label: string; strength: HintStrength; ranges: PresenceRange[] }
+    /** RA: only one person was in the call, so the voice is that person, whatever the label says. */
+    | {
+          kind: "sole-attendee";
+          label: string;
+          strength: HintStrength;
+          person: string;
+          /** The person is the recording user. */
+          self: boolean;
+          ranges: PresenceRange[];
+      }
     | { kind: "several-people"; label: string; strength: HintStrength; spans: number; share: number }
     | { kind: "leave-then-continues"; label: string; strength: HintStrength; leaves: SpeakerLeave[] }
     | {
@@ -207,7 +243,7 @@ interface TurnRun {
  */
 export function speakerStats(
     entries: TranscriptEntry[],
-    options: { gapSec?: number; participants?: Participant[] } = {}
+    options: { gapSec?: number; participants?: Participant[]; presence?: Presence[] } = {}
 ): SpeakerStats {
     const gapSec = options.gapSec ?? DEFAULT_SPAN_GAP_SEC;
     const participants = options.participants ?? [];
@@ -410,5 +446,107 @@ export function speakerStats(
         });
     }
 
+    if (timed && options.presence && options.presence.length > 0) {
+        hints.unshift(...presenceHints(lines, speakers, options.presence));
+    }
+
     return { timed, speakers, hints };
+}
+
+/** Lower case, no diacritics, no "(company)" suffix, as a set of words. */
+function nameWords(name: string): Set<string> {
+    const plain = name
+        .normalize("NFD")
+        .replace(/\p{M}/gu, "")
+        .replace(/\([^)]*\)/g, " ")
+        .toLowerCase();
+    return new Set(plain.split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+}
+
+/** "Bob Example" is "Example Bob (QT)": every word of the shorter name is in the longer one, and it has two words at least. */
+function sameName(a: string, b: string): boolean {
+    const [short, long] = [nameWords(a), nameWords(b)].sort((x, y) => x.size - y.size);
+    return short!.size >= 2 && [...short!].every((word) => long!.has(word));
+}
+
+function presentAt(presence: Presence[], sec: number): Presence[] {
+    return presence.filter(
+        (stay) => sec >= stay.fromSec - PRESENCE_TOLERANCE_SEC && sec <= stay.toSec + PRESENCE_TOLERANCE_SEC
+    );
+}
+
+function toRanges(times: number[]): PresenceRange[] {
+    const ranges: PresenceRange[] = [];
+
+    for (const sec of times) {
+        const last = ranges.at(-1);
+
+        if (last && sec - last.toSec < PRESENCE_RANGE_GAP_SEC) {
+            last.toSec = sec;
+            last.lines += 1;
+        } else {
+            ranges.push({ fromSec: sec, toSec: sec, lines: 1 });
+        }
+    }
+
+    return ranges;
+}
+
+/**
+ * Rule RA, before every content rule: a label cannot speak while its person is out of the call, and when only one
+ * person is in the call, every voice is that person.
+ */
+function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presence: Presence[]): SpeakerHint[] {
+    const hints: SpeakerHint[] = [];
+    const people = new Set(presence.map((stay) => stay.name));
+
+    for (const stat of speakers) {
+        const stays = presence.filter(
+            (stay) => sameName(stat.label, stay.name) || (stay.self === true && stat.origin === "self")
+        );
+        const timesOf = (keep: (sec: number) => boolean) =>
+            lines
+                .filter((line) => line.speaker === stat.label && line.startSec !== undefined && keep(line.startSec))
+                .map((line) => line.startSec!);
+
+        if (stays.length > 0) {
+            const absent = timesOf((sec) => presentAt(stays, sec).length === 0);
+
+            if (absent.length > 0) {
+                hints.push({ kind: "absent-speaker", label: stat.label, strength: "strong", ranges: toRanges(absent) });
+            }
+        }
+
+        const byPerson = new Map<string, number[]>();
+
+        for (const sec of timesOf(() => true)) {
+            const here = new Set(presentAt(presence, sec).map((stay) => stay.name));
+
+            if (here.size !== 1 || people.size < 2) {
+                continue;
+            }
+
+            const person = [...here][0]!;
+            const stay = presence.find((candidate) => candidate.name === person)!;
+
+            if (stays.includes(stay)) {
+                continue;
+            }
+
+            byPerson.set(person, [...(byPerson.get(person) ?? []), sec]);
+        }
+
+        for (const [person, times] of byPerson) {
+            hints.push({
+                kind: "sole-attendee",
+                label: stat.label,
+                strength: "strong",
+                person,
+                self: presence.some((stay) => stay.name === person && stay.self === true),
+                ranges: toRanges(times),
+            });
+        }
+    }
+
+    return hints;
 }

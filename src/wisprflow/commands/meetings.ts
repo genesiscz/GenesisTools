@@ -14,7 +14,13 @@ import {
     TRANSCRIPT_FORMATS,
     type TranscriptFormat,
 } from "@genesiscz/utils/transcribe/render";
-import { DEFAULT_SPAN_GAP_SEC, type SpeakerHint, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import {
+    DEFAULT_SPAN_GAP_SEC,
+    type Presence,
+    type PresenceRange,
+    type SpeakerHint,
+    speakerStats,
+} from "@genesiscz/utils/transcribe/speakers";
 import {
     applyFixes,
     buildVocabulary,
@@ -30,6 +36,7 @@ import {
 } from "@genesiscz/utils/transcribe/terms";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { loadPresence } from "../lib/attendance";
 import { dictionaryPhrases, listLocalMeetings, localAvailable } from "../lib/local";
 import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
 import { writeGuarded } from "../lib/output";
@@ -356,7 +363,28 @@ const ORIGIN_NOTE: Record<SpeakerHint["strength"], string> = {
     strong: " (a language model guessed this label: strong)",
 };
 
+function rangesText(ranges: PresenceRange[]): string {
+    return ranges
+        .map((range) => {
+            const span =
+                range.fromSec === range.toSec
+                    ? formatClock(range.fromSec)
+                    : `${formatClock(range.fromSec)}–${formatClock(range.toSec)}`;
+            return `${span} (${range.lines} ${range.lines === 1 ? "line" : "lines"})`;
+        })
+        .join(", ");
+}
+
 function hintText(hint: SpeakerHint): string {
+    if (hint.kind === "absent-speaker") {
+        return `${hint.label}: speaks while ${hint.label} was not in the call (Teams attendance), so these lines are someone else: ${rangesText(hint.ranges)}`;
+    }
+
+    if (hint.kind === "sole-attendee") {
+        const person = hint.self ? `you (${hint.person})` : hint.person;
+        return `${hint.label}: only ${person} was in the call (Teams attendance), so these lines are ${person}: ${rangesText(hint.ranges)}`;
+    }
+
     const note = ORIGIN_NOTE[hint.strength];
 
     if (hint.kind === "several-people") {
@@ -387,7 +415,7 @@ function hintText(hint: SpeakerHint): string {
 
 async function speakers(
     ref: string,
-    opts: { source?: string; format?: string | boolean; gap?: string }
+    opts: { source?: string; format?: string | boolean; gap?: string; attendance?: string }
 ): Promise<void> {
     const subcommand = ["meetings", "speakers"];
     const format = await resolveEnum({
@@ -420,7 +448,20 @@ async function speakers(
     }
 
     reportSource(loaded.source, loaded.notes);
-    const stats = speakerStats(loaded.data.transcript, { gapSec, participants: loaded.data.participants });
+    let presence: Presence[] | undefined;
+
+    if (opts.attendance) {
+        try {
+            const loadedPresence = await loadPresence(loaded.data, opts.attendance);
+            presence = loadedPresence.presence;
+            ui.dim(loadedPresence.note);
+        } catch (err) {
+            fail(errorText(err));
+            return;
+        }
+    }
+
+    const stats = speakerStats(loaded.data.transcript, { gapSec, participants: loaded.data.participants, presence });
     log.debug({ meeting: loaded.data.id, speakers: stats.speakers.length, hints: stats.hints.length }, "speaker stats");
 
     if (format === "json") {
@@ -650,6 +691,10 @@ export function registerMeetingsCommand(program: Command): void {
             "Per speaker label: origin, turns, lines, words, spoken time and spans, with hints at mixed or split voices"
         )
         .option("--gap <duration>", "a pause shorter than this keeps two turns in one span", "2m")
+        .option(
+            "--attendance <teams|file>",
+            "who was in the call and when: teams asks tools ms-teams by the meeting title, or a file of its --json output"
+        )
         .option("--source [source]", "auto | local | mcp")
         .option("--format [format]", "table | json")
         .action(speakers);
