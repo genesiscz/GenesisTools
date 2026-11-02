@@ -1,6 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { ClarityClient, isClarityAuthError } from "@app/clarity/lib/auth/client";
-import { chooseAuthDriver, DEFAULT_AUTH_DRIVER, findAuthDriver, savedAuthDriver } from "@app/clarity/lib/auth/drivers";
+import {
+    authDrivers,
+    chooseAuthDriver,
+    DEFAULT_AUTH_DRIVER,
+    findAuthDriver,
+    savedAuthDriver,
+} from "@app/clarity/lib/auth/drivers";
 
 const server = Bun.serve({ port: 0, fetch: () => new Response("", { status: 401 }) });
 
@@ -21,8 +27,12 @@ describe("clarity auth drivers", () => {
         expect(() => findAuthDriver("elsewhere")).toThrow(/Use one of: curl/);
     });
 
-    test("--driver wins and a single driver needs no question", async () => {
+    test("--driver wins without a question", async () => {
         expect((await chooseAuthDriver("curl", undefined))?.id).toBe("curl");
+    });
+
+    // A build with extra drivers asks instead, so this only holds where cURL is the only one.
+    test.if(authDrivers().length === 1)("a single driver needs no question", async () => {
         expect((await chooseAuthDriver(undefined, "elsewhere"))?.id).toBe("curl");
     });
 
