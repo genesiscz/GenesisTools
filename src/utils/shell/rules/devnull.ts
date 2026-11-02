@@ -1178,29 +1178,21 @@ function sameFolder(scan: ShellScan, structure: readonly StatementInfo[], a: Spa
     return !structure.some((info) => info.span.start < later && MOVES.test(info.span.text));
 }
 
-// Whether every hit's producer is ls, du, stat, find or fd with flags and
-// primaries that fail only on a path, and every path it names is named by
-// another listing or search that runs whenever the producer runs, in the same
-// folder for a relative path, and whose stderr reaches the terminal.
+// Whether every hit's producer is ls, du, stat, find or fd, and every path it
+// names is named by another listing or search that runs whenever the producer
+// runs, in the same folder for a relative path, and whose stderr reaches the
+// terminal. A producer with a flag, primary or value that can fail on its own
+// is covered only by the same command with the same arguments.
 function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean {
     const producers = hits.map((hit) => parseElement(scan, hit.producer));
+    const producerArgs = hits.map((hit) => wordsOf(scan, hit.producer).args);
 
-    if (
-        hits.some((hit, i) => {
-            const p = producers[i];
-            return (
-                !p ||
-                !COVERABLE_PRODUCERS.has(p.word) ||
-                p.paths.length === 0 ||
-                !producerFlagsSafe(p.word, wordsOf(scan, hit.producer).args)
-            );
-        })
-    ) {
+    if (producers.some((p) => !p || !COVERABLE_PRODUCERS.has(p.word) || p.paths.length === 0)) {
         return false;
     }
 
     const statements = callStructure(scan);
-    const siblings: Array<{ info: StatementInfo; parsed: ParsedElement }> = [];
+    const siblings: Array<{ info: StatementInfo; parsed: ParsedElement; args: string[] }> = [];
 
     for (const info of statements) {
         const elements = splitPipeline(info.span);
@@ -1219,7 +1211,7 @@ function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean 
             const parsed = parseElement(scan, element);
 
             if (parsed && !parsed.viaXargs && stderrShown(scan, info, elements, k, parsed.err)) {
-                siblings.push({ info, parsed });
+                siblings.push({ info, parsed, args: wordsOf(scan, element).args });
             }
         }
     }
@@ -1233,7 +1225,15 @@ function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean 
         }
 
         const runs = new Set(allConds(at));
-        const witnesses = siblings.filter((s) => allConds(s.info).every((cond) => runs.has(cond)));
+        const args = producerArgs[i];
+        const witnesses = siblings.filter(
+            (s) =>
+                allConds(s.info).every((cond) => runs.has(cond)) &&
+                (producerFlagsSafe(producer.word, args) ||
+                    (s.parsed.word === producer.word &&
+                        s.args.length === args.length &&
+                        s.args.every((arg, k) => arg === args[k])))
+        );
 
         return producer.paths.every((path) =>
             witnesses.some((s) =>

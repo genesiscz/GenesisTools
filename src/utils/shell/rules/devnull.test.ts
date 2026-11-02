@@ -360,6 +360,19 @@ describe("stderr-discarded-then-counted-covered: the block stays", () => {
         expect(tags("ls src; find src -type f 2>/dev/null | wc -l")).toEqual([`${COVERED}:context`]);
     });
 
+    it("unless the sibling runs the same command with the same arguments, which shows that failure too", () => {
+        const same = "fd -t f --changed-within 2023-01-01 . ~/x -H";
+
+        expect(tags(`${same} 2>&1 | head -8; ${same} 2>/dev/null | wc -l`)).toEqual([`${COVERED}:context`]);
+        expect(tags("find src -newer stamp 2>&1 | head; find src -newer stamp 2>/dev/null | wc -l")).toEqual([
+            `${COVERED}:context`,
+        ]);
+        expect(tags("find src -newer stamp 2>&1 | head; find src -newer other 2>/dev/null | wc -l")).toEqual([
+            `${COUNT}:block`,
+        ]);
+        expect(tags(`fd -t f . ~/x -H 2>&1 | head -8; ${same} 2>/dev/null | wc -l`)).toEqual([`${COUNT}:block`]);
+    });
+
     it("when a relative path is read in another folder than the sibling's, or one the guard cannot place", () => {
         expect(tags("ls src; cd other; find src -type f 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
         expect(tagsIn("/repo", "ls src; cd other; find src -type f 2>/dev/null | wc -l")).toEqual([`${COUNT}:block`]);
