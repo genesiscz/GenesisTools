@@ -1,7 +1,10 @@
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Command, InvalidArgumentError } from "commander";
-import { SEARCH_SORTS } from "../lib/api";
-import { parseIntArg, parseNumberArg, runOperation } from "./run";
+import { SEARCH_SORTS, type SearchSort } from "../lib/api";
+import { parseIntArg, parseNumberArg, runOperation, TOOL } from "./run";
+
+const SEARCH_SORT_NAMES = Object.keys(SEARCH_SORTS) as SearchSort[];
 
 interface ListingFlags {
     page?: number;
@@ -57,12 +60,25 @@ export function registerCatalogCommands(program: Command): void {
             .command("search")
             .description("Search products by keywords")
             .argument("<query...>", "Search words")
-            .option("--sort <order>", `Server-side order: ${Object.keys(SEARCH_SORTS).join(", ")}`)
+            .option("--sort [order]", `Server-side order: ${SEARCH_SORT_NAMES.join(", ")} (default relevance)`)
             .option("--page <n>", "First result page, 0-based", parseIntArg)
-    ).action(async (query: string[], flags: ListingFlags & { sort?: string }, command: Command) => {
+    ).action(async (query: string[], flags: ListingFlags & { sort?: string | boolean }, command: Command) => {
+        const sort = await pickEnumFlag({
+            tool: TOOL,
+            subcommand: ["search"],
+            flag: "--sort",
+            given: flags.sort,
+            values: SEARCH_SORT_NAMES,
+            fallback: "relevance",
+            accepts: (v): v is SearchSort => (SEARCH_SORT_NAMES as readonly string[]).includes(v),
+        });
+        if (!sort) {
+            return;
+        }
+
         await runOperation(command, "search_products", {
             query: query.join(" "),
-            sort: flags.sort,
+            sort,
             page: flags.page,
             ...listingInput(flags),
         });
