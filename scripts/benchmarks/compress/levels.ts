@@ -11,8 +11,9 @@
  *   rg      ripgrepFiles -c (tools genesis-tools logs day, daemon stats health)
  *   frames  readZstdFramesSync, every byte (restore: tools compress unpack, verify)
  * CPU is the child's rusage with its waited-for children (rg); `op` is the CPU of the read itself, without the
- * process start and without the content check (its sha256 is timed apart). Medians per arm; the content of every
- * read must agree between arms: each line, each tail, each rg count (an rg error stops the run), every byte.
+ * process start. A timed read hands what it reads to a sink that keeps nothing; the content check runs once per arm in
+ * a child of its own that is not timed. Medians per arm; the content of every read must agree between arms: each line,
+ * each tail, each rg count (an rg error stops the run), every byte.
  *
  * Samples: a folder of real data copied by hand (never the originals). The preset comes from the name:
  * `tree-*` tree, `binary-*` binary, `database-*` database, a folder (hang captures) text per file, anything else
@@ -118,24 +119,35 @@ function cpuMs(usage: NodeJS.ResourceUsage): number {
     return (usage.userCPUTime + usage.systemCPUTime) / 1000;
 }
 
+/** What a read hands its content to: the content check, or {@link DISCARD} in a timed read. */
+export interface ReadSink {
+    /** Bytes or text of the current file. */
+    update(data: string | Uint8Array): void;
+    /** One line of the current file. */
+    line(text: string): void;
+    endFile(): void;
+}
+
+/** The sink of a timed read: it keeps nothing, so `op` is the read alone. */
+const DISCARD: ReadSink = { update: () => undefined, line: () => undefined, endFile: () => undefined };
+
 /**
  * The content check of a read: one sha256 per file of what the reader yielded, folded into one digest when the file
- * ends, so content cannot move between files unseen. The hashing is timed apart (`cpuMs`) and taken out of `op`: a
- * sha256 of every byte costs about as much as the read it checks.
+ * ends, so content cannot move between files unseen. It runs in a child of its own that is not timed ({@link
+ * checkedRead}): a sha256 of every byte costs about as much as the read it checks, and its bookkeeping (the line
+ * batches, the clock reads around each hash) would stay in a timed read's CPU however it was subtracted.
  */
-export class ReadCheck {
+export class ReadCheck implements ReadSink {
     private readonly files = createHash("sha256");
     private file: Hash = createHash("sha256");
     private lines: string[] = [];
     private lineChars = 0;
-    cpuMs = 0;
 
-    /** Bytes or text of the current file. */
     update(data: string | Uint8Array): void {
-        this.timed(() => this.file.update(data));
+        this.file.update(data);
     }
 
-    /** One line of the current file. Lines are hashed in batches, each closed by "\n", which no line holds. */
+    /** Lines are hashed in batches, each closed by "\n", which no line holds. */
     line(text: string): void {
         this.lines.push(text);
         this.lineChars += text.length + 1;
@@ -147,7 +159,7 @@ export class ReadCheck {
 
     endFile(): void {
         this.flushLines();
-        this.timed(() => this.files.update(this.file.digest()));
+        this.files.update(this.file.digest());
         this.file = createHash("sha256");
     }
 
@@ -164,13 +176,7 @@ export class ReadCheck {
         const lines = this.lines;
         this.lines = [];
         this.lineChars = 0;
-        this.timed(() => this.file.update(`${lines.join("\n")}\n`));
-    }
-
-    private timed(work: () => void): void {
-        const before = cpuMs(process.resourceUsage());
-        work();
-        this.cpuMs += cpuMs(process.resourceUsage()) - before;
+        this.file.update(`${lines.join("\n")}\n`);
     }
 }
 
@@ -238,38 +244,46 @@ async function childCompress(args: string[]): Promise<unknown> {
     };
 }
 
-async function childRead(args: string[]): Promise<unknown> {
-    const [mode, ...files] = args as [ReadMode, ...string[]];
-    const before = process.resourceUsage();
-    const check = new ReadCheck();
-
+/** Reads every file the way `mode` reads it and hands the content to `sink`. An rg error throws in both kinds of run. */
+async function readFiles(mode: ReadMode, files: string[], sink: ReadSink): Promise<void> {
     for (const file of files) {
         if (mode === "lines") {
             for (const line of readLinesSync(file)) {
-                check.line(line);
+                sink.line(line);
             }
         } else if (mode === "tail") {
-            check.update(readLastLines(file).lines.join("\n"));
+            sink.update(readLastLines(file).lines.join("\n"));
         } else if (mode === "rg") {
             const run = await ripgrepFiles({
                 rg: ripgrepBinary() ?? "rg",
                 args: ["--no-config", "--no-filename", "-c", "-F", RG_PATTERN],
                 files: [file],
             });
-            check.update(rgOutput(run, file));
+            sink.update(rgOutput(run, file));
         } else {
             const frames = isZstdPath(file) ? readZstdFramesSync(file) : readTextChunksSync(file);
 
             for (const frame of frames) {
-                check.update(frame);
+                sink.update(frame);
             }
         }
 
-        check.endFile();
+        sink.endFile();
     }
+}
 
-    const opCpuMs = cpuMs(process.resourceUsage()) - cpuMs(before) - check.cpuMs;
-    return { opCpuMs, check: check.digest() };
+/** The CPU of a read alone: its content goes to a sink that keeps nothing, and no check runs in this process. */
+export async function timedRead(mode: ReadMode, files: string[]): Promise<{ opCpuMs: number }> {
+    const before = process.resourceUsage();
+    await readFiles(mode, files, DISCARD);
+    return { opCpuMs: cpuMs(process.resourceUsage()) - cpuMs(before) };
+}
+
+/** The content check of a read, in a child of its own whose time no row reports. */
+export async function checkedRead(mode: ReadMode, files: string[]): Promise<{ check: string }> {
+    const check = new ReadCheck();
+    await readFiles(mode, files, check);
+    return { check: check.digest() };
 }
 
 // ── parent ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -418,20 +432,27 @@ async function benchSample({
         };
     });
 
-    const readSamples = new Map<string, Array<Spawned<{ opCpuMs: number; check: string }>>>();
+    const readSamples = new Map<string, Array<Spawned<{ opCpuMs: number }>>>();
     const checks = new Map<ReadMode, Set<string>>();
     const arms = ["plain", ...settings.map((setting) => setting.tag)];
+    const armFiles = (arm: string) => (arm === "plain" ? filesOf(spec.path) : outputsFor(spec, workDir, arm));
+
+    // The content check once per arm, in children that are not timed: the timed reads below hash nothing.
+    for (const mode of spec.modes) {
+        for (const arm of arms) {
+            const checked = await spawnChild<{ check: string }>(["check", mode, ...armFiles(arm)]);
+            checks.set(mode, (checks.get(mode) ?? new Set()).add(checked.result.check));
+        }
+    }
 
     for (let run = 0; run < readRuns; run++) {
         const rotated = [...arms.slice(run % arms.length), ...arms.slice(0, run % arms.length)];
 
         for (const mode of spec.modes) {
             for (const arm of rotated) {
-                const files = arm === "plain" ? filesOf(spec.path) : outputsFor(spec, workDir, arm);
-                const spawned = await spawnChild<{ opCpuMs: number; check: string }>(["read", mode, ...files]);
+                const spawned = await spawnChild<{ opCpuMs: number }>(["read", mode, ...armFiles(arm)]);
                 const key = `${mode}|${arm}`;
                 readSamples.set(key, [...(readSamples.get(key) ?? []), spawned]);
-                checks.set(mode, (checks.get(mode) ?? new Set()).add(spawned.result.check));
             }
         }
     }
@@ -615,7 +636,13 @@ if (!import.meta.main) {
     // Imported by levels.test.ts: run nothing.
 } else if (process.argv[2] === "--child") {
     const [, kind, ...rest] = process.argv.slice(2);
-    const result = kind === "compress" ? await childCompress(rest) : await childRead(rest);
+    const [mode, ...files] = rest as [ReadMode, ...string[]];
+    const result =
+        kind === "compress"
+            ? await childCompress(rest)
+            : kind === "check"
+              ? await checkedRead(mode, files)
+              : await timedRead(mode, files);
     process.stdout.write(SafeJSON.stringify(result));
 } else {
     await parent(process.argv.slice(2));

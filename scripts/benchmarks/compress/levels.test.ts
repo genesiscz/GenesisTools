@@ -1,6 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { compressFile } from "@genesiscz/utils/compress/file";
 import type { RipgrepRun } from "@genesiscz/utils/compress/search";
-import { armNeedBytes, MIN_FREE_BYTES, ReadCheck, rgOutput } from "./levels";
+import { armNeedBytes, checkedRead, MIN_FREE_BYTES, ReadCheck, rgOutput, timedRead } from "./levels";
+
+const scratch = mkdtempSync(join(tmpdir(), "levels-bench-test-"));
+
+afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+});
 
 function linesCheck(files: string[][]): string {
     const check = new ReadCheck();
@@ -36,6 +46,29 @@ describe("levels benchmark checks", () => {
             "No such file"
         );
         expect(() => rgOutput(rgRun({ signal: "SIGTERM" }), "day.log")).toThrow("SIGTERM");
+    });
+
+    test("a timed read hashes nothing, and the untimed check reads the same content from either form", async () => {
+        const plain = join(scratch, "day.log");
+        writeFileSync(plain, Array.from({ length: 500 }, (_, n) => `{"level":30,"n":${n}}`).join("\n"));
+        await compressFile({ source: plain, target: `${plain}.zst`, frameBytes: 1024 });
+        const line = spyOn(ReadCheck.prototype, "line");
+        const update = spyOn(ReadCheck.prototype, "update");
+
+        try {
+            for (const mode of ["lines", "tail", "frames"] as const) {
+                const timed = await timedRead(mode, [plain]);
+                expect(Object.keys(timed)).toEqual(["opCpuMs"]);
+            }
+
+            expect([line.mock.calls.length, update.mock.calls.length]).toEqual([0, 0]);
+            const fromPlain = await checkedRead("lines", [plain]);
+            expect(line.mock.calls.length).toBe(500);
+            expect(await checkedRead("lines", [`${plain}.zst`])).toEqual(fromPlain);
+        } finally {
+            line.mockRestore();
+            update.mockRestore();
+        }
     });
 
     test("an arm needs room for an output the size of an incompressible input, plus the reserve", () => {

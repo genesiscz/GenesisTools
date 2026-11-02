@@ -23,6 +23,7 @@ import { removePath } from "./retention";
 import {
     archiveBaseName,
     assertArchiveOutsideSource,
+    changedSinceCheck,
     FOLDER_ARCHIVE_SUFFIX,
     isTarArchive,
     listArchive,
@@ -367,7 +368,17 @@ export async function compressPath(options: CompressPathOptions): Promise<Compre
         }
 
         if (options.removeOriginal) {
-            for (const path of files ? files.map((file) => join(source, file)) : [source]) {
+            const originals = files ? files.map((file) => join(source, file)) : [source];
+            // The check hashed one file after another: one written after its sha256 matched is not in the archive.
+            const changed = changedSinceCheck(check, files ? originals : undefined);
+
+            if (changed.length > 0) {
+                throw new CompressRefusal(
+                    `${source} changed while it was packed (${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ` and ${changed.length - 5} more` : ""}); the archive and the originals are kept`
+                );
+            }
+
+            for (const path of originals) {
                 removePath(path);
             }
         }
@@ -459,6 +470,13 @@ export interface ExpandOptions {
 }
 
 /**
+ * The separators tar's extraction splits an entry path on here: `/` everywhere, and `\` on Windows only. On macOS and
+ * Linux a backslash is part of a name, so `a\..\b` is one file that a list pack packs and verifies; splitting on it
+ * would invent a `..` and refuse the restore of an archive this tool wrote.
+ */
+const ENTRY_SEPARATORS = process.platform === "win32" ? /[/\\]/ : /\//;
+
+/**
  * Restores a `.zst`: a packed folder (`x.zst` or `x.tar.zst` holding a tar stream) back to `x/`, a compressed file
  * back to `x`. Refuses to overwrite. The archive is removed only with `removeArchive`, after the restore finished.
  */
@@ -487,7 +505,7 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
     if (isTar) {
         const entries = listArchive(archive);
         const insideTarget = (path: string): boolean => {
-            const parts = path.split(/[/\\]/);
+            const parts = path.split(ENTRY_SEPARATORS);
             return parts[0] === name && parts.every((part) => part !== "" && part !== "." && part !== "..");
         };
         const root = entries.find((entry) => entry.path === name);
