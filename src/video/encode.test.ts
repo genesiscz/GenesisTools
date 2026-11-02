@@ -685,14 +685,14 @@ describe("undoCommand", () => {
         writeFileSync(clip, "result");
         writeFileSync(sibling, "an earlier output");
 
-        const blocked = Bun.spawnSync(["sh", "-c", command], { cwd: dir, stderr: "pipe" });
+        const blocked = Bun.spawnSync(["sh", "-c", command], { cwd: dir, stderr: "pipe", env: process.env });
         expect(blocked.exitCode).not.toBe(0);
         expect(readFileSync(sibling, "utf8")).toBe("an earlier output");
         expect(readFileSync(clip, "utf8")).toBe("result");
         expect(existsSync(join(dir, "restored"))).toBe(false);
 
         rmSync(sibling);
-        const done = Bun.spawnSync(["sh", "-c", command], { cwd: dir, stderr: "pipe" });
+        const done = Bun.spawnSync(["sh", "-c", command], { cwd: dir, stderr: "pipe", env: process.env });
         expect(done.exitCode).toBe(0);
         expect(readFileSync(sibling, "utf8")).toBe("result");
         expect(existsSync(clip)).toBe(false);
@@ -780,6 +780,7 @@ describe("encode with the hardware encoder", () => {
             // The printed undo: the result moves aside, then the real restore puts the original back.
             const aside = Bun.spawnSync(["sh", "-c", undoCommand({ input: clip, encoder, restore: "true" })], {
                 stderr: "pipe",
+                env: process.env,
             });
             expect(aside.exitCode).toBe(0);
             expect(restoreBatch(row.trashBatch ?? "", { config, paths }).restored).toEqual([clip]);
