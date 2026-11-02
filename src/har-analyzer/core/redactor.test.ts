@@ -169,6 +169,32 @@ describe("redactHar", () => {
         expect(text).toContain("application/json");
     });
 
+    // A timesheet app authenticates with a custom `authToken` header; only Authorization was on the header list.
+    test("masks custom credential headers by name, and leaves headers that only name auth", () => {
+        const har = makeHar([
+            makeEntry({
+                request: {
+                    headers: [
+                        { name: "authToken", value: "12345678__00000000-0000-0000-0000-000000000000" },
+                        { name: "X-Goog-Api-Key", value: "fake-api-key-0123456789" },
+                        { name: "x-api-next-string", value: "dHJ1ZQ==" },
+                        { name: ":authority", value: "app.example.com" },
+                    ],
+                },
+                response: {
+                    headers: [{ name: "Access-Control-Allow-Headers", value: "authToken, Content-Type" }],
+                },
+            }),
+        ]);
+
+        const text = redactedText(redactHar(har).har);
+        expect(text).not.toContain("12345678__00000000-0000-0000-0000-000000000000");
+        expect(text).not.toContain("fake-api-key-0123456789");
+        expect(text).toContain("dHJ1ZQ==");
+        expect(text).toContain("app.example.com");
+        expect(text).toContain("authToken, Content-Type");
+    });
+
     test("redacts sensitive query params in url, queryString array and redirectURL", () => {
         const url = `https://auth.test/authorize?client_id=webapp&login_hint=martin%40example.com&id_token_hint=${FAKE_JWT}`;
         const har = makeHar([

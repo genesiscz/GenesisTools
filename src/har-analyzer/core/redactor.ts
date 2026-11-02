@@ -18,6 +18,7 @@
  * - "keep": leave the value untouched
  */
 import type { HarEntry, HarFile, HarHeader } from "@app/har-analyzer/types";
+import { sensitiveHeaderKind } from "@genesiscz/utils/http/sensitive-headers";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export type RedactionKind = "password" | "secret" | "token" | "session" | "email" | "username" | "cookie" | "jwt";
@@ -137,18 +138,6 @@ const KEY_KINDS: Record<string, RedactionKind> = {
     login: "username",
     loginname: "username",
     userlogin: "username",
-};
-
-const SENSITIVE_HEADER_NAMES: Record<string, RedactionKind> = {
-    authorization: "token",
-    "proxy-authorization": "token",
-    cookie: "cookie",
-    "set-cookie": "cookie",
-    "x-api-key": "secret",
-    "x-auth-token": "token",
-    "x-access-token": "token",
-    "x-csrf-token": "token",
-    "x-xsrf-token": "token",
 };
 
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
@@ -485,7 +474,7 @@ class Redactor {
     private redactHeaders(headers: HarHeader[], location: string): void {
         for (const header of headers) {
             const lower = header.name.toLowerCase();
-            const kind = SENSITIVE_HEADER_NAMES[lower];
+            const kind = sensitiveHeaderKind(header.name);
 
             if (isRedactedValue(header.value)) {
                 continue;
