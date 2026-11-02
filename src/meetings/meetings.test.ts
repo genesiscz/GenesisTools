@@ -291,6 +291,68 @@ describe("--with-suggested (R4.2)", () => {
     });
 });
 
+describe("energy over the live segments (R4.3)", () => {
+    const base = {
+        record,
+        rules: ["evidence" as const],
+        dictionary: { abbrExpansion: "every" as const, entries: [] },
+        sourceWords: [],
+        now: "2026-11-02T15:00:00.000Z",
+    };
+    const callSegment = {
+        selfName: "Alice Example",
+        segments: [{ startSec: 0, endSec: 30, channel: "system" as const, liveName: "Carol Example" }],
+        speaking: [{ tSec: 1, speaking: ["Carol Example"], muted: [] }],
+        files: [],
+    };
+    const replies = {
+        ...meeting,
+        transcript: [
+            line("Carol Example", 0, "Ano."),
+            line("Alice Example", 10, "Jasně."),
+            line("Carol Example", 20, "Dál."),
+        ],
+    };
+    const energyAt = (shares: Record<number, number>) => (fromSec: number) => shares[fromSec];
+
+    test("a reply the microphone's energy holds is the user's, though the segment, E3 and E4 say the call", () => {
+        const items = suggestItems({
+            ...base,
+            meeting: replies,
+            evidence: callSegment,
+            energyMicShare: energyAt({ 0: 0.99, 10: 0.97, 20: 0.4 }),
+        });
+
+        expect(items).toEqual([
+            expect.objectContaining({
+                label: "Carol Example",
+                fromSec: 0,
+                toSec: 0,
+                speaker: "Alice Example",
+                rules: ["energy"],
+                confidence: 0.75,
+            }),
+        ]);
+    });
+
+    test("a line the call's energy holds is never the user's, though the segments said the microphone", () => {
+        const items = suggestItems({
+            ...base,
+            meeting: replies,
+            evidence: { ...callSegment, segments: [{ startSec: 0, endSec: 30, channel: "mic" as const }] },
+            energyMicShare: energyAt({ 0: 0.05, 10: 0.03, 20: 0.95 }),
+        });
+        const ranges = items.filter((item) => item.kind === "speaker-range");
+
+        expect(ranges.some((item) => item.fromSec === 0)).toBe(false);
+        expect(ranges.find((item) => item.fromSec === 10)).toMatchObject({ label: "Alice Example", rules: ["energy"] });
+        expect(ranges.find((item) => item.fromSec === 20)).toMatchObject({
+            speaker: "Alice Example",
+            confidence: 0.98,
+        });
+    });
+});
+
 describe("evidence rule after a leave", () => {
     test("a live name of someone who left is dropped; the speaking indicator among those still here guesses, to listen", () => {
         const items = suggestItems({
