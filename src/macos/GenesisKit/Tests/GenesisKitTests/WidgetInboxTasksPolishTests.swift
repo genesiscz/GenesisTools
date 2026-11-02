@@ -780,6 +780,16 @@ final class WidgetInboxPolishTests: XCTestCase {
         let form = WidgetCard(id: "form:f1", kind: "form", sessionKey: "k", sourceId: "f1", at: 1, title: "Q", body: "",
                               status: "answered", choices: [], attachments: [], refs: [], read: true)
         XCTAssertEqual(LiveWidgetView.kindLabel(form), "Question · Answered")
+        let message = WidgetCard(id: "answer:m1", kind: "answer", sessionKey: "k", sourceId: "m1", at: 1, title: "T",
+                                 body: "", status: "message", choices: [], attachments: [], refs: [], read: true)
+        XCTAssertEqual(LiveWidgetView.kindLabel(message), "Message", "an agent message answers nothing")
+        let answer = WidgetCard(id: "answer:a1", kind: "answer", sessionKey: "k", sourceId: "a1", at: 1, title: "T",
+                                body: "", status: "answered", choices: [], attachments: [], refs: [], read: false)
+        XCTAssertEqual(LiveWidgetView.kindLabel(answer), "New answer")
+        let messageItem = WidgetInboxItem(id: "answer:m1", sourceId: "m1", kind: "answer", key: "k", at: 1,
+                                          needsAnswer: false, tag: "message")
+        XCTAssertEqual(WidgetAlerts.kicker(messageItem), "New message")
+        XCTAssertEqual(WidgetInboxOverview.kindLabel(messageItem), "New message")
 
         let delivered = WidgetActivityEvent(id: "e1", sourceId: "d_4_s", at: 1, title: "Decision delivery",
                                             body: "sent · cmux")

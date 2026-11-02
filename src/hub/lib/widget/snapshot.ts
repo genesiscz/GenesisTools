@@ -250,6 +250,8 @@ export interface WidgetInboxGroup {
     count: number;
     /** The newest item's own title: an answer's question, a form's first prompt. */
     itemTitle?: string | null;
+    /** The newest answer's Q→A tag: `message` for an agent message (inbox_send, a tools rm request notice). */
+    itemTag?: string | null;
     /** Items after the window's `clearedAt`. */
     afterClear: number;
     /** Of those, the ones at or after `staleBefore`: what a quiet session counts. */
@@ -293,6 +295,8 @@ export interface WidgetInboxItem {
     summary?: string;
     /** How many inbox items this entry stands for: an answers group lists only its newest item. */
     count?: number;
+    /** `message` when the newest answer is an agent message rather than an answer, so the popup says so. */
+    tag?: "message";
     /** A decision: its options, so the inbox of every session can stage a pick without opening the session. */
     options?: string[];
     recommended?: string;
@@ -375,7 +379,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
                              WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
                         COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
-                        COALESCE(cwd,'') AS cwd, ts AS at, substr(question,1,400) AS itemTitle
+                        COALESCE(cwd,'') AS cwd, ts AS at, substr(question,1,400) AS itemTitle, tag AS itemTag
                     FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
                         AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
                 ), ranked AS (
@@ -383,7 +387,8 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM unseen
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,itemTitle,afterClear,recentAfterClear,recentAfterClearTotal
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,itemTitle,itemTag,afterClear,recentAfterClear,
+                    recentAfterClearTotal
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
                 .all(...bounds);
@@ -965,6 +970,7 @@ export async function widgetSnapshot({
                   at: row.ts,
                   count: 1,
                   itemTitle: row.question,
+                  itemTag: row.tag,
                   ...inboxWindowCounts([row.ts], inboxWindow),
                   recentAfterClearTotal: rosterRecent.answers,
               })),
@@ -978,6 +984,7 @@ export async function widgetSnapshot({
                   at: form.createdAt,
                   count: 1,
                   itemTitle: form.items[0]?.promptMarkdown,
+                  itemTag: null,
                   ...inboxWindowCounts([form.createdAt], inboxWindow),
                   recentAfterClearTotal: rosterRecent.forms,
               })),
@@ -1285,6 +1292,7 @@ export async function widgetSnapshot({
                     at: row.at,
                     needsAnswer: kind === "form",
                     ...(title ? { title } : {}),
+                    ...(row.itemTag === "message" ? { tag: "message" as const } : {}),
                 },
                 items
             );

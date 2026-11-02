@@ -6380,6 +6380,11 @@ describe("inbox card images and agent messages", () => {
                     });
                     expect(card?.attachments).toHaveLength(1);
                     expect(card?.attachments[0]?.path).toStartWith(join(directory, "durable"));
+                    // The inbox entry says it is a message, so the popup reads New message, not New answer.
+                    const entry = snapshot.notifications?.sessions
+                        .find((group) => group.key === session?.key)
+                        ?.items?.find((item) => item.kind === "answer");
+                    expect(entry?.tag).toBe("message");
                 }
 
                 expect(snapshot.sessions.some((entry) => entry.target.provider === "unknown")).toBe(false);
