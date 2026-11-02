@@ -89,6 +89,7 @@ import {
     realWidgetSources,
     type WidgetInboxWindow,
     type WidgetSources,
+    widgetCardText,
     widgetForms,
     widgetResultNode,
     widgetSnapshot,
@@ -2161,6 +2162,10 @@ test("a decision card carries what the hub's Inbox card shows: context, proposal
         { id: "b", title: "allow any size", recommended: false, rationale: "costs a prompt per delete" },
         { id: "c", title: "keep the block", recommended: false },
     ]);
+    // An option's reason sits under it in the card's whole text.
+    expect(card ? widgetCardText(card) : "").toEndWith(
+        "Options:\na) allow at 1 GB or more (recommended)\nb) allow any size\n   Why: costs a prompt per delete\nc) keep the block"
+    );
     // The cited lines, read from disk around line 9 with the language; a file that is not there says so.
     const [found, missing] = card?.decision?.refs ?? [];
     expect(found).toMatchObject({
@@ -2215,6 +2220,14 @@ test("a decision stored with bare letters shows each option's words from its pro
     // The reasoning is the agent's pick under its option, not the Context: the hub's Inbox card reads the same field.
     expect(card?.decision?.context).toBeUndefined();
     expect(card?.decision?.proposal).toBe("One day is enough to notice anything missing.");
+    // A handoff takes the card whole: the option words left the body, so its text lists them after the pick.
+    expect(card ? widgetCardText(card) : "").toBe(
+        [
+            "The folder holds 81.8 GB. A move frees nothing.",
+            "One day is enough to notice anything missing.",
+            "Options:\na) empty it now\nb) keep it until tomorrow evening (recommended)\nc) let macOS clear it",
+        ].join("\n\n")
+    );
     // The inbox of every session stages a pick from its own entry: the same words, and the summary its open row shows.
     const entry = snapshot.notifications?.sessions
         .flatMap((session) => session.items ?? [])

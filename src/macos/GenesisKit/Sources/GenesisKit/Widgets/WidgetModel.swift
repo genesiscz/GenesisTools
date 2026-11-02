@@ -3212,7 +3212,7 @@ public final class WidgetModel: ObservableObject {
                 }
             }
             do {
-                try (card.title + "\n" + card.fullText).write(to: file, atomically: true, encoding: .utf8)
+                try (card.title + "\n" + card.wholeText).write(to: file, atomically: true, encoding: .utf8)
                 let result = try await self.bridge.run(
                     subcommand: "hub", args: self.widgetArgs + ["readback", "--input", file.path],
                     timeoutSeconds: 600)

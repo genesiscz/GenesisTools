@@ -199,9 +199,36 @@ export interface WidgetDecisionDetails {
     delivery?: InboxDeliveryView;
 }
 
-/** A card as one text, for a reader that takes it whole (a handoff): the body, then a decision's context, proposal and notes. */
-export function widgetCardText(card: Pick<WidgetCard, "body" | "decision">): string {
-    return [card.body, card.decision?.context, card.decision?.proposal, card.decision?.notes]
+/**
+ * A card's options as one text: "Options:", then a line per option ("a) words", the recommended one marked, its reason
+ * under it); "" for a card without options. GenesisKit's `WidgetCard.wholeText` writes the same lines.
+ */
+function widgetChoicesText(choices: WidgetCard["choices"]): string {
+    if (choices.length === 0) {
+        return "";
+    }
+
+    const lines = choices.map((choice) => {
+        const line = `${choice.id}) ${choice.title}${choice.recommended ? " (recommended)" : ""}`;
+        const why = choice.rationale?.trim();
+        return why ? `${line}\n   Why: ${why}` : line;
+    });
+    return ["Options:", ...lines].join("\n");
+}
+
+/**
+ * A card as one text, for a reader that takes it whole (a handoff): the body, then a decision's context, proposal and
+ * notes, then its options. A decision's body leaves out the "a) …" lines that only repeat its buttons
+ * (`shownDecisionText`), so the options are written here, or a reader would get the question without them.
+ */
+export function widgetCardText(card: Pick<WidgetCard, "body" | "decision" | "choices">): string {
+    return [
+        card.body,
+        card.decision?.context,
+        card.decision?.proposal,
+        card.decision?.notes,
+        widgetChoicesText(card.choices),
+    ]
         .filter((text): text is string => Boolean(text?.trim()))
         .join("\n\n");
 }

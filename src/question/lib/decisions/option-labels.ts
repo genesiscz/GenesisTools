@@ -24,6 +24,32 @@ const OPTION_LINE = /^\s*(?:[-*+]\s+)?(\*\*|__)?\(?([a-z])[).:](\*\*|__)?(?:\s+(
 /** An indented line under an option line, with something on it. */
 const CONTINUATION = /^(?:\t| {2,})\S/;
 
+/** The fence that opens or closes a fenced code block: three or more backticks or tildes, at any indent. */
+const FENCE = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * Whether each line is part of a fenced code block, its fence lines included. An unclosed fence runs to the end, as
+ * in Markdown. A closing fence is the opening one's character, at least as long, with nothing after it.
+ */
+function fencedLines(lines: readonly string[]): boolean[] {
+    let open: string | null = null;
+
+    return lines.map((line) => {
+        const fence = FENCE.exec(line)?.[1] ?? null;
+
+        if (open === null) {
+            open = fence;
+            return fence !== null;
+        }
+
+        if (fence !== null && fence[0] === open[0] && fence.length >= open.length && line.trim() === fence) {
+            open = null;
+        }
+
+        return true;
+    });
+}
+
 function letterAt(index: number): string {
     return String.fromCharCode(97 + index);
 }
@@ -50,16 +76,19 @@ function optionLine(line: string): { letter: string; text: string } | null {
  * The last list in the prompt that starts at "a)", each letter at its line. An earlier list (findings numbered a, b, c
  * above the question) gives way to the later one, because the options close the question in every posted prompt.
  * A line of prose after an option ends its list, so a later "c) …" (an example under the options) is never option c;
- * blank lines and indented lines between the options keep the list going.
+ * blank lines and indented lines between the options keep the list going. A line in a fenced code block is never an
+ * option: a sample with "a) …" lines, above or below the options, keeps its letters to itself. An unindented fence
+ * ends the list as prose does; an indented one under an option continues that option.
  */
 function lastOptionList(lines: string[]): Map<string, OptionLine> {
     let current: Map<string, OptionLine> | null = null;
     let last = new Map<string, OptionLine>();
     let previous: OptionLine | null = null;
+    const fenced = fencedLines(lines);
 
     for (let index = 0; index < lines.length; index++) {
         const line = lines[index] ?? "";
-        const found = optionLine(line);
+        const found = fenced[index] ? null : optionLine(line);
 
         if (!found) {
             const indented = CONTINUATION.test(line);

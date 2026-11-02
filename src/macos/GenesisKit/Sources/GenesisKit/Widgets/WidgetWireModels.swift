@@ -201,14 +201,31 @@ public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
             || (kind == "form" && status == "pending")
     }
 
-    /// The card as one text, for every reader that takes it whole (read aloud, a row's preview line, a reply's
-    /// excerpt, the staged list): the body, then a decision's context, proposal and notes, which the snapshot carries
-    /// apart from the body since the decision details came in.
+    /// The card's text for the readers that preview it (a row's preview line, a reply's excerpt, the staged list): the
+    /// body, then a decision's context, proposal and notes, which the snapshot carries apart from the body since the
+    /// decision details came in. Its options are on their own buttons there, so they are not in it.
     public var fullText: String {
         [body, decision?.context, decision?.proposal, decision?.notes]
             .compactMap { $0 }
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n\n")
+    }
+
+    /// The card as one text for a reader that takes it whole (read aloud): `fullText`, then "Options:" and a line per
+    /// option ("a) words", the recommended one marked, its reason under it). A decision's body leaves out the "a) …"
+    /// lines that only repeat its buttons, so without this a listener hears the question and never its options. The
+    /// hub's handoff writes the same lines (`widgetCardText` in src/hub/lib/widget/snapshot.ts).
+    public var wholeText: String {
+        guard !choices.isEmpty else { return fullText }
+        let options = choices.map { choice -> String in
+            let line = "\(choice.id)) \(choice.title)" + (choice.recommended ? " (recommended)" : "")
+            guard let why = choice.rationale?.trimmingCharacters(in: .whitespacesAndNewlines), !why.isEmpty else {
+                return line
+            }
+            return line + "\n   Why: " + why
+        }
+        let list = (["Options:"] + options).joined(separator: "\n")
+        return fullText.isEmpty ? list : fullText + "\n\n" + list
     }
 }
 public struct WidgetVideoSettings: Codable, Equatable, Sendable {

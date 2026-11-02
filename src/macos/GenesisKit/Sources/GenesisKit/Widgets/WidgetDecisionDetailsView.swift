@@ -32,6 +32,7 @@ struct WidgetDecisionDetailsView: View {
                     .foregroundStyle(SessionPalette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+                    .pathLinkMenu(markdown: notes)
             }
             if let proposal {
                 WidgetProposalLine(text: proposal)
@@ -41,7 +42,8 @@ struct WidgetDecisionDetailsView: View {
     }
 }
 
-/// The agent's pick with its reason, behind a lightbulb, as the hub's Inbox card draws it.
+/// The agent's pick with its reason, behind a lightbulb, as the hub's Inbox card draws it. A file link in it opens by
+/// the widget's setting on a click and lists its ways to open on a right-click, as a card's body does.
 struct WidgetProposalLine: View {
     let text: String
 
@@ -58,6 +60,7 @@ struct WidgetProposalLine: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("The agent's pick: ") + Text(.init(text)))
+        .pathLinkMenu(markdown: text)
     }
 }
 

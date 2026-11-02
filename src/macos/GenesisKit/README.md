@@ -10698,6 +10698,8 @@ One inbox item of a session: a decision, a form, an answer or a result. It is `I
 - `read: Bool`, `entryId: String?`: read state and the transcript entry id.
 - `sourceContext: WidgetSourceContext?`, `transcriptAnchor: WidgetTranscriptAnchor?`: where the card came from (session, agent, project, repo, branch, commit, worktree) and where it sits in the transcript.
 - `needsAnswer: Bool`: true for an open or drafted decision and for a pending form.
+- `fullText: String`: the text the previews show (a row's preview line, a reply's excerpt, the staged list): the body, then a decision's context, proposal and notes. The options stay on their buttons.
+- `wholeText: String`: the card for a reader that takes it whole (`toggleRead()`): `fullText`, then "Options:" and a line per option (`a) words`, the recommended one marked, its reason under it). A decision's body leaves out the "a) …" lines that only repeat its buttons, so these lines carry the option words. The hub's handoff writes the same lines (`widgetCardText`).
 
 ```swift
 let unanswered = model.cards.filter(\.needsAnswer)

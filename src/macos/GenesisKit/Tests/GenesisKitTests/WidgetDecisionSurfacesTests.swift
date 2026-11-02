@@ -660,6 +660,11 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertTrue(delivery.line.hasSuffix(" to original Claude session"), delivery.line)
         XCTAssertTrue(card.fullText.contains("The block protects nothing"))
         XCTAssertTrue(card.fullText.contains("it matches both of your instructions"))
+        // Read aloud takes the card whole: the previews' text, then each option's words, as the hub's handoff writes
+        // them. The previews leave the options to their buttons.
+        XCTAssertFalse(card.fullText.contains("Options:"), card.fullText)
+        XCTAssertEqual(card.wholeText, card.fullText + "\n\nOptions:\na) allow at 1 GB or more (recommended)\n"
+            + "b) allow any size\n   Why: every delete would ask for Touch ID\nc) keep the block, fix the message")
         let missing = try JSONDecoder().decode(DecisionRef.self, from: Data(
             #"{"path":"src/gone.ts","line":3,"missing":true,"searched":["/Users/alice/Projects/Fixture"],"matches":0}"#.utf8))
         XCTAssertTrue(missing.hasContent)
@@ -709,6 +714,21 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertFalse(hidden.contains("tool-rules.ts:9"), hidden)
         XCTAssertTrue(hidden.contains("Show less"), hidden)
         XCTAssertTrue(hidden.contains("types the command in a terminal"), "open shows the whole context: \(hidden)")
+    }
+
+    /// A file link in a decision's notes or in the agent's pick lists its ways to open on a right-click, as the card's
+    /// body (`WidgetMarkdown`) and its Context section do: `.pathLinks` routes a left-click only, and SwiftUI exposes
+    /// no view's context menu to a test, so the source is read.
+    func testTheNotesAndThePickOfferTheFileLinkMenu() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/GenesisKit/Widgets/WidgetDecisionDetailsView.swift"), encoding: .utf8)
+        let notes = try XCTUnwrap(source.range(of: "Text(.init(notes))"))
+        let notesEnd = try XCTUnwrap(source.range(of: "if let proposal", range: notes.upperBound..<source.endIndex))
+        XCTAssertTrue(source[notes.lowerBound..<notesEnd.lowerBound].contains(".pathLinkMenu(markdown: notes)"))
+        let pick = try XCTUnwrap(source.range(of: "struct WidgetProposalLine"))
+        let pickEnd = try XCTUnwrap(source.range(of: "enum WidgetProposal {", range: pick.upperBound..<source.endIndex))
+        XCTAssertTrue(source[pick.lowerBound..<pickEnd.lowerBound].contains(".pathLinkMenu(markdown: text)"))
     }
 
     private func decisionCardText(preferences: [String: Any]) throws -> String {

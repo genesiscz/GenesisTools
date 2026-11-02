@@ -32,7 +32,7 @@ import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./an
 import { buildInbox, fromRecord, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
 import { answerDialogItem, parseDialogKey } from "./dialog-answer";
 import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
-import { cachingReadDeps, fillExcerpts, locateRef } from "./excerpts";
+import { cachingReadDeps, fillExcerpts, locateRef, readExcerpt } from "./excerpts";
 import {
     type InboxDeps,
     loadInbox,
@@ -195,6 +195,29 @@ describe("decision option labels", () => {
             "Keep",
             "Drop\nand log why",
         ]);
+    });
+
+    test("a fenced code block is never the options: its sample lines keep their letters and stay in the prompt", () => {
+        // A fenced sample after the real options used to replace them, as the last list that starts at "a)".
+        const after = "Pick one:\na) Keep\nb) Drop\n\nExample output:\n```\na) sample output\nb) other output\n```";
+
+        expect(decisionOptionLabels(after, ["a", "b"])).toEqual(["Keep", "Drop"]);
+        expect(shownDecisionText({ prompt: after, options: ["a", "b"] })).toEqual({
+            prompt: "Pick one:\n\nExample output:\n```\na) sample output\nb) other output\n```",
+            options: ["Keep", "Drop"],
+        });
+
+        // A prompt that ends with a fenced sample and has no list of its own keeps the bare letters and every line.
+        const sampleOnly = "Which format?\n~~~\na) sample output\nb) other output\n~~~";
+        expect(shownDecisionText({ prompt: sampleOnly, options: ["a", "b"] })).toEqual({
+            prompt: sampleOnly,
+            options: ["a", "b"],
+        });
+
+        // An indented fence under an option continues that option; its "b)" line is not option b. A longer closing
+        // fence closes it, and the option after it still counts.
+        const indented = "Pick:\na) Run it\n   ```sh\n   b) not an option\n   ````\nb) Skip";
+        expect(decisionOptionLabels(indented, ["a", "b"])).toEqual(["Run it\n```sh\nb) not an option\n````", "Skip"]);
     });
 
     test("a line that differs from its button only in case stays in the prompt", () => {
@@ -452,7 +475,7 @@ describe("cachingReadDeps", () => {
         from: "refs",
     });
 
-    test("a cited file is read again only when its stamp changed, and a folder's roots after a minute", () => {
+    test("a cited excerpt is read again only when its file's stamp changed, and a folder's roots after a minute", () => {
         const text: Record<string, string> = {
             "/w/app/a.ts": "a1\na2\na3\na4\na5",
             "/w/app/b.ts": "b1\nb2",
@@ -463,9 +486,12 @@ describe("cachingReadDeps", () => {
         let clock = 0;
         const deps = cachingReadDeps({
             base: {
-                read: (path) => {
+                excerpt: (path, { from, to }) => {
                     reads.push(path);
-                    return text[path] ?? "";
+                    return (text[path] ?? "")
+                        .split("\n")
+                        .slice(from - 1, to)
+                        .join("\n");
                 },
                 isFile: (path) => path in text,
                 roots: (cwd) => {
@@ -481,15 +507,16 @@ describe("cachingReadDeps", () => {
 
         fillExcerpts(refs, "/w/app", deps);
         const again = fillExcerpts(refs, "/w/app", deps);
-        // Three refs filled twice read each file once and look up the session folder's roots once.
-        expect(reads).toEqual(["/w/app/a.ts", "/w/app/b.ts"]);
+        // Three refs filled twice read each line window once (a.ts has two) and look up the folder's roots once.
+        expect(reads).toEqual(["/w/app/a.ts", "/w/app/a.ts", "/w/app/b.ts"]);
         expect(rootLookups).toBe(1);
         expect(again[0]?.excerpt).toBe("a1\na2\na3\na4\na5");
+        expect(again[1]?.excerpt).toBe("a2\na3\na4\na5");
 
         text["/w/app/a.ts"] = "changed1\nchanged2";
         stamps["/w/app/a.ts"] = "2";
         const changed = fillExcerpts(refs, "/w/app", deps);
-        expect(reads).toEqual(["/w/app/a.ts", "/w/app/b.ts", "/w/app/a.ts"]);
+        expect(reads).toEqual(["/w/app/a.ts", "/w/app/a.ts", "/w/app/b.ts", "/w/app/a.ts", "/w/app/a.ts"]);
         expect(changed[0]?.excerpt).toBe("changed1\nchanged2");
 
         // A file with no stamp (gone, or not a regular file) is never kept: each fill asks the disk.
@@ -501,6 +528,27 @@ describe("cachingReadDeps", () => {
         clock = 60_000;
         fillExcerpts([ref("a.ts", 1)], "/w/app", deps);
         expect(rootLookups).toBe(2);
+    });
+});
+
+describe("readExcerpt", () => {
+    test("reads a file's head only up to the cited window, and never past its byte budget", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-inbox-excerpt-"));
+        const path = join(folder, "cited.log");
+        // Ten lines of ten bytes each ("line 01.." and its newline), 99 bytes: the last one has no newline.
+        const lines = Array.from({ length: 10 }, (_, index) => `line ${String(index + 1).padStart(2, "0")}..`);
+        writeFileSync(path, lines.join("\n"));
+
+        expect(readExcerpt(path, { from: 2, to: 3 })).toBe("line 02..\nline 03..");
+        // The window past the end gives the lines there are, the last one without its newline.
+        expect(readExcerpt(path, { from: 9, to: 15 })).toBe("line 09..\nline 10..");
+        expect(readExcerpt(path, { from: 5, to: 4 })).toBe("");
+
+        // A 35-byte budget reads lines 1 to 3 and half of line 4: the cut line is left out, and so is all after it.
+        expect(readExcerpt(path, { from: 2, to: 5, maxBytes: 35 })).toBe("line 02..\nline 03..");
+        expect(readExcerpt(path, { from: 4, to: 5, maxBytes: 35 })).toBe("");
+        // A budget that ends exactly at the end of the file keeps its last line.
+        expect(readExcerpt(path, { from: 10, to: 10, maxBytes: 99 })).toBe("line 10..");
     });
 });
 
