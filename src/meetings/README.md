@@ -31,7 +31,11 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
 | `attendance <meeting> [--from teams\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given |
 | `listen <meeting> [--item i42]` | Answer the open questions by ear: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), played (`afplay` by default), and the answer decides its items. `--item i42 --answer "<text>"` answers without audio |
+| `items add <meeting> --kind speaker-range --from 38:12 --to 38:20 --label "<raw label>" --speaker <name> --confidence 0.85 --reason "…"` | Store an agent's finding (rule `agent`, the reason in `evidence.reason`); it stays suggested until a person confirms it |
+| `items add <meeting> --kind term --at 1:02 --heard <words> [--proposed <spelling>] --confidence 0.4 --reason "…"` | The same for a term; without `--proposed` it is asked as free text when it matters |
 | `items add <meeting> --listen --from 37:43 --to 37:51 --question "…" [--choices "A,B"] [--decides i7]` | Add a question of your own for `listen` |
+| `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `question`, `choices`, `decides`, `confidence`, `reason`); times as seconds or "37:43". One bad entry adds nothing |
+| `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the term part and the summary; no rule and no confidence |
 | `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |

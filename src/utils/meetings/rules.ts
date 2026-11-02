@@ -103,8 +103,14 @@ export enum MeetingRule {
      */
     UnknownWord = "unknown-word",
     /**
-     * User. The item was added by hand (`tools meetings items add`), for example a question the polisher wants
-     * answered by ear. No rule scored it, so it has no confidence.
+     * Agent. An agent judged the item from the raw evidence (`tools meetings evidence --raw`) and the meeting's
+     * context, and stored it with `items add` and a reason (`evidence.reason`). Its confidence is the agent's own.
+     * It stays suggested, so a person still confirms it; a low one becomes a listen question like any other.
+     */
+    Agent = "agent",
+    /**
+     * User. The item was added by hand (`tools meetings items add`) with no reason, for example a question the
+     * polisher wants answered by ear. No rule scored it, so it has no confidence.
      */
     User = "user",
 }
