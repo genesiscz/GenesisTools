@@ -422,7 +422,7 @@ async function decide(
             ? picked.filter(
                   (item) =>
                       (item.kind === "speaker-range" && !item.speaker && !opts.speaker) ||
-                      (item.kind === "term" && !item.proposed && !opts.proposed)
+                      (item.kind === "term" && !item.proposed && !item.meaning && !item.quote && !opts.proposed)
               )
             : [];
     // A question is answered by ear, which also decides the items it names.

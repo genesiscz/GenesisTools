@@ -32,7 +32,9 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    (transcript, people, calendar entry, attendance and `sections[]` from the meeting platform). `tools meetings
    evidence <meeting> --raw` prints the facts per line (label and its origin, text, microphone share, the people shown
    speaking or muted, who was present) and, for the terms, the vocabulary, the runs that sound like a vocabulary term
-   and the words no layer of the word check knows, each with its verdict (`--word-check hunspell` by default). It has
+   and the words no layer of the word check knows, each with its verdict (`--word-check hunspell` by default). Its
+   `terms.documents` lists, for the meeting's context documents, each passage that reads a document line aloud
+   (`readAloud`: the heard words, the line and its text) and each spoken path or identifier (`identifiers`). It has
    no rule weights and no confidence.
    Pull the documents the meeting discussed (read-only) and check the project dictionary (`tools meetings dictionary
    show`). **Ask the user for each person's role** before you judge anything.
@@ -40,7 +42,10 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    depends on who spoke), then build the glossary and fix terms with [polishing.md](references/polishing.md). Settle
    what the context settles, and store every finding in the record with its confidence and the facts it rests on:
    `tools meetings items add <meeting> --kind speaker-range --from <time> --to <time> --label <label> --speaker <name>
-   --confidence 0.85 --reason "<text>"`, or `--kind term --at <time> --heard <words> [--proposed <spelling>]`. Write
+   --confidence 0.85 --reason "<text>"`, or `--kind term --at <time> --heard <words> [--proposed <spelling>]`. In a
+   `--from-file` batch a term finding may carry `"quote": { "text": "<the document line>", "source": "čte z
+   <document>, ř. <line>" }` for a passage read aloud (D8), or `"meaning": "<identifier>"` for a spoken path (D1);
+   check each `readAloud` and `identifiers` fact against the transcript before you store it. Write
    many in one call with `--from-file <json>` (an array of objects named like the flags). For a line or a word that
    stays under 60 % and matters, add a listen question: `tools meetings items add <meeting> --kind question --from
    <time> --to <time> --about speaker|term --question "<text>" --choices <list>`, within the question budget in
