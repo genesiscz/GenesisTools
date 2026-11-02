@@ -518,6 +518,51 @@ describe("own label (R17)", () => {
     });
 });
 
+describe("a join and a range on the line after the cut", () => {
+    test("the joined line takes the voice the range gives the line after the cut", () => {
+        const item = (fields: Record<string, unknown>) =>
+            meetingItemSchema.parse({ status: "suggested", suggestedAt: "2026-11-02T15:00:00.000Z", ...fields });
+        const withItems = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                item({
+                    id: "i1",
+                    kind: "join",
+                    atSec: 10,
+                    speaker: "Carol Example",
+                    joined: "dotáhnu",
+                    confidence: 0.9,
+                    rules: ["split-word"],
+                }),
+                item({
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Carol Example",
+                    fromSec: 10,
+                    toSec: 10,
+                    speaker: "Alice Example",
+                    confidence: 0.9,
+                    rules: [MeetingRule.Channel],
+                }),
+            ],
+        });
+        const entries = [line("Speaker 5", 0, "Jak to dot"), line("Carol Example", 10, "áhnu do konce.")];
+        const applied = applyCorrections(
+            entries,
+            correctionsOf(withItems, meetingsConfigSchema.parse({}), {
+                withSuggested: true,
+                dictionary: false,
+                format: "txt",
+            })
+        );
+
+        expect(applied.entries.map((entry) => [entry.speaker, entry.text])).toEqual([
+            ["Alice Example", "Jak to dotáhnu"],
+            ["Alice Example", "do konce."],
+        ]);
+    });
+});
+
 describe("evidence rule after a leave", () => {
     test("a live name of someone who left is dropped; the speaking indicator among those still here guesses, to listen", () => {
         const items = suggestItems({
