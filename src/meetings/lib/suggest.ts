@@ -19,7 +19,10 @@ import {
     DEV_GLOSSARY,
     findSuspectTerms,
     findUnknownWords,
+    type RawTermEvidence,
+    rawTermEvidence,
     termsFromText,
+    type VocabTerm,
 } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
 import { selectQuestions } from "./question-select";
@@ -162,14 +165,16 @@ function speakerItems(options: {
     return items;
 }
 
-function termItems(options: {
+interface TermSources {
     meeting: SourceMeeting;
     record: MeetingRecord;
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
-    wordCheck?: WordCheck;
-}): NewItem[] {
-    const { meeting, record, dictionary, wordCheck } = options;
+}
+
+/** The terms a meeting's transcript should contain: glossary, source dictionary, own dictionary, names, context. */
+function termVocabulary(options: TermSources): VocabTerm[] {
+    const { record, dictionary } = options;
     const contextTexts = record.context.map((entry) => {
         if (entry.kind === "note") {
             return termsFromText(entry.ref, "context");
@@ -186,7 +191,8 @@ function termItems(options: {
 
         return entry.type === "fix" ? [{ term: entry.substitution, source: "dictionary" }] : [];
     });
-    const vocab = buildVocabulary([
+
+    return buildVocabulary([
         DEV_GLOSSARY.map((term) => ({ term, source: "glossary" })),
         options.sourceWords.map((word) => ({ term: word.replacement ?? word.value, source: "source" })),
         dictionaryTerms,
@@ -196,6 +202,22 @@ function termItems(options: {
         ),
         ...contextTexts,
     ]);
+}
+
+/** The term part of `evidence --raw`: the same vocabulary as the term rules, with no threshold of their own. */
+export function rawTerms(options: TermSources & { wordCheck?: WordCheck; unavailable?: string }): RawTermEvidence {
+    return rawTermEvidence({
+        entries: options.meeting.transcript,
+        vocab: termVocabulary(options),
+        context: termsFromText(options.meeting.title, "title"),
+        wordCheck: options.wordCheck,
+        unavailable: options.unavailable,
+    });
+}
+
+function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] {
+    const { meeting, dictionary, wordCheck } = options;
+    const vocab = termVocabulary(options);
     const keep = new Set(
         dictionary.entries.filter((entry) => entry.type === "keep").map((entry) => entry.value.toLowerCase())
     );
