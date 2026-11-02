@@ -160,6 +160,26 @@ describe("zsh-word-split", () => {
         expect(ids("arr=( foo $x ); x=$(git diff --name-only)")).toEqual([]);
     });
 
+    it("an array assignment covers only the uses after it, until the next assignment", () => {
+        expect(ids('files="a b"; git add $files; files=( a b )')).toEqual([SPLIT]);
+        expect(ids("files=( a b ); files=$(git diff --name-only); git add $files")).toEqual([SPLIT]);
+        expect(ids("files=$(git diff --name-only); files=( ${(f)files} ); git add $files")).toEqual([]);
+    });
+
+    it("an assignment inside a subshell, a substitution or a piped element stays there", () => {
+        expect(ids("files=README.md; (files=$(git diff --name-only)); cat $files")).toEqual([]);
+        expect(ids("out=$(files=$(git diff --name-only); echo x); git add $files")).toEqual([]);
+        expect(ids("files=$(git diff --name-only) | cat; git add $files")).toEqual([]);
+        expect(ids("files=README.md; zsh <<'EOF'\nfiles=$(git diff --name-only)\nEOF\ncat $files")).toEqual([]);
+        // Inside the subshell, and from the outer shell into a subshell, it still counts.
+        expect(ids("(files=$(git diff --name-only); git add $files)")).toEqual([SPLIT]);
+        expect(ids("files=$(git diff --name-only); (cd sub && git add $files)")).toEqual([SPLIT]);
+    });
+
+    it("a use inside the substitution that reassigns the variable reads the earlier value", () => {
+        expect(ids("x=$(git diff --name-only); x=$(wc -l $x)")).toEqual([SPLIT]);
+    });
+
     it("a list variable inside an array literal is one element in zsh", () => {
         const v = only("x=$(git diff --name-only); arr=( $x ); git add $arr", SPLIT);
 
@@ -189,6 +209,23 @@ describe("zsh-word-split", () => {
         ]);
     });
 
+    it("option text in data, an option set later or in a subshell, and a bash heredoc leave the zsh code checked", () => {
+        const list = "files=$(git diff --name-only); git add $files";
+
+        expect(ids(`echo 'setopt shwordsplit'; ${list}`)).toEqual([SPLIT]);
+        expect(ids(`# setopt shwordsplit\n${list}`)).toEqual([SPLIT]);
+        expect(ids(`git commit -m "emulate sh"; ${list}`)).toEqual([SPLIT]);
+        expect(ids(`${list}; setopt shwordsplit`)).toEqual([SPLIT]);
+        expect(ids(`(setopt shwordsplit); ${list}`)).toEqual([SPLIT]);
+        expect(ids(`zsh <<'EOF'\nsetopt shwordsplit\nEOF\n${list}`)).toEqual([SPLIT]);
+        expect(ids(`bash <<'EOF'\necho hi\nEOF\n${list}`)).toEqual([SPLIT]);
+        expect(ids(`${list}\nbash <<'EOF'\nfor f in $files; do echo $f; done\nEOF`)).toEqual([SPLIT]);
+        expect(ids(`echo 'bash <<EOF'\n${list}`)).toEqual([SPLIT]);
+        // The bash body itself still passes, and so does code after an option set in the same shell.
+        expect(ids("bash <<'EOF'\nfiles=$(git diff --name-only)\nfor f in $files; do echo $f; done\nEOF")).toEqual([]);
+        expect(ids(`(setopt shwordsplit; ${list})`)).toEqual([]);
+    });
+
     it("a single value by construction passes", () => {
         expect(ids("sha=$(git rev-parse HEAD); git show $sha")).toEqual([]);
         expect(ids("base=$(git merge-base HEAD origin/master); for c in $base; do echo $c; done")).toEqual([]);
@@ -211,6 +248,18 @@ describe("zsh-word-split", () => {
 
         const joined = only("F=$(rg -l parity src -g '*.test.ts' | tr '\\n' ' '); bun run test $F", SPLIT);
         expect(joined?.suggestion).toBe("F=$(rg -l parity src -g '*.test.ts' | tr '\\n' ' '); bun run test ${=F}");
+
+        const sorted = only("F=$(git diff --name-only | tr '\\n' ' ' | sort); git add $F", SPLIT);
+        expect(sorted?.suggestion).toBe("F=$(git diff --name-only | tr '\\n' ' ' | sort); git add ${=F}");
+        expect(only("F=$(git diff --name-only | xargs); git add $F", SPLIT)?.suggestion).toBe(
+            "F=$(git diff --name-only | xargs); git add ${=F}"
+        );
+    });
+
+    it("a tr that maps characters keeps the lines, so the correction still splits per line", () => {
+        const v = only("files=$(git diff --name-only | tr '[:upper:]' '[:lower:]'); git add $files", SPLIT);
+
+        expect(v?.suggestion).toBe("files=$(git diff --name-only | tr '[:upper:]' '[:lower:]'); git add ${(f)files}");
     });
 
     it("an argument meant as one string passes", () => {
@@ -249,11 +298,17 @@ describe("zsh-word-split", () => {
                 .trim();
         const loop = "files=$(printf 'a\\nb\\nc\\n' | head -40); n=0; for f in $files; do n=$((n+1)); done; echo $n";
         const args = 'list="a b"; count() { echo $#; }; count $list';
+        const mapped =
+            "files=$(printf 'My File.ts\\nb.ts\\n' | head -40 | tr '[:upper:]' '[:lower:]'); " +
+            "count() { echo $#; }; count $files";
 
         expect(run(loop)).toBe("1");
         expect(run(only(loop, SPLIT)?.suggestion ?? "")).toBe("3");
         expect(run(args)).toBe("1");
         expect(run(only(args, SPLIT)?.suggestion ?? "")).toBe("2");
+        // A path with a space survives the per-line split; `${=files}` would have made it 3.
+        expect(run(mapped)).toBe("1");
+        expect(run(only(mapped, SPLIT)?.suggestion ?? "")).toBe("2");
     });
 });
 
