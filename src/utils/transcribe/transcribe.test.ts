@@ -349,7 +349,7 @@ describe("lineEvidence fields (R2.1, R2.2)", () => {
             () => 0.8
         );
 
-        expect(first).toMatchObject({ refinedSpeakerId: 4, liveVoiceId: 1, energyLeft: 0.8, winner: SELF });
+        expect(first).toMatchObject({ refinedSpeakerId: 4, liveVoiceId: 1, energyMic: 0.8, winner: SELF });
         expect(first!.echo).toBe(1);
     });
 });

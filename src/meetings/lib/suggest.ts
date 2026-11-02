@@ -255,8 +255,8 @@ function micConfidence(line: LineEvidence): {
     energyChecked: boolean;
 } {
     const echo = (line.echo ?? 0) >= ECHO_SIMILARITY;
-    const callLoud = line.energyLeft !== undefined && 1 - line.energyLeft >= CALL_LOUD_SHARE;
-    const agrees = line.energyLeft !== undefined && line.energyLeft >= ENERGY_AGREES_SHARE;
+    const callLoud = line.energyMic !== undefined && 1 - line.energyMic >= CALL_LOUD_SHARE;
+    const agrees = line.energyMic !== undefined && line.energyMic >= ENERGY_AGREES_SHARE;
     let confidence = Math.min(MIC_ALONE_MAX, line.micShare ?? 0);
 
     confidence -= echo ? ECHO_PENALTY : 0;
@@ -267,7 +267,7 @@ function micConfidence(line: LineEvidence): {
         confidence: Math.max(0, Math.min(MIC_WITH_ENERGY_MAX, confidence)),
         echo,
         callLoud,
-        energyChecked: line.energyLeft !== undefined,
+        energyChecked: line.energyMic !== undefined,
     };
 }
 
@@ -347,7 +347,7 @@ function evidenceItems(options: {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
     presence?: Presence[];
-    energyLeftShare?: (fromSec: number, toSec: number) => number | undefined;
+    energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
 }): NewItem[] {
     const selfName = options.evidence.selfName;
 
@@ -358,7 +358,7 @@ function evidenceItems(options: {
 
     // Teams attendance names the user by email; here the user is always `selfName`.
     const presence = options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay));
-    const lines = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyLeftShare);
+    const lines = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyMicShare);
     const items: NewItem[] = [];
     let open:
         | {
@@ -473,7 +473,7 @@ export function suggestItems(options: {
     presence?: Presence[];
     evidence?: MeetingEvidence | null;
     /** The microphone channel's share of the audio energy over a time range (R2.1), when the audio is at hand. */
-    energyLeftShare?: (fromSec: number, toSec: number) => number | undefined;
+    energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     now: string;
 }): MeetingItem[] {
     const { record, meeting } = options;
@@ -496,7 +496,7 @@ export function suggestItems(options: {
                 meeting,
                 evidence: options.evidence,
                 presence: options.presence,
-                energyLeftShare: options.energyLeftShare,
+                energyMicShare: options.energyMicShare,
             })
         );
     }

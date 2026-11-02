@@ -9,6 +9,7 @@ import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcr
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { energyMicShareFor } from "../lib/energy";
 import { presenceFor } from "../lib/presence";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { meetingSource } from "../lib/sources";
@@ -60,7 +61,8 @@ async function evidence(
         }
 
         const presence = await presenceFor(record, meeting, opts.attendance);
-        const lines = lineEvidence(meeting.transcript, found, presence);
+        const energy = await energyMicShareFor(store, record, found);
+        const lines = lineEvidence(meeting.transcript, found, presence, energy.share);
         const selfLabelWords = meeting.transcript
             .filter((entry) => found.selfName && sameName(entry.speaker, found.selfName))
             .reduce((sum, entry) => sum + entry.text.split(/\s+/).filter(Boolean).length, 0);
@@ -79,6 +81,7 @@ async function evidence(
                         meeting: record.id,
                         selfName: found.selfName,
                         volume,
+                        channels: energy.calibration ?? null,
                         files: found.files,
                         devices: found.devices,
                         lines,
@@ -107,6 +110,18 @@ async function evidence(
         ui.dim(
             `${lines.length} lines · ${found.segments.length} channel segments · ${found.speaking.length} speaking readings · ${lines.filter((line) => line.tie).length} ties (two voices equal) · "?" = no channel segment overlaps the line`
         );
+
+        const channels = energy.calibration;
+
+        if (!channels) {
+            ui.dim("audio energy: not checked (no audio on this Mac, or ffmpeg is missing)");
+        } else if (channels.layout === "unknown") {
+            ui.warn(`audio energy: not used, the microphone channel is unknown: ${channels.reason}`);
+        } else {
+            ui.dim(
+                `audio energy: ${channels.layout} (mic segments median left share ${channels.micMedian}, call ${channels.systemMedian}; ${channels.segments.mic} + ${channels.segments.system} segments)`
+            );
+        }
 
         if (volume) {
             const say = `your microphone recognized ${volume.micTokens} words; your label "${found.selfName}" holds ${volume.selfLabelWords}`;

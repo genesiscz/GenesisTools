@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { MeetingsConfigStore, matchProjects, meetingsConfigSchema, resolveDictionary } from "./config";
+import { calibrateChannels, micShare } from "./energy";
 import { MeetingStore, nextId, titleSlug } from "./record";
 
 let stores = 0;
@@ -149,5 +150,45 @@ describe("meeting records", () => {
         expect(read.context.map((entry) => entry.id)).toEqual(["c1"]);
         expect(read.project).toBeUndefined();
         expect(read.history.map((entry) => entry.command)).toEqual(["new", "context add"]);
+    });
+});
+
+describe("calibrateChannels", () => {
+    // 30 mic segments (2 s each) then 30 call segments, 10 blocks per second.
+    const segments = Array.from({ length: 60 }, (_, index) => ({
+        startSec: index * 2,
+        endSec: index * 2 + 2,
+        channel: index < 30 ? "mic" : "system",
+    }));
+    const energyOf = (micSide: "left" | "right" | "both") => {
+        const left = new Float32Array(1200);
+        const right = new Float32Array(1200);
+
+        for (let block = 0; block < 1200; block += 1) {
+            const mic = block < 600;
+            const loudLeft = micSide === "both" || (micSide === "left") === mic;
+            const loudRight = micSide === "both" || (micSide === "right") === mic;
+            left[block] = loudLeft ? 500 : 5;
+            right[block] = loudRight ? 500 : 5;
+        }
+
+        return { left, right };
+    };
+
+    test("the side the tagged microphone segments are loud on is the microphone", () => {
+        expect(calibrateChannels(energyOf("left"), segments).layout).toBe("left-mic");
+        expect(calibrateChannels(energyOf("right"), segments).layout).toBe("right-mic");
+        expect(micShare(energyOf("right"), "right-mic", 0, 2)).toBeCloseTo(0.99, 2);
+    });
+
+    test("a mono recording, or too few tagged segments, leaves the layout unknown and the share out", () => {
+        const mono = calibrateChannels(energyOf("both"), segments);
+        expect(mono).toMatchObject({ layout: "unknown", micMedian: 0.5, systemMedian: 0.5 });
+        expect(mono.reason).toContain("do not separate");
+        expect(calibrateChannels(energyOf("left"), segments.slice(0, 40))).toMatchObject({
+            layout: "unknown",
+            segments: { mic: 30, system: 10 },
+        });
+        expect(micShare(energyOf("left"), "unknown", 0, 2)).toBeUndefined();
     });
 });

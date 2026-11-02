@@ -358,8 +358,8 @@ describe("microphone scoring (R2.1)", () => {
             speaking: [],
             files: [],
         };
-        const agrees = suggestItems({ ...base, meeting: oneLine, evidence, energyLeftShare: () => 0.9 });
-        const loud = suggestItems({ ...base, meeting: oneLine, evidence, energyLeftShare: () => 0.5 });
+        const agrees = suggestItems({ ...base, meeting: oneLine, evidence, energyMicShare: () => 0.9 });
+        const loud = suggestItems({ ...base, meeting: oneLine, evidence, energyMicShare: () => 0.5 });
 
         expect(agrees[0]).toMatchObject({ confidence: 0.98, rules: ["E1", "energy"] });
         expect(loud[0]!.confidence).toBe(0.8);
