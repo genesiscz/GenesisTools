@@ -48,6 +48,10 @@ export interface LinkTargets {
         /** Show a file or a folder in Finder. Only the router serves it: no app scheme opens Finder. */
         reveal: { target: string };
     };
+    "meetings-play": {
+        /** Play a meeting's audio from a transcript time (`tools meetings play`). Only the router serves it. */
+        play: { meeting: string; at: string };
+    };
     "claude-find": {
         /** Scroll to DECISION `decision`; oldest by default, or the requested position. */
         decision: { session: string; decision: number; at?: "oldest" | "newest" };
@@ -101,6 +105,18 @@ export const APP_LINKS: AppLinkTable = {
     finder: {
         reveal: {
             path: (data) => `finder/reveal${linkQuery([["target", data.target]], { keepSlash: true })}`,
+        },
+    },
+    "meetings-play": {
+        play: {
+            path: (data) =>
+                `meetings/play${linkQuery(
+                    [
+                        ["meeting", data.meeting],
+                        ["at", data.at],
+                    ],
+                    { keepSlash: false }
+                )}`,
         },
     },
     "claude-find": {
