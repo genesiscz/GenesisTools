@@ -112,10 +112,9 @@ const READ_ONLY_GIT = new Set([
 
 /** The session, or `session:agent` for a subagent's call, so a subagent's edit is not its parent's. */
 export function actorOf(payload: HookPayload): string {
-    const agent = payload.raw.agent_id ?? payload.raw.agentId;
     const session = payload.sessionId ?? "";
 
-    return typeof agent === "string" && agent.length > 0 ? `${session}:${agent}` : session;
+    return payload.agentId ? `${session}:${payload.agentId}` : session;
 }
 
 /** git verbs that bring content the command did not write: other commits, a stash, another branch. */

@@ -5716,7 +5716,7 @@ describe("the misfires of 2026-10-14", () => {
         const theirs = begin({
             toolUseId: "sib-agent",
             command: `bun /x/fix.ts ${target}`,
-            raw: { agent_id: "agent-x" },
+            agentId: "agent-x",
         });
         const mine = begin({ command: "bun run codemod" });
 
@@ -5955,7 +5955,7 @@ describe("the misfires of 2026-10-14", () => {
             const started = begin({
                 toolUseId: "bg-agent-call",
                 command: `bun /x/long.ts ${target}`,
-                raw: { agent_id: "agent-sub" },
+                agentId: "agent-sub",
             });
             const deferred = runDiffPost({
                 payload: {
@@ -5975,10 +5975,10 @@ describe("the misfires of 2026-10-14", () => {
             const main = begin({ command: "true", transcriptPath: transcript });
             expect(flushDeferred({ payload: main, config: plain })).toEqual([]);
 
-            const other = begin({ command: "true", transcriptPath: transcript, raw: { agent_id: "agent-other" } });
+            const other = begin({ command: "true", transcriptPath: transcript, agentId: "agent-other" });
             expect(flushDeferred({ payload: other, config: plain })).toEqual([]);
 
-            const own = begin({ command: "true", transcriptPath: transcript, raw: { agent_id: "agent-sub" } });
+            const own = begin({ command: "true", transcriptPath: transcript, agentId: "agent-sub" });
             const flushed = flushDeferred({ payload: own, config: plain });
 
             expect(flushed.map((item) => item.task?.id)).toEqual(["bgagent1"]);
