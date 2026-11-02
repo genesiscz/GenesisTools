@@ -25,12 +25,14 @@ import {
     type RmRequest,
     type RmRequestTarget,
     type RmSweepResult,
+    type RmTarget,
     recoverAsideJournals,
     rememberOptions,
     requestLive,
     reserveRmRequestId,
     resolveTarget,
     ruleCoverage,
+    targetChangeReason,
     updateRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
@@ -53,6 +55,7 @@ import {
 import { buildRequestViews, renderRequestDetail, renderRequestList, renderRequestRow } from "../lib/requests-view";
 import {
     minutesOption,
+    type PersonAnswer,
     printRequestHint,
     type RunContext,
     requestRuleContext,
@@ -299,121 +302,184 @@ function rowKey(target: RmRequestTarget): string {
     return `${target.path}\u0000${target.stored ?? ""}`;
 }
 
+/** A request a batch window held back, and its rows as that window read them. */
+interface HeldBack {
+    id: string;
+    /** Each row's object by row key: the next window leaves the request out when a row names another one now. */
+    pinned: ReadonlyMap<string, RmTarget>;
+}
+
+/** What one window of a batch approval read before it opened. */
+interface BatchRead {
+    parts: BatchPart[];
+    /** Requests that share a path with a part this window shows: they wait for the next window. */
+    heldBack: HeldBack[];
+    /** Requests left out because a row names another object than it did before the earlier window. */
+    changed: string[];
+    /** Requests with nothing left but lost aside copies: closed as gone here, never a failure. */
+    closedLost: number;
+}
+
+/** Locks each of `ids` for the whole call (one open in another window is left out), oldest request first. */
+function lockBatch(ids: readonly string[], releases: Array<() => void>): string[] {
+    const locked: string[] = [];
+
+    for (const id of [...new Set(ids)].sort()) {
+        const lock = lockRmRequest(id);
+
+        if (!lock.ok) {
+            const holder = lock.holder ? ` (pid ${lock.holder})` : "";
+            out.println(pc.yellow(`left out ${id}: it is open in an approval window${holder}`));
+            continue;
+        }
+
+        releases.push(lock.release);
+        locked.push(id);
+    }
+
+    // Request order, then the id: when two requests name one path, the older one is shown first.
+    const order = new Map(locked.map((id) => [id, `${loadRmRequest(id)?.createdAt ?? ""}\u0000${id}`]));
+    return locked.sort((a, b) => ((order.get(a) ?? "") < (order.get(b) ?? "") ? -1 : 1));
+}
+
+/** The first row that names another object than `pinned` holds for it, and what changed; null when none did. */
+function changedRow(
+    entries: readonly ApproveEntry[],
+    pinned: ReadonlyMap<string, RmTarget>
+): { path: string; reason: string } | null {
+    for (const { wanted, target } of entries) {
+        const before = pinned.get(rowKey(wanted));
+
+        // A path that was missing then and is missing now did not change.
+        if (!before || (before.identity === null && target.identity === null)) {
+            continue;
+        }
+
+        const reason = targetChangeReason(before);
+
+        if (reason) {
+            return { path: wanted.path, reason };
+        }
+    }
+
+    return null;
+}
+
 /**
- * `tools rm approve <id> <id> ...`: one window and one person check for the rows of several requests. The set is
- * fixed when every lock is held, so a request made while the window is open never rides along. An in-place path
- * that two requests name is one row: the first request owns it, an approval reaches the other through the shared-path
- * settle, and a Deny or an unticked row denies the path in every request that names it.
+ * Reads the requests of one batch window in order, each through the checks a single approval makes. A request that
+ * shares a path with one this window already shows is held back for the next window; a held-back request is shown
+ * only while every row still names the object it named when it was held back.
  */
-export async function approveMany(
-    ids: readonly string[],
-    ctx: RunContext,
-    deps: Partial<BatchDeps> = {}
-): Promise<void> {
-    const ask = deps.ask ?? requirePerson;
-    const kick = deps.kickDrainer ?? kickDrainer;
-    const releases: Array<() => void> = [];
+function readBatch(queue: readonly HeldBack[], ctx: RunContext, kick: BatchDeps["kickDrainer"]): BatchRead {
+    const read: BatchRead = { parts: [], heldBack: [], changed: [], closedLost: 0 };
+    const inPlaceOwner = new Map<string, string>();
+    const asidePaths = new Set<string>();
 
-    try {
-        const parts: BatchPart[] = [];
-        const inPlaceOwner = new Map<string, string>();
-        const asidePaths = new Set<string>();
-        // Requests with nothing left but lost aside copies: closed as gone here, never a failure.
-        let closedLost = 0;
+    for (const { id, pinned } of queue) {
+        // A path a rule covers now is decided by it, never shown to the person (the lock is this process's).
+        const swept = sweepBeforeApproval(id, ctx, kick);
+        const request = loadRmRequest(id);
 
-        for (const id of [...new Set(ids)].sort()) {
-            const lock = lockRmRequest(id);
+        if (swept.ruled.some((close) => close.closed) || swept.gone.includes(id)) {
+            continue;
+        }
 
-            if (!lock.ok) {
-                const holder = lock.holder ? ` (pid ${lock.holder})` : "";
-                out.println(pc.yellow(`left out ${id}: it is open in an approval window${holder}`));
-                continue;
-            }
+        const why = leftOutReason(request, id);
 
-            releases.push(lock.release);
-            // A path a rule covers now is decided by it, never shown to the person (the lock is this process's).
-            const swept = sweepBeforeApproval(id, ctx, kick);
-            const request = loadRmRequest(id);
+        if (why || !request) {
+            out.println(pc.yellow(`left out ${id}: ${why ?? "no such request"}`));
+            continue;
+        }
 
-            if (swept.ruled.some((close) => close.closed) || swept.gone.includes(id)) {
-                continue;
-            }
+        const { openEntries, blocked } = prepareApproval(request, ctx);
 
-            const why = leftOutReason(request, id);
+        if (openEntries.length === 0 && blocked.length === 0) {
+            closeAllLost(request, ctx.caller);
+            read.closedLost++;
+            continue;
+        }
 
-            if (why || !request) {
-                out.println(pc.yellow(`left out ${id}: ${why ?? "no such request"}`));
-                continue;
-            }
+        // The earlier window's decision (a copy put back) or a sync client can put another object at a path while
+        // this request waits: the person named the request for what was there, so it is never shown for another.
+        const changed = changedRow(openEntries, pinned);
 
-            const { openEntries, blocked } = prepareApproval(request, ctx);
-
-            if (openEntries.length === 0 && blocked.length === 0) {
-                closeAllLost(request, ctx.caller);
-                closedLost++;
-                continue;
-            }
-
-            // The window answers with paths, so two rows of one path cannot be told apart in it. Only two in-place
-            // rows of one path name the same object (one shared row); an aside or came-back copy beside any other
-            // row of its path is a different object, so its request is left out.
-            const samePath = openEntries.some(({ wanted }) =>
-                wanted.stored
-                    ? asidePaths.has(wanted.path) || inPlaceOwner.has(wanted.path)
-                    : asidePaths.has(wanted.path)
+        if (changed) {
+            out.println(
+                pc.yellow(
+                    `left out ${id}: ${changed.path} changed while the request before it was decided (${changed.reason})`
+                )
             );
-
-            if (samePath) {
-                out.println(pc.yellow(`left out ${id}: another request here names the same path`));
-                continue;
-            }
-
-            const rows = openEntries.filter((entry) => entry.wanted.stored || !inPlaceOwner.has(entry.wanted.path));
-            const shared = openEntries.filter((entry) => !rows.includes(entry));
-
-            for (const { wanted } of rows) {
-                if (wanted.stored) {
-                    asidePaths.add(wanted.path);
-                } else {
-                    inPlaceOwner.set(wanted.path, id);
-                }
-            }
-
-            parts.push({ request, rows, shared });
+            read.changed.push(id);
+            continue;
         }
 
-        const shown = parts.filter((part) => part.rows.length > 0);
-
-        if (shown.length === 0 && closedLost > 0) {
-            return;
-        }
-
-        if (shown.length === 0) {
-            out.println(pc.red("Nothing to approve."));
-            process.exitCode = 1;
-            return;
-        }
-
-        const measuring = new AbortController();
-        const perPart = shown.map((part) => approvalRows(part.request, part.rows, { signal: measuring.signal }));
-        const items = perPart.flatMap((rows) => rows.items);
-        const sessions = new Set(shown.map((part) => part.request.caller?.sessionId ?? null));
-        const askedAt = shown.map((part) => part.request.createdAt).sort()[0];
-        const lines = shown.flatMap((part, index) => {
-            const caller = part.request.caller;
-            const who = caller?.sessionTitle ?? caller?.project ?? caller?.agent ?? "a person";
-            const sizes = (perPart[index]?.items ?? []).map((item) => item.bytes);
-            return [
-                `${part.request.id} · ${who} · ${formatCount(part.rows.length, "item")}`,
-                ...approvalLines(part.request, part.rows, ctx, sizes).map((line) => `  ${line}`),
-            ];
-        });
-        out.println(
-            pc.dim(
-                `Opening the approval window for ${formatCount(items.length, "item")} from ${shown.length} requests…`
-            )
+        // The window answers with paths, so two rows of one path cannot be told apart in it. Only two in-place
+        // rows of one path name the same object (one shared row); an aside or came-back copy beside any other
+        // row of its path is a different object, so its request waits for the next window.
+        const samePath = openEntries.some(({ wanted }) =>
+            wanted.stored ? asidePaths.has(wanted.path) || inPlaceOwner.has(wanted.path) : asidePaths.has(wanted.path)
         );
-        const answer = await ask(ctx, {
+
+        if (samePath) {
+            out.println(pc.dim(`${id} waits for the next window: another request here names the same path`));
+            read.heldBack.push({
+                id,
+                pinned: new Map(openEntries.map((entry) => [rowKey(entry.wanted), entry.target])),
+            });
+            continue;
+        }
+
+        const rows = openEntries.filter((entry) => entry.wanted.stored || !inPlaceOwner.has(entry.wanted.path));
+        const shared = openEntries.filter((entry) => !rows.includes(entry));
+
+        for (const { wanted } of rows) {
+            if (wanted.stored) {
+                asidePaths.add(wanted.path);
+            } else {
+                inPlaceOwner.set(wanted.path, id);
+            }
+        }
+
+        read.parts.push({ request, rows, shared });
+    }
+
+    return read;
+}
+
+/**
+ * Opens one window and one person check for the rows of `parts`, then does what the person answered for each part.
+ * Null when no part has a row to show: nothing opens.
+ */
+async function decideBatch(
+    parts: readonly BatchPart[],
+    ctx: RunContext,
+    deps: BatchDeps
+): Promise<PersonAnswer | null> {
+    const shown = parts.filter((part) => part.rows.length > 0);
+
+    if (shown.length === 0) {
+        return null;
+    }
+
+    const measuring = new AbortController();
+    const perPart = shown.map((part) => approvalRows(part.request, part.rows, { signal: measuring.signal }));
+    const items = perPart.flatMap((rows) => rows.items);
+    const sessions = new Set(shown.map((part) => part.request.caller?.sessionId ?? null));
+    const askedAt = shown.map((part) => part.request.createdAt).sort()[0];
+    const lines = shown.flatMap((part, index) => {
+        const caller = part.request.caller;
+        const who = caller?.sessionTitle ?? caller?.project ?? caller?.agent ?? "a person";
+        const sizes = (perPart[index]?.items ?? []).map((item) => item.bytes);
+        return [
+            `${part.request.id} · ${who} · ${formatCount(part.rows.length, "item")}`,
+            ...approvalLines(part.request, part.rows, ctx, sizes).map((line) => `  ${line}`),
+        ];
+    });
+    out.println(
+        pc.dim(`Opening the approval window for ${formatCount(items.length, "item")} from ${shown.length} requests…`)
+    );
+    const answer = await deps
+        .ask(ctx, {
             title: `Delete ${items.length} items from ${shown.length} requests?`,
             lines,
             code: reserveRmRequestId(),
@@ -428,44 +494,105 @@ export async function approveMany(
                 items,
             },
             updates: mergeUpdates(perPart.map((rows) => rows.updates)),
-        }).finally(() => measuring.abort());
+        })
+        .finally(() => measuring.abort());
 
-        // Every part, also one whose rows are all shared: a Deny or an unticked shared row must reach it too.
-        for (const part of parts) {
-            // An earlier request's approval may have decided a path of this one (the shared-path settle): read it
-            // again, and decide only the rows the window showed for it, its own or the earlier part's.
-            const fresh = loadRmRequest(part.request.id);
+    // Every part, also one whose rows are all shared: a Deny or an unticked shared row must reach it too.
+    for (const part of parts) {
+        // An earlier request's approval may have decided a path of this one (the shared-path settle): read it
+        // again, and decide only the rows the window showed for it, its own or the earlier part's.
+        const fresh = loadRmRequest(part.request.id);
 
-            if (fresh?.status !== "pending") {
-                continue;
+        if (fresh?.status !== "pending") {
+            continue;
+        }
+
+        const again = prepareApproval(fresh, ctx, true);
+        // Each row keeps the identity pinned BEFORE the window opened: the checks after the wait (and the
+        // verified rename) compare against what the person was shown, so a path swapped meanwhile is refused.
+        const pinned = new Map([...part.rows, ...part.shared].map((entry) => [rowKey(entry.wanted), entry.target]));
+        const openEntries = again.openEntries.flatMap((entry) => {
+            const target = pinned.get(rowKey(entry.wanted));
+            return target ? [{ wanted: entry.wanted, target }] : [];
+        });
+        const notShown = again.openEntries.filter((entry) => !pinned.has(rowKey(entry.wanted)));
+        const paths = new Set(openEntries.map((entry) => entry.wanted.path));
+        const selected = answer.choices.selected?.filter((path) => paths.has(path)) ?? null;
+
+        if (openEntries.length === 0) {
+            continue;
+        }
+
+        applyApprovalAnswer({
+            ctx,
+            request: fresh,
+            openEntries,
+            blocked: [...again.blocked, ...notShown],
+            answer,
+            selected,
+            denyOf: again.denyOf,
+            kickDrainer: deps.kickDrainer,
+        });
+    }
+
+    return answer;
+}
+
+/**
+ * `tools rm approve <id> <id> ...`: one window and one person check for the rows of several requests. The set is
+ * fixed when every lock is held, so a request made while the window is open never rides along. An in-place path
+ * that two requests name is one row: the older request owns it, an approval reaches the other through the
+ * shared-path settle, and a Deny or an unticked row denies the path in every request that names it. A request that
+ * acts on another copy of a path already in the window (an aside copy beside the live path) waits for the next
+ * window, oldest request first, and is read again after the person answered. When a window gets no answer, the
+ * requests still waiting are named with the command that approves them, and the exit code is 1.
+ */
+export async function approveMany(
+    ids: readonly string[],
+    ctx: RunContext,
+    deps: Partial<BatchDeps> = {}
+): Promise<void> {
+    const batchDeps: BatchDeps = { ask: deps.ask ?? requirePerson, kickDrainer: deps.kickDrainer ?? kickDrainer };
+    const releases: Array<() => void> = [];
+
+    try {
+        let queue: HeldBack[] = lockBatch(ids, releases).map((id) => ({ id, pinned: new Map() }));
+        const notDecided: string[] = [];
+        let opened = false;
+        let closedLost = 0;
+
+        while (queue.length > 0) {
+            const read = readBatch(queue, ctx, batchDeps.kickDrainer);
+            notDecided.push(...read.changed);
+            closedLost += read.closedLost;
+            const answer = await decideBatch(read.parts, ctx, batchDeps);
+            opened ||= answer !== null;
+            queue = read.heldBack;
+
+            // A window the person did not answer decided nothing, so the next one would ask about the same paths.
+            if (queue.length > 0 && !answer?.approved && !answer?.deniedByPerson) {
+                for (const { id } of queue) {
+                    out.println(pc.yellow(`left out ${id}: another request here names the same path`));
+                }
+
+                notDecided.push(...queue.map(({ id }) => id));
+                break;
             }
+        }
 
-            const again = prepareApproval(fresh, ctx, true);
-            // Each row keeps the identity pinned BEFORE the window opened: the checks after the wait (and the
-            // verified rename) compare against what the person was shown, so a path swapped meanwhile is refused.
-            const pinned = new Map([...part.rows, ...part.shared].map((entry) => [rowKey(entry.wanted), entry.target]));
-            const openEntries = again.openEntries.flatMap((entry) => {
-                const target = pinned.get(rowKey(entry.wanted));
-                return target ? [{ wanted: entry.wanted, target }] : [];
-            });
-            const notShown = again.openEntries.filter((entry) => !pinned.has(rowKey(entry.wanted)));
-            const paths = new Set(openEntries.map((entry) => entry.wanted.path));
-            const selected = answer.choices.selected?.filter((path) => paths.has(path)) ?? null;
+        if (!opened && closedLost === 0) {
+            out.println(pc.red("Nothing to approve."));
+            process.exitCode = 1;
+            return;
+        }
 
-            if (openEntries.length === 0) {
-                continue;
-            }
-
-            applyApprovalAnswer({
-                ctx,
-                request: fresh,
-                openEntries,
-                blocked: [...again.blocked, ...notShown],
-                answer,
-                selected,
-                denyOf: again.denyOf,
-                kickDrainer: kick,
-            });
+        if (notDecided.length > 0) {
+            out.println(
+                pc.yellow(
+                    `${formatCount(notDecided.length, "request")} still ${notDecided.length === 1 ? "waits" : "wait"}: ${toolCommand("rm approve", ...notDecided)}`
+                )
+            );
+            process.exitCode = 1;
         }
     } finally {
         for (const release of releases) {
