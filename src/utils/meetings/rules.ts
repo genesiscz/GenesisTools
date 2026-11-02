@@ -49,6 +49,12 @@ export enum MeetingRule {
      */
     Arrival = "R16",
     /**
+     * R17, own label. A person the platform named a label after talks under that label within 10 s of a line under
+     * another label: in that dialogue the line is the other voice. When the speaking indicator (E3) shows that person
+     * and exactly one other present, the line is the other (0.65), and the live name (E4) for that person loses.
+     */
+    OwnLabel = "R17",
+    /**
      * RM, muted. A person the platform shows muted in every reading over a line did not say it in the call. Muted
      * people are never candidates and never "shown speaking"; with one person left whom E3 shows, the line is theirs
      * (0.9). It never overrules E1: Wispr records the microphone itself, so a muted user can still be on it.
