@@ -724,3 +724,45 @@ describe("arrival and muted (R16, RM), Martin's three lines of the example", () 
         expect(people).toContain("Fil Example");
     });
 });
+
+describe("goodbyes that were only an intention", () => {
+    const base = {
+        record,
+        rules: ["speakers" as const],
+        dictionary: { abbrExpansion: "every" as const, entries: [] },
+        sourceWords: [],
+        now: "2026-11-02T15:00:00.000Z",
+    };
+    // Carol says goodbye at 10 s, nobody but Alice's "Jo, čau." follows, and Carol talks again at 80 s.
+    const leaves = (origin: "platform" | "llm") => ({
+        ...meeting,
+        speakers: meeting.speakers.map((speaker) => (speaker.speakerId === 2 ? { ...speaker, origin } : speaker)),
+    });
+
+    test("a platform-named label still in the call splits off no range", () => {
+        const presence = [{ name: "Carol Example", fromSec: 0, toSec: 500 }];
+        const items = suggestItems({ ...base, meeting: leaves("platform"), presence });
+        expect(items.filter((item) => item.kind === "speaker-range" && item.label === "Carol Example")).toEqual([]);
+    });
+
+    test("an unanswered goodbye is kept as an intention, never as a question", () => {
+        const items = suggestItems({
+            ...base,
+            meeting: {
+                ...leaves("llm"),
+                transcript: [
+                    line("Alice Example", 0, "Začneme."),
+                    line("Carol Example", 10, "Já už musím jít, mějte se."),
+                    line(
+                        "Carol Example",
+                        80,
+                        "Tak já pokračuju s databází, ten export dat do nového systému připravíme do pátku."
+                    ),
+                ],
+            },
+        });
+        const range = items.find((item) => item.kind === "speaker-range" && item.label === "Carol Example");
+        expect(range?.evidence).toMatchObject({ intention: true });
+        expect(items.some((item) => item.kind === "question")).toBe(false);
+    });
+});

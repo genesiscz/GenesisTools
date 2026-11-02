@@ -5,7 +5,13 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
-import { type Presence, type SpeakerHint, sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import {
+    PRESENCE_TOLERANCE_SEC,
+    type Presence,
+    type SpeakerHint,
+    sameName,
+    speakerStats,
+} from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import { buildVocabulary, DEV_GLOSSARY, findSuspectTerms, termsFromText } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
@@ -42,6 +48,9 @@ function speakerItems(options: {
     selfName: string | undefined;
     selfAttendee: string | undefined;
     lastSecOf: Map<string, number>;
+    /** Who named each label: a platform names the person, so attendance can tell whether they are still there. */
+    originOf: Map<string, string | undefined>;
+    presence: Presence[] | undefined;
 }): NewItem[] {
     const { hints, selfName, lastSecOf } = options;
     const items: NewItem[] = [];
@@ -89,6 +98,21 @@ function speakerItems(options: {
                 const until = hint.leaves[index + 1]?.atSec ?? lastSecOf.get(hint.label) ?? leave.continuesAtSec;
                 const answered = Boolean(leave.confirmedBy || leave.echoOf);
                 const base = answered ? CONFIDENCE.answeredLeave : CONFIDENCE.unansweredLeave;
+                // A platform names the label after the person: while attendance shows them in the call through
+                // the range, their goodbye was only an intention and the lines after it are still theirs.
+                const stillThere =
+                    options.originOf.get(hint.label) === "platform" &&
+                    options.presence?.some(
+                        (stay) =>
+                            sameName(stay.name, hint.label) &&
+                            stay.fromSec <= leave.continuesAtSec &&
+                            stay.toSec >= until - PRESENCE_TOLERANCE_SEC
+                    );
+
+                if (stillThere) {
+                    return;
+                }
+
                 items.push({
                     kind: "speaker-range",
                     status: "suggested",
@@ -105,6 +129,8 @@ function speakerItems(options: {
                     evidence: {
                         leaveAt: leave.atSec,
                         said: leave.text,
+                        // Nobody answered the goodbye: maybe only an intention, so it is kept but never asked by ear.
+                        ...(answered ? {} : { intention: true }),
                         ...(leave.confirmedBy ? { answeredBy: leave.confirmedBy } : {}),
                         ...(leave.echoOf ? { notThisPerson: leave.echoOf.label } : {}),
                     },
@@ -570,7 +596,16 @@ export function suggestItems(options: {
         const lastSecOf = new Map(stats.speakers.map((stat) => [stat.label, stat.lastSec ?? 0]));
         const selfName = record.participants.find((person) => person.self)?.name;
         const selfAttendee = options.presence?.find((stay) => stay.self)?.name;
-        found.push(...speakerItems({ hints: stats.hints, selfName, selfAttendee, lastSecOf }));
+        found.push(
+            ...speakerItems({
+                hints: stats.hints,
+                selfName,
+                selfAttendee,
+                lastSecOf,
+                originOf: new Map(stats.speakers.map((stat) => [stat.label, stat.origin])),
+                presence: options.presence,
+            })
+        );
     }
 
     if (options.rules.includes("evidence") && options.evidence) {
