@@ -127,9 +127,14 @@ jobs:
       # 1.4.2 — ~75% of worker time was overhead rather than tests. ⚠️ 1.4.0 is NOT enough; it
       # turns the resulting hang into an EBADF fast-fail. 1.4.1 is the first version with both
       # fixes. See the block comment in scripts/test.ts for the local side of this.
+      #
+      # 1.4.4 since 2026-11-02: 1.4.2 loses a spawnSync child exit in a long-lived test worker
+      # (oven-sh/bun#34069, fixed by #44581 in 1.4.3). Each lost exit was a 20 s test timeout
+      # ("killed 1 dangling process"), and a spawnSync outside a test (a describe body, a
+      # beforeAll) has no test timeout, so it held the whole suite until the 5-minute budget.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
 
       # The hosted images ship no ripgrep (actions/runner-images#12179, closed
       # NOT_PLANNED) and the history search, the shell-quirks extractor and the
@@ -377,7 +382,7 @@ jobs:
       # Keep in step with the `test` job's pin; the reasoning lives there.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
 
       # Three guards shell out to it (logging, pid-safety, package boundaries), and the
       # hosted image ships none.
