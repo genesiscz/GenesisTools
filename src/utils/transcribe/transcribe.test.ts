@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { speakerStats } from "./speakers";
-import type { TranscriptEntry } from "./types";
+import { LEAVE_PHRASES, speakerStats } from "./speakers";
+import type { Participant, TranscriptEntry } from "./types";
 
-function line(speaker: string, startSec: number | undefined, text: string): TranscriptEntry {
-    return { speaker, startSec, text };
+function line(speaker: string, startSec: number | undefined, text: string, speakerId?: number): TranscriptEntry {
+    return { speaker, startSec, text, speakerId };
 }
 
 describe("speakerStats", () => {
@@ -52,5 +52,43 @@ describe("speakerStats", () => {
         expect(stats.timed).toBe(false);
         expect(stats.speakers.every((s) => s.spokenSec === 0 && s.spans.length === 0)).toBe(true);
         expect(stats.hints.some((h) => h.kind === "several-people")).toBe(false);
+    });
+
+    test("a label that says goodbye and speaks on later marks a boundary, strong when a language model named it", () => {
+        const participants: Participant[] = [
+            { speakerId: 1, name: "Alice Example", origin: "platform" },
+            { speakerId: 2, name: "Carol Example", origin: "llm" },
+        ];
+        const stats = speakerStats(
+            [
+                line("Alice Example", 0, "Začneme.", 1),
+                line("Carol Example", 10, "Hele, já už musím, mějte se.", 2),
+                line("Alice Example", 20, "Díky.", 1),
+                line("Carol Example", 80, "Tak já bych pokračoval s databází.", 2),
+            ],
+            { participants }
+        );
+        const carol = stats.speakers.find((s) => s.label === "Carol Example")!;
+
+        expect(carol.origin).toBe("llm");
+        expect(carol.leaves).toEqual([{ atSec: 10, text: "Hele, já už musím, mějte se.", continuesAtSec: 80 }]);
+        expect(stats.hints).toContainEqual(
+            expect.objectContaining({ kind: "leave-then-continues", label: "Carol Example", strength: "strong" })
+        );
+    });
+
+    test("leave phrases match whole Czech words only", () => {
+        const leaves = (text: string) => LEAVE_PHRASES.some((phrase) => phrase.test(text));
+
+        expect(leaves("Dobrý, hele, mizím.")).toBe(true);
+        expect(leaves("já už jsem měl před půl hodinou jít")).toBe(true);
+        expect(leaves("nemizím")).toBe(false);
+    });
+
+    test("a split voice that cut a word prints the joined word", () => {
+        const { hints } = speakerStats(meeting);
+        const split = hints.find((h) => h.kind === "split-voice");
+
+        expect(split).toMatchObject({ strength: "strong", join: { left: "dot", right: "áhnu", joined: "dotáhnu" } });
     });
 });

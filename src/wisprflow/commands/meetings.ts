@@ -350,14 +350,33 @@ function showMarkdown(meeting: Meeting, source: SourceName): string {
     return `${parts.join("\n\n")}\n`;
 }
 
+const ORIGIN_NOTE: Record<SpeakerHint["strength"], string> = {
+    weak: " (the platform named this label: weak)",
+    normal: "",
+    strong: " (a language model guessed this label: strong)",
+};
+
 function hintText(hint: SpeakerHint): string {
+    const note = ORIGIN_NOTE[hint.strength];
+
     if (hint.kind === "several-people") {
-        return `${hint.label}: ${hint.spans} spans far apart and ${Math.round(hint.share * 100)} % of the speech, maybe several people`;
+        return `${hint.label}: ${hint.spans} spans far apart and ${Math.round(hint.share * 100)} % of the speech, maybe several people${note}`;
+    }
+
+    if (hint.kind === "leave-then-continues") {
+        const leaves = hint.leaves
+            .map(
+                (leave) =>
+                    `${formatClock(leave.atSec)} "${truncateDisplay(leave.text, 60)}" (speaks again at ${formatClock(leave.continuesAtSec)})`
+            )
+            .join("; ");
+        return `${hint.label}: says goodbye and keeps speaking, so another voice follows each of: ${leaves}${note}`;
     }
 
     const at = hint.atSec === undefined ? "" : ` at ${formatClock(hint.atSec)}`;
     const spoken = hint.spokenSec > 0 ? `, ${Math.round(hint.spokenSec)} s` : "";
-    return `${hint.label}: one turn${spoken}${at} next to ${hint.neighbour}, maybe a split voice`;
+    const join = hint.join ? `; "${hint.join.left}" + "${hint.join.right}" = "${hint.join.joined}"` : "";
+    return `${hint.label}: one turn${spoken}${at} next to ${hint.neighbour}, maybe a split voice${join}`;
 }
 
 async function speakers(
@@ -395,7 +414,7 @@ async function speakers(
     }
 
     reportSource(loaded.source, loaded.notes);
-    const stats = speakerStats(loaded.data.transcript, { gapSec });
+    const stats = speakerStats(loaded.data.transcript, { gapSec, participants: loaded.data.participants });
     log.debug({ meeting: loaded.data.id, speakers: stats.speakers.length, hints: stats.hints.length }, "speaker stats");
 
     if (format === "json") {
@@ -403,7 +422,17 @@ async function speakers(
         return;
     }
 
-    const table = createBoxTable(["SPEAKER", "#", "TURNS", "LINES", "WORDS", "SPOKEN", "FIRST–LAST", "SPANS"]);
+    const table = createBoxTable([
+        "SPEAKER",
+        "#",
+        "ORIGIN",
+        "TURNS",
+        "LINES",
+        "WORDS",
+        "SPOKEN",
+        "FIRST–LAST",
+        "SPANS",
+    ]);
 
     for (const stat of stats.speakers) {
         const range =
@@ -413,6 +442,7 @@ async function speakers(
         table.push([
             pc.white(stat.label),
             stat.speakerId === undefined ? "—" : String(stat.speakerId),
+            stat.origin === "unknown" ? "—" : stat.origin,
             String(stat.turns),
             String(stat.lines),
             String(stat.words),
@@ -429,7 +459,11 @@ async function speakers(
     }
 
     for (const hint of stats.hints) {
-        ui.warn(hintText(hint));
+        if (hint.strength === "weak") {
+            ui.dim(hintText(hint));
+        } else {
+            ui.warn(hintText(hint));
+        }
     }
 }
 
@@ -607,7 +641,7 @@ export function registerMeetingsCommand(program: Command): void {
         .command("speakers")
         .argument("<meeting>", "meeting id, share link, or share slug")
         .description(
-            "Per speaker label: turns, lines, words, spoken time and spans, with hints at mixed or split voices"
+            "Per speaker label: origin, turns, lines, words, spoken time and spans, with hints at mixed or split voices"
         )
         .option("--gap <duration>", "a pause shorter than this keeps two turns in one span", "2m")
         .option("--source [source]", "auto | local | mcp")
