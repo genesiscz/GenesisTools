@@ -1,9 +1,8 @@
 # Polishing rules
 
-Each rule comes from a decision Martin made on 2026-11-02 (session `4ea826dd-e609-4ebc-9690-9ba4cc925167`, decisions
-D1 to D18). Rules marked PENDING wait for his answer; apply the recommended option and mark it as a suggestion. The
-meeting these rules were made on is worked through in a private example in the user's notes vault (real names, so it is
-not in this repository).
+Each rule comes from a decision the user made on 2026-11-02 (decisions D1 to D18). Rules marked PENDING wait for an
+answer; apply the recommended option and mark it as a suggestion. The meeting these rules were made on is worked
+through in a private example in the user's notes vault (real names, so it is not in this repository).
 
 ## The polished file
 
@@ -45,7 +44,7 @@ Work in this order; each pass finds what the previous ones miss.
 
 1. **Read every line**, not only the tool's lists. The tool gives two: runs that sound like a vocabulary term, and words
    no layer of the word check knows (see below). Both are leads, not verdicts: ordinary spoken words land in the
-   unknown list too ("byznysák"), and a real word used wrongly ("funkcionář" for a feature) passes the check.
+   unknown list too ("byznysák"), and a real word used wrongly ("implementátor" for an implementation) passes the check.
 2. **Build the project vocabulary first**: identifiers from the discussed documents and code (DTO and interface names,
    paths, fields, enum values), people from the invite, and the project dictionary.
 3. **Look for these error shapes**:
@@ -54,7 +53,7 @@ Work in this order; each pass finds what the previous ones miss.
      in Czech and compare);
    - a technology name glued to a Czech ending (invented: "Grafkůelem" for "GraphQL-em");
    - a nickname built from a person's syllables;
-   - a word that is real Czech but makes no sense in its sentence ("funkcionář" where a feature is meant);
+   - a word that is real Czech but makes no sense in its sentence ("implementátor" where an implementation is meant);
    - a person's name in the wrong grammatical case. Check every name against the verb before it, even when the person
      exists: "ptát se / zeptat se / neptat se" take the genitive ("zeptat se Pavla Nováka", invented example), so an
      accusative form after them is a mishearing, not a `keep`. A form suggested by the tool or the source's summary is
@@ -64,12 +63,15 @@ Work in this order; each pass finds what the previous ones miss.
    - a domain value heard as a foreign word: check the data model's labels and codebooks (a heard English word can be the
      client's brand name in a list of offer types);
    - a garbled stretch where the speaker reads a document aloud (look for the document's section words around it).
-4. **Work-item numbers**: when a speaker says a ticket number, fetch its title (`tools azure-devops wi <id> -f md`)
-   before you judge the words around it; an odd abbreviation near it is often part of the title.
+4. **Work-item numbers**: when a speaker says a ticket number, fetch its title (`tools azure-devops wi <id> -f md`, run
+   from the project's checkout, which holds the Azure DevOps configuration) before you judge the words around it; an
+   odd abbreviation near it is often part of the title.
 5. **Read-aloud passages**: when a speaker reads from a document, find the sentence in the document and propose it as a
-   quote (D8). A strange abbreviation inside such a passage is usually the document's own word misheard.
-6. **Keep real words** that only look odd (invented examples: "pushnu" is a Czech verb made from "push", "dlaždice" is a real domain word). Record them as
-   `keep`, so the tool's false suggestion is visibly rejected.
+   quote (D8). Quote only the part that was read: a speaker skips code spans and stops mid-line, and a quote of the
+   whole line puts words in the transcript that nobody said. A strange abbreviation inside such a passage is usually
+   the document's own word misheard.
+6. **Keep real words** that only look odd (invented examples: "pushnu" is a Czech verb made from "push", "dlaždice" is
+   a real domain word). List them in the glossary as `keep`; in the automatic mode, reject the tool's suggestion.
 
 ## The word check
 
@@ -94,9 +96,9 @@ term rules skip every word with a Czech letter, as before.
 ## Term rules
 
 - **Keep the words, add the meaning** (D1, D16): the original text stays and the meaning follows as
-  `<sup>(…)</sup>`: "v tom get-u to lomeno type <sup>(`/{type}`)</sup>".
+  `<sup>(…)</sup>`: "v tom get-u to lomeno id <sup>(`/{id}`)</sup>".
 - **A path parameter is written as the speaker said it** (D2). When the meeting decides to change it, add the marker
-  from the exact turn of the agreement on (D18): `{key} <sup>(Nově GUID)</sup>`.
+  from the exact turn of the agreement on (D18): `{id} <sup>(Nově UUID)</sup>`.
 - **Czech slang for technical words stays** (D5): "DTOčko", "APIčko", "BFFko", "UIčko". Fix only a misspelling. Use the
   exact identifier only when the speaker names one specific thing.
 - **Business abbreviations are substituted, never translated to code values** (D7): the abbreviation stays and its
@@ -106,8 +108,8 @@ term rules skip every word with a Czech letter, as before.
   slash or an underscore in a passage about values or paths ("x.y", "a/b") was probably read from the screen: ask the
   user what was shown (or look up the screen record, `tools meetings screen --at`), and do not guess.
 - **A fix stays in the speaker's language and register**: a misheard Czech word becomes the Czech word the speaker
-  meant, not an English synonym (a Czech "funkcionář" that should mean a feature becomes "funkcionalita", not
-  "feature").
+  meant, not an English synonym (a Czech "implementátor" that should mean an implementation becomes "implementace",
+  not "implementation"), and the words that agree with it change with it.
 - **Fix a word only when one reading fits the grammar and the context** (D9), and log the reason. Two possible readings
   make it an unclear item that always shows what is unclear: `[nejasné: "<raw>"; 1) <reading> 2) <reading>]`, never a
   bare `[nejasné]`. A word the user can settle by listening becomes a "listen" item (see speakers.md).
@@ -121,7 +123,7 @@ term rules skip every word with a Czech letter, as before.
 ## Removals
 
 - **Swearing and fillers stay** in the transcript and never go into the summary (D6).
-- **Immediate repeats and cut-offs are removed** ("že všechny, že všechny" becomes "že všechny"; "A- a" becomes "A"),
+- **Immediate repeats and cut-offs are removed** ("že to, že to" becomes "že to"; "A- a" becomes "A"),
   listed in a review file grouped by kind, confirmed per kind by the user, and shown in the Diffs section (D17).
   Interjections ("Jo. Jo.") stay.
 

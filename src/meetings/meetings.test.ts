@@ -9,7 +9,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
-import { findingItems, findingProblem, findingsFileSchema } from "./lib/findings";
+import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { selectQuestions } from "./lib/question-select";
@@ -1209,7 +1209,127 @@ describe("an agent's findings (items add)", () => {
         const [late] = findingsFileSchema.parse({
             findings: [{ kind: "question", from: 5, to: 9, question: "?", decides: ["i9"] }],
         });
-        expect(findingProblem(late!, [])).toContain("i9");
+        expect(findingProblems([late!], [])[0]).toContain("i9");
+    });
+
+    test("a question decides the findings of its own batch by their refs, which become the new ids", () => {
+        const parsed = findingsFileSchema.parse([
+            { kind: "question", from: 10, to: 20, question: "Who says it?", decides: ["early", "i1"] },
+            {
+                kind: "speaker-range",
+                ref: "early",
+                from: 10,
+                to: 20,
+                label: "Speaker 5",
+                speaker: "Fil Example",
+                confidence: 0.55,
+                reason: "only the content points at him",
+            },
+            {
+                kind: "join",
+                at: "2:03",
+                label: "Speaker 5",
+                joined: "dotáhnu",
+                confidence: 0.9,
+                reason: "the word is cut",
+            },
+        ]);
+        const existing = meetingItemSchema.parse({
+            id: "i1",
+            kind: "term",
+            status: "suggested",
+            heard: "x",
+            suggestedAt: now,
+        });
+
+        expect(findingProblems(parsed, [existing])).toEqual([]);
+        const [question, range, join] = findingItems(parsed, [existing], now);
+        expect(question).toMatchObject({ id: "i2", decides: ["i3", "i1"] });
+        expect(range).toMatchObject({ id: "i3", kind: "speaker-range" });
+        expect(join).toMatchObject({ id: "i4", kind: "join", atSec: 123, speaker: "Speaker 5", joined: "dotáhnu" });
+    });
+
+    test("an unknown ref, a ref used twice, or a ref shaped like an item id is refused", () => {
+        const range = (ref: string) => ({
+            kind: "speaker-range",
+            ref,
+            from: 1,
+            to: 2,
+            label: "A",
+            speaker: "B",
+            confidence: 0.5,
+            reason: "r",
+        });
+        const twice = findingsFileSchema.parse([
+            range("a"),
+            range("a"),
+            { kind: "question", from: 1, to: 2, question: "?", decides: ["b"] },
+        ]);
+
+        expect(findingProblems(twice, [])).toEqual([
+            expect.stringContaining('ref "a"'),
+            expect.stringContaining('ref "a"'),
+            expect.stringContaining("decides b"),
+        ]);
+        expect(findingsFileSchema.safeParse([range("i7")]).success).toBe(false);
+    });
+});
+
+describe("a term fix for one line, and a word that a question and an unlinked low term both mark", () => {
+    const item = (fields: Record<string, unknown>) =>
+        meetingItemSchema.parse({ status: "suggested", suggestedAt: "2026-11-02T15:00:00.000Z", ...fields });
+    const apply = (items: unknown[], entries: TranscriptEntry[]) =>
+        applyCorrections(
+            entries,
+            correctionsOf(meetingRecordSchema.parse({ ...record, items }), meetingsConfigSchema.parse({}), {
+                withSuggested: true,
+                dictionary: false,
+                format: "txt",
+            })
+        ).entries.map((entry) => entry.text);
+
+    test("a fix scoped to its line leaves the same words elsewhere as heard", () => {
+        const fix = item({
+            id: "i1",
+            kind: "term",
+            atSec: 10,
+            heard: "Ada",
+            proposed: "ADO",
+            scope: "line",
+            confidence: 0.9,
+            rules: [MeetingRule.Agent],
+        });
+
+        expect(apply([fix], [line("A", 0, "Ada řekla ne."), line("A", 10, "Je to v Ada.")])).toEqual([
+            "Ada řekla ne.",
+            "Je to v ADO.",
+        ]);
+    });
+
+    test("the question marks the word once, with its own choices", () => {
+        const low = item({
+            id: "i1",
+            kind: "term",
+            atSec: 10,
+            heard: "vajbu",
+            proposed: "vibe",
+            confidence: 0.3,
+            rules: [MeetingRule.Agent],
+        });
+        const question = item({
+            id: "i2",
+            kind: "question",
+            about: "term",
+            fromSec: 10,
+            toSec: 10,
+            question: "What is said?",
+            heard: "vajbu",
+            choices: ["vibe", "vajbu"],
+            decides: [],
+        });
+        const [text] = apply([low, question], [line("A", 10, "To má svou vajbu.")]);
+
+        expect(text).toBe('To má svou [nejasné: "vajbu"; 1) vibe 2) vajbu].');
     });
 });
 

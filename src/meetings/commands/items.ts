@@ -36,7 +36,7 @@ import pc from "picocolors";
 import { z } from "zod";
 import { collectAndReport } from "../lib/collect";
 import { energyMicShareFor } from "../lib/energy";
-import { FINDING_KINDS, findingItems, findingProblem, findingSchema, findingsFileSchema } from "../lib/findings";
+import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
@@ -260,6 +260,8 @@ interface AddOptions {
     speaker?: string;
     heard?: string;
     proposed?: string;
+    scope?: string;
+    joined?: string;
     about?: string;
     question?: string;
     choices?: string;
@@ -289,6 +291,8 @@ function findingFromFlags(opts: AddOptions): Record<string, unknown> {
         speaker: opts.speaker,
         heard: opts.heard,
         proposed: opts.proposed,
+        scope: opts.scope,
+        joined: opts.joined,
         about: opts.about,
         question: opts.question,
         choices: commaList(opts.choices),
@@ -336,10 +340,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
         return;
     }
 
-    const problems = parsed.data.flatMap((finding, index) => {
-        const problem = findingProblem(finding, record.items);
-        return problem ? [`#${index + 1} (${finding.kind}) ${problem}`] : [];
-    });
+    const problems = findingProblems(parsed.data, record.items);
 
     if (problems.length > 0) {
         fail(`Nothing added: ${problems.join("; ")}`);
@@ -698,27 +699,29 @@ export function registerItemCommands(program: Command): void {
         .command("add")
         .argument("<meeting>", MEETING_REF)
         .description(
-            `Add an agent's finding (a speaker range or a term, with a confidence and a reason) or a question for ${toolCommand("meetings", "listen")}`
+            `Add an agent's finding (a speaker range, a join or a term, with a confidence and a reason) or a question for ${toolCommand("meetings", "listen")}`
         )
         .option("--kind <kind>", `${FINDING_KINDS.join(" | ")} (default question)`)
         .option("--listen", "same as --kind question")
         .option("--from-file <json>", "a batch: an array of findings in the shape the flags make (see the README)")
         .option("--from <time>", "range start: 37:43, 1:02:10 or seconds (speaker-range, question)")
         .option("--to <time>", "range end (speaker-range, question)")
-        .option("--at <time>", "term: where it is heard")
-        .option("--label <label>", "speaker-range: the source's label of those lines")
+        .option("--at <time>", "term: where it is heard; join: the start of the line after the cut")
+        .option("--label <label>", "speaker-range: the source's label of those lines; join: whose voice speaks it")
         .option("--speaker <name>", "speaker-range: who it really is")
         .option(
             "--heard <words>",
             "term: the words as the transcript has them; question: the words marked until answered"
         )
         .option("--proposed <text>", "term: the right spelling, when known")
+        .option("--scope <scope>", "term: line (fix only the line at --at) or everywhere (default)")
+        .option("--joined <word>", "join: the whole word the two lines make")
         .option("--about [topic]", `question: ${QUESTION_TOPICS.join(" | ")} (default speaker)`)
         .option("--question <text>", "question: what to decide, as the listener reads it")
         .option("--choices <list>", "question: comma-separated answers to offer")
-        .option("--decides <ids>", "question: comma-separated items the answer confirms or rejects")
-        .option("--confidence <0..1>", "how sure the finding is (required for speaker-range and term)")
-        .option("--reason <text>", "why: the facts and context it rests on (required for speaker-range and term)")
+        .option("--decides <ids>", "question: comma-separated items (or batch refs) the answer confirms or rejects")
+        .option("--confidence <0..1>", "how sure the finding is (required for speaker-range, join and term)")
+        .option("--reason <text>", "why: the facts and context it rests on (required for speaker-range, join and term)")
         .action(addItems);
 
     for (const [name, status] of [

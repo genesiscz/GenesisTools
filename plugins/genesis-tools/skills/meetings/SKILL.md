@@ -40,16 +40,29 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    show`). **Ask the user for each person's role** before you judge anything.
 3. **Pass 2, the agent judges.** Attribute speakers with [speakers.md](references/speakers.md) first (a term fix often
    depends on who spoke), then build the glossary and fix terms with [polishing.md](references/polishing.md). Settle
-   what the context settles, and store every finding in the record with its confidence and the facts it rests on:
-   `tools meetings items add <meeting> --kind speaker-range --from <time> --to <time> --label <label> --speaker <name>
-   --confidence 0.85 --reason "<text>"`, or `--kind term --at <time> --heard <words> [--proposed <spelling>]`. In a
-   `--from-file` batch a term finding may carry `"quote": { "text": "<the document line>", "source": "čte z
-   <document>, ř. <line>" }` for a passage read aloud (D8), or `"meaning": "<identifier>"` for a spoken path (D1);
-   check each `readAloud` and `identifiers` fact against the transcript before you store it. Write
-   many in one call with `--from-file <json>` (an array of objects named like the flags). For a line or a word that
-   stays under 60 % and matters, add a listen question: `tools meetings items add <meeting> --kind question --from
-   <time> --to <time> --about speaker|term --question "<text>" --choices <list>`, within the question budget in
-   speakers.md.
+   what the context settles, and store every finding in the record with its confidence and the facts it rests on, all
+   in one `tools meetings items add <meeting> --from-file <json>` call: an array of objects named like the flags
+   (`tools meetings items add --help`). The kinds:
+   - `speaker-range`: `from`, `to`, `label`, `speaker`. `to` is the START time of the last line of the range, as
+     `evidence --raw` prints it: a range takes every line of its label that starts inside it, so the end time of the
+     last line can pull in the next line of the same label.
+   - `term`: `at`, `heard`, then one of `proposed` (the right spelling), `meaning` (a spoken path: the identifier shown
+     after the heard words, D1) or `quote` (`{ "text": "<the part of the document line that was read>", "source":
+     "čte z <document>, ř. <line>" }`, D8). `proposed` fixes the words wherever they are heard; add `"scope": "line"`
+     when the same words are right elsewhere. Put the words that agree with the fix into `heard` too ("nějakej
+     implementátor" becomes "nějaká implementace"), or the fixed sentence breaks its grammar. A real word the word
+     check flags needs no item: list it in the glossary as `keep`.
+   - `join`: `at` (the start of the line after the cut), `joined` (the whole word), and `label` when the voice of the
+     joined line is not the label of the line after the cut.
+   - `question` (for a line or a word that stays under 60 % and matters, within the question budget in speakers.md):
+     `from`, `to`, `about` (`speaker` or `term`), `question`, `choices`, `heard` for a term, and `decides`. Give each
+     finding the question settles a `ref` (a short name such as `"r-14"`) and list the refs in `decides`; the tool
+     turns them into the new item ids, so the user's answer confirms or rejects those findings.
+
+   Check every `readAloud` and `identifiers` fact against the transcript before you store it: the line number can be
+   off, and a match can be a false one. A context document can be newer than the meeting and already hold its
+   outcomes: read the version from before the meeting (`git log --before=<meeting start> -1 -- <path>`, then `git show
+   <sha>:<path>`), and use a later version for spelling only, never for who said what.
 4. **Pass 3, the user listens.** Give the user `tools meetings listen <meeting>`: it shows one question, plays its clip
    with a tone before the asked words, and waits for the answer; Esc goes back one step and undoes the previous
    answer. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
@@ -76,7 +89,7 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 
 ## Hard rules
 
-- Read the WHOLE transcript. A sample misses the speaker who left at minute 37.
+- Read the WHOLE transcript. A sample misses a speaker who left halfway through.
 - Keep the speaker's language, order and turns. Correct terms, names, identifiers and mishearings; do not rewrite style,
   shorten or add content. Keep the original wording and add the meaning next to it (see the marker rule).
 - An unresolvable passage is `[nejasné: <raw text>]`. A guessed speaker is `[<name>: NN %]`.
