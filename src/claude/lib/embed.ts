@@ -23,6 +23,7 @@ export function claudeEmbedAccountName(
 export const claudeEmbed: EmbedLauncher = {
     alias: "claude",
     hostProtocol: "claude-stream-json",
+    servesProxy: true,
     async run({ request, argv }) {
         if (request.kind === "proxy") {
             const { runProxySession } = await import("@app/claude/commands/run");

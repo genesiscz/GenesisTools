@@ -20,5 +20,10 @@ export interface EmbedLaunchInput {
 export interface EmbedLauncher {
     readonly alias: HarnessId;
     readonly hostProtocol: EmbedHostProtocol;
+    /**
+     * Whether `run` serves a `proxy:<account>/<provider>` request through the ai-proxy. `tools t3 providers add`
+     * refuses a proxy instance for a launcher that does not, and its doctor reports one, because it could never start.
+     */
+    readonly servesProxy: boolean;
     run(input: EmbedLaunchInput): Promise<void>;
 }

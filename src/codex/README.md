@@ -411,6 +411,9 @@ An app that runs codex as a provider (T3 Code) points its binary path at a launc
 - `--version`, `app-server --help` and `exec` go to the real binary unchanged. `exec` (T3's text generation)
   still bills the login in `auth.json`.
 - `proxy:` is refused: the ai-proxy does not serve the app-server protocol.
+- `auto` cannot keep the account a resumed thread last ran on (the Claude embed can, because its resume id is on the
+  argv). T3 names the thread later, in `thread/resume` over the app-server's stdin, after the launcher has logged the
+  app-server in, and one app-server can serve several threads.
 
 `tools t3 launchers install` writes the launchers and `tools t3 providers add|sync` writes the T3 instances
 (see `src/t3/README.md`).

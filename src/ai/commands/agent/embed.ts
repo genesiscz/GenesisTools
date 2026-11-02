@@ -10,6 +10,9 @@ import type { Command } from "commander";
  * between `embed` and `--`. Commander would bind the first native operand to `[account]` (it does so even after
  * `--`), and the host's own flags (`--output-format`, `app-server`, `--resume=<id>`) must never reach it, so the
  * launcher scripts always pass `--`. Null when there is no `--`.
+ *
+ * The verb is the FIRST `embed` after the runtime and the script path: the account operand comes after it and may
+ * itself be named `embed` (`tools claude embed embed -- …`).
  */
 export function splitEmbedArgv(argv: readonly string[]): { account: string | undefined; native: string[] } | null {
     const dash = argv.indexOf("--");
@@ -18,7 +21,7 @@ export function splitEmbedArgv(argv: readonly string[]): { account: string | und
         return null;
     }
 
-    const verb = argv.lastIndexOf("embed", dash);
+    const verb = argv.slice(0, dash).indexOf("embed", 2);
     const operands = verb < 0 ? [] : argv.slice(verb + 1, dash).filter((token) => !token.startsWith("-"));
 
     return { account: operands[0], native: argv.slice(dash + 1) };

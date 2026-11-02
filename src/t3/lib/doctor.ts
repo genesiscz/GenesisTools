@@ -1,10 +1,10 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { embedLauncher } from "@app/ai/lib/embed/registry";
 import { embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import { t3HostFor } from "./hosts";
 import { embedAccountStatus, instanceBinaryPath, instanceEmbed, isOwnedInstanceId, type T3Instance } from "./instances";
@@ -13,6 +13,7 @@ import {
     type LauncherSpec,
     launcherFileName,
     listAccountLaunchers,
+    parseLauncherAccount,
     parseLauncherCheckout,
     renderLauncher,
 } from "./launchers";
@@ -37,13 +38,6 @@ function isExecutable(path: string): boolean {
         log.debug({ path, error }, "not executable");
         return false;
     }
-}
-
-function accountFromLauncher(script: string, alias: HarnessId): string | null {
-    const variable = embedAccountEnvVar(alias);
-    const match = script.match(new RegExp(`^export ${variable}='((?:[^']|'\\\\'')*)'$`, "m"));
-
-    return match ? match[1].replace(/'\\''/g, "'") : null;
 }
 
 /** Checks one launcher file: present, executable, pointing at a checkout, and in the form `install` writes today. */
@@ -87,7 +81,7 @@ export function checkLaunchers(input: { binDir: string; accounts: readonly Accou
 
         for (const name of listAccountLaunchers(input.binDir, alias)) {
             const path = join(input.binDir, name);
-            const account = isExecutable(path) ? accountFromLauncher(readFileSync(path, "utf8"), alias) : null;
+            const account = isExecutable(path) ? parseLauncherAccount(readFileSync(path, "utf8"), alias) : null;
 
             if (account === null) {
                 findings.push({ level: "warn", subject: path, message: "cannot read the account it pins", fix: null });
@@ -179,6 +173,16 @@ export async function checkInstances(input: {
                 subject: id,
                 message: `embed account "${embed.value}" is ${status}`,
                 fix: toolCommand("ai", "config", "account", "list"),
+            });
+            continue;
+        }
+
+        if (status === "proxy" && !(await embedLauncher(embed.alias)).servesProxy) {
+            findings.push({
+                level: "err",
+                subject: id,
+                message: `embed account "${embed.value}" is an ai-proxy target, which ${embed.alias}'s embed launcher refuses, so the instance never starts; remove it in T3 Code`,
+                fix: toolCommand("t3", "providers", "add", embed.alias, "--account", "auto", ...input.settingsFlags),
             });
             continue;
         }

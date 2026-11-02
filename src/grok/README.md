@@ -118,6 +118,8 @@ An app that runs grok as a provider (T3 Code) points its binary path at a launch
 - T3 runs `<launcher> agent stdio` (ACP), with `--permission-mode` or `--always-approve`. The launcher runs the
   real grok with the account's auth file, or a vault grant it releases when grok exits.
 - `--version` and `--help` probes run with no account. `proxy:` is refused.
+- `auto` cannot keep the account a resumed session last ran on (the Claude embed can, because its resume id is on
+  the argv). T3 names the session later, in ACP `session/load`, after grok has started as the account.
 
 `tools t3 launchers install` writes the launchers and `tools t3 providers add|sync` writes the T3 instances
 (see `src/t3/README.md`).

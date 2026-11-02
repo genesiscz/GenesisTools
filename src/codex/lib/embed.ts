@@ -292,10 +292,16 @@ async function serveAsAccount(input: { binding: CodexAccountBinding; argv: strin
  * Codex for an embedding app: `codex app-server` that runs as the requested account. The vault stays the one owner of
  * the account's tokens: they reach the app-server as external tokens over JSON-RPC, it keeps them in memory only, and
  * its refresh requests come back to the vault. The shared home's `auth.json` is never swapped or rewritten.
+ *
+ * An `auto` pick here cannot keep a resumed thread's account (Claude's embed can: its resume id is on the argv). The
+ * host names the thread later, in a `thread/resume` request on the app-server's stdin, after this launcher has
+ * logged the app-server in, and the proxy refuses a later account change; one app-server can also serve several
+ * threads. Grok's ACP `session/load` arrives the same way.
  */
 export const codexEmbed: EmbedLauncher = {
     alias: "codex",
     hostProtocol: "codex-app-server",
+    servesProxy: false,
     async run({ request, argv }) {
         if (embedArgvMode(argv) === "native") {
             process.exitCode = await runNative(argv);

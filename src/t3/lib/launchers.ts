@@ -78,6 +78,62 @@ export function parseLauncherCheckout(script: string): string | null {
     return dirname(toolsPath);
 }
 
+/** The account a per-account launcher pins (its `export TOOLS_<ALIAS>_EMBED_ACCOUNT=` line), or null without one. */
+export function parseLauncherAccount(script: string, alias: HarnessId): string | null {
+    const variable = embedAccountEnvVar(alias);
+    const match = script.match(new RegExp(`^export ${variable}='((?:[^']|'\\\\'')*)'$`, "m"));
+
+    return match ? match[1].replace(/'\\''/g, "'") : null;
+}
+
+/**
+ * Two accounts whose launcher file names are equal (`work laptop` and `work-laptop` both become
+ * `claude-tools@work-laptop`), or a launcher on disk that already pins another account. Writing would make the app
+ * that runs that path run as the other account, so nothing is written.
+ */
+export class LauncherCollisionError extends Error {
+    constructor(path: string, accounts: readonly string[]) {
+        super(
+            `${accounts.map((account) => `"${account}"`).join(" and ")} map to the same launcher ${path}, so one would run as the other. Rename one of the accounts, or move that launcher away first; nothing was written.`
+        );
+        this.name = "LauncherCollisionError";
+    }
+}
+
+/** The account the launcher file at `path` pins today, or null when there is no file or no account line in it. */
+function pinnedAccountAt(path: string, alias: HarnessId): string | null {
+    if (!existsSync(path)) {
+        return null;
+    }
+
+    return parseLauncherAccount(readFileSync(path, "utf8"), alias);
+}
+
+/** Refuses a batch that puts two accounts on one launcher file, or an account on a file that pins another one. */
+function checkLauncherCollisions(binDir: string, specs: readonly LauncherSpec[]): void {
+    const byPath = new Map<string, { alias: HarnessId; accounts: Set<string> }>();
+
+    for (const spec of specs) {
+        if (spec.account === null) {
+            continue;
+        }
+
+        const path = launcherPath(binDir, spec);
+        const entry = byPath.get(path) ?? { alias: spec.alias, accounts: new Set<string>() };
+        entry.accounts.add(spec.account);
+        byPath.set(path, entry);
+    }
+
+    for (const [path, { alias, accounts }] of byPath) {
+        const pinned = pinnedAccountAt(path, alias);
+        const claimants = pinned === null || accounts.has(pinned) ? [...accounts] : [pinned, ...accounts];
+
+        if (claimants.length > 1) {
+            throw new LauncherCollisionError(path, claimants);
+        }
+    }
+}
+
 /** True when `dir` holds a runnable `tools` entry point. */
 export function isCheckout(dir: string): boolean {
     const tools = join(dir, "tools");
@@ -133,11 +189,19 @@ export interface LauncherWriteResult {
     status: LauncherWriteStatus;
 }
 
-/** Writes one launcher. The same content is a no-op, apart from restoring mode 755. */
+/**
+ * Writes one launcher. The same content is a no-op, apart from restoring mode 755. A per-account launcher that already
+ * pins another account is refused (`LauncherCollisionError`).
+ */
 export function writeLauncher(input: { binDir: string; spec: LauncherSpec; checkout: string }): LauncherWriteResult {
     const path = launcherPath(input.binDir, input.spec);
     const content = renderLauncher({ spec: input.spec, checkout: input.checkout });
     const current = existsSync(path) ? readFileSync(path, "utf8") : null;
+    const pinned = current === null ? null : parseLauncherAccount(current, input.spec.alias);
+
+    if (input.spec.account !== null && pinned !== null && pinned !== input.spec.account) {
+        throw new LauncherCollisionError(path, [pinned, input.spec.account]);
+    }
 
     if (current === content) {
         if ((statSync(path).mode & 0o777) !== 0o755) {
@@ -153,7 +217,10 @@ export function writeLauncher(input: { binDir: string; spec: LauncherSpec; check
     return { path, spec: input.spec, status: current === null ? "created" : "updated" };
 }
 
-/** Every env-driven launcher, plus one per `--account <alias>:<name>`. */
+/**
+ * Every env-driven launcher, plus one per `--account <alias>:<name>`. The whole batch is checked for launcher file
+ * collisions before the first write, so a refused batch writes nothing.
+ */
 export function installLaunchers(input: {
     binDir: string;
     checkout: string;
@@ -163,6 +230,7 @@ export function installLaunchers(input: {
         ...ACCOUNT_PROVIDER_ALIASES.map((alias) => ({ alias, account: null })),
         ...input.accounts,
     ];
+    checkLauncherCollisions(input.binDir, specs);
 
     return specs.map((spec) => writeLauncher({ binDir: input.binDir, spec, checkout: input.checkout }));
 }
