@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { type CopyFile, cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
-import { isDatalessFile, underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
+import { isDatalessFile, namesCloudRoot, underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
@@ -348,8 +348,15 @@ function captureList({
  */
 const MAX_RECORDED_NAMES = 5_000;
 
-/** Placeholder entries the skipped reason names before it only counts the rest. */
-const NAMED_PLACEHOLDERS = 5;
+/** Refused entries the skipped reason names (placeholders, files below a cloud folder) before it counts the rest. */
+const NAMED_REFUSALS = 5;
+
+/** The first `NAMED_REFUSALS` of `entries` and a count of the rest, so the log says which file was refused. */
+function namedFew(entries: string[]): string {
+    const shown = entries.slice(0, NAMED_REFUSALS).join(", ");
+
+    return entries.length > NAMED_REFUSALS ? `${shown} and ${entries.length - NAMED_REFUSALS} more` : shown;
+}
 
 /**
  * Which dirty files fit the budget, SMALLEST FIRST.
@@ -386,10 +393,10 @@ function fillCapture({
     const copyCap = megabytes(config.maxCaptureFileMB);
     const totalCap = megabytes(config.maxCaptureMB);
     const sized = files.map((file) => {
-        const found = { placeholder: false };
+        const found = { placeholder: false, cloud: false };
         const size = entryBytes(join(root, file), Math.max(cloneCap, copyCap), found);
 
-        return { file, size, mine: mentioned(file), placeholder: found.placeholder };
+        return { file, size, mine: mentioned(file), placeholder: found.placeholder, cloud: found.cloud };
     });
 
     // The session's own files first, then smallest first. Measured 2026-09-30 on the vault: 835
@@ -400,12 +407,21 @@ function fillCapture({
     const take: string[] = [];
     const left: string[] = [];
     const placeholders: string[] = [];
+    const clouds: string[] = [];
     /** Paths below a taken directory that did not fit or could not be stored, left out on their own. */
     const inside: string[] = [];
     let copied = 0;
     let failed = 0;
 
     for (const entry of sized) {
+        // A repository above a cloud folder (one at home holds `~/Library/CloudStorage`) passes the root check, and the
+        // named-path pass refuses the same file: a clone or a copy below that folder can reach the provider.
+        if (entry.cloud) {
+            left.push(entry.file);
+            clouds.push(entry.file);
+            continue;
+        }
+
         // A clone of a dataless file makes no sense and a copy reads it, which downloads it.
         if (entry.placeholder) {
             left.push(entry.file);
@@ -455,19 +471,19 @@ function fillCapture({
 
     const why: string[] = [];
 
-    if (left.length > placeholders.length + failed) {
+    if (left.length > placeholders.length + clouds.length + failed) {
         why.push(
             `over the ${config.clone.maxFileMB} MB per-entry clone / ${config.maxCaptureFileMB} MB per-entry copy / ${config.maxCaptureMB} MB total copied / ${config.maxCaptureFiles} entry cap`
         );
     }
 
     // Named, so the log says which file was refused; the full list is in the `.left` file.
-    if (placeholders.length > 0) {
-        const shown = placeholders.slice(0, NAMED_PLACEHOLDERS).join(", ");
-        const more =
-            placeholders.length > NAMED_PLACEHOLDERS ? ` and ${placeholders.length - NAMED_PLACEHOLDERS} more` : "";
+    if (clouds.length > 0) {
+        why.push(`${clouds.length} under a cloud storage folder, where a read can download them (${namedFew(clouds)})`);
+    }
 
-        why.push(`${placeholders.length} hold cloud placeholders a read would download (${shown}${more})`);
+    if (placeholders.length > 0) {
+        why.push(`${placeholders.length} hold cloud placeholders a read would download (${namedFew(placeholders)})`);
     }
 
     if (failed > 0) {
@@ -496,8 +512,17 @@ function fillCapture({
  * The walk stops as soon as it is over `limit`, so a huge tree costs a few `readdir` calls
  * rather than a full traversal, and a symlink is never followed: the capture stores the link, and
  * following one could count a target outside the repository or loop.
+ *
+ * `found.cloud` is set for an entry at or below a cloud storage folder, and for a directory entry (a nested
+ * repository) that holds one; `found.placeholder` for a dataless file. The caller leaves either entry out whole.
+ * Both stop the walk, and neither reads a byte: the name test needs no disk, and a placeholder shows in `lstat`.
  */
-function entryBytes(path: string, limit: number, found: { placeholder: boolean }): number {
+function entryBytes(path: string, limit: number, found: { placeholder: boolean; cloud: boolean }): number {
+    if (namesCloudRoot(path)) {
+        found.cloud = true;
+        return 0;
+    }
+
     let stat: Stats;
 
     try {
@@ -542,6 +567,11 @@ function entryBytes(path: string, limit: number, found: { placeholder: boolean }
             }
 
             const child = join(dir, item.name);
+
+            if (namesCloudRoot(child)) {
+                found.cloud = true;
+                return total;
+            }
 
             if (item.isDirectory()) {
                 pending.push(child);
