@@ -1,9 +1,9 @@
-import { lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, type Stats, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { sha256File } from "@genesiscz/utils/fs/hash";
 import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
-import { readExistingAncestorSync } from "./file";
+import { readExistingAncestorSync, type SourceStat, sameSource } from "./file";
 import { PRESETS } from "./presets";
 import { readZstdFramesSync, SeekableZstdWriter, type ZstdParams } from "./zstd";
 
@@ -757,27 +757,41 @@ interface WalkedEntry {
     size: number;
     linkTarget?: string;
     absolute: string;
+    /** The entry's identity when the walk saw it, before its content was compared. */
+    seen: SourceStat;
+}
+
+function identity(stat: Stats): SourceStat {
+    return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
 }
 
 /** The entry at `absolute` as the walk records it, from `lstat` (a symlink is not followed). */
 function entryAt(absolute: string): WalkedEntry {
     const stat = lstatSync(absolute);
+    const seen = identity(stat);
 
     if (stat.isDirectory()) {
-        return { type: "directory", size: 0, absolute };
+        return { type: "directory", size: 0, absolute, seen };
     }
 
     if (stat.isSymbolicLink()) {
-        return { type: "symlink", size: 0, linkTarget: readlinkSync(absolute), absolute };
+        return { type: "symlink", size: 0, linkTarget: readlinkSync(absolute), absolute, seen };
     }
 
-    return stat.isFile() ? { type: "file", size: stat.size, absolute } : { type: "other", size: 0, absolute };
+    return stat.isFile()
+        ? { type: "file", size: stat.size, absolute, seen }
+        : { type: "other", size: 0, absolute, seen };
+}
+
+/** The packed folder itself: always the top folder of the archive, and followed, as the pack reads it. */
+function topEntry(root: string): WalkedEntry {
+    return { type: "directory", size: 0, absolute: root, seen: identity(statSync(root)) };
 }
 
 /** The entries a pack of `files` holds, keyed like {@link walkFolder}: the top folder, the parent folders, the files. */
 function walkFiles(root: string, files: readonly string[]): Map<string, WalkedEntry> {
     const top = basename(root);
-    const entries = new Map<string, WalkedEntry>([[top, { type: "directory", size: 0, absolute: root }]]);
+    const entries = new Map<string, WalkedEntry>([[top, topEntry(root)]]);
 
     for (const path of [...parentFolders(files), ...files]) {
         entries.set(`${top}/${path}`, entryAt(join(root, path)));
@@ -790,21 +804,21 @@ function walkFiles(root: string, files: readonly string[]): Map<string, WalkedEn
 function walkFolder(root: string): Map<string, WalkedEntry> {
     const entries = new Map<string, WalkedEntry>();
     const top = basename(root);
-    entries.set(top, { type: "directory", size: 0, absolute: root });
+    entries.set(top, topEntry(root));
     const stack: Array<{ absolute: string; key: string }> = [{ absolute: root, key: top }];
 
     while (stack.length > 0) {
         const { absolute, key } = stack.pop()!;
 
-        for (const dirent of readdirSync(absolute, { withFileTypes: true })) {
-            const childAbsolute = join(absolute, dirent.name);
-            const childKey = `${key}/${dirent.name}`;
+        for (const name of readdirSync(absolute)) {
+            const childAbsolute = join(absolute, name);
+            const childKey = `${key}/${name}`;
+            // A folder's identity too: a file created in it after the check changes the folder's mtime.
+            const entry = entryAt(childAbsolute);
+            entries.set(childKey, entry);
 
-            if (dirent.isDirectory()) {
-                entries.set(childKey, { type: "directory", size: 0, absolute: childAbsolute });
+            if (entry.type === "directory") {
                 stack.push({ absolute: childAbsolute, key: childKey });
-            } else {
-                entries.set(childKey, entryAt(childAbsolute));
             }
         }
     }
@@ -822,6 +836,22 @@ export interface ArchiveCheck {
     mismatched: string[];
     /** In the archive, not in the folder (the folder lost an entry after packing). */
     extra: string[];
+    /** Each compared entry of the folder by absolute path, as `lstat` saw it before any content was compared. */
+    seen: Map<string, SourceStat>;
+}
+
+/**
+ * The entries of a checked folder that are no longer what the check saw (written, replaced, gone, or a folder that
+ * gained or lost an entry), so a removal after the check leaves them: a file appended after its sha256 matched while
+ * later files were still being hashed is not in the archive. `paths` (absolute) limits it to the entries a removal
+ * takes; a list pack removes only its files.
+ */
+export function changedSinceCheck(check: ArchiveCheck, paths?: readonly string[]): string[] {
+    return (paths ?? [...check.seen.keys()]).filter((path) => {
+        const before = check.seen.get(path);
+        const now = lstatSync(path, { throwIfNoEntry: false });
+        return !before || !now || !sameSource(now, before);
+    });
 }
 
 /**
@@ -887,5 +917,6 @@ export function verifyArchiveAgainstFolder({
         missing,
         mismatched,
         extra,
+        seen: new Map([...walked.values()].map((entry) => [entry.absolute, entry.seen])),
     };
 }

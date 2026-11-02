@@ -20,7 +20,13 @@ import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
 import { compressFile, digestZstdContent, type SourceStat, sameSource, verifyCompressedFile } from "./file";
 import { recordCompression } from "./ledger";
 import { type CompressPreset, PRESETS } from "./presets";
-import { archiveBaseName, FOLDER_ARCHIVE_SUFFIX, packDirectory, verifyArchiveAgainstFolder } from "./tar";
+import {
+    archiveBaseName,
+    changedSinceCheck,
+    FOLDER_ARCHIVE_SUFFIX,
+    packDirectory,
+    verifyArchiveAgainstFolder,
+} from "./tar";
 import { ZSTD_SUFFIX } from "./zstd";
 
 const DAY_MS = 86_400_000;
@@ -309,6 +315,17 @@ export async function applyFolderRetention(
                     },
                     `[compress] ${reason}`
                 );
+                report.failed.push({ folder: item.folder, reason });
+                continue;
+            }
+
+            // A file written after its sha256 matched, or a new one in the folder, is not in the archive.
+            const changed = changedSinceCheck(check);
+
+            if (changed.length > 0) {
+                retire(item.archive);
+                const reason = `the folder changed while it was checked (${changed.length} entries)`;
+                logger.warn({ folder: item.folder, changed: changed.slice(0, 5) }, `[compress] ${reason}`);
                 report.failed.push({ folder: item.folder, reason });
                 continue;
             }

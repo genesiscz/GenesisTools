@@ -2,6 +2,7 @@ import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import {
+    appendFileSync,
     chmodSync,
     closeSync,
     existsSync,
@@ -28,6 +29,7 @@ import { join, resolve } from "node:path";
 import { createZstdCompress, constants as zlibConstants } from "node:zlib";
 import { env } from "@genesiscz/utils/env";
 import { fileFlags, SF_DATALESS } from "@genesiscz/utils/fs/cloud-placeholder";
+import * as hash from "@genesiscz/utils/fs/hash";
 import {
     readFirstLines,
     readLastLines,
@@ -68,6 +70,7 @@ import {
 import { ripgrepDigestPath, ripgrepFiles, ripgrepFilesCached } from "./search";
 import {
     assertArchiveOutsideSource,
+    changedSinceCheck,
     listArchive,
     packDirectory,
     TarLister,
@@ -915,7 +918,15 @@ describe("folder archives", () => {
         expect(raw.includes("GNU.sparse.major=1")).toBe(process.platform === "darwin");
         expect(raw.includes("._plain.txt")).toBe(false);
         const check = verifyArchiveAgainstFolder({ archive: packed.archive, source: tree });
-        expect(check).toEqual({ ok: true, entries: 11, missing: [], mismatched: [], extra: [] });
+        expect({ ...check, seen: check.seen.size }).toEqual({
+            ok: true,
+            entries: 11,
+            missing: [],
+            mismatched: [],
+            extra: [],
+            seen: 11,
+        });
+        expect(changedSinceCheck(check)).toEqual([]);
 
         const out = join(dir, "restored");
         await unpackArchive({ archive: packed.archive, destination: out });
@@ -1233,6 +1244,86 @@ describe("folder archives", () => {
         const into = join(dir, "restored");
         await expandPath({ archive: record.target, into, caller: "test" });
         expect(readFileSync(join(into, "tree", "a\\empty"), "utf8")).toBe("backslash\n");
+
+        // Names whose backslashes a split on both separators would read as `..` or an empty part: they round-trip too.
+        const names = ["a\\..\\b", "x\\\\y"];
+
+        for (const name of names) {
+            writeFileSync(join(tree, name), `${name}\n`);
+        }
+
+        const odd = await compressPath({
+            source: tree,
+            files: names,
+            target: join(dir, "odd", "tree.zst"),
+            removeOriginal: true,
+            force: true,
+            caller: "test",
+        });
+        const oddInto = join(dir, "odd-restored");
+        await expandPath({ archive: odd.record.target, into: oddInto, caller: "test" });
+
+        for (const name of names) {
+            expect(readFileSync(join(oddInto, "tree", name), "utf8")).toBe(`${name}\n`);
+        }
+    });
+
+    it("keeps the archive and the originals when a file changes after its sha256 matched, in a pack and in retention", async () => {
+        const dir = scratch("late-write");
+        const tree = makeTree(dir);
+        const sha256File = hash.sha256File;
+        // Another process appends to a file the moment after the check hashed it, while later files are still hashed.
+        const lateWrite = (file: string) =>
+            spyOn(hash, "sha256File").mockImplementation((path) => {
+                const digest = sha256File(path);
+
+                if (path === file) {
+                    appendFileSync(file, "late\n");
+                }
+
+                return digest;
+            });
+
+        for (const files of [undefined, ["top.txt", "a/empty"]]) {
+            const target = join(dir, files ? "listed.zst" : "whole.zst");
+            const probe = lateWrite(join(tree, "top.txt"));
+
+            try {
+                await expect(
+                    compressPath({ source: tree, files, target, removeOriginal: true, force: true, caller: "test" })
+                ).rejects.toThrow("changed while it was packed");
+            } finally {
+                probe.mockRestore();
+            }
+
+            expect(readFileSync(join(tree, "top.txt"), "utf8")).toEndWith("late\n");
+            expect(existsSync(join(tree, "a", "empty"))).toBe(true);
+            expect(existsSync(target)).toBe(true);
+        }
+
+        const runs = join(dir, "runs");
+        mkdirSync(join(runs, "r1"), { recursive: true });
+        writeFileSync(join(runs, "r1", "data.jsonl"), logText(20));
+        const now = new Date();
+        const old = (now.getTime() - 3 * 86_400_000) / 1000;
+        utimesSync(join(runs, "r1"), old, old);
+        const probe = lateWrite(join(runs, "r1", "data.jsonl"));
+        let report: Awaited<ReturnType<typeof applyFolderRetention>>;
+
+        try {
+            report = await applyFolderRetention(planFolderRetention({ root: runs, keep: 0, now }), {
+                caller: "test",
+                minFreeBytes: 0,
+            });
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(report.failed.map((failure) => failure.reason)).toEqual([
+            "the folder changed while it was checked (1 entries)",
+        ]);
+        expect(readdirSync(runs)).toEqual(["r1"]);
+        expect(readFileSync(join(runs, "r1", "data.jsonl"), "utf8")).toEndWith("late\n");
     });
 
     it("packs, verifies and unpacks a folder and files whose names start with -, and bsdtar's -C and @ names", async () => {
