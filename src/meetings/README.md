@@ -29,6 +29,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of the screen around a transcript time |
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
+| `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |

@@ -25,6 +25,10 @@ function rangesText(ranges: PresenceRange[]): string {
 }
 
 function hintText(hint: SpeakerHint): string {
+    if (hint.kind === "label-drift") {
+        return `${hint.person}: in the call but silent under their own label from ${formatClock(Math.max(0, hint.fromSec))} to ${formatClock(hint.toSec)} (R15), so their voice is probably under other labels`;
+    }
+
     if (hint.kind === "absent-speaker") {
         return `${hint.label}: speaks while ${hint.label} was not in the call (Teams attendance), so these lines are someone else: ${rangesText(hint.ranges)}`;
     }

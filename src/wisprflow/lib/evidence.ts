@@ -126,6 +126,7 @@ export function readEvidence(meetingId: string, selfName: string | undefined): M
             ? { tokens: { mic: tokens.data.mic.total_tokens, system: tokens.data.system.total_tokens } }
             : {}),
         ...(devices.success ? { devices: devices.data } : {}),
+        ...(existsSync(join(folder, "upload.ogg")) ? { audioPath: join(folder, "upload.ogg") } : {}),
         files,
     };
 }

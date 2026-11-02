@@ -20,7 +20,8 @@ const { log } = logger.scoped("wisprflow-meeting-source");
 /** A calendar event counts as this meeting's when it starts this close to the recording. */
 const CALENDAR_WITHIN_MS = 15 * 60_000;
 
-function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
+/** The Wispr calendar event that starts closest to the meeting (within 15 minutes), from the local app data. */
+export function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
     if (!localAvailable()) {
         return undefined;
     }
