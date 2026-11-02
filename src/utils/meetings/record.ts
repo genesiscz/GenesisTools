@@ -99,7 +99,8 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         kind: z.literal("term"),
         atSec: z.number().optional(),
         heard: z.string(),
-        proposed: z.string(),
+        /** The right spelling. Absent for a word no dictionary layer accepts and no term resembles: asked by ear. */
+        proposed: z.string().optional(),
         ...itemBase,
     }),
     /**

@@ -126,7 +126,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
 
     if (item.kind === "term" && item.atSec !== undefined) {
         const occurrences = typeof item.evidence?.occurrences === "number" ? item.evidence.occurrences : 1;
-        const identifier = /\p{Lu}.*\p{Lu}|\d|[_./]/u.test(item.proposed);
+        const identifier = /\p{Lu}.*\p{Lu}|\d|[_./]/u.test(item.proposed ?? item.heard);
         const atLine = context.transcript.find(
             (entry) => entry.startSec !== undefined && Math.abs(entry.startSec - item.atSec!) < 1
         );
@@ -143,9 +143,12 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             about: "term",
             fromSec: item.atSec,
             toSec: item.atSec + TERM_CLIP_SEC,
-            question: `Is "${item.heard}" at ${formatClock(item.atSec)} really "${item.proposed}"?`,
+            // No proposal: no layer knows the word and no term resembles it, so the listener types it.
+            question: item.proposed
+                ? `Is "${item.heard}" at ${formatClock(item.atSec)} really "${item.proposed}"?`
+                : `What is "${item.heard}" at ${formatClock(item.atSec)}?`,
             heard: item.heard,
-            choices: [item.proposed],
+            choices: item.proposed ? [item.proposed] : [],
             decides: [item.id],
             rules: item.rules,
             ...(item.confidence === undefined ? {} : { confidence: item.confidence }),

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
-import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -764,5 +764,32 @@ describe("goodbyes that were only an intention", () => {
         const range = items.find((item) => item.kind === "speaker-range" && item.label === "Carol Example");
         expect(range?.evidence).toMatchObject({ intention: true });
         expect(items.some((item) => item.kind === "question")).toBe(false);
+    });
+});
+
+describe("a term with no spelling yet", () => {
+    const now = "2026-11-02T15:00:00.000Z";
+    const unknown = {
+        id: "i1",
+        kind: "term",
+        status: "suggested",
+        atSec: 12,
+        heard: "proklizuje",
+        confidence: 0.3,
+        rules: [],
+        evidence: { occurrences: 2 },
+        suggestedAt: now,
+    };
+
+    test("is asked as free text, and the answer becomes its spelling", () => {
+        const meetingRecord = meetingRecordSchema.parse({ ...record, items: [unknown] });
+        const question = questionFor(meetingRecord.items[0]!, { listenBelow: 0.6, transcript: [], points: [] });
+        expect(question).toMatchObject({ about: "term", heard: "proklizuje", choices: [] });
+        expect(question?.question).toContain('What is "proklizuje"');
+
+        meetingRecord.items.push(meetingItemSchema.parse({ ...question, id: "i2", suggestedAt: now }));
+        const ledger = answerQuestion(meetingRecord, "i2", { answer: "prolistuje", now });
+        expect(meetingRecord.items[0]).toMatchObject({ status: "confirmed", proposed: "prolistuje" });
+        expect(ledger).toEqual([expect.objectContaining({ heard: "proklizuje", fixed: "prolistuje" })]);
     });
 });

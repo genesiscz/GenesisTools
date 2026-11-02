@@ -87,7 +87,7 @@ function itemWhat(item: MeetingItem): string {
     }
 
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";
-    return `${item.heard} → ${item.proposed}${occurrences}`;
+    return `${item.heard} → ${item.proposed ?? "?"}${occurrences}`;
 }
 
 const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
@@ -349,10 +349,14 @@ async function decide(
         return;
     }
 
-    // A range nobody named cannot be applied, so confirming it needs --speaker.
+    // A range nobody named, or a term with no spelling, cannot be applied: confirming needs --speaker or --proposed.
     const unnamed =
         status === "confirmed"
-            ? picked.filter((item) => item.kind === "speaker-range" && !item.speaker && !opts.speaker)
+            ? picked.filter(
+                  (item) =>
+                      (item.kind === "speaker-range" && !item.speaker && !opts.speaker) ||
+                      (item.kind === "term" && !item.proposed && !opts.proposed)
+              )
             : [];
     // A question is answered by ear, which also decides the items it names.
     const questions: MeetingItem[] = status === "confirmed" ? picked.filter((item) => item.kind === "question") : [];
@@ -368,7 +372,11 @@ async function decide(
             item.kind === "speaker-range" && item.candidates?.length
                 ? ` Candidates: ${item.candidates.join(", ")}.`
                 : "";
-        ui.warn(`${item.id} has no speaker yet; confirm it with --speaker <name>.${candidates}`);
+        ui.warn(
+            item.kind === "term"
+                ? `${item.id} ("${item.heard}") has no spelling yet; confirm it with --proposed <text>.`
+                : `${item.id} has no speaker yet; confirm it with --speaker <name>.${candidates}`
+        );
     }
 
     if (deciding.length === 0) {
@@ -404,14 +412,20 @@ async function decide(
                     }
 
                     if (item.kind === "term") {
-                        item.proposed = opts.proposed ?? item.proposed;
+                        const fixed = opts.proposed ?? item.proposed;
+
+                        if (!fixed) {
+                            continue;
+                        }
+
+                        item.proposed = fixed;
                         ledger.push({
                             at: now,
                             meeting: current.id,
                             project: current.project,
                             kind: "term",
                             heard: item.heard,
-                            fixed: item.proposed,
+                            fixed,
                             item: item.id,
                         });
                     }
@@ -510,7 +524,7 @@ function unclearPassages(record: MeetingRecord, listenBelow: number): UnclearPas
                       fromSec: 0,
                       toSec: Number.POSITIVE_INFINITY,
                       heard: item.heard,
-                      readings: withConfidence([item.proposed], item.confidence),
+                      readings: item.proposed ? withConfidence([item.proposed], item.confidence) : [],
                   },
               ]
             : []
@@ -574,7 +588,7 @@ function correctionsOf(
             item.kind === "join" ? [{ atSec: item.atSec, ...(item.speaker ? { speaker: item.speaker } : {}) }] : []
         ),
         terms: used.flatMap((item) =>
-            item.kind === "term" ? [{ heard: item.heard, replacement: item.proposed }] : []
+            item.kind === "term" && item.proposed ? [{ heard: item.heard, replacement: item.proposed }] : []
         ),
         ...(opts.dictionary === false
             ? {}
