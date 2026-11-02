@@ -807,16 +807,18 @@ func unlockVault(_ params: VaultUnlockParams) {
 
     let deadlineSeconds = windowSeconds - lock.waited
     let content = VaultWindowContent.build(params, caller: caller, session: session)
-    let biometric = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
-
     DispatchQueue.main.async {
+        // Touch ID in the window, as in the rm window: a touch approves, "Use password…" is the fallback.
+        let verifier = ApprovalVerifier(reason: "give “\(tool)” the GenesisTools vault key")
+        verifier.onEvent = { logClick("vault.unlock \($0)") }
         let model = ApprovalDialogModel(
             title: content.title, purpose: content.purpose, command: content.command, symbol: "key.fill", facts: content.facts,
             details: content.details, warning: content.warning, footnote: VaultWindowContent.footnote,
             rememberChoices: rememberable ? VaultWindowContent.rememberChoices : [],
             rememberNote: content.onceOnlyReason.map { "Only once: \($0)" },
-            allowTitle: biometric ? "Allow with Touch ID" : "Allow…",
-            deadline: Date().addingTimeInterval(deadlineSeconds), identifier: "vault-unlock")
+            allowTitle: "Use password…",
+            deadline: Date().addingTimeInterval(deadlineSeconds), identifier: "vault-unlock", verifier: verifier,
+            hint: "Esc denies")
 
         // A modal loop would hold the main queue and this timer with it; the panel leaves the run loop free.
         let deadline = DispatchWorkItem {
@@ -832,35 +834,25 @@ func unlockVault(_ params: VaultUnlockParams) {
             vaultDeny("denied in the approval window")
         }
 
-        model.onAllow = { choice in
-            // From the click on, Touch ID has the time the caller allows (180 s), not the window's deadline.
+        model.onVerified = { method, choice in
             deadline.cancel()
             vaultPresenter.close()
             let remember = choice?.seconds ?? 0
-            authenticate(reason: "give “\(tool)” the GenesisTools vault key") { method, failure in
-                DispatchQueue.main.async {
-                    guard let method else {
-                        vaultAudit("denied", params: params, caller: caller, session: session, detail: failure)
-                        vaultDeny(failure)
-                    }
-
-                    Task { @MainActor in
-                        let forever = rememberable && choice != nil && choice?.seconds == nil
-                        var stored = false
-                        if rememberable, remember != 0 || forever {
-                            let until = forever ? nil : Optional(now + Int64(remember) * 1_000)
-                            let grant = VaultGrant(key: key, tool: tool, executable: executable, script: caller.script,
-                                                   grantedAt: now, until: until, method: method)
-                            stored = await VaultGrants.store(grant, now: now)
-                            if !stored { logClick("vault.unlock could not remember approval: grant lock or write failed") }
-                        }
-
-                        vaultAudit("allowed", params: params, caller: caller, session: session,
-                                   detail: "method: \(method); remembered: \(!stored ? "once" : forever ? "always" : "\(remember / 3_600) h")")
-                        logClick("vault.unlock decision=allow tool=\(tool) method=\(method)")
-                        emitVaultKey(remembered: false, params: params, caller: caller, session: session)
-                    }
+            Task { @MainActor in
+                let forever = rememberable && choice != nil && choice?.seconds == nil
+                var stored = false
+                if rememberable, remember != 0 || forever {
+                    let until = forever ? nil : Optional(now + Int64(remember) * 1_000)
+                    let grant = VaultGrant(key: key, tool: tool, executable: executable, script: caller.script,
+                                           grantedAt: now, until: until, method: method)
+                    stored = await VaultGrants.store(grant, now: now)
+                    if !stored { logClick("vault.unlock could not remember approval: grant lock or write failed") }
                 }
+
+                vaultAudit("allowed", params: params, caller: caller, session: session,
+                           detail: "method: \(method); remembered: \(!stored ? "once" : forever ? "always" : "\(remember / 3_600) h")")
+                logClick("vault.unlock decision=allow tool=\(tool) method=\(method)")
+                emitVaultKey(remembered: false, params: params, caller: caller, session: session)
             }
         }
 

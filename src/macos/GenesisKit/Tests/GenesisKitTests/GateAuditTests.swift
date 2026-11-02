@@ -384,6 +384,52 @@ final class ApprovalVerifierTests: XCTestCase {
         XCTAssertEqual(answers, ["password"])
     }
 
+    // A finger already on the sensor when the window appears must not approve a request nobody read (2026-11-02).
+    func testATouchRightAsTheWindowOpensAsksOnceMoreAndApprovesOnlyOnTheClick() throws {
+        let fake = FakeEvaluator()
+        let verifier = ApprovalVerifier(reason: "approve: test", evaluator: fake)
+        var answers: [String] = []
+        let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "key.fill", facts: [], details: [], warning: nil,
+                                        footnote: "f", rememberChoices: [], rememberNote: nil, allowTitle: "Use password…",
+                                        deadline: nil, identifier: "test", verifier: verifier)
+        model.onVerified = { method, _ in answers.append(method) }
+        model.confirmWithin = 1
+        model.shownAt = Date()
+
+        verifier.begin(windowIsKey: false)
+        verifier.evaluate(try XCTUnwrap(verifier.context))
+        try XCTUnwrap(fake.biometricReplies.last)(true, nil)
+        settle()
+        XCTAssertTrue(answers.isEmpty, "a touch within the first second must not approve by itself")
+        XCTAssertEqual(model.pendingIntent, "touch-id")
+        XCTAssertFalse(model.answered)
+
+        model.confirmIntent()
+        XCTAssertEqual(answers, ["touch-id"])
+        XCTAssertTrue(model.answered)
+    }
+
+    func testATouchAfterTheFirstSecondOrWithTheGuardOffApprovesAtOnce() throws {
+        for (shownAgo, confirmWithin) in [(5.0, 1.0), (0.0, 0.0)] {
+            let fake = FakeEvaluator()
+            let verifier = ApprovalVerifier(reason: "approve: test", evaluator: fake)
+            var answers: [String] = []
+            let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "key.fill", facts: [], details: [], warning: nil,
+                                            footnote: "f", rememberChoices: [], rememberNote: nil, allowTitle: "Use password…",
+                                            deadline: nil, identifier: "test", verifier: verifier)
+            model.onVerified = { method, _ in answers.append(method) }
+            model.confirmWithin = confirmWithin
+            model.shownAt = Date().addingTimeInterval(-shownAgo)
+
+            verifier.begin(windowIsKey: false)
+            verifier.evaluate(try XCTUnwrap(verifier.context))
+            try XCTUnwrap(fake.biometricReplies.last)(true, nil)
+            settle()
+            XCTAssertEqual(answers, ["touch-id"], "shown \(shownAgo) s ago, guard \(confirmWithin) s")
+            XCTAssertNil(model.pendingIntent)
+        }
+    }
+
     func testADenyStopsListeningAndALateTouchIsIgnored() throws {
         let fake = FakeEvaluator()
         let verifier = ApprovalVerifier(reason: "approve: test", evaluator: fake)
