@@ -35,6 +35,7 @@ public enum WidgetAlerts {
         case "decision" where item.isAnsweredElsewhere: return item.number.map { "Decision \($0) answered" } ?? "Decision answered"
         case "decision": return item.number.map { "Decision \($0)" } ?? "New decision"
         case "form": return "New question"
+        case "answer" where item.tag == "message": return "New message"
         case "answer": return "New answer"
         default: return "New in the inbox"
         }

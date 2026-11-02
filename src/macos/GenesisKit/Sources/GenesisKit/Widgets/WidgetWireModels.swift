@@ -582,6 +582,8 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     /// A decision row's last write (epoch ms): `reconcileStaged` drops an optimistic pick once the row changed after
     /// the pick was asked for, whatever the row now holds. Nil from an older hub.
     public var updatedAt: Double? = nil
+    /// `message` when the newest answer of the entry is an agent message, so the popup says "New message".
+    public var tag: String? = nil
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var isAnsweredElsewhere: Bool { kind == "decision" && !needsAnswer && answeredVia != nil }
 }

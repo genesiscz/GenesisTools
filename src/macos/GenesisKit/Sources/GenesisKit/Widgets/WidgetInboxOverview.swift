@@ -345,6 +345,7 @@ struct WidgetInboxOverview: View {
     static func kindLabel(_ item: WidgetInboxItem) -> String {
         if item.needsAnswer { return item.kind == "decision" ? "Decision · waiting for your answer" : "Waiting for your answer" }
         switch item.kind {
+        case "answer" where item.tag == "message": return "New message"
         case "answer": return "New answer"
         case "result": return "Agent result"
         // Words, never the wire kind: "Todo" and "Form" read as raw data.

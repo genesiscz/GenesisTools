@@ -838,6 +838,9 @@ public struct LiveWidgetView: View {
     static func kindLabel(_ card: WidgetCard) -> String {
         if card.needsAnswer { return "Waiting for your answer" }
         switch card.kind {
+        // An agent message (inbox_send, tools question message, a tools rm request notice) rides the answer card with
+        // status "message"; it answers nothing, so it reads as a message.
+        case "answer" where card.status == "message": return card.read ? "Message" : "New message"
         case "answer": return card.read ? "Answer" : "New answer"
         case "result": return card.read ? "Agent result" : "New agent result"
         case "todo": return "Task · " + WidgetTask.label(for: card.status)
