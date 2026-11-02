@@ -81,6 +81,12 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(names, ["Alpha", "beta", "note 2.md", "note 10.md"])
     }
 
+    func testHiddenNamesListWhenAskedButNeverDSStore() throws {
+        try Data("x".utf8).write(to: root.appendingPathComponent(".DS_Store"))
+        let names = FileTreeListing.entries(of: root.path, includeHidden: true).map(\.name)
+        XCTAssertEqual(names, ["Alpha", "beta", ".hidden", "note 2.md", "note 10.md"])
+    }
+
     func testRevealOpensTheChainAndRowsAreFlatWithDepth() async {
         let model = FileTreeModel(root: root)
         model.setRoot(root)
@@ -92,6 +98,25 @@ final class FileTreeTests: XCTestCase {
 
         model.toggle(root.appendingPathComponent("beta").standardizedFileURL.path)
         XCTAssertEqual(model.rows.map(\.name), ["Alpha", "beta", "note 2.md", "note 10.md"], "closing a folder hides its subtree at once")
+    }
+
+    // "Show in Sidebar" on a note under a dot-folder (`CEZ/.claude/docs/…`): the listing skips hidden items, so the row
+    // never came and the sidebar never scrolled (2026-11-02). The folders on the way show; other hidden files do not.
+    func testRevealingAFileUnderAHiddenFolderShowsThatFolderOnly() async throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".claude/docs"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: root.appendingPathComponent(".claude/docs/plan.md"))
+        let model = FileTreeModel(root: root)
+        model.watchesDisk = false
+        model.setRoot(root)
+        await settle(model) { model.rows.contains { $0.name == "beta" } }
+        XCTAssertFalse(model.rows.contains { $0.name == ".claude" }, "a hidden folder stays out until a reveal walks through it")
+
+        model.reveal(root.appendingPathComponent(".claude/docs/plan.md"))
+        await settle(model) { model.rows.contains { $0.name == "plan.md" } }
+
+        XCTAssertEqual(model.rows.map(\.name), [".claude", "docs", "plan.md", "Alpha", "beta", "note 2.md", "note 10.md"])
+        XCTAssertEqual(model.rows.map(\.depth), [0, 1, 2, 0, 0, 0, 0])
+        XCTAssertFalse(model.rows.contains { $0.name == ".hidden" })
     }
 
     func testReRootingReadsAnOpenFolderWhoseReadItDropped() async {

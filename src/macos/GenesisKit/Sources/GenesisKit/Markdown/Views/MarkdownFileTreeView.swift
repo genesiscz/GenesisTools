@@ -142,6 +142,7 @@ struct MarkdownFileTreeView: View {
                     }
                 }
                 .onChange(of: model.revealToken) { _, _ in handleReveal(proxy) }
+                .onChange(of: config.treeShowsHidden) { _, on in tree.showsHidden = on }
                 .onChange(of: hitCursor) { _, index in
                     guard let index, search.hits.indices.contains(index) else { return }
                     proxy.scrollTo(search.hits[index].id)
@@ -159,6 +160,7 @@ struct MarkdownFileTreeView: View {
         // Dev/Swift/AccessibilityIdentifierPropagationClobbersChildren).
         .axMarker("markdown-file-tree")
         .onAppear {
+            tree.showsHidden = config.treeShowsHidden
             tree.setRoot(root)
             revealSelected(root)
             search.setRoot(root)

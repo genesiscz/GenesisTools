@@ -67,6 +67,10 @@ struct MarkdownSettingsView: View {
                 NativeSettingsCard("File sidebar", subtitle: "Choose which files the sidebar shows.") {
                     NativeSettingsToggle("Show only notes", detail: "Hide other files while keeping folders visible.",
                                          identifier: "markdown.settings.treeNotesOnly", isOn: $notesOnly)
+                    Divider()
+                    NativeSettingsToggle("Show hidden files",
+                                         detail: "Names that start with a dot (.claude, .github). Off: only the ones on the way to a note you show in the sidebar.",
+                                         identifier: "markdown.settings.treeShowsHidden", isOn: $configuration.treeShowsHidden)
                 }
                 .id("markdown-file-sidebar")
                 .nativeSettingsAnchor("markdown-file-sidebar")
