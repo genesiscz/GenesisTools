@@ -59,9 +59,9 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, 
             notifications: config.notifications,
             alerts: { rules: { threshold: thresholds } },
         });
-        // With the alert engine wired, the desktop banner is the engine's (one record with the daemon); this
-        // notifier keeps only the in-TUI banners.
-        notifRef.current = new NotificationManager(enginesDesktop ? { ...settings, macos: false } : settings);
+        // With the alert engine wired, the threshold banner is the engine's (one record with the daemon); this
+        // notifier keeps the in-TUI banners and the cache-expiry banners, which the engine has no rule for.
+        notifRef.current = new NotificationManager({ ...settings, thresholdDesktop: !enginesDesktop });
 
         // Persist tracker state across TUI launches so an over-threshold window does
         // not re-notify on every open. The ready promise is awaited by poll() so the
