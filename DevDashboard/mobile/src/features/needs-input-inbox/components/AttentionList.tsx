@@ -24,6 +24,8 @@ export function AttentionList({ items, onResolve, header }: AttentionListProps) 
         <FlatList
             testID="needs-input-inbox-list"
             accessibilityLabel="needs-input-inbox-list"
+            // The header holds the answer queue's text fields: a tap on Send must not only close the keyboard.
+            keyboardShouldPersistTaps="handled"
             data={items}
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ gap: 12, paddingBottom: 32, paddingHorizontal: 16 }}
