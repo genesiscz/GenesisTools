@@ -218,12 +218,14 @@ describe("scanSpendWaste", () => {
         ];
         writeFileSync(file, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
 
-        // What version 1 left on disk for this transcript: a sub-agent file scanned as no waste.
+        // What an older version left on disk for this transcript: version 2 priced calls without the harness's
+        // candidate ladder and recorded-cost rule, and version 1 scanned a sub-agent file as no waste. Either is
+        // ignored, and the file read again.
         const cachePath = toolDataDir("ai-spend", "cache", "session-waste.json");
         mkdirSync(dirname(cachePath), { recursive: true });
         writeFileSync(
             cachePath,
-            SafeJSON.stringify({ version: 1, entries: { [file]: { identity: fileIdentity(file), value: [] } } })
+            SafeJSON.stringify({ version: 2, entries: { [file]: { identity: fileIdentity(file), value: [] } } })
         );
 
         const waste = await scanSpendWaste({
@@ -235,7 +237,7 @@ describe("scanSpendWaste", () => {
             reportCommand: (sessionId) => sessionId,
         });
 
-        expect(WASTE_CACHE_VERSION).toBeGreaterThan(1);
         expect(waste.top.map((item) => item.kind)).toEqual(["cache-rebuild-idle"]);
+        expect(WASTE_CACHE_VERSION).toBeGreaterThan(2);
     });
 });

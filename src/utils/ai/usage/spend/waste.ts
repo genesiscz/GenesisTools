@@ -64,9 +64,11 @@ function isWasteItems(value: unknown): value is WasteItem[] {
 
 /**
  * Version 2: a sub-agent's own transcript is scanned as its own cache (version 1 cached it as no waste), and a call
- * is priced at its service tier. A version 1 file is ignored, so every transcript is scanned again.
+ * is priced at its service tier. Version 3: a call is priced through its harness's candidate ladder and recorded-cost
+ * rule (`CallPricing`), so a Grok `-build` model is priced and Grok's plan metering is no longer its cost. A file of
+ * an older version is ignored, so every transcript is scanned again.
  */
-export const WASTE_CACHE_VERSION = 2;
+export const WASTE_CACHE_VERSION = 3;
 
 const wasteCache = new FileIdentityCache<WasteItem[]>({
     limit: 20_000,
