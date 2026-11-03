@@ -33,6 +33,28 @@ function entry(points: Array<[string, number]>, overrides: Partial<SeriesEntry> 
 }
 
 describe("dailyRowsOf", () => {
+    test("a day the window was gone all day gets a row, and a window gone after its last reading ends the day absent", () => {
+        const rows = dailyRowsOf({
+            series: [
+                entry([["2026-11-01T08:00:00Z", 30]], {
+                    availability: [
+                        { from: "2026-11-01T08:00:00Z", to: "2026-11-01T20:00:00Z", state: "limited" },
+                        { from: "2026-11-01T20:00:00Z", to: "2026-11-03T12:00:00Z", state: "absent" },
+                    ],
+                }),
+            ],
+            tz: TZ,
+            runs: [],
+            accountIdOf: () => "acc-work",
+        });
+
+        expect(rows.map((row) => [row.day, row.readings, row.endPct, row.availability])).toEqual([
+            ["2026-11-01", 1, 30, "absent"],
+            ["2026-11-02", 0, 0, "absent"],
+            ["2026-11-03", 0, 0, "absent"],
+        ]);
+    });
+
     test("one row per day with its first, last and peak reading, its resets, and the cycles that reached 90%", () => {
         const rows = dailyRowsOf({
             series: [

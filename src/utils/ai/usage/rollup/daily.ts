@@ -19,6 +19,7 @@ export interface DailyRow {
     /** `YYYY-MM-DD` in `tz`. */
     day: string;
     tz: string;
+    /** First, last and highest reading of the day; 0 on a day the window was gone with no reading (`readings` 0). */
     startPct: number;
     endPct: number;
     peakPct: number;
@@ -28,7 +29,7 @@ export interface DailyRow {
     readings: number;
     /** Minutes of the day the poller measured this account; null when no run says. */
     minutesMeasured: number | null;
-    /** The window's state at the day's last reading. */
+    /** The window's state at the end of the day (or of the readings' range, for today), from its availability spans. */
     availability: "limited" | "absent" | "unknown";
 }
 
@@ -104,7 +105,25 @@ function cyclesOver(values: readonly number[]): number {
     return count + (peak >= CYCLE_PEAK ? 1 : 0);
 }
 
-/** The rows of every day the readings touch (or only `days`), one per series and day. */
+/** The local days a span covers, its end exclusive. */
+function daysOfSpan(span: { from: string; to: string }, tz: string): string[] {
+    const end = Date.parse(span.to);
+    const days: string[] = [];
+    let day = zonedDay(span.from, tz);
+
+    while (day && dayBounds(day, tz).start < end) {
+        days.push(day);
+        day = zonedDay(new Date(dayBounds(day, tz).end).toISOString(), tz);
+    }
+
+    return days;
+}
+
+/**
+ * The rows of every day the readings or an absent span touch (or only `days`), one per series and day. The series
+ * door keeps an absent row out of the points and in the spans, so a day the window was gone all day has no reading
+ * and still gets its row; each row's availability is the span at the day's end, not at its last reading.
+ */
 export function dailyRowsOf(input: {
     series: readonly SeriesEntry[];
     tz: string;
@@ -125,13 +144,23 @@ export function dailyRowsOf(input: {
             }
         }
 
+        for (const span of entry.availability.filter((s) => s.state === "absent")) {
+            for (const day of daysOfSpan(span, input.tz)) {
+                if (!byDay.has(day) && (!input.days || input.days.has(day))) {
+                    byDay.set(day, []);
+                }
+            }
+        }
+
+        const rangeEnd = Math.max(0, ...entry.availability.map((s) => Date.parse(s.to)));
+
         const runs = input.runs.filter((run) => run.provider === entry.provider && run.accountName === entry.account);
 
-        for (const [day, points] of byDay) {
+        for (const [day, points] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {
             const values = points.map((point) => point.percent);
             const bounds = dayBounds(day, input.tz);
-            const last = Date.parse(points[points.length - 1].t);
-            const span = entry.availability.find((s) => Date.parse(s.from) <= last && last <= Date.parse(s.to));
+            const end = Math.min(bounds.end - 1, rangeEnd);
+            const span = entry.availability.find((s) => Date.parse(s.from) <= end && end <= Date.parse(s.to));
 
             rows.push({
                 provider: entry.provider,
@@ -141,9 +170,9 @@ export function dailyRowsOf(input: {
                 kind: entry.kind,
                 day,
                 tz: input.tz,
-                startPct: values[0],
-                endPct: values[values.length - 1],
-                peakPct: Math.max(...values),
+                startPct: values[0] ?? 0,
+                endPct: values[values.length - 1] ?? 0,
+                peakPct: values.length > 0 ? Math.max(...values) : 0,
                 resets: entry.resets.filter((reset) => zonedDay(reset, input.tz) === day).length,
                 cyclesOver90: cyclesOver(values),
                 readings: values.length,
