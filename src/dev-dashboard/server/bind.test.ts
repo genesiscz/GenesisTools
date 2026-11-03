@@ -123,6 +123,35 @@ describe("bindEndpoint", () => {
         expect(other.body).toEqual({ run: 2 });
         expect(unkeyed.body).toEqual({ run: 3 });
     });
+
+    it("lets a retry run again after the write threw, instead of answering it with the cached 500", async () => {
+        let runs = 0;
+        const def = bindEndpoint(
+            row,
+            {
+                input: z.object({ session: z.string(), number: z.number() }),
+                invalid: "bad",
+                run: async (): Promise<RouteResult> => {
+                    runs++;
+
+                    if (runs === 1) {
+                        throw new Error("decision store busy");
+                    }
+
+                    return { kind: "json", status: 200, body: { run: runs } };
+                },
+            },
+            new ReceiptCache()
+        );
+        const keyed = () =>
+            ctx({ pathname: row.path, body: { session: "s", number: 1 }, headers: { "idempotency-key": "k-throw" } });
+
+        const failed = json(await def.handler(keyed()));
+        const retry = json(await def.handler(keyed()));
+
+        expect(failed.status).toBe(500);
+        expect(retry).toEqual({ status: 200, body: { run: 2 } });
+    });
 });
 
 describe("bindEndpoint on the act row", () => {
