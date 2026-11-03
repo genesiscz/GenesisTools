@@ -27,6 +27,7 @@ import {
     type AudioPlan,
     type AudioRequest,
     audioBytes,
+    changesAudio,
     correctedKbps,
     decodeErrors,
     type EncodePass,
@@ -644,14 +645,16 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         options.height !== undefined && (inputHeight === undefined || inputHeight > options.height)
             ? options.height
             : undefined;
-    const skip = skipReason({ facts, encoder, reshaping: options.targetBytes !== undefined || height !== undefined });
+    const audio = planAudio({ facts, request: options.audio ?? "copy", targetBytes: options.targetBytes });
+    // An explicit audio conversion is a reason to encode a file already in the codec; a copy is a true no-op.
+    const reshaping = options.targetBytes !== undefined || height !== undefined || changesAudio(facts, audio);
+    const skip = skipReason({ facts, encoder, reshaping });
 
     if (skip) {
         return finish({ reason: skip });
     }
 
     let rate: VideoRate = { kind: "quality", quality: options.quality };
-    const audio = planAudio({ facts, request: options.audio ?? "copy", targetBytes: options.targetBytes });
 
     if (options.targetBytes !== undefined) {
         const kbps = videoKbpsForTarget({ facts, targetBytes: options.targetBytes, audio });

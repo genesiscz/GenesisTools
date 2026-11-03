@@ -260,7 +260,10 @@ export function skipReason({
 }: {
     facts: MediaFacts;
     encoder: VideoEncoder;
-    /** A size target or a smaller height is asked for, so an input already in the codec is still a candidate. */
+    /**
+     * A size target, a smaller height or an audio conversion (`changesAudio`) is asked for, so an input already in the
+     * codec is still a candidate.
+     */
     reshaping?: boolean;
 }): string | null {
     const video = primaryVideo(facts);
@@ -495,6 +498,11 @@ export function planAudio({
     const aboveAuto = audio.every((stream) => (stream.bitRate ?? UNKNOWN_AUDIO_BPS) > AUTO_AUDIO_KBPS * 1000);
     const share = audioBytes(facts) / targetBytes;
     return aboveAuto && share > AUDIO_SHARE_LIMIT ? { kind: "aac", kbps: AUTO_AUDIO_KBPS } : COPY_AUDIO;
+}
+
+/** The plan rewrites the audio: AAC for a file that has audio. A copy, or AAC for a silent file, changes nothing. */
+export function changesAudio(facts: MediaFacts, plan: AudioPlan): boolean {
+    return plan.kind === "aac" && hasAudio(facts);
 }
 
 /** Bytes the audio tracks take over the whole duration, copied (the default) or re-encoded by `plan`. */

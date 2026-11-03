@@ -28,6 +28,7 @@ import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils
 import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
 import { pickSampleWindows } from "@genesiscz/utils/video/quality";
 import {
+    changesAudio,
     correctedKbps,
     decodeErrors,
     encodeArgs,
@@ -113,6 +114,23 @@ function judge(patch: Partial<Parameters<typeof judgeOutput>[0]> = {}) {
     });
 }
 
+describe("changesAudio", () => {
+    test("an AAC conversion of a file with audio is a reason to encode; a copy or a silent file is not", () => {
+        const withAudio = facts({
+            streams: [
+                { type: "video", codec: "hevc", attachedPicture: false },
+                { type: "audio", codec: "pcm_s16le", attachedPicture: false },
+            ],
+        });
+        const silent = facts({ streams: [{ type: "video", codec: "hevc", attachedPicture: false }] });
+
+        expect(changesAudio(withAudio, planAudio({ facts: withAudio, request: 96 }))).toBe(true);
+        expect(changesAudio(withAudio, planAudio({ facts: withAudio, request: "copy" }))).toBe(false);
+        expect(changesAudio(withAudio, planAudio({ facts: withAudio, request: "auto" }))).toBe(false);
+        expect(changesAudio(silent, planAudio({ facts: silent, request: 96 }))).toBe(false);
+    });
+});
+
 describe("skipReason", () => {
     test("an H.264 file with audio is a candidate", () => {
         expect(skipReason({ facts: facts(), encoder })).toBeNull();
@@ -134,6 +152,7 @@ describe("skipReason", () => {
         });
 
         expect(skipReason({ facts: hevc, encoder })).toBe("already hevc");
+        expect(skipReason({ facts: hevc, encoder, reshaping: true })).toBeNull();
         expect(skipReason({ facts: mebx, encoder })).toContain("data track");
         expect(skipReason({ facts: music, encoder })).toContain("not a video");
     });
