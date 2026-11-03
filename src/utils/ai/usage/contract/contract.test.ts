@@ -51,6 +51,8 @@ describe("the window grammar", () => {
         expect(codeOf(() => parseWhen("2026-02-30", { now: NOW, tz: TZ }))).toBe("bad-window");
         expect(codeOf(() => parseWhen("reset", { now: NOW, tz: TZ }))).toBe("reserved");
         expect(codeOf(() => parseWhen("soon", { now: NOW, tz: TZ }))).toBe("bad-window");
+        // About 6e19 ms: past the range of a Date, so a refusal instead of an Invalid Date that throws later.
+        expect(codeOf(() => parseWhen("99999999999w", { now: NOW, tz: TZ }))).toBe("bad-window");
     });
 
     test("old spellings are aliases, and two spellings of one bound refuse", () => {
