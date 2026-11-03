@@ -1,0 +1,67 @@
+import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import type { NotifiedThreshold } from "@genesiscz/utils/ai/usage-poll/notifications";
+import type { UsageAlertsStore } from "./log";
+import { RESET_JITTER_MS } from "./refire";
+import { thresholdRule } from "./rules/threshold";
+import type { AlertRound, AlertRuleSettings } from "./types";
+
+/**
+ * Carries the old notifier's memory into the alert record, once. Without it, the first tick of the engine finds no
+ * threshold alert at all and fires a banner for every window already over a threshold, the burst the notifier's own
+ * legacy read existed to prevent.
+ *
+ * Runs only while `usage_alerts` holds no threshold row. For each threshold candidate of the round whose tracker
+ * (keyed `<accountId>:<key>`, or the older `<accountName>:<key>`) already notified this reset cycle at that level or
+ * higher, it records an acknowledged, undelivered alert at the tracker's level, so the engine treats it as fired.
+ */
+export function seedThresholdAlerts(input: {
+    store: UsageAlertsStore;
+    trackers: Readonly<Record<string, NotifiedThreshold>>;
+    snapshots: readonly AccountUsageSnapshot[];
+    settings: AlertRuleSettings["threshold"];
+    now: Date;
+}): number {
+    if (input.store.hasRule("threshold")) {
+        return 0;
+    }
+
+    const round: AlertRound = {
+        now: input.now,
+        snapshots: input.snapshots,
+        samples: [],
+        runs: [],
+        previousRoundAt: null,
+        events: [],
+        availabilityChanges: [],
+    };
+    let seeded = 0;
+
+    for (const candidate of thresholdRule.evaluate(round, input.settings)) {
+        const tracker =
+            input.trackers[`${candidate.accountId}:${candidate.windowKey}`] ??
+            input.trackers[`${candidate.accountName}:${candidate.windowKey}`];
+        const level = tracker?.lastNotifiedThreshold;
+
+        if (level === null || level === undefined) {
+            continue;
+        }
+
+        const reset = candidate.cycle === null ? Number.NaN : Date.parse(candidate.cycle);
+        const sameCycle =
+            tracker.lastResetEpoch === null ||
+            !Number.isFinite(reset) ||
+            Math.abs(reset - tracker.lastResetEpoch) <= RESET_JITTER_MS;
+
+        if (!sameCycle) {
+            continue;
+        }
+
+        input.store.insert(
+            { ...candidate, severity: level, payload: { ...candidate.payload, seededFrom: "notification-tracker" } },
+            { firedAt: input.now, channels: [], ackAt: input.now }
+        );
+        seeded++;
+    }
+
+    return seeded;
+}
