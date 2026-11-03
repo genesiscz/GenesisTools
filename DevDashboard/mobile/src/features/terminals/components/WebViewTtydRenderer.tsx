@@ -18,7 +18,7 @@ import type {
     TerminalSession,
     TerminalStatus,
 } from "@/features/terminals/TerminalRenderer";
-import { useConnection } from "@/state/connection";
+import { usePlainBaseUrl } from "@/state/connection-store";
 import { useThemeColors } from "@/theme/colors";
 
 /**
@@ -71,7 +71,8 @@ function cookiePlantJs(cookie: string | null): string {
 export const WebViewTtydRenderer = forwardRef<TerminalRenderer, TerminalDriverProps>(
     function WebViewTtydRenderer({ session, callbacks }, ref) {
         const c = useThemeColors();
-        const baseUrl = useConnection((s) => s.baseUrl);
+        // Null on the managed tier: the relay must never load the terminal as plain HTTP (D9, D11).
+        const baseUrl = usePlainBaseUrl();
         const webRef = useRef<WebView>(null);
         const cbRef = useRef<TerminalCallbacks>(callbacks);
         cbRef.current = callbacks;

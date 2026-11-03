@@ -7,9 +7,11 @@ import { ReachabilityBadge } from "@/components/connect/ReachabilityBadge";
 import { TierPicker } from "@/components/connect/TierPicker";
 import { applyPairingUri } from "@/lib/apply-pairing";
 import { parseScannedPairing } from "@/lib/qr";
-import { useConnectionStore } from "@/state/connection-store";
+import { type ConnectResult, useConnectionStore } from "@/state/connection-store";
 import { useThemeColors } from "@/theme/colors";
-import { reachabilityReducer } from "@/transport/reachability";
+import { useZeroconfDiscovery } from "@/transport/lan-discovery";
+import { FAILURE_MESSAGE, reachabilityReducer } from "@/transport/reachability";
+import { TIERS } from "@/transport/tiers";
 import { openTailscaleApp } from "@/transport/tiers/tailscale";
 import type { TransportTier } from "@/transport/Transport";
 import { Card } from "@/ui/Card";
@@ -127,21 +129,20 @@ export default function ConnectScreen() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
 
-    const { setLan, setTailscale, transport } = useConnectionStore();
+    const connect = useConnectionStore((s) => s.connect);
+    const [deviceCode, setDeviceCode] = useState("");
+    // F5: the LAN discovery hook (mDNS `_devdashboard._tcp`) fills the address with one tap.
+    const discovery = useZeroconfDiscovery();
 
-    async function runProbe(active = transport): Promise<void> {
-        if (!active) {
+    /** Shows a connect result on the badge; a failure committed nothing, so the app stays on its old Mac. */
+    function show(result: ConnectResult): void {
+        if (result.ok) {
+            dispatchReach({ type: "probe-ok" });
             return;
         }
 
-        dispatchReach({ type: "probe-start" });
-        const ok = await active.reachable();
-        console.log(`[connect] reachability dispatch: ${ok ? "probe-ok" : "probe-fail"} tier=${active.tier}`);
-        dispatchReach(
-            ok
-                ? { type: "probe-ok" }
-                : { type: "probe-fail", tier: active.tier, paired: active.tier !== "managed" },
-        );
+        setError(result.error ?? FAILURE_MESSAGE[result.failure]);
+        dispatchReach({ type: "probe-fail", failure: result.failure === "error" ? "unreachable" : result.failure });
     }
 
     async function connectLan(): Promise<void> {
@@ -158,8 +159,8 @@ export default function ConnectScreen() {
             const host = url.hostname === "localhost" ? "127.0.0.1" : url.hostname;
             const baseUrl = `http://${host}:${port}`;
             console.log(`[connect] connectLan tier=lan baseUrl=${baseUrl}`);
-            await setLan({ name: host, host, port, baseUrl }, { username, password });
-            await runProbe(useConnectionStore.getState().transport);
+            dispatchReach({ type: "probe-start" });
+            show(await connect({ tier: "lan", label: host, baseUrl, host, port, username, password }));
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
         }
@@ -178,9 +179,10 @@ export default function ConnectScreen() {
                 throw new Error("Invalid port. Use a value between 1 and 65535.");
             }
 
-            console.log(`[connect] connectTailscale tier=tailscale baseUrl=http://${host}:${port}`);
-            await setTailscale({ tailnetHost: host, port, username, password });
-            await runProbe(useConnectionStore.getState().transport);
+            const baseUrl = `http://${host}:${port}`;
+            console.log(`[connect] connectTailscale tier=tailscale baseUrl=${baseUrl}`);
+            dispatchReach({ type: "probe-start" });
+            show(await connect({ tier: "tailscale", baseUrl, host, port, username, password }));
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
         }
@@ -195,40 +197,18 @@ export default function ConnectScreen() {
             return false;
         }
 
-        // Same path as a deep-link pair (see app/pair.tsx) — applyPairingUri connects + probes; the
-        // local reducer drives the reachability badge so the Continue button appears on success.
+        // Same path as a deep-link pair (see app/pair.tsx): applyPairingUri connects through the session, which
+        // pairs, probes and commits only on success; the local reducer drives the badge.
         dispatchReach({ type: "probe-start" });
-
-        let result: Awaited<ReturnType<typeof applyPairingUri>>;
-
-        try {
-            result = await applyPairingUri(data, password);
-        } catch (err) {
-            // The scanner's own catch releases the scan latch, but it cannot reach this screen's
-            // reducer — without this the badge stays on `probe-start` for good after a throw.
-            console.warn("[connect] applyPairingUri threw", err);
-            setError(err instanceof Error ? err.message : "Pairing failed.");
-
-            if (tier) {
-                dispatchReach({ type: "probe-fail", tier, paired: tier !== "managed" });
-            }
-
-            return false;
-        }
+        const result = await applyPairingUri(data, { password, deviceCode });
 
         if (result.ok) {
-            console.log("[connect] reachability dispatch: probe-ok (pairing)");
             dispatchReach({ type: "probe-ok" });
             return true;
         }
 
         setError(result.error ?? "Pairing failed.");
-
-        if (tier) {
-            console.log(`[connect] reachability dispatch: probe-fail tier=${tier} (pairing)`);
-            dispatchReach({ type: "probe-fail", tier, paired: tier !== "managed" });
-        }
-
+        dispatchReach({ type: "probe-fail", failure: tier ? TIERS[tier].probeFailure : "unreachable" });
         return false;
     }
 
@@ -263,8 +243,16 @@ export default function ConnectScreen() {
                         <Eyebrow label="LAN · credentials" />
                         <View accessibilityLabel="lan-agent-list" className="gap-3">
                             <Text className="text-xs leading-5 text-dd-text-muted">
-                                Discovery runs automatically; enter the agent address + credentials to connect.
+                                {discovery.scanning ? "Looking for Macs on this network…" : "Tap a Mac found on this network, or type its address."}
                             </Text>
+                            {discovery.agents.map((agent) => (
+                                <GhostButton
+                                    key={agent.baseUrl}
+                                    accessibilityLabel={`lan-found-${agent.host}`}
+                                    label={`${agent.name} · ${agent.host}:${agent.port}`}
+                                    onPress={() => setLanHost(`${agent.host}:${agent.port}`)}
+                                />
+                            ))}
                             <TextInput
                                 accessibilityLabel="lan-host"
                                 value={lanHost}
@@ -350,6 +338,20 @@ export default function ConnectScreen() {
                     <Card bezel featured className="gap-4">
                         <Eyebrow label={tier === "managed" ? "Managed · scan" : "Cloudflare · scan"} tone="violet" />
                         <View accessibilityLabel="pair-panel" className="gap-3">
+                            {TIERS[tier].pairing === "device-code" ? (
+                                <TextInput
+                                    accessibilityLabel="pair-device-code"
+                                    value={deviceCode}
+                                    onChangeText={setDeviceCode}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    keyboardType="number-pad"
+                                    textContentType="oneTimeCode"
+                                    placeholder="pairing code shown on your Mac"
+                                    placeholderTextColor={placeholderColor}
+                                    className={inputClass}
+                                />
+                            ) : null}
                             {tier === "cloudflared-self" ? (
                                 <TextInput
                                     accessibilityLabel="pair-password"

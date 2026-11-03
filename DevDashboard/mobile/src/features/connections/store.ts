@@ -1,16 +1,12 @@
-import type { PairingPayload } from "@dd/contract";
 import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
 import type {
     SavedConnection,
     SavedConnectionInput,
     SavedConnectionPatch,
+    TierOptions,
 } from "@/features/connections/types";
-import type { DiscoveredAgent } from "@/transport/lan-discovery";
-import { createCloudflaredTransport } from "@/transport/tiers/cloudflared";
-import { createLanTransport, type LanCredentials } from "@/transport/tiers/lan";
-import { createManagedTransport } from "@/transport/tiers/managed";
-import { createTailscaleTransport } from "@/transport/tiers/tailscale";
+import { TIERS, type TierTarget } from "@/transport/tiers";
 import type { Transport, TransportTier } from "@/transport/Transport";
 
 const CONNECTIONS_KEY = "dd.connections";
@@ -73,6 +69,29 @@ function isSavedConnection(value: unknown): value is SavedConnection {
     );
 }
 
+/**
+ * Moves a saved row of the old flat shape to the nested one: the managed tier's `agentPublicKey` goes under
+ * `tierOptions.managed`. When both are present the nested key wins and the flat one only fills a gap. Pure and
+ * idempotent; anything that is not an object passes through for the validator to drop.
+ */
+export function migrateSavedConnection(raw: unknown): unknown {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        return raw;
+    }
+
+    const { agentPublicKey, ...rest } = raw as Record<string, unknown>;
+
+    if (typeof agentPublicKey !== "string" || agentPublicKey.length === 0) {
+        return rest;
+    }
+
+    const options = (rest.tierOptions ?? {}) as TierOptions;
+    return {
+        ...rest,
+        tierOptions: { ...options, managed: { agentPublicKey: options.managed?.agentPublicKey ?? agentPublicKey } },
+    };
+}
+
 /** Reads + validates the persisted connection list; tolerates corrupt/legacy payloads by ignoring them. */
 export async function loadConnections(): Promise<SavedConnection[]> {
     try {
@@ -89,7 +108,7 @@ export async function loadConnections(): Promise<SavedConnection[]> {
             return [];
         }
 
-        return parsed.filter(isSavedConnection);
+        return parsed.map(migrateSavedConnection).filter(isSavedConnection);
     } catch (err) {
         console.warn("[connections] failed to load saved connections", err);
         return [];
@@ -118,50 +137,28 @@ async function setActiveConnectionId(id: string | null): Promise<void> {
     await Storage.setItem(ACTIVE_ID_KEY, id);
 }
 
-/**
- * Rebuilds the live transport for a saved connection, re-reading its password from SecureStore. This
- * is the single place that maps a persisted (password-less) row back into a working `Transport`, so
- * both `activate` and boot-time `restore` go through it.
- */
-export async function buildTransportFor(conn: SavedConnection): Promise<Transport> {
-    const password = await readPassword(conn.id);
-
-    if (conn.tier === "tailscale") {
-        return createTailscaleTransport({
-            tailnetHost: conn.host,
-            port: conn.port,
-            username: conn.username,
-            password,
-        });
-    }
-
-    if (conn.tier === "cloudflared-self") {
-        const pairing: PairingPayload = {
-            baseUrl: conn.baseUrl,
-            tier: "cloudflared-self",
-            username: conn.username,
-        };
-        return createCloudflaredTransport(pairing, password);
-    }
-
-    if (conn.tier === "managed") {
-        const pairing: PairingPayload = {
-            baseUrl: conn.baseUrl,
-            tier: "managed",
-            username: conn.username,
-            agentPublicKey: conn.agentPublicKey,
-        };
-        return createManagedTransport(pairing);
-    }
-
-    const agent: DiscoveredAgent = {
-        name: conn.label || conn.host,
+/** What a tier builds from: a row (saved or about to be) plus its password. */
+export function targetOf(
+    conn: Pick<SavedConnectionInput, "label" | "baseUrl" | "host" | "port" | "username" | "tierOptions">,
+    password: string
+): TierTarget {
+    return {
+        label: conn.label ?? "",
+        baseUrl: conn.baseUrl,
         host: conn.host,
         port: conn.port,
-        baseUrl: conn.baseUrl,
+        username: conn.username,
+        password,
+        ...(conn.tierOptions?.managed ? { managed: conn.tierOptions.managed } : {}),
     };
-    const creds: LanCredentials = { username: conn.username, password };
-    return createLanTransport(agent, creds);
+}
+
+/**
+ * Rebuilds the live transport for a saved connection, re-reading its password from SecureStore, through its row of
+ * the tier table. Both `activate` and boot-time `restore` go through it.
+ */
+export async function buildTransportFor(conn: SavedConnection): Promise<Transport> {
+    return TIERS[conn.tier].build(targetOf(conn, await readPassword(conn.id)));
 }
 
 function defaultLabel({ host, port, tier }: { host: string; port: number; tier: TransportTier }): string {
@@ -175,7 +172,8 @@ function defaultLabel({ host, port, tier }: { host: string; port: number; tier: 
 /**
  * Upserts a connection by `(tier, baseUrl)` identity so re-connecting the same agent through the
  * Connect flow updates the existing row instead of stacking duplicates. Persists the password to
- * SecureStore, marks the row active + freshens `lastUsedAt`, and returns the resolved id.
+ * SecureStore, freshens `lastUsedAt`, and returns the resolved id. It never makes the row active:
+ * only the connection session does that, after a probe succeeded (`markActivated`).
  */
 export async function upsertConnection(input: SavedConnectionInput): Promise<string> {
     const list = await loadConnections();
@@ -196,7 +194,7 @@ export async function upsertConnection(input: SavedConnectionInput): Promise<str
         host: input.host,
         port: input.port,
         username: input.username,
-        agentPublicKey: input.agentPublicKey ?? existing?.agentPublicKey,
+        tierOptions: { ...existing?.tierOptions, ...input.tierOptions },
         addedAt: existing?.addedAt ?? now,
         lastUsedAt: now,
     };
@@ -205,7 +203,6 @@ export async function upsertConnection(input: SavedConnectionInput): Promise<str
         : [...list, next];
 
     await persistConnections(merged);
-    await setActiveConnectionId(id);
     return id;
 }
 
@@ -264,7 +261,7 @@ export async function updateConnection(id: string, patch: SavedConnectionPatch):
         host,
         port,
         username: patch.username ?? target.username,
-        agentPublicKey: patch.agentPublicKey ?? target.agentPublicKey,
+        tierOptions: patch.tierOptions ?? target.tierOptions,
         baseUrl: patch.baseUrl ?? rebuildBaseUrl(target, patch, host, port),
     };
 

@@ -15,13 +15,23 @@ export interface SavedConnection {
     port: number;
     username: string;
     /**
-     * The agent's base64 X25519 PUBLIC key from the pairing QR. Managed connections cannot rebuild
-     * their transport without it, so it has to survive a restart. Public material only — the private
-     * half never leaves SecureStore.
+     * Fields only one tier has, nested under that tier (the old flat `agentPublicKey` moves here in
+     * `migrateSavedConnection`). Today only the managed tier has one.
      */
-    agentPublicKey?: string;
+    tierOptions?: TierOptions;
     addedAt: number;
     lastUsedAt: number;
+}
+
+export interface TierOptions {
+    managed?: {
+        /**
+         * The agent's base64 X25519 PUBLIC key from the pairing QR. Managed connections cannot rebuild
+         * their transport without it, so it has to survive a restart. Public material only — the private
+         * half never leaves SecureStore.
+         */
+        agentPublicKey: string;
+    };
 }
 
 /** Fields a caller provides when saving a new connection (ids/timestamps are assigned by the store). */
@@ -32,8 +42,7 @@ export interface SavedConnectionInput {
     host: string;
     port: number;
     username: string;
-    /** The agent's base64 X25519 public key, for managed pairings. */
-    agentPublicKey?: string;
+    tierOptions?: TierOptions;
     /** Plaintext password, persisted to SecureStore (never to the kv list). Omit/empty for no auth. */
     password?: string;
 }
@@ -45,6 +54,6 @@ export interface SavedConnectionPatch {
     port?: number;
     username?: string;
     baseUrl?: string;
-    agentPublicKey?: string;
+    tierOptions?: TierOptions;
     password?: string;
 }
