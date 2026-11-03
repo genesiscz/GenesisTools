@@ -39,6 +39,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 { registerUsageDaemonCommands },
                 { registerAiUsageEventsCommand },
                 { registerAiUsageAlertsCommand },
+                registerSpendAlias,
             ] = await Promise.all([
                 import("./commands/usage/index"),
                 import("./commands/usage/limits"),
@@ -46,6 +47,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 import("./commands/usage/daemon"),
                 import("./commands/usage/events"),
                 import("./commands/usage/alerts"),
+                import("./commands/usage/spend").then(({ loadUsageSpendAlias }) => loadUsageSpendAlias(process.argv)),
             ]);
 
             return (program: Command) => {
@@ -56,6 +58,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 registerUsageDaemonCommands(usageCmd);
                 registerAiUsageEventsCommand(usageCmd);
                 registerAiUsageAlertsCommand(usageCmd);
+                registerSpendAlias(usageCmd);
             };
         },
     },
