@@ -122,6 +122,35 @@ final class UsageTests: XCTestCase {
         XCTAssertTrue(row.limitBeforeReset)
     }
 
+    func testTheDriftBadgeShowsAChangedLimitNotASteadyOne() throws {
+        let limits = try decode("""
+        {"schema":"usage.limits@1","generatedAt":"2026-11-03T10:00:00.000Z","selector":{"accounts":[]},"warnings":[],
+         "data":{"accounts":[{"provider":"anthropic-sub","accountId":"acc_work","accountName":"work","label":"max","limits":[]},
+                             {"provider":"openai-sub","accountId":"acc_side","accountName":"side","label":"plus","limits":[]}]}}
+        """, as: UsageLimitsData.self, door: .limits).data
+        let drift = try decode("""
+        {"schema":"usage.limits.drift@1","generatedAt":"2026-11-03T10:00:00.000Z","selector":{"accounts":[]},"warnings":[],
+         "data":{"rows":[
+           {"account":{"provider":"anthropic-sub","accountId":"acc_work","accountName":"work"},"kind":"weekly","model":"a","weeks":[],"baseline":null,"verdict":"steady"},
+           {"account":{"provider":"anthropic-sub","accountId":"acc_work","accountName":"work"},"kind":"weekly","model":"b","weeks":[],"baseline":null,"verdict":"limit cut?"},
+           {"account":{"provider":"openai-sub","accountId":"acc_side","accountName":"side"},"kind":"weekly","model":"a","weeks":[],"baseline":null,"verdict":"steady"}]}}
+        """, as: UsageDriftData.self, door: .drift).data
+        let table = UsageTableBuilder.build(limits: limits, series: nil, drift: drift, now: UsageTime.date("2026-11-03T10:00:00.000Z")!)
+
+        XCTAssertEqual(table.rows.first { $0.account.accountId == "acc_work" }?.verdict, "limit cut?")
+        XCTAssertNil(table.rows.first { $0.account.accountId == "acc_side" }?.verdict)
+    }
+
+    func testEachUsageCellNamesItsWindowForVoiceOver() throws {
+        let now = try XCTUnwrap(UsageTime.date("2026-11-03T10:00:00.000Z"))
+        let reset = now.addingTimeInterval(2 * 3600)
+        XCTAssertEqual(UsageTableRowView.spokenCell(UsageTableCell(percent: 62, resetsAt: reset, severity: "ok"), title: "Week", now: now),
+                       "Week: \(UsageFormat.percent(62)) used, resets in \(UsageFormat.countdown(to: reset, now: now))")
+        XCTAssertEqual(UsageTableRowView.spokenCell(UsageTableCell(percent: nil, resetsAt: nil, severity: nil, absent: true), title: "5h", now: now),
+                       "5h: no limit")
+        XCTAssertEqual(UsageTableRowView.spokenCell(nil, title: "Fable", now: now), "Fable: no reading")
+    }
+
     func testBindingForecastSkipsStaleAndPassedResetForecasts() throws {
         let series = try decode(Self.seriesJSON, as: UsageSeriesData.self, door: .series(.day, step: "raw", agg: "raw")).data
         let session = try XCTUnwrap(series.series.first)
