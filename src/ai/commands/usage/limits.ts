@@ -2,12 +2,13 @@ import { formatLimitLine } from "@app/ai/lib/accounts/last-usage";
 import {
     type AdviseOptions,
     AGG_VALUES,
+    type HealthOptions,
     type LimitsOptions,
     queryAdvice,
+    queryHealth,
     queryLimitsNow,
     querySeries,
     type SeriesOptions,
-    TOOL,
 } from "@app/ai/lib/usage/limits-query";
 import { usageProviderValues } from "@app/ai/lib/usage/provider-values";
 import { FORECAST_DESCRIPTION, type ForecastCommandOptions, runForecastCommand } from "@app/hub/commands/forecast";
@@ -22,6 +23,7 @@ import {
     UsageQueryError,
     type UsageWarning,
 } from "@genesiscz/utils/ai/usage/contract";
+import type { AccountHealth, LimitsHealthData } from "@genesiscz/utils/ai/usage/poll-runs/health";
 import type { LimitsNowData, WireAccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/limits-now";
 import type { LimitSeriesData, LimitSeriesItem } from "@genesiscz/utils/ai/usage-poll/series";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -34,12 +36,22 @@ import pc from "picocolors";
  * A refusal the user can fix: an enumerated flag gets its value list, anything else its
  * message. Never thrown further, so commander prints no stack.
  */
+/**
+ * The tool part of the suggested command line. The subcommand words come from argv, which already starts with
+ * `usage`, so the tool is `tools ai`: with `tools ai usage` the line read `tools ai usage usage limits ...`.
+ */
+const SUGGEST_TOOL = "tools ai";
+
 function refuse(err: UsageQueryError, subcommand: string[]): void {
+    const given = err.details.given === undefined ? {} : { given: err.details.given };
+
     if (err.code === "unknown-provider") {
+        out.printlnErr(suggestEnumFlag(SUGGEST_TOOL, "--provider", usageProviderValues(), { subcommand, ...given }));
+    } else if (err.details.enumFlag) {
         out.printlnErr(
-            suggestEnumFlag(TOOL, "--provider", usageProviderValues(), {
+            suggestEnumFlag(SUGGEST_TOOL, err.details.enumFlag.flag, err.details.enumFlag.values, {
                 subcommand,
-                ...(err.details.given === undefined ? {} : { given: err.details.given }),
+                ...given,
             })
         );
     } else {
@@ -49,7 +61,7 @@ function refuse(err: UsageQueryError, subcommand: string[]): void {
     process.exitCode = 1;
 }
 
-async function guarded(subcommand: string[], run: () => Promise<void>): Promise<void> {
+export async function guarded(subcommand: string[], run: () => Promise<void>): Promise<void> {
     try {
         await run();
     } catch (err) {
@@ -63,11 +75,11 @@ async function guarded(subcommand: string[], run: () => Promise<void>): Promise<
     }
 }
 
-function accountLabel(account: AccountKey): string {
+export function accountLabel(account: AccountKey): string {
     return `${providerAliasOf(account.provider)}/${account.accountName}`;
 }
 
-function printWarnings(warnings: readonly UsageWarning[]): void {
+export function printWarnings(warnings: readonly UsageWarning[]): void {
     for (const warning of warnings) {
         out.printlnErr(pc.yellow(`warning: ${warning.message}`));
     }
@@ -204,6 +216,62 @@ function renderAdvice(envelope: UsageEnvelope<AdviseData>): void {
     printWarnings(envelope.warnings);
 }
 
+const OUTCOME_TONE: Record<AccountHealth["outcome"], (text: string) => string> = {
+    ok: pc.green,
+    stale: pc.yellow,
+    error: pc.red,
+    blocked: pc.red,
+    backoff: pc.magenta,
+    "needs-login": pc.red,
+    unmeasured: pc.dim,
+};
+
+function shortTime(iso: string | null): string {
+    return iso === null ? pc.dim("—") : new Date(iso).toLocaleString();
+}
+
+function gapsCell(account: AccountHealth): string {
+    if (account.gaps.length === 0) {
+        return pc.dim("none");
+    }
+
+    const longest = account.gaps.reduce((best, gap) => (gap.minutes > best.minutes ? gap : best));
+    return `${account.gaps.length} (longest ${longest.minutes} min from ${new Date(longest.from).toLocaleTimeString()})`;
+}
+
+function renderHealth(envelope: UsageEnvelope<LimitsHealthData>): void {
+    const { daemon } = envelope.data;
+    renderCliHeader("Poll coverage", `${envelope.window?.label ?? ""} · daemon ${daemon.alive ? "up" : "down"}`);
+    const table = createBoxTable(["ACCOUNT", "NOW", "SINCE", "COVERAGE", "GAPS", "SOURCE"]);
+
+    for (const account of envelope.data.accounts) {
+        const reason =
+            account.outcome === "ok" || account.reason === null ? "" : `\n${truncateDisplay(account.reason, 40)}`;
+        table.push([
+            accountLabel(account),
+            `${OUTCOME_TONE[account.outcome](account.outcome)}${reason}`,
+            shortTime(account.since),
+            `${account.coveragePct}%`,
+            gapsCell(account),
+            account.source ?? pc.dim("—"),
+        ]);
+    }
+
+    out.println(table.toString());
+    out.println(
+        daemon.alive
+            ? pc.dim(
+                  `Daemon heartbeat ${Math.round((daemon.heartbeatAgeMs ?? 0) / 1000)} s ago; last round ${shortTime(daemon.lastRoundAt)}.`
+              )
+            : pc.red("The usage daemon is not running, so nothing is measured.")
+    );
+    printWarnings(envelope.warnings);
+}
+
+async function runHealth(opts: HealthOptions): Promise<void> {
+    await emit(await queryHealth(opts), opts.json, renderHealth);
+}
+
 async function runLimits(opts: LimitsOptions): Promise<void> {
     await emit(await queryLimitsNow(opts), opts.json, renderLimits);
 }
@@ -216,7 +284,11 @@ async function runAdvice(opts: AdviseOptions): Promise<void> {
     await emit(await queryAdvice(opts), opts.json, renderAdvice);
 }
 
-async function emit<T>(envelope: UsageEnvelope<T>, json: boolean | undefined, render: (e: UsageEnvelope<T>) => void) {
+export async function emit<T>(
+    envelope: UsageEnvelope<T>,
+    json: boolean | undefined,
+    render: (e: UsageEnvelope<T>) => void
+): Promise<void> {
     if (json) {
         out.result(envelope);
         await out.flush();
@@ -226,7 +298,7 @@ async function emit<T>(envelope: UsageEnvelope<T>, json: boolean | undefined, re
     render(envelope);
 }
 
-function addSelectorOptions(command: Command): Command {
+export function addSelectorOptions(command: Command): Command {
     return command
         .option("--provider [list...]", `Limit to these providers: ${usageProviderValues().join(" | ")}`)
         .option(
@@ -270,6 +342,21 @@ export function registerAiUsageLimitsCommand(usage: Command): void {
             .option("--model <names...>", "Add a profile per model that ranks by that model's own weekly window")
     ).action(async (_opts: AdviseOptions, command: Command) => {
         await guarded(["limits", "advise"], () => runAdvice(command.optsWithGlobals<AdviseOptions>()));
+    });
+
+    addReservedHarnessOption(
+        addWindowOptions(
+            addSelectorOptions(
+                limits
+                    .command("health")
+                    .description(
+                        "Poll coverage per account: idle, unmeasured, stale, held back or blocked, with the gaps; --json prints usage.limits.health@1"
+                    )
+            ),
+            { since: "24h" }
+        )
+    ).action(async (_opts: HealthOptions, command: Command) => {
+        await guarded(["limits", "health"], () => runHealth(command.optsWithGlobals<HealthOptions>()));
     });
 
     const series = addWindowOptions(

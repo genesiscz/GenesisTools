@@ -1,3 +1,5 @@
+import type { Database } from "bun:sqlite";
+import { openHistoryReadOnly } from "@genesiscz/utils/agent-sessions/database";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { isLimitKind, LIMIT_KIND_VALUES, type LimitKind } from "@genesiscz/utils/ai/providers/account-features";
@@ -25,6 +27,9 @@ import {
     type WindowFlags,
 } from "@genesiscz/utils/ai/usage/contract";
 import { absentKey, FORECAST_LOOKBACK_MS, forecastFromSamples } from "@genesiscz/utils/ai/usage/forecast/forecast";
+import { LIMITS_HEALTH_SCHEMA, type LimitsHealthData, limitsHealth } from "@genesiscz/utils/ai/usage/poll-runs/health";
+import { type PollRun, PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
+import { usageDaemonAgeMs } from "@genesiscz/utils/ai/usage-poll/daemon-heartbeat";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import {
@@ -297,4 +302,63 @@ export async function querySeries(opts: SeriesOptions): Promise<UsageEnvelope<Li
         data,
         warnings,
     });
+}
+
+export interface HealthOptions extends LimitsOptions, WindowFlags {}
+
+export interface HealthDeps {
+    /** A read-only connection to the history store, or undefined when there is none yet. */
+    open?: () => Database | undefined;
+    heartbeatAgeMs?: () => number | null;
+    now?: Date;
+}
+
+/**
+ * `tools ai usage limits health`: what the poller knew per account over the window, as `usage.limits.health@1`. A
+ * diagnostic, so it never polls and never migrates: the runs come through a read-only connection, and a store the
+ * coverage migration has not reached answers no runs with a warning.
+ */
+export async function queryHealth(
+    opts: HealthOptions,
+    deps: HealthDeps = {}
+): Promise<UsageEnvelope<LimitsHealthData>> {
+    refuseHarness(opts.harness);
+
+    const now = deps.now ?? new Date();
+    const window = resolveWindow(opts, { now, defaultSince: "24h" });
+    const providers = resolveProviderList(opts.provider);
+    const providerIds = providers ?? usagePlugins().map((entry) => entry.plugin.id);
+    const store = await AiConfigStore.readOnly();
+    const candidates = usageAccountKeys(store.accounts(), providerIds, { visibleOnly: true });
+    const selection = selectAccounts(opts.account, candidates);
+    const db = (deps.open ?? (() => openHistoryReadOnly()))();
+    let runs: PollRun[] = [];
+    let lastRoundAt: string | null = null;
+
+    try {
+        if (db) {
+            const runStore = new PollRunsStore(db);
+            runs = runStore.runsBetween({ from: window.from, to: window.to, providers: providerIds });
+            lastRoundAt = runStore.lastRoundAt();
+        }
+    } finally {
+        db?.close();
+    }
+
+    const accounts = selection ?? candidates;
+    const { data, warnings } = limitsHealth({
+        accounts,
+        runs,
+        window,
+        now,
+        heartbeatAgeMs: (deps.heartbeatAgeMs ?? usageDaemonAgeMs)(),
+        lastRoundAt,
+    });
+
+    logger.debug(
+        { window: window.label, accounts: accounts.length, runs: runs.length, lastRoundAt },
+        "[ai-usage] limits health"
+    );
+
+    return usageEnvelope({ ...LIMITS_HEALTH_SCHEMA, now, window, accounts, data, warnings });
 }
