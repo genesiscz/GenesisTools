@@ -241,6 +241,15 @@ export async function sendDrafts(
     const shown = input.drafts ? new Map(input.drafts.map((entry) => [entry.number, entry])) : undefined;
     refuseStaleShown(sessionRows, input.drafts ?? [], input.session);
     const drafted = sessionRows.filter((row) => isDrafted(row) && (!shown || shown.has(row.number)));
+    // With `drafts`, the delivery takes only the shown decisions: an answer of a hidden one that still waits to go out
+    // (its earlier delivery failed) is not part of the batch the user reviewed. Without it, every pending answer goes.
+    const selected = shown
+        ? {
+              ids: sessionRows
+                  .filter((row) => kindOf(row) === "decision" && shown.has(row.number))
+                  .map((row) => row.id),
+          }
+        : {};
     // The rows name the provider when the caller did not: the wait and the send below must look up one harness.
     const provider = providerOf(input.provider, sessionRows) ?? undefined;
 
@@ -248,6 +257,7 @@ export async function sendDrafts(
         const result = await sendAnsweredDecisions({
             session: input.session,
             ...(provider ? { provider } : {}),
+            ...selected,
             dryRun: true,
             files: deps,
             ...(deps.deliver ? { deps: deps.deliver } : {}),
@@ -305,7 +315,11 @@ export async function sendDrafts(
     // normal send below types them.
     if (input.recordResumeTarget && !live) {
         const answered = readDecisions(deps.file).filter(
-            (row) => row.sessionId === input.session && kindOf(row) === "decision" && row.state === "answered"
+            (row) =>
+                row.sessionId === input.session &&
+                kindOf(row) === "decision" &&
+                row.state === "answered" &&
+                (!selected.ids || selected.ids.includes(row.id))
         );
         await recordDelivery(
             deps.file,
@@ -330,6 +344,7 @@ export async function sendDrafts(
     const result = await sendAnsweredDecisions({
         session: input.session,
         ...(provider ? { provider } : {}),
+        ...selected,
         ...(input.inSession ? { inSession: true } : {}),
         ...(live ? { located: live } : {}),
         files: deps,

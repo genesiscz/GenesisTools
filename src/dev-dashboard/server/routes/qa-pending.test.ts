@@ -704,4 +704,44 @@ describe("qa decision routes", () => {
             draftOption: "b",
         });
     });
+
+    it("POST send-drafts delivers only the shown decisions, never a hidden answer still waiting to go out", async () => {
+        const { file, events } = scratchFiles();
+        await postDecisions(file, events, {
+            sessionId: "s-beta",
+            decisions: [
+                { prompt: "Which port?", options: ["3000", "4000"] },
+                { prompt: "Retry the build?", options: ["yes", "no"], for: "agent" },
+            ],
+        });
+        // DECISION 2 (hidden from the phone) was answered elsewhere and its delivery failed: it waits to go out.
+        runResult = { success: false, stdout: "", stderr: "No cmux pane matches" };
+        await answer({ session: "s-beta", answers: [{ number: 2, option: "a" }] });
+        expect(readDecisions(file).find((row) => row.number === 2)?.state).toBe("answered");
+        runResult = { success: true, stdout: '{"sent":true}', stderr: "" };
+        runs = [];
+
+        await decisionRoute("POST", "/api/qa/decisions/draft").handler(
+            makeCtx({ body: { session: "s-beta", number: 1, option: "b", expectedRevision: 1 } })
+        );
+        const sent = asJson(
+            await decisionRoute("POST", "/api/qa/decisions/send-drafts").handler(
+                makeCtx({ body: { session: "s-beta", drafts: [{ number: 1, expectedRevision: 1 }] } })
+            )
+        );
+
+        expect(sent.body).toMatchObject({ delivered: true, numbers: [1], promoted: [1] });
+        const rows = readDecisions(file);
+        expect(rows.find((row) => row.number === 1)?.state).toBe("sent");
+        expect(rows.find((row) => row.number === 2)?.state).toBe("answered");
+
+        // An empty list shows nothing, so it sends nothing, not the hidden answer.
+        const empty = asJson(
+            await decisionRoute("POST", "/api/qa/decisions/send-drafts").handler(
+                makeCtx({ body: { session: "s-beta", drafts: [] } })
+            )
+        );
+        expect(empty.status).toBe(400);
+        expect(readDecisions(file).find((row) => row.number === 2)?.state).toBe("answered");
+    });
 });
