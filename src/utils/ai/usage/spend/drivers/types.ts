@@ -14,6 +14,7 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
+import type { SessionAccountSource } from "@genesiscz/utils/ai/usage/attribution/session-account";
 import type { CreateParserOptions, DriverLineParser } from "@genesiscz/utils/ai/usage/transcripts/types";
 
 export type {
@@ -101,6 +102,11 @@ export interface MonitorDriver {
      * to (the id the pin journal keys), and a project label. Attribution reads it per file of the events cache.
      */
     transcriptOwner(file: string): TranscriptOwner;
+    /**
+     * Which account ran one of this harness's sessions (design 2026-11-01 section 4): Claude's transcripts name no
+     * account, so the pin journal answers; a harness whose homes belong to accounts answers by the home, then the pin.
+     */
+    readonly sessionAccount: SessionAccountSource;
 }
 
 export interface TranscriptOwner {

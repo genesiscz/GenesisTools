@@ -2,6 +2,7 @@ import { basename, dirname } from "node:path";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { CLAUDE_ALL_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
+import { pinJournalSource } from "@genesiscz/utils/ai/usage/attribution/session-account";
 import {
     isNativeTranscript,
     nativeSessionRoots,
@@ -107,6 +108,9 @@ export const claudeDriver: MonitorDriver = {
 
     // Claude's rows carry their session id and project, so the row parser reads them (`parseClaudeLine`).
     spendLayout: { kind: "rows" },
+
+    // The projects tree names no login (decision D6), so a session's pin is the only link to its account.
+    sessionAccount: pinJournalSource,
 
     // `<project>/<session>.jsonl`, or a sub-agent's `<project>/<lead>/subagents/[workflows/<wf>/]agent-<id>.jsonl`.
     transcriptOwner(file) {
