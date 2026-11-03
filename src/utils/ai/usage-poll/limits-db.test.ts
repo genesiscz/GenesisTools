@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { type DriftRow, recordDrift } from "@genesiscz/utils/ai/usage/drift/drift";
 import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { removeDbFile } from "@genesiscz/utils/fs";
 import { tmpdir } from "@genesiscz/utils/paths";
@@ -1268,5 +1269,78 @@ describe("UsageLimitsDb", () => {
         test("an unknown name moves nothing rather than throwing", () => {
             expect(db.renameAccount("nobody", "new")).toBe(0);
         });
+    });
+});
+
+describe("limit_drift rows", () => {
+    const week = (scopeModel: string | null, tokensPerPct: number): DriftRow => ({
+        account: { provider: "anthropic-sub", accountId: "w", accountName: "work" },
+        kind: "weekly",
+        scopeModel,
+        model: "all",
+        weeks: [
+            {
+                week: "2026-10-26",
+                windows: 5,
+                tokensPerPct,
+                usdPerPct: 1,
+                ci: [tokensPerPct - 10, tokensPerPct + 10],
+                status: "ok",
+            },
+        ],
+        baseline: null,
+        verdict: "steady",
+    });
+    const stored = (handle: Database) =>
+        handle.prepare("SELECT scope_model, tokens_per_pct FROM limit_drift ORDER BY scope_model").all() as Array<{
+            scope_model: string;
+            tokens_per_pct: number;
+        }>;
+
+    test("an unscoped and a model-scoped window of one kind keep a row each", () => {
+        const store = new UsageLimitsDb(":memory:");
+
+        try {
+            const now = new Date("2026-11-02T12:00:00.000Z");
+            recordDrift(store.connection(), [week(null, 1000), week("claude-sonnet-4-5", 300)], now);
+
+            expect(stored(store.connection())).toEqual([
+                { scope_model: "", tokens_per_pct: 1000 },
+                { scope_model: "claude-sonnet-4-5", tokens_per_pct: 300 },
+            ]);
+        } finally {
+            store.close();
+        }
+    });
+
+    test("a store with the first limit_drift shape keeps its rows as unscoped ones", () => {
+        const path = getTestDbPath();
+        const seed = new Database(path);
+        seed.exec(`
+            CREATE TABLE limit_drift (
+                provider TEXT NOT NULL, account_id TEXT, account_name TEXT NOT NULL, kind TEXT NOT NULL,
+                model TEXT NOT NULL, week TEXT NOT NULL, windows INTEGER NOT NULL, tokens_per_pct REAL,
+                usd_per_pct REAL, ci_low REAL, ci_high REAL, status TEXT NOT NULL, computed_at TEXT NOT NULL,
+                PRIMARY KEY (provider, account_name, kind, model, week)
+            );
+            INSERT INTO limit_drift VALUES
+                ('anthropic-sub', 'w', 'work', 'weekly', 'all', '2026-10-26', 5, 1000, 1, 990, 1010, 'ok',
+                 '2026-11-01T00:00:00.000Z');
+        `);
+        seed.close();
+
+        const upgraded = new UsageLimitsDb(path);
+
+        try {
+            recordDrift(upgraded.connection(), [week("claude-sonnet-4-5", 300)], new Date("2026-11-02T12:00:00.000Z"));
+
+            expect(stored(upgraded.connection())).toEqual([
+                { scope_model: "", tokens_per_pct: 1000 },
+                { scope_model: "claude-sonnet-4-5", tokens_per_pct: 300 },
+            ]);
+        } finally {
+            upgraded.close();
+            removeDbFile(path);
+        }
     });
 });

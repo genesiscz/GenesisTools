@@ -167,7 +167,7 @@ function renderDrift(envelope: UsageEnvelope<DriftData>): void {
                   : row.verdict;
         table.push([
             accountLabel(row.account),
-            row.kind ?? "?",
+            row.scopeModel ? `${row.kind ?? "?"} · ${row.scopeModel}` : (row.kind ?? "?"),
             row.model,
             latest?.week ?? "—",
             String(latest?.windows ?? 0),

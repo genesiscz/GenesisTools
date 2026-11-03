@@ -385,4 +385,46 @@ export const USAGE_LIMITS_MIGRATIONS: Migration[] = [
             `);
         },
     },
+    {
+        /**
+         * A drift row names its window's model scope. An unscoped weekly window and a model-scoped one of the same
+         * account share kind, model and week, so under the first key the later write overwrote the other. SQLite
+         * cannot change a primary key in place, so the table is rebuilt; the rows written before carry over as
+         * unscoped (`''`, never NULL, which a primary key would let repeat).
+         */
+        id: "2026-11-limit-drift-scope",
+        description: "scope_model in the limit_drift key",
+        isApplied(db) {
+            return columnNames(db, "limit_drift").has("scope_model");
+        },
+        apply(db) {
+            db.exec(`
+                CREATE TABLE limit_drift_scoped (
+                    provider TEXT NOT NULL,
+                    account_id TEXT,
+                    account_name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    scope_model TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL,
+                    week TEXT NOT NULL,
+                    windows INTEGER NOT NULL,
+                    tokens_per_pct REAL,
+                    usd_per_pct REAL,
+                    ci_low REAL,
+                    ci_high REAL,
+                    status TEXT NOT NULL,
+                    computed_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, account_name, kind, scope_model, model, week)
+                );
+                INSERT INTO limit_drift_scoped
+                    (provider, account_id, account_name, kind, model, week, windows, tokens_per_pct, usd_per_pct,
+                     ci_low, ci_high, status, computed_at)
+                SELECT provider, account_id, account_name, kind, model, week, windows, tokens_per_pct, usd_per_pct,
+                       ci_low, ci_high, status, computed_at
+                FROM limit_drift;
+                DROP TABLE limit_drift;
+                ALTER TABLE limit_drift_scoped RENAME TO limit_drift;
+            `);
+        },
+    },
 ];
