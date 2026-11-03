@@ -155,6 +155,10 @@ final class HubUsageModel: ObservableObject {
 
     @Published private(set) var loading: Set<HubUsageDoorKey> = []
     @Published private(set) var errors: [HubUsageDoorKey: String] = [:]
+    /// A failed acknowledge, kept apart from `errors` so the alerts read that follows it does not clear it. It clears
+    /// when an acknowledge works, or when the alerts read finds that alert no longer open.
+    @Published private(set) var ackError: String?
+    private var ackFailedAlert: Int?
     private var loaded: [HubUsageDoorKey: Date] = [:]
     /// Each door's newest request. A completion of an older one (the range or the session changed while it ran) is
     /// dropped, so the old answer never lands under the new parameters or marks them fresh.
@@ -282,6 +286,8 @@ final class HubUsageModel: ObservableObject {
     }
 
     var sectionErrors: [String] { section.doors(settings).compactMap { errors[$0] } }
+    /// The failed acknowledge, on the sections that show the alerts.
+    var sectionAckError: String? { section.doors(settings).contains(.alerts) ? ackError : nil }
     var sectionLoading: Bool { section.doors(settings).contains(where: loading.contains) }
 
     private func load(_ keys: [HubUsageDoorKey]) {
@@ -330,7 +336,13 @@ final class HubUsageModel: ObservableObject {
                 apply = { self.spikes = value }
             case .alerts:
                 let value = try await client.envelope(.alerts, as: UsageAlertsData.self)
-                apply = { self.alerts = value }
+                apply = {
+                    self.alerts = value
+                    if let id = self.ackFailedAlert, !value.data.alerts.contains(where: { $0.id == id && $0.isOpen }) {
+                        self.ackFailedAlert = nil
+                        self.ackError = nil
+                    }
+                }
             case .advise:
                 let value = try await client.envelope(.advise, as: UsageAdviseData.self)
                 apply = { self.advise = value }
@@ -456,15 +468,18 @@ final class HubUsageModel: ObservableObject {
         return matches.count == 1 ? matches[0] : nil
     }
 
-    /// Acknowledges an alert (`tools ai usage alerts ack <id>`), then reads the alerts again.
+    /// Acknowledges an alert (`tools ai usage alerts ack <id>`), then reads the alerts again. A failure goes to
+    /// `ackError`, which that read does not clear.
     func acknowledge(_ alert: UsageAlert) {
         let client = client
         Task {
             do {
                 _ = try await client.fetch(["ai", "usage", "alerts", "ack", String(alert.id)])
-                errors[.alerts] = nil
+                ackFailedAlert = nil
+                ackError = nil
             } catch {
-                errors[.alerts] = "tools ai usage alerts ack \(alert.id) failed: \(error.localizedDescription)"
+                ackFailedAlert = alert.id
+                ackError = "tools ai usage alerts ack \(alert.id) failed: \(error.localizedDescription)"
             }
             invalidate([.alerts])
             load([.alerts])

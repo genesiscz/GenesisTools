@@ -41,7 +41,7 @@ struct WidgetUsageModuleView: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     header
-                    if let error = store.error {
+                    ForEach([store.error, store.ackError].compactMap { $0 }, id: \.self) { error in
                         Text(verbatim: error).font(.caption2).foregroundStyle(KitPalette.removed).lineLimit(3)
                     }
                     if store.rows.isEmpty, store.loading {
