@@ -80,6 +80,7 @@ public struct FocusHUDView: View {
                         .font(GenTypography.caption(11, weight: .semibold))
                         .foregroundStyle(Color.genTextSecondary)
                         .accessibilityIdentifier("focus-hud-phase")
+                        .allowsHitTesting(false)
                     if recorder.pausedUntil != nil {
                         Image(systemName: "eye.slash")
                             .font(.system(size: 8))
@@ -94,6 +95,7 @@ public struct FocusHUDView: View {
                     .foregroundStyle(timerColor)
                     .contentTransition(.numericText())
                     .accessibilityIdentifier("focus-hud-timer")
+                    .allowsHitTesting(false)
                 // The steps as well as the dots: without them the compact HUD had no way to go back
                 // after a mis-skip, or on to the next phase, short of the menu.
                 cycleRow
@@ -206,6 +208,10 @@ public struct FocusHUDView: View {
             )
             // Static shadow on purpose: an animated one is this app's biggest idle-CPU sink.
             .shadow(color: .black.opacity(0.45), radius: 18, y: 6)
+            // The card moves the window. `isMovableByWindowBackground` never saw these clicks: the card's
+            // double-tap gesture and its shapes took them first, so the HUD could not be dragged (2026-11-03).
+            .overlay(PanelDragArea(identifier: "focus-hud-drag", label: "Move the Flow timer",
+                                   doubleClicked: onOpenStudio))
     }
 
     private var header: some View {
@@ -218,6 +224,7 @@ public struct FocusHUDView: View {
                 .font(GenTypography.caption(11, weight: .semibold))
                 .foregroundStyle(Color.genTextSecondary)
                 .accessibilityIdentifier("focus-hud-phase")
+                .allowsHitTesting(false)
             if let tag = engine.tag, !tag.isEmpty {
                 Text("· \(tag)")
                     .font(GenTypography.caption(11))
@@ -259,6 +266,7 @@ public struct FocusHUDView: View {
             .foregroundStyle(timerColor)
             .contentTransition(.numericText())
             .accessibilityIdentifier("focus-hud-timer")
+            .allowsHitTesting(false)
     }
 
     /// Dots flanked by the two controls a mis-skip needs: one step back, one step forward.
