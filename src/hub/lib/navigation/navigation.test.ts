@@ -151,6 +151,33 @@ describe("what tools hub nav open names", () => {
         expect(hubArgs({ decision: "d_3_s1" })).toEqual(["--hub", "--decision", "d_3_s1"]);
     });
 
+    // The app's HubRequest parses these (Parts/Hub/Hub/HubWindow.swift); `tools hub` had no way to send them.
+    it("passes the Usage mode's section, session, accounts and every-account flags to the app", () => {
+        expect(hubArgs({ usageSection: "spend" })).toEqual(["--hub", "--usage-section", "spend"]);
+        expect(hubArgs({ usageSession: "s-1", usageHarness: "codex" })).toEqual([
+            "--hub",
+            "--usage-session",
+            "s-1",
+            "--usage-harness",
+            "codex",
+        ]);
+        expect(hubArgs({ usageAccounts: ["work", "acc_side"] })).toEqual([
+            "--hub",
+            "--usage-account",
+            "work",
+            "--usage-account",
+            "acc_side",
+        ]);
+        expect(hubArgs({ mode: "usage", usageSection: "limits", usageAllAccounts: true })).toEqual([
+            "--hub",
+            "--mode",
+            "usage",
+            "--usage-section",
+            "limits",
+            "--usage-all-accounts",
+        ]);
+    });
+
     // The app resolves a relative path against its own folder (`/`): `tools hub open --worktree .` opened nothing.
     it("passes a worktree path to the app absolute, with ~ expanded and no trailing slash", () => {
         expect(worktreeTarget(".")).toBe(resolve("."));
