@@ -170,6 +170,8 @@ export type DriftVerdict = "steady" | "limit cut?" | "limit raised?" | "insuffic
 export interface DriftRow {
     account: AccountKey;
     kind: string | null;
+    /** The window's model scope (a per-model weekly window), null for the account-wide window. */
+    scopeModel: string | null;
     model: string;
     weeks: DriftWeek[];
     baseline: { tokensPerPct: number; ci: [number, number] } | null;
@@ -304,21 +306,24 @@ export function computeDrift(input: {
                 verdict = "steady";
             }
 
-            rows.push({ account, kind: entry.kind, model, weeks, baseline, verdict });
+            rows.push({ account, kind: entry.kind, scopeModel: entry.scopeModel, model, weeks, baseline, verdict });
         }
     }
 
     return rows;
 }
 
-/** Writes this run's weeks into `limit_drift` (the table of `USAGE_LIMITS_MIGRATIONS`), one row per account, model, week. */
+/**
+ * Writes this run's weeks into `limit_drift` (the table of `USAGE_LIMITS_MIGRATIONS`), one row per account, window
+ * (kind and model scope, `''` for the account-wide one), model and week.
+ */
 export function recordDrift(db: Database, rows: readonly DriftRow[], now: Date): number {
     const statement = db.prepare(
         `INSERT INTO limit_drift
-            (provider, account_id, account_name, kind, model, week, windows, tokens_per_pct, usd_per_pct, ci_low, ci_high,
-             status, computed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (provider, account_name, kind, model, week) DO UPDATE SET
+            (provider, account_id, account_name, kind, scope_model, model, week, windows, tokens_per_pct, usd_per_pct,
+             ci_low, ci_high, status, computed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (provider, account_name, kind, scope_model, model, week) DO UPDATE SET
             account_id = excluded.account_id, windows = excluded.windows, tokens_per_pct = excluded.tokens_per_pct,
             usd_per_pct = excluded.usd_per_pct, ci_low = excluded.ci_low, ci_high = excluded.ci_high,
             status = excluded.status, computed_at = excluded.computed_at`
@@ -332,6 +337,7 @@ export function recordDrift(db: Database, rows: readonly DriftRow[], now: Date):
                     row.account.accountId,
                     row.account.accountName,
                     row.kind ?? "?",
+                    row.scopeModel ?? "",
                     row.model,
                     week.week,
                     week.windows,
