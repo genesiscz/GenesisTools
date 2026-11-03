@@ -1331,6 +1331,33 @@ describe("a term fix for one line, and a word that a question and an unlinked lo
 
         expect(text).toBe('To má svou [nejasné: "vajbu"; 1) vibe 2) vajbu].');
     });
+
+    test("a range that knows only that the label is wrong marks the line, whatever its confidence", () => {
+        const notTheUser = item({
+            id: "i1",
+            kind: "speaker-range",
+            label: "Alice Example",
+            fromSec: 10,
+            toSec: 10,
+            candidates: ["Bob Example", "Carol Example"],
+            confidence: 0.6,
+            rules: [MeetingRule.Channel],
+        });
+        const [speaker] = applyCorrections(
+            [line("Alice Example", 10, "Ono to...")],
+            correctionsOf(
+                meetingRecordSchema.parse({ ...record, items: [notTheUser] }),
+                meetingsConfigSchema.parse({}),
+                {
+                    withSuggested: true,
+                    dictionary: false,
+                    format: "txt",
+                }
+            )
+        ).entries.map((entry) => entry.speaker);
+
+        expect(speaker).toBe('[nejasné: "Alice Example"; 1) Bob Example 2) Carol Example]');
+    });
 });
 
 describe("evidence --raw", () => {
