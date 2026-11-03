@@ -9,7 +9,7 @@ import {
 import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { isObject } from "@genesiscz/utils/object";
 import { ALERT_RULE_DEFAULTS } from "../config";
-import { sameResetCycle } from "../refire";
+import { startsNewCycle } from "../refire";
 import type { AlertCandidate, AlertRound, AlertRuleSettings, UsageAlertRule } from "../types";
 
 /** The run-out time has to move at least this much earlier before the same cycle alerts again. */
@@ -126,8 +126,8 @@ export const predictedExhaustRule: UsageAlertRule<"predicted-exhaust"> = {
         return candidates;
     },
     /** A new reset re-arms it; in the same cycle only a run-out at least 30 minutes earlier than the last alert's. */
-    refire(previous, next) {
-        if (!sameResetCycle(previous.cycle, next.cycle)) {
+    refire(previous, next, context) {
+        if (startsNewCycle(previous, next, context)) {
             return true;
         }
 
