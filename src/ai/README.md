@@ -152,6 +152,7 @@ tools ai usage limits [--provider ...] [--account ...] [--cached|--fresh] [--sco
 tools ai usage limits series [--since 24h] [--until <when>] [--tz <zone>] [--step auto|raw|5m] [--agg last|minmax|raw] [--kind session weekly ...] [--json]
 tools ai usage limits forecast [--provider <id>] [--account <name>] [--json]
 tools ai usage limits advise [--model fable] [--cached|--fresh] [--json]
+tools ai usage limits health [--since 24h] [--provider ...] [--account ...] [--json]
 ```
 
 Every `--json` prints one envelope, `{ schema: "usage.<verb>@1", generatedAt, window?, selector, data, warnings }`, from the shared contract in `@genesiscz/utils/ai/usage/contract` (the `--since`/`--until`/`--tz` grammar, the `--account` selector, the step default). `--since` takes a duration (`90m`, `7d`), a date (local midnight in `--tz`), an ISO instant with an offset, or `today`, `yesterday`, `week` (Monday start) and `month`; `--range`, `--from`, `--to`, `--hours` and `--timezone` are hidden aliases. `--account` takes an id, a name, `provider/name` or a unique part of a name, and an ambiguous value lists its candidates.
@@ -161,7 +162,38 @@ Every `--json` prints one envelope, `{ schema: "usage.<verb>@1", generatedAt, wi
 - `limits forecast` is an alias of `tools hub forecast`: the same flags, the same runner, the same bytes. `tools hub forecast` stays the real command.
 - `limits advise` names the next account per workload (`default`, `fan-out`, `long-run`, and `model:<name>` for each `--model`), how long it lasts at the recent burn, and the weekly capacity each account leaves unused at its reset.
 
+- `limits health` is the poll coverage per account over the window: the current outcome (`ok`, `stale`, `error`, `blocked`, `backoff`, `needs-login`, or `unmeasured` when no poll reaches the present), since when, the share of the window some poll measured, the gaps of 5 minutes or more nobody polled, and the reading source (`endpoint`, `headers`, `app-server`, `billing-api`). The daemon tick writes the runs to `usage_poll_runs`, one row per account while its outcome stays the same. It never polls: a flat line now reads as idle, unmeasured, stale or held back.
+
 The same answers are MCP tools under the `usage` capability (`usage_limits`, `usage_series`, `usage_forecast`, `usage_advise`); those read the last poll's file and never poll.
+
+### `ai usage events`: rate limits, cooldowns and probes
+
+```bash
+tools ai usage events [--since 24h] [--kind usage-429 rate-limited cooldown poll-backoff org-blocked probe-refused probe] [--provider ...] [--account ...] [--limit 50] [--json]
+```
+
+Facts that lived only as day-log text, newest first, as `usage.events@1` with counts per kind: the usage endpoint's 429s, the proxy's rate-limited answers and the cooldowns it took, the poll gate's pauses, organization blocks, refused quota probes, and one row per account, model and day counting the probes sent. `recordUsageEvent` (`@genesiscz/utils/ai/usage/events/record`) writes them where they happen and never throws; the proxy maps its provider names to plugin ids first. `--account` matches an id or a name exactly, proxy account names included.
+
+### `ai usage alerts`: the alert engine
+
+```bash
+tools ai usage alerts [list] [--since 7d] [--rule ...] [--unacked] [--provider ...] [--account ...] [--json]
+tools ai usage alerts ack <id...> | --all
+tools ai usage alerts rules [--json]
+tools ai usage alerts test <rule> [--account ...] [--send] [--json]
+```
+
+The daemon tick runs the engine after each poll round and records every alert it fires in `usage_alerts`, which is also its dedupe memory: one alert per dedupe key per window cycle, again only when the severity rises (each rule's `refire`). The rules (`ALERT_RULES` in `@genesiscz/utils/ai/usage/alerts/rules`):
+
+- `threshold`: the percent thresholds the notifier used (session `[80]`, weekly `[20, 40, 60, 80]`; scoped and monthly windows use the weekly list).
+- `predicted-exhaust`: the forecast runs a window out before its reset within its lead time (45 min for 5h, 12 h weekly, 6 h scoped), only while its use rose in the last 30 minutes; again in one cycle only when the run-out moves 30 minutes earlier.
+- `limit-state-change`: a window disappeared (an account lost its 5-hour limit) or came back.
+- `health`: the poller recorded nothing for 10 minutes, an account is paused by the poll gate, refused by its organization or has no credential, a refresh grant expires within 7 days, or the probe budget refused a probe.
+- `rate-limited`: 3 rate-limit answers for one account within 10 minutes.
+
+Settings live in `~/.genesis-tools/ai-usage-dashboard/config.json` under `alerts`, nested by axis: `alerts.global` (`enabled`, `quietHours: { start, end }`), `alerts.rules.<rule>` (`enabled`, `channels`, and the rule's own keys), and `alerts.providers.<plugin id>.rules.<rule>.enabled` to turn one rule off for one provider. The channels are `macos` (a banner; it honours `notifications.macos` and `notifications.sound`, and quiet hours hold it) and `inbox` (an unread card in the GenesisTools widget). Defaults: threshold to `macos`, predicted-exhaust to both, limit-state-change and rate-limited to `inbox`, health recorded only. The loader moves the old `notifications.thresholds` to `alerts.rules.threshold` once; a read-only load migrates in memory and writes nothing. On its first tick the engine seeds its record from the old notifier's trackers, so no threshold already announced fires again.
+
+`list`, `rules` and `test` never write; `test` judges the last poll's snapshots without polling or recording, and `--send` tries the rule's channels with its findings or one test card.
 
 ### `ai usage sessions`: one list across Claude, Codex and Grok
 
