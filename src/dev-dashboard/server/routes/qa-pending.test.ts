@@ -637,4 +637,46 @@ describe("qa decision routes", () => {
         expect(rows.find((row) => row.number === 1)?.state).toBe("sent");
         expect(rows.find((row) => row.number === 2)).toMatchObject({ state: "drafted", draftOption: "a" });
     });
+
+    it("POST send-drafts refuses the whole batch when the agent re-posted one shown decision, and sends nothing", async () => {
+        const { file, events } = scratchFiles();
+        await postDecisions(file, events, {
+            sessionId: "s-beta",
+            decisions: [
+                { prompt: "Which port?", options: ["3000", "4000"] },
+                { prompt: "Keep the cache?", options: ["keep", "drop"] },
+            ],
+        });
+        const draft = decisionRoute("POST", "/api/qa/decisions/draft");
+        await draft.handler(makeCtx({ body: { session: "s-beta", number: 1, option: "b", expectedRevision: 1 } }));
+        await draft.handler(makeCtx({ body: { session: "s-beta", number: 2, option: "a", expectedRevision: 1 } }));
+        // The agent posts DECISION 2 again: the store clears its staged pick and puts it back to open at revision 2.
+        await postDecisions(file, events, {
+            sessionId: "s-beta",
+            decisions: [{ prompt: "Keep the cache across runs?", options: ["keep", "drop"], supersedes: "d_2_s-beta" }],
+        });
+        expect(readDecisions(file).find((row) => row.number === 2)).toMatchObject({ state: "open", revision: 2 });
+
+        const res = asJson(
+            await decisionRoute("POST", "/api/qa/decisions/send-drafts").handler(
+                makeCtx({
+                    body: {
+                        session: "s-beta",
+                        drafts: [
+                            { number: 1, expectedRevision: 1 },
+                            { number: 2, expectedRevision: 1 },
+                        ],
+                    },
+                })
+            )
+        );
+
+        expect(res.status).toBe(400);
+        expect(String(res.body.error)).toStartWith("DECISION 2 changed");
+        expect(runs).toEqual([]);
+        expect(readDecisions(file).find((row) => row.number === 1)).toMatchObject({
+            state: "drafted",
+            draftOption: "b",
+        });
+    });
 });
