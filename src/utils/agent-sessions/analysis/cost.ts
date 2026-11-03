@@ -1,5 +1,6 @@
 import { type AgentId, spendDriver } from "@genesiscz/utils/ai/usage/spend/drivers";
 import { costOf, DEFAULT_PRICING, priceForCandidates, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
+import { chooseCost } from "@genesiscz/utils/ai/usage/spend/reports/cost";
 import type { ModelPrice, ModelPriceEntry, PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
 import type { SessionCall } from "../analysis-types";
 
@@ -36,14 +37,24 @@ export function priceOfCall(call: SessionCall, pricing: CallPricing): ModelPrice
 }
 
 /**
- * One call's list-price cost: the harness's own recorded cost when it wrote one, else the catalog rate through the one
- * cost function (`costOf` over `calculateCallCostUsd`); null when the model has no known rate.
+ * One call's list-price cost, by the spend reports' recorded-cost rule (`chooseCost`, the harness's
+ * `MonitorDriver.recordedCost`): a recorded list price stands, else the catalog rate through the one cost function
+ * (`costOf` over `calculateCallCostUsd`), else a recorded metering figure; null when nothing prices the call.
  */
 export function callCostUsd(call: SessionCall, pricing: CallPricing): number | null {
-    if (call.recordedCostUsd !== undefined) {
-        return call.recordedCostUsd;
-    }
+    return chooseCost({
+        source: pricing.agent,
+        recorded: call.recordedCostUsd,
+        mode: "auto",
+        catalog: () => {
+            const costUSD = catalogCostUsd(call, pricing);
+            return { costUSD, longContext: false, basis: costUSD === null ? "unpriced" : "catalog" };
+        },
+    }).costUSD;
+}
 
+/** The catalog rate of one call through the one cost function; null for a model with no known rate. */
+function catalogCostUsd(call: SessionCall, pricing: CallPricing): number | null {
     const price = priceOfCall(call, pricing);
 
     if (!price) {

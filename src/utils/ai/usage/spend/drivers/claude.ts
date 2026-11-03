@@ -97,6 +97,9 @@ export const claudeDriver: MonitorDriver = {
         };
     },
 
+    // Claude Code's recorded `costUSD` is the list price.
+    recordedCost: "list-price",
+
     priceCandidates(model: string): string[] {
         const base = stripModelVariantSuffix(model);
 
