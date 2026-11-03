@@ -143,9 +143,16 @@ export function correctionsOf(
             item.status === "suggested" &&
             (item.confidence === undefined || item.confidence >= applyAbove));
     const used = record.items.filter(applies);
-    const passages = opts.withSuggested
-        ? unclearPassages(record, { below: applyAbove, applied: applies })
-        : unclearPassages(record, { below: config.global.suggest.listenBelow });
+    // A label that tracks no one person marks its lines unclear, last: a question or a range's own guess says more.
+    const unlabeled = used.flatMap((item): UnclearPassage[] =>
+        item.kind === "label" ? [{ fromSec: item.fromSec, toSec: item.toSec, speaker: item.label, readings: [] }] : []
+    );
+    const passages = [
+        ...(opts.withSuggested
+            ? unclearPassages(record, { below: applyAbove, applied: applies })
+            : unclearPassages(record, { below: config.global.suggest.listenBelow })),
+        ...unlabeled,
+    ];
 
     const address = (item: MeetingItem) => {
         const line = lineOf(item);
@@ -242,7 +249,9 @@ export function correctTranscript(options: {
     include?: string[];
 }): CorrectedTranscript {
     const { record, transcript, config } = options;
-    const applied = applyCorrections(transcript, correctionsOf(record, config, options));
+    const corrections = correctionsOf(record, config, options);
+    const applied = applyCorrections(transcript, corrections);
+    const outcomes = [...applied.outcomes, ...labelOutcomes(record, transcript, applied.outcomes, corrections)];
     const unclear = `[${config.global.render.unclearLabel}:`;
     const sourceLabels = new Set(transcript.map((entry) => entry.speaker));
     const people = new Set([
@@ -265,9 +274,78 @@ export function correctTranscript(options: {
 
     return {
         ...applied,
+        outcomes,
         speakers: ranked.filter((speaker) => isPerson(speaker.name)),
         unattributed: ranked.filter((speaker) => !isPerson(speaker.name)),
     };
+}
+
+/**
+ * What became of each label item the corrections used: applied to its lines that no range or join gave a voice, shadowed
+ * when those gave every one of them a voice, not found when the label has no line in the stretch.
+ */
+function labelOutcomes(
+    record: MeetingRecord,
+    transcript: TranscriptEntry[],
+    outcomes: CorrectionOutcome[],
+    corrections: TranscriptCorrections
+): CorrectionOutcome[] {
+    const lines = new TranscriptLines(transcript);
+    const voiced = new Map<number, string>();
+
+    for (const outcome of outcomes) {
+        if (outcome.status === "applied") {
+            for (const line of outcome.lines) {
+                voiced.set(line.index, outcome.item);
+            }
+        }
+    }
+
+    const passages = corrections.unclear?.passages ?? [];
+
+    return record.items.flatMap((item): CorrectionOutcome[] => {
+        const used =
+            item.kind === "label" &&
+            passages.some(
+                (passage) =>
+                    passage.speaker === item.label &&
+                    passage.readings.length === 0 &&
+                    passage.fromSec === item.fromSec &&
+                    passage.toSec === item.toSec
+            );
+
+        if (item.kind !== "label" || !used) {
+            return [];
+        }
+
+        const inside = transcript.flatMap((entry, index) =>
+            entry.speaker === item.label &&
+            entry.startSec !== undefined &&
+            entry.startSec >= item.fromSec &&
+            entry.startSec <= item.toSec
+                ? [index]
+                : []
+        );
+
+        if (inside.length === 0) {
+            return [
+                {
+                    item: item.id,
+                    status: "not-found",
+                    reason: `no line of "${item.label}" from ${formatClock(item.fromSec)} to ${formatClock(item.toSec)}`,
+                },
+            ];
+        }
+
+        const open = inside.filter((index) => !voiced.has(index));
+
+        if (open.length === 0) {
+            const by = voiced.get(inside[0]!)!;
+            return [{ item: item.id, status: "shadowed", by, reason: `${by} and other items gave every line a voice` }];
+        }
+
+        return [{ item: item.id, status: "applied", lines: open.flatMap((index) => lines.address(index) ?? []) }];
+    });
 }
 
 /** `i42 did not apply: no "X" at 37:43`. Undefined for an item that applied. */

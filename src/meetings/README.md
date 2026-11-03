@@ -16,10 +16,10 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `set <meeting> --project <name> \| --title <text>` | Change a field |
 | `link <meeting> wisprflow:<id>` | Attach a source's meeting to an existing record |
 | `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
-| `speakers stats <meeting> [--attendance teams\|<file>]` | Per label: origin, turns, spoken time, spans, with hints |
+| `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints |
 | `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
-| `evidence <meeting> [--attendance teams\|<file>] [--files]` | Which voice each label's lines are: audio channel and the platform's speaking indicator, plus the volume check (`--format json`: one row per line) |
-| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance teams\|<file>]` | Run the rules and add what they find as suggested items |
+| `evidence <meeting> [--attendance <platform>\|<file>] [--files]` | Which voice each label's lines are: audio channel and the platform's speaking indicator, plus the volume check (`--format json`: one row per line) |
+| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>]` | Run the rules and add what they find as suggested items |
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
@@ -30,14 +30,14 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of each recorded screen around a transcript time |
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
-| `attendance <meeting> [--from teams\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given. A Teams call that lists its people without join or leave times (its call-ended message) counts them present for the whole call, and the note says how many. A fresh home needs `tools ms-teams sync` first |
+| `attendance <meeting> [--from <platform>\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given. A file is read in a platform's export format: `teams:<file>` names it, a bare path is read in the meeting's platform's format, else in the one format its text fits (Teams: `tools ms-teams meetings attendance --json` output). Second 0 is the source's transcript clock. A Teams call that lists its people without join or leave times (its call-ended message) counts them present for the whole call, and the note says how many. A fresh home needs `tools ms-teams sync` first |
 | `listen <meeting> [--item Q12]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`beep`, `beepLeadSec`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to |
 | `listen <meeting> --subscribe-answers [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. Run it under a Monitor, so each answer wakes the agent |
 | `items add <meeting> --kind speaker-range --from 38:12 --to 38:20 --label "<raw label>" --speaker <name> --confidence 0.85 --reason "…"` | Store an agent's finding (rule `agent`, the reason in `evidence.reason`); it stays suggested until a person confirms it |
 | `items add <meeting> --kind term --at 1:02 --heard <words> [--proposed <spelling>] --confidence 0.4 --reason "…"` | The same for a term; without `--proposed` it is asked as free text when it matters |
 | `items add <meeting> --listen --from 37:43 --to 37:51 --question "…" [--choices "A,B"] [--decides i7] [--priority 0.8]` | Add a question of your own for `listen`; `--priority` (0 to 1) orders it, and one under `playback.listen.minPriority` (0.5) is asked only with `--item` |
-| `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `priority`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
-| `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the term part and the summary; no rule and no confidence |
+| `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `priority`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `label` (`label`, `from`, `to`, `"meaningless": true`, `reason`: the label tracks no one person in that stretch, so its lines there count as unlabeled for the rules and render as `[nejasné: "<label>"]` unless a range or join gives them a voice), `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
+| `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the silent call stretches (`meeting.callSilent`), the term part and the summary; no rule and no confidence. Like suggest, it first collects the platform, attendance and channel layout when the record lacks one, so both modes read the same inputs |
 | `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
@@ -149,9 +149,26 @@ as an open question is.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
 - `term`: a misheard term and its proposed spelling.
+- `label` (`meaningless: true`): the label tracks no one person from `fromSec` to `toSec`. The rules see its lines
+  there under a label that names nobody, and the transcript marks each such line no range or join gives a voice as
+  `[nejasné: "<label>"]`. Its outcome is the lines it marked, or shadowed when ranges gave every line a voice.
 - `question`: something to decide by ear (`about`: speaker, term or text), with its time range, `choices` and the
   items it `decides`. Answering it confirms each decided item with the answer (a range's speaker, a term's
   spelling); "none of these" rejects them; a skip leaves them as they were; "Several voices" cuts it at each line inside it and, in a line of 3 s or more, at each change between the microphone and the call (half-second energy windows); each part shows its words and plays only its own audio. Two remote voices in a row stay one part. With nothing to cut, the question stays open. A speaker question shows the words of its span and plays only that span, from the tone on.
+
+### The opened meeting and the call timeline
+
+`OpenedMeeting` in `lib/opened-meeting.ts` opens a record once and gives, read lazily and once, the linked source and
+its meeting (the first source block that names a meeting, `sourceRefOf` in `lib/sources.ts`), the evidence with the
+speaking readings dropped on a platform without an indicator, presence with the user under their own name, the energy
+share, the silent call stretches, the dictionary, the summary points and the word check. Reading never writes the
+record: `collect` (platform, attendance, channel layout) and `calibrate` (`evidence.channels` with `callSilent`) are
+the explicit steps. suggest, evidence, `evidence --raw`, attendance, speakers stats and items open meetings through it.
+
+`CallTimeline` in `lib/call-timeline.ts` owns the transcript clock: second 0 is the source's `recordingClock`, else
+the clock the recorder stored from it at `record stop`, else the record's start. It loads stays from a platform
+(`MEETING_PLATFORMS`) or from a file in a platform's export format (`MeetingPlatform.attendanceFile`), names the user
+once and stores stays and sections once. A new platform with an export format is one `attendanceFile` reader.
 
 ### Transcript lines and the corrections pipeline
 

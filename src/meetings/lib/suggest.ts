@@ -30,6 +30,7 @@ import {
 import { arrivalItems } from "./arrival";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
+import { unlabeledStretches, unlabeledView } from "./unlabeled";
 
 const { log } = logger.scoped("meetings-suggest");
 
@@ -731,10 +732,6 @@ function findingFor(options: {
     return undefined;
 }
 
-/** R18: a second person in the room talks into the user's microphone, under a label of their own. */
-const LOCAL_VOICE_RULE = "R18";
-/** R19: where the channels do not work, a label carries the voice it carried on the microphone where they do. */
-const LABEL_VOICE_RULE = "R19";
 /** A silent call stretch counts when two labels each hold this share of its lines, or E3 shows others this often. */
 const SILENT_CALL_LABEL_SHARE = 0.15;
 const SILENT_CALL_SHOWN_SHARE = 0.2;
@@ -911,7 +908,7 @@ function localVoiceFinding(options: {
 
     if (options.unusable) {
         return !options.isSelfLabel && voices.ownerLeads && line.label === voices.owner
-            ? { speaker: selfName, rules: [LABEL_VOICE_RULE], confidence: LABEL_VOICE_CONFIDENCE, listen: true }
+            ? { speaker: selfName, rules: [MeetingRule.LabelVoice], confidence: LABEL_VOICE_CONFIDENCE, listen: true }
             : undefined;
     }
 
@@ -922,7 +919,7 @@ function localVoiceFinding(options: {
                 present,
                 speakingNames(line).filter((name) => !sameName(name, selfName))
             ),
-            rules: [MeetingRule.Channel, LOCAL_VOICE_RULE],
+            rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
             confidence: LOCAL_VOICE_CONFIDENCE,
             listen: true,
         };
@@ -936,7 +933,7 @@ function localVoiceFinding(options: {
 
         return {
             ...found,
-            rules: [...found.rules, LOCAL_VOICE_RULE],
+            rules: [...found.rules, MeetingRule.LocalVoice],
             confidence: Math.min(OWNER_WITH_LOCAL_VOICE_MAX, found.confidence),
             listen: true,
         };
@@ -1110,6 +1107,10 @@ function itemKey(item: NewItem | MeetingItem): string {
         return questionKey(item);
     }
 
+    if (item.kind === "label") {
+        return `label|${item.label}|${Math.round(item.fromSec)}|${Math.round(item.toSec)}`;
+    }
+
     // A quote or a meaning belongs to one place; a spelling fix to the word wherever it is heard.
     const place = item.quote || item.meaning ? `|${item.meaning ?? ""}|${Math.round(item.atSec ?? 0)}` : "";
     return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}${place}`;
@@ -1162,7 +1163,10 @@ export function suggestItems(options: {
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     now: string;
 }): MeetingItem[] {
-    const { record, meeting } = options;
+    const { record } = options;
+    // A label item says the label tracks no one person in its stretch: the speaker rules see those lines unlabeled.
+    const unlabeled = unlabeledView(options.meeting, unlabeledStretches(record.items));
+    const meeting = unlabeled.meeting;
     const found: NewItem[] = [];
 
     if (options.rules.includes("speakers")) {
@@ -1202,6 +1206,8 @@ export function suggestItems(options: {
         );
     }
 
+    found.splice(0, found.length, ...found.map(unlabeled.restore));
+
     if (options.rules.includes("terms")) {
         found.push(...termItems(options));
     }
@@ -1237,7 +1243,7 @@ export function suggestItems(options: {
         listenBelow: options.listenBelow ?? DEFAULT_LISTEN_BELOW,
         presence: options.presence,
         selfName: record.participants.find((person) => person.self)?.name,
-        transcript: meeting.transcript,
+        transcript: options.meeting.transcript,
         points: options.points ?? [],
     };
     const candidates = fresh.flatMap((item) => questionFor(item, context) ?? []);

@@ -83,6 +83,10 @@ function itemWhat(item: MeetingItem): string {
         return `${range} ${item.question} ${said}`.trim();
     }
 
+    if (item.kind === "label") {
+        return `${item.label} ${formatClock(item.fromSec)}–${formatClock(item.toSec)} tracks no one person`;
+    }
+
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";
     return `${item.heard} → ${item.proposed ?? "?"}${occurrences}`;
 }
@@ -293,6 +297,7 @@ function findingFromFlags(opts: AddOptions): Record<string, unknown> {
         confidence: opts.confidence === undefined ? undefined : Number(opts.confidence),
         priority: opts.priority === undefined ? undefined : Number(opts.priority),
         reason: opts.reason,
+        ...(kind === "label" ? { meaningless: true } : {}),
     };
     return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
@@ -737,21 +742,24 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("The meeting's items with their status, confidence and rules")
         .option("--status [status]", ITEM_STATUSES.join(" | "))
-        .option("--kind <kind>", "speaker-range | join | term | question")
+        .option("--kind <kind>", "speaker-range | label | join | term | question")
         .option("--json", "print JSON")
         .action(items)
         .command("add")
         .argument("<meeting>", MEETING_REF)
         .description(
-            `Add an agent's finding (a speaker range, a join or a term, with a confidence and a reason) or a question for ${toolCommand("meetings", "listen")}`
+            `Add an agent's finding (a speaker range, a join or a term, with a confidence and a reason; a label that tracks no one person in a stretch, with a reason) or a question for ${toolCommand("meetings", "listen")}`
         )
         .option("--kind <kind>", `${FINDING_KINDS.join(" | ")} (default question)`)
         .option("--listen", "same as --kind question")
         .option("--from-file <json>", "a batch: an array of findings in the shape the flags make (see the README)")
-        .option("--from <time>", "range start: 37:43, 1:02:10 or seconds (speaker-range, question)")
-        .option("--to <time>", "range end (speaker-range, question)")
+        .option("--from <time>", "range start: 37:43, 1:02:10 or seconds (speaker-range, label, question)")
+        .option("--to <time>", "range end (speaker-range, label, question)")
         .option("--at <time>", "term: where it is heard; join: the start of the line after the cut")
-        .option("--label <label>", "speaker-range: the source's label of those lines; join: whose voice speaks it")
+        .option(
+            "--label <label>",
+            "speaker-range: the source's label of those lines; label: the label that tracks no one person; join: whose voice speaks it"
+        )
         .option("--speaker <name>", "speaker-range: who it really is")
         .option(
             "--heard <words>",
@@ -766,7 +774,10 @@ export function registerItemCommands(program: Command): void {
         .option("--decides <ids>", "question: comma-separated items (or batch refs) the answer confirms or rejects")
         .option("--confidence <0..1>", "how sure the finding is (required for speaker-range, join and term)")
         .option("--priority <0..1>", "question: how much its answer matters; listen asks the highest first")
-        .option("--reason <text>", "why: the facts and context it rests on (required for speaker-range, join and term)")
+        .option(
+            "--reason <text>",
+            "why: the facts and context it rests on (required for speaker-range, label, join and term)"
+        )
         .action(addItems);
 
     for (const [name, status] of [

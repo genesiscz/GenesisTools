@@ -49,7 +49,19 @@ The tool applies three of these limits itself (`suggest`): a call channel silent
 talk makes E1 say nothing there (R19 lets the microphone's own label stand for the user at 0.5); a platform-named label
 with a quarter of the sure microphone lines and call lines of its own is a second person in the room (R18: candidates
 at 0.4, the user capped at 0.7 and only on sure microphone lines); and E3 stuck on one remote person for 6 min with a third of the lines on the
-microphone is ignored there. Read the rules in an item before you trust an E1 range.
+microphone is ignored there. Read the rules in an item before you trust an E1 range. `evidence --raw` lists the silent
+call stretches as `meeting.callSilent` (`{ fromSec, toSec }`): inside them E1 and the energy say nothing.
+
+### A label that tracks no one person
+
+Where a label carries several voices over a stretch (two people in the room under the room's tile, a diarization
+cluster that drifts), its name is no evidence there. Store one `label` finding for the stretch instead of a range per
+line: `{ "kind": "label", "label": "<raw label>", "from": "0:00", "to": "27:42", "meaningless": true, "reason": "…" }`
+(`tools meetings items add --kind label --label … --from … --to … --reason …`). The rules then see those lines
+unlabeled (no own-label, owner-label or platform-name hint), the corrections mark each line in the stretch that no
+range or join gives a voice as `[nejasné: "<label>"]`, and `items add` and `transcript` report the item as applied to
+those lines. Add a `speaker-range` only for the lines you can attribute on their own evidence (E1, content, an
+answered vocative); every other line stays visibly open instead of carrying a wrong name.
 
 ### E1 energy table
 

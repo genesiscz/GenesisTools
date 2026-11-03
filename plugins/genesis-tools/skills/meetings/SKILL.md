@@ -57,6 +57,11 @@ Both modes share the meeting record, its items and `tools meetings listen`.
      for a sentence cut between two whole words, `joined` has a space ("jsem zvědavej") and the space stays. `label` is
      a source label: the joined line takes the voice that the ranges give to that label at that time. Leave it out to
      use the label of the line after the cut.
+   - `label` with `"meaningless": true`: `from`, `to`, `label`, `reason`. The label does not track one person in this
+     stretch (diarization put several voices under it, so its name says nothing there). Its lines there count as
+     unlabeled: the rules take no hint from the label, and the transcript marks each line no range or join gives a
+     voice as `[nejasné: "<label>"]`. One such finding replaces a range per line for the lines you cannot attribute;
+     keep a `speaker-range` for each line you can.
    - Two lines can start in the same second. `items add` then warns and names both lines by index; reject
      that item and add the finding again with `"line": <index>`, or it does not apply.
    - Store only re-attributions: a line that stays with its own label needs no range. Group consecutive lines of one

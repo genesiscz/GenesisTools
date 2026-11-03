@@ -163,3 +163,92 @@ describe("anchors at items add", () => {
         expect([...addresses]).toEqual([["i2", 2]]);
     });
 });
+
+describe("a label that tracks no one person", () => {
+    const mixed = [
+        line("Speaker 5", 0, "Začneme."),
+        line("Speaker 5", 10, "Já jsem to upravil."),
+        line("Speaker 5", 20, "Dobře, další bod."),
+        line("Speaker 5", 90, "Ještě jedna věc."),
+    ];
+    const label = item({
+        id: "i1",
+        kind: "label",
+        label: "Speaker 5",
+        fromSec: 0,
+        toSec: 30,
+        meaningless: true,
+        status: "suggested",
+        evidence: { reason: "two voices in the room under one label" },
+    });
+
+    test("marks its lines in the stretch unclear, keeps a line a range gives a voice, and leaves the rest of the label", () => {
+        const record = meetingRecordSchema.parse({
+            ...base,
+            items: [
+                label,
+                item({
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 5",
+                    fromSec: 10,
+                    toSec: 10,
+                    speaker: "Petr Novák",
+                }),
+            ],
+        });
+        const result = correctTranscript({ record, transcript: mixed, config, format: "txt", withSuggested: true });
+
+        expect(result.entries.map((entry) => entry.speaker)).toEqual([
+            '[nejasné: "Speaker 5"]',
+            "Petr Novák",
+            '[nejasné: "Speaker 5"]',
+            "Speaker 5",
+        ]);
+        expect(result.outcomes.find((outcome) => outcome.item === "i1")).toEqual({
+            item: "i1",
+            status: "applied",
+            lines: [
+                { index: 0, startSec: 0 },
+                { index: 2, startSec: 20 },
+            ],
+        });
+    });
+
+    test("is shadowed when ranges give every line a voice, and not found on a label with no line there", () => {
+        const record = meetingRecordSchema.parse({
+            ...base,
+            items: [
+                { ...label, toSec: 10 },
+                item({
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 5",
+                    fromSec: 0,
+                    toSec: 10,
+                    speaker: "Petr Novák",
+                }),
+                { ...label, id: "i3", label: "Speaker 9" },
+            ],
+        });
+        const outcomes = correctTranscript({
+            record,
+            transcript: mixed,
+            config,
+            format: "txt",
+            withSuggested: true,
+        }).outcomes;
+
+        expect(outcomes.find((outcome) => outcome.item === "i1")?.status).toBe("shadowed");
+        expect(outcomeText(outcomes.find((outcome) => outcome.item === "i3")!)).toBe(
+            'i3 did not apply: no line of "Speaker 9" from 00:00 to 00:30'
+        );
+    });
+
+    test("a rejected label item changes nothing", () => {
+        const record = meetingRecordSchema.parse({ ...base, items: [{ ...label, status: "rejected" }] });
+        const result = correctTranscript({ record, transcript: mixed, config, format: "txt", withSuggested: true });
+
+        expect(result.entries.map((entry) => entry.speaker)).toEqual(mixed.map((entry) => entry.speaker));
+    });
+});

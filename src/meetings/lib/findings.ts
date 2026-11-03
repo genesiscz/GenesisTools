@@ -27,7 +27,8 @@ const ref = z
 
 /**
  * One finding to store, from `items add` flags or one entry of `--from-file`. A speaker range, a join or a term is an
- * agent's judgement and needs a confidence and a reason; a question needs neither.
+ * agent's judgement and needs a confidence and a reason; a label that tracks no one person needs a reason; a question
+ * needs neither.
  */
 export const findingSchema = z.discriminatedUnion("kind", [
     z.object({
@@ -71,6 +72,17 @@ export const findingSchema = z.discriminatedUnion("kind", [
         reason: text,
     }),
     z.object({
+        kind: z.literal("label"),
+        ref,
+        from: clock,
+        to: clock,
+        /** The source's own label that does not track one person from `from` to `to`. */
+        label: text,
+        meaningless: z.literal(true),
+        confidence: confidence.optional(),
+        reason: text,
+    }),
+    z.object({
         kind: z.literal("question"),
         from: clock,
         to: clock,
@@ -87,7 +99,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
     }),
 ]);
 export type Finding = z.output<typeof findingSchema>;
-export const FINDING_KINDS = ["speaker-range", "join", "term", "question"] as const;
+export const FINDING_KINDS = ["speaker-range", "label", "join", "term", "question"] as const;
 
 /** A file of findings: an array, or `{ findings: [...] }`. */
 export const findingsFileSchema = z.union([
@@ -175,6 +187,16 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
             fromSec: finding.from,
             toSec: finding.to,
             speaker: finding.speaker,
+        };
+    }
+
+    if (finding.kind === "label") {
+        return {
+            kind: finding.kind,
+            label: finding.label,
+            fromSec: finding.from,
+            toSec: finding.to,
+            meaningless: true,
         };
     }
 

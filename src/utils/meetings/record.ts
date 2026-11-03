@@ -87,6 +87,19 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         candidates: z.array(z.string()).optional(),
         ...itemBase,
     }),
+    /**
+     * A label that does not track one person over a stretch: diarization put several voices under it there. Its lines
+     * in the stretch count as unlabeled: the rules take no hint from the label, and the transcript marks each one no
+     * range or join gives a voice as unclear. One item stands for what would otherwise be a range per line.
+     */
+    z.object({
+        kind: z.literal("label"),
+        label: z.string(),
+        fromSec: z.number(),
+        toSec: z.number(),
+        meaningless: z.literal(true),
+        ...itemBase,
+    }),
     /** Two lines that are one sentence cut by diarization. */
     z.object({
         kind: z.literal("join"),
