@@ -5,8 +5,9 @@ import {
     findCacheLosses,
     summarizeCache,
 } from "@genesiscz/utils/ai/usage/cache-stats";
+import type { AgentId } from "@genesiscz/utils/ai/usage/spend/drivers";
 import type { SessionCall, SessionCompaction, SessionFacts } from "../analysis-types";
-import { callCostUsd, priceOfCall } from "./cost";
+import { type CallPricing, callCostUsd, priceOfCall } from "./cost";
 
 /**
  * The provider-neutral session report (design 2026-11-01, proposal 2, first in the port order): what a session cost,
@@ -143,8 +144,8 @@ export function cacheCallsOf(calls: readonly SessionCall[], compactions: readonl
     });
 }
 
-function noCacheCost(call: SessionCall): number {
-    const price = priceOfCall(call);
+function noCacheCost(call: SessionCall, pricing: CallPricing): number {
+    const price = priceOfCall(call, pricing);
     return price
         ? ((call.input + call.cacheRead + call.cacheWrite) * price.input + call.output * price.output) / 1e6
         : 0;
@@ -154,10 +155,13 @@ export function buildSessionReport(input: {
     calls: SessionFacts<SessionCall>;
     compactions: SessionFacts<SessionCompaction>;
     top?: number;
+    /** The harness that wrote the session: its spend driver's candidate ladder prices the calls. */
+    agent: AgentId;
 }): SessionReport {
     const calls = input.calls.supported ? input.calls.items : [];
     const compactions = input.compactions.supported ? input.compactions.items : [];
     const unsupported: Record<string, string> = {};
+    const pricing: CallPricing = { agent: input.agent };
 
     if (!input.calls.supported) {
         unsupported.callTrace = input.calls.reason;
@@ -184,7 +188,7 @@ export function buildSessionReport(input: {
     let lastMain: SessionCall | undefined;
 
     calls.forEach((call, index) => {
-        const usd = callCostUsd(call);
+        const usd = callCostUsd(call, pricing);
         const model = models.get(call.model) ?? {
             model: call.model,
             calls: 0,
@@ -208,7 +212,7 @@ export function buildSessionReport(input: {
 
         if (usd !== null) {
             cost.totalUsd += usd;
-            cost.noCacheUsd += noCacheCost(call);
+            cost.noCacheUsd += noCacheCost(call, pricing);
 
             if (call.sidechain) {
                 cost.subagentUsd += usd;

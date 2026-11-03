@@ -1,4 +1,4 @@
-import { costOf, priceFor, resolvePrice } from "../pricing";
+import { costOf, priceForCandidates, resolvePrice } from "../pricing";
 import type { PricingTable } from "../types";
 import type { CostMode, SpendEvent } from "./types";
 
@@ -46,46 +46,43 @@ export function recordedCostIsListPrice(source: string): boolean {
 }
 
 export function catalogEstimate(event: CostableEvent, pricing: PricingTable, candidates: string[]): CostEstimate {
-    for (const model of candidates) {
-        const entry = priceFor(model, pricing);
-        if (!entry) {
-            continue;
-        }
+    const found = priceForCandidates(candidates, pricing);
 
-        const at = new Date(event.timestamp);
-        // A context band bills per request. An event that sums several requests has lost their
-        // lengths, so it prices at the base band rather than at the band of the SUM.
-        const context = {
-            at: Number.isNaN(at.getTime()) ? undefined : at,
-            serviceTier: event.serviceTier,
-            contextTokens: event.aggregate
-                ? undefined
-                : event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
-        };
-        const price = resolvePrice(entry, context);
-        const short = resolvePrice(entry, { ...context, contextTokens: 0 });
-        return {
-            costUSD: costOf(
-                {
-                    input: event.inputTokens,
-                    output: event.outputTokens,
-                    cacheWrite: event.cacheCreationTokens,
-                    cacheRead: event.cacheReadTokens,
-                    cacheWrite1h: event.cacheCreation1hTokens,
-                },
-                price
-            ),
-            pricingModel: model,
-            longContext:
-                price.input !== short.input ||
-                price.output !== short.output ||
-                price.cacheRead !== short.cacheRead ||
-                price.cacheWrite !== short.cacheWrite,
-            basis: "catalog",
-        };
+    if (!found) {
+        return { costUSD: null, longContext: false, basis: "unpriced" };
     }
 
-    return { costUSD: null, longContext: false, basis: "unpriced" };
+    const at = new Date(event.timestamp);
+    // A context band bills per request. An event that sums several requests has lost their
+    // lengths, so it prices at the base band rather than at the band of the SUM.
+    const context = {
+        at: Number.isNaN(at.getTime()) ? undefined : at,
+        serviceTier: event.serviceTier,
+        contextTokens: event.aggregate
+            ? undefined
+            : event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
+    };
+    const price = resolvePrice(found.entry, context);
+    const short = resolvePrice(found.entry, { ...context, contextTokens: 0 });
+    return {
+        costUSD: costOf(
+            {
+                input: event.inputTokens,
+                output: event.outputTokens,
+                cacheWrite: event.cacheCreationTokens,
+                cacheRead: event.cacheReadTokens,
+                cacheWrite1h: event.cacheCreation1hTokens,
+            },
+            price
+        ),
+        pricingModel: found.model,
+        longContext:
+            price.input !== short.input ||
+            price.output !== short.output ||
+            price.cacheRead !== short.cacheRead ||
+            price.cacheWrite !== short.cacheWrite,
+        basis: "catalog",
+    };
 }
 
 export function catalogCost(event: SpendEvent, pricing: PricingTable, candidates: string[]): number {
