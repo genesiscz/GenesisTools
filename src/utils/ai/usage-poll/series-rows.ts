@@ -259,6 +259,8 @@ export function minMaxBins(rows: readonly SeriesRow[], step: number, resetBefore
 export interface ShapeOptions {
     step: number;
     roughlyEqual: (x: string | null, y: string | null) => boolean;
+    /** The range's start (ISO): a reset the carried row implies before it stays out. */
+    from: string;
     /** The range's end (ISO), where the last availability span stops. */
     to: string;
 }
@@ -309,6 +311,24 @@ function resetsOf(rows: readonly SeriesRow[], roughlyEqual: ShapeOptions["roughl
     return { resets, resetBefore };
 }
 
+/**
+ * The resets among a group's readings. The row carried from before the range holds the prior reset clock, so a
+ * reset between it and the first reading in the range is found; it is never a point, and a reset before `from` is
+ * left out. `resetBefore` stays one flag per reading.
+ */
+function resetsIn(rows: readonly SeriesRow[], read: readonly SeriesRow[], opts: ShapeOptions) {
+    const seed = rows.find((row) => row.seed && row.availability !== "absent");
+
+    if (!seed) {
+        return resetsOf(read, opts.roughlyEqual);
+    }
+
+    const { resets, resetBefore } = resetsOf([seed, ...read], opts.roughlyEqual);
+    const from = Date.parse(opts.from);
+
+    return { resets: resets.filter((at) => Date.parse(at) >= from), resetBefore: resetBefore.slice(1) };
+}
+
 export function shapePoints(group: SeriesGroup, agg: "raw" | "last", opts: ShapeOptions): SeriesEntry {
     const { rows, ...base } = group;
     const read = readings(rows);
@@ -316,7 +336,7 @@ export function shapePoints(group: SeriesGroup, agg: "raw" | "last", opts: Shape
 
     return {
         ...base,
-        resets: resetsOf(read, opts.roughlyEqual).resets,
+        resets: resetsIn(rows, read, opts).resets,
         availability: availabilitySpans(rows, opts.to),
         points: agg === "raw" ? points : lastPerBucket(points, opts.step),
     };
@@ -325,7 +345,7 @@ export function shapePoints(group: SeriesGroup, agg: "raw" | "last", opts: Shape
 export function shapeBins(group: SeriesGroup, opts: ShapeOptions): SeriesBinEntry {
     const { rows, ...base } = group;
     const read = readings(rows);
-    const { resets, resetBefore } = resetsOf(read, opts.roughlyEqual);
+    const { resets, resetBefore } = resetsIn(rows, read, opts);
 
     return {
         ...base,
