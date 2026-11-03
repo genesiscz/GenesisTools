@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { openHistoryReadOnly } from "@genesiscz/utils/agent-sessions/database";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { isLimitKind, LIMIT_KIND_VALUES, type LimitKind } from "@genesiscz/utils/ai/providers/account-features";
 import { rankAccounts } from "@genesiscz/utils/ai/usage/account-rank";
@@ -224,6 +225,13 @@ export async function queryAdvice(
     });
 }
 
+/**
+ * The suggested line for a series flag. `subcommand` names the words the tool name already holds, so the argv of
+ * `tools ai usage limits series --agg x` is not appended again (it read `tools ai usage usage limits series`).
+ */
+const SERIES_COMMAND = `${TOOL} limits series`;
+const SERIES_WORDS = ["usage", "limits", "series"];
+
 function resolveAgg(raw: string | boolean | undefined): SeriesAgg {
     if (raw === undefined || raw === false) {
         return "last";
@@ -235,8 +243,8 @@ function resolveAgg(raw: string | boolean | undefined): SeriesAgg {
     if (agg === undefined) {
         throw new UsageQueryError(
             "bad-value",
-            suggestEnumFlag(TOOL, "--agg", AGG_VALUES, {
-                subcommand: ["limits", "series"],
+            suggestEnumFlag(SERIES_COMMAND, "--agg", AGG_VALUES, {
+                subcommand: SERIES_WORDS,
                 ...(raw === true ? {} : { given: raw }),
             })
         );
@@ -256,8 +264,8 @@ function resolveKinds(raw: string[] | boolean | undefined): LimitKind[] | undefi
     if (bad !== undefined) {
         throw new UsageQueryError(
             "bad-value",
-            suggestEnumFlag(TOOL, "--kind", LIMIT_KIND_VALUES, {
-                subcommand: ["limits", "series"],
+            suggestEnumFlag(SERIES_COMMAND, "--kind", LIMIT_KIND_VALUES, {
+                subcommand: SERIES_WORDS,
                 ...(bad ? { given: bad } : {}),
             })
         );
@@ -343,6 +351,8 @@ export interface HealthOptions extends LimitsOptions, WindowFlags {}
 export interface HealthDeps {
     /** A read-only connection to the history store, or undefined when there is none yet. */
     open?: () => Database | undefined;
+    /** The configured accounts; the AI config's by default. A test passes its own. */
+    accounts?: () => Promise<readonly AccountEntry[]>;
     heartbeatAgeMs?: () => number | null;
     now?: Date;
 }
@@ -362,8 +372,8 @@ export async function queryHealth(
     const window = resolveWindow(opts, { now, defaultSince: "24h" });
     const providers = resolveProviderList(opts.provider);
     const providerIds = providers ?? usagePlugins().map((entry) => entry.plugin.id);
-    const store = await AiConfigStore.readOnly();
-    const candidates = usageAccountKeys(store.accounts(), providerIds, { visibleOnly: true });
+    const configured = await (deps.accounts ?? (async () => (await AiConfigStore.readOnly()).accounts()))();
+    const candidates = usageAccountKeys(configured, providerIds, { visibleOnly: true });
     const selection = selectAccounts(opts.account, candidates);
     const accounts = selection ?? candidates;
     const db = (deps.open ?? (() => openHistoryReadOnly()))();
