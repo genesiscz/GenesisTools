@@ -1,8 +1,7 @@
 import type { WaitingFormDto } from "@dd/contract";
-import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
-import { useAnswerForm } from "@/features/answer-queue/hooks";
+import { useAnswerForm, useKeptState } from "@/features/answer-queue/hooks";
 import {
     type FormDraft,
     formAnswers,
@@ -30,7 +29,8 @@ export function FormCard({
     const answer = useAnswerForm((receipt) =>
         onReceipt({ testID: `${testId}-receipt`, label: `Ask form${form.source ? ` · ${form.source}` : ""}`, receipt })
     );
-    const [draft, setDraft] = useState<FormDraft>({});
+    // Kept by the screen: a form scrolled far away unmounts, and the answers typed so far must survive that.
+    const [draft, setDraft] = useKeptState<FormDraft>((kept) => kept.forms, form.id, () => ({}));
     const missing = missingAnswers(form, draft);
     const canSend = missing.length === 0 && !answer.isPending;
 

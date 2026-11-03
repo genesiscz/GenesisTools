@@ -1,27 +1,51 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { QueueSessionCard } from "@/features/answer-queue/components/QueueSessionCard";
 import { ReceiptLine } from "@/features/answer-queue/components/ReceiptLine";
 import { useAnswerQueue } from "@/features/answer-queue/hooks";
-import { type RecentReceipt, withRecentReceipt } from "@/features/answer-queue/units";
+import { keptEdits, pruneKept, type RecentReceipt, withRecentReceipt } from "@/features/answer-queue/units";
 import { SectionHeader } from "@/ui/SectionHeader";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
 
 /**
- * The answer queue (F6): decisions and ask forms grouped by agent session, with the notch widget's count. Sits at
- * the top of the Needs Input screen; the attention list below it keeps the agent sessions and QA action items.
+ * The answer queue's state, shared by its header and its session rows in the Needs Input list: the queue read, the
+ * recent receipts and the cards' kept edits. The rows are list items (virtualized), so this lives in the screen, not
+ * in a card: a send removes its card on the next read, and its receipt must stay until it is read.
  */
-export function AnswerQueue() {
-    const c = useThemeColors();
+export function useAnswerQueueState() {
     const queue = useAnswerQueue();
-    const sessions = queue.data?.sessions ?? [];
-    // Above the cards: a send removes its card on the next read, and its receipt must stay until it is read.
     const [recent, setRecent] = useState<RecentReceipt[]>([]);
     const onReceipt = useCallback((entry: RecentReceipt) => setRecent((list) => withRecentReceipt(list, entry)), []);
+    const dismiss = useCallback(
+        (testID: string) => setRecent((list) => list.filter((kept) => kept.testID !== testID)),
+        []
+    );
+    // A card that scrolls far away unmounts; what the user typed in it stays here until its item leaves the queue.
+    const [kept] = useState(keptEdits);
+    const data = queue.data;
+
+    useEffect(() => {
+        // Only a successful read prunes: a failed poll keeps the last data, and never drops a note being typed.
+        if (data) {
+            pruneKept(kept, data.sessions);
+        }
+    }, [kept, data]);
+
+    return { queue, sessions: data?.sessions ?? [], recent, onReceipt, dismiss, kept };
+}
+
+export type AnswerQueueState = ReturnType<typeof useAnswerQueueState>;
+
+/**
+ * The answer queue's header (F6): the notch widget's count, the recent receipts, and the loading, error or empty
+ * line. Its session cards are the rows below it in the same list.
+ */
+export function AnswerQueueHeader({ state }: { state: AnswerQueueState }) {
+    const c = useThemeColors();
+    const { queue, sessions, recent, dismiss } = state;
 
     return (
-        <View testID="answer-queue" className="gap-3 pb-4">
+        <View testID="answer-queue" className="gap-3">
             <View className="flex-row items-center justify-between">
                 <SectionHeader title="Waiting for you" />
                 <StatusPill testID="answer-queue-count" label={`${queue.data?.total ?? 0}`} tone="accent" normalCase />
@@ -36,7 +60,7 @@ export function AnswerQueue() {
                         testID={`${entry.testID}-dismiss`}
                         accessibilityRole="button"
                         accessibilityLabel={`Dismiss the receipt of ${entry.label}`}
-                        onPress={() => setRecent((list) => list.filter((kept) => kept.testID !== entry.testID))}
+                        onPress={() => dismiss(entry.testID)}
                         className="min-h-11 min-w-11 items-center justify-center px-2"
                     >
                         <Text className="text-xs" style={{ color: c.textSecondary }}>
@@ -60,13 +84,6 @@ export function AnswerQueue() {
                     No decision or ask form waits for you.
                 </Text>
             ) : null}
-            {sessions.map((session) => (
-                <QueueSessionCard
-                    key={session.sessionId ?? session.items[0]?.id ?? "form"}
-                    session={session}
-                    onReceipt={onReceipt}
-                />
-            ))}
         </View>
     );
 }
