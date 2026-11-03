@@ -12,6 +12,18 @@ export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "
 export type HubMode = (typeof HUB_MODES)[number];
 export const HUB_TABS = ["transcript", "changes", "files", "decisions"] as const;
 export type HubTab = (typeof HUB_TABS)[number];
+/** The Usage mode's sections (`HubUsageSection` in Parts/Hub/Usage/HubUsageModel.swift). */
+export const HUB_USAGE_SECTIONS = [
+    "limits",
+    "spend",
+    "waste",
+    "attribution",
+    "efficiency",
+    "plans",
+    "agents",
+    "session",
+] as const;
+export type HubUsageSection = (typeof HUB_USAGE_SECTIONS)[number];
 
 export interface OpenHubOptions {
     mode?: HubMode;
@@ -57,6 +69,16 @@ export interface OpenHubOptions {
     prompts?: boolean;
     /** Opens the handoff composer for `session` (or the selected session). */
     handoff?: boolean;
+    /** Opens the Usage mode at this section. */
+    usageSection?: HubUsageSection;
+    /** Opens the Usage mode at this session's analysis. */
+    usageSession?: string;
+    /** With `usageSession`: its harness (`claude`, `codex`, `grok`) when known. */
+    usageHarness?: string;
+    /** Opens the Usage mode with these accounts' lanes selected: an id, `provider/name` or a name. */
+    usageAccounts?: string[];
+    /** Opens the Usage mode with every account, dropping a selection the running hub had. */
+    usageAllAccounts?: boolean;
     /** Who asked for this place, for the hub's history: `user`, `agent` or `link` (the hub's default). */
     actor?: string;
     /** Why the place was opened; the history list shows it under the place. */
@@ -154,6 +176,26 @@ export function hubArgs(options: OpenHubOptions): string[] {
         if (value !== undefined) {
             args.push(flag, value);
         }
+    }
+
+    if (options.usageSection) {
+        args.push("--usage-section", options.usageSection);
+    }
+
+    if (options.usageSession) {
+        args.push("--usage-session", options.usageSession);
+
+        if (options.usageHarness) {
+            args.push("--usage-harness", options.usageHarness);
+        }
+    }
+
+    for (const account of options.usageAccounts ?? []) {
+        args.push("--usage-account", account);
+    }
+
+    if (options.usageAllAccounts) {
+        args.push("--usage-all-accounts");
     }
 
     if (options.digest) {
