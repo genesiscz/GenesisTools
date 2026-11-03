@@ -679,4 +679,29 @@ describe("qa decision routes", () => {
             draftOption: "b",
         });
     });
+
+    it("POST send-drafts refuses the whole batch when a shown decision has no stored row, and sends nothing", async () => {
+        const { file, events } = scratchFiles();
+        await postDecisions(file, events, {
+            sessionId: "s-beta",
+            decisions: [{ prompt: "Which port?", options: ["3000", "4000"] }],
+        });
+        await decisionRoute("POST", "/api/qa/decisions/draft").handler(
+            makeCtx({ body: { session: "s-beta", number: 1, option: "b", expectedRevision: 1 } })
+        );
+
+        const res = asJson(
+            await decisionRoute("POST", "/api/qa/decisions/send-drafts").handler(
+                makeCtx({ body: { session: "s-beta", drafts: [{ number: 1, expectedRevision: 1 }, { number: 9 }] } })
+            )
+        );
+
+        expect(res.status).toBe(400);
+        expect(String(res.body.error)).toStartWith("DECISION 9 is not waiting");
+        expect(runs).toEqual([]);
+        expect(readDecisions(file).find((row) => row.number === 1)).toMatchObject({
+            state: "drafted",
+            draftOption: "b",
+        });
+    });
 });

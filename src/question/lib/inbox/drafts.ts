@@ -188,19 +188,20 @@ export interface ShownDraft {
 }
 
 /**
- * Refuses the whole send when the agent re-posted any decision the caller showed, before a draft is promoted. A
- * re-post clears the staged pick and puts the row back to `open`, so it is no longer a draft: checking only the drafts
- * would send the other shown decisions as if the batch the user reviewed still stood.
+ * Refuses the whole send, before a draft is promoted, when a decision the caller showed has no row in the session or
+ * the agent re-posted it. A re-post clears the staged pick and puts the row back to `open`, so it is no longer a draft:
+ * checking only the drafts would send the other shown decisions as if the batch the user reviewed still stood.
  */
-function refuseStaleShown(rows: readonly DecisionRecord[], shown: readonly ShownDraft[]): void {
+function refuseStaleShown(rows: readonly DecisionRecord[], shown: readonly ShownDraft[], session: string): void {
     for (const entry of shown) {
-        if (entry.expectedRevision === undefined) {
-            continue;
-        }
-
         const row = rows.find((candidate) => kindOf(candidate) === "decision" && candidate.number === entry.number);
 
-        if (row && (row.revision ?? 1) !== entry.expectedRevision) {
+        // The caller showed a decision this session does not have: the batch it reviewed is not the one stored.
+        if (!row) {
+            throw new Error(`DECISION ${entry.number} is not waiting in session ${session}`);
+        }
+
+        if (entry.expectedRevision !== undefined && (row.revision ?? 1) !== entry.expectedRevision) {
             throw staleRevisionError(entry.number);
         }
     }
@@ -238,7 +239,7 @@ export async function sendDrafts(
 
     const sessionRows = readDecisions(deps.file).filter((row) => row.sessionId === input.session);
     const shown = input.drafts ? new Map(input.drafts.map((entry) => [entry.number, entry])) : undefined;
-    refuseStaleShown(sessionRows, input.drafts ?? []);
+    refuseStaleShown(sessionRows, input.drafts ?? [], input.session);
     const drafted = sessionRows.filter((row) => isDrafted(row) && (!shown || shown.has(row.number)));
     // The rows name the provider when the caller did not: the wait and the send below must look up one harness.
     const provider = providerOf(input.provider, sessionRows) ?? undefined;
