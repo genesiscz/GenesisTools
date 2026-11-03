@@ -63,13 +63,14 @@ function bucketOf(window: LimitWindow): UsageBucket {
  * Undefined without a weekly window: the scorer needs one, and a guess would invent headroom.
  */
 export function usageFromWindows(snapshot: AccountUsageSnapshot): UsageResponse | undefined {
-    const weekly = snapshot.limits.find((window) => window.kind === "weekly" && !window.scopeModel);
+    // By key: `seven_day_oauth_apps` is an unscoped weekly window too, and the file keeps no order between them.
+    const weekly = snapshot.limits.find((window) => window.key === "seven_day" && !window.scopeModel);
 
     if (!weekly) {
         return undefined;
     }
 
-    const session = snapshot.limits.find((window) => window.kind === "session");
+    const session = snapshot.limits.find((window) => window.key === "five_hour");
     const usage: UsageResponse = { five_hour: session ? bucketOf(session) : null, seven_day: bucketOf(weekly) };
     const limits: ApiLimit[] = [];
 

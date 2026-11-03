@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
-import { anthropicRanker } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/rank";
+import { anthropicRanker, usageFromWindows } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/rank";
 import { scoreAccounts, sortGrouped } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/scorer";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/snapshot-usage";
 import { windowRanker } from "@genesiscz/utils/ai/providers/usage-rank";
@@ -150,6 +150,21 @@ describe("the ranker each provider declares", () => {
         expect(rankAccounts(cached, { now: NOW }).map((row) => [row.accountName, row.tier, row.why])).toEqual(
             rankAccounts(live, { now: NOW }).map((row) => [row.accountName, row.tier, row.why])
         );
+    });
+
+    it("a cached Claude snapshot takes its week from seven_day even when the OAuth week comes first", () => {
+        const live = claude("work", 10, 90);
+        const oauth: LimitWindow = {
+            key: "seven_day_oauth_apps",
+            label: "Weekly (OAuth)",
+            kind: "weekly",
+            percentUsed: 5,
+            resetsAt: inHours(60),
+        };
+        const { native: _native, ...cached } = { ...live, limits: [oauth, ...live.limits] };
+
+        expect(usageFromWindows(cached)?.seven_day?.utilization).toBe(90);
+        expect(usageFromWindows(cached)?.five_hour?.utilization).toBe(10);
     });
 
     it("a Claude week the scorer calls dead, or a login it calls expired, is never picked although its tier reads ready", () => {
