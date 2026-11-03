@@ -50,7 +50,9 @@ export const pinJournalSource: SessionAccountSource = {
     accountOf(session, lookup) {
         const pin = lookup.pins.get(session.sessionId);
 
-        if (!pin?.account) {
+        // A pin of another harness names no account of this one: an old row without a provider is Claude's (a Codex
+        // pane once captured a Claude account), never "any provider".
+        if (!pin?.account || (pin.provider ?? "claude") !== session.agent) {
             return NONE;
         }
 

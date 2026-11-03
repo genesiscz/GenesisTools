@@ -89,7 +89,7 @@ function tagsOf(call: SessionCall, previous: SessionCall | undefined): CallTag[]
     const tags: CallTag[] = [];
     const context = call.input + call.cacheRead + call.cacheWrite;
 
-    if (previous && context > 20_000) {
+    if (previous && context > 20_000 && !call.aggregate) {
         if (call.cacheRead === 0 && call.cacheWrite > 0.5 * context) {
             tags.push("cold-cache");
         } else if (call.cacheWrite > 0.3 * context) {
@@ -117,11 +117,18 @@ function tagsOf(call: SessionCall, previous: SessionCall | undefined): CallTag[]
 /** The calls of one session in cache-stats terms; the call just before a compaction carries the flag. */
 export function cacheCallsOf(calls: readonly SessionCall[], compactions: readonly SessionCompaction[]): CacheCall[] {
     const marks = compactions.map((compaction) => Date.parse(compaction.t));
+    // The cache a call reads lives as long as the last write said: a one-hour write survives a 10-minute gap.
+    let ttl: CacheCall["ttl"];
 
     return calls.map((call, index) => {
         const at = Date.parse(call.t);
         const next = calls[index + 1];
         const nextAt = next ? Date.parse(next.t) : Number.POSITIVE_INFINITY;
+        const lifetime = ttl;
+
+        if (call.cacheWrite > 0 && call.cacheWrite1h !== undefined) {
+            ttl = call.cacheWrite1h >= call.cacheWrite ? "1h" : call.cacheWrite1h > 0 ? "mixed" : "5m";
+        }
 
         return {
             t: at,
@@ -130,6 +137,7 @@ export function cacheCallsOf(calls: readonly SessionCall[], compactions: readonl
             cacheRead: call.cacheRead,
             cacheWrite: call.cacheWrite,
             output: call.output,
+            ...(lifetime === undefined ? {} : { ttl: lifetime }),
             compaction: marks.some((mark) => mark >= at && mark <= nextAt),
         };
     });
@@ -236,7 +244,10 @@ export function buildSessionReport(input: {
 
     cost.unpricedModels = [...models.values()].filter((model) => model.costUsd === null).map((model) => model.model);
     cost.savingsUsd = cost.noCacheUsd - cost.totalUsd;
-    const cacheCalls = cacheCallsOf(main, compactions);
+    const cacheCalls = cacheCallsOf(
+        main.filter((call) => !call.aggregate),
+        compactions
+    );
     const losses = findCacheLosses(cacheCalls);
     const first = calls[0]?.t ?? null;
     const last = calls.at(-1)?.t ?? null;

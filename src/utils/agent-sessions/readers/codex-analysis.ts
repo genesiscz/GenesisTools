@@ -1,6 +1,6 @@
 import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import type { SessionAnalysisReader, SessionCompaction, SessionQuotaReading } from "../analysis-types";
-import { callsOfParser, factsOf, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
+import { callsOfParser, factsOrFailure, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
 import { createCodexUsageParser } from "./codex-usage";
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -60,7 +60,7 @@ export const codexAnalysis: SessionAnalysisReader = {
             }
         });
 
-        return factsOf(items, failed);
+        return factsOrFailure(items, failed);
     },
 
     async quotaReadings(transcriptPath) {
@@ -95,6 +95,6 @@ export const codexAnalysis: SessionAnalysisReader = {
             }
         });
 
-        return factsOf(items, failed);
+        return factsOrFailure(items, failed);
     },
 };

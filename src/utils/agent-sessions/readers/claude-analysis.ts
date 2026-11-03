@@ -1,7 +1,7 @@
 import { parseTranscriptLine } from "@genesiscz/utils/ai/usage/spend/parse";
 import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import type { SessionAnalysisReader, SessionCall, SessionCompaction } from "../analysis-types";
-import { factsOf, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
+import { factsOrFailure, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
 
 /** Claude Code writes local notices (API errors, "No response.") as assistant rows of this model: not model calls. */
 const SYNTHETIC_MODEL = "<synthetic>";
@@ -23,14 +23,17 @@ export const claudeAnalysis: SessionAnalysisReader = {
 
             const event = parseTranscriptLine(line);
 
-            if (!event || !event.timestamp || event.model === SYNTHETIC_MODEL || seen.has(event.messageId)) {
+            // An unreadable timestamp skips the row; `toISOString` would throw and lose the whole trace.
+            const t = event ? isoOf(event.timestamp) : null;
+
+            if (!event || !t || event.model === SYNTHETIC_MODEL || seen.has(event.messageId)) {
                 return;
             }
 
             seen.add(event.messageId);
             items.push({
                 id: event.messageId,
-                t: new Date(event.timestamp).toISOString(),
+                t,
                 model: event.model,
                 input: event.inputTokens,
                 cacheRead: event.cacheReadTokens,
@@ -42,7 +45,7 @@ export const claudeAnalysis: SessionAnalysisReader = {
             });
         });
 
-        return factsOf(items, failed);
+        return factsOrFailure(items, failed);
     },
 
     async compactions(transcriptPath) {
@@ -71,7 +74,7 @@ export const claudeAnalysis: SessionAnalysisReader = {
             }
         });
 
-        return factsOf(items, failed);
+        return factsOrFailure(items, failed);
     },
 
     async quotaReadings() {
