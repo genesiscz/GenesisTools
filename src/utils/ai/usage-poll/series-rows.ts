@@ -83,6 +83,8 @@ export interface SeriesRow {
 
 export interface SeriesGroup extends Omit<SeriesEntryBase, "resets" | "availability"> {
     rows: SeriesRow[];
+    /** When the slot passed to another kind (a Codex plan change): this series' availability stops there. */
+    ends: string[];
 }
 
 /**
@@ -94,6 +96,7 @@ export function groupSeriesRows(rows: readonly SeriesRow[]): SeriesGroup[] {
     const groups = new Map<string, SeriesGroup>();
     let runKey: string | null = null;
     let carried: string | null = null;
+    let previous: SeriesGroup | undefined;
 
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
@@ -102,6 +105,7 @@ export function groupSeriesRows(rows: readonly SeriesRow[]): SeriesGroup[] {
         if (run !== runKey) {
             runKey = run;
             carried = firstKindOfRun(rows, i, run);
+            previous = undefined;
         }
 
         if (row.kind !== null) {
@@ -113,9 +117,23 @@ export function groupSeriesRows(rows: readonly SeriesRow[]): SeriesGroup[] {
         let group = groups.get(id);
 
         if (!group) {
-            group = { provider: row.provider, account: row.account, key: row.key, kind, scopeModel: null, rows: [] };
+            group = {
+                provider: row.provider,
+                account: row.account,
+                key: row.key,
+                kind,
+                scopeModel: null,
+                rows: [],
+                ends: [],
+            };
             groups.set(id, group);
         }
+
+        if (previous && previous !== group) {
+            previous.ends.push(row.t);
+        }
+
+        previous = group;
 
         if (row.scopeModel !== null) {
             group.scopeModel = row.scopeModel;
@@ -267,24 +285,42 @@ export interface ShapeOptions {
 
 /**
  * The availability spans of a group's rows, absent rows included. Each span runs from the row
- * that began a state to the row that changed it, the last one to the range's end.
+ * that began a state to the row that changed it, the last one to the range's end. An `ends` instant
+ * (the slot passed to another kind) closes the open span, so two kinds never hold one slot at once.
  */
-export function availabilitySpans(rows: readonly SeriesRow[], to: string): AvailabilitySpan[] {
+export function availabilitySpans(
+    rows: readonly SeriesRow[],
+    to: string,
+    ends: readonly string[] = []
+): AvailabilitySpan[] {
     const spans: AvailabilitySpan[] = [];
+    const events = [...rows.map((row) => ({ t: row.t, row })), ...ends.map((t) => ({ t, row: undefined }))].sort(
+        (a, b) => Date.parse(a.t) - Date.parse(b.t)
+    );
+    let open: AvailabilitySpan | undefined;
 
-    for (const row of rows) {
+    for (const { t, row } of events) {
+        if (!row) {
+            if (open) {
+                open.to = t;
+            }
+
+            open = undefined;
+            continue;
+        }
+
         const state = row.availability ?? "unknown";
-        const open = spans.at(-1);
 
         if (open?.state === state) {
             continue;
         }
 
         if (open) {
-            open.to = row.t;
+            open.to = t;
         }
 
-        spans.push({ from: row.t, to, state });
+        open = { from: t, to, state };
+        spans.push(open);
     }
 
     return spans;
@@ -330,27 +366,27 @@ function resetsIn(rows: readonly SeriesRow[], read: readonly SeriesRow[], opts: 
 }
 
 export function shapePoints(group: SeriesGroup, agg: "raw" | "last", opts: ShapeOptions): SeriesEntry {
-    const { rows, ...base } = group;
+    const { rows, ends, ...base } = group;
     const read = readings(rows);
     const points = read.map(pointOf);
 
     return {
         ...base,
         resets: resetsIn(rows, read, opts).resets,
-        availability: availabilitySpans(rows, opts.to),
+        availability: availabilitySpans(rows, opts.to, ends),
         points: agg === "raw" ? points : lastPerBucket(points, opts.step),
     };
 }
 
 export function shapeBins(group: SeriesGroup, opts: ShapeOptions): SeriesBinEntry {
-    const { rows, ...base } = group;
+    const { rows, ends, ...base } = group;
     const read = readings(rows);
     const { resets, resetBefore } = resetsIn(rows, read, opts);
 
     return {
         ...base,
         resets,
-        availability: availabilitySpans(rows, opts.to),
+        availability: availabilitySpans(rows, opts.to, ends),
         bins: minMaxBins(read, opts.step, resetBefore),
     };
 }

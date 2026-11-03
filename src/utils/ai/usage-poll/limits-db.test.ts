@@ -948,6 +948,26 @@ describe("UsageLimitsDb", () => {
             ]);
             expect(mem.getSeries({ from: FROM, to: TO, kinds: [] })).toEqual([]);
         });
+
+        test("a slot that changes kind ends one kind's availability where the other starts", () => {
+            put("2026-11-01T06:00:00.000Z", 30, { key: "primary", kind: "session", resetsAt: null });
+            put("2026-11-01T08:00:00.000Z", 12, { key: "primary", kind: "weekly", resetsAt: null });
+            put("2026-11-01T10:00:00.000Z", 5, { key: "primary", kind: "session", resetsAt: null });
+
+            for (const agg of ["raw", "minmax"] as const) {
+                const byKind = Object.fromEntries(
+                    mem.getSeries({ from: FROM, to: TO, keys: ["primary"], agg }).map((e) => [e.kind, e.availability])
+                );
+
+                expect(byKind.session).toEqual([
+                    { from: "2026-11-01T06:00:00.000Z", to: "2026-11-01T08:00:00.000Z", state: "limited" },
+                    { from: "2026-11-01T10:00:00.000Z", to: TO, state: "limited" },
+                ]);
+                expect(byKind.weekly).toEqual([
+                    { from: "2026-11-01T08:00:00.000Z", to: "2026-11-01T10:00:00.000Z", state: "limited" },
+                ]);
+            }
+        });
     });
 
     describe("availability", () => {
