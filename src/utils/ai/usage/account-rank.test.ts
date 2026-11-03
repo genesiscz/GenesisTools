@@ -6,7 +6,13 @@ import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/an
 import { windowRanker } from "@genesiscz/utils/ai/providers/usage-rank";
 import { pickRanked, rankAccounts, rankerFor } from "@genesiscz/utils/ai/usage/account-rank";
 import { adviseAccounts } from "@genesiscz/utils/ai/usage/advise";
-import { type AccountForecast, type WindowForecast, windowStartMs } from "@genesiscz/utils/ai/usage/forecast/forecast";
+import {
+    type AccountForecast,
+    forecastWindow,
+    type WindowForecast,
+    windowStartMs,
+} from "@genesiscz/utils/ai/usage/forecast/forecast";
+import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 
 const NOW = new Date("2026-10-25T20:00:00.000Z");
 const inHours = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000).toISOString();
@@ -230,6 +236,7 @@ describe("adviseAccounts", () => {
                 resetsAt: inHours(30),
                 lastSampleAt: NOW.toISOString(),
                 samples: 4,
+                cycleSamples: 4,
                 ratePctPerHour: 1,
                 basis: "window",
                 exhaustAt: null,
@@ -242,6 +249,32 @@ describe("adviseAccounts", () => {
             },
         ],
         warning: null,
+    });
+
+    it("readings from before the last reset are no evidence: one fresh reading of the new cycle is unknown", () => {
+        // The 5h window reset an hour ago (it resets again in 4 h); three readings belong to the cycle before.
+        const reading = (hoursAgo: number, utilization: number, resetsInHours: number): UsageSample => ({
+            provider: "openai-sub",
+            account: "work",
+            bucket: "primary",
+            kind: "session",
+            utilization,
+            resetsAt: inHours(resetsInHours),
+            timestamp: inHours(-hoursAgo),
+        });
+        const oldCycle = [reading(3, 50, -1), reading(2.5, 60, -1), reading(2, 70, -1)];
+        const pickOf = (samples: UsageSample[]) => {
+            const window = forecastWindow(samples, NOW);
+            const forecasts: AccountForecast[] = window
+                ? [{ provider: "openai-sub", account: "work", windows: [window], warning: null }]
+                : [];
+            const data = adviseAccounts({ snapshots: [codex("work", 2, 20)], forecasts, now: NOW });
+            return data.providers[0]?.profiles.find((profile) => profile.profile === "default")?.pick;
+        };
+
+        expect(pickOf([...oldCycle, reading(1 / 60, 2, 4)])).toMatchObject({ forecast: "unknown", lastsMinutes: null });
+        // Two readings of the new cycle that show no burn are evidence that it lasts.
+        expect(pickOf([...oldCycle, reading(0.5, 2, 4), reading(1 / 60, 2, 4)])).toMatchObject({ forecast: "lasts" });
     });
 
     it("picks per workload, says how long the pick lasts, and lists the unused capacity soonest reset first", () => {

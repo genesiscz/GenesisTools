@@ -105,6 +105,7 @@ const FORECAST: ForecastResult = {
                     resetsAt: "2026-11-01T14:00:00.000Z",
                     lastSampleAt: "2026-11-01T11:29:00.000Z",
                     samples: 6,
+                    cycleSamples: 6,
                     ratePctPerHour: 12.5,
                     basis: "active",
                     exhaustAt: "2026-11-01T16:17:00.000Z",

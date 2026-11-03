@@ -130,7 +130,7 @@ function forecastKey(provider: string, accountName: string): string {
  * readings that show none. A single reading, a stale one, or one from before a reset projects nothing.
  */
 function forecastable(window: WindowForecast): boolean {
-    return !window.stale && !window.resetSinceSample && (window.ratePctPerHour !== null || window.samples >= 2);
+    return !window.stale && !window.resetSinceSample && (window.ratePctPerHour !== null || window.cycleSamples >= 2);
 }
 
 function lastsOf(forecast: AccountForecast | undefined): Pick<AdviceRow, "forecast" | "lastsMinutes" | "bindingLabel"> {
