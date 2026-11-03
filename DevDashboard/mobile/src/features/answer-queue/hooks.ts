@@ -5,6 +5,7 @@ import {
     answerForm,
     answerQueueKeys,
     answerQueueQuery,
+    type SendStagedInput,
     type StageInput,
     sendStaged,
     stagePick,
@@ -53,7 +54,7 @@ export function useStagePick() {
 
 export function useSendStaged(onReceipt?: (receipt: Receipt) => void) {
     return useQueueWrite(
-        (client, input: { session: string; provider?: string; key: string }) => sendStaged(client, input),
+        (client, input: SendStagedInput) => sendStaged(client, input),
         onReceipt
     );
 }

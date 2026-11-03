@@ -37,14 +37,19 @@ export function stagePick(client: DashboardClient, { key, ...input }: StageInput
     return client.call(ENDPOINTS.qaDecisionsDraft, input, { idempotencyKey: key });
 }
 
-/** Sends every staged pick of a session as one message, and says what happened to it. */
-export async function sendStaged(
-    client: DashboardClient,
-    input: { session: string; provider?: string; key: string }
-): Promise<Receipt> {
+export interface SendStagedInput {
+    session: string;
+    provider?: string;
+    /** The decisions the card shows (`shownDrafts`): only their staged picks go out. */
+    drafts: { number: number; expectedRevision: number }[];
+    key: string;
+}
+
+/** Sends the staged picks of the decisions a session card shows as one message, and says what happened to it. */
+export async function sendStaged(client: DashboardClient, input: SendStagedInput): Promise<Receipt> {
     const send = await client.call(
         ENDPOINTS.qaDecisionsSendDrafts,
-        { session: input.session, ...(input.provider ? { provider: input.provider } : {}) },
+        { session: input.session, ...(input.provider ? { provider: input.provider } : {}), drafts: input.drafts },
         { idempotencyKey: input.key }
     );
     return receiptOf(send);

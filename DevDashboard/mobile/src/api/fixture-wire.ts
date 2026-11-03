@@ -90,6 +90,20 @@ function numberOf(value: unknown): number {
     return typeof value === "number" ? value : Number(value);
 }
 
+/** The `drafts` of a send body: the decisions the phone shows, each at the revision it showed. */
+function draftsOf(value: unknown[]): { number: number; expectedRevision?: number }[] {
+    return value.flatMap((entry) => {
+        if (typeof entry !== "object" || entry === null || !("number" in entry)) {
+            return [];
+        }
+
+        const revision = "expectedRevision" in entry ? entry.expectedRevision : undefined;
+        return [
+            { number: numberOf(entry.number), ...(typeof revision === "number" ? { expectedRevision: revision } : {}) },
+        ];
+    });
+}
+
 /** A caller mistake the Mac would answer with 400; the client throws it as `<path> -> 400: <message>`. */
 class FixtureRefusal extends Error {}
 
@@ -240,7 +254,13 @@ const ROUTES: FixtureRoute[] = [
     {
         method: ENDPOINTS.qaDecisionsSendDrafts.method,
         path: ENDPOINTS.qaDecisionsSendDrafts.path,
-        handle: ({ body }) => refusing(() => fixtureSendDrafts({ session: text(body.session) })),
+        handle: ({ body }) =>
+            refusing(() =>
+                fixtureSendDrafts({
+                    session: text(body.session),
+                    ...(Array.isArray(body.drafts) ? { drafts: draftsOf(body.drafts) } : {}),
+                })
+            ),
     },
     {
         method: ENDPOINTS.qaPendingAnswer.method,
