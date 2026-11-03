@@ -127,9 +127,12 @@ term rules skip every word with a Czech letter, as before.
 ## Removals
 
 - **Swearing and fillers stay** in the transcript and never go into the summary (D6).
-- **Immediate repeats and cut-offs are removed** ("že to, že to" becomes "že to"; "A- a" becomes "A"),
-  listed in a review file grouped by kind, confirmed per kind by the user, and shown in the Diffs section (D17).
-  Interjections ("Jo. Jo.") stay.
+- **A cut-off word followed by its full form is removed** ("A- a" becomes "A", "teoreti- teoreticky" becomes
+  "teoreticky"), and each removal shows in the Diffs section (D35).
+- **Restarts and repeats stay as said** and are only proposed in the Diffs section, grouped by kind. A restart
+  ("ma- jakoby") usually comes with a repeated lead-in, so removing the fragment alone leaves the lead-in twice, and a
+  fragment can be a self-correction that matters ("GET- POST"). A repeat ("že to, že to") can carry emphasis.
+  Interjections ("Jo. Jo.") stay and are not listed.
 
 ## Summary
 
