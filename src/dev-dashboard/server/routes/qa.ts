@@ -29,6 +29,7 @@ import {
 } from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@genesiscz/utils/audio/library";
 import { resolveSoundBuffer } from "@genesiscz/utils/audio/runner.server";
+import { execTool } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
@@ -185,13 +186,13 @@ export function qaRoutes(): RouteDef[] {
                         args.push("--sound-volume", String(body.soundVolume));
                     }
 
-                    const proc = Bun.spawn(["tools", ...args], { stdout: "pipe", stderr: "pipe" });
-                    const code = await proc.exited;
+                    // execTool, not `tools` from PATH: the server runs its own checkout's tool, never the main one.
+                    const result = await execTool(args, { timeout: 30_000 });
 
                     return {
                         kind: "json",
-                        status: code === 0 ? 200 : 500,
-                        body: { ok: code === 0, output: await new Response(proc.stdout).text() },
+                        status: result.exitCode === 0 ? 200 : 500,
+                        body: { ok: result.exitCode === 0, output: result.stdout },
                     };
                 } catch (err) {
                     return errorResult(err);
