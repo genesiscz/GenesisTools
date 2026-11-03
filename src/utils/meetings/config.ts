@@ -88,6 +88,10 @@ const listenSchema = z.object({
     beep: z.boolean().default(true),
     /** How long before the asked spot the tone sounds. */
     beepLeadSec: z.number().min(0).max(3).default(0.4),
+    /** Plays the clip again each time it ends, until the question is answered, so it can be heard while typing. */
+    repeat: z.boolean().default(true),
+    /** The pause between two plays of a repeated clip. */
+    repeatGapSec: z.number().min(0).max(10).default(1),
 });
 
 const playbackSchema = z.object({

@@ -27,6 +27,8 @@ import {
     answerQuestion,
     answerVocabulary,
     askedSpotSec,
+    type HeardContext,
+    heardContext,
     NONE_OF_THESE,
     openQuestions,
     propagateAnswer,
@@ -58,6 +60,10 @@ type Outcome = { answer: string; comment?: string } | "skip" | "split" | "stop" 
 interface Step {
     question: QuestionItem;
     before: MeetingItem[];
+    /** The answer given, for a later question on the same heard words. */
+    answer?: string;
+    /** A split: its parts take its place, so it does not count against the budget. */
+    split?: true;
     /** Written when the round ends, so an undone answer leaves no correction behind. */
     corrections: Correction[];
 }
@@ -171,9 +177,23 @@ function spokenIn(question: QuestionItem, transcript: TranscriptEntry[]): string
     return text.length > SAID_MAX_CHARS ? `${text.slice(0, SAID_MAX_CHARS)}…` : text || undefined;
 }
 
+/** The words around a word question's heard words: the line before (dim), the line with them marked, the line after. */
+function contextLines(context: HeardContext): string {
+    const lines = [
+        context.before ? pc.dim(context.before) : undefined,
+        `${pc.cyan(context.lead)}${pc.bold(pc.yellow(context.heard))}${pc.cyan(context.rest)}`,
+        context.after ? pc.dim(context.after) : undefined,
+    ];
+    return lines
+        .filter((line) => line !== undefined)
+        .map((line) => `\n  ${line}`)
+        .join("");
+}
+
 /**
- * Shows one question, plays its clip after `delayMs`, and asks until it is answered, skipped, split or left. Esc on
- * the choices goes back to the previous question; Esc in a later step goes back to the choices.
+ * Shows one question, plays its clip after `delayMs` (again and again with `repeatGapMs`, until it is answered), and
+ * asks until it is answered, skipped, split or left. Esc on the choices goes back to the previous question; Esc in a
+ * later step goes back to the choices.
  */
 async function ask(options: {
     question: QuestionItem;
@@ -181,20 +201,42 @@ async function ask(options: {
     player: (typeof LISTEN_PLAYERS)[number];
     vocabulary: string[];
     delayMs: number;
+    repeatGapMs?: number;
     /** What is said in the asked span, shown under the question. */
     said?: string;
+    /** For a word question: the sentence its heard words are in. */
+    context?: HeardContext;
+    /** The answer this round gave the same heard words at another time: offered first. */
+    earlier?: { answer: string; atSec: number };
 }): Promise<Outcome> {
-    const { question } = options;
-    let playing = playClip(options.player, options.clip, options.delayMs);
-    const said = options.said ? `\n  ${pc.cyan(`„${options.said}“`)}` : "";
+    const { question, earlier } = options;
+    const repeat = options.repeatGapMs === undefined ? {} : { repeatGapMs: options.repeatGapMs };
+    let playing = playClip(options.player, options.clip, { delayMs: options.delayMs, ...repeat });
+    const shown = options.context
+        ? contextLines(options.context)
+        : options.said
+          ? `\n  ${pc.cyan(`„${options.said}“`)}`
+          : "";
+    const earlierNote = earlier
+        ? `\n  ${pc.dim(`You answered the same words at ${formatClock(earlier.atSec)}: ${earlier.answer}`)}`
+        : "";
+    const choices = earlier
+        ? [earlier.answer, ...question.choices.filter((choice) => choice !== earlier.answer)]
+        : question.choices;
 
     try {
         while (true) {
             const picked = await clack.select({
-                message: `${question.question} ${pc.dim("(Esc: back to the previous question)")}${said}`,
+                message: `${question.question} ${pc.dim("(Esc: back to the previous question)")}${shown}${earlierNote}`,
                 options: [
-                    ...question.choices.map((choice) => ({ value: choice, label: choice })),
-                    { value: AGAIN, label: "Play the audio again" },
+                    ...choices.map((choice) => ({
+                        value: choice,
+                        label: choice,
+                        ...(earlier && choice === earlier.answer
+                            ? { hint: `as at ${formatClock(earlier.atSec)}` }
+                            : {}),
+                    })),
+                    { value: AGAIN, label: "Play the audio again", hint: "from the start" },
                     { value: OTHER, label: "Something else…" },
                     { value: NONE_OF_THESE, label: "None of these", hint: "rejects the items it decides" },
                     ...(question.about === "speaker"
@@ -210,7 +252,6 @@ async function ask(options: {
                     { value: STOP, label: "Enough for now", hint: "the rest stay open for the next listen" },
                 ],
             });
-            playing.stop();
 
             if (clack.isCancel(picked)) {
                 return "back";
@@ -221,22 +262,26 @@ async function ask(options: {
             }
 
             if (picked === AGAIN) {
-                playing = playClip(options.player, options.clip);
+                playing.stop();
+                playing = playClip(options.player, options.clip, repeat);
                 continue;
             }
 
+            // The clip keeps playing while the answer is typed.
             const answer = picked === OTHER ? await somethingElse(options.vocabulary) : String(picked);
 
             if (!answer) {
                 continue;
             }
 
+            playing.stop();
             const comment = await clack.text({
                 message: `Comment (optional) ${pc.dim("(Esc: back to the choices)")}`,
                 placeholder: "Enter to skip",
             });
 
             if (clack.isCancel(comment)) {
+                playing = playClip(options.player, options.clip, repeat);
                 continue;
             }
 
@@ -247,7 +292,6 @@ async function ask(options: {
     }
 }
 
-/** For an agent: prints the answers of the running (or next) round as JSON lines, and exits when it ends. */
 async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: ListenOptions): Promise<void> {
     const path = join(store.folder(meeting.id), ANSWER_LOG_FILE);
     const roundRunning = runningRound(readAnswerEvents(path)).length > 0;
@@ -374,7 +418,8 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             meeting,
             dictionary.entries.map((entry) => entry.value)
         );
-        const { budget, minPriority, delaySec, beep, beepLeadSec } = settings.global.playback.listen;
+        const { budget, minPriority, delaySec, beep, beepLeadSec, repeat, repeatGapSec } =
+            settings.global.playback.listen;
         const transcript: TranscriptEntry[] = await meetingTranscript(meeting);
         await round({
             meeting,
@@ -384,10 +429,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             budget,
             minPriority,
             listenBelow: settings.global.suggest.listenBelow,
-            ask: async (question) => {
+            ask: async (question, earlier) => {
                 const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
                 const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
                 const spotSec = askedSpotSec(question, transcript);
+                const context =
+                    question.about === "speaker" ? undefined : heardContext(question, transcript, SAID_MAX_CHARS);
                 // A speaker question plays only the asked voice, from the tone on; a word keeps the audio around it.
                 const pad = question.about === "speaker" ? beepLeadSec + SPEAKER_PAD_SEC : padSec;
                 const inClip = spotSec >= heard.fromSec - pad && spotSec <= heard.toSec + pad;
@@ -405,7 +452,10 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                     player,
                     vocabulary,
                     delayMs: delaySec * 1000,
+                    ...(repeat ? { repeatGapMs: repeatGapSec * 1000 } : {}),
                     ...(question.about === "speaker" ? { said: spokenIn(question, transcript) } : {}),
+                    ...(context ? { context } : {}),
+                    ...(earlier ? { earlier } : {}),
                 });
             },
         });
@@ -423,7 +473,7 @@ async function round(options: {
     budget: number;
     minPriority: number;
     listenBelow: number;
-    ask: (question: QuestionItem) => Promise<Outcome>;
+    ask: (question: QuestionItem, earlier?: { answer: string; atSec: number }) => Promise<Outcome>;
 }): Promise<void> {
     const { meeting, store, logPath, only, minPriority } = options;
     const askable = (record: MeetingRecord, passed: Set<string>, reask?: string) =>
@@ -445,6 +495,14 @@ async function round(options: {
     let reask: string | undefined;
     let micShares: Promise<MicShare | undefined> | undefined;
     let reason: RoundEndReason = "done";
+    const decided = (): number => steps.filter((step) => !step.split).length;
+    const earlierFor = (question: QuestionItem): { answer: string; atSec: number } | undefined => {
+        const heard = question.heard?.toLowerCase();
+        const step = heard
+            ? steps.findLast((done) => done.answer !== undefined && done.question.heard?.toLowerCase() === heard)
+            : undefined;
+        return step?.answer === undefined ? undefined : { answer: step.answer, atSec: step.question.fromSec };
+    };
 
     const end = (why: RoundEndReason): void => {
         if (ended) {
@@ -458,10 +516,16 @@ async function round(options: {
             event: "round-end",
             at: new Date().toISOString(),
             reason: why,
-            asked: steps.length,
+            asked: decided(),
             open,
         });
-        ui.ok(`${steps.length} decided; ${open} open questions stay, marked in ${TOOL} transcript ${meeting.id}.`);
+        ui.ok(`${decided()} decided; ${open} open questions stay, marked in ${TOOL} transcript ${meeting.id}.`);
+
+        if (why === "budget" && open > 0) {
+            ui.info(
+                `This round asks at most ${options.budget} questions. The next round asks the rest: ${TOOL} listen ${meeting.id}`
+            );
+        }
     };
     // Ctrl-C outside a prompt (while a clip is cut) ends the process; the exit handler still closes the round.
     const onExit = (): void => end("aborted");
@@ -471,7 +535,7 @@ async function round(options: {
     appendAnswerEvent(logPath, { event: "round-start", at: new Date().toISOString(), pid: process.pid, open: total });
 
     try {
-        while (steps.length < options.budget) {
+        while (decided() < options.budget) {
             const current = store.read(meeting.id) ?? meeting;
             const question = askable(current, passed, reask);
             reask = undefined;
@@ -481,9 +545,9 @@ async function round(options: {
             }
 
             ui.header(
-                `${steps.length + 1}/${total}  Q${questionNumber(current, question.id)} (${question.id})  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
+                `${decided() + 1}/${total}  Q${questionNumber(current, question.id)} (${question.id})  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
             );
-            const outcome = await options.ask(question);
+            const outcome = await options.ask(question, earlierFor(question));
 
             if (outcome === "stop") {
                 reason = "stopped";
@@ -552,7 +616,7 @@ async function round(options: {
                     continue;
                 }
 
-                steps.push({ question, before, corrections: [] });
+                steps.push({ question, before, corrections: [], split: true });
                 appendAnswerEvent(logPath, {
                     event: "split",
                     at: new Date().toISOString(),
@@ -571,7 +635,7 @@ async function round(options: {
                 outcome,
                 listenBelow: options.listenBelow,
             });
-            steps.push({ question, before, corrections });
+            steps.push({ question, before, corrections, ...(outcome === "skip" ? {} : { answer: outcome.answer }) });
             appendAnswerEvent(
                 logPath,
                 outcome === "skip"
@@ -586,7 +650,7 @@ async function round(options: {
             }
         }
 
-        if (reason === "done" && steps.length >= options.budget) {
+        if (reason === "done" && decided() >= options.budget) {
             reason = "budget";
         }
     } finally {

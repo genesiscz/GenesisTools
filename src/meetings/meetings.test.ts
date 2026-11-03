@@ -16,6 +16,7 @@ import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { selectQuestions } from "./lib/question-select";
 import {
     answerQuestion,
+    heardContext,
     openQuestions,
     propagateAnswer,
     type QuestionContext,
@@ -1101,6 +1102,61 @@ describe("several voices", () => {
         expect(parts).toEqual([]);
         expect(split.items).toHaveLength(1);
         expect(split.items[0]).toMatchObject({ status: "suggested" });
+    });
+});
+
+describe("a word question shows where its words are said", () => {
+    const now = "2026-11-02T15:00:00.000Z";
+    const transcript = [
+        line("Alice Example", 50, "Hledal to Petr."),
+        line("Alice Example", 55, "Nehodil to někam do Ada, ale nevím vlastně, jestli to našel."),
+        line("Bob Example", 70, "Ten username a password do toho Ada, do tý databáze."),
+        line("Bob Example", 80, "Jo."),
+    ];
+    const questions = openQuestions(
+        meetingRecordSchema.parse({
+            ...record,
+            items: [55, 70].map((fromSec, n) => ({
+                id: `i${n + 1}`,
+                kind: "question",
+                status: "suggested",
+                about: "term",
+                fromSec,
+                toSec: fromSec + 10,
+                question: 'What is said where the transcript has "Ada"?',
+                heard: "Ada",
+                choices: ["ADO", "a database name"],
+                decides: [],
+                rules: [],
+                suggestedAt: now,
+            })),
+        })
+    );
+
+    test("the line with the heard words, and the lines before and after it", () => {
+        expect(heardContext(questions[0]!, transcript, 240)).toEqual({
+            before: "Hledal to Petr.",
+            lead: "Nehodil to někam do ",
+            heard: "Ada",
+            rest: ", ale nevím vlastně, jestli to našel.",
+            after: "Ten username a password do toho Ada, do tý databáze.",
+        });
+    });
+
+    test("two questions on the same word show two different lines", () => {
+        const second = heardContext(questions[1]!, transcript, 240);
+
+        expect(second?.lead).toBe("Ten username a password do toho ");
+        expect(second?.after).toBe("Jo.");
+    });
+
+    test("a long line is cut around the heard words, at whole words", () => {
+        const long = [line("Alice Example", 55, `${"slovo ".repeat(40)}do Ada ${"konec ".repeat(40)}`.trim())];
+        const context = heardContext(questions[0]!, long, 60);
+
+        expect(context?.heard).toBe("Ada");
+        expect(context?.lead.startsWith("…slovo")).toBe(true);
+        expect(context?.rest.endsWith("konec…")).toBe(true);
     });
 });
 
