@@ -8,6 +8,9 @@ import type {
     DashboardClient,
     DiskUsageResult,
     EnrichedQaEntry,
+    Endpoint,
+    EndpointInput,
+    EndpointOutput,
     KillPortResult,
     NetStatusRes,
     PortsResult,
@@ -28,7 +31,7 @@ import type {
     VaultEntry,
     WeatherRes,
 } from "@dd/contract";
-import { paths } from "@dd/contract";
+import { fillPath, paths } from "@dd/contract";
 
 /**
  * A `DashboardClient`-shaped stand-in that returns believable FIXTURES instead of hitting a
@@ -705,6 +708,9 @@ function escapeHatch<T>(path: string): Promise<T> {
 export const mockDashboardClient: DashboardClient = {
     get: <T>(path: string) => escapeHatch<T>(path),
     post: <T>(path: string, _body: unknown) => escapeHatch<T>(path),
+    // The generic endpoint-table call reaches the same fixtures by its filled path (M2b replaces this mock).
+    call: <E extends Endpoint>(endpoint: E, input: EndpointInput<E>) =>
+        escapeHatch<EndpointOutput<E>>(fillPath(endpoint.path, (input ?? {}) as Record<string, unknown>).path),
 
     system: {
         pulse: () => delay(mockPulse()),
