@@ -2,8 +2,8 @@ import type { Database } from "bun:sqlite";
 import { parseWhen } from "@genesiscz/utils/ai/usage/contract/window";
 import { type PollRun, PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import { zonedDay } from "@genesiscz/utils/ai/usage/spend/reports/dates";
-import type { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
-import type { SeriesEntry, SeriesPoint } from "@genesiscz/utils/ai/usage-poll/series-rows";
+import { resetsAtRoughlyEqual, type UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { resetBetween, type SeriesEntry, type SeriesPoint } from "@genesiscz/utils/ai/usage-poll/series-rows";
 
 /**
  * The daily rollup (design 2026-11-01, step U10, proposal 16): one row per account, window and local day in
@@ -94,12 +94,14 @@ function minutesIn(runs: readonly PollRun[], bounds: { start: number; end: numbe
     return any ? Math.round(ms / 60_000) : null;
 }
 
-/** A new reset cycle began between two readings: a reset the series found, or a drop where no reset clock says. */
-function newCycle(previous: SeriesPoint, point: SeriesPoint, resets: readonly number[]): boolean {
-    const from = Date.parse(previous.t);
-    const to = Date.parse(point.t);
-
-    if (resets.some((at) => from < at && at <= to)) {
+/**
+ * A new reset cycle began between two readings: the earlier one's reset clock ran out or moved on (`resetBetween`, the
+ * rule the series' resets come from), or, where it has no reset clock, the value dropped. It reads the readings' own
+ * clocks, not `entry.resets`: the store moves the carried reading to the range's start and leaves a reset before the
+ * range out of the resets, so only the carried reading's clock shows that the first reading opened a new cycle.
+ */
+function newCycle(previous: SeriesPoint, point: SeriesPoint): boolean {
+    if (resetBetween(previous, point, resetsAtRoughlyEqual) !== null) {
         return true;
     }
 
@@ -109,16 +111,15 @@ function newCycle(previous: SeriesPoint, point: SeriesPoint, resets: readonly nu
 /**
  * The reset cycles that reached 90 %, by local day: each cycle counts once, on the day its readings first reached
  * 90 %, so a cycle that crosses midnight is not counted on both days. A cycle the carried reading already had at
- * 90 % was counted on an earlier day.
+ * 90 % was counted on an earlier day, unless its reset clock ran out before the next reading.
  */
 function cyclesOverByDay(entry: SeriesEntry, tz: string): Map<string, number> {
     const counts = new Map<string, number>();
-    const resets = entry.resets.map((at) => Date.parse(at));
     let previous = entry.carried;
     let counted = previous !== undefined && previous.percent >= CYCLE_PEAK;
 
     for (const point of entry.points) {
-        if (previous && newCycle(previous, point, resets)) {
+        if (previous && newCycle(previous, point)) {
             counted = false;
         }
 
