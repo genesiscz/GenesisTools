@@ -36,16 +36,23 @@ export interface ActTokenStore {
 
 const TOKENS_FILE = "act-tokens.json";
 
-/** `~/.genesis-tools/question/cache/act-tokens.json`, under the file lock of `Storage.atomicUpdate`. */
+/**
+ * `~/.genesis-tools/question/cache/act-tokens.json`, under the file lock of `Storage.atomicUpdate`. Owner-only (0600):
+ * a token answers a decision without the dashboard login.
+ */
 export function fileActTokenStore(storage = new Storage("question")): ActTokenStore {
     return {
         async update(fn) {
             let result: ReturnType<typeof fn> | undefined;
-            await storage.atomicUpdate<ActTokenMap>(TOKENS_FILE, (current) => {
-                const tokens = { ...(current ?? {}) };
-                result = fn(tokens);
-                return tokens;
-            });
+            await storage.atomicUpdate<ActTokenMap>(
+                TOKENS_FILE,
+                (current) => {
+                    const tokens = { ...(current ?? {}) };
+                    result = fn(tokens);
+                    return tokens;
+                },
+                { mode: 0o600 }
+            );
             return result as ReturnType<typeof fn>;
         },
     };
