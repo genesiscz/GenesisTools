@@ -84,7 +84,7 @@ final class WidgetUsageTests: XCTestCase {
         let withoutAccount = try JSONDecoder().decode(UsageAlert.self, from: Data(json.utf8))
         store.openAlert(withAccount)
         store.openAlert(withoutAccount)
-        XCTAssertEqual(opened, [["--usage-account", "acc_work"], ["--mode", "usage", "--usage-section", "limits"]])
+        XCTAssertEqual(opened, [["--usage-account", "acc_work"], ["--mode", "usage", "--usage-section", "limits", "--usage-all-accounts"]])
     }
 
     func testPreferencesDecodeWithoutTheUsageKey() throws {
