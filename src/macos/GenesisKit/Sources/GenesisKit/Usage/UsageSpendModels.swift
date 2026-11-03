@@ -323,6 +323,52 @@ public struct UsageDigestOutlook: Decodable, Equatable, Sendable, Identifiable {
     public var id: String { account.id + "\u{1}" + label }
 }
 
+// MARK: - usage.budgets@1
+
+public struct UsageBudgetsData: Decodable, Equatable, Sendable {
+    public let windows: [UsageBudgetWindowRow]
+    public let spend: [UsageSpendBudgetRow]
+}
+
+/// A window target with today's pace: keep `reservePct` at the reset, use at most the allowance per day.
+public struct UsageBudgetWindowRow: Decodable, Equatable, Sendable, Identifiable {
+    public let provider: String
+    public let accountId: String
+    public let accountName: String
+    public let kind: String
+    public let key: String
+    public let label: String
+    public let utilization: Double
+    public let resetsAt: String?
+    public let budget: UsageWindowBudget
+    public let pace: UsageBudgetPace
+    public var id: String { provider + "\u{1}" + accountId + "\u{1}" + kind }
+}
+
+public struct UsageWindowBudget: Decodable, Equatable, Sendable {
+    public let reservePct: Double?
+    public let dailyAllowancePct: Double?
+}
+
+public struct UsageBudgetPace: Decodable, Equatable, Sendable {
+    public let reservePct: Double
+    public let allowancePct: Double?
+    public let burnedTodayPct: Double?
+    public let paceRatio: Double?
+    public let headroomPct: Double
+    /// `on-pace`, `over-pace`, `under-reserve` or `no-target` (`PaceStatus` in src/utils/ai/usage/budgets/budgets.ts).
+    public let status: String
+}
+
+/// A spend target: today's dollars against the daily target, for everything (`global`) or one provider.
+public struct UsageSpendBudgetRow: Decodable, Equatable, Sendable, Identifiable {
+    public let scope: String
+    public let dailyUsd: Double
+    public let todayUsd: Double
+    public let ratio: Double
+    public var id: String { scope }
+}
+
 // MARK: - sessions.report@1
 
 public struct UsageSessionReportEnvelope: Decodable, Equatable, Sendable {

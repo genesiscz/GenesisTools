@@ -43,6 +43,7 @@ public enum UsageDoor: Equatable, Sendable {
     case proxy
     case waste(UsageRange)
     case workers
+    case budgets
     case sessionReport(id: String, harness: String?)
 
     /// The arguments after `tools`.
@@ -65,9 +66,39 @@ public enum UsageDoor: Equatable, Sendable {
         case .proxy: return ["ai-spend", "proxy", "--json"]
         case .waste(let range): return ["ai-spend", "waste", "--since", range.rawValue, "--json"]
         case .workers: return ["ai-spend", "workers", "--by", "backend,model,outcome", "--json"]
+        case .budgets: return ["ai", "usage", "budgets", "list", "--json"]
         case .sessionReport(let id, let harness):
             return ["ai", "sessions", "report", id] + (harness.map { ["--provider", $0] } ?? []) + ["--json"]
         }
+    }
+}
+
+/// The writes of `tools ai usage budgets`: a window target per account and kind, or a spend target per day. The only
+/// usage commands a settings card runs that change a file (the usage config's `budgets`).
+public enum UsageBudgetCommand: Equatable, Sendable {
+    case setWindow(accountId: String, kind: String, reservePct: Double?, dailyPct: Double?)
+    case removeWindow(accountId: String, kind: String)
+    case setSpend(provider: String?, dailyUsd: Double)
+    case removeSpend(provider: String?)
+
+    public var argv: [String] {
+        let base = ["ai", "usage", "budgets"]
+        switch self {
+        case .setWindow(let account, let kind, let reserve, let daily):
+            return base + ["set", "--account", account, "--kind", kind]
+                + (reserve.map { ["--reserve", Self.number($0)] } ?? []) + (daily.map { ["--daily", Self.number($0)] } ?? [])
+        case .removeWindow(let account, let kind):
+            return base + ["rm", "--account", account, "--kind", kind]
+        case .setSpend(let provider, let usd):
+            return base + ["set", "--spend-daily", Self.number(usd)] + (provider.map { ["--provider", $0] } ?? [])
+        case .removeSpend(let provider):
+            return base + ["rm", "--spend"] + (provider.map { ["--provider", $0] } ?? [])
+        }
+    }
+
+    /// "15", "2.5": no locale, no trailing zeros.
+    static func number(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(value)
     }
 }
 
@@ -138,6 +169,7 @@ extension UsageDoor {
         case .plans: return "usage.spend.plans"
         case .proxy: return "usage.spend.proxy"
         case .waste: return "usage.spend.waste"
+        case .budgets: return "usage.budgets"
         case .workers, .sessionReport: return nil
         }
     }
