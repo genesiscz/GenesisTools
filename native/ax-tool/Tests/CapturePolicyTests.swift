@@ -253,3 +253,54 @@ final class DisplayScaleTests: XCTestCase {
         XCTAssertEqual(displayScale(pixelWidth: 3024, pointWidth: 0), 1)
     }
 }
+
+final class AudioCommandTests: XCTestCase {
+    func testParsesTheAudioAndSettingsCommands() throws {
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"mute","source":"mic"}"#)?.get(), .mute(.mic))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"unmute","source":"system"}"#)?.get(), .unmute(.system))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"set-mic","deviceId":"BuiltInMicrophoneDevice"}"#)?.get(),
+                       .setMic("BuiltInMicrophoneDevice"))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"set-fps","active":4}"#)?.get(), .setFps(active: 4, idle: nil))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"set-fps","active":8,"idle":0.5}"#)?.get(), .setFps(active: 8, idle: 0.5))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"set-threshold","percent":1.5}"#)?.get(), .setThreshold(1.5))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"set-max-long-side","px":1280}"#)?.get(), .setMaxLongSide(1280))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"set-max-long-side","px":0}"#)?.get(), .setMaxLongSide(nil))
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"set-max-long-side","px":null}"#)?.get(), .setMaxLongSide(nil))
+    }
+
+    func testRefusesOutOfRangeSettings() {
+        for line in [#"{"cmd":"mute","source":"speaker"}"#, #"{"cmd":"mute"}"#, #"{"cmd":"set-mic","deviceId":""}"#,
+                     #"{"cmd":"set-fps"}"#, #"{"cmd":"set-fps","active":200}"#, #"{"cmd":"set-fps","idle":9}"#,
+                     #"{"cmd":"set-fps","active":true}"#, #"{"cmd":"set-threshold","percent":101}"#,
+                     #"{"cmd":"set-max-long-side","px":8}"#, #"{"cmd":"set-max-long-side","px":100.5}"#] {
+            guard case .failure = parseCaptureCommand(line) else {
+                XCTFail("\(line) must be refused")
+                continue
+            }
+        }
+    }
+
+    func testAudioSourcesAndPeaks() {
+        XCTAssertEqual(try parseAudioSources("system,mic").get(), [.system, .mic])
+        XCTAssertEqual(try parseAudioSources("mic, mic").get(), [.mic])
+        XCTAssertThrowsError(try parseAudioSources("system,radio").get())
+        XCTAssertThrowsError(try parseAudioSources("").get())
+        let floats: [Float] = [0.1, -0.5, 0.25, .nan]
+        XCTAssertEqual(floats.withUnsafeBufferPointer { peakAmplitude(float32: $0) }, 0.5)
+        let ints: [Int16] = [100, -16384, 200]
+        XCTAssertEqual(ints.withUnsafeBufferPointer { peakAmplitude(int16: $0) }, 0.5)
+        XCTAssertEqual(peakDbfs(0.5), -6)
+        XCTAssertEqual(peakDbfs(1), 0)
+        XCTAssertNil(peakDbfs(0), "digital silence has no dB value")
+    }
+
+    func testThresholdChangesLive() {
+        let dark = signature(width: 16, height: 16) { _, _ in 0 }
+        let half = signature(width: 16, height: 16) { x, _ in x < 4 ? 255 : 0 }
+        var policy = KeepPolicy(thresholdPercent: 50)
+        XCTAssertTrue(policy.consider(dark).keep)
+        XCTAssertFalse(policy.consider(half).keep)
+        policy.setThreshold(10)
+        XCTAssertTrue(policy.consider(half).keep)
+    }
+}

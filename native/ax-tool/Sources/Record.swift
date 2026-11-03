@@ -58,6 +58,12 @@ struct RecordOptions {
     let maxMb: Double?
     /// `--control-stdin`: JSON-line commands on stdin, JSON-line events on stderr.
     let controlStdin: Bool
+    /// `--audio system,mic`: the audio sources, each its own track.
+    let audioSources: [CaptureAudioSource]
+    /// `--mic-device <uid>` from `ax-tool audio-devices`; nil is the default input.
+    let micDevice: String?
+    /// `--audio-sidecar`: also write each source as `audio-<source>.m4a` next to the frames.
+    let audioSidecar: Bool
     /// Warnings raised before the recorder existed; they open its warning list.
     let startWarnings: [String]
 }
@@ -111,6 +117,39 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
     if controlStdin && mode == "isolated" {
         errorExit("--control-stdin applies to screen, window and region mode", code: "invalid-argument")
     }
+    var audioSources: [CaptureAudioSource] = []
+    if let raw = argValue("--audio") {
+        switch parseAudioSources(raw) {
+        case .success(let sources):
+            audioSources = sources
+        case .failure(let error):
+            errorExit(error.message, code: "invalid-argument")
+        }
+    }
+    let micDevice = argValue("--mic-device")
+    let audioSidecar = CommandLine.arguments.contains("--audio-sidecar")
+    if !audioSources.isEmpty {
+        if mode == "isolated" {
+            errorExit("--audio applies to screen, window and region mode", code: "invalid-argument")
+        }
+        if argValue("--video-out") == nil && !audioSidecar {
+            errorExit("--audio needs --video-out (tracks in the movie) or --audio-sidecar (.m4a files)", code: "invalid-argument")
+        }
+    }
+    if (micDevice != nil || audioSidecar) && audioSources.isEmpty {
+        errorExit("--mic-device and --audio-sidecar need --audio", code: "invalid-argument")
+    }
+    if micDevice != nil && !audioSources.contains(.mic) {
+        errorExit("--mic-device needs --audio mic", code: "invalid-argument")
+    }
+    if audioSources.contains(.mic) {
+        if #unavailable(macOS 15.0) {
+            errorExit("microphone capture needs macOS 15 or newer (SCStreamConfiguration.captureMicrophone)", code: "unsupported")
+        }
+    }
+    if let micDevice, !audioDevices().contains(where: { $0.uid == micDevice && $0.inputChannels > 0 }) {
+        errorExit("no input device \(micDevice); run `ax-tool audio-devices`", code: "device-missing")
+    }
     let maxLongSide = optionalNumber("--max-long-side", min: 16, max: 16384).map { Int($0) }
     if maxLongSide != nil && mode == "isolated" {
         errorExit("--max-long-side applies to screen, window and region mode; isolated mode takes --output-size", code: "invalid-argument")
@@ -149,6 +188,9 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         heartbeatSec: number("--heartbeat-sec", default: 0, min: 0, max: 3600),
         maxMb: optionalNumber("--max-mb", min: 0.01, max: 1_000_000),
         controlStdin: controlStdin,
+        audioSources: audioSources,
+        micDevice: micDevice,
+        audioSidecar: audioSidecar,
         startWarnings: startWarnings
     )
 }
@@ -367,6 +409,13 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private(set) var captured = 0
     private(set) var warnings: [String] = []
     private var writer: AVAssetWriter?
+    /// The audio receiver, told when the movie session starts so its tracks begin at the same moment.
+    var audio: NativeAudio?
+    /// Movie tracks per audio source, added before the writer starts.
+    private(set) var audioInputs: [CaptureAudioSource: AVAssetWriterInput] = [:]
+    /// `set-fps` and `set-threshold` change these while recording.
+    private var activeFps: Double
+    private var idleFps: Double
     private var writerInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var videoAppendFailed = false
@@ -394,6 +443,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                                  maxBytes: maxBytes(megabytes: options.maxMb))
         self.rate = FrameRatePolicy(activeFps: options.activeFps, idleFps: options.idleFps, quietMs: options.quietMs)
         self.heartbeat = HeartbeatPolicy(seconds: options.heartbeatSec)
+        self.activeFps = options.activeFps
+        self.idleFps = options.idleFps
         self.currentDisplayID = displayID
         self.warnings = options.startWarnings
     }
@@ -557,6 +608,15 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         input.expectsMediaDataInRealTime = true
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
         writer.add(input)
+        for source in options.audioSources {
+            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aacSettings(channels: audioChannelCount(source)))
+            audioInput.expectsMediaDataInRealTime = true
+            guard writer.canAdd(audioInput) else {
+                throw NSError(domain: "ax-tool", code: 1, userInfo: [NSLocalizedDescriptionKey: "the movie cannot take a \(source.rawValue) audio track"])
+            }
+            writer.add(audioInput)
+            audioInputs[source] = audioInput
+        }
         guard writer.startWriting() else {
             throw writer.error ?? NSError(domain: "ax-tool", code: 1, userInfo: [NSLocalizedDescriptionKey: "video writer refused to start"])
         }
@@ -592,6 +652,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         if firstTimestamp == nil {
             firstTimestamp = timestamp
             writer?.startSession(atSourceTime: timestamp)
+            audio?.movieStarted(at: timestamp)
         }
         lastTimestamp = timestamp
         captured += 1
@@ -720,6 +781,43 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     var failure: Error? { queue.sync { streamError } }
+
+    /// The first frame's host time: the origin of every timestamp in the result, audio included.
+    var origin: CMTime? { queue.sync { firstTimestamp } }
+
+    /// `set-fps`: a new rate pair, applied at once at the new active rate.
+    func setFrameRates(active: Double?, idle: Double?) -> (active: Double, idle: Double) {
+        queue.sync {
+            activeFps = active ?? activeFps
+            idleFps = min(idle ?? idleFps, activeFps)
+            rate = FrameRatePolicy(activeFps: activeFps, idleFps: idleFps,
+                                   quietMs: options.quietMs)
+            applyRate(activeFps)
+            return (activeFps, idleFps)
+        }
+    }
+
+    /// `set-threshold`.
+    func setThreshold(_ percent: Double) {
+        queue.sync { policy.setThreshold(percent) }
+    }
+
+    /// The next frame is kept as the first one at a new output size.
+    func noteResize() {
+        queue.async { [self] in policy.restart(reason: "resize") }
+    }
+
+    /// A change to the live configuration, made on the frame queue; the caller hands the result to the stream.
+    func changeConfiguration(_ change: (SCStreamConfiguration) -> Void) -> SCStreamConfiguration {
+        queue.sync {
+            change(configuration)
+            return configuration
+        }
+    }
+
+    var rateSettings: (active: Double, idle: Double, threshold: Double) {
+        queue.sync { (activeFps, idleFps, policy.thresholdPercent) }
+    }
 
     var videoSucceeded: Bool { options.videoOut == nil || (writer?.status == .completed && !videoAppendFailed) }
 
@@ -926,6 +1024,7 @@ func cmdCaptureScreen() {
         configuration.ignoreShadowsSingleWindow = true
         configuration.preservesAspectRatio = true
     }
+    configureAudio(configuration, options)
 
     let recorder = NativeRecorder(options: options, configuration: configuration, displayID: display.id)
     do {
@@ -933,17 +1032,24 @@ func cmdCaptureScreen() {
     } catch {
         errorExit("cannot open --video-out: \(error.localizedDescription)")
     }
+    let audio = options.audioSources.isEmpty ? nil : NativeAudio(
+        sources: options.audioSources, movieInputs: recorder.audioInputs,
+        sidecarDirectory: options.audioSidecar ? URL(fileURLWithPath: options.outDir) : nil)
+    recorder.audio = audio
     let stream = SCStream(filter: filter, configuration: configuration, delegate: recorder)
     recorder.stream = stream
     do {
         try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
+        if let audio {
+            try addAudioOutputs(audio, to: stream)
+        }
         try awaitResult { try await stream.startCapture() }
     } catch {
         errorExit("recording never started: \(error.localizedDescription)", code: captureErrorCode(error))
     }
     recorder.startHeartbeat()
     let host = ScreenStreamHost(options: options, recorder: recorder, configuration: configuration, indicator: indicator,
-                                stream: stream, display: display)
+                                stream: stream, display: display, pointSize: pointSize, audio: audio)
     if options.controlStdin {
         CaptureEvents.enabled = true
         host.startControlChannel()
@@ -999,6 +1105,7 @@ func cmdCaptureScreen() {
     }
     // Drain the frame and encode queues so the last kept frame is on disk before the sheet is built.
     recorder.drainFrames()
+    audio?.close()
     recorder.finishVideo(stoppedAt: stoppedAt)
     let endedEarly = captureEarlyEnd(cancelled: cancelled || host.stopRequested, displayRemoved: host.displayRemoved,
                                      streamFailed: streamFailure != nil)
@@ -1029,7 +1136,11 @@ func cmdCaptureScreen() {
         "indicator": options.selection.indicator, "indicatorCaptured": false,
         "displayId": display.id, "followFocus": options.followFocus, "heartbeatSec": options.heartbeatSec,
         "quietMs": options.quietMs ?? FrameRatePolicy.defaultQuietMs(activeFps: options.activeFps),
+        "audio": options.audioSources.map(\.rawValue), "audioSidecar": options.audioSidecar,
     ]
+    if let micDevice = options.micDevice {
+        recordedOptions["micDevice"] = micDevice
+    }
     if let maxLongSide = options.maxLongSide {
         recordedOptions["maxLongSide"] = maxLongSide
     }
@@ -1048,6 +1159,9 @@ func cmdCaptureScreen() {
         "display": ["id": host.display.id],
         "displays": host.displaysUsed,
     ]
+    if let audio {
+        data["tracks"] = audio.summaries(origin: recorder.origin)
+    }
     if let endedEarly {
         data["endedEarly"] = endedEarly.rawValue
     }
@@ -1074,16 +1188,48 @@ func cmdCaptureScreen() {
 }
 
 /// The stream output size: the selection's size at the display scale, then capped by `--max-long-side`.
-private func recordOutputSize(_ options: RecordOptions, points: CGSize, scale: CGFloat) -> CGSize {
+private func recordOutputSize(_ options: RecordOptions, points: CGSize, scale: CGFloat,
+                              maxLongSide: Int?? = nil) -> CGSize {
     let video = options.videoOut != nil
     let size = options.selection.dimensions(points: points, nativeScale: scale, video: video)
-    return capLongSide(size, maxLongSide: options.maxLongSide, even: video && options.selection.codec == "h264")
+    return capLongSide(size, maxLongSide: maxLongSide ?? options.maxLongSide, even: video && options.selection.codec == "h264")
 }
 
 /// `no-permission` when ScreenCaptureKit says the user declined, else `failed`.
 private func captureErrorCode(_ error: Error) -> String {
     let error = error as NSError
     return error.domain == SCStreamErrorDomain && error.code == SCStreamError.userDeclined.rawValue ? "no-permission" : "failed"
+}
+
+/// System audio and the microphone on the stream configuration. The caller checked the OS version for the microphone.
+private func configureAudio(_ configuration: SCStreamConfiguration, _ options: RecordOptions) {
+    guard !options.audioSources.isEmpty else { return }
+    configuration.sampleRate = 48_000
+    configuration.channelCount = 2
+    if options.audioSources.contains(.system) {
+        configuration.capturesAudio = true
+        configuration.excludesCurrentProcessAudio = true
+    }
+    if options.audioSources.contains(.mic), #available(macOS 15.0, *) {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted:
+            errorExit("microphone access is not granted to the app that started ax-tool (GenesisTools.app when it is the launcher)",
+                      code: "no-permission")
+        default:
+            break
+        }
+        configuration.captureMicrophone = true
+        configuration.microphoneCaptureDeviceID = options.micDevice
+    }
+}
+
+private func addAudioOutputs(_ audio: NativeAudio, to stream: SCStream) throws {
+    if audio.sources.contains(.system) {
+        try stream.addStreamOutput(audio, type: .audio, sampleHandlerQueue: audio.queue)
+    }
+    if audio.sources.contains(.mic), #available(macOS 15.0, *) {
+        try stream.addStreamOutput(audio, type: .microphone, sampleHandlerQueue: audio.queue)
+    }
 }
 
 /// Owns the stream of a screen, window or region recording. In screen mode it also moves the stream between
@@ -1109,8 +1255,19 @@ private final class ScreenStreamHost {
     /// Ticks since the stream reported an error; a removed display can report it before the display list changes.
     private var deadTicks = 0
 
+    let audio: NativeAudio?
+    /// `set-max-long-side` replaces `--max-long-side`.
+    private var maxLongSide: Int?
+    /// The size in points the stream records: the display in screen mode, else the window or region.
+    private var pointSize: CGSize
+    private var micDevice: String?
+
     init(options: RecordOptions, recorder: NativeRecorder, configuration: SCStreamConfiguration,
-         indicator: RecordingIndicator, stream: SCStream, display: DisplayGeometry) {
+         indicator: RecordingIndicator, stream: SCStream, display: DisplayGeometry, pointSize: CGSize, audio: NativeAudio?) {
+        self.audio = audio
+        self.maxLongSide = options.maxLongSide
+        self.pointSize = pointSize
+        self.micDevice = options.micDevice
         self.options = options
         self.recorder = recorder
         self.configuration = configuration
@@ -1152,7 +1309,26 @@ private final class ScreenStreamHost {
         case .pause, .resume:
             let paused = command == .pause
             recorder.setPaused(paused)
+            audio?.setPaused(paused)
             CaptureEvents.emit(["event": "state", "state": paused ? "paused" : "recording"])
+        case .mute(let source), .unmute(let source):
+            let muted: Bool
+            if case .mute = command { muted = true } else { muted = false }
+            guard let audio, audio.setMuted(source, muted) else {
+                CaptureEvents.error("invalid-argument", "\(source.rawValue) audio is not recorded; start with --audio \(source.rawValue)")
+                return
+            }
+            CaptureEvents.emit(["event": "state", "state": recorder.status()["state"] ?? "recording", "muted": audio.mutedState])
+        case .setMic(let deviceId):
+            setMic(deviceId)
+        case .setFps(let active, let idle):
+            _ = recorder.setFrameRates(active: active, idle: idle)
+            emitSettings()
+        case .setThreshold(let percent):
+            recorder.setThreshold(percent)
+            emitSettings()
+        case .setMaxLongSide(let px):
+            setMaxLongSide(px)
         case .stop:
             stopRequested = true
         case .status:
@@ -1177,6 +1353,68 @@ private final class ScreenStreamHost {
                 return
             }
             switchLive(to: id)
+        }
+    }
+
+    func emitSettings() {
+        let rates = recorder.rateSettings
+        var event: [String: Any] = ["event": "settings", "activeFps": rates.active, "idleFps": rates.idle,
+                                    "threshold": rates.threshold, "maxLongSide": maxLongSide ?? NSNull()]
+        if let audio {
+            event["muted"] = audio.mutedState
+            event["micDevice"] = micDevice ?? NSNull()
+        }
+        CaptureEvents.emit(event)
+    }
+
+    private func setMic(_ deviceId: String) {
+        guard let audio, audio.sources.contains(.mic) else {
+            CaptureEvents.error("invalid-argument", "the microphone is not recorded; start with --audio mic")
+            return
+        }
+        guard audioDevices().contains(where: { $0.uid == deviceId && $0.inputChannels > 0 }) else {
+            CaptureEvents.error("device-missing", "no input device \(deviceId); run `ax-tool audio-devices`")
+            return
+        }
+        guard #available(macOS 15.0, *) else {
+            CaptureEvents.error("unsupported", "microphone capture needs macOS 15 or newer")
+            return
+        }
+        let configuration = recorder.changeConfiguration { $0.microphoneCaptureDeviceID = deviceId }
+        let stream = self.stream
+        Task {
+            do {
+                try await stream.updateConfiguration(configuration)
+                DispatchQueue.main.async {
+                    self.micDevice = deviceId
+                    self.emitSettings()
+                }
+            } catch {
+                CaptureEvents.error("failed", "the stream refused the microphone \(deviceId): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func setMaxLongSide(_ px: Int?) {
+        guard options.videoOut == nil else {
+            CaptureEvents.error("unsupported", "a movie keeps one size; set-max-long-side works only without --video-out")
+            return
+        }
+        maxLongSide = px
+        let size = recordOutputSize(options, points: pointSize, scale: display.scale, maxLongSide: px)
+        let configuration = recorder.changeConfiguration {
+            $0.width = Int(size.width)
+            $0.height = Int(size.height)
+        }
+        recorder.noteResize()
+        let stream = self.stream
+        Task {
+            do {
+                try await stream.updateConfiguration(configuration)
+                DispatchQueue.main.async { self.emitSettings() }
+            } catch {
+                CaptureEvents.error("failed", "the stream refused the new size: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1221,6 +1459,7 @@ private final class ScreenStreamHost {
 
     private func adopt(_ geometry: DisplayGeometry) {
         display = geometry
+        pointSize = geometry.bounds.size
         displayLost = false
         if !displaysUsed.contains(geometry.id) {
             displaysUsed.append(geometry.id)
@@ -1230,7 +1469,8 @@ private final class ScreenStreamHost {
 
     private func outputSize(for geometry: DisplayGeometry) -> CGSize? {
         // A movie keeps one size from start to end; the stream letterboxes another display into it.
-        options.videoOut == nil ? recordOutputSize(options, points: geometry.bounds.size, scale: geometry.scale) : nil
+        options.videoOut == nil
+            ? recordOutputSize(options, points: geometry.bounds.size, scale: geometry.scale, maxLongSide: maxLongSide) : nil
     }
 
     @available(macOS 14.0, *)
@@ -1284,6 +1524,9 @@ private final class ScreenStreamHost {
             }
             let next = SCStream(filter: filter, configuration: configuration, delegate: recorder)
             try next.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
+            if let audio {
+                try addAudioOutputs(audio, to: next)
+            }
             try awaitResult { try await next.startCapture() }
             stream = next
             recorder.stream = next

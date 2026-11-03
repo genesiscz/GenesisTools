@@ -202,7 +202,7 @@ public func mergeMotionRegions(_ regions: [BlockRect], maxBoxes: Int) -> [BlockR
 /// the last kept frame, not the previous captured one, is what stops a slow fade from being
 /// sampled as a hundred identical-looking steps.
 public struct KeepPolicy {
-    public let thresholdPercent: Double
+    public private(set) var thresholdPercent: Double
     public let maxFrames: Int
     /// Bytes of kept frames after which no more are kept (`--max-mb`); nil means no byte cap.
     public let maxBytes: Int?
@@ -239,6 +239,11 @@ public struct KeepPolicy {
 
     /// True once either cap is reached: no more frames are kept, motion is still measured.
     public var capReached: Bool { keptCount >= maxFrames || maxBytes.map { bytesWritten >= $0 } == true }
+
+    /// `set-threshold`: later frames are compared with the new cutoff.
+    public mutating func setThreshold(_ percent: Double) {
+        thresholdPercent = max(0, percent)
+    }
 
     /// Counts the bytes of a frame that reached the disk, for the byte cap.
     public mutating func noteWritten(bytes: Int) {

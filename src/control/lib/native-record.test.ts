@@ -173,6 +173,56 @@ describe("nativeCaptureArgv", () => {
         );
     });
 
+    it("passes audio sources, the microphone and the sidecar flag", () => {
+        expect(
+            nativeCaptureArgv(
+                {
+                    mode: "screen",
+                    duration: 5,
+                    videoOut: "/v.mp4",
+                    audio: ["system", "mic"],
+                    micDevice: "BuiltInMicrophoneDevice",
+                    audioSidecar: true,
+                },
+                "/o"
+            ).slice(-7)
+        ).toEqual([
+            "--video-out",
+            "/v.mp4",
+            "--audio",
+            "system,mic",
+            "--mic-device",
+            "BuiltInMicrophoneDevice",
+            "--audio-sidecar",
+        ]);
+        const screen = { mode: "screen", duration: 1 } as const;
+        expect(() => validateCaptureOptions({ ...screen, audio: ["system"] })).toThrow(/videoOut/);
+        expect(() => validateCaptureOptions({ ...screen, audio: [], audioSidecar: true })).toThrow(/audio/);
+        expect(() => validateCaptureOptions({ ...screen, audio: ["mic", "mic"], audioSidecar: true })).toThrow(/once/);
+        expect(() =>
+            validateCaptureOptions({
+                ...screen,
+                audio: ["system"],
+                audioSidecar: true,
+                micDevice: "BuiltInMicrophoneDevice",
+            })
+        ).toThrow(/micDevice/);
+        expect(() =>
+            validateCaptureOptions({
+                mode: "isolated",
+                windowIds: [12],
+                duration: 1,
+                audio: ["system"],
+                audioSidecar: true,
+            })
+        ).toThrow(/region mode/);
+        expect(() => validateCaptureOptions({ ...screen, micDevice: "x" })).toThrow(/need audio/);
+        expect(() =>
+            validateCaptureOptions({ ...screen, backend: "peekaboo", audio: ["system"], videoOut: "/v.mp4" })
+        ).toThrow(/backend native/);
+        expect(() => validateCaptureOptions({ ...screen, audio: ["mic"], audioSidecar: true })).not.toThrow();
+    });
+
     it("rejects the native screen options where they do not apply", () => {
         const screen = { mode: "screen", duration: 1 } as const;
         expect(() => validateCaptureOptions({ ...screen, displayId: 0 })).toThrow(/displayId/);

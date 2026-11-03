@@ -120,6 +120,9 @@ PLAN CONTRACT (TypeScript)
       quietMs?: number;           // native: calm ms before the idle rate (default 8 frames at the active rate)
       heartbeatSec?: number;      // native: keep a frame at least every N s while nothing changes (0 = off)
       maxMb?: number;             // native: stop keeping frames after N MB written; sampling continues
+      audio?: ("system" | "mic")[]; // native, not isolated: audio tracks in videoOut and/or .m4a sidecars
+      micDevice?: string;         // native: input UID from \`ax-tool audio-devices\` (needs audio "mic")
+      audioSidecar?: boolean;     // native: also write audio-<source>.m4a next to the frames
       app?: string;               // window mode
       windowTitle?: string;       // window mode narrowing
       windowIndex?: number;       // window mode narrowing. AX-ordered, so the native recorder
@@ -481,6 +484,12 @@ export interface CaptureSpec {
     heartbeatSec?: number;
     /** Native: stop keeping frames after N MB were written; sampling continues. */
     maxMb?: number;
+    /** Native, not isolated: audio sources, each its own track in videoOut and/or an `.m4a` sidecar. */
+    audio?: ("system" | "mic")[];
+    /** Native: the microphone's input UID from `ax-tool audio-devices`; needs audio "mic". */
+    micDevice?: string;
+    /** Native: also write `audio-<source>.m4a` next to the frames. */
+    audioSidecar?: boolean;
     countdownSec?: number;
     noRemote?: boolean;
     captureEngine?: "cg" | "sc";

@@ -11,8 +11,18 @@ export const CAPTURE_CODEC_VALUES = ["h264", "prores4444"] as const;
 /** Options only the native recorder (`ax-tool capture`) has; they are fields of `CaptureSpec`. */
 export type NativeCaptureOptions = Pick<
     CaptureSpec,
-    "displayId" | "followFocus" | "maxLongSide" | "quietMs" | "heartbeatSec" | "maxMb"
+    | "displayId"
+    | "followFocus"
+    | "maxLongSide"
+    | "quietMs"
+    | "heartbeatSec"
+    | "maxMb"
+    | "audio"
+    | "micDevice"
+    | "audioSidecar"
 >;
+
+export const CAPTURE_AUDIO_SOURCES = ["system", "mic"] as const;
 
 /**
  * argv for `ax-tool capture`, the ScreenCaptureKit recorder. The runner prepends the binary
@@ -128,6 +138,18 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         }
     }
 
+    if (cap.audio?.length) {
+        argv.push("--audio", cap.audio.join(","));
+
+        if (cap.micDevice) {
+            argv.push("--mic-device", cap.micDevice);
+        }
+
+        if (cap.audioSidecar) {
+            argv.push("--audio-sidecar");
+        }
+    }
+
     return argv;
 }
 
@@ -186,6 +208,35 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         }
     }
 
+    if (
+        cap.audio !== undefined &&
+        (!Array.isArray(cap.audio) ||
+            !cap.audio.length ||
+            cap.audio.some((source) => !CAPTURE_AUDIO_SOURCES.includes(source)) ||
+            new Set(cap.audio).size !== cap.audio.length)
+    ) {
+        throw new Error('audio must list "system" and/or "mic" once each');
+    }
+
+    if (cap.audio?.length && cap.mode === "isolated") {
+        throw new Error("audio applies to screen, window and region mode");
+    }
+
+    if (cap.audio?.length && !cap.videoOut && !cap.audioSidecar) {
+        throw new Error("audio needs videoOut (tracks in the movie) or audioSidecar (.m4a files)");
+    }
+
+    if ((cap.micDevice !== undefined || cap.audioSidecar !== undefined) && !cap.audio?.length) {
+        throw new Error("micDevice and audioSidecar need audio");
+    }
+
+    if (
+        cap.micDevice !== undefined &&
+        (typeof cap.micDevice !== "string" || !cap.micDevice || !cap.audio?.includes("mic"))
+    ) {
+        throw new Error('micDevice needs a device UID string and audio "mic"');
+    }
+
     if (cap.maxLongSide !== undefined && cap.mode === "isolated") {
         throw new Error("maxLongSide applies to screen, window and region mode; isolated mode takes outputSize");
     }
@@ -207,10 +258,13 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.quietMs,
         cap.heartbeatSec,
         cap.maxMb,
+        cap.audio,
+        cap.micDevice,
+        cap.audioSidecar,
     ];
     if (cap.backend === "peekaboo" && (cap.mode === "isolated" || extended.some((value) => value !== undefined))) {
         throw new Error(
-            "Isolated selection, output geometry, codec, transparency, indicator, displayId, followFocus and frame tuning options require backend native"
+            "Isolated selection, output geometry, codec, transparency, indicator, displayId, followFocus, frame tuning and audio options require backend native"
         );
     }
 
