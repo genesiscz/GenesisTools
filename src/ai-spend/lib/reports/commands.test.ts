@@ -886,6 +886,15 @@ describe("--harness, the design name of --sources and --backend", () => {
         expect(days).toEqual([7, 2]);
     });
 
+    test("pivot --heatmap prints the hour-by-weekday grid in the text output", async () => {
+        await spend("pivot", "--heatmap");
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(stdout).toContain("average dollars by hour of the week");
+        expect(stdout).toContain("Mon  ");
+        expect(stdout).toContain("Sun  ");
+    });
+
     test("workers takes --harness for --backend", async () => {
         await spend("workers", "--harness", "nonesuch");
 
