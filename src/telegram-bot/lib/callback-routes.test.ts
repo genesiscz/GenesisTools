@@ -69,7 +69,9 @@ describe("F11: decisions answered in Telegram", () => {
         const api = new FakeTelegramMessagesApi();
         const store = memoryActTokenStore();
         const row = decision({ id: "d_5_s-five", number: 5, sessionId: "s-five" });
-        await postDecisionsToTelegram([row], { bot, api, store, now: NOW });
+        // Its own chat: the message memory is shared by the file, and another test's message 1 in CHAT would match.
+        const own = { ...bot, chats: { commands: 7005 } };
+        await postDecisionsToTelegram([row], { bot: own, api, store, now: NOW });
 
         const calls: AnswerDecisionInput[] = [];
         const actDeps: ActDeps = {
@@ -84,14 +86,21 @@ describe("F11: decisions answered in Telegram", () => {
             d: decisionPressHandler({ actDeps: async () => actDeps, now: () => NOW + 1 }),
         });
         const [message] = api.messages;
-        const press = { id: "cbq-1", data: message.buttons[0][1].data, chatId: CHAT, messageId: message.message };
+        const press = { id: "cbq-1", data: message.buttons[0][1].data, chatId: 7005, messageId: message.message };
 
         await answerPress({ api, router, press });
-        const retry = await router.route(press);
+        const edited = message.text;
+        // Telegram's retry of the same press goes through the whole path, edit included.
+        const retry = await answerPress({ api, router, press });
 
+        expect(retry.edit).toBeUndefined();
+        expect(message.text).toBe(edited);
         expect(calls).toHaveLength(1);
         expect(calls[0]).toMatchObject({ session: "s-five", number: 5, option: "b", deliveryKey: "telegram:cbq-1" });
-        expect(api.answered).toEqual([{ id: "cbq-1", text: "Sent b" }]);
+        expect(api.answered).toEqual([
+            { id: "cbq-1", text: "Sent b" },
+            { id: "cbq-1", text: "Sent b" },
+        ]);
         expect(message.text).toContain("Ship the cache?");
         expect(message.text).toContain("→ b sent to the agent (cmux · work)");
         expect(message.buttons).toEqual([]);
