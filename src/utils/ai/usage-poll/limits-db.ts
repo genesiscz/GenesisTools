@@ -222,6 +222,22 @@ interface ColumnInfo {
     name: string;
 }
 
+/** The series query's order: provider, account, window key, then time, a carried state before a row at the same time. */
+function compareSeriesRows(a: SeriesRow, b: SeriesRow): number {
+    for (const [x, y] of [
+        [a.provider, b.provider],
+        [a.account, b.account],
+        [a.key, b.key],
+        [a.t, b.t],
+    ]) {
+        if (x !== y) {
+            return x < y ? -1 : 1;
+        }
+    }
+
+    return Number(Boolean(b.seed)) - Number(Boolean(a.seed));
+}
+
 export class UsageLimitsDb {
     /** Undefined on a read-only view, which has no writer to prune or migrate with. */
     private readonly claudeDb: ClaudeDatabase | undefined;
@@ -534,36 +550,36 @@ export class UsageLimitsDb {
             return [];
         }
 
-        const where: string[] = ["timestamp >= ?", "timestamp <= ?"];
-        const params: Array<string | null> = [query.from, query.to];
+        const filters: string[] = [];
+        const filterParams: string[] = [];
 
         if (query.provider) {
-            where.push("provider = ?");
-            params.push(query.provider);
+            filters.push("provider = ?");
+            filterParams.push(query.provider);
         }
 
         if (query.accounts) {
-            where.push(`account_name IN (${query.accounts.map(() => "?").join(", ")})`);
-            params.push(...query.accounts);
+            filters.push(`account_name IN (${query.accounts.map(() => "?").join(", ")})`);
+            filterParams.push(...query.accounts);
         }
 
         if (query.keys) {
-            where.push(`bucket IN (${query.keys.map(() => "?").join(", ")})`);
-            params.push(...query.keys);
+            filters.push(`bucket IN (${query.keys.map(() => "?").join(", ")})`);
+            filterParams.push(...query.keys);
         }
 
         const stmt = this.handle.prepare(`
             SELECT provider, account_name, bucket, timestamp, utilization, resets_at, severity, scope_model, kind,
                    availability
             FROM usage_snapshots
-            WHERE ${where.join(" AND ")}
+            WHERE ${["timestamp >= ?", "timestamp <= ?", ...filters].join(" AND ")}
             ORDER BY provider, account_name, bucket, timestamp ASC
         `);
-        const rows = stmt.all(...params) as SeriesSqlRow[];
+        const rows = stmt.all(query.from, query.to, ...filterParams) as SeriesSqlRow[];
         // Provider belongs in the identity: an unscoped query reads every provider, and two
         // providers that happen to share an account name and a window key would otherwise
         // have their points interleaved into one line.
-        const shaped: SeriesRow[] = rows.map((row) => ({
+        const toRow = (row: SeriesSqlRow): SeriesRow => ({
             provider: row.provider ?? DEFAULT_LIMITS_PROVIDER,
             account: row.account_name,
             key: row.bucket,
@@ -574,10 +590,18 @@ export class UsageLimitsDb {
             resetsAt: row.resets_at,
             severity: normalizeNullableSeverity(row.severity),
             availability: storedAvailability(row.availability),
-        }));
+        });
+        const seeds = this.seriesSeeds(query.from, filters, filterParams).map(
+            (row): SeriesRow => ({ ...toRow(row), t: query.from, seed: true })
+        );
+        const shaped = [...seeds, ...rows.map(toRow)].sort(compareSeriesRows);
         const kinds = query.kinds ? new Set(query.kinds) : undefined;
         const groups = groupSeriesRows(shaped).filter(
-            (group) => !kinds || (group.kind !== null && kinds.has(group.kind))
+            (group) =>
+                (!kinds || (group.kind !== null && kinds.has(group.kind))) &&
+                // A window with no row in the range shows only while its carried state is "gone"; a quiet
+                // limited window stays out, as before.
+                group.rows.some((row) => !row.seed || row.availability === "absent")
         );
         const opts = {
             step: query.step ?? autoSeriesStepMs(query.from, query.to),
@@ -591,6 +615,35 @@ export class UsageLimitsDb {
 
         const agg = query.agg ?? "last";
         return groups.map((group) => shapePoints(group, agg, opts));
+    }
+
+    /**
+     * Each window's last row before `from`, when it recorded its availability: absent windows are written once per
+     * change, so the state at the range's start is often a row before it. One indexed lookup per window.
+     */
+    private seriesSeeds(from: string, filters: readonly string[], filterParams: readonly string[]): SeriesSqlRow[] {
+        const windows = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+
+        return this.handle
+            .prepare(`
+                SELECT provider, account_name, bucket, timestamp, utilization, resets_at, severity, scope_model, kind,
+                       availability
+                FROM usage_snapshots
+                WHERE availability IS NOT NULL
+                  AND id IN (
+                    SELECT (
+                        SELECT inner_row.id FROM usage_snapshots AS inner_row
+                        WHERE inner_row.account_name = w.account_name
+                          AND inner_row.bucket = w.bucket
+                          AND inner_row.provider IS w.provider
+                          AND inner_row.timestamp < ?
+                        ORDER BY inner_row.timestamp DESC, inner_row.id DESC
+                        LIMIT 1
+                    )
+                    FROM (SELECT DISTINCT provider, account_name, bucket FROM usage_snapshots ${windows}) AS w
+                  )
+            `)
+            .all(from, ...filterParams) as SeriesSqlRow[];
     }
 
     /**

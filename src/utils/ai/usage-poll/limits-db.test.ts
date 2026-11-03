@@ -989,6 +989,47 @@ describe("UsageLimitsDb", () => {
             }
         });
 
+        test("the state recorded before the range carries into it: a window gone earlier, and the start of a change", () => {
+            const at = (hour: number) => new Date(Date.UTC(2026, 10, 1, hour)).toISOString();
+            const reading = {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "anthropic-sub",
+                kind: "session",
+            };
+            const absent = { ...reading, availability: "absent" as const };
+            const store = new UsageLimitsDb(":memory:");
+
+            try {
+                // "work" lost its window long before the range; "personal" was limited before it and goes in it;
+                // "side" is limited and quiet, with no row in the range.
+                store.recordSnapshotV2("work", "five_hour", 10, at(0), reading);
+                store.recordSnapshotV2("work", "five_hour", 0, at(1), absent);
+                store.recordSnapshotV2("personal", "five_hour", 30, at(2), reading);
+                store.recordSnapshotV2("personal", "five_hour", 0, at(12), absent);
+                store.recordSnapshotV2("side", "five_hour", 50, at(3), reading);
+
+                const series = store.getSeries({ from: at(10), to: at(20), agg: "raw" });
+                const byAccount = Object.fromEntries(series.map((entry) => [entry.account, entry]));
+
+                expect(Object.keys(byAccount).sort()).toEqual(["personal", "work"]);
+                expect(byAccount.work.points).toEqual([]);
+                expect(byAccount.work.availability).toEqual([{ from: at(10), to: at(20), state: "absent" }]);
+                expect(byAccount.personal.points).toEqual([]);
+                expect(byAccount.personal.availability).toEqual([
+                    { from: at(10), to: at(12), state: "limited" },
+                    { from: at(12), to: at(20), state: "absent" },
+                ]);
+                expect(store.getSeries({ from: at(10), to: at(20), agg: "minmax" }).map((e) => e.account)).toEqual([
+                    "personal",
+                    "work",
+                ]);
+            } finally {
+                store.close();
+            }
+        });
+
         test("a row from before the column reads as unknown", () => {
             const row = (t: string, availability: "limited" | "absent" | null) => ({
                 provider: "anthropic-sub",

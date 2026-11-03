@@ -74,6 +74,11 @@ export interface SeriesRow {
     severity: string | null;
     /** The stored state; null is a row from before the column. An `absent` row carries no reading. */
     availability: "limited" | "absent" | null;
+    /**
+     * The window's last row before the range, moved to the range's start: it carries the recorded state into the
+     * range (a window gone for two days has no row in the last 24 hours) and is never a reading.
+     */
+    seed?: boolean;
 }
 
 export interface SeriesGroup extends Omit<SeriesEntryBase, "resets" | "availability"> {
@@ -283,9 +288,9 @@ export function availabilitySpans(rows: readonly SeriesRow[], to: string): Avail
     return spans;
 }
 
-/** The rows that carry a reading: every row but the ones that only mark the window gone. */
+/** The rows that carry a reading: every row but the ones that only mark the window gone, and the carried state. */
 function readings(rows: readonly SeriesRow[]): SeriesRow[] {
-    return rows.filter((row) => row.availability !== "absent");
+    return rows.filter((row) => !row.seed && row.availability !== "absent");
 }
 
 function resetsOf(rows: readonly SeriesRow[], roughlyEqual: ShapeOptions["roughlyEqual"]) {
