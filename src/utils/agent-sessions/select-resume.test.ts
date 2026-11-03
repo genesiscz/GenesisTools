@@ -493,6 +493,23 @@ describe("sessions already running in a cmux tab", () => {
         expect(choice?.action).toBe("focus");
     });
 
+    // The only match came from the transcript, so its name does not hold the query. It still runs in a tab, and
+    // resuming it without asking opened a second process on one session.
+    test("a lone transcript match that already runs opens the picker with its tab on top", async () => {
+        const mentions = session("mentions", "billing");
+        const { shown, pick } = picker(() => 0);
+        const choice = await chooseResume({
+            adapter: adapter([], [mentions]),
+            query: "invoice",
+            interactive: true,
+            running: async () => [tab("mentions", "billing")],
+            pick,
+        });
+
+        expect(shown.length).toBe(1);
+        expect(choice).toEqual({ action: "focus", running: tab("mentions", "billing") });
+    });
+
     test("a running session whose name holds the query is offered even outside the history matches", async () => {
         const { shown, pick } = picker(() => 0);
         const choice = await chooseResume({

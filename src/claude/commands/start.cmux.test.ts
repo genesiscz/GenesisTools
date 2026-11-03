@@ -12,6 +12,7 @@ import {
     buildLaunchArgs,
     cmuxPermissionArgs,
     passthroughHandlesSession,
+    resolveResumeArgs,
     resumedSessionIdOf,
     splitStartOperands,
     stickyResumePick,
@@ -299,6 +300,50 @@ describe("resumedSessionIdOf", () => {
         expect(resumedSessionIdOf(["--session-id=abc-123"])).toBeNull();
         expect(resumedSessionIdOf(["--resume"])).toBeNull();
         expect(resumedSessionIdOf(["--resume", "--model"])).toBeNull();
+    });
+});
+
+// `tools claude run <account> --resume` with no query handed Claude's own picker a bare `--resume`. That picker
+// cannot know which sessions run in cmux, so picking one that ran in another tab opened a second process on it
+// (2026-11-03). In a terminal the bare flag now goes through the same picker as a query, which marks the running
+// ones and focuses their tab.
+describe("resolveResumeArgs", () => {
+    const picked = { sessionId: "11111111-1111-4111-8111-111111111111", name: "invoice" };
+
+    test("a bare --resume in a terminal goes through the shared picker", async () => {
+        const queries: Array<string | undefined> = [];
+        const resume = await resolveResumeArgs({ resume: true }, [], {
+            interactive: true,
+            pick: async (query) => {
+                queries.push(query);
+                return picked;
+            },
+        });
+
+        expect(queries).toEqual([undefined]);
+        expect(resume).toEqual({ args: ["--resume", picked.sessionId], title: "invoice" });
+    });
+
+    test("a query goes through the same picker", async () => {
+        const resume = await resolveResumeArgs({ resume: "invoice" }, [], {
+            interactive: true,
+            pick: async () => picked,
+        });
+
+        expect(resume).toEqual({ args: ["--resume", picked.sessionId], title: "invoice" });
+    });
+
+    test("NEGATIVE CONTROL: without a terminal, or for an embedding app, a bare --resume still reaches claude as is", async () => {
+        const pick = async (): Promise<typeof picked> => {
+            throw new Error("the picker must not open");
+        };
+
+        expect(await resolveResumeArgs({ resume: true }, [], { interactive: false, pick })).toEqual({
+            args: ["--resume"],
+        });
+        expect(await resolveResumeArgs({ resume: true, sdk: true }, [], { interactive: true, pick })).toEqual({
+            args: ["--resume"],
+        });
     });
 });
 

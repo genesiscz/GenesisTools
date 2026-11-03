@@ -874,9 +874,20 @@ async function offerLimitKilledResume(): Promise<string[]> {
     return picked ? ["--resume", picked] : [];
 }
 
-async function resolveResumeArgs(
-    opts: StartOptions,
-    passthrough: string[]
+/**
+ * The claude arguments for `--continue` / `--resume [query]`. A resume in a terminal goes through
+ * `pickSessionForResume`, bare or with a query: that picker knows which sessions already run in a cmux tab and
+ * focuses the tab instead of returning one. A bare `--resume` handed to Claude's own picker could not know, and on
+ * 2026-11-03 picking a session that ran in another tab opened a second process on it. Without a terminal, or for an
+ * embedding app (`--sdk`), a bare `--resume` still reaches claude as is.
+ */
+export async function resolveResumeArgs(
+    opts: Pick<StartOptions, "continue" | "resume" | "sdk">,
+    passthrough: string[],
+    deps: {
+        interactive?: boolean;
+        pick?: (query: string | undefined) => Promise<{ sessionId: string; name: string }>;
+    } = {}
 ): Promise<{ args: string[]; title?: string }> {
     if (opts.continue) {
         if (opts.resume) {
@@ -886,12 +897,14 @@ async function resolveResumeArgs(
         return { args: ["--continue"] };
     }
 
-    if (opts.resume === true) {
+    const pick = deps.pick ?? ((query: string | undefined) => pickSessionForResume(query, { allProjects: false }));
+
+    if (opts.resume === true && (opts.sdk || !(deps.interactive ?? isInteractive()))) {
         return { args: ["--resume"] };
     }
 
-    if (typeof opts.resume === "string") {
-        const session = await pickSessionForResume(opts.resume, { allProjects: false });
+    if (opts.resume) {
+        const session = await pick(opts.resume === true ? undefined : opts.resume);
         if (!/^[\w-]+$/.test(session.sessionId)) {
             throw new Error(`Invalid session ID: ${session.sessionId}`);
         }
@@ -1302,7 +1315,10 @@ export function registerStartCommand(program: Command): void {
             "-e, --effort <level>",
             "Reasoning effort: claude's own --effort, or the :<effort> suffix for an ai-proxy target (account/provider)"
         )
-        .option("-r, --resume [query]", "Resume a session: bare uses claude's own picker, query searches locally")
+        .option(
+            "-r, --resume [query]",
+            "Resume a session: bare lists this folder's sessions, a query searches; a session already running in cmux is focused"
+        )
         .option("-c, --continue", "Continue the most recent session")
         .option(
             "--keychain",

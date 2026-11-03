@@ -194,7 +194,10 @@ function processState(pid: number): string | null {
 }
 
 /** The running sessions are an offer on top of the resume, never a reason it fails. */
-async function readRunning(kind: string, load: () => Promise<RunningCmuxSession[]>): Promise<RunningCmuxSession[]> {
+export async function readRunning(
+    kind: string,
+    load: () => Promise<RunningCmuxSession[]>
+): Promise<RunningCmuxSession[]> {
     try {
         return await profiler.scope("agent-sessions").measureAsync(`resume.running.${kind}`, load);
     } catch (error) {
@@ -223,14 +226,26 @@ export function runningResumeHits(running: RunningCmuxSession[], query: string):
     );
 }
 
+/**
+ * The scanned sessions a picker may offer to focus: still running, in another tab, one per session id (a session
+ * open in two tabs is focused in either).
+ */
+export function focusableRunning(
+    scanned: RunningCmuxSession[],
+    stillRunning: (entry: RunningCmuxSession) => boolean = (entry) => runsElsewhere(entry)
+): RunningCmuxSession[] {
+    return [...new Map(scanned.filter(stillRunning).map((entry) => [entry.sessionId.toLowerCase(), entry])).values()];
+}
+
 /** A running session's row: its history row when the index has it, else what the process scan knows. */
 function runningDisplay(entry: RunningCmuxSession, known: AgentSession[]): SessionDisplayItem {
     const session = known.find((candidate) => candidate.sessionId === entry.sessionId);
 
-    if (session) {
-        return toSessionDisplay(session);
-    }
+    return session ? toSessionDisplay(session) : runningRowDisplay(entry);
+}
 
+/** The row of a running session the history index does not hold: what the process scan knows. */
+export function runningRowDisplay(entry: RunningCmuxSession): SessionDisplayItem {
     return {
         sessionId: entry.sessionId,
         name: entry.title ?? "(unnamed)",
@@ -325,11 +340,17 @@ async function resolveResume(
     }
 
     matches = preferHomeCopies(matches, options.preferredHome);
-    const eligible = ((await runningScan) ?? []).filter(options.stillRunning ?? ((entry) => runsElsewhere(entry)));
-    const allRunning = [...new Map(eligible.map((entry) => [entry.sessionId.toLowerCase(), entry])).values()];
-    const running = fullNativeId
+    const allRunning = focusableRunning((await runningScan) ?? [], options.stillRunning);
+    const named = fullNativeId
         ? allRunning.filter((entry) => entry.sessionId.toLowerCase() === normalized)
         : runningResumeHits(allRunning, trimmed);
+    // The only match is the session the user means, however it matched (a transcript phrase too): when it already
+    // runs, its tab goes on top, or the lone-match rule below resumed a second copy without asking.
+    const loneRunning =
+        named.length === 0 && matches.length === 1
+            ? allRunning.filter((entry) => entry.sessionId.toLowerCase() === matches[0].sessionId.toLowerCase())
+            : [];
+    const running = [...named, ...loneRunning];
 
     if (!matches.length && !running.length) {
         if (fullNativeId) {
