@@ -58,8 +58,10 @@ export interface UsageEventInput {
 
 export interface UsageEventRow {
     id: number;
-    /** ISO UTC. For a daily count row, the last probe of that day. */
+    /** ISO UTC. For a count row, its last event. */
     ts: string;
+    /** ISO UTC of a count row's first event; `ts` on a single event and on a count row from before the column. */
+    firstTs: string;
     provider: string;
     accountId: string | null;
     accountName: string | null;
@@ -68,7 +70,7 @@ export interface UsageEventRow {
     retryAfterMs: number | null;
     model: string | null;
     detail: string | null;
-    /** Local `YYYY-MM-DD` of a daily count row (`probe`, `probe-refused`); null on a single event. */
+    /** Local `YYYY-MM-DD` of a count row (`probe`, `probe-refused`, one row per hour); null on a single event. */
     day: string | null;
     count: number;
 }
@@ -76,6 +78,7 @@ export interface UsageEventRow {
 interface EventSqlRow {
     id: number;
     ts: string;
+    first_ts: string | null;
     provider: string;
     account_id: string | null;
     account_name: string | null;
@@ -100,9 +103,14 @@ export interface UsageEventQuery {
 }
 
 const DETAIL_MAX = 300;
+const HOUR_MS = 3_600_000;
 
 function isMissingTable(err: unknown): boolean {
     return err instanceof Error && /no such table/.test(err.message);
+}
+
+function isMissingFirstTs(err: unknown): boolean {
+    return err instanceof Error && /no such column: first_ts/.test(err.message);
 }
 
 function inList(column: string, values: readonly string[] | undefined, params: string[]): string {
@@ -119,13 +127,15 @@ export class UsageEventsStore {
 
     /** One event row. Returns its id. */
     insert(event: UsageEventInput): number {
+        const at = (event.at ?? new Date()).toISOString();
         const result = this.db
             .prepare(
-                `INSERT INTO usage_events (ts, provider, account_id, account_name, source, kind, retry_after_ms, model, detail)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO usage_events (ts, first_ts, provider, account_id, account_name, source, kind, retry_after_ms, model, detail)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             )
             .run(
-                (event.at ?? new Date()).toISOString(),
+                at,
+                at,
                 event.provider,
                 event.accountId ?? null,
                 event.accountName ?? null,
@@ -140,30 +150,40 @@ export class UsageEventsStore {
     }
 
     /**
-     * Adds `by` to the daily count row of `(provider, account, kind, model, day)`, creating it on the first event of
-     * the day. A given `detail` replaces the row's; an omitted one keeps it. Read and write run in one immediate
-     * transaction, so two processes at once never write two rows for one day.
+     * Adds `by` to the count row of `(provider, account, kind, model, local day)` for the UTC hour of `at`, creating
+     * it on the hour's first event. The row spans its first to its last event (`first_ts` to `ts`), at most one hour,
+     * so a window over part of a day counts what it holds (`countByKind` with the window) and at most a few events
+     * of a crossing row are uncertain (`partialCountByKind`). A given `detail` replaces the row's; an omitted one
+     * keeps it. Read and write run in one immediate transaction, so two processes at once never write two rows.
      */
-    bumpDaily(event: UsageEventInput & { day: string; by?: number }): void {
-        const at = (event.at ?? new Date()).toISOString();
+    bumpHourly(event: UsageEventInput & { day: string; by?: number }): void {
+        const atMs = (event.at ?? new Date()).getTime();
+        const at = new Date(atMs).toISOString();
+        const hourStart = new Date(Math.floor(atMs / HOUR_MS) * HOUR_MS);
+        const hourEnd = new Date(hourStart.getTime() + HOUR_MS);
         const by = event.by ?? 1;
         const detail = event.detail?.slice(0, DETAIL_MAX) ?? null;
         const bump = this.db.transaction(() => {
             const updated = this.db
                 .prepare(
-                    `UPDATE usage_events SET count = count + ?, ts = ?, detail = COALESCE(?, detail)
+                    `UPDATE usage_events
+                     SET count = count + ?, ts = MAX(ts, ?), first_ts = MIN(first_ts, ?), detail = COALESCE(?, detail)
                      WHERE day = ? AND provider = ? AND kind = ?
-                       AND account_name IS ? AND model IS ?`
+                       AND account_name IS ? AND model IS ?
+                       AND first_ts >= ? AND first_ts < ?`
                 )
                 .run(
                     by,
+                    at,
                     at,
                     detail,
                     event.day,
                     event.provider,
                     event.kind,
                     event.accountName ?? null,
-                    event.model ?? null
+                    event.model ?? null,
+                    hourStart.toISOString(),
+                    hourEnd.toISOString()
                 );
 
             if (updated.changes > 0) {
@@ -172,10 +192,11 @@ export class UsageEventsStore {
 
             this.db
                 .prepare(
-                    `INSERT INTO usage_events (ts, provider, account_id, account_name, source, kind, model, detail, day, count)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    `INSERT INTO usage_events (ts, first_ts, provider, account_id, account_name, source, kind, model, detail, day, count)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                 )
                 .run(
+                    at,
                     at,
                     event.provider,
                     event.accountId ?? null,
@@ -192,8 +213,24 @@ export class UsageEventsStore {
         bump.immediate();
     }
 
-    /** Rows in the window, newest first. A store without the table answers no rows. */
+    /**
+     * Rows whose span touches the window, newest first: a count row that crosses an edge is listed too, and the
+     * counting functions decide what of it the window may claim. A store without the table answers no rows; one
+     * without `first_ts` (not migrated yet) reads every row at its `ts`.
+     */
     list(query: UsageEventQuery): UsageEventRow[] {
+        try {
+            return this.listWith(query, "first_ts");
+        } catch (err) {
+            if (isMissingFirstTs(err)) {
+                return this.listWith(query, "NULL");
+            }
+
+            throw err;
+        }
+    }
+
+    private listWith(query: UsageEventQuery, firstTs: "first_ts" | "NULL"): UsageEventRow[] {
         const params: string[] = [query.from.toISOString(), query.to.toISOString()];
         const filters: string[] = [];
         filters.push(inList("provider", query.providers, params));
@@ -210,9 +247,10 @@ export class UsageEventsStore {
         try {
             const rows = this.db
                 .prepare(
-                    `SELECT id, ts, provider, account_id, account_name, source, kind, retry_after_ms, model, detail, day, count
+                    `SELECT id, ts, ${firstTs} AS first_ts, provider, account_id, account_name, source, kind, retry_after_ms,
+                            model, detail, day, count
                      FROM usage_events
-                     WHERE ts >= ? AND ts <= ?${filters.join("")}
+                     WHERE ts >= ? AND COALESCE(${firstTs}, ts) <= ?${filters.join("")}
                      ORDER BY ts DESC, id DESC${limit}`
                 )
                 .all(...params) as EventSqlRow[];
@@ -240,6 +278,7 @@ function mapRow(row: EventSqlRow): UsageEventRow | null {
     return {
         id: row.id,
         ts: row.ts,
+        firstTs: row.first_ts ?? row.ts,
         provider: row.provider,
         accountId: row.account_id,
         accountName: row.account_name,
@@ -253,8 +292,17 @@ function mapRow(row: EventSqlRow): UsageEventRow | null {
     };
 }
 
-/** Counts per kind, a daily row counted by its `count`. */
-export function countByKind(rows: readonly UsageEventRow[]): Partial<Record<UsageEventKind, number>> {
+interface EventWindow {
+    from: Date;
+    to: Date;
+}
+
+/** Whether the window holds the row's whole span, so it may claim the row's whole count. */
+function insideWindow(row: UsageEventRow, window: EventWindow): boolean {
+    return Date.parse(row.firstTs) >= window.from.getTime() && Date.parse(row.ts) <= window.to.getTime();
+}
+
+function sumByKind(rows: readonly UsageEventRow[]): Partial<Record<UsageEventKind, number>> {
     const counts: Partial<Record<UsageEventKind, number>> = {};
 
     for (const row of rows) {
@@ -262,4 +310,23 @@ export function countByKind(rows: readonly UsageEventRow[]): Partial<Record<Usag
     }
 
     return counts;
+}
+
+/**
+ * Counts per kind, a count row counted by its `count`. With a window, only the rows whose whole span lies inside it:
+ * a row that crosses an edge may hold events outside, so it goes to `partialCountByKind` and is never claimed whole.
+ */
+export function countByKind(
+    rows: readonly UsageEventRow[],
+    window?: EventWindow
+): Partial<Record<UsageEventKind, number>> {
+    return sumByKind(window ? rows.filter((row) => insideWindow(row, window)) : rows);
+}
+
+/** Per kind, the counts of the rows that cross the window's edge: some of their events are inside, some may not be. */
+export function partialCountByKind(
+    rows: readonly UsageEventRow[],
+    window: EventWindow
+): Partial<Record<UsageEventKind, number>> {
+    return sumByKind(rows.filter((row) => !insideWindow(row, window)));
 }
