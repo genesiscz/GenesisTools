@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createApi, TelegramApiRootError, validateTelegramApiRoot } from "./api";
 import { migrateTelegramBotConfig, resolveTelegramTarget, telegramChatFor } from "./config";
 import type { TelegramBotConfig } from "./types";
 
@@ -86,5 +87,17 @@ describe("resolveTelegramTarget", () => {
     it("is null for a token without a chat, and for nothing at all", () => {
         expect(resolveTelegramTarget({ purpose: "notifications", own: { botToken: OTHER_TOKEN }, bot: v2 })).toBeNull();
         expect(resolveTelegramTarget({ purpose: "notifications", own: {}, bot: null })).toBeNull();
+    });
+});
+
+describe("validateTelegramApiRoot", () => {
+    it("keeps https and loopback http, drops a trailing slash, and refuses plain http elsewhere", () => {
+        expect(validateTelegramApiRoot(undefined)).toBeUndefined();
+        expect(validateTelegramApiRoot("https://api.example.test/")).toBe("https://api.example.test");
+        expect(validateTelegramApiRoot("http://127.0.0.1:8081")).toBe("http://127.0.0.1:8081");
+        expect(() => validateTelegramApiRoot("http://api.example.test")).toThrow(TelegramApiRootError);
+        expect(() => validateTelegramApiRoot("nonsense")).toThrow(TelegramApiRootError);
+        // The decision posts build their client here: a cleartext root never gets the token.
+        expect(() => createApi("100:fake-token-for-tests", "http://api.example.test")).toThrow(TelegramApiRootError);
     });
 });

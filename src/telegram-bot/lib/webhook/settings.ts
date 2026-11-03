@@ -1,4 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { TelegramApiRootError, validateTelegramApiRoot } from "@genesiscz/utils/telegram-bot/lib/api";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
 /**
@@ -75,24 +76,18 @@ export function resolveWebhookSettings(input: WebhookSettingsInput): WebhookSett
     return { url: parsed.href, hostname: parsed.hostname, path: parsed.pathname, port };
 }
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
-
-/** Telegram's own server when unset. A custom root carries the bot token, so plain http is for loopback only. */
+/**
+ * Telegram's own server when unset. A custom root carries the bot token, so plain http is for loopback only. The
+ * rule is the shared `validateTelegramApiRoot`, so the bot and the decision posts refuse the same roots.
+ */
 export function resolveApiRoot(apiRoot: string | undefined): string | undefined {
-    if (!apiRoot) {
-        return undefined;
-    }
-
-    let parsed: URL;
     try {
-        parsed = new URL(apiRoot);
-    } catch {
-        throw new WebhookSettingsError("apiRoot in the telegram-bot config is not a valid URL.");
-    }
+        return validateTelegramApiRoot(apiRoot);
+    } catch (err) {
+        if (err instanceof TelegramApiRootError) {
+            throw new WebhookSettingsError(err.message);
+        }
 
-    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && LOOPBACK_HOSTS.has(parsed.hostname))) {
-        throw new WebhookSettingsError("apiRoot must use https, or http on a loopback address.");
+        throw err;
     }
-
-    return apiRoot.replace(/\/+$/, "");
 }
