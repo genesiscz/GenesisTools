@@ -157,21 +157,15 @@ export async function runSpend(cmd: Command, view: SpendView): Promise<void> {
 }
 
 /**
- * The `monitor --json` envelope.
- *
- * 🛑 `today.cost`, `today.tokens`, `week.cost`, `week.tokens` are decoded
- * STRICTLY by the Genesis app's `SpendClient`. They must stay numbers at these
- * exact paths; extra keys are ignored by its `JSONDecoder`, so `accounts` may
- * ride alongside, but nothing may move cost into a new top-level key.
- */
-/**
  * The calendar month so far, local time (proposal 10: the popover's monthlyCost mode had no writer). The monitor's
- * own walk covers seven days, so the month comes from the series events cache, which keeps 90 days.
+ * own walk covers seven days, so the month comes from the series events cache, which keeps 90 days. It reads the
+ * same homes as the week (`--all-homes` included), so the month never sums less than the week inside it.
  */
-function monthSoFar(input: {
+export function monthSoFar(input: {
     storage: Storage;
     pricing: PricingTable;
     accounts: Parameters<typeof collectSeriesEvents>[0]["accounts"];
+    discoveredHomes?: Parameters<typeof collectSeriesEvents>[0]["discoveredHomes"];
     accountIds?: readonly string[];
 }): { start: string; totals: { cost: number; tokens: number } } {
     const now = new Date();
@@ -186,6 +180,7 @@ function monthSoFar(input: {
         sources: AGENT_IDS,
         minMtimeMs: first.getTime(),
         accounts: input.accounts,
+        ...(input.discoveredHomes ? { discoveredHomes: input.discoveredHomes } : {}),
         now,
     })) {
         if (Date.parse(event.t) < first.getTime()) {
@@ -203,6 +198,14 @@ function monthSoFar(input: {
     return { start: localDayString(first), totals };
 }
 
+/**
+ * The `monitor --json` envelope.
+ *
+ * 🛑 `today.cost`, `today.tokens`, `week.cost`, `week.tokens` are decoded
+ * STRICTLY by the Genesis app's `SpendClient`. They must stay numbers at these
+ * exact paths; extra keys are ignored by its `JSONDecoder`, so `accounts` may
+ * ride alongside, but nothing may move cost into a new top-level key.
+ */
 export function monitorEnvelope(report: MonitorReport): Record<string, unknown> {
     const envelope: Record<string, unknown> = {
         today: report.today,
@@ -442,7 +445,13 @@ export function registerSpendCommand(program: Command): Command {
         );
         prof.summary("ai-spend monitor");
         const month = opts.month
-            ? monthSoFar({ storage, pricing, accounts: context.accounts, accountIds: opts.account })
+            ? monthSoFar({
+                  storage,
+                  pricing,
+                  accounts: context.accounts,
+                  discoveredHomes: context.discoveredHomes,
+                  accountIds: opts.account,
+              })
             : undefined;
 
         if (opts.json) {
