@@ -25,6 +25,11 @@ export interface SearchSelectOptions<T> {
     items: SearchItem<T>[];
     maxVisible?: number;
     onHighlight?: (item: SearchItem<T>) => void;
+    /**
+     * A first row that stays while the filter matches nothing: Enter on it takes the typed text.
+     * `resolve` returns undefined when the text cannot be an answer; the row is then not offered.
+     */
+    typed?: { label: (query: string) => string; resolve: (query: string) => T | undefined };
 }
 
 // Symbols for consistent styling
@@ -41,7 +46,7 @@ export const searchSelectCancelSymbol = Symbol("cancel");
  * Press Enter to confirm the currently highlighted item.
  */
 export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<T | symbol> {
-    const { message, items, maxVisible = 8, onHighlight } = options;
+    const { message, items, maxVisible = 8, onHighlight, typed } = options;
 
     return new Promise((resolve) => {
         const rl = readline.createInterface({
@@ -69,7 +74,14 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
         };
 
         const getFiltered = (): SearchItem<T>[] => {
-            return items.filter((item) => filter(item, query));
+            const matches = items.filter((item) => filter(item, query));
+            const value = typed && query ? typed.resolve(query) : undefined;
+
+            if (typed && value !== undefined) {
+                return [{ value, label: typed.label(query) }, ...matches];
+            }
+
+            return matches;
         };
 
         const emitHighlight = (): void => {
@@ -102,7 +114,12 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
 
             // Header
             const icon = state === "active" ? S_STEP_ACTIVE : state === "cancel" ? S_STEP_CANCEL : S_STEP_SUBMIT;
-            lines.push(`${icon}  ${pc.bold(message)}`);
+            const [first = "", ...more] = message.split("\n");
+            lines.push(`${icon}  ${pc.bold(first)}`);
+
+            for (const extra of more) {
+                lines.push(`${S_BAR}  ${extra}`);
+            }
 
             if (state === "active") {
                 // Search input
@@ -122,7 +139,9 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
                 const visibleItems = filtered.slice(visibleStart, visibleEnd);
 
                 if (filtered.length === 0) {
-                    lines.push(`${S_BAR}  ${pc.dim("No matches found")}`);
+                    lines.push(
+                        `${S_BAR}  ${pc.dim(typed ? "Type to filter, or type a new answer" : "No matches found")}`
+                    );
                 } else {
                     for (let i = 0; i < visibleItems.length; i++) {
                         const item = visibleItems[i]!;

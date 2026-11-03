@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { LISTEN_PLAYERS, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -47,7 +48,6 @@ const AGAIN = "\u0000again";
 const OTHER = "\u0000other";
 const SKIP = "\u0000skip";
 const STOP = "\u0000stop";
-const TYPE_IT = "\u0000type";
 const SPLIT = "\u0000split";
 const DEFAULT_SUBSCRIBE_MINUTES = 120;
 /** Audio after a speaker question's span, and before it besides the tone's lead. */
@@ -131,23 +131,20 @@ async function padSeconds(config: MeetingsConfigStore): Promise<number | undefin
     return Number(picked);
 }
 
-/** "Something else": pick a known name or word, or type a new one. Esc returns undefined (back to the choices). */
-async function somethingElse(vocabulary: string[]): Promise<string | undefined> {
+/**
+ * "Something else": pick a known name or word, or type a new one: the typed text is always the first row, so Enter
+ * takes it when nothing matches. Esc returns undefined (back to the choices).
+ */
+async function somethingElse(vocabulary: string[], context: string[]): Promise<string | undefined> {
     const picked = await searchSelect<string>({
-        message: "Who or what is it? (type to filter, Esc goes back)",
-        items: [{ value: TYPE_IT, label: "Type it…" }, ...vocabulary.map((value) => ({ value, label: value }))],
+        message: ["Who or what is it?", ...context].join("\n"),
+        items: vocabulary.map((value) => ({ value, label: value })),
+        typed: {
+            label: (query) => (query ? `Use "${query}" as typed` : "Type to filter, or type a new answer"),
+            resolve: (query) => query.trim() || undefined,
+        },
     });
-
-    if (typeof picked === "symbol") {
-        return undefined;
-    }
-
-    if (picked !== TYPE_IT) {
-        return picked;
-    }
-
-    const typed = await clack.text({ message: "Answer", validate: (value) => (value?.trim() ? undefined : "Empty") });
-    return clack.isCancel(typed) ? undefined : typed.trim();
+    return typeof picked === "symbol" ? undefined : picked;
 }
 
 type MicShare = (fromSec: number, toSec: number) => number | undefined;
@@ -195,16 +192,74 @@ function spokenIn(question: QuestionItem, transcript: TranscriptEntry[]): string
 }
 
 /** The words around a word question's heard words: the line before (dim), the line with them marked, the line after. */
-function contextLines(context: HeardContext): string {
-    const lines = [
+function contextLines(context: HeardContext): string[] {
+    return [
         context.before ? pc.dim(context.before) : undefined,
-        `${pc.cyan(context.lead)}${pc.bold(pc.yellow(context.heard))}${pc.cyan(context.rest)}`,
+        `${context.lead}${heardMark(context.heard)}${context.rest}`,
         context.after ? pc.dim(context.after) : undefined,
+    ].filter((line) => line !== undefined);
+}
+
+/** The asked question's rows: its answers first, then the actions, each with its glyph and colour. */
+function choiceRows(options: {
+    question: QuestionItem;
+    choices: string[];
+    earlier?: { answer: string; atSec: number };
+}): ChoiceRow<string>[] {
+    const { question, earlier } = options;
+    return [
+        ...options.choices.map((choice) => ({
+            value: choice,
+            label: choice,
+            kind: "answer" as const,
+            ...(earlier && choice === earlier.answer ? { hint: `as at ${formatClock(earlier.atSec)}` } : {}),
+        })),
+        {
+            value: AGAIN,
+            label: "Play the audio again",
+            hint: "from the start",
+            kind: "action",
+            glyph: "↻",
+            paint: pc.yellow,
+        },
+        {
+            value: OTHER,
+            label: "Something else…",
+            hint: "pick a known name or word, or type a new one",
+            kind: "action",
+            glyph: "✎",
+            paint: pc.magenta,
+        },
+        {
+            value: NONE_OF_THESE,
+            label: "None of these",
+            hint: "rejects the items it decides",
+            kind: "action",
+            glyph: "⊘",
+            paint: pc.red,
+        },
+        ...(question.about === "speaker"
+            ? [
+                  {
+                      value: SPLIT,
+                      label: "Several voices",
+                      hint: "cut at each line and each change between your microphone and the call, then ask each part",
+                      kind: "action" as const,
+                      glyph: "⇆",
+                      paint: pc.cyan,
+                  },
+              ]
+            : []),
+        { value: SKIP, label: "Skip", hint: "leave it open", kind: "action", glyph: "»", paint: pc.dim },
+        {
+            value: STOP,
+            label: "Enough for now",
+            hint: "the rest stay open for the next listen",
+            kind: "action",
+            glyph: "◼",
+            paint: pc.dim,
+        },
     ];
-    return lines
-        .filter((line) => line !== undefined)
-        .map((line) => `\n  ${line}`)
-        .join("");
 }
 
 /**
@@ -225,6 +280,8 @@ async function ask(options: {
     context?: HeardContext;
     /** The answer this round gave the same heard words at another time: offered first. */
     earlier?: { answer: string; atSec: number };
+    /** The styled header line: question number, progress and time range. */
+    header?: string;
 }): Promise<Outcome> {
     const { question, earlier } = options;
     const repeat = options.repeatGapMs === undefined ? {} : { repeatGapMs: options.repeatGapMs };
@@ -232,42 +289,24 @@ async function ask(options: {
     const shown = options.context
         ? contextLines(options.context)
         : options.said
-          ? `\n  ${pc.cyan(`„${options.said}“`)}`
-          : "";
+          ? [pc.italic(`„${options.said}“`)]
+          : [];
     const earlierNote = earlier
-        ? `\n  ${pc.dim(`You answered the same words at ${formatClock(earlier.atSec)}: ${earlier.answer}`)}`
-        : "";
+        ? `${pc.dim("↺")} ${pc.dim(`you answered these words at ${formatClock(earlier.atSec)}: `)}${pc.cyan(earlier.answer)}`
+        : undefined;
     const choices = earlier
         ? [earlier.answer, ...question.choices.filter((choice) => choice !== earlier.answer)]
         : question.choices;
 
     try {
         while (true) {
-            const picked = await clack.select({
-                message: `${question.question} ${pc.dim("(Esc: back to the previous question)")}${shown}${earlierNote}`,
-                options: [
-                    ...choices.map((choice) => ({
-                        value: choice,
-                        label: choice,
-                        ...(earlier && choice === earlier.answer
-                            ? { hint: `as at ${formatClock(earlier.atSec)}` }
-                            : {}),
-                    })),
-                    { value: AGAIN, label: "Play the audio again", hint: "from the start" },
-                    { value: OTHER, label: "Something else…" },
-                    { value: NONE_OF_THESE, label: "None of these", hint: "rejects the items it decides" },
-                    ...(question.about === "speaker"
-                        ? [
-                              {
-                                  value: SPLIT,
-                                  label: "Several voices",
-                                  hint: "cut at each line and each change between your microphone and the call, then ask each part",
-                              },
-                          ]
-                        : []),
-                    { value: SKIP, label: "Skip" },
-                    { value: STOP, label: "Enough for now", hint: "the rest stay open for the next listen" },
-                ],
+            const picked = await choiceSelect<string>({
+                message: question.question,
+                ...(options.header ? { header: options.header } : {}),
+                context: shown,
+                ...(earlierNote ? { note: earlierNote } : {}),
+                rows: choiceRows({ question, choices, ...(earlier ? { earlier } : {}) }),
+                formatSubmitted: (row) => row.label,
             });
 
             if (clack.isCancel(picked)) {
@@ -285,7 +324,7 @@ async function ask(options: {
             }
 
             // The clip keeps playing while the answer is typed.
-            const answer = picked === OTHER ? await somethingElse(options.vocabulary) : String(picked);
+            const answer = picked === OTHER ? await somethingElse(options.vocabulary, shown) : String(picked);
 
             if (!answer) {
                 continue;
@@ -454,7 +493,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             budget,
             minPriority,
             listenBelow: settings.global.suggest.listenBelow,
-            ask: async (question, earlier) => {
+            ask: async (question, earlier, header) => {
                 const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
                 const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
                 const spotSec = askedSpotSec(question, transcript);
@@ -481,6 +520,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                     ...(question.about === "speaker" ? { said: spokenIn(question, transcript) } : {}),
                     ...(context ? { context } : {}),
                     ...(earlier ? { earlier } : {}),
+                    ...(header ? { header } : {}),
                 });
             },
         });
@@ -498,7 +538,7 @@ async function round(options: {
     budget: number;
     minPriority: number;
     listenBelow: number;
-    ask: (question: QuestionItem, earlier?: { answer: string; atSec: number }) => Promise<Outcome>;
+    ask: (question: QuestionItem, earlier?: { answer: string; atSec: number }, header?: string) => Promise<Outcome>;
 }): Promise<void> {
     const { meeting, store, logPath, only, minPriority } = options;
     const askable = (record: MeetingRecord, passed: Set<string>, reask?: string) =>
@@ -569,10 +609,8 @@ async function round(options: {
                 break;
             }
 
-            ui.header(
-                `${decided() + 1}/${total}  ${questionLabel(current, question.id)}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
-            );
-            const outcome = await options.ask(question, earlierFor(question));
+            const header = `${choiceChip(questionLabel(current, question.id))} ${pc.dim(`${decided() + 1}/${total} · ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : ` · priority ${question.priority}`}`)}`;
+            const outcome = await options.ask(question, earlierFor(question), header);
 
             if (outcome === "stop") {
                 reason = "stopped";
