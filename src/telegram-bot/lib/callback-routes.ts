@@ -35,17 +35,23 @@ export function decisionPressReply(receipt: ActReceipt, original: string | undef
  * edits the message with the outcome. A refusal drops the buttons too: the token can never succeed again.
  */
 export function decisionPressHandler(
-    deps: { actDeps: () => Promise<ActDeps> } = { actDeps: realActDeps }
+    deps: {
+        actDeps: () => Promise<ActDeps>;
+        /** The clock of the token expiry and the message memory; tests pass the fixture's, so a date never decides. */
+        now?: () => number;
+    } = { actDeps: realActDeps }
 ): CallbackHandler {
     return async (press: CallbackPress, token: string) => {
+        const at = deps.now?.();
+        const clock = at === undefined ? {} : { now: at };
         const claimed =
             press.messageId === undefined
                 ? null
-                : await takeMessageAt({ chat: press.chatId, message: press.messageId });
+                : await takeMessageAt({ chat: press.chatId, message: press.messageId, ...clock });
         let receipt: ActReceipt;
 
         try {
-            receipt = await act({ token, key: `telegram:${press.id}`, deps: await deps.actDeps() });
+            receipt = await act({ token, key: `telegram:${press.id}`, deps: await deps.actDeps(), ...clock });
         } catch (err) {
             // Give the message back, so the retraction can still drop its buttons when the decision closes elsewhere.
             if (claimed) {

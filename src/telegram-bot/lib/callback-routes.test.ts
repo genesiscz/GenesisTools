@@ -80,7 +80,9 @@ describe("F11: decisions answered in Telegram", () => {
                 return { session: "s-five", text: "5b", channel: "cmux", delivered: true, detail: "cmux · work" };
             },
         };
-        const router = createCallbackRouter({ d: decisionPressHandler({ actDeps: async () => actDeps }) });
+        const router = createCallbackRouter({
+            d: decisionPressHandler({ actDeps: async () => actDeps, now: () => NOW + 1 }),
+        });
         const [message] = api.messages;
         const press = { id: "cbq-1", data: message.buttons[0][1].data, chatId: CHAT, messageId: message.message };
 
@@ -143,6 +145,7 @@ describe("F11: decisions answered in Telegram", () => {
                 actDeps: async () => {
                     throw new Error("token store locked");
                 },
+                now: () => NOW + 1,
             }),
         });
         const [message] = api.messages;
@@ -154,7 +157,7 @@ describe("F11: decisions answered in Telegram", () => {
         });
 
         expect(reply.toast).toBe("That did not work. Check the hub.");
-        expect(await retractDecisionTelegramMessages(["d_9_s-nine"], { bot: own, api })).toBe(1);
+        expect(await retractDecisionTelegramMessages(["d_9_s-nine"], { bot: own, api, now: NOW + 2 })).toBe(1);
         expect(api.messages[0].buttons).toEqual([]);
     });
 
@@ -182,7 +185,9 @@ describe("F11: decisions answered in Telegram", () => {
             rows: () => [row],
             answer: async () => ({ session: "s-ten", text: "10a", channel: "cmux", delivered: true, detail: "cmux" }),
         };
-        const router = createCallbackRouter({ d: decisionPressHandler({ actDeps: async () => actDeps }) });
+        const router = createCallbackRouter({
+            d: decisionPressHandler({ actDeps: async () => actDeps, now: () => NOW + 1 }),
+        });
         const [message] = api.messages;
         await answerPress({
             api,
@@ -191,7 +196,7 @@ describe("F11: decisions answered in Telegram", () => {
         });
 
         expect(api.messages[0].buttons).not.toEqual([]);
-        expect(await retractDecisionTelegramMessages(["d_10_s-ten"], { bot: own, api })).toBe(1);
+        expect(await retractDecisionTelegramMessages(["d_10_s-ten"], { bot: own, api, now: NOW + 2 })).toBe(1);
         expect(api.messages[0].buttons).toEqual([]);
     });
 
@@ -211,7 +216,9 @@ describe("F11: decisions answered in Telegram", () => {
                 return { session: "s-eleven", text: "11a", channel: "cmux", delivered: true, detail: "cmux" };
             },
         };
-        const router = createCallbackRouter({ d: decisionPressHandler({ actDeps: async () => actDeps }) });
+        const router = createCallbackRouter({
+            d: decisionPressHandler({ actDeps: async () => actDeps, now: () => NOW + 1 }),
+        });
         const [message] = api.messages;
         // The first press's edit drops the buttons, so read the button data before it.
         const data = message.buttons[0][0].data;
@@ -236,9 +243,9 @@ describe("F11: decisions answered in Telegram", () => {
             now: NOW,
         });
 
-        expect(await retractDecisionTelegramMessages(["d_6_s-six"], { bot, api })).toBe(1);
+        expect(await retractDecisionTelegramMessages(["d_6_s-six"], { bot, api, now: NOW + 2 })).toBe(1);
         expect(api.messages[0].text.endsWith(CLOSED_ELSEWHERE)).toBe(true);
         expect(api.messages[0].buttons).toEqual([]);
-        expect(await retractDecisionTelegramMessages(["d_6_s-six"], { bot, api })).toBe(0);
+        expect(await retractDecisionTelegramMessages(["d_6_s-six"], { bot, api, now: NOW + 2 })).toBe(0);
     });
 });
