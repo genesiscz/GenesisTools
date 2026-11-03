@@ -12,6 +12,7 @@ import {
 } from "@/features/answer-queue/queries";
 import {
     flushThenSend,
+    singleFlight,
     formAnswers,
     missingAnswers,
     noteStateOf,
@@ -96,6 +97,27 @@ describe("answer queue rules", () => {
         });
         expect(reconcileNote(typed, { revision: 2, draft: null })).toEqual(typed);
         expect(reconcileNote(typed, { revision: 1, draft: null })).toBe(typed);
+    });
+
+    it("a second Send tap while the first still flushes does nothing", async () => {
+        const once = singleFlight();
+        let sends = 0;
+        let release = () => {};
+        const slow = new Promise<void>((resolve) => (release = resolve));
+
+        const first = once(async () => {
+            await slow;
+            sends++;
+        });
+        const second = await once(async () => {
+            sends++;
+        });
+        release();
+
+        expect(second).toBe(false);
+        expect(await first).toBe(true);
+        expect(sends).toBe(1);
+        expect(await once(async () => {})).toBe(true);
     });
 
     it("send waits for a slow note save, and a refused save stops the send", async () => {
