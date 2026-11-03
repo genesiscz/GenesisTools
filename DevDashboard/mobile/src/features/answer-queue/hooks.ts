@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFocused } from "expo-router";
 import { useDashboardClient } from "@/api/client-provider";
 import {
     answerForm,
@@ -16,8 +17,14 @@ import type { Receipt } from "@/features/answer-queue/units";
  * same action sends the same key and the Mac answers it once.
  */
 
+/**
+ * The queue polls only while its screen is focused: each poll is a full inbox gather on the Mac (and a sealed relay
+ * round trip on the managed tier), and a tab screen stays mounted after the user leaves it.
+ */
 export function useAnswerQueue() {
-    return useQuery(answerQueueQuery(useDashboardClient()));
+    const focused = useIsFocused();
+    const options = answerQueueQuery(useDashboardClient());
+    return useQuery({ ...options, refetchInterval: focused ? options.refetchInterval : false });
 }
 
 /**
