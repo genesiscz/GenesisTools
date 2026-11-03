@@ -87,12 +87,12 @@ final class HubUsageModel: ObservableObject {
     /// Accounts whose lanes show; empty shows every account.
     @Published var selectedAccounts: [String] = []
     @Published var analysisSession: HubUsageSessionRef? {
-        didSet { if oldValue != analysisSession { loaded[.report] = nil } }
+        didSet { if oldValue != analysisSession { invalidate([.report]) } }
     }
     /// The spike whose sessions the Limits section lists.
     @Published var selectedSpike: UsageLaneSpike?
     /// Accounts a link named (`--usage-account <id or name>`), selected once the table knows their ids.
-    var pendingAccounts: [String] = []
+    private(set) var pendingAccounts: [String] = []
 
     @Published private(set) var limits: UsageEnvelope<UsageLimitsData>?
     @Published private(set) var series: UsageEnvelope<UsageSeriesData>?
@@ -118,6 +118,9 @@ final class HubUsageModel: ObservableObject {
     @Published private(set) var loading: Set<HubUsageDoorKey> = []
     @Published private(set) var errors: [HubUsageDoorKey: String] = [:]
     private var loaded: [HubUsageDoorKey: Date] = [:]
+    /// Each door's newest request. A completion of an older one (the range or the session changed while it ran) is
+    /// dropped, so the old answer never lands under the new parameters or marks them fresh.
+    private var generations: [HubUsageDoorKey: Int] = [:]
     private(set) var active = false
 
     let preferences: UsagePreferences
@@ -156,10 +159,20 @@ final class HubUsageModel: ObservableObject {
         load(section.doors(settings))
     }
 
-    /// The range or the resolution changed: the range-bound doors read again.
+    /// The range or the resolution changed: the range-bound doors read again, and a read still running for the old
+    /// range is dropped when it lands.
     func rangeChanged() {
-        for key in [HubUsageDoorKey.series, .health, .spikes, .pivot, .waste] { loaded[key] = nil }
+        invalidate([.series, .health, .spikes, .pivot, .waste])
         loadIfStale()
+    }
+
+    /// Forgets what the doors hold and any read in flight for them, so the next `loadIfStale` asks again.
+    private func invalidate(_ keys: [HubUsageDoorKey]) {
+        for key in keys {
+            generations[key, default: 0] += 1
+            loaded[key] = nil
+            loading.remove(key)
+        }
     }
 
     func select(account id: String, additive: Bool) {
@@ -217,13 +230,19 @@ final class HubUsageModel: ObservableObject {
         guard !keys.isEmpty else { return }
         let settings = settings
         let session = analysisSession
+        var requests: [HubUsageDoorKey: Int] = [:]
+        for key in keys {
+            generations[key, default: 0] += 1
+            requests[key] = generations[key]
+        }
         loading.formUnion(keys)
         let done = HubSnapshotLoads.begin("usage")
         let span = HubPerf.begin("usage.load", keys.map(\.rawValue).joined(separator: ","), awaits: true)
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for key in keys {
-                    group.addTask { await self.fetch(key, settings: settings, session: session) }
+                    let generation = requests[key] ?? 0
+                    group.addTask { await self.fetch(key, generation: generation, settings: settings, session: session) }
                 }
             }
             if keys.contains(where: [.limits, .series, .health, .spikes].contains) { await rebuild() }
@@ -232,35 +251,71 @@ final class HubUsageModel: ObservableObject {
         }
     }
 
-    private func fetch(_ key: HubUsageDoorKey, settings: UsageSettings, session: HubUsageSessionRef?) async {
+    private func fetch(_ key: HubUsageDoorKey, generation: Int, settings: UsageSettings, session: HubUsageSessionRef?) async {
         let range = settings.range
         let resolution = settings.resolution.door(range)
+        let apply: () -> Void
         do {
             switch key {
-            case .limits: limits = try await client.envelope(.limits, as: UsageLimitsData.self)
+            case .limits:
+                let value = try await client.envelope(.limits, as: UsageLimitsData.self)
+                apply = { self.limits = value }
             case .series:
-                series = try await client.envelope(.series(range, step: resolution.step, agg: resolution.agg), as: UsageSeriesData.self)
-            case .health: health = try await client.envelope(.health(range), as: UsageHealthData.self)
-            case .spikes: spikes = try await client.envelope(.spikes(range), as: UsageSpikesData.self)
-            case .alerts: alerts = try await client.envelope(.alerts, as: UsageAlertsData.self)
-            case .advise: advise = try await client.envelope(.advise, as: UsageAdviseData.self)
-            case .pivot: pivot = try await client.envelope(.pivot(range, by: settings.spendStack.rawValue), as: UsagePivotData.self)
-            case .waste: waste = try await client.envelope(.waste(range), as: UsageWasteData.self)
-            case .attribution: attribution = try await client.envelope(.attribution, as: UsageAttributionData.self)
-            case .drift: drift = try await client.envelope(.drift, as: UsageDriftData.self)
-            case .plans: plans = try await client.envelope(.plans, as: UsagePlansData.self)
-            case .proxy: proxy = try await client.envelope(.proxy, as: UsageProxyData.self)
-            case .workers: workers = try await client.plain(.workers, as: UsageWorkersReport.self)
+                let value = try await client.envelope(.series(range, step: resolution.step, agg: resolution.agg), as: UsageSeriesData.self)
+                apply = { self.series = value }
+            case .health:
+                let value = try await client.envelope(.health(range), as: UsageHealthData.self)
+                apply = { self.health = value }
+            case .spikes:
+                let value = try await client.envelope(.spikes(range), as: UsageSpikesData.self)
+                apply = { self.spikes = value }
+            case .alerts:
+                let value = try await client.envelope(.alerts, as: UsageAlertsData.self)
+                apply = { self.alerts = value }
+            case .advise:
+                let value = try await client.envelope(.advise, as: UsageAdviseData.self)
+                apply = { self.advise = value }
+            case .pivot:
+                let value = try await client.envelope(.pivot(range, by: settings.spendStack.rawValue), as: UsagePivotData.self)
+                apply = { self.pivot = value }
+            case .waste:
+                let value = try await client.envelope(.waste(range), as: UsageWasteData.self)
+                apply = { self.waste = value }
+            case .attribution:
+                let value = try await client.envelope(.attribution, as: UsageAttributionData.self)
+                apply = { self.attribution = value }
+            case .drift:
+                let value = try await client.envelope(.drift, as: UsageDriftData.self)
+                apply = { self.drift = value }
+            case .plans:
+                let value = try await client.envelope(.plans, as: UsagePlansData.self)
+                apply = { self.plans = value }
+            case .proxy:
+                let value = try await client.envelope(.proxy, as: UsageProxyData.self)
+                apply = { self.proxy = value }
+            case .workers:
+                let value = try await client.plain(.workers, as: UsageWorkersReport.self)
+                apply = { self.workers = value }
             case .report:
-                guard let session else { report = nil; break }
-                report = try await client.plain(.sessionReport(id: session.id, harness: session.harness), as: UsageSessionReportEnvelope.self)
+                if let session {
+                    let value = try await client.plain(.sessionReport(id: session.id, harness: session.harness), as: UsageSessionReportEnvelope.self)
+                    apply = { self.report = value }
+                } else {
+                    apply = { self.report = nil }
+                }
             }
-            errors[key] = nil
-            loaded[key] = Date()
         } catch {
+            guard generations[key] == generation else { return }
             errors[key] = "\(Self.command(key, settings: settings, session: session)) failed: \(error.localizedDescription)"
             HubPerf.log("usage.\(key.rawValue) failed: \(error)")
+            loading.remove(key)
+            return
         }
+        // A newer request owns the door now (the range or the session changed): this answer is for the old one.
+        guard generations[key] == generation else { return }
+        apply()
+        errors[key] = nil
+        loaded[key] = Date()
         loading.remove(key)
     }
 
@@ -305,13 +360,24 @@ final class HubUsageModel: ObservableObject {
         table = (built.0, built.1)
         lanes = built.2
         builtAt = now
-        if !pendingAccounts.isEmpty {
-            let wanted = Set(pendingAccounts)
-            let ids = built.1.filter { wanted.contains($0.account.accountId) || wanted.contains($0.account.accountName) }.map(\.id)
-            if !ids.isEmpty {
-                selectedAccounts = ids
-                pendingAccounts = []
-            }
+        applyPendingAccounts()
+    }
+
+    /// Selects the accounts a link named (`--usage-account`). Rows already on screen take the selection at once (a
+    /// fresh table starts no load, so waiting for the next rebuild left the old selection); the names wait for the
+    /// next rebuild only while no row matches yet.
+    func selectAccounts(named names: [String]) {
+        pendingAccounts = names
+        applyPendingAccounts()
+    }
+
+    private func applyPendingAccounts() {
+        guard !pendingAccounts.isEmpty else { return }
+        let wanted = Set(pendingAccounts)
+        let ids = table.rows.filter { wanted.contains($0.account.accountId) || wanted.contains($0.account.accountName) }.map(\.id)
+        if !ids.isEmpty {
+            selectedAccounts = ids
+            pendingAccounts = []
         }
     }
 
@@ -325,7 +391,7 @@ final class HubUsageModel: ObservableObject {
             } catch {
                 errors[.alerts] = "tools ai usage alerts ack \(alert.id) failed: \(error.localizedDescription)"
             }
-            loaded[.alerts] = nil
+            invalidate([.alerts])
             load([.alerts])
         }
     }
