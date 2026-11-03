@@ -111,6 +111,118 @@ final class HubUsageTests: XCTestCase {
         return (try XCTUnwrap(accounts.first { $0.account == "work" }), try XCTUnwrap(accounts.first { $0.account == "personal" }))
     }
 
+    // MARK: - Loads that land after their parameters changed
+
+    @MainActor
+    private static func scratchPreferences() throws -> UsagePreferences {
+        let name = "hub-usage-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        return UsagePreferences(defaults: defaults, notificationNamespace: name, broadcasts: false, observeExternalChanges: false)
+    }
+
+    private static func value(after flag: String, in argv: [String]) -> String? {
+        argv.firstIndex(of: flag).flatMap { argv.indices.contains($0 + 1) ? argv[$0 + 1] : nil }
+    }
+
+    private static func seriesJSON(since: String) -> String {
+        """
+        {"schema":"usage.limits.series@1","generatedAt":"2026-11-03T10:00:00.000Z",
+         "window":{"from":"2026-11-02T10:00:00.000Z","to":"2026-11-03T10:00:00.000Z","tz":"UTC","label":"since \(since)"},
+         "selector":{"accounts":[]},"warnings":[],"data":{"agg":"raw","stepMs":0,"series":[],"coverage":[],"events":[]}}
+        """
+    }
+
+    private static func reportJSON(session: String) -> String {
+        """
+        {"schema":"ai.sessions.report@1","session":{"provider":"claude","sessionId":"\(session)","filePath":null},
+         "report":{"overview":{"first":null,"last":null,"durationMinutes":null,"calls":0,"models":[],"compactions":0},
+           "tokens":{"input":0,"cacheRead":0,"cacheWrite":0,"output":0},"cost":{"totalUsd":0,"mainUsd":0,"subagentUsd":0},
+           "quotaWeight":null,"models":[],"cache":null,"losses":[],"topCalls":[],"gaps":[]}}
+        """
+    }
+
+    private static let limitsJSON = """
+    {"schema":"usage.limits@1","generatedAt":"2026-11-03T10:00:00.000Z","selector":{"accounts":[]},"warnings":[],
+     "data":{"accounts":[{"provider":"anthropic-sub","accountId":"acc_work","accountName":"work","label":"max",
+       "limits":[{"key":"seven_day","label":"Weekly","kind":"weekly","percentUsed":62,"severity":"ok"}]},
+       {"provider":"openai-sub","accountId":"acc_side","accountName":"side","label":"plus",
+       "limits":[{"key":"secondary","label":"Weekly","kind":"weekly","percentUsed":10,"severity":"ok"}]}]}}
+    """
+
+    @MainActor
+    private func wait(_ timeout: TimeInterval = 3, until condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+    }
+
+    @MainActor
+    func testARangeChangeWhileTheOldRangeLoadsShowsOnlyTheNewRange() async throws {
+        let preferences = try Self.scratchPreferences()
+        let model = HubUsageModel(preferences: preferences, client: UsageClient { argv in
+            guard argv.contains("series"), let since = Self.value(after: "--since", in: argv) else { return Data("{}".utf8) }
+            // The old range answers last.
+            if since == "24h" { try await Task.sleep(nanoseconds: 300_000_000) }
+            return Data(Self.seriesJSON(since: since).utf8)
+        })
+        model.activate()
+        preferences.settings.range = .sixHours
+        model.rangeChanged()
+
+        try await wait { model.series?.window?.label == "since 6h" }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(model.series?.window?.label, "since 6h")
+        XCTAssertFalse(model.loading.contains(.series))
+    }
+
+    @MainActor
+    func testOpeningAnotherSessionWhileOneLoadsShowsTheOtherSession() async throws {
+        let model = HubUsageModel(preferences: try Self.scratchPreferences(), client: UsageClient { argv in
+            guard argv.contains("report") else { return Data("{}".utf8) }
+            if argv.contains("s-old") { try await Task.sleep(nanoseconds: 300_000_000) }
+            return Data(Self.reportJSON(session: argv.contains("s-old") ? "s-old" : "s-new").utf8)
+        })
+        model.openSession("s-old")
+        model.openSession("s-new")
+
+        try await wait { model.report?.session.sessionId == "s-new" }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(model.report?.session.sessionId, "s-new")
+    }
+
+    @MainActor
+    func testAnAccountLinkSelectsRowsTheTableAlreadyHas() async throws {
+        let model = HubUsageModel(preferences: try Self.scratchPreferences(), client: UsageClient { argv in
+            Data((argv.contains("--cached") ? Self.limitsJSON : "{}").utf8)
+        })
+        model.activate()
+        try await wait { model.table.rows.count == 2 }
+
+        model.selectAccounts(named: ["side"])
+        XCTAssertEqual(model.selectedAccounts.count, 1)
+        XCTAssertEqual(model.table.rows.first { $0.id == model.selectedAccounts.first }?.account.accountName, "side")
+        XCTAssertTrue(model.pendingAccounts.isEmpty)
+    }
+
+    @MainActor
+    func testADigestDayChangedWhileTheOldDayLoadsShowsTheNewDay() async throws {
+        let store = HubUsageDigestStore(client: UsageClient { argv in
+            guard argv.contains("digest"), let day = Self.value(after: "--day", in: argv) else {
+                return Data(Self.seriesJSON(since: "6h").utf8)
+            }
+            if day == "2026-03-01" { try await Task.sleep(nanoseconds: 300_000_000) }
+            return Data("""
+            {"schema":"usage.digest@1","generatedAt":"x","selector":{"accounts":[]},"warnings":[],
+             "data":{"period":"day","days":["\(day)"],"windows":[],"alerts":null,"spend":null,"outlook":[],"workers":null}}
+            """.utf8)
+        })
+        store.loadIfStale(day: "2026-03-01")
+        store.loadIfStale(day: "2026-03-02")
+
+        try await wait { store.digest?.data.days == ["2026-03-02"] }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(store.digest?.data.days, ["2026-03-02"])
+    }
+
     func testSpendBarsKeepTheLargestGroupsAndStackTheRestAsOther() throws {
         let json = """
         {"by":["model"],"grain":"day","tz":"UTC","total":{"costUsd":10,"tokens":0,"unpriced":0},"heatmap":null,"groups":[
