@@ -1,10 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { outputScaleFor, parseDisplayList } from "./displays";
-import { type LiveCommandLine, LiveRecordingWriter, listLiveRecordings, sendLiveCommand } from "./live";
+import {
+    type LiveNotification,
+    LiveRecordingServer,
+    listLiveRecordings,
+    liveSocketPath,
+    RecorderClient,
+    RPC_ERRORS,
+    RpcError,
+    readLiveRecording,
+} from "./live";
 import { captureErrorKind, flagsInHelp, nativeArgv } from "./native";
 import { peekabooCaptureError } from "./peekaboo";
 import { CaptureError, type CaptureRequest } from "./types";
@@ -148,64 +157,86 @@ describe("a failed peekaboo capture", () => {
 });
 
 describe("live recordings", () => {
-    test("an entry is written, gets commands within a second, and its files go when it closes", async () => {
+    test("an entry and its socket answer JSON-RPC calls, send events to subscribers, and go when it closes", async () => {
         const dir = mkdtempSync(join(tmpdir(), "live-rec-"));
-        const received: LiveCommandLine[] = [];
-        const writer = new LiveRecordingWriter({
+        let state: "recording" | "paused" = "recording";
+        const server = new LiveRecordingServer({
             id: "meeting-m1",
             kind: "meeting",
             title: "Planning",
             displays: [{ id: 1, name: "Built-in" }],
-            onCommand: (command) => received.push(command),
             dir,
+            methods: {
+                pause: () => {
+                    if (state === "paused") {
+                        throw new RpcError(RPC_ERRORS.alreadyPaused, "already paused");
+                    }
+
+                    state = "paused";
+                    server.update({ state });
+                    return { state };
+                },
+            },
         });
 
         expect(listLiveRecordings(dir).map((entry) => [entry.id, entry.state, entry.pid])).toEqual([
             ["meeting-m1", "recording", process.pid],
         ]);
+        expect(readLiveRecording("meeting-m1", dir)?.socket).toBe(join(dir, "meeting-m1.sock"));
 
-        writer.update({ state: "paused", frames: 3, warning: "a note" });
-        writer.update({ warning: undefined });
+        const client = await RecorderClient.connect("meeting-m1", { dir });
+        const events: LiveNotification[] = [];
+        await client.subscribe((event) => events.push(event), ["state", "ended"]);
+
+        expect(await client.call("status")).toMatchObject({ id: "meeting-m1", kind: "meeting", state: "recording" });
+        expect(await client.call<{ state: string }>("pause")).toEqual({ state: "paused" });
+        await expect(client.call("pause")).rejects.toMatchObject({ code: RPC_ERRORS.alreadyPaused });
+        await expect(client.call("nonsense")).rejects.toMatchObject({ code: RPC_ERRORS.methodNotFound });
+
+        server.update({ frames: 3, warning: "a note" });
+        server.update({ warning: undefined });
         const saved = SafeJSON.parse(readFileSync(join(dir, "meeting-m1.json"), "utf8"), { strict: true });
 
         expect(saved).toMatchObject({ version: 1, state: "paused", frames: 3, controls: ["pause", "resume", "stop"] });
         expect(saved).not.toHaveProperty("warning");
 
-        sendLiveCommand({ id: "meeting-m1", command: "stop", from: "test", dir });
-        // A half-written line waits for its newline.
-        appendFileSync(join(dir, "meeting-m1.commands.jsonl"), '{"command":"pa');
-        const deadline = Date.now() + 3_000;
+        server.close("requested");
+        const deadline = Date.now() + 2_000;
 
-        while (received.length === 0 && Date.now() < deadline) {
-            await Bun.sleep(100);
+        while (!events.some((event) => event.event === "ended") && Date.now() < deadline) {
+            await Bun.sleep(20);
         }
 
-        expect(received.map((line) => [line.command, line.from])).toEqual([["stop", "test"]]);
-
-        writer.close();
-
+        expect(events.map((event) => event.event)).toEqual(["state", "ended"]);
         expect(existsSync(join(dir, "meeting-m1.json"))).toBe(false);
-        expect(existsSync(join(dir, "meeting-m1.commands.jsonl"))).toBe(false);
-        expect(() => sendLiveCommand({ id: "meeting-m1", command: "stop", from: "test", dir })).toThrow(
-            /No running recording/
-        );
+        expect(existsSync(join(dir, "meeting-m1.sock"))).toBe(false);
+        await expect(RecorderClient.connect("meeting-m1", { dir })).rejects.toThrow(/No running recording/);
     });
 
-    test("an entry whose process is gone is not listed", () => {
+    test("an entry whose process is gone is not listed, and a socket nobody listens on counts as gone", async () => {
         const dir = mkdtempSync(join(tmpdir(), "live-rec-"));
-        appendFileSync(
-            join(dir, "gone.json"),
+        const entry = (id: string, pid: number) =>
             SafeJSON.stringify({
                 version: 1,
-                id: "gone",
+                id,
                 kind: "meeting",
                 title: "",
-                pid: 999_999,
+                pid,
                 startedAt: "2026-11-03T12:00:00.000Z",
                 state: "recording",
-            })
-        );
+                socket: join(dir, `${id}.sock`),
+            });
+        writeFileSync(join(dir, "gone.json"), entry("gone", 999_999));
+        writeFileSync(join(dir, "stale.json"), entry("stale", process.pid));
 
-        expect(listLiveRecordings(dir)).toEqual([]);
+        expect(listLiveRecordings(dir).map((one) => one.id)).toEqual(["stale"]);
+        await expect(RecorderClient.connect("stale", { dir })).rejects.toThrow(/does not answer/);
+    });
+
+    test("a socket path too long for macOS falls back to a hash of the id", () => {
+        const path = liveSocketPath(`/tmp/${"x".repeat(60)}`, "meeting-2026-11-03_15-00-a-long-meeting-title");
+
+        expect(Buffer.byteLength(path)).toBeLessThanOrEqual(103);
+        expect(path).toMatch(/[0-9a-f]{16}\.sock$/);
     });
 });

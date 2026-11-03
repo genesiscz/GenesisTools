@@ -31,6 +31,7 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "--quiet-ms",
     "--heartbeat-sec",
     "--max-mb",
+    "--control-stdin",
 ] as const;
 export type NativeOptionalFlag = (typeof NATIVE_OPTIONAL_FLAGS)[number];
 
@@ -55,7 +56,10 @@ const nativeResult = z.object({
 });
 const nativeError = z.object({ ok: z.literal(false), error: z.string(), code: z.string().optional() });
 
-/** The flags `ax-tool capture --help` names, read once per binary and process. */
+/**
+ * The flags the ax-tool help names, read once per binary and process. `ax-tool --help` documents the capture options;
+ * `ax-tool capture --help` would parse as a capture.
+ */
 const helpCache = new Map<string, Promise<Set<NativeOptionalFlag>>>();
 
 export function flagsInHelp(text: string): Set<NativeOptionalFlag> {
@@ -66,13 +70,11 @@ function detectFlags(binary: string): Promise<Set<NativeOptionalFlag>> {
     let cached = helpCache.get(binary);
 
     if (!cached) {
-        cached = boundedCommand({ command: [binary, "capture", "--help"], timeoutMs: HELP_TIMEOUT_MS }).then(
-            (result) => {
-                const flags = flagsInHelp(`${result.stdout}\n${result.stderr}`);
-                log.debug({ binary, flags: [...flags] }, "ax-tool capture options");
-                return flags;
-            }
-        );
+        cached = boundedCommand({ command: [binary, "--help"], timeoutMs: HELP_TIMEOUT_MS }).then((result) => {
+            const flags = flagsInHelp(`${result.stdout}\n${result.stderr}`);
+            log.debug({ binary, flags: [...flags] }, "ax-tool capture options");
+            return flags;
+        });
         helpCache.set(binary, cached);
     }
 
