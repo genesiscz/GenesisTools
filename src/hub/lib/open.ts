@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
-import { HUB_LINK_KEYS, routerLink, schemeLink } from "@genesiscz/utils/browser-router/router-link";
+import { type HubLinkQuery, routerLink, schemeLink } from "@genesiscz/utils/browser-router/router-link";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
@@ -97,6 +97,32 @@ export interface OpenHubOptions {
     /** Live progress of the app build's `swift build` step (`BuildAppOptions.onProgress`). */
     onProgress?: (message: string) => void;
 }
+
+/** The options a hub link carries (`hubUrl`, `--print-url`): every place, never a build or focus choice. */
+export type HubLinkOptions = Pick<
+    OpenHubOptions,
+    | "mode"
+    | "session"
+    | "agent"
+    | "pr"
+    | "reveal"
+    | "repo"
+    | "commit"
+    | "tab"
+    | "filter"
+    | "worktree"
+    | "decision"
+    | "question"
+    | "usageSection"
+    | "usageSession"
+    | "usageHarness"
+    | "usageAccounts"
+    | "usageAllAccounts"
+    | "actor"
+    | "note"
+    | "from"
+    | "nav"
+>;
 
 export interface OpenHubResult {
     built: boolean;
@@ -238,7 +264,7 @@ export function hubArgs(options: OpenHubOptions): string[] {
  * `HubRequest.linkKeys` in the app). A link without `worktree` and `reveal` lost them: `--print-url`
  * named neither. A commit link: `?pr=owner%2Frepo%2342&commit=<sha>` (or `<from>..<to>`), or `?repo=<path>&commit=<sha>`.
  */
-export function hubUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>): string {
+export function hubUrl(options: HubLinkOptions): string {
     // The link itself is built in the router utils, beside its https twin, so the two cannot drift.
     return schemeLink({ preset: "genesis-hub", action: "open", data: hubLinkData(options) });
 }
@@ -247,7 +273,7 @@ export function hubUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[numb
  * The link to print for a place (`--print-url`): the https link where the router serves `/hub` on this Mac, as the
  * agents' rule writes it, else the app's own `genesis-tools://hub?…` (`hubUrl`).
  */
-export function hubPrintUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>): string {
+export function hubPrintUrl(options: HubLinkOptions): string {
     const data = hubLinkData(options);
     return routerLink({
         preset: "genesis-hub",
@@ -257,20 +283,32 @@ export function hubPrintUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)
     }).result;
 }
 
-function hubLinkData(
-    options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>
-): Record<string, string | undefined> {
-    return Object.fromEntries(
-        HUB_LINK_KEYS.map((key) => {
-            const value = options[key];
-
-            if (key === "repo" && value) {
-                return [key, repoTarget(value)];
-            }
-
-            return [key, key === "worktree" && value ? worktreeTarget(value) : value];
-        })
-    );
+function hubLinkData(options: HubLinkOptions): HubLinkQuery {
+    // Every link key is named here, so a key added to HUB_LINK_KEYS does not compile until it is filled.
+    const query: { [K in keyof Required<HubLinkQuery>]: HubLinkQuery[K] } = {
+        mode: options.mode,
+        session: options.session,
+        agent: options.agent,
+        pr: options.pr,
+        reveal: options.reveal,
+        repo: options.repo ? repoTarget(options.repo) : undefined,
+        commit: options.commit,
+        tab: options.tab,
+        filter: options.filter,
+        worktree: options.worktree ? worktreeTarget(options.worktree) : undefined,
+        decision: options.decision,
+        question: options.question,
+        "usage-section": options.usageSection,
+        "usage-session": options.usageSession,
+        "usage-harness": options.usageSession ? options.usageHarness : undefined,
+        "usage-account": options.usageAccounts,
+        "usage-all-accounts": options.usageAllAccounts ? "1" : undefined,
+        actor: options.actor,
+        note: options.note,
+        from: options.from,
+        nav: options.nav,
+    };
+    return query;
 }
 
 /** Why the installed app cannot serve the hub as it is, or undefined when it can. */
