@@ -118,6 +118,7 @@ export function ruleEnabledFor(config: UsageAlertsConfig, rule: AlertRuleId, pro
     return provider === null || config.providers[provider]?.rules?.[rule]?.enabled !== false;
 }
 
+/** Minutes after midnight of an `HH:MM` clock; null for anything else, a hand-edited number or null included. */
 function minutesOf(clock: unknown): number | null {
     if (typeof clock !== "string") {
         return null;
@@ -151,13 +152,25 @@ export function inQuietHours(quiet: UsageAlertsConfig["global"]["quietHours"], n
     return start < end ? minute >= start && minute < end : minute >= start || minute < end;
 }
 
-/** The channels an alert of `rule` goes to now: the rule's list, minus the interrupting ones in quiet hours. */
+/**
+ * The channels an alert of `rule` goes to now: the rule's list, minus the interrupting ones in quiet hours. The
+ * engine calls it outside its per-channel guard, so it never throws: a quiet-hours check that fails counts as quiet,
+ * and the alert still reaches the channels that do not interrupt.
+ */
 export function deliveryChannels(input: {
     config: UsageAlertsConfig;
     rule: AlertRuleId;
     now: Date;
     interrupts: (channel: AlertChannelId) => boolean;
 }): AlertChannelId[] {
-    const quiet = inQuietHours(input.config.global.quietHours, input.now);
+    let quiet: boolean;
+
+    try {
+        quiet = inQuietHours(input.config.global.quietHours, input.now);
+    } catch (err) {
+        logger.warn({ err, quietHours: input.config.global.quietHours }, "[usage-alerts] quiet hours unreadable");
+        quiet = true;
+    }
+
     return input.config.rules[input.rule].channels.filter((channel) => !(quiet && input.interrupts(channel)));
 }

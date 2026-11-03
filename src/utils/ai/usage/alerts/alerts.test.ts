@@ -657,6 +657,25 @@ describe("config", () => {
         expect(inQuietHours(null, local(23))).toBe(false);
     });
 
+    test("hand-edited quiet hours that are no clock strings mean no quiet hours, and the round still delivers", async () => {
+        // A hand-edited config file, read as the loader reads it: the values are whatever the file says.
+        const merged = mergeAlertsConfig(
+            SafeJSON.parse('{"global":{"enabled":true,"quietHours":{"start":2200,"end":null}}}')
+        );
+
+        expect(inQuietHours(merged.global.quietHours, NOW)).toBe(false);
+
+        const fired = await runAlertEngine({
+            round: round({ snapshots: [snapshot(85)] }),
+            config: merged,
+            store,
+            channels,
+        });
+
+        expect(fired.map((alert) => alert.channels)).toEqual([["macos"]]);
+        expect(macos.delivered).toHaveLength(1);
+    });
+
     test("a saved rule keeps its other defaults, and the lead minutes merge per kind", () => {
         const merged = mergeAlertsConfig({ rules: { "predicted-exhaust": { leadMinutes: { session: 30 } } } });
 
