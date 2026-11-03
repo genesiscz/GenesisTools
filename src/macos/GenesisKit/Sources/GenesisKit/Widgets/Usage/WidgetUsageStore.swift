@@ -127,9 +127,11 @@ public final class WidgetUsageStore: ObservableObject {
     }
 
     /// Opens the hub at the alert's account, or at the Usage mode's Limits with no account picked when the alert
-    /// names none.
+    /// names none. Without an id the name goes as `provider/name` when the provider is known: two providers may
+    /// each have a "work" account, and the hub selects a bare name only when one row has it (`uniqueRow`).
     func openAlert(_ alert: UsageAlert) {
-        if let account = alert.accountId ?? alert.accountName {
+        let named = alert.accountName.map { name in alert.provider.map { "\($0)/\(name)" } ?? name }
+        if let account = alert.accountId ?? named {
             openHub(["--usage-account", account])
         } else {
             openHub(["--mode", "usage", "--usage-section", "limits", "--usage-all-accounts"])
