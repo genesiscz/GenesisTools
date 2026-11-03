@@ -426,7 +426,7 @@ describe("UsageLimitsDb", () => {
     test("a fresh store still ends up with the legacy severity and scope_model columns", () => {
         const cols = new Set(
             // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
-            (db["claudeDb"].getDb().prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>).map(
+            (db["handle"].prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>).map(
                 (c) => c.name
             )
         );
@@ -461,7 +461,7 @@ describe("UsageLimitsDb", () => {
 
         try {
             // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
-            const raw = upgraded["claudeDb"].getDb();
+            const raw = upgraded["handle"];
             const cols = new Set(
                 (raw.prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>).map((c) => c.name)
             );
@@ -487,7 +487,7 @@ describe("UsageLimitsDb", () => {
         const execSpy: string[] = [];
         const first = new UsageLimitsDb();
         // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
-        const rawDb = first["claudeDb"].getDb();
+        const rawDb = first["handle"];
         const originalExec = rawDb.exec.bind(rawDb);
         rawDb.exec = (sql: string) => {
             execSpy.push(sql);
@@ -1007,6 +1007,60 @@ describe("UsageLimitsDb", () => {
                 { from: "a", to: "b", state: "unknown" },
                 { from: "b", to: "c", state: "limited" },
             ]);
+        });
+    });
+
+    describe("openReadOnly", () => {
+        const reading = { resetsAt: null, severity: null, scopeModel: null, provider: "openai-sub", kind: "weekly" };
+
+        test("no history file: no view, and no file or folder is created", () => {
+            const missing = join(tmpdir(), `ai-usage-limits-missing-${Date.now()}`, "index.db");
+
+            expect(UsageLimitsDb.openReadOnly(missing)).toBeUndefined();
+            expect(existsSync(missing)).toBe(false);
+            expect(existsSync(join(missing, ".."))).toBe(false);
+        });
+
+        test("a store from before the availability column: no view, and its schema is left as it was", () => {
+            const oldPath = getTestDbPath();
+            const old = new Database(oldPath);
+            old.run("CREATE TABLE usage_snapshots (id INTEGER PRIMARY KEY, timestamp TEXT, account_name TEXT)");
+            old.close();
+
+            try {
+                expect(UsageLimitsDb.openReadOnly(oldPath)).toBeUndefined();
+
+                const check = new Database(oldPath, { readonly: true });
+                const tables = check.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+                const columns = check.prepare("PRAGMA table_info(usage_snapshots)").all();
+                check.close();
+
+                expect(tables).toEqual([{ name: "usage_snapshots" }]);
+                expect(columns.length).toBe(3);
+            } finally {
+                removeDbFile(oldPath);
+            }
+        });
+
+        test("a migrated store reads series and samples through a read-only handle that refuses writes", () => {
+            db.recordSnapshotV2("work", "secondary", 30, recentTimestamp(10), reading);
+            db.close();
+
+            const view = UsageLimitsDb.openReadOnly(dbPath);
+
+            try {
+                expect(view).toBeDefined();
+                expect(
+                    view
+                        ?.getSeries({ from: recentTimestamp(60), to: recentTimestamp(0), agg: "raw" })
+                        .map((entry) => [entry.account, entry.points.map((p) => p.percent)])
+                ).toEqual([["work", [30]]]);
+                expect(view?.getForecastSamples({ since: new Date(Date.now() - 3_600_000) }).length).toBe(1);
+                expect(() => view?.recordSnapshotV2("work", "secondary", 40, recentTimestamp(0), reading)).toThrow();
+            } finally {
+                view?.close();
+                db = new UsageLimitsDb(dbPath);
+            }
         });
     });
 

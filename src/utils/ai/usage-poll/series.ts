@@ -200,7 +200,7 @@ export function readLimitSeries(request: LimitSeriesRequest, sources: LimitSerie
     const kept = entries
         .filter((entry) => !providers || providers.has(entry.provider))
         .filter((entry) => !selected || selected.has(pairKey(entry.provider, entry.account)));
-    const samples = request.forecastAt ? forecastSamples(sources.db, request, request.forecastAt) : undefined;
+    const samples = request.forecastAt ? forecastSamples(sources.db, kept, request.forecastAt) : undefined;
     const series = kept.map((entry) => {
         const item = toItem(entry, ids, { windows, absent });
 
@@ -259,13 +259,20 @@ function coverageAndEvents(
     return { coverage, events };
 }
 
-/** The lookback's samples in one query, grouped by provider, account and window key. */
-function forecastSamples(db: UsageLimitsDb, request: LimitSeriesRequest, at: Date): Map<string, UsageSample[]> {
+/**
+ * The lookback's samples in one query, grouped by provider, account and window key. Only the accounts the series
+ * kept are read, so an account nobody asked for is never hydrated.
+ */
+function forecastSamples(
+    db: UsageLimitsDb,
+    kept: ReadonlyArray<SeriesEntry | SeriesBinEntry>,
+    at: Date
+): Map<string, UsageSample[]> {
     const groups = new Map<string, UsageSample[]>();
+    const accounts = new Map(kept.map((entry) => [pairKey(entry.provider, entry.account), entry]));
     const rows = db.getForecastSamples({
         since: new Date(at.getTime() - FORECAST_LOOKBACK_MS),
-        ...(request.providers?.length === 1 ? { provider: request.providers[0] } : {}),
-        ...(request.accounts?.length === 1 ? { account: request.accounts[0].accountName } : {}),
+        accounts: [...accounts.values()].map((entry) => ({ provider: entry.provider, account: entry.account })),
     });
 
     for (const row of rows) {
