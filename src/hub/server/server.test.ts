@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
@@ -268,6 +269,29 @@ describe("hub server", () => {
         servers.push(...handles);
 
         expect(handles).toHaveLength(1);
+    });
+
+    it("over its memory cap drops the registered caches first, and restarts only when that is not enough", async () => {
+        const socketPath = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "s", "hub.sock");
+        let released = 0;
+        onReleaseMemory("hub server test cache", () => {
+            released++;
+        });
+        const stopped = Promise.withResolvers<string>();
+        const handle = await startHubServer({
+            socketPath,
+            doors: [echoDoor],
+            // No process fits in one byte: the release cannot bring it under, so the server still drains.
+            maxFootprintBytes: 1,
+            idleMs: 0,
+            checkEveryMs: 20,
+            callTimeoutMs: 5000,
+            onStopped: (reason) => stopped.resolve(reason),
+        });
+        expect(handle).not.toBeNull();
+
+        expect(await stopped.promise).toBe("memory");
+        expect(released).toBe(1);
     });
 });
 

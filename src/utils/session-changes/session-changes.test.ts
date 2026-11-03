@@ -955,11 +955,15 @@ describe("readClaudeTranscriptFolded", () => {
         appendFileSync(agent, lines([result("p1", "t-main", 4), use("t-sub", "Bash", { command: "pwd" }, 5)]));
         same();
 
-        appendFileSync(main, lines([result("p1", "t-agent", 6), prompt("p2", "next", 7)]));
+        // A line no rule reads between two that are read, and text outside ASCII: the fold decodes only the lines a
+        // parse reads, from the raw bytes, and must find the same lines and the same text.
+        appendFileSync(main, `{"type":"attachment","note":"příliš žluťoučký kůň"}\n`);
+        appendFileSync(main, lines([result("p1", "t-agent", 6), prompt("p2", "další krok 🚀", 7)]));
         const final = same();
         expect(final.calls.find((call) => call.id === "t-main")?.finishedAt).not.toBeNull();
         expect(final.turns.find((turn) => turn.turnId === "p1")?.prompt).toBe("from the agent");
         expect(final.calls.find((call) => call.id === "t-sub")?.agentId).toBe("a1");
+        expect(final.turns.find((turn) => turn.turnId === "p2")?.prompt).toBe("další krok 🚀");
     });
 });
 
