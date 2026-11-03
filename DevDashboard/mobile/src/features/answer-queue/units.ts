@@ -146,6 +146,27 @@ export function latestStage(): { track: (write: Promise<unknown>) => void; settl
     };
 }
 
+type StageTracker = ReturnType<typeof latestStage>;
+
+/**
+ * A decision card's flush before Send. A failed pick blocks until a later pick succeeds (the pick before it must not
+ * go out in its place). A failed note save never blocks by itself: the note is still dirty, so `saveNote` tries it
+ * again here, and only that retry's failure stops the send.
+ */
+export async function flushDecision({
+    pick,
+    note,
+    saveNote,
+}: {
+    pick: StageTracker;
+    note: StageTracker;
+    saveNote: () => Promise<void>;
+}): Promise<void> {
+    await pick.settled();
+    await note.settled().catch(() => undefined);
+    await saveNote();
+}
+
 export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     delivered: "Delivered",
     queued: "Queued for the next turn",

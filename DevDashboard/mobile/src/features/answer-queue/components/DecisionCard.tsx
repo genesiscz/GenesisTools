@@ -4,6 +4,7 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useStagePick } from "@/features/answer-queue/hooks";
 import {
+    flushDecision,
     idempotencyKey,
     latestStage,
     type NoteState,
@@ -30,7 +31,9 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
     const c = useThemeColors();
     const stage = useStagePick();
     const [noteState, setNoteState] = useState<NoteState>(() => noteStateOf(decision));
-    const lastStage = useRef(latestStage()).current;
+    // Picks and note saves are tracked apart: a failed pick blocks Send, a failed note save is retried by it.
+    const pickStage = useRef(latestStage()).current;
+    const noteStage = useRef(latestStage()).current;
     const testId = `answer-queue-decision-${session}-${decision.number}`;
 
     // The card is keyed by the decision id, which stays when the agent re-posts it or another surface edits the draft.
@@ -46,7 +49,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
             key: idempotencyKey(),
             ...patch,
         });
-        lastStage.track(pending);
+        (patch.option === undefined ? noteStage : pickStage).track(pending);
         return pending;
     };
 
@@ -64,9 +67,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
     // The session card calls the latest flush; the ref keeps one stable function registered.
     const flushRef = useRef(async () => {});
     flushRef.current = async () => {
-        // A failed pick stops the send: its error shows on this card, and the earlier pick must not go out instead.
-        await lastStage.settled();
-        await saveNote();
+        await flushDecision({ pick: pickStage, note: noteStage, saveNote });
     };
 
     useEffect(() => {
