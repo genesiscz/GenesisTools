@@ -1030,6 +1030,42 @@ describe("UsageLimitsDb", () => {
             }
         });
 
+        test("a row from before the column carries unknown into the range until the next recorded state", () => {
+            const at = (hour: number) => new Date(Date.UTC(2026, 10, 1, hour)).toISOString();
+            const store = new UsageLimitsDb(":memory:");
+
+            try {
+                // An older row with no availability (as the column's migration leaves one), then a limited one.
+                store.recordSnapshotV2("work", "five_hour", 20, at(2), {
+                    resetsAt: null,
+                    severity: null,
+                    scopeModel: null,
+                    provider: "anthropic-sub",
+                    kind: "session",
+                });
+                // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
+                store["handle"].run("UPDATE usage_snapshots SET availability = NULL");
+                store.recordSnapshotV2("work", "five_hour", 30, at(12), {
+                    resetsAt: null,
+                    severity: null,
+                    scopeModel: null,
+                    provider: "anthropic-sub",
+                    kind: "session",
+                    availability: "limited",
+                });
+
+                const [entry] = store.getSeries({ from: at(10), to: at(20), agg: "raw" });
+
+                expect(entry.points.map((point) => point.percent)).toEqual([30]);
+                expect(entry.availability).toEqual([
+                    { from: at(10), to: at(12), state: "unknown" },
+                    { from: at(12), to: at(20), state: "limited" },
+                ]);
+            } finally {
+                store.close();
+            }
+        });
+
         test("a row from before the column reads as unknown", () => {
             const row = (t: string, availability: "limited" | "absent" | null) => ({
                 provider: "anthropic-sub",
