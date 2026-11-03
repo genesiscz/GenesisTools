@@ -12,7 +12,7 @@ import {
 } from "@app/ai/lib/usage/limits-query";
 import { usageProviderValues } from "@app/ai/lib/usage/provider-values";
 import { FORECAST_DESCRIPTION, type ForecastCommandOptions, runForecastCommand } from "@app/hub/commands/forecast";
-import { LIMIT_KIND_VALUES } from "@genesiscz/utils/ai/providers/account-features";
+import { absentLimitText, LIMIT_KIND_VALUES } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import type { AdviceRow, AdviseData } from "@genesiscz/utils/ai/usage/advise";
 import {
@@ -111,7 +111,11 @@ function renderLimits(envelope: UsageEnvelope<LimitsNowData>): void {
     const table = createBoxTable(["ACCOUNT", "WINDOWS", "STATUS"]);
 
     for (const snapshot of envelope.data.accounts) {
-        const windows = snapshot.limits.map((window) => `${window.label} ${formatLimitLine(window)}`).join("\n");
+        // A window the provider says does not exist is named, as `tools ai usage --no-tui` names it.
+        const windows = [
+            ...snapshot.limits.map((window) => `${window.label} ${formatLimitLine(window)}`),
+            ...(snapshot.absentLimits ?? []).map(absentLimitText),
+        ].join("\n");
         table.push([accountLabel(snapshot), windows || pc.dim("no windows reported"), statusOf(snapshot)]);
     }
 
