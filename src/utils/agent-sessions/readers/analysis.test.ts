@@ -124,6 +124,23 @@ describe("the analysis members of the three readers", () => {
         ]);
     });
 
+    test("a transcript that cannot be read is unsupported with the reason, never an empty list", async () => {
+        const missing = join(mkdtempSync(join(tmpdir(), "gt-analysis-")), "gone.jsonl");
+
+        for (const reader of [claudeHistoryReader, codexHistoryReader, grokHistoryReader]) {
+            const calls = await reader.analysis.callTrace(missing);
+
+            expect(calls.supported).toBe(false);
+            expect(calls.supported ? "" : calls.reason).toContain("could not be read");
+        }
+
+        for (const reader of [claudeHistoryReader, codexHistoryReader]) {
+            expect((await reader.analysis.compactions(missing)).supported).toBe(false);
+        }
+
+        expect((await codexHistoryReader.analysis.quotaReadings(missing)).supported).toBe(false);
+    });
+
     test("Grok: turn usage from updates.jsonl beside the chat history; no compaction times and no quota", async () => {
         const chat = transcript("chat_history.jsonl", [{ role: "user", content: "hi" }]);
         writeFileSync(
