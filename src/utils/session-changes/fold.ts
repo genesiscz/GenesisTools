@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
+import { splitLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
@@ -81,29 +82,6 @@ onReleaseMemory("session-changes folds", () => {
     sessions.clear();
 });
 
-const PARSED_LINE_BYTES = PARSED_LINE_MARKERS.map((marker) => Buffer.from(marker));
-
-/**
- * The lines of `bytes` that `parseLines` reads, each decoded on its own. Decoding the whole chunk and splitting it made
- * a string of every line, about 30% of them lines no rule reads, and a value the fold kept pinned its whole 8 MB chunk
- * string: a cold fold of a 329 MB session (170 sub-agent files) peaked at 630 MB RSS this way and at 450 MB with this
- * (2026-11-03, three interleaved runs each). A newline byte never occurs inside a UTF-8 sequence, and the markers are
- * ASCII, so the lines and the matches are the ones the string split finds.
- */
-function* parsedLines(bytes: Buffer): Generator<string> {
-    let start = 0;
-    while (start < bytes.length) {
-        const newline = bytes.indexOf(10, start);
-        const end = newline === -1 ? bytes.length : newline;
-        const line = bytes.subarray(start, end);
-        if (PARSED_LINE_BYTES.some((marker) => line.includes(marker))) {
-            yield line.toString("utf8");
-        }
-
-        start = end + 1;
-    }
-}
-
 /**
  * `fold` brought up to the file's last complete line, or a new fold read from the start when the file was replaced,
  * shortened or rewritten. Null when the file ends in a line without its newline that the full parse would read
@@ -152,7 +130,11 @@ function advance(path: string, agentId: string | null, fold: FileFold | null): F
                 continue;
             }
 
-            parseLines(parsedLines(bytes.subarray(0, lastNewline)), agentId, current.state, current.cursor, hooks);
+            // Only the lines a parse reads are decoded: decoding the whole chunk made a string of every line, about 30%
+            // of them lines no rule reads. A cold fold of a 329 MB session (170 sub-agent files) peaked at 630 MB RSS
+            // that way and at 450 MB this way (2026-11-03, three interleaved runs each).
+            const lines = splitLinesSync([bytes.subarray(0, lastNewline)], { containing: PARSED_LINE_MARKERS });
+            parseLines(lines, agentId, current.state, current.cursor, hooks);
             current.consumed += lastNewline + 1;
             prefix.update(bytes.subarray(0, lastNewline + 1));
             carry = Buffer.from(bytes.subarray(lastNewline + 1));

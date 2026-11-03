@@ -330,6 +330,20 @@ describe("lines are cut at \\n only (readLines, readLinesSync, splitLines)", () 
         }
     });
 
+    it("with `containing` gives exactly the lines of text.split that hold a marker, at every chunk size", () => {
+        const content = '{"keep":1}\nskip žluť\n{"keep":"kůň 🙂"}\n\nskip\n{"keep":"last, no newline"}';
+        const markers = ['"keep"'];
+        const expected = content.split("\n").filter((line) => line.includes(markers[0]));
+        const path = file("containing.txt", content);
+
+        for (const chunkBytes of [1, 2, 5, 1024]) {
+            expect([...readLinesSync(path, { chunkBytes, containing: markers })]).toEqual(expected);
+        }
+
+        expect([...splitLinesSync([Buffer.from(content)], { containing: markers })]).toEqual(expected);
+        expect([...splitLinesSync([Buffer.from("a\nb\n")], { containing: markers })]).toEqual([]);
+    });
+
     it("readLines throws for a missing file", async () => {
         await expect(collect(readLines(join(dir, "missing.txt")))).rejects.toThrow();
     });

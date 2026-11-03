@@ -371,7 +371,12 @@ export function parseLines(
                     continue;
                 }
 
-                state.inputs.set(id, input);
+                // Only a file tool's input is read again (its edits rebuild the after state); a resident fold keeps
+                // what is set here for as long as it keeps the session.
+                if (fileToolVia(name) !== null) {
+                    state.inputs.set(id, input);
+                }
+
                 state.calls.set(id, {
                     id,
                     turnId: cursor.currentTurn ?? "",
@@ -614,13 +619,13 @@ export function readClaudeTranscript(transcriptPath: string): SessionTranscript 
         agentId: file.agentId,
         parentToolUseId: file.parentToolUseId,
         // A generator: each file is read only while it is parsed, never all at once (365 MB for one session).
-        content: readLinesSync(file.path),
+        content: readLinesSync(file.path, { containing: PARSED_LINE_MARKERS }),
     }));
     log.debug({ transcriptPath, subagents: subagents.length }, "reading session transcript");
 
     // In chunks: the whole text of a 218 MB transcript was a 640 MB string before parsing began.
     return parseClaudeTranscript(sessionId, {
-        main: readLinesSync(transcriptPath),
+        main: readLinesSync(transcriptPath, { containing: PARSED_LINE_MARKERS }),
         subagents,
         readBackup: backupReader(sessionId),
     });
