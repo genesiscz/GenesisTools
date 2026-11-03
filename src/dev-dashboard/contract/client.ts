@@ -120,9 +120,10 @@ export function createDashboardClient(opts: DashboardClientOptions) {
 
     /**
      * The one generic method: calls any row of the endpoint table (`ENDPOINTS`) with its typed input and answer.
-     * Path params come out of the input; the rest is the query of a GET or DELETE, else the JSON body.
+     * Path params come out of the input; the rest is the query of a GET or DELETE, else the JSON body. `async`, so a
+     * missing path param is a rejection like every other failure, not a synchronous throw.
      */
-    function call<E extends Endpoint>(
+    async function call<E extends Endpoint>(
         endpoint: E,
         input: EndpointInput<E>,
         options: CallOptions = {}
