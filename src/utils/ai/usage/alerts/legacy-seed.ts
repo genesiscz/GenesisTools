@@ -28,6 +28,7 @@ export function seedThresholdAlerts(input: {
         now: input.now,
         snapshots: input.snapshots,
         samples: [],
+        baselines: [],
         runs: [],
         previousRoundAt: null,
         events: [],

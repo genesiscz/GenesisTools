@@ -6,10 +6,40 @@ import { notifiableWindows } from "../windows";
 
 const HOUR_MS = 3_600_000;
 
-function samplesOf(round: AlertRound, provider: string, account: string, bucket: string) {
-    return round.samples
-        .filter((sample) => sample.provider === provider && sample.account === account && sample.bucket === bucket)
+/** One window's readings, oldest first, after its last reading before the lookback (its baseline). */
+function samplesOf(round: AlertRound, window: { provider: string; account: string; bucket: string }) {
+    return [...round.baselines, ...round.samples]
+        .filter(
+            (sample) =>
+                sample.provider === window.provider &&
+                sample.account === window.account &&
+                sample.bucket === window.bucket
+        )
         .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+}
+
+/**
+ * A pace alert's severity, in steps: the raw ratio or depth moves with every reading, and the shared refire fires
+ * again at any higher severity, so a raw value fired many times a day. Over pace steps by whole multiples of the
+ * allowance, into the reserve by 5 points.
+ */
+function paceSeverity(over: boolean, pace: { paceRatio: number | null; headroomPct: number }): number {
+    return over ? Math.max(1, Math.floor(pace.paceRatio ?? 1)) : Math.floor((100 - pace.headroomPct) / 5) * 5;
+}
+
+function overPaceMessage(
+    account: string,
+    label: string,
+    pace: { burnedTodayPct: number | null; allowancePct: number | null; paceRatio: number | null }
+): string {
+    const burned = `${account}: ${label} used ${pace.burnedTodayPct?.toFixed(1)} points today`;
+
+    // A zero allowance has no ratio: any burn is over it.
+    if (pace.paceRatio === null) {
+        return `${burned}, with no daily allowance.`;
+    }
+
+    return `${burned}, allowance ${pace.allowancePct?.toFixed(1)} (${pace.paceRatio.toFixed(1)}x).`;
 }
 
 /**
@@ -45,7 +75,11 @@ export const budgetRule: UsageAlertRule<"budget"> = {
                     kind: window.kind,
                     utilization: window.utilization,
                     resetsAt: window.resetsAt,
-                    samples: samplesOf(round, window.provider, window.accountName, window.key),
+                    samples: samplesOf(round, {
+                        provider: window.provider,
+                        account: window.accountName,
+                        bucket: window.key,
+                    }),
                     now: round.now,
                     dayStart,
                     overPaceFactor: settings.overPaceFactor,
@@ -58,11 +92,11 @@ export const budgetRule: UsageAlertRule<"budget"> = {
                         dedupeKey: `budget:${pace.status}:${window.provider}:${window.accountId}:${window.key}`,
                         // A pace belongs to a local day: tomorrow's first breach fires again.
                         cycle: day,
-                        severity: over ? (pace.paceRatio ?? 1) : 100 - pace.headroomPct,
+                        severity: paceSeverity(over, pace),
                         level: over ? "warning" : "critical",
                         title: over ? "Over budget pace" : "Into the reserve",
                         message: over
-                            ? `${window.accountName}: ${window.label} used ${pace.burnedTodayPct?.toFixed(1)} points today, allowance ${pace.allowancePct?.toFixed(1)} (${pace.paceRatio?.toFixed(1)}x).`
+                            ? overPaceMessage(window.accountName, window.label, pace)
                             : `${window.accountName}: ${window.label} at ${Math.round(window.utilization)}%, inside the ${pace.reservePct}% reserve.`,
                         payload: { ...pace },
                     });

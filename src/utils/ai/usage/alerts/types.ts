@@ -119,6 +119,8 @@ export interface AlertRound {
     snapshots: readonly AccountUsageSnapshot[];
     /** Readings of the lookback (3 days), for the forecast. */
     samples: readonly UsageSample[];
+    /** Each window's last reading before that lookback (`readSampleSeeds`): the budget rule's value at midnight. */
+    baselines: readonly UsageSample[];
     /** Poll runs of the last day, this round's included. */
     runs: readonly PollRun[];
     /** The end of the last round recorded before this one; null before the first. */

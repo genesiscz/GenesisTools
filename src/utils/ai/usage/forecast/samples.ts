@@ -34,6 +34,40 @@ export interface UsageSampleQuery {
     accounts?: readonly SampleAccount[];
 }
 
+/**
+ * Each window's last reading before `before`, oldest first: the baseline a lookback starts from. Readings are written
+ * only on a change, so a window idle longer than the lookback has no reading inside it, and a reader that needs the
+ * value at the lookback's start (a budget's "used at midnight") would otherwise read 0.
+ */
+export function readSampleSeeds(db: Database, options: { before: Date }): UsageSample[] {
+    const columns = db.prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>;
+    const readingsOnly = columns.some((column) => column.name === "availability")
+        ? "AND availability IS NOT 'absent'"
+        : "";
+    const rows = db
+        .prepare(
+            `SELECT provider, account_name, bucket, kind, utilization, resets_at, timestamp
+             FROM usage_snapshots
+             WHERE id IN (
+                 SELECT MAX(id) FROM usage_snapshots
+                 WHERE timestamp < ?1 ${readingsOnly}
+                 GROUP BY provider, account_name, bucket
+             )
+             ORDER BY timestamp ASC`
+        )
+        .all(options.before.toISOString()) as SampleRow[];
+
+    return rows.map((row) => ({
+        provider: row.provider,
+        account: row.account_name,
+        bucket: row.bucket,
+        kind: row.kind,
+        utilization: row.utilization,
+        resetsAt: row.resets_at,
+        timestamp: row.timestamp,
+    }));
+}
+
 /** The samples of the lookback, filters in the WHERE clause (never after a full read). */
 export function readUsageSamples(db: Database, options: UsageSampleQuery): UsageSample[] {
     if (options.accounts?.length === 0) {

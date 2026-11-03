@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
-import { EMPTY_BUDGETS, type UsageBudgets } from "@genesiscz/utils/ai/usage/budgets/budgets";
+import type { UsageBudgets } from "@genesiscz/utils/ai/usage/budgets/budgets";
 import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
-import { readUsageSamples } from "@genesiscz/utils/ai/usage/forecast/samples";
+import { readSampleSeeds, readUsageSamples } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import type { UsageAlertsConfig } from "./config";
 import type { AlertRound, AvailabilityChange } from "./types";
@@ -97,14 +97,17 @@ export function buildAlertRound(input: {
     previousRoundAt: string | null;
     /** The alerts config the round is judged by: its rules decide how far back the events are read. */
     config: UsageAlertsConfig;
-    budgets?: UsageBudgets;
+    /** The usage config's budgets; required, so a caller cannot silently judge none. */
+    budgets: UsageBudgets;
 }): AlertRound {
     const { db, now } = input;
     const nowMs = now.getTime();
     let samples: AlertRound["samples"] = [];
+    let baselines: AlertRound["baselines"] = [];
 
     try {
         samples = readUsageSamples(db, { since: new Date(nowMs - ALERT_SAMPLE_LOOKBACK_MS) });
+        baselines = readSampleSeeds(db, { before: new Date(nowMs - ALERT_SAMPLE_LOOKBACK_MS) });
     } catch (err) {
         if (!isMissing(err)) {
             throw err;
@@ -123,6 +126,7 @@ export function buildAlertRound(input: {
             .list({ from: new Date(nowMs - alertEventLookbackMs(input.config)), to: now })
             .reverse(),
         availabilityChanges: availabilityChangesSince(db, since),
-        budgets: input.budgets ?? EMPTY_BUDGETS,
+        baselines,
+        budgets: input.budgets,
     };
 }

@@ -11,6 +11,7 @@ import {
     migrateDashboardConfig,
     prominentFor,
     saveDashboardConfig,
+    updateDashboardConfig,
 } from "./dashboard-config";
 
 const cleanups: Array<() => void> = [];
@@ -63,6 +64,20 @@ describe("loadDashboardConfig", () => {
 
         const copied = await new Storage("ai-usage-dashboard").getConfig<{ refreshInterval: number }>();
         expect(copied?.refreshInterval).toBe(15);
+    });
+
+    test("a first budget edit on a Mac with only the claude-era store keeps those preferences", async () => {
+        useTempHome();
+        await new Storage("claude-usage-dashboard").setConfig({ refreshInterval: 15, hiddenAccounts: ["shop"] });
+
+        await updateDashboardConfig((stored) => {
+            stored.budgets = { global: { spend: { dailyUsd: 30 } }, providers: {} };
+        });
+        const config = await loadDashboardConfig();
+
+        expect(config.refreshInterval).toBe(15);
+        expect(config.hiddenAccounts).toEqual(["shop"]);
+        expect(config.budgets.global.spend).toEqual({ dailyUsd: 30 });
     });
 
     test("a second load does not overwrite preferences saved in the new store", async () => {
