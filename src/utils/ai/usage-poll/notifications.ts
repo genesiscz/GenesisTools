@@ -155,6 +155,11 @@ class BucketTracker {
 /** What the in-TUI notifier reads: the `notifications` block plus the threshold lists, now at `alerts.rules.threshold`. */
 export type NotificationSettings = UsageDashboardConfig["notifications"] & {
     thresholds: { session: number[]; weekly: number[] };
+    /**
+     * False when the alert engine delivers the threshold banner (the usage TUI with the engine wired). It covers that
+     * banner only: the cache-expiry banners have no engine rule and still follow `macos`. Not a saved setting.
+     */
+    thresholdDesktop?: boolean;
 };
 
 export function notificationSettings(config: {
@@ -245,7 +250,9 @@ export class NotificationManager {
                 });
             }
 
-            await this.dispatchDesktop({ title: "AI Usage Alert", message, group: "ai-usage" });
+            if (this.config.thresholdDesktop !== false) {
+                await this.dispatchDesktop({ title: "AI Usage Alert", message, group: "ai-usage" });
+            }
         }
     }
 

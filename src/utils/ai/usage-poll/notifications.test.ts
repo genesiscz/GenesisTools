@@ -84,6 +84,19 @@ describe("NotificationManager desktop dispatch", () => {
 
         expect(dispatched).toEqual([]);
     });
+
+    test("with the alert engine wired the threshold banner is the engine's, and the cache banners still go out", async () => {
+        dispatched.length = 0;
+        const manager = new NotificationManager(config({ thresholdDesktop: false }));
+
+        await manager.processUsage(WINDOW);
+        manager.processCacheSessions([
+            { sessionId: "s1", title: "fixture", cwdShort: "repo", mtime: 0, lastCacheAt: 1, cacheStatus: "COOLING" },
+        ]);
+        await Bun.sleep(0);
+
+        expect(dispatched.map((event) => event.title)).toEqual(["Claude Cache Cooling"]);
+    });
 });
 
 /**
