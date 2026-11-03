@@ -410,6 +410,8 @@ test("only a live agent with an explicit session identity counts as open", async
     const report = await readProcsReport({ sources });
     expect(report.groups.find((group) => group.rootPid === 20)?.session).toMatchObject({ sessionId: S2, match: "cwd" });
     expect(await openAgentSessionIds(sources)).toEqual(new Set([S1]));
+    // A `ps` bound (the one-session door) never replaces an injected table with a real `ps`.
+    expect(await openAgentSessionIds(sources, { psTimeoutMs: 1 })).toEqual(new Set([S1]));
 });
 
 /** A process table in memory: signals are recorded, and each pid dies on the signals listed for it. */

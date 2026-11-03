@@ -94,8 +94,18 @@ export const realProcsSources: ProcsSources = {
  * clock alone calls an open, idle session "not live" (the hub's Agents tab said "No live agent sessions" for two
  * open ones on 2026-10-16).
  */
-export async function openAgentSessionIds(sources?: ProcsSources): Promise<Set<string>> {
-    const report = await readProcsReport(sources ? { sources } : {});
+export async function openAgentSessionIds(
+    sources?: ProcsSources,
+    options: { psTimeoutMs?: number } = {}
+): Promise<Set<string>> {
+    const psTimeoutMs = options.psTimeoutMs;
+    // Injected sources (tests) keep their own table; the bound applies to the real `ps` only.
+    const bounded =
+        sources ??
+        (psTimeoutMs === undefined
+            ? realProcsSources
+            : { ...realProcsSources, table: () => listPsTable({ timeoutMs: psTimeoutMs }) });
+    const report = await readProcsReport({ sources: bounded });
     return new Set(
         report.groups.flatMap((group) =>
             group.kind === "agent" && group.session && group.session.match !== "cwd" ? [group.session.sessionId] : []
