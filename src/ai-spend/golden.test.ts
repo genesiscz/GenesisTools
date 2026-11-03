@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { GOLDEN_CASES, goldenPath, runGoldenCase, writeGoldenHome } from "./__fixtures__/golden-home";
+import { GOLDEN_CASES, goldenPath, runGoldenCase, writeGoldenHome } from "./__tests__/golden-home";
 
 /**
  * The bytes of `tools ai-spend daily`, `weekly` and `statusline` (Claude Code runs the statusline in its settings,
