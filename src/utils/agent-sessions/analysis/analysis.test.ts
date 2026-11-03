@@ -129,6 +129,19 @@ describe("session report", () => {
         expect(priority ?? 0).toBeGreaterThan(standard ?? 0);
     });
 
+    test("a recorded cost follows the spend reports' rule for its harness: Grok's metering only prices an unpriced model", () => {
+        // Grok Build records costUsdTicks, its plan metering (about a third of list price), on every call it traces.
+        const metered = call(0, { model: "grok-4.6-build", cacheRead: 0, recordedCostUsd: 0.0001 });
+        const listPrice = callCostUsd({ ...metered, recordedCostUsd: undefined }, { agent: "grok" });
+
+        expect(listPrice).not.toBeNull();
+        expect(callCostUsd(metered, { agent: "grok" })).toBe(listPrice);
+        // A model the catalog cannot price keeps the agent's own figure rather than no cost at all.
+        expect(callCostUsd({ ...metered, model: "grok-0-invented" }, { agent: "grok" })).toBe(0.0001);
+        // Claude's recorded cost is the list price, so it stays as recorded.
+        expect(callCostUsd(call(0, { recordedCostUsd: 1.23 }), { agent: "claude" })).toBe(1.23);
+    });
+
     test("a call is priced through its harness's candidate ladder, as the spend reports price it", () => {
         const build = call(0, { model: "grok-4.6-build", cacheRead: 0 });
         const base = call(0, { model: "grok-4.6", cacheRead: 0 });

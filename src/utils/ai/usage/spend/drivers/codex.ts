@@ -99,6 +99,9 @@ export const codexDriver: MonitorDriver = {
 
     priceCandidates: codexPriceCandidates,
 
+    // A cost a Codex rollout records is the list price.
+    recordedCost: "list-price",
+
     // Each Codex home belongs to its own account.
     sharedAccountRow: null,
 
