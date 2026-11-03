@@ -35,6 +35,7 @@ export function registerAiUsageDigestCommand(usage: Command): void {
 
             if (opts.write) {
                 out.println(await writeDigestNote(envelope.data));
+                printWarnings(envelope.warnings);
                 return;
             }
 

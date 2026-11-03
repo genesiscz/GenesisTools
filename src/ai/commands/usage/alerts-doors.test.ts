@@ -6,7 +6,7 @@ import { withSessionCost } from "@app/ai/lib/sessions/session-cost";
 import { ackAlerts, queryAlertRules, queryAlerts, testAlertRule } from "@app/ai/lib/usage/alerts-query";
 import { recordRoundAndAlert } from "@app/ai/lib/usage/alerts-tick";
 import { queryBudgets, removeBudget, setBudget } from "@app/ai/lib/usage/budgets-query";
-import { digestDays } from "@app/ai/lib/usage/digest-query";
+import { digestDays, mergeDigestRows } from "@app/ai/lib/usage/digest-query";
 import { queryEvents } from "@app/ai/lib/usage/events-query";
 import { queryHealth, querySeries } from "@app/ai/lib/usage/limits-query";
 import { mergeAlertsConfig } from "@genesiscz/utils/ai/usage/alerts/config";
@@ -15,9 +15,11 @@ import type { AlertChannel, AlertChannelTable, StoredAlert } from "@genesiscz/ut
 import { UsageQueryError } from "@genesiscz/utils/ai/usage/contract";
 import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
+import type { DailyRow } from "@genesiscz/utils/ai/usage/rollup/daily";
 import type { UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { removeDbFile } from "@genesiscz/utils/fs";
+import { aiSessionReportCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { tmpdir } from "@genesiscz/utils/paths";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -396,8 +398,8 @@ describe("tools ai usage budgets and digest", () => {
     });
 
     test("--day defaults to yesterday and --week to the Monday-to-Sunday week before this one", () => {
-        expect(digestDays({}, NOW, "UTC")).toEqual({ period: "day", days: ["2026-11-02"] });
-        expect(digestDays({ week: true }, NOW, "UTC").days).toEqual([
+        expect(digestDays({ opts: {}, now: NOW, tz: "UTC" })).toEqual({ period: "day", days: ["2026-11-02"] });
+        expect(digestDays({ opts: { week: true }, now: NOW, tz: "UTC" }).days).toEqual([
             "2026-10-26",
             "2026-10-27",
             "2026-10-28",
@@ -406,12 +408,56 @@ describe("tools ai usage budgets and digest", () => {
             "2026-10-31",
             "2026-11-01",
         ]);
-        expect(digestDays({ week: "2026-11-05" }, NOW, "UTC").days[0]).toBe("2026-11-02");
+        expect(digestDays({ opts: { week: "2026-11-05" }, now: NOW, tz: "UTC" }).days[0]).toBe("2026-11-02");
+    });
+
+    test("a finished day the rollup kept wins over a partly pruned rebuild; today and another zone's days do not", () => {
+        const row = (day: string, peakPct: number, tz = "UTC"): DailyRow => ({
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            accountName: "work",
+            bucket: "five_hour",
+            kind: "session",
+            day,
+            tz,
+            startPct: 0,
+            endPct: peakPct,
+            peakPct,
+            resets: 0,
+            cyclesOver90: 0,
+            readings: 1,
+            minutesMeasured: 60,
+            availability: "limited",
+        });
+        // 11-01 at the retention edge: the rollup kept its morning peak of 90, the readings left only 20.
+        const merged = mergeDigestRows({
+            fresh: [row("2026-11-01", 20), row("2026-11-03", 30)],
+            stored: [row("2026-11-01", 90), row("2026-11-03", 10), row("2026-10-31", 50, "Europe/Prague")],
+            tz: "UTC",
+            today: "2026-11-03",
+        });
+
+        expect(merged.rows.map((r) => [r.day, r.peakPct]).sort()).toEqual([
+            ["2026-11-01", 90],
+            ["2026-11-03", 30],
+        ]);
+        expect(merged.otherZones).toEqual(["Europe/Prague"]);
+    });
+
+    test("a session window takes no daily allowance: budgets set refuses it before writing", async () => {
+        await expect(setBudget({ account: ["work"], kind: "session", daily: "10" })).rejects.toThrow(
+            "--daily does not apply to a session window"
+        );
+    });
+
+    test("a session report hint quotes the id, so a path-derived id never becomes shell syntax", () => {
+        expect(aiSessionReportCommand("a1b2-c3")).toBe("tools ai sessions report a1b2-c3");
+        expect(aiSessionReportCommand("x; rm -rf ~")).toBe("tools ai sessions report 'x; rm -rf ~'");
     });
 
     test("--week starts on the local Monday in a zone far from UTC", () => {
         for (const tz of ["Pacific/Kiritimati", "Pacific/Tongatapu", "Pacific/Pago_Pago"]) {
-            const { days } = digestDays({ week: "2026-11-05" }, NOW, tz);
+            const { days } = digestDays({ opts: { week: "2026-11-05" }, now: NOW, tz });
 
             expect({ tz, first: days[0], last: days.at(-1) }).toEqual({ tz, first: "2026-11-02", last: "2026-11-08" });
         }

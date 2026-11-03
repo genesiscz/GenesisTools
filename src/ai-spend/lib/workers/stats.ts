@@ -302,24 +302,18 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
             continue;
         }
 
-        const authAt = (timestamp: string): WorkerAuthMode => {
+        // The one turn whose span holds the moment; none, or overlapping turns, prove nothing.
+        const turnAt = (timestamp: string) => {
             const time = Date.parse(timestamp);
             const matches = sessionRows.filter((row) => {
                 const end = Date.parse(row.ts);
                 return time <= end && time >= end - (row.durationMs ?? 0);
             });
-            // Missing or overlapping turn evidence cannot establish a historical login.
-            return matches.length === 1 ? matches[0].auth : "unknown";
+            return matches.length === 1 ? matches[0] : null;
         };
-        // The turn whose span holds the moment names its outcome; a moment no single turn holds is `unknown`.
-        const outcomeAt = (timestamp: string): string => {
-            const time = Date.parse(timestamp);
-            const matches = sessionRows.filter((row) => {
-                const end = Date.parse(row.ts);
-                return time <= end && time >= end - (row.durationMs ?? 0);
-            });
-            return matches.length === 1 ? (matches[0].outcome ?? "unknown") : "unknown";
-        };
+        // Missing or overlapping turn evidence cannot establish a historical login.
+        const authAt = (timestamp: string): WorkerAuthMode => turnAt(timestamp)?.auth ?? "unknown";
+        const outcomeAt = (timestamp: string): string => turnAt(timestamp)?.outcome ?? "unknown";
         const values = (model: string | null, ts: string, outcome: string): Record<WorkerStatsDimension, string> => ({
             backend: session.backend,
             model: model || session.model || "?",

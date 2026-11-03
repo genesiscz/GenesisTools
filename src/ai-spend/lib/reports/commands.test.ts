@@ -875,6 +875,17 @@ describe("--harness, the design name of --sources and --backend", () => {
         expect(attributedCalls.map((call) => call.sources)).toEqual([["claude"], ["codex"], undefined]);
     });
 
+    test("pivot keeps its own 7-day window under the root's 30-day --since default, and takes --from", async () => {
+        attributedCalls.length = 0;
+
+        await spend("pivot");
+        await spend("pivot", "--from", "2d");
+
+        expect(process.exitCode ?? 0).toBe(0);
+        const days = attributedCalls.map((call) => Math.round((Date.now() - call.from.getTime()) / 86_400_000));
+        expect(days).toEqual([7, 2]);
+    });
+
     test("workers takes --harness for --backend", async () => {
         await spend("workers", "--harness", "nonesuch");
 
