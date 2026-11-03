@@ -96,13 +96,16 @@ async function gatherSnapshots(opts: LimitsOptions): Promise<GatheredSnapshots> 
     const selection = selectAccounts(opts.account, candidates);
     const pollProviders = selection ? [...new Set(selection.map((account) => account.provider))] : providers;
     const cache = opts.cached ? await readSnapshotsCache() : null;
-    const snapshots = opts.cached
+    const gathered = opts.cached
         ? snapshotsFromCache(cache)
         : await pollAccounts({
               ...(pollProviders === undefined ? {} : { providers: pollProviders }),
               ...(selection === undefined ? {} : { accountFilter: selection.map((account) => account.accountName) }),
               ...(opts.fresh ? { force: true } : {}),
           });
+    // The cache file keeps an account hidden or removed since its poll: only a visible configured account answers.
+    const known = new Set((selection ?? candidates).map((account) => `${account.provider}\u0000${account.accountId}`));
+    const snapshots = gathered.filter((snapshot) => known.has(`${snapshot.provider}\u0000${snapshot.accountId}`));
 
     return { snapshots, providers, providerIds, selection, noCache: opts.cached === true && cache === null };
 }
