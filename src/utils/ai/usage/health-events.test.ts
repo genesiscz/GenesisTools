@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { readLimitSeries } from "@genesiscz/utils/ai/usage-poll/series";
-import { recordUsageEvent, useUsageEventsStoreForTests } from "./events/record";
+import { recordProbeRefusal, recordUsageEvent, useUsageEventsStoreForTests } from "./events/record";
 import { countByKind, UsageEventsStore } from "./events/store";
 import { limitsHealth } from "./poll-runs/health";
 import { PollRunsStore, pollOutcomeOf } from "./poll-runs/store";
@@ -116,6 +116,25 @@ describe("usage events", () => {
             ["haiku", 3, "2026-11-03"],
         ]);
         expect(countByKind(rows)).toEqual({ probe: 4 });
+    });
+
+    test("refused probes are one row per account, model and day, with a count and the latest refusal's detail", () => {
+        const store = new UsageEventsStore(limits.connection());
+        useUsageEventsStoreForTests(store);
+        const refusal = { provider: "anthropic-sub", accountName: "work", model: "haiku", source: "probe-budget" };
+
+        recordProbeRefusal({ ...refusal, detail: "the account probe budget of 7 days is spent", at: at(1) });
+        recordProbeRefusal({ ...refusal, detail: "the account probe budget of 7 days is spent", at: at(2) });
+        recordProbeRefusal({ ...refusal, detail: "the global probe budget of 7 days is spent", at: at(3) });
+        recordProbeRefusal({ ...refusal, detail: "the global probe budget of 7 days is spent", at: at(24 * 60) });
+
+        const rows = store.list({ from: T0, to: at(25 * 60), kinds: ["probe-refused"] });
+
+        expect(rows.map((row) => [row.ts, row.count, row.detail, row.source])).toEqual([
+            [at(24 * 60).toISOString(), 1, "the global probe budget of 7 days is spent", "probe-budget"],
+            [at(3).toISOString(), 3, "the global probe budget of 7 days is spent", "probe-budget"],
+        ]);
+        expect(countByKind(rows)).toEqual({ "probe-refused": 4 });
     });
 
     test("recordUsageEvent never throws, even when its store is gone", () => {
