@@ -174,6 +174,10 @@ final class HubUsageModel: ObservableObject {
     init(preferences: UsagePreferences = .shared, client: UsageClient = HubUsageModel.hubClient) {
         self.preferences = preferences
         self.client = client
+        // Uncovered, unminimized or back from another Space: the open section reads what went stale meanwhile.
+        HubVisibility.shared.onChange(self) { model, visible in
+            if visible { model.windowReturned() }
+        }
     }
 
     /// The hub's runner: the resident server when it has the door, else a `tools` process.
@@ -194,8 +198,14 @@ final class HubUsageModel: ObservableObject {
 
     func deactivate() { active = false }
 
-    func loadIfStale() {
-        let now = Date()
+    /// The window came back (it became key, or it can be seen again): while the mode is open, the open section reads
+    /// again what is older than `maxAge`, so percentages and countdowns left open for hours do not stay frozen.
+    func windowReturned(at now: Date = Date()) {
+        guard active else { return }
+        loadIfStale(now: now)
+    }
+
+    func loadIfStale(now: Date = Date()) {
         let stale = section.doors(settings).filter { key in
             !loading.contains(key) && (loaded[key].map { now.timeIntervalSince($0) >= Self.maxAge } ?? true)
         }
