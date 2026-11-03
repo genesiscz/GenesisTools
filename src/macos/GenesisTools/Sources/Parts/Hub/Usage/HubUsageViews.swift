@@ -143,6 +143,9 @@ struct UsageMain: View {
                         NoticePill(text: "A usage door failed.", more: error, tone: .error,
                                    fixes: [.button("Retry", symbol: "arrow.clockwise") { usage.reload() }])
                     }
+                    if let error = usage.sectionAckError {
+                        NoticePill(text: "The alert was not acknowledged.", more: error, tone: .error)
+                    }
                     if !usage.warnings.isEmpty {
                         InfoStrip(usage.warnings.map(\.message).joined(separator: "\n"))
                     }

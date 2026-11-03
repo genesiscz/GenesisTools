@@ -59,6 +59,23 @@ final class WidgetUsageTests: XCTestCase {
         XCTAssertTrue(expanded.contains("no 5h"), expanded)
     }
 
+    func testAFailedAcknowledgeStaysShownAfterTheReloadThatFollowsIt() async throws {
+        struct AckRefused: LocalizedError { var errorDescription: String? { "the ledger is locked" } }
+        let store = WidgetUsageStore(client: UsageClient { argv in
+            if argv.contains("ack") { throw AckRefused() }
+            if argv.contains("alerts") { return Data(Self.alertsJSON.utf8) }
+            if argv.contains("series") { return Data(Self.seriesJSON.utf8) }
+            return Data(Self.limitsJSON.utf8)
+        }, watchFolder: NSTemporaryDirectory(), openHub: { _ in })
+        let alert = try UsageClient.decodeEnvelope(Data(Self.alertsJSON.utf8), as: UsageAlertsData.self, door: .alerts).data.alerts[0]
+        store.acknowledge(alert)
+        // The reload after the acknowledge sets `loadedAt` when it lands.
+        for _ in 0..<200 where store.loadedAt == nil { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertNotNil(store.loadedAt)
+        XCTAssertNil(store.error, "the read itself worked")
+        XCTAssertEqual(store.ackError, "tools ai usage alerts ack 7 failed: the ledger is locked")
+    }
+
     func testPreferencesDecodeWithoutTheUsageKey() throws {
         struct Holder: Decodable { let usage: WidgetUsagePreferences? }
         XCTAssertNil(try JSONDecoder().decode(Holder.self, from: Data("{}".utf8)).usage)

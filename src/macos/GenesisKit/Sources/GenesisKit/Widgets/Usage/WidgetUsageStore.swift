@@ -10,6 +10,10 @@ public final class WidgetUsageStore: ObservableObject {
     @Published public private(set) var alerts: [UsageAlert] = []
     @Published public private(set) var loading = false
     @Published public private(set) var error: String?
+    /// A failed acknowledge, kept apart from `error` so the read that follows it does not clear it. It clears when an
+    /// acknowledge works, or when a read finds that alert no longer open (acknowledged somewhere else).
+    @Published public private(set) var ackError: String?
+    private var ackFailedAlert: Int?
     @Published public private(set) var loadedAt: Date?
 
     private let client: UsageClient
@@ -89,6 +93,10 @@ public final class WidgetUsageStore: ObservableObject {
                 self.rows = table.rows
                 self.alerts = alertsValue.data.alerts
                 self.error = nil
+                if let id = self.ackFailedAlert, !self.openAlerts.contains(where: { $0.id == id }) {
+                    self.ackFailedAlert = nil
+                    self.ackError = nil
+                }
                 self.loadedAt = now
             } catch is CancellationError {
                 return
@@ -104,8 +112,11 @@ public final class WidgetUsageStore: ObservableObject {
         Task { [weak self] in
             do {
                 _ = try await client.fetch(["ai", "usage", "alerts", "ack", String(alert.id)])
+                self?.ackFailedAlert = nil
+                self?.ackError = nil
             } catch {
-                self?.error = "tools ai usage alerts ack \(alert.id) failed: \(error.localizedDescription)"
+                self?.ackFailedAlert = alert.id
+                self?.ackError = "tools ai usage alerts ack \(alert.id) failed: \(error.localizedDescription)"
             }
             self?.load()
         }
