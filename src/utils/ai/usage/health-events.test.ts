@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { readLimitSeries } from "@genesiscz/utils/ai/usage-poll/series";
 import { recordUsageEvent, useUsageEventsStoreForTests } from "./events/record";
 import { countByKind, UsageEventsStore } from "./events/store";
 import { limitsHealth } from "./poll-runs/health";
@@ -231,5 +232,62 @@ describe("limitsHealth", () => {
         });
 
         expect(warnings.map((warning) => warning.code)).toEqual(["daemon-down", "no-runs"]);
+    });
+});
+
+describe("the series door", () => {
+    test("returns the coverage runs and the events of the accounts its series name, and no one else's", () => {
+        limits.recordSnapshotV2("work", "five_hour", 40, at(1).toISOString(), {
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            kind: "session",
+        });
+        new PollRunsStore(limits.connection()).recordRound(
+            [
+                { snapshot: snapshot(), source: "endpoint" },
+                { snapshot: snapshot({ accountId: "acc_side", accountName: "side" }), source: "endpoint" },
+            ],
+            at(1)
+        );
+        const events = new UsageEventsStore(limits.connection());
+        events.insert({
+            provider: "anthropic-sub",
+            accountName: "work",
+            source: "usage-client",
+            kind: "usage-429",
+            at: at(2),
+        });
+        events.insert({
+            provider: "anthropic-sub",
+            accountName: "side",
+            source: "usage-client",
+            kind: "usage-429",
+            at: at(2),
+        });
+
+        const data = readLimitSeries(
+            { from: T0.toISOString(), to: at(10).toISOString(), agg: "raw" },
+            {
+                db: limits,
+                directory: [{ provider: "anthropic-sub", accountId: "acc_work", accountName: "work" }],
+                current: [],
+            }
+        );
+
+        expect(data.series).toHaveLength(1);
+        expect(data.coverage).toEqual([
+            {
+                provider: "anthropic-sub",
+                accountId: "acc_work",
+                accountName: "work",
+                runs: [
+                    { from: at(1).toISOString(), to: at(1).toISOString(), outcome: "ok", source: "endpoint", polls: 1 },
+                ],
+            },
+        ]);
+        expect(data.events.map((event) => event.accountName)).toEqual(["work"]);
     });
 });
