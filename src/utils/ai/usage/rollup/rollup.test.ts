@@ -110,6 +110,41 @@ describe("dailyRowsOf", () => {
         ]);
     });
 
+    test("a new cycle over 90% after a reset before the range is counted when the range starts after the reset", () => {
+        const reading = (resetsAt: string) => ({
+            resetsAt,
+            severity: null,
+            scopeModel: null,
+            provider: "anthropic-sub",
+            accountId: "acc-work",
+            kind: "session",
+        });
+        // 95% in a window that reset at 23:30, then 92% in the next window, first read after midnight.
+        limits.recordSnapshotV2("work", "five_hour", 95, "2026-11-01T22:00:00.000Z", reading("2026-11-01T23:30:00Z"));
+        limits.recordSnapshotV2("work", "five_hour", 92, "2026-11-02T01:00:00.000Z", reading("2026-11-02T04:30:00Z"));
+        const cycles = (from: string) =>
+            dailyRowsOf({
+                series: limits.getSeries({
+                    from,
+                    to: "2026-11-02T12:00:00.000Z",
+                    agg: "raw",
+                    step: 0,
+                    keepQuiet: true,
+                }),
+                tz: TZ,
+                runs: [],
+                accountIdOf: () => "acc-work",
+            }).map((r) => [r.day, r.cyclesOver90]);
+
+        expect(cycles("2026-11-01T00:00:00.000Z")).toEqual([
+            ["2026-11-01", 1],
+            ["2026-11-02", 1],
+        ]);
+        // A range from 11-02 midnight: the store moves the 95% reading to the range's start and drops the reset
+        // before it, so only the carried reading's own reset clock shows the 92% is a new cycle.
+        expect(cycles("2026-11-02T00:00:00.000Z")).toEqual([["2026-11-02", 1]]);
+    });
+
     test("the daemon's rollup carries a quiet limited window into the days after its last reading", () => {
         limits.recordSnapshotV2("work", "seven_day", 40, "2026-10-30T08:00:00.000Z", {
             resetsAt: null,
