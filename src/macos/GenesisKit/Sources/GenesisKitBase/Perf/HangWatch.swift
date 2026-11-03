@@ -170,7 +170,11 @@ public enum HangWatch {
         lock.unlock()
 
         if shouldSample { captureStack(stallSoFar: gap, reason: "main-stall") }
-        if shouldLog { PerfLog.mark(String(format: "main-stall ongoing %.1fs load=%.1f", gap, PerfLog.loadAverage()) + PerfContext.describe()) }
+        if shouldLog {
+            let load = PerfLog.loadAverage()
+            PerfLog.mark(String(format: "main-stall ongoing %.1fs load=%.1f", gap, load) + PerfContext.describe())
+            LoadTop.noteStall(load: load)
+        }
         if shouldAlert { reportWedge(stallSoFar: gap) }
     }
 
@@ -194,7 +198,9 @@ public enum HangWatch {
                 let sinceWake = woke > 0 && ran - woke < wakeWindow ? ran - woke : nil
                 // On the main queue here, so AppKit may be asked. No app object (a test) counts as seen.
                 let hidden = MainActor.assumeIsolated { NSApp.map { !$0.occlusionState.contains(.visible) } ?? false }
-                PerfLog.mark(stallMark(ms: ms, load: PerfLog.loadAverage(), sinceWake: sinceWake, hidden: hidden) + PerfContext.describe(now: ran))
+                let load = PerfLog.loadAverage()
+                PerfLog.mark(stallMark(ms: ms, load: load, sinceWake: sinceWake, hidden: hidden) + PerfContext.describe(now: ran))
+                LoadTop.noteStall(load: load)
             }
         }
     }
@@ -204,7 +210,9 @@ public enum HangWatch {
     /// (delivered by the notification daemon, not by us) is the only channel
     /// left. The message names the capture so the stack is one click away.
     private static func reportWedge(stallSoFar: CFAbsoluteTime) {
-        PerfLog.mark(String(format: "main-thread WEDGED for %.0fs — app will not respond", stallSoFar))
+        let load = PerfLog.loadAverage()
+        PerfLog.mark(String(format: "main-thread WEDGED for %.0fs load=%.1f — app will not respond", stallSoFar, load))
+        LoadTop.noteStall(load: load)
         if let onWedge {
             onWedge(stallSoFar)
             return
@@ -385,6 +393,62 @@ public enum HangWatch {
             PerfLog.mark(String(format: "main-spin ended after %.0fs", seconds) + PerfContext.describe())
         case nil:
             break
+        }
+    }
+
+    // MARK: Load
+
+    /// The busiest processes on the Mac when a stall comes with a high load average. On 2026-11-02 the load went to
+    /// 160-281 for 12 minutes with stalls of 0.5-1.2 s, and nothing in the logs named the process: `load=` says how
+    /// busy the machine is, not who. One `ps` per minute at most, off the main thread, killed after 3 s.
+    public enum LoadTop {
+        /// Below this load the stall line's `load=` is enough; the probe adds no work.
+        public static let threshold: Double = 100
+        public static let cooldown: CFAbsoluteTime = 60
+        public static let count = 5
+        public static let timeout: TimeInterval = 3
+        private static let lock = NSLock()
+        private nonisolated(unsafe) static var lastAt: CFAbsoluteTime = 0
+        private static let queue = DispatchQueue(label: "HangWatch.LoadTop", qos: .utility)
+
+        /// Logs `load-top` after a stall line when `load` is past the threshold and the last probe is a minute old.
+        /// Safe from any thread: the check takes a lock, the `ps` runs on a utility queue.
+        public static func noteStall(load: Double, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+            guard load >= threshold else { return }
+            lock.lock()
+            let due = now - lastAt >= cooldown
+            if due { lastAt = now }
+            lock.unlock()
+            guard due else { return }
+            queue.async { PerfLog.mark(line(load: load)) }
+        }
+
+        static func line(load: Double) -> String {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            // `-r` sorts by %cpu, `comm` is the executable alone (no arguments, so no secrets on the line).
+            process.arguments = ["-Ao", "pid=,pcpu=,comm=", "-r"]
+            do {
+                let capture = try process.runCapturing(timeout: timeout)
+                let top = summary(psOutput: String(decoding: capture.stdout, as: UTF8.self), limit: count)
+                return String(format: "load-top load=%.1f: ", load) + (top.isEmpty ? "ps listed nothing" : top)
+            } catch {
+                return String(format: "load-top load=%.1f: ps failed: ", load) + "\(error)"
+            }
+        }
+
+        /// `pid=,pcpu=,comm=` rows sorted by %cpu into `<pid> <cpu>% <name>`, the name cut to its last path part
+        /// and 32 characters. Pure, so a test can feed it a listing.
+        public static func summary(psOutput: String, limit: Int) -> String {
+            var rows: [String] = []
+            for raw in psOutput.split(separator: "\n") where rows.count < limit {
+                let fields = raw.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                guard fields.count == 3, let pid = Int(fields[0]), let cpu = Double(fields[1]) else { continue }
+                let path = fields[2].trimmingCharacters(in: .whitespaces)
+                let name = String((path as NSString).lastPathComponent.prefix(32))
+                rows.append(String(format: "%d %.1f%% %@", pid, cpu, name))
+            }
+            return rows.joined(separator: ", ")
         }
     }
 

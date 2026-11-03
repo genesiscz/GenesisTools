@@ -73,3 +73,26 @@ final class SpinTrackerTests: XCTestCase {
         XCTAssertGreaterThan(after - before, 0.05, "busy work shows as CPU time (\(spins) spins)")
     }
 }
+
+final class LoadTopTests: XCTestCase {
+    func testSummaryKeepsTheFirstRowsWithShortNames() {
+        let listing = """
+          812  98.5 /Applications/Some App.app/Contents/MacOS/Some App Helper (Renderer)
+         4401  45.0 /usr/libexec/syspolicyd
+            7   3.2 bun
+          not a row
+           99   1.0 /bin/zsh
+        """
+        XCTAssertEqual(
+            HangWatch.LoadTop.summary(psOutput: listing, limit: 3),
+            "812 98.5% Some App Helper (Renderer), 4401 45.0% syspolicyd, 7 3.2% bun"
+        )
+        XCTAssertEqual(HangWatch.LoadTop.summary(psOutput: "", limit: 5), "")
+    }
+
+    func testLineNamesTheLoadAndRealProcesses() {
+        let line = HangWatch.LoadTop.line(load: 150)
+        XCTAssertTrue(line.hasPrefix("load-top load=150.0: "), line)
+        XCTAssertTrue(line.contains("%"), line)
+    }
+}
