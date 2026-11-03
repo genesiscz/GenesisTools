@@ -102,6 +102,38 @@ final class UsageTests: XCTestCase {
                                    until: start.addingTimeInterval(3600)))
     }
 
+    func testTheConeFollowsEachPaceToTheLimitThenRunsAlongIt() throws {
+        let start = Date(timeIntervalSince1970: 0)
+        let geometry = UsageLaneGeometry(domain: start...start.addingTimeInterval(4 * 3600), size: CGSize(width: 400, height: 100))
+        func forecast(low: Double, high: Double) -> UsageLaneForecast {
+            UsageLaneForecast(start: start, value: 80, ratePerHour: (low + high) / 2, lowPerHour: low, highPerHour: high,
+                              safePerHour: nil, resetAt: nil, exhaustAt: nil, beforeReset: false)
+        }
+        let end = start.addingTimeInterval(3 * 3600)
+        // Both paces reach 100 % before the end: the fast one after 1 h, the slow one after 2 h. The cone keeps the
+        // area between them up to the slow crossing instead of collapsing onto one clamped end point.
+        let both = try XCTUnwrap(geometry.cone(forecast(low: 10, high: 20), until: end))
+        XCTAssertEqual(both, [CGPoint(x: 0, y: 20), CGPoint(x: 200, y: 0), CGPoint(x: 300, y: 0), CGPoint(x: 100, y: 0)])
+        XCTAssertEqual(Self.area(both), 1000, accuracy: 0.001)
+        // Only the fast pace reaches 100 %: its crossing is a vertex, so the band is not cut short along a chord.
+        let one = try XCTUnwrap(geometry.cone(forecast(low: 5, high: 20), until: end))
+        XCTAssertEqual(one, [CGPoint(x: 0, y: 20), CGPoint(x: 300, y: 5), CGPoint(x: 300, y: 0), CGPoint(x: 100, y: 0)])
+        XCTAssertEqual(Self.area(one), 2750, accuracy: 0.001)
+        // Already at the limit: nothing left to forecast.
+        XCTAssertNil(geometry.cone(UsageLaneForecast(start: start, value: 100, ratePerHour: 10, lowPerHour: 5, highPerHour: 20,
+                                                     safePerHour: nil, resetAt: nil, exhaustAt: nil, beforeReset: false),
+                                   until: end))
+    }
+
+    /// A polygon's area by the shoelace formula.
+    private static func area(_ points: [CGPoint]) -> Double {
+        let sum = points.indices.reduce(0.0) { total, index in
+            let a = points[index], b = points[(index + 1) % points.count]
+            return total + Double(a.x * b.y - b.x * a.y)
+        }
+        return abs(sum) / 2
+    }
+
     func testTableShowsNoLimitForAnAbsentWindowAndTheBindingForecast() throws {
         let limits = try decode("""
         {"schema":"usage.limits@1","generatedAt":"2026-11-03T10:00:00.000Z","selector":{"accounts":[]},"warnings":[],
