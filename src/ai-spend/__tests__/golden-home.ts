@@ -202,7 +202,7 @@ export async function settleWithin(input: {
             throw error;
         }
 
-        const ended = await killWithEscalation(child, { graceMs: 1000 });
+        const ended = await killWithEscalation(child, { graceMs: 1000, reapMs: 1000 });
         throw new Error(`${late.message}; its child was ${ended ? "killed" : "signalled and may still run"}.`);
     }
 }
