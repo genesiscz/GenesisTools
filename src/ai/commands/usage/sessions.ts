@@ -10,6 +10,7 @@ import {
     listAgentSessionRows,
 } from "../../lib/sessions/agent-session-rows";
 import { sessionRowsJson } from "../../lib/sessions/rows-cache";
+import { type SessionCostFields, withSessionCost } from "../../lib/sessions/session-cost";
 
 interface SessionsOptions {
     provider?: string[] | boolean;
@@ -20,6 +21,7 @@ interface SessionsOptions {
     fresh?: boolean;
     cacheWrite?: boolean;
     journalOnly?: boolean;
+    cost?: boolean;
 }
 
 function positiveInt(value: string | undefined): number | undefined {
@@ -63,9 +65,21 @@ function cacheCell(row: AgentSessionRow): string {
     return pc.green(label);
 }
 
-function render(rows: AgentSessionRow[]): void {
+function money(value: number | null): string {
+    return value === null ? pc.dim("—") : `$${value.toFixed(2)}`;
+}
+
+function render(rows: Array<AgentSessionRow & Partial<SessionCostFields>>, withCost: boolean): void {
     renderCliHeader("Agent sessions", "every provider in one list");
-    const table = createBoxTable(["AGE", "CACHE", "PROVIDER", "ACCOUNT", "TITLE", "CWD"]);
+    const table = createBoxTable([
+        "AGE",
+        "CACHE",
+        "PROVIDER",
+        "ACCOUNT",
+        ...(withCost ? ["SPENT", "$/H", "REBUILD"] : []),
+        "TITLE",
+        "CWD",
+    ]);
     const now = Date.now();
 
     for (const row of rows) {
@@ -74,6 +88,9 @@ function render(rows: AgentSessionRow[]): void {
             cacheCell(row),
             row.provider,
             row.account ?? pc.dim("—"),
+            ...(withCost
+                ? [money(row.spentUsd ?? null), money(row.usdPerHour ?? null), money(row.coldRebuildUsd ?? null)]
+                : []),
             truncateDisplay(row.title ?? "", 48),
             truncateDisplay(row.cwdShort, 36),
         ]);
@@ -100,6 +117,7 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
         .option("--json", "Emit the rows as JSON")
         .option("--fresh", "Recompute instead of reading the daemon's cached answer (--json only)")
         .option("--no-cache-write", "Read the rows without updating the daemon cache or request stamp (--json only)")
+        .option("--cost", "Add spentUsd, usdPerHour and coldRebuildUsd to each row (reads each transcript)")
         .option(
             "--journal-only",
             "Leave out the live cmux tab of tmux-hosted sessions; for rows that will be cached (--json only)"
@@ -136,17 +154,18 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
             // and the one whose consumer can read `fetchedAt` and decide for itself; a human
             // reading the table gets a freshly computed list every time.
             if (opts.json) {
-                out.result(
-                    await sessionRowsJson(listing, {
-                        fresh: opts.fresh === true,
-                        cacheWrite: opts.cacheWrite !== false,
-                        liveLocations: opts.journalOnly !== true,
-                        listRows: listAgentSessionRows,
-                    })
-                );
+                const answer = await sessionRowsJson(listing, {
+                    fresh: opts.fresh === true,
+                    cacheWrite: opts.cacheWrite !== false,
+                    liveLocations: opts.journalOnly !== true,
+                    listRows: listAgentSessionRows,
+                });
+                // The cost fields ride only on request, so the rows Genesis polls keep their bytes.
+                out.result(opts.cost ? { ...answer, rows: await withSessionCost(answer.rows) } : answer);
                 return;
             }
 
-            render(await listAgentSessionRows(listing));
+            const rows = await listAgentSessionRows(listing);
+            render(opts.cost ? await withSessionCost(rows) : rows, opts.cost === true);
         });
 }
