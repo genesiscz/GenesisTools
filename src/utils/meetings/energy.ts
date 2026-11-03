@@ -323,3 +323,76 @@ export function voiceRuns(
 
     return runs;
 }
+
+export interface SilentCallSpan {
+    fromSec: number;
+    toSec: number;
+}
+
+const SILENT_WINDOW_SEC = 60;
+const SILENT_PROBE_SEC = 5;
+/** A probe this sure of the microphone heard nothing on the call's channel. */
+const SILENT_PROBE_SHARE = 0.99;
+/** A window is silent on the call when this share of its voiced probes is, with at least `SILENT_MIN_PROBES` voiced. */
+const SILENT_WINDOW_SHARE = 0.9;
+const SILENT_MIN_PROBES = 3;
+/** Shorter silent stretches happen when only the people in the room talk. */
+const SILENT_MIN_SEC = 300;
+
+/**
+ * Stretches of 5 min or more where the call's channel stayed silent while the microphone heard speech: the call
+ * played through the room's speakers (or another device), so the microphone carried the remote voices too and the
+ * channel cannot tell the user apart (measured 2026-11-03: 27 min where the call channel stayed at its noise floor of
+ * about 20 while the microphone peaked at 5,000). A window with almost no speech keeps the stretch going.
+ */
+export function silentCallSpans(
+    share: (fromSec: number, toSec: number) => number | undefined,
+    fromSec: number,
+    toSec: number
+): SilentCallSpan[] {
+    const spans: SilentCallSpan[] = [];
+    let open: SilentCallSpan | undefined;
+    const close = () => {
+        if (open && open.toSec - open.fromSec >= SILENT_MIN_SEC) {
+            spans.push(open);
+        }
+
+        open = undefined;
+    };
+
+    for (let start = fromSec; start < toSec; start += SILENT_WINDOW_SEC) {
+        const end = Math.min(toSec, start + SILENT_WINDOW_SEC);
+        let voiced = 0;
+        let silent = 0;
+
+        for (let probe = start; probe < end; probe += SILENT_PROBE_SEC) {
+            const mic = share(probe, Math.min(end, probe + SILENT_PROBE_SEC));
+
+            if (mic === undefined) {
+                continue;
+            }
+
+            voiced += 1;
+            silent += mic >= SILENT_PROBE_SHARE ? 1 : 0;
+        }
+
+        if (voiced < SILENT_MIN_PROBES) {
+            if (open) {
+                open.toSec = end;
+            }
+
+            continue;
+        }
+
+        if (silent / voiced >= SILENT_WINDOW_SHARE) {
+            open = open ? { ...open, toSec: end } : { fromSec: start, toSec: end };
+            continue;
+        }
+
+        close();
+    }
+
+    close();
+
+    return spans;
+}

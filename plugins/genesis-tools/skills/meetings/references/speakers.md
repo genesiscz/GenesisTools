@@ -45,6 +45,12 @@ platform cannot supply is skipped, never guessed.
 | E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. An indicator that shows one person on most lines of the meeting (a pinned or stuck tile) is no evidence for that person: use it only where it changes. A person missing from the indicator is never evidence against that person. |
 | E4 live names | 2 | The recorder's live segments. | A weak hint. The name belongs to a live voice, not a person; at the start of a meeting and after a person leaves it is often stale. Drop it when E2 or E3 contradicts it. |
 
+The tool applies three of these limits itself (`suggest`): a call channel silent for 5 min or more while two labels
+talk makes E1 say nothing there (R19 lets the microphone's own label stand for the user at 0.5); a platform-named label
+with a quarter of the sure microphone lines and call lines of its own is a second person in the room (R18: candidates
+at 0.4, the user capped at 0.7 and only on sure microphone lines); and E3 stuck on one remote person for 6 min with a third of the lines on the
+microphone is ignored there. Read the rules in an item before you trust an E1 range.
+
 ### E1 energy table
 
 `energyMicShare` in `evidence --raw` is the share of the line's energy on the microphone. The confidence that the user
@@ -145,7 +151,8 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
 In the automatic mode the tool applies these rules (`tools meetings suggest`, then `tools meetings listen`). In the
 three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`, which
 warns about a question whose text repeats another open question (name the time or quote the words instead), one that
-decides no item, and one with no priority. The
+decides no item, and one with no priority. Give each question `priority` (0 to 1, `--priority` or the batch field):
+listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`. The
 budget is one for speakers and terms together (`playback.listen.budget`, 12 by default). In both, the
 agent answers only what the listen round left open, in the chat round, with the evidence.
 

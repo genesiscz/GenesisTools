@@ -30,13 +30,13 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of each recorded screen around a transcript time |
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
-| `attendance <meeting> [--from teams\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given |
+| `attendance <meeting> [--from teams\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given. A Teams call that lists its people without join or leave times (its call-ended message) counts them present for the whole call, and the note says how many. A fresh home needs `tools ms-teams sync` first |
 | `listen <meeting> [--item Q12]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`beep`, `beepLeadSec`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to |
 | `listen <meeting> --subscribe-answers [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. Run it under a Monitor, so each answer wakes the agent |
 | `items add <meeting> --kind speaker-range --from 38:12 --to 38:20 --label "<raw label>" --speaker <name> --confidence 0.85 --reason "…"` | Store an agent's finding (rule `agent`, the reason in `evidence.reason`); it stays suggested until a person confirms it |
 | `items add <meeting> --kind term --at 1:02 --heard <words> [--proposed <spelling>] --confidence 0.4 --reason "…"` | The same for a term; without `--proposed` it is asked as free text when it matters |
-| `items add <meeting> --listen --from 37:43 --to 37:51 --question "…" [--choices "A,B"] [--decides i7]` | Add a question of your own for `listen` |
-| `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
+| `items add <meeting> --listen --from 37:43 --to 37:51 --question "…" [--choices "A,B"] [--decides i7] [--priority 0.8]` | Add a question of your own for `listen`; `--priority` (0 to 1) orders it, and one under `playback.listen.minPriority` (0.5) is asked only with `--item` |
+| `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `priority`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
 | `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the term part and the summary; no rule and no confidence |
 | `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
@@ -129,6 +129,16 @@ as an open question is.
   it stays with that person when E3 shows only that person speaking, unless 80 % or more of the energy is on the
   microphone (then it is the user's). R17: when such a person talks under their own label within 10 s of another label's line, and E3 shows them
   and one other present, the line is the other's (0.65).
+- A silent call channel: where the call's channel stays at its noise floor for 5 min or more while the microphone
+  hears speech, and two labels talk there (or E3 shows others speaking), the call played through the room's speakers
+  and the microphone carried every voice. E1 and the energy say nothing there. R19: the label with the most sure
+  microphone lines where the channels work (leading the next by 1.25 times) stands for the user there (0.5, to listen).
+- R18, a second person in the room: a platform-named label that holds a quarter or more of the sure microphone lines
+  (30 at least) and call lines of its own carries someone else on the microphone. Its microphone lines name the people
+  in the call as candidates (0.4); the user's sure microphone lines are capped at 0.7 and asked, and a line under 90 %
+  stays its label's.
+- A stuck speaking indicator: E3 showing the same one remote person for 6 min or more while a third of the lines are on
+  the microphone is ignored for that stretch.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
 - `term`: a misheard term and its proposed spelling.
@@ -184,6 +194,9 @@ the person: the terminal (clack and audio, in `commands/listen.ts`) or `GivenAns
 A question is `Q<n>` to people: the n-th question of the record, as listen's header and the polished file number it.
 `items` shows the number in its `Q` column, and `confirm`, `reject` and `listen --item` take `Q12`. `items add` warns
 about a question whose text repeats another open question, one that decides no item, and one with no priority.
+A word question finds its heard words as whole words (`TranscriptLines` in `src/utils/transcribe/lines.ts`), so
+"Ada" never matches inside "zadání"; its clip is cut around the spot the words are said, and two questions on the
+same words over the same range take the first and the second occurrence, each with its own time and line.
 
 A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
 

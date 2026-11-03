@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -730,6 +731,220 @@ function findingFor(options: {
     return undefined;
 }
 
+/** R18: a second person in the room talks into the user's microphone, under a label of their own. */
+const LOCAL_VOICE_RULE = "R18";
+/** R19: where the channels do not work, a label carries the voice it carried on the microphone where they do. */
+const LABEL_VOICE_RULE = "R19";
+/** A silent call stretch counts when two labels each hold this share of its lines, or E3 shows others this often. */
+const SILENT_CALL_LABEL_SHARE = 0.15;
+const SILENT_CALL_SHOWN_SHARE = 0.2;
+/** A platform-named label with this share of the microphone's sure lines (and some call lines) is another person. */
+const LOCAL_VOICE_SHARE = 0.25;
+const LOCAL_VOICE_MIN_LINES = 30;
+const LOCAL_VOICE_CALL_SHARE = 0.1;
+const LOCAL_VOICE_CONFIDENCE = 0.4;
+/** With a second voice on the microphone, its larger voice is the user's, but not sure enough to skip a listen. */
+const OWNER_WITH_LOCAL_VOICE_MAX = 0.7;
+/** The label with the most microphone lines leads the next one by this factor before it may stand for the user. */
+const LABEL_VOICE_MARGIN = 1.25;
+const LABEL_VOICE_CONFIDENCE = 0.5;
+/**
+ * E3 showing one remote person for this long while this share of the lines is the microphone's is stuck: a live
+ * indicator lets go while the user talks. Measured: 6.7 and 30 min stuck on 2026-11-03 (62 % and 46 % microphone
+ * lines), and at most 5.4 min with 25 % on a meeting where it worked.
+ */
+const STUCK_MIN_SEC = 360;
+const STUCK_MIN_LINES = 20;
+const STUCK_MIC_SHARE = 0.35;
+const STUCK_CALL_LINES = 5;
+
+interface Span {
+    fromSec: number;
+    toSec: number;
+}
+
+interface MicrophoneVoices {
+    owner?: string;
+    ownerLeads: boolean;
+    others: Set<string>;
+}
+
+function micSure(line: LineEvidence): boolean {
+    return line.energyMic !== undefined
+        ? line.energyMic >= ENERGY_MIC_SURE
+        : line.winner === SELF && (line.micShare ?? 0) >= CHANNEL_SHARE;
+}
+
+function callSure(line: LineEvidence): boolean {
+    return line.energyMic !== undefined
+        ? line.energyMic <= ENERGY_CALL_SURE
+        : line.winner !== undefined && line.winner !== SELF && (line.micShare ?? 1) <= 1 - CHANNEL_SHARE;
+}
+
+function within(spans: Span[], sec: number): boolean {
+    return spans.some((span) => sec >= span.fromSec && sec < span.toSec);
+}
+
+/**
+ * The stretches where E1 says nothing: the call's channel stayed silent for 5 min or more while two labels talked,
+ * or while E3 showed other people speaking. The microphone then carried the call's voices as well (the call played
+ * through the room's speakers), so a microphone line there may be anyone.
+ */
+function unusableChannelSpans(
+    lines: LineEvidence[],
+    share: ((fromSec: number, toSec: number) => number | undefined) | undefined,
+    selfName: string
+): Span[] {
+    if (!share || lines.length === 0) {
+        return [];
+    }
+
+    const end = Math.max(...lines.map((line) => line.endSec));
+
+    return silentCallSpans(share, 0, end).filter((span) => {
+        const inside = lines.filter((line) => within([span], line.startSec));
+        const perLabel = new Map<string, number>();
+
+        for (const line of inside) {
+            perLabel.set(line.label, (perLabel.get(line.label) ?? 0) + 1);
+        }
+
+        const talking = [...perLabel.values()].filter((count) => count >= SILENT_CALL_LABEL_SHARE * inside.length);
+        const shownOthers = inside.filter((line) =>
+            Object.keys(line.speaking).some((name) => !sameName(name, selfName))
+        ).length;
+
+        return inside.length > 0 && (talking.length >= 2 || shownOthers >= SILENT_CALL_SHOWN_SHARE * inside.length);
+    });
+}
+
+/** The lines whose E3 reading is stuck: one remote person shown through a long stretch with many microphone lines. */
+function stuckIndicator(lines: LineEvidence[], selfName: string): Set<number> {
+    const stuck = new Set<number>();
+    const shownKey = (line: LineEvidence) =>
+        Object.keys(line.speaking)
+            .filter((name) => !sameName(name, selfName))
+            .sort()
+            .join("|");
+    let start = 0;
+
+    while (start < lines.length) {
+        const key = shownKey(lines[start]!);
+        let end = start;
+
+        while (end + 1 < lines.length && shownKey(lines[end + 1]!) === key) {
+            end += 1;
+        }
+
+        const run = lines.slice(start, end + 1);
+        const long = run.length >= STUCK_MIN_LINES && run.at(-1)!.endSec - run[0]!.startSec >= STUCK_MIN_SEC;
+
+        if (key && !key.includes("|") && long) {
+            const mic = run.filter(micSure).length;
+            const call = run.filter(callSure).length;
+
+            if (mic >= STUCK_MIC_SHARE * run.length && call >= STUCK_CALL_LINES) {
+                for (const line of run) {
+                    stuck.add(line.index);
+                }
+            }
+        }
+
+        start = end + 1;
+    }
+
+    return stuck;
+}
+
+/**
+ * Who the microphone's labels are where the channels work. `owner`: the label with the most sure microphone lines
+ * (the user's voice), and whether it leads clearly enough to stand for the user where the channels fail. `others`:
+ * the platform-named labels that also hold a large share of the sure microphone lines next to call lines of their
+ * own, so a second person in the room talks into the microphone under them (R18).
+ */
+function microphoneVoices(lines: LineEvidence[], selfName: string, platformLabels: Set<string>): MicrophoneVoices {
+    const mic = new Map<string, number>();
+    const call = new Map<string, number>();
+    const all = new Map<string, number>();
+
+    for (const line of lines) {
+        all.set(line.label, (all.get(line.label) ?? 0) + 1);
+        mic.set(line.label, (mic.get(line.label) ?? 0) + (micSure(line) ? 1 : 0));
+        call.set(line.label, (call.get(line.label) ?? 0) + (callSure(line) ? 1 : 0));
+    }
+
+    const ranked = [...mic.entries()].filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]);
+    const total = ranked.reduce((sum, [, count]) => sum + count, 0);
+    const top = ranked[0];
+    const ownerLeads = top !== undefined && (ranked[1]?.[1] ?? 0) * LABEL_VOICE_MARGIN <= top[1];
+    const others = new Set(
+        ranked
+            .filter(
+                ([label, count]) =>
+                    label !== top?.[0] &&
+                    !sameName(label, selfName) &&
+                    platformLabels.has(label) &&
+                    count >= Math.max(LOCAL_VOICE_MIN_LINES, LOCAL_VOICE_SHARE * total) &&
+                    (call.get(label) ?? 0) >= LOCAL_VOICE_CALL_SHARE * (all.get(label) ?? 1)
+            )
+            .map(([label]) => label)
+    );
+
+    return { ...(top ? { owner: top[0] } : {}), ownerLeads, others };
+}
+
+/**
+ * R18 and R19 over the finding of one line. Where the channels fail, only the microphone's own label stands for the
+ * user (0.5, to listen). A second person's sure microphone line is not the user's: the people in the call are the
+ * candidates (0.4). With such a person in the room, the user's sure microphone lines are capped at 0.7 and asked,
+ * and a line the microphone does not clearly hold stays its label's.
+ */
+function localVoiceFinding(options: {
+    line: LineEvidence;
+    selfName: string;
+    isSelfLabel: boolean;
+    voices: MicrophoneVoices;
+    unusable: boolean;
+    found: EvidenceFinding | undefined;
+}): EvidenceFinding | undefined {
+    const { line, selfName, voices, found } = options;
+
+    if (options.unusable) {
+        return !options.isSelfLabel && voices.ownerLeads && line.label === voices.owner
+            ? { speaker: selfName, rules: [LABEL_VOICE_RULE], confidence: LABEL_VOICE_CONFIDENCE, listen: true }
+            : undefined;
+    }
+
+    if (voices.others.has(line.label) && micSure(line)) {
+        const present = line.present?.filter((name) => !sameName(name, selfName));
+        return {
+            candidates: shownFirst(
+                present,
+                speakingNames(line).filter((name) => !sameName(name, selfName))
+            ),
+            rules: [MeetingRule.Channel, LOCAL_VOICE_RULE],
+            confidence: LOCAL_VOICE_CONFIDENCE,
+            listen: true,
+        };
+    }
+
+    if (voices.others.size > 0 && found?.speaker === selfName) {
+        // Two people in the room: a line the microphone does not clearly hold is either of them, or the call.
+        if (!micSure(line)) {
+            return undefined;
+        }
+
+        return {
+            ...found,
+            rules: [...found.rules, LOCAL_VOICE_RULE],
+            confidence: Math.min(OWNER_WITH_LOCAL_VOICE_MAX, found.confidence),
+            listen: true,
+        };
+    }
+
+    return found;
+}
+
 function evidenceItems(options: {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
@@ -745,7 +960,23 @@ function evidenceItems(options: {
 
     // Teams attendance names the user by email; here the user is always `selfName`.
     const presence = options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay));
-    const lines = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyMicShare);
+    const measured = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyMicShare);
+    const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
+    const stuck = stuckIndicator(measured, selfName);
+    const lines = measured.map((line) => {
+        const shown = stuck.has(line.index) ? { ...line, speaking: {} } : line;
+
+        return within(unusable, line.startSec)
+            ? {
+                  ...shown,
+                  micShare: undefined,
+                  winner: undefined,
+                  winnerShare: undefined,
+                  energyMic: undefined,
+                  echo: undefined,
+              }
+            : shown;
+    });
     const items: NewItem[] = [];
     let open:
         | {
@@ -773,6 +1004,12 @@ function evidenceItems(options: {
     const platformLabels = new Set(
         options.meeting.speakers.filter((speaker) => speaker.origin === "platform").map((speaker) => speaker.name)
     );
+    const voices = microphoneVoices(
+        lines.filter((line) => !within(unusable, line.startSec)),
+        selfName,
+        platformLabels
+    );
+    log.debug({ unusable, stuckLines: stuck.size, ...voices, others: [...voices.others] }, "microphone voices");
     const byLabel = new Map<string, LineEvidence[]>();
 
     for (const line of lines) {
@@ -783,7 +1020,7 @@ function evidenceItems(options: {
         const isSelfLabel = sameName(label, selfName);
 
         for (const line of labelLines) {
-            const finding = findingFor({
+            const found = findingFor({
                 line,
                 selfName,
                 isSelfLabel,
@@ -800,6 +1037,14 @@ function evidenceItems(options: {
                             .map((near) => near.label)
                     ),
                 ],
+            });
+            const finding = localVoiceFinding({
+                line,
+                selfName,
+                isSelfLabel,
+                voices,
+                unusable: within(unusable, line.startSec),
+                found,
             });
 
             // A range holds only consecutive lines with its finding: a line without one stays its label's.
