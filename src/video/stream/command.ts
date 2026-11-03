@@ -106,7 +106,10 @@ export function registerStreamCommands(program: Command): void {
             `While the broadcast is live or its recording is not made yet, wait for the platform's recording, asking every minute (default ${DEFAULT_RECORDING_WAIT_MINUTES} min)`
         )
         .option("--from-stream", "Never take the platform's recording; only the HLS streams are offered")
-        .option("--keep-parts", "Keep <out>.parts after a complete download (default: it goes to the tools rm trash)")
+        .option(
+            "--keep-parts",
+            "Keep <out>.parts after a complete download (default: it is deleted 10 minutes after the download completes)"
+        )
         .option("--json", "Print the result as JSON")
         .action(async (input: string | undefined, flags: DownloadFlags) => {
             await runDownload(input, flags);
