@@ -191,6 +191,26 @@ describe("limit drift", () => {
         expect(exclusiveWindows(same, target, opts)).toEqual([{ from: 0, to: 60_000, delta: 6 }]);
     });
 
+    test("an idle reading's reset is now plus the window, so the first rise after it is a window unless a reset passed", () => {
+        const week = 7 * 24 * 3_600_000;
+        const opts = { padMs: 30_000, maxWindowMs: 3_600_000 };
+        const target = { account: "a", series: "a" };
+        // Idle at 0 %: the provider names "now + window", which moves with every poll, so the later reading names a
+        // reset ten minutes later without any reset having happened.
+        const afterIdle = [
+            { ts: 0, account: "a", series: "a", util: 0, resetsAt: week },
+            { ts: 600_000, account: "a", series: "a", util: 3, resetsAt: 600_000 + week },
+        ];
+        // The idle reading's own reset instant passed before the next one: still no window.
+        const passed = [
+            { ts: 0, account: "a", series: "a", util: 0, resetsAt: 300_000 },
+            { ts: 600_000, account: "a", series: "a", util: 3, resetsAt: 300_000 + week },
+        ];
+
+        expect(exclusiveWindows(afterIdle, target, opts)).toEqual([{ from: 0, to: 600_000, delta: 3 }]);
+        expect(exclusiveWindows(passed, target, opts)).toEqual([]);
+    });
+
     test("pooled ratio, a deterministic interval, and the overlap test", () => {
         const samples = [
             { delta: 1, value: 100 },
