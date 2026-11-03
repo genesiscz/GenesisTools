@@ -3,6 +3,7 @@ import { codexClassifyPath, findCodexRollout } from "@genesiscz/utils/agent-sess
 import { createCodexUsageParser } from "@genesiscz/utils/agent-sessions/readers/codex-usage";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { providerHomeSource } from "@genesiscz/utils/ai/usage/attribution/session-account";
 import {
     isNativeTranscript,
     nativeSessionRoots,
@@ -103,6 +104,9 @@ export const codexDriver: MonitorDriver = {
 
     // A rollout names its thread in its file name and records no project.
     spendLayout: { kind: "path", session: (file) => transcriptStem(basename(file)), project: () => "" },
+
+    // A bound home names its account; the shared default home falls back to the session's pin.
+    sessionAccount: providerHomeSource,
 
     // A rollout names its thread in its file name and no project.
     transcriptOwner(file) {

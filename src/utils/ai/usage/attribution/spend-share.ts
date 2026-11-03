@@ -1,7 +1,7 @@
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract";
 import { agentPluginId, spendDriver, type TranscriptOwner } from "@genesiscz/utils/ai/usage/spend/drivers";
 import type { CompactEvent } from "@genesiscz/utils/ai/usage/spend/events-cache";
-import { type SessionAccount, type SessionAccountLookup, sessionAccountOf } from "./session-account";
+import type { SessionAccount, SessionAccountLookup } from "./session-account";
 
 /** One spend event with its session and the account that session ran on. */
 export interface AttributedEvent {
@@ -31,8 +31,9 @@ export function attributeEvents(events: readonly CompactEvent[], lookup: Session
         let known = perFile.get(event.file);
 
         if (!known) {
-            const owner = spendDriver(event.source).transcriptOwner(event.file);
-            const account = sessionAccountOf(
+            const driver = spendDriver(event.source);
+            const owner = driver.transcriptOwner(event.file);
+            const account = driver.sessionAccount.accountOf(
                 {
                     agent: event.source,
                     sessionId: owner.leadSessionId,

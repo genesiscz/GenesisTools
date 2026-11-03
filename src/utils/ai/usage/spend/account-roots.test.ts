@@ -25,6 +25,7 @@ function fakeDriver(options: {
         spendSessionId: (sessionId) => sessionId,
         spendLayout: { kind: "rows" },
         transcriptOwner: (file) => ({ sessionId: file, leadSessionId: file, subagent: false, project: "" }),
+        sessionAccount: { accountOf: () => ({ basis: "none", approximate: false }) },
     };
 }
 

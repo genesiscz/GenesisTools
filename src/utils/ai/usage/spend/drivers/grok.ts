@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { createGrokUsageParser } from "@genesiscz/utils/agent-sessions/readers/grok-usage";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { providerHomeSource } from "@genesiscz/utils/ai/usage/attribution/session-account";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -135,6 +136,9 @@ export const grokDriver: MonitorDriver = {
 
     // ai-spend keys Grok usage by the session id itself (the session folder's name).
     spendSessionId: (sessionId) => sessionId,
+
+    // Each Grok home belongs to its own account; an unbound one falls back to the session's pin.
+    sessionAccount: providerHomeSource,
 
     // `<encoded cwd>/<session id>/updates.jsonl`; the project label is the cwd's last folder.
     transcriptOwner(file) {
