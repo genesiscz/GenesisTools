@@ -94,11 +94,13 @@ fallback-price behavior. Older non-Codex reports retain their existing shapes.
 
 Reads the session records your coding agents leave on disk and turns them into a spend report: what the window cost, which sessions were expensive, and what today looks like so far.
 
-`summary`, `sessions` and `today` read every source by default (Claude Code, Codex, Grok and the others the ccusage reports know). `--sources claude,codex` narrows them. `monitor` reports Claude Code, Codex and Grok separately.
+`summary`, `sessions` and `today` read every source by default (Claude Code, Codex, Grok and the others the ccusage reports know). `--harness claude,codex` narrows them; `--sources` is the same flag under its older name, as `--backend` is on `workers`. `monitor` reports Claude Code, Codex and Grok separately.
 
 `daily`, `weekly`, `monthly`, `session`, `blocks` and `statusline` mirror the live `ccusage` command tree (unified across every detected source, plus per-source namespaces). `--json` uses the same grouping keys and token field names as `ccusage --json`.
 
-Also reachable as `tools claude spending`, which is an alias for this tool.
+Also reachable as `tools claude spending` and `tools ai usage spend`, which are aliases for this tool and print the same bytes (`golden.test.ts` pins `daily`, `weekly` and `statusline` through both doors).
+
+The library lives in `@genesiscz/utils/ai/usage/spend` (the drivers, the events cache, the reports, the series and the pricing), so the usage alerts and attribution in `src/utils/` can read spend events. This folder keeps the commander adapters (`lib/register.ts`, `lib/reports/commands.ts`), the chart renderer (`lib/render.ts`) and the worker ledger (`lib/workers/`, which reads the claude, codex and grok tool stores). `lib/pricing.ts`, `lib/reports/load.ts` and `lib/series.ts` are re-export shims for one release.
 
 ---
 
@@ -161,7 +163,7 @@ Every option applies to every subcommand.
 
 ## `monitor` drivers
 
-Each agent contributes a driver under `lib/drivers/`. A driver declares only three things: which directories to walk, which file names are transcripts, and how one JSONL line becomes a usage event. The walker, the mtime pruning, the incremental tail cache and the 10-minute sweep are shared, so an agent is added by adding a folder, not by forking the scanner.
+Each agent contributes a driver under `src/utils/ai/usage/spend/drivers/`. A driver declares only three things: which directories to walk, which file names are transcripts, and how one JSONL line becomes a usage event. The walker, the mtime pruning, the incremental tail cache and the 10-minute sweep are shared, so an agent is added by adding a folder, not by forking the scanner.
 
 | Agent | Files | Usage line | Cost |
 |---|---|---|---|
