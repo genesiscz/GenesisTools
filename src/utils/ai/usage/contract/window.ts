@@ -1,4 +1,5 @@
 import { systemTimeZone } from "@genesiscz/utils/ai/usage/series-keys";
+import { aiUsageCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { epochFromWallClockInZone, partsInZone, resolveZone } from "@genesiscz/utils/timezone";
 import { UsageQueryError } from "./errors";
 import { parseDurationMs } from "./step";
@@ -43,8 +44,8 @@ export interface WindowContext {
  * with the step that brings them, instead of meaning something else for a while.
  */
 const RESERVED_KEYWORDS: Record<string, string> = {
-    reset: "--since reset (since the last reset of the binding window) arrives with tools ai usage limits attribution (build step U9).",
-    cycle: "--since cycle (the current billing cycle) arrives with tools ai usage spend plans (build step U11).",
+    reset: `--since reset (since the last reset of the binding window) arrives with ${aiUsageCommand("limits", "attribution")} (build step U9).`,
+    cycle: `--since cycle (the current billing cycle) arrives with ${aiUsageCommand("spend", "plans")} (build step U11).`,
 };
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
