@@ -147,6 +147,11 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
                     return SUPERSEDED;
                 }
 
+                // remove() may have deleted the row while the probe ran: a removed Mac never becomes the live one.
+                if (!(await getConnection(id))) {
+                    return { ok: false, failure: "error", error: `Connection ${id} was removed while it connected.` };
+                }
+
                 if (failed) {
                     return failed;
                 }
