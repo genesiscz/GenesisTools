@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { ackAlerts, queryAlertRules, queryAlerts, testAlertRule } from "@app/ai/lib/usage/alerts-query";
 import { recordRoundAndAlert } from "@app/ai/lib/usage/alerts-tick";
 import { queryEvents } from "@app/ai/lib/usage/events-query";
-import { queryHealth } from "@app/ai/lib/usage/limits-query";
+import { queryHealth, querySeries } from "@app/ai/lib/usage/limits-query";
 import { mergeAlertsConfig } from "@genesiscz/utils/ai/usage/alerts/config";
 import { UsageAlertsStore } from "@genesiscz/utils/ai/usage/alerts/log";
 import type { AlertChannel, AlertChannelTable, StoredAlert } from "@genesiscz/utils/ai/usage/alerts/types";
@@ -238,6 +238,24 @@ describe("tools ai usage events and limits health", () => {
         expect(envelope.window?.label).toBe("since 1h");
     });
 
+    test("a bad --agg suggests the whole series command once, from the CLI or with no argv", async () => {
+        const argv = process.argv;
+        const suggestion = async () => {
+            const err = await querySeries({ agg: "median" }).catch((error: unknown) => error);
+            return err instanceof UsageQueryError ? err.message : "";
+        };
+
+        try {
+            process.argv = ["bun", "tools", "usage", "limits", "series", "--agg", "median"];
+            expect(await suggestion()).toContain("tools ai usage limits series --agg last");
+            expect(await suggestion()).not.toContain("usage usage");
+            process.argv = ["bun", "mcp"];
+            expect(await suggestion()).toContain("tools ai usage limits series --agg last");
+        } finally {
+            process.argv = argv;
+        }
+    });
+
     test("a missing store is a warning on every diagnostic door, never a crash", async () => {
         const none = () => undefined;
 
@@ -267,7 +285,19 @@ describe("tools ai usage events and limits health", () => {
             new Date(NOW.getTime() - 60_000)
         );
 
-        const health = await queryHealth({ since: "1h" }, { open: readOnly, now: NOW, heartbeatAgeMs: () => 20_000 });
+        const work = {
+            id: "acc_work",
+            name: "work",
+            provider: "anthropic-sub",
+            enabled: true,
+            billing: { mode: "subscription" as const },
+            credentials: {},
+            useEnvApiKey: false,
+        };
+        const health = await queryHealth(
+            { since: "1h", provider: ["anthropic-sub"] },
+            { open: readOnly, now: NOW, heartbeatAgeMs: () => 20_000, accounts: async () => [work] }
+        );
 
         expect(health.data.daemon).toEqual({
             heartbeatAgeMs: 20_000,
@@ -275,6 +305,9 @@ describe("tools ai usage events and limits health", () => {
             lastRoundAt: new Date(NOW.getTime() - 60_000).toISOString(),
         });
         expect(health.warnings).toEqual([]);
+        // The read path: the selected account's runs through the SQL bound, and its current state.
+        expect(health.data.accounts.map((account) => [account.accountName, account.outcome])).toEqual([["work", "ok"]]);
+        expect(health.data.accounts[0].coveragePct).toBeGreaterThan(0);
     });
 });
 
