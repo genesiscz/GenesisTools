@@ -128,7 +128,7 @@ public final class WidgetUsageStore: ObservableObject {
         if let account = alert.accountId ?? alert.accountName {
             openHub(["--usage-account", account])
         } else {
-            openHub(["--mode", "usage", "--usage-section", "limits"])
+            openHub(["--mode", "usage", "--usage-section", "limits", "--usage-all-accounts"])
         }
     }
 

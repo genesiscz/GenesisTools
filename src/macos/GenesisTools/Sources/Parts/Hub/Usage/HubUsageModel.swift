@@ -439,6 +439,24 @@ final class HubUsageModel: ObservableObject {
         applyPendingAccounts()
     }
 
+    /// A link's Usage place: its accounts, or every account (`--usage-all-accounts` drops the selection and any name
+    /// still waiting for its row), then its session or section.
+    func open(_ request: HubRequest) {
+        if request.usageAllAccounts {
+            pendingAccounts = []
+            selectedAccounts = []
+            section = .limits
+        } else if !request.usageAccounts.isEmpty {
+            selectAccounts(named: request.usageAccounts)
+            section = .limits
+        }
+        if let id = request.usageSession {
+            openSession(id, harness: request.usageHarness)
+        } else if let section = request.usageSection.flatMap(HubUsageSection.init(rawValue:)) {
+            self.section = section
+        }
+    }
+
     /// Selects the accounts a link named (`--usage-account`). Rows already on screen take the selection at once (a
     /// fresh table starts no load, so waiting for the next rebuild left the old selection); the names wait for the
     /// next rebuild only while no row matches yet. Each name resolves as `tools ai usage --account` does: an id,

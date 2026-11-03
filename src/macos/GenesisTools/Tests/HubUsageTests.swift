@@ -215,6 +215,34 @@ final class HubUsageTests: XCTestCase {
     }
 
     @MainActor
+    func testTheAllAccountsLinkDropsAnEarlierSelectionAndASectionLinkKeepsIt() async throws {
+        let model = HubUsageModel(preferences: try Self.scratchPreferences(), client: UsageClient { argv in
+            Data((argv.contains("--cached") ? Self.limitsJSON : "{}").utf8)
+        })
+        model.activate()
+        try await wait { model.table.rows.count == 2 }
+        model.selectAccounts(named: ["side"])
+        model.section = .spend
+
+        // A section alone (a saved place reopening) keeps what the reader picked.
+        model.open(HubRequest(["--mode", "usage", "--usage-section", "limits"]))
+        XCTAssertEqual(model.section, .limits)
+        XCTAssertEqual(model.selectedAccounts.count, 1)
+
+        // The widget's alert with no account: every account, and no earlier link's name waits to apply later.
+        model.selectAccounts(named: ["nobody"])
+        XCTAssertEqual(model.pendingAccounts, ["nobody"])
+        model.section = .spend
+        let request = HubRequest(["--mode", "usage", "--usage-section", "limits", "--usage-all-accounts"])
+        XCTAssertTrue(request.problems.isEmpty)
+        model.open(request)
+        XCTAssertEqual(model.section, .limits)
+        XCTAssertTrue(model.selectedAccounts.isEmpty)
+        XCTAssertTrue(model.pendingAccounts.isEmpty)
+        XCTAssertEqual(HubRequest(["--usage-all-accounts"]).launchMode, .usage)
+    }
+
+    @MainActor
     func testANameTwoProvidersShareSelectsNothingAndTheProviderOrIdPicksOne() async throws {
         let json = """
         {"schema":"usage.limits@1","generatedAt":"2026-11-03T10:00:00.000Z","selector":{"accounts":[]},"warnings":[],
