@@ -32,7 +32,7 @@ export interface SpendOpts {
     top?: string;
     json?: boolean;
     sources?: string;
-    harness?: string;
+    harness?: string | true;
 }
 
 export type SpendView = "summary" | "sessions" | "today";
@@ -190,7 +190,7 @@ interface SeriesOpts {
     account?: string[];
     allHomes?: boolean;
     sources?: string;
-    harness?: string;
+    harness?: string | true;
     byModel?: boolean;
     json?: boolean;
 }

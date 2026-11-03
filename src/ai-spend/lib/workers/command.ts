@@ -42,7 +42,7 @@ interface WorkersFlags {
     timezone?: string;
     by?: string | boolean;
     backend?: string;
-    harness?: string;
+    harness?: string | true;
     label?: string;
     backfill?: boolean;
     reprice?: boolean;
@@ -281,10 +281,10 @@ export function registerWorkersCommand(program: Command): Command {
                 return;
             }
 
-            const backends = harness.raw ? parseList(harness.raw, BACKENDS) : undefined;
+            const backends = harness.raw !== undefined ? parseList(harness.raw, BACKENDS) : undefined;
 
-            if (harness.raw && !backends) {
-                out.printlnErr(suggestEnumFlag(TOOL, harness.flag, BACKENDS, { given: harness.raw }));
+            if (harness.raw !== undefined && !backends) {
+                out.printlnErr(suggestEnumFlag(TOOL, harness.flag, BACKENDS, { given: harness.raw || undefined }));
                 process.exitCode = 1;
                 return;
             }
