@@ -6,6 +6,7 @@ import { ConnectionRow } from "@/features/connections/ConnectionRow";
 import { Eyebrow, GhostButton, MeshOrbs, PrimaryButton } from "@/features/connections/components";
 import type { SavedConnection } from "@/features/connections/types";
 import { useConnectionStore } from "@/state/connection-store";
+import { FAILURE_MESSAGE } from "@/transport/reachability";
 import { useThemeColors } from "@/theme/colors";
 import { Card } from "@/ui/Card";
 import { Empty } from "@/ui/Empty";
@@ -40,9 +41,18 @@ export function ConnectionsScreen() {
     const activeId = useConnectionStore((s) => s.activeId);
     const listConnections = useConnectionStore((s) => s.listConnections);
     const addConnection = useConnectionStore((s) => s.addConnection);
-    const activateConnection = useConnectionStore((s) => s.activateConnection);
+    const activate = useConnectionStore((s) => s.activate);
     const updateConnection = useConnectionStore((s) => s.updateConnection);
-    const removeConnection = useConnectionStore((s) => s.removeConnection);
+    const removeConnection = useConnectionStore((s) => s.remove);
+
+    /** Activates a saved row; a failed probe keeps the current Mac and says why. */
+    async function activateConnection(id: string): Promise<void> {
+        const result = await activate(id);
+
+        if (!result.ok) {
+            throw new Error(result.error ?? FAILURE_MESSAGE[result.failure]);
+        }
+    }
 
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);

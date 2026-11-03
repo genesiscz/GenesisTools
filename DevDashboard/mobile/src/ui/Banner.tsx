@@ -1,10 +1,9 @@
 import { Text, View } from "react-native";
 
-import type { ConnStatus } from "@/state/connection";
+import type { ConnStatus } from "@/state/connection-store";
 
 const STATUS_LABEL: Record<ConnStatus, string> = {
     disconnected: "Disconnected",
-    connecting: "Connecting…",
     connected: "Connected",
     error: "Connection error",
 };
@@ -13,7 +12,6 @@ const STATUS_LABEL: Record<ConnStatus, string> = {
 // `error` the danger token; the rest stay muted.
 const STATUS_CLASS: Record<ConnStatus, string> = {
     disconnected: "text-dd-text-muted",
-    connecting: "text-dd-text-secondary",
     connected: "text-dd-accent-to",
     error: "text-dd-danger",
 };

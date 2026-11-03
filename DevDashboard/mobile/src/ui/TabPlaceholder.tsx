@@ -1,6 +1,6 @@
 import { Text } from "react-native";
 
-import { useConnection } from "@/state/connection";
+import { useConnectionStore } from "@/state/connection-store";
 import { Card } from "@/ui/Card";
 import { Screen } from "@/ui/Screen";
 
@@ -16,8 +16,8 @@ interface TabPlaceholderProps {
  * Appium locator (`screen-pulse`, …); native tab-bar buttons are located by their Label.
  */
 export function TabPlaceholder({ title, testID }: TabPlaceholderProps) {
-    const status = useConnection((s) => s.status);
-    const baseUrl = useConnection((s) => s.baseUrl);
+    const status = useConnectionStore((s) => s.status);
+    const baseUrl = useConnectionStore((s) => s.transport?.baseUrl() ?? null);
 
     return (
         <Screen testID={testID}>

@@ -9,7 +9,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ClientProvider } from "@/api/client-provider";
 import { wireAppStateFocus } from "@/lib/query";
 import { createConnectionQueryClient } from "@/lib/query-client";
-import { useConnection } from "@/state/connection";
 import { useConnectionStore } from "@/state/connection-store";
 import { ErrorBoundary } from "@/ui/ErrorBoundary";
 import { ScreenLoader } from "@/ui/ScreenLoader";
@@ -25,7 +24,7 @@ export default function RootLayout() {
         void useConnectionStore.getState().restore();
     }, []);
 
-    const baseUrl = useConnection((s) => s.baseUrl);
+    const connected = useConnectionStore((s) => s.transport !== null);
     const restored = useConnectionStore((s) => s.restored);
     const sessionGeneration = useConnectionStore((s) => s.sessionGeneration);
 
@@ -36,19 +35,19 @@ export default function RootLayout() {
                     <ErrorBoundary>
                         {restored ? (
                             // Mount the navigator only AFTER restore resolves, so the
-                            // `Stack.Protected` guard sees the final baseUrl on its FIRST render
+                            // `Stack.Protected` guard sees the final transport on its FIRST render
                             // and picks (tabs) vs connect as the initial route. expo-router does
                             // not auto-navigate when a guard flips later — gating the whole Stack
                             // on `restored` is what makes a paired relaunch land in the app
                             // instead of flashing /connect.
                             <Stack screenOptions={{ headerShown: false }}>
-                                <Stack.Protected guard={baseUrl !== null}>
+                                <Stack.Protected guard={connected}>
                                     <Stack.Screen name="(tabs)" />
                                     <Stack.Screen name="(more)" />
                                 </Stack.Protected>
                                 {/* connect/pair stay ALWAYS available (not gated): the
                                         Connections config screen routes to /connect to add a tunnel
-                                        while already connected. When baseUrl is null the (tabs) group
+                                        while already connected. With no transport the (tabs) group
                                         is gated out, so the router anchors here at first mount. */}
                                 <Stack.Screen name="connect" />
                                 <Stack.Screen name="pair" />

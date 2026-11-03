@@ -4,7 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { WebViewNoteRenderer } from "@/features/obsidian/components/NoteRenderer";
 import { useNote, usePublishNote, useUnpublishNote } from "@/features/obsidian/hooks";
 import { shareUrl } from "@/features/obsidian/note-html";
-import { useConnection } from "@/state/connection";
+import { usePlainBaseUrl } from "@/state/connection-store";
 import { useThemeColors } from "@/theme/colors";
 
 interface Props {
@@ -24,7 +24,7 @@ interface Props {
  */
 export function NoteReader({ path, onOpenNote }: Props) {
     const c = useThemeColors();
-    const baseUrl = useConnection((s) => s.baseUrl);
+    const baseUrl = usePlainBaseUrl();
     const { data, isPending, isError } = useNote(path);
     const publish = usePublishNote(path);
     const unpublish = useUnpublishNote(path);
