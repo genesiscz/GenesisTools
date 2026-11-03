@@ -119,22 +119,46 @@ export interface PlayingClip {
     stop(): void;
 }
 
-/** Starts the clip after `delayMs`, so a question on screen is read before the audio starts. */
-export function playClip(player: ListenPlayer, path: string, delayMs = 0): PlayingClip {
+/**
+ * Starts the clip after `delayMs`, so a question on screen is read before the audio starts. With `repeatGapMs`, the
+ * clip plays again after that pause each time it ends, until `stop`.
+ */
+export function playClip(
+    player: ListenPlayer,
+    path: string,
+    options: { delayMs?: number; repeatGapMs?: number } = {}
+): PlayingClip {
     const argv = CLIP_PLAYERS[player].argv(path);
+    const { delayMs = 0, repeatGapMs } = options;
     let proc: Bun.Subprocess | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
     const start = (): void => {
         log.debug({ argv }, "clip playing");
-        proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-    };
-    const timer = delayMs > 0 ? setTimeout(start, delayMs) : undefined;
+        const current = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+        proc = current;
 
-    if (!timer) {
+        if (repeatGapMs === undefined) {
+            return;
+        }
+
+        void current.exited.then((code) => {
+            // A player that fails would fail again: repeat only a clip that played to its end.
+            if (!stopped && proc === current && code === 0) {
+                timer = setTimeout(start, repeatGapMs);
+            }
+        });
+    };
+
+    if (delayMs > 0) {
+        timer = setTimeout(start, delayMs);
+    } else {
         start();
     }
 
     return {
         stop: () => {
+            stopped = true;
             clearTimeout(timer);
             proc?.kill();
         },

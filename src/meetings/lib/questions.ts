@@ -445,15 +445,12 @@ export function answerVocabulary(record: MeetingRecord, dictionaryValues: string
     ].filter((value) => value.trim().length > 0);
 }
 
-/**
- * The moment in the recording the question is about: for a term or text, where its heard words fall, estimated from
- * their place in the line (a source times lines, not words); for a speaker, or words not found, the range's start.
- */
-export function askedSpotSec(question: QuestionItem, transcript: TranscriptEntry[]): number {
+/** The transcript line inside the question's range that holds its heard words, and where they start in it. */
+function heardLine(question: QuestionItem, transcript: TranscriptEntry[]): { n: number; at: number } | undefined {
     const heard = question.heard?.toLowerCase();
 
     if (!heard) {
-        return question.fromSec;
+        return undefined;
     }
 
     for (const [n, line] of transcript.entries()) {
@@ -465,15 +462,86 @@ export function askedSpotSec(question: QuestionItem, transcript: TranscriptEntry
 
         const at = line.text.toLowerCase().indexOf(heard);
 
-        if (at < 0) {
-            continue;
+        if (at >= 0) {
+            return { n, at };
         }
-
-        const endSec = transcript.slice(n + 1).find((next) => next.startSec !== undefined)?.startSec ?? question.toSec;
-        return startSec + (at / Math.max(1, line.text.length)) * Math.max(0, endSec - startSec);
     }
 
-    return question.fromSec;
+    return undefined;
+}
+
+/**
+ * The moment in the recording the question is about: for a term or text, where its heard words fall, estimated from
+ * their place in the line (a source times lines, not words); for a speaker, or words not found, the range's start.
+ */
+export function askedSpotSec(question: QuestionItem, transcript: TranscriptEntry[]): number {
+    const found = heardLine(question, transcript);
+    const startSec = found ? transcript[found.n]!.startSec : undefined;
+
+    if (!found || startSec === undefined) {
+        return question.fromSec;
+    }
+
+    const line = transcript[found.n]!;
+    const endSec =
+        transcript.slice(found.n + 1).find((next) => next.startSec !== undefined)?.startSec ?? question.toSec;
+    return startSec + (found.at / Math.max(1, line.text.length)) * Math.max(0, endSec - startSec);
+}
+
+/** The words of a heard passage in its line, with the line before and after, each cut to about `maxChars`. */
+export interface HeardContext {
+    before?: string;
+    /** The line's text up to the heard words, the heard words as the transcript has them, and the rest of the line. */
+    lead: string;
+    heard: string;
+    rest: string;
+    after?: string;
+}
+
+/** Where a word question's heard words are said: the sentence around them, so two questions on one word differ. */
+export function heardContext(
+    question: QuestionItem,
+    transcript: TranscriptEntry[],
+    maxChars: number
+): HeardContext | undefined {
+    const found = heardLine(question, transcript);
+
+    if (!found) {
+        return undefined;
+    }
+
+    const text = transcript[found.n]!.text;
+    const end = found.at + (question.heard?.length ?? 0);
+    const side = Math.max(20, Math.floor((maxChars - (end - found.at)) / 2));
+    const lead =
+        found.at > side ? `…${text.slice(found.at - side, found.at).replace(/^\S*\s/, "")}` : text.slice(0, found.at);
+    const rest = text.length - end > side ? `${text.slice(end, end + side).replace(/\s\S*$/, "")}…` : text.slice(end);
+    const neighbour = (step: -1 | 1): string | undefined => {
+        const line = transcript[found.n + step];
+
+        if (!line?.text.trim()) {
+            return undefined;
+        }
+
+        const words = line.text.trim();
+
+        if (words.length <= maxChars) {
+            return words;
+        }
+
+        return step < 0
+            ? `…${words.slice(-maxChars).replace(/^\S*\s/, "")}`
+            : `${words.slice(0, maxChars).replace(/\s\S*$/, "")}…`;
+    };
+    const before = neighbour(-1);
+    const after = neighbour(1);
+    return {
+        ...(before ? { before } : {}),
+        lead,
+        heard: text.slice(found.at, end),
+        rest,
+        ...(after ? { after } : {}),
+    };
 }
 
 /**

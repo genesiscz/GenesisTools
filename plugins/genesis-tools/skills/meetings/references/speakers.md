@@ -132,7 +132,8 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
    with the same evidence (the same live voice, the same people present, the same top candidates).
 5. **Propagate**: an answer raises every range with the same evidence; re-rank, and ask the next only if it is still
    under 60 %.
-6. **Budget**: about 12 questions per meeting; the user can say "enough". The rest stay suggestions and render as
+6. **Budget**: about 12 questions per meeting; the user can say "enough". A split does not count: its parts take its
+   place. The rest stay suggestions and render as
    `[nejasné: "<label>"; 1) Petr 55 % 2) Pavel]` (only the known confidence is shown).
 7. **Split**: when the user hears several voices in one range, "Several voices" in `listen` cuts it at each line and at
    each change between the microphone and the call, then asks each part with its words. Two remote voices in a row
