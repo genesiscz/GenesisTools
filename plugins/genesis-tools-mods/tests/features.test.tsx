@@ -7,6 +7,7 @@ import {
     lastSaidOf,
     refreshAgentDetails,
     workersOf,
+    workersRetryMs,
 } from "../hooks/agents-band";
 import {
     answersFrom,
@@ -4226,6 +4227,10 @@ test("the agents band lists the session's running codex and grok workers from to
         },
     ]);
     expect(workersOf("not json", "sess-1")).toEqual([]);
+});
+
+test("a failed workers read waits 30 s, doubling with each failure in a row, at most 5 minutes", () => {
+    expect([1, 2, 3, 4, 5, 9].map(workersRetryMs)).toEqual([30_000, 60_000, 120_000, 240_000, 300_000, 300_000]);
 });
 
 /** A host over an in-memory folder shared by "sessions", whose `run` counts and answers after `ms`. */
