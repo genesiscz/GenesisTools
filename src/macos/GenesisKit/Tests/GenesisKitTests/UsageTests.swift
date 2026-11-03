@@ -157,6 +157,21 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(UsageDoor.digest(week: false, date: "2026-11-02").argv.suffix(3), ["--day", "2026-11-02", "--json"])
     }
 
+    func testBudgetWritesNameTheTargetExactly() throws {
+        XCTAssertEqual(UsageBudgetCommand.setWindow(accountId: "acc_work", kind: "weekly", reservePct: 10, dailyPct: 2.5).argv,
+                       ["ai", "usage", "budgets", "set", "--account", "acc_work", "--kind", "weekly", "--reserve", "10", "--daily", "2.5"])
+        XCTAssertEqual(UsageBudgetCommand.removeSpend(provider: nil).argv, ["ai", "usage", "budgets", "rm", "--spend"])
+        let budgets = try decode("""
+        {"schema":"usage.budgets@1","generatedAt":"x","selector":{"accounts":[]},"warnings":[],
+         "data":{"budgets":{"global":{},"providers":{}},"spend":[{"scope":"global","dailyUsd":50,"todayUsd":12,"ratio":0.24}],
+          "windows":[{"provider":"anthropic-sub","accountId":"acc_work","accountName":"work","kind":"weekly","key":"seven_day","label":"Weekly",
+           "utilization":40,"resetsAt":null,"budget":{"reservePct":10},"pace":{"reservePct":10,"allowancePct":8,"burnedTodayPct":2,
+           "paceRatio":0.25,"headroomPct":50,"status":"ok"}}]}}
+        """, as: UsageBudgetsData.self, door: .budgets).data
+        XCTAssertEqual(budgets.windows.first?.pace.allowancePct, 8)
+        XCTAssertEqual(budgets.spend.first?.ratio, 0.24)
+    }
+
     func testCountdownAndTokens() {
         XCTAssertEqual(UsageFormat.duration(92 * 60), "1h 32m")
         XCTAssertEqual(UsageFormat.duration(52 * 3600), "2d 4h")
