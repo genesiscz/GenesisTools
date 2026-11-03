@@ -101,20 +101,18 @@ export function bindEndpoint<E extends Endpoint>(
     binding: Binding<E>,
     receipts: ReceiptCache = sharedReceipts
 ): RouteDef {
-    const answer = async (ctx: RouteContext): Promise<RouteResult> => {
+    /** The answer, or a rejection when the binding threw: the receipt cache must see a throw to drop the key. */
+    const run = async (ctx: RouteContext): Promise<RouteResult> => {
         const parsed = binding.input.safeParse(await rawInput(endpoint.method, ctx, binding.body ?? "json"));
 
         if (!parsed.success) {
             return { kind: "json", status: 400, body: { error: binding.invalid } };
         }
 
-        try {
-            const output = await binding.run(parsed.data, ctx);
-            return isRouteResult(output) ? output : { kind: "json", status: 200, body: output };
-        } catch (err) {
-            return binding.error ? binding.error(err) : errorResult(err);
-        }
+        const output = await binding.run(parsed.data, ctx);
+        return isRouteResult(output) ? output : { kind: "json", status: 200, body: output };
     };
+    const failure = (err: unknown): RouteResult => (binding.error ? binding.error(err) : errorResult(err));
 
     return {
         method: endpoint.method,
@@ -126,10 +124,12 @@ export function bindEndpoint<E extends Endpoint>(
             // Only a keyed-write row is cached here. `act` dedupes per token and key inside `act()`; a cache keyed
             // without the act token would hand one token's receipt to another token that reused the key.
             if (endpoint.policy !== "keyed-write" || !key) {
-                return answer(ctx);
+                return run(ctx).catch(failure);
             }
 
-            return receipts.once(`${endpoint.method} ${ctx.pathname} ${key}`, () => answer(ctx));
+            // The throw is turned into its error answer only after the cache, so a transient failure is retried
+            // instead of pinning the key to a 500 for the cache's lifetime.
+            return receipts.once(`${endpoint.method} ${ctx.pathname} ${key}`, () => run(ctx)).catch(failure);
         },
     };
 }
