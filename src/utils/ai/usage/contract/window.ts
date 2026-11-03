@@ -130,7 +130,8 @@ export function parseWhen(text: string, ctx: { now: Date; tz: string; flag?: str
     const flag = ctx.flag ?? "--since";
     const value = text.trim();
     const keyword = value.toLowerCase();
-    const reserved = RESERVED_KEYWORDS[keyword];
+    // An own key only: `constructor` or `__proto__` would otherwise read Object.prototype and crash below.
+    const reserved = Object.hasOwn(RESERVED_KEYWORDS, keyword) ? RESERVED_KEYWORDS[keyword] : undefined;
 
     if (reserved !== undefined) {
         throw new UsageQueryError("reserved", reserved.replace("--since", flag), { given: text });
