@@ -195,6 +195,10 @@ Settings live in `~/.genesis-tools/ai-usage-dashboard/config.json` under `alerts
 
 `list`, `rules` and `test` never write; `test` judges the last poll's snapshots without polling or recording, and `--send` tries the rule's channels with its findings or one test card.
 
+### `ai usage spend`: the `tools ai-spend` tree
+
+`tools ai usage spend <verb> ...` is an alias of [`tools ai-spend <verb> ...`](../ai-spend/README.md): the same commands, flags and bytes. `tools ai-spend` stays the documented path, and a new spend verb lands in its tree. `--harness <list>` picks transcript data by the agent that wrote it (`--sources` and `--backend` are the older names); a limits verb refuses `--harness`, because limit windows belong to a provider (`--provider`).
+
 ### `ai usage sessions`: one list across Claude, Codex and Grok
 
 ```bash
