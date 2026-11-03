@@ -64,6 +64,17 @@ interface ConnectionStoreState {
  * It replaces the gate's copy store (`state/connection.ts`): the route gate reads `transport` here.
  */
 export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
+    /**
+     * The latest connect or activate. Each attempt takes a number before it pairs, builds and probes; one that is no
+     * longer the latest when its probe returns commits nothing, so a slow attempt to A cannot replace B after B won.
+     */
+    let latestAttempt = 0;
+    const SUPERSEDED: ConnectResult = {
+        ok: false,
+        failure: "error",
+        error: "A newer connection attempt replaced this one.",
+    };
+
     /** The commit step: the transport is live from here on. */
     function commit(id: string, transport: Transport, connections: SavedConnection[]): void {
         set((state) => ({
@@ -91,6 +102,7 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
         restored: false,
 
         async connect({ deviceCode, ...input }) {
+            const attempt = ++latestAttempt;
             const row = TIERS[input.tier];
             const target = targetOf(input, input.password ?? "");
 
@@ -101,6 +113,10 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
 
                 const transport = await row.build(target);
                 const failed = await probed(input.tier, transport);
+
+                if (attempt !== latestAttempt) {
+                    return SUPERSEDED;
+                }
 
                 if (failed) {
                     return failed;
@@ -116,6 +132,7 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
         },
 
         async activate(id) {
+            const attempt = ++latestAttempt;
             const conn = await getConnection(id);
 
             if (!conn) {
@@ -125,6 +142,10 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
             try {
                 const transport = await buildTransportFor(conn);
                 const failed = await probed(conn.tier, transport);
+
+                if (attempt !== latestAttempt) {
+                    return SUPERSEDED;
+                }
 
                 if (failed) {
                     return failed;

@@ -18,13 +18,18 @@ const offline = new Set<string>();
 /** The probe deadline each plain tier was built with. */
 const timeouts: Record<string, number> = {};
 const paired: string[] = [];
+/** Hosts whose probe waits until the test releases it. */
+const held = new Map<string, Promise<void>>();
 
 function transport(tier: string, host = `${tier}.example.test`) {
     return {
         tier,
         baseUrl: () => `http://${host}`,
         authHeader: () => undefined,
-        reachable: async () => !offline.has(host),
+        reachable: async () => {
+            await held.get(host);
+            return !offline.has(host);
+        },
     };
 }
 
@@ -127,6 +132,22 @@ describe("connection session — probe before commit", () => {
         expect(useConnectionStore.getState().transport?.baseUrl()).toBe("http://machine-a.test");
         expect((await loadConnections()).map((c) => c.host)).toEqual(["machine-a.test"]);
         expect(await getActiveConnectionId()).toBe(first.ok ? first.id : null);
+    });
+
+    it("a slow attempt that finishes after a newer one commits nothing", async () => {
+        let release = () => {};
+        held.set("machine-slow.test", new Promise<void>((resolve) => (release = resolve)));
+
+        const slow = useConnectionStore.getState().connect(lanInput("machine-slow.test"));
+        const fast = await useConnectionStore.getState().connect(lanInput("machine-fast.test"));
+        release();
+        const late = await slow;
+        held.clear();
+
+        expect(fast.ok).toBe(true);
+        expect(late).toEqual({ ok: false, failure: "error", error: "A newer connection attempt replaced this one." });
+        expect(useConnectionStore.getState().transport?.baseUrl()).toBe("http://machine-fast.test");
+        expect((await loadConnections()).map((c) => c.host)).toEqual(["machine-fast.test"]);
     });
 
     it("a failed first connect keeps the gate closed (no transport, no active id)", async () => {
