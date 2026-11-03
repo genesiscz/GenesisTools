@@ -8,7 +8,9 @@ import type { Command } from "commander";
  * on `workers`.
  */
 export function addHarnessOption(command: Command, legacy: string): Command {
-    return command.option("--harness <ids>", `Only the transcripts these agents wrote; same values as ${legacy}`);
+    // An optional value: a bare `--harness` reaches the same list-of-agents diagnostic as an unknown one, where a
+    // required value stopped in commander's generic "argument missing".
+    return command.option("--harness [ids]", `Only the transcripts these agents wrote; same values as ${legacy}`);
 }
 
 export interface HarnessFlag {
@@ -36,19 +38,22 @@ export function resolveHarnessFlag({
     legacy,
     legacyFlag,
 }: {
-    harness: string | undefined;
+    harness: string | true | undefined;
     legacy: string | undefined;
     legacyFlag: string;
 }): HarnessFlag | null {
-    if (harness !== undefined && legacy !== undefined && listKey(harness) !== listKey(legacy)) {
-        out.error(`--harness ${harness} and ${legacyFlag} ${legacy} name different lists; pass one of them.`);
+    // A bare `--harness` is a given flag with an empty list, which every reader refuses with the list of agents.
+    const given = harness === true ? "" : harness;
+
+    if (given !== undefined && legacy !== undefined && listKey(given) !== listKey(legacy)) {
+        out.error(`--harness ${given} and ${legacyFlag} ${legacy} name different lists; pass one of them.`);
         process.exitCode = 1;
 
         return null;
     }
 
-    if (harness !== undefined) {
-        return { flag: "--harness", raw: harness };
+    if (given !== undefined) {
+        return { flag: "--harness", raw: given };
     }
 
     return { flag: legacyFlag, raw: legacy };
@@ -66,7 +71,7 @@ export function parseSources<T extends string>(
     raw: string | undefined,
     { command, ids, flag }: { command: string; ids: readonly T[]; flag: string }
 ): T[] | undefined | null {
-    if (!raw) {
+    if (raw === undefined) {
         return undefined;
     }
 
@@ -77,11 +82,12 @@ export function parseSources<T extends string>(
     const known = (value: string): value is T => (ids as readonly string[]).includes(value);
     const unknown = wanted.filter((value) => !known(value));
 
-    if (unknown.length > 0) {
+    // An empty list (a bare `--harness`) is refused like an unknown one: it names no agent.
+    if (unknown.length > 0 || wanted.length === 0) {
         out.error(
             suggestEnumFlag(`tools ai-spend ${command}`, flag, ids, {
                 subcommand: [command],
-                given: unknown.join(", "),
+                given: unknown.length > 0 ? unknown.join(", ") : undefined,
             })
         );
         process.exitCode = 1;
@@ -109,7 +115,7 @@ export function harnessSources<T extends string>({
     ids: readonly T[];
     namespace?: T;
 }): T[] | undefined | null {
-    const flags = cmd.optsWithGlobals<{ harness?: string; sources?: string }>();
+    const flags = cmd.optsWithGlobals<{ harness?: string | true; sources?: string }>();
     const harness = resolveHarnessFlag({ harness: flags.harness, legacy: flags.sources, legacyFlag: "--sources" });
 
     if (!harness) {

@@ -790,6 +790,17 @@ describe("--harness, the design name of --sources and --backend", () => {
         expect(stderr).not.toContain("--sources");
     });
 
+    test("a bare --harness lists the agents it takes instead of reading every one", async () => {
+        // Last on the line: a required value took the next flag as its list, so only a trailing bare flag fell
+        // through to commander's generic "argument missing".
+        await spend("summary", "--json", "--harness");
+
+        expect(process.exitCode).toBe(1);
+        expect(loadCalls).toHaveLength(0);
+        expect(stderr).toContain("--harness");
+        expect(stderr).toContain("codex");
+    });
+
     test("the reports apply the inherited --harness, and a list that leaves out the namespace is refused", async () => {
         fixtureEvents = [event(), event({ source: "codex", id: "evt-2" })];
 
