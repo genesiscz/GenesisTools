@@ -1,16 +1,16 @@
 import type { WaitingDecisionDto } from "@dd/contract";
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
-import { useKeptState, useStagePick } from "@/features/answer-queue/hooks";
+import { KeptEditsContext, useKeptState, useStagePick } from "@/features/answer-queue/hooks";
 import {
     flushDecision,
     idempotencyKey,
-    latestStage,
     type NoteState,
     noteIsDirty,
     noteStateOf,
     reconcileNote,
+    stagesOf,
 } from "@/features/answer-queue/units";
 import { useThemeColors } from "@/theme/colors";
 
@@ -36,9 +36,9 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
         decision.id,
         () => noteStateOf(decision)
     );
-    // Picks and note saves are tracked apart: a failed pick blocks Send, a failed note save is retried by it.
-    const pickStage = useRef(latestStage()).current;
-    const noteStage = useRef(latestStage()).current;
+    // Picks and note saves are tracked apart: a failed pick blocks Send, a failed note save is retried by it. The
+    // screen keeps the trackers too, so a refused pick still blocks Send after the list remounts the card.
+    const { pick: pickStage, note: noteStage } = stagesOf(useContext(KeptEditsContext), decision.id);
     const testId = `answer-queue-decision-${session}-${decision.number}`;
 
     // The card is keyed by the decision id, which stays when the agent re-posts it or another surface edits the draft.
