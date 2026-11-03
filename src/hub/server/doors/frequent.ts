@@ -1,6 +1,7 @@
 import { asResult } from "@genesiscz/utils/cli/result";
 import { resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { currentTraceId } from "@genesiscz/utils/trace";
+import { HUB_CAPABILITIES } from "../../lib/capabilities/index";
 import { parseArgv, stringFlag, wholeNumber } from "../argv";
 import { type SessionRowsJob, SessionRowsRunner } from "../session-rows";
 import { type CallDoor, failed, ok } from "./types";
@@ -16,10 +17,8 @@ export const forecastDoor: CallDoor<true> = {
     },
     async run(_parsed, { signal }) {
         try {
-            // A cancel that arrived before the work started stops it here.
-            signal.throwIfAborted();
-            const { buildForecast } = await import("../../lib/forecast");
-            return ok(asResult(await buildForecast({})));
+            // The capability is the one parse and run; this door keeps the CLI's argv and its stdout.
+            return ok(asResult(await HUB_CAPABILITIES.forecast.run({}, { signal })));
         } catch (error) {
             return failed(error);
         }
@@ -40,10 +39,7 @@ export const procsDoor: CallDoor<true> = {
     },
     async run(_parsed, { signal }) {
         try {
-            // A cancel that arrived before the work started stops it here.
-            signal.throwIfAborted();
-            const { readProcsReport } = await import("../../lib/procs/sources");
-            return ok(asResult(await readProcsReport({ energy: false })));
+            return ok(asResult(await HUB_CAPABILITIES.procs.run({}, { signal })));
         } catch (error) {
             return failed(error);
         }
@@ -67,13 +63,7 @@ export const stuckDoor: CallDoor<string[]> = {
     },
     async run(sessionIds, { signal }) {
         try {
-            // A cancel that arrived before the work started stops it here.
-            signal.throwIfAborted();
-            const { readStuckThresholds } = await import("../../lib/insights/stuck");
-            const { stuckSessions } = await import("../../lib/insights/index");
-            const thresholds = readStuckThresholds();
-            const sessions = await stuckSessions({ sessionIds, thresholds });
-            return ok(asResult({ thresholds, checked: sessions.length, sessions }));
+            return ok(asResult(await HUB_CAPABILITIES.stuck.run({ sessionIds }, { signal })));
         } catch (error) {
             return failed(error);
         }

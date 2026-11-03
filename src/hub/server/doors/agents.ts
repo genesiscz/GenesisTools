@@ -1,5 +1,6 @@
 import { asResult } from "@genesiscz/utils/cli/result";
 import { hoursArg, limitArg } from "../../commands/agents-args";
+import { CapabilityRefusedError, HUB_CAPABILITIES } from "../../lib/capabilities/index";
 import { parseArgv, stringFlag } from "../argv";
 import { type CallDoor, failed, ok } from "./types";
 
@@ -54,21 +55,12 @@ export const agentsTreeDoor: CallDoor<TreeArgs> = {
     },
     async run(args, { signal }) {
         try {
-            // A cancel that arrived before the work started stops it here.
-            signal.throwIfAborted();
-            const agents = await import("../../lib/agents/index");
-            if (args.agent) {
-                const detail = await agents.hubAgent({ ...args, agent: args.agent });
-                if (!detail) {
-                    const where = args.session ? ` under session ${args.session}` : " in the window";
-                    return { stdout: "", stderr: `No agent ${args.agent}${where}\n`, exit: 1 };
-                }
-
-                return ok(asResult(detail));
+            return ok(asResult(await HUB_CAPABILITIES.agents.run(args, { signal })));
+        } catch (error) {
+            if (error instanceof CapabilityRefusedError && error.code === "not-found") {
+                return { stdout: "", stderr: `${error.message}\n`, exit: 1 };
             }
 
-            return ok(asResult(await agents.hubAgents(args)));
-        } catch (error) {
             return failed(error);
         }
     },
