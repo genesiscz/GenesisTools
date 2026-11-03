@@ -4,6 +4,8 @@ import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usag
 import { TASK_SIGTERM_CLEANUP_MS } from "@app/daemon/lib/runner";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { releaseCodexUsageHomes } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
+import { rollUpRecentDays } from "@genesiscz/utils/ai/usage/rollup/daily";
+import { systemTimeZone } from "@genesiscz/utils/ai/usage/series-keys";
 import { touchUsageDaemonHeartbeat } from "@genesiscz/utils/ai/usage-poll/daemon-heartbeat";
 import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
@@ -213,6 +215,22 @@ async function main(): Promise<void> {
             );
         } catch (err) {
             logger.warn({ err }, "[ai-usage] poll coverage or alert pass failed");
+        }
+
+        // The daily rollup (step U10): yesterday and today into usage_daily, at most every 15 minutes.
+        try {
+            const ids = new Map(snapshots.map((s) => [`${s.provider}\u0000${s.accountName}`, s.accountId]));
+            const rolled = prof.measure("tick.rollup", () =>
+                rollUpRecentDays({
+                    db,
+                    now: new Date(),
+                    tz: systemTimeZone(),
+                    accountIdOf: (entry) => ids.get(`${entry.provider}\u0000${entry.account}`) ?? null,
+                })
+            );
+            logger.debug({ rolled }, "[ai-usage] daily rollup");
+        } catch (err) {
+            logger.warn({ err }, "[ai-usage] daily rollup failed");
         }
 
         const anthropic = anthropicRows(snapshots);
