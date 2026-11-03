@@ -130,6 +130,33 @@ describe("F11: decisions answered in Telegram", () => {
         expect(api.messages[0].text.length).toBeLessThanOrEqual(3800);
     });
 
+    it("gives a pressed message back when the act fails, so the retraction still drops its buttons", async () => {
+        // Its own chat: the message memory is shared by the file, and another test's message 1 in CHAT would match.
+        const own = { ...bot, chats: { commands: 7009 } };
+        const api = new FakeTelegramMessagesApi();
+        const row = decision({ id: "d_9_s-nine", number: 9, sessionId: "s-nine" });
+        await postDecisionsToTelegram([row], { bot: own, api, store: memoryActTokenStore(), now: NOW });
+
+        const router = createCallbackRouter({
+            d: decisionPressHandler({
+                actDeps: async () => {
+                    throw new Error("token store locked");
+                },
+            }),
+        });
+        const [message] = api.messages;
+        const reply = await router.route({
+            id: "cbq-9",
+            data: message.buttons[0][0].data,
+            chatId: 7009,
+            messageId: message.message,
+        });
+
+        expect(reply.toast).toBe("That did not work. Check the hub.");
+        expect(await retractDecisionTelegramMessages(["d_9_s-nine"], { bot: own, api })).toBe(1);
+        expect(api.messages[0].buttons).toEqual([]);
+    });
+
     it("edits the message of a decision closed elsewhere and drops its buttons", async () => {
         const api = new FakeTelegramMessagesApi();
         await postDecisionsToTelegram([decision({ id: "d_6_s-six", number: 6, sessionId: "s-six" })], {
