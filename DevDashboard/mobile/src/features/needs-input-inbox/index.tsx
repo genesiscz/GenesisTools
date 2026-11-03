@@ -1,4 +1,4 @@
-import { Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AnswerQueue } from "@/features/answer-queue/components/AnswerQueue";
 import { AttentionList } from "@/features/needs-input-inbox/components/AttentionList";
@@ -32,12 +32,14 @@ export function NeedsInputInboxScreen() {
     }
 
     if (attention.isError && items.length === 0) {
-        // The answer queue reads its own route, so a failed attention list never hides it.
+        // The answer queue reads its own route, so a failed attention list never hides it. It scrolls: a queue of
+        // several cards is taller than the screen.
         return (
-            <View
+            <ScrollView
                 testID="screen-needs-input-inbox"
-                className="flex-1 gap-2 bg-dd-bg-base p-6"
-                style={{ paddingTop: insets.top + 8 }}
+                className="flex-1 bg-dd-bg-base"
+                contentContainerStyle={{ gap: 8, padding: 24, paddingTop: insets.top + 8 }}
+                keyboardShouldPersistTaps="handled"
             >
                 <AnswerQueue />
                 <Text
@@ -50,7 +52,7 @@ export function NeedsInputInboxScreen() {
                 <Text className="text-xs" style={{ color: c.textMuted, fontFamily: "monospace" }}>
                     {attention.error instanceof Error ? attention.error.message : "Could not reach the agent."}
                 </Text>
-            </View>
+            </ScrollView>
         );
     }
 
