@@ -247,6 +247,11 @@ program
                         tab,
                         filter: opts.filter,
                         worktree: opts.worktree,
+                        usageSection,
+                        usageSession: opts.usageSession,
+                        usageHarness: opts.usageHarness,
+                        usageAccounts: opts.usageAccount,
+                        usageAllAccounts: opts.usageAllAccounts,
                     })
                 );
                 return;
