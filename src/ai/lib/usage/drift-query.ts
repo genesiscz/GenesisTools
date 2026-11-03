@@ -32,7 +32,7 @@ export interface DriftOptions extends AttributionOptions {
  */
 export async function queryDrift(
     opts: DriftOptions,
-    deps: { now?: Date; loadEvents?: typeof loadAttributedSpend } = {}
+    deps: { now?: Date; loadEvents?: typeof loadAttributedSpend; readScope?: typeof readScope } = {}
 ): Promise<UsageEnvelope<DriftData>> {
     refuseHarness(opts.harness);
 
@@ -44,7 +44,12 @@ export async function queryDrift(
         padMinutes: positive("--pad", opts.pad, DRIFT_DEFAULTS.padMinutes),
     };
     const kinds = resolveKinds(opts.kind, ["weekly"]);
-    const scope = await readScope({ opts: { ...opts, account: undefined }, from: window.from, to: window.to, kinds });
+    const scope = await (deps.readScope ?? readScope)({
+        opts: { ...opts, account: undefined },
+        from: window.from,
+        to: window.to,
+        kinds,
+    });
     const events = await (deps.loadEvents ?? loadAttributedSpend)({
         from: window.from,
         now,
@@ -57,21 +62,15 @@ export async function queryDrift(
         selection === undefined
             ? undefined
             : new Set(selection.map((key) => `${key.provider}\u0000${key.accountName}`));
-    const rows = [
-        ...new Set(scope.series.map((entry) => `${entry.provider}\u0000${entry.kind}\u0000${entry.scopeModel}`)),
-    ]
-        .flatMap((group) =>
-            computeDrift({
-                series: scope.series.filter(
-                    (entry) => `${entry.provider}\u0000${entry.kind}\u0000${entry.scopeModel}` === group
-                ),
-                events,
-                accountOf: scope.keyOf,
-                settings,
-                tz: window.tz,
-            })
-        )
-        .filter((row) => !picked || picked.has(`${row.account.provider}\u0000${row.account.accountName}`));
+    // One call over every series: a model-scoped window is exclusive only when no unscoped (or other-model) window of
+    // another account of its provider rose around it.
+    const rows = computeDrift({
+        series: scope.series,
+        events,
+        accountOf: scope.keyOf,
+        settings,
+        tz: window.tz,
+    }).filter((row) => !picked || picked.has(`${row.account.provider}\u0000${row.account.accountName}`));
 
     if (opts.record) {
         const db = new UsageLimitsDb();
