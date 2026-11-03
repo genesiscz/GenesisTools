@@ -529,6 +529,9 @@ export function probeFailureRow({
     return { status: "failed", reason: `the probe failed: ${messageOf(error)}` };
 }
 
+/** How long one ffmpeg run of an encode may take. */
+const ENCODE_PASS_TIMEOUT_MS = 4 * 60 * 60_000;
+
 /** Runs one ffmpeg encode (or one run of a two-pass encode) and reports its progress; the failure text, or null. */
 async function runEncodePass({
     input,
@@ -565,7 +568,11 @@ async function runEncodePass({
             pass: twoPass,
             progress: onProgress !== undefined,
         }),
-        timeoutMs: 4 * 60 * 60_000,
+        timeoutMs: ENCODE_PASS_TIMEOUT_MS,
+        // boundedCommand keeps stdout even while onStdout reads it, and `-progress pipe:1` writes a block of about
+        // 300 bytes every half second: the 4 MiB default filled after about two and a half hours and killed the
+        // encode. 64 MiB (the most boundedCommand takes) covers the whole deadline several times over.
+        maxBufferBytes: 64 * 1024 * 1024,
         signal: options.signal,
         onStdout: onProgress
             ? ffmpegProgressReader((block) =>
