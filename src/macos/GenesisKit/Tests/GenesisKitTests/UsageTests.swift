@@ -154,6 +154,7 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(UsageDoor.sessionReport(id: "s1", harness: "codex").argv,
                        ["ai", "sessions", "report", "s1", "--provider", "codex", "--json"])
         XCTAssertEqual(UsageDoor.digest(week: true).argv.suffix(2), ["--week", "--json"])
+        XCTAssertEqual(UsageDoor.digest(week: false, date: "2026-11-02").argv.suffix(3), ["--day", "2026-11-02", "--json"])
     }
 
     func testCountdownAndTokens() {

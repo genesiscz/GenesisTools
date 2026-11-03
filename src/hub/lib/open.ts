@@ -8,7 +8,7 @@ import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { expandTilde } from "@genesiscz/utils/paths";
 import { hubStatus } from "./proposal";
 
-export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "agents"] as const;
+export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "agents", "usage"] as const;
 export type HubMode = (typeof HUB_MODES)[number];
 export const HUB_TABS = ["transcript", "changes", "files", "decisions"] as const;
 export type HubTab = (typeof HUB_TABS)[number];

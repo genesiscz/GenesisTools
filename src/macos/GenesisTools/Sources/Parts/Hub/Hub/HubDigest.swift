@@ -253,7 +253,16 @@ struct HubDigestPanel: View {
                     } else if model.loading {
                         Text("Reading the day…").foregroundColor(.settingsTextMuted)
                     }
-                    section("Usage forecast", count: nil) { HubForecastList() }
+                    section("Usage", count: nil) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HubForecastList()
+                            HubUsageDigestSummary(store: HubUsageDigestStore.shared) { id, harness in
+                                hub.setMode(.usage)
+                                MainActor.assumeIsolated { hub.usage.openSession(id, harness: harness) }
+                                close()
+                            }
+                        }
+                    }
                 }
                 .padding(14)
                 .scrollOverflowContent()
@@ -265,7 +274,9 @@ struct HubDigestPanel: View {
         .onAppear {
             model.load()
             HubForecastStore.shared.loadIfStale(maxAge: 30)
+            HubUsageDigestStore.shared.loadIfStale(day: model.day)
         }
+        .onChange(of: model.day) { _, day in HubUsageDigestStore.shared.loadIfStale(day: day) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Today digest"))
     }
@@ -286,6 +297,7 @@ struct HubDigestPanel: View {
             IconButton(systemName: "arrow.clockwise", tooltip: "Read the day again") {
                 model.load()
                 HubForecastStore.shared.load()
+                HubUsageDigestStore.shared.load(day: model.day)
             }
             IconButton(systemName: "bell.badge", tooltip: "Notification rules") { HubDailyModel.shared.rulesOpen = true }
             MenuButton(items: {

@@ -273,7 +273,8 @@ public struct UsageBurnLaneView: View {
             path.addLines(line)
             context.stroke(path, with: .color(Color(red: 0.45, green: 0.66, blue: 0.98).opacity(0.55)), lineWidth: 0.8)
         }
-        if let label = forecast.label(now: now), geometry.x(end) - geometry.x(forecast.start) > 40 {
+        // A mini chart says it in its tooltip; the words would cover its few points of height.
+        if labelled, let label = forecast.label(now: now), geometry.x(end) - geometry.x(forecast.start) > 40 {
             context.draw(
                 Text(verbatim: label).font(.system(size: 9.5)).foregroundColor(tint.opacity(0.8)),
                 at: CGPoint(x: geometry.x(end) - 3, y: 2), anchor: .topTrailing)
