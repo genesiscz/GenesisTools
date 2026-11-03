@@ -14,7 +14,12 @@ import {
     MeetingsConfigStore,
 } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { type RecorderStatus, RpcError } from "@genesiscz/utils/screen-recorder/control";
+import {
+    AUDIO_SOURCES,
+    type AudioSource,
+    type RecorderStatus,
+    RpcError,
+} from "@genesiscz/utils/screen-recorder/control";
 import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
@@ -41,6 +46,17 @@ const START_WAIT_MS = 15_000;
 const STOP_WAIT_MS = 75_000;
 
 /** `all`, `follow-focus`, `main` or a screen index; undefined when the text is none of them. */
+/** `mic,system` as audio sources; undefined when a part is none of them. */
+export function parseAudioSources(raw: string): AudioSource[] | undefined {
+    const parts = raw
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+    return parts.every((part): part is AudioSource => (AUDIO_SOURCES as readonly string[]).includes(part))
+        ? [...new Set(parts)]
+        : undefined;
+}
+
 export function parseDisplayPolicy(raw: string): DisplayPolicy | undefined {
     if ((DISPLAY_POLICIES as readonly string[]).includes(raw)) {
         return raw as DisplayPolicy;
@@ -126,10 +142,17 @@ async function start(opts: {
     title?: string;
     project?: string;
     display?: string;
+    audio?: string;
     yes?: boolean;
 }): Promise<void> {
     const store = new MeetingStore();
     const current = readRecorderState(store);
+    const audio = opts.audio === undefined ? [] : parseAudioSources(opts.audio);
+
+    if (audio === undefined) {
+        fail(`--audio ${opts.audio} is not a list of ${AUDIO_SOURCES.join(", ")} (for example mic,system).`);
+        return;
+    }
 
     if (current.running) {
         fail(`Already recording ${current.state?.meetingId ?? "a meeting"}. Stop it first: ${TOOL} record stop`);
@@ -158,6 +181,7 @@ async function start(opts: {
             "run",
             record.id,
             ...(display !== undefined ? ["--display", String(display)] : []),
+            ...(audio.length > 0 ? ["--audio", audio.join(",")] : []),
         ]);
         log.info({ meeting: record.id, pid, identity: grant.identity }, "recorder started");
         const files = recorderFiles(store);
@@ -278,6 +302,60 @@ async function displayChange(method: "add" | "remove" | "switch", rawId: string)
     }
 }
 
+async function muteSource(raw: string, muted: boolean): Promise<void> {
+    const source = parseAudioSources(raw)?.[0];
+
+    if (!source) {
+        fail(`"${raw}" is none of ${AUDIO_SOURCES.join(", ")}.`);
+        return;
+    }
+
+    const answer = await callRunning(new MeetingStore(), (recorder) => recorder.muteAudio(source, muted));
+
+    if (answer) {
+        ui.ok(
+            muted
+                ? `Muted the ${source} sound; its file keeps silence for this time.`
+                : `Recording the ${source} sound again.`
+        );
+    }
+}
+
+async function setSettings(opts: {
+    activeFps?: string;
+    idleFps?: string;
+    threshold?: string;
+    maxLongSide?: string;
+    json?: boolean;
+}): Promise<void> {
+    const number = (raw: string | undefined) => (raw === undefined ? undefined : Number(raw));
+    const patch = Object.fromEntries(
+        Object.entries({
+            activeFps: number(opts.activeFps),
+            idleFps: number(opts.idleFps),
+            threshold: number(opts.threshold),
+            maxLongSide: number(opts.maxLongSide),
+        }).filter(([, value]) => value !== undefined)
+    );
+    const answer = await callRunning(new MeetingStore(), (recorder) =>
+        Object.keys(patch).length > 0 ? recorder.setSettings(patch) : recorder.getSettings()
+    );
+
+    if (!answer) {
+        return;
+    }
+
+    if (opts.json) {
+        out.result(SafeJSON.stringify(answer.result, null, 2));
+        return;
+    }
+
+    const { settings, applied } = answer.result;
+    ui.ok(
+        `${settings.activeFps} fps active, ${settings.idleFps} idle, threshold ${settings.threshold} %, long side ${settings.maxLongSide} px${applied ? ` (${applied})` : ""}`
+    );
+}
+
 async function displayMode(raw: string): Promise<void> {
     const mode = parseDisplayPolicy(raw);
 
@@ -389,7 +467,7 @@ async function status(opts: { json?: boolean }): Promise<void> {
     }
 }
 
-async function runCommand(id: string, opts: { display?: string }): Promise<void> {
+async function runCommand(id: string, opts: { display?: string; audio?: string }): Promise<void> {
     const store = new MeetingStore();
 
     try {
@@ -401,6 +479,7 @@ async function runCommand(id: string, opts: { display?: string }): Promise<void>
             display,
             capture: config.global.capture,
             ocrLanguages: languageSettings(config).ocr,
+            ...(opts.audio ? { audio: parseAudioSources(opts.audio) ?? [] } : {}),
         });
     } catch (err) {
         log.error({ err, id }, "recorder failed");
@@ -494,6 +573,7 @@ export function registerRecordCommands(program: Command): void {
             "--display <which>",
             "all, follow-focus, main or a screen index (default: the capture.displays setting, all)"
         )
+        .option("--audio <sources>", "also record sound beside the frames: mic, system or mic,system (.m4a in audio/)")
         .option("-y, --yes", "never prompt (project, permissions)")
         .action(start);
 
@@ -506,6 +586,25 @@ export function registerRecordCommands(program: Command): void {
         .command("resume")
         .description("Record again after a pause")
         .action(() => pauseOrResume("resume"));
+    record
+        .command("mute")
+        .argument("<source>", "mic or system")
+        .description("Mute a recorded sound source; the file keeps silence for the time")
+        .action((source: string) => muteSource(source, true));
+    record
+        .command("unmute")
+        .argument("<source>", "mic or system")
+        .description("Record the sound source again")
+        .action((source: string) => muteSource(source, false));
+    record
+        .command("set")
+        .description("Change the running recording's settings; applied at once (no option: print them)")
+        .option("--active-fps <n>", "frames per second while the screen changes")
+        .option("--idle-fps <n>", "frames per second while it does not")
+        .option("--threshold <percent>", "the share of the screen that must change for a frame")
+        .option("--max-long-side <px>", "the longest side of a frame")
+        .option("--json", "print the settings as JSON")
+        .action(setSettings);
     const display = record
         .command("display")
         .description("Which displays a running recording records; applies at once");
@@ -539,6 +638,7 @@ export function registerRecordCommands(program: Command): void {
         .command("run", { hidden: true })
         .argument("<meeting>", "the meeting id")
         .option("--display <which>", "all, follow-focus, main or a screen index")
+        .option("--audio <sources>", "mic, system or mic,system")
         .description("The recorder process itself; record start runs it")
         .action(runCommand);
 

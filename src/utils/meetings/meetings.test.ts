@@ -43,7 +43,7 @@ describe("meetings config", () => {
         expect(config.global.suggest.questionCap).toBe(12);
         expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
-        expect(recorderSettings(config.global.capture)).toEqual({});
+        expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: [] } });
     });
 
     test("a version 1 file moves each key to its axis, and the old places still read", () => {

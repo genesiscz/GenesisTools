@@ -8,14 +8,33 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 
-const commandSchema = z.object({ cmd: z.string(), displayId: z.number().optional() });
+const commandSchema = z.object({
+    cmd: z.string(),
+    displayId: z.number().optional(),
+    deviceId: z.string().optional(),
+    active: z.number().optional(),
+    idle: z.number().optional(),
+    percent: z.number().optional(),
+    source: z.string().optional(),
+});
 
 const args = process.argv.slice(2);
 const print = (value: unknown, stream: "stdout" | "stderr" = "stdout") =>
     process[stream].write(`${SafeJSON.stringify(value)}\n`);
 
 if (args[0] === "--help") {
-    process.stdout.write("capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin]\n");
+    process.stdout.write(
+        "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n"
+    );
+    process.exit(0);
+}
+
+if (args[0] === "audio-devices") {
+    print({
+        ok: true,
+        inputs: [{ id: "built-in-mic", name: "Built-in Microphone", channels: 1, default: true, audioObjectId: 1 }],
+        outputs: [{ id: "speakers", name: "Speakers", channels: 2, default: true, audioObjectId: 2 }],
+    });
     process.exit(0);
 }
 
@@ -111,6 +130,15 @@ process.stdin.on("data", (chunk) => {
             keep("display-switch");
         } else if (command.cmd === "pause" || command.cmd === "resume") {
             print({ event: "state", state: command.cmd === "pause" ? "paused" : "recording" }, "stderr");
+        } else if (["set-fps", "set-threshold", "set-max-long-side", "mute", "unmute"].includes(command.cmd)) {
+            print({ event: "settings", cmd: command.cmd, activeFps: command.active, idleFps: command.idle }, "stderr");
+        } else if (command.cmd === "set-mic") {
+            print(
+                command.deviceId === "built-in-mic"
+                    ? { event: "settings", micDevice: command.deviceId }
+                    : { event: "error", code: "device-missing", message: `no input device ${command.deviceId}` },
+                "stderr"
+            );
         } else if (command.cmd === "stop") {
             finish(false);
         }

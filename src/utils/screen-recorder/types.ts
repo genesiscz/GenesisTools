@@ -1,3 +1,5 @@
+import type { AudioDevices, AudioSource } from "./control";
+
 export const FRAME_RECORDER_IDS = ["native", "peekaboo"] as const;
 export type FrameRecorderId = (typeof FRAME_RECORDER_IDS)[number];
 
@@ -31,6 +33,19 @@ export interface CaptureRequest {
     outDir: string;
     /** Called while the capture runs, by a recorder that can (`supports.liveControl`). */
     hooks?: CaptureHooks;
+    /** Sound beside the frames, as one `.m4a` per source in `outDir` (`supports.audio`). */
+    audio?: { sources: AudioSource[]; micDeviceId?: string };
+}
+
+/** One recorded sound source of a capture. */
+export interface AudioTrack {
+    source: AudioSource;
+    /** The `.m4a` file, in the capture's `outDir`. */
+    path?: string;
+    durationMs: number;
+    peakDbfs?: number;
+    /** `[fromMs, toMs]` on the capture's clock while the source was muted (silence in the file). */
+    mutedSpans: Array<[number, number]>;
 }
 
 /** A running capture that takes commands while it records, without a restart. */
@@ -39,6 +54,12 @@ export interface LiveCapture {
     switchDisplay(displayId: number): Promise<void>;
     pause(): void;
     resume(): void;
+    /** The live settings this capture takes without a restart; absent when the recorder has no such command. */
+    setRates?(active: number, idle: number): Promise<void>;
+    setThreshold?(percent: number): Promise<void>;
+    setMaxLongSide?(px: number): Promise<void>;
+    mute?(source: AudioSource, muted: boolean): Promise<void>;
+    setMic?(deviceId: string): Promise<void>;
 }
 
 export interface CaptureHooks {
@@ -69,6 +90,7 @@ export interface CaptureResult {
     frames: CapturedFrame[];
     endedEarly?: CaptureEnding;
     stats?: Record<string, number>;
+    tracks?: AudioTrack[];
 }
 
 export const CAPTURE_ERROR_KINDS = ["display-missing", "no-permission", "unavailable", "timeout", "failed"] as const;
@@ -94,6 +116,8 @@ export interface FrameRecorderSupport {
     liveControl: boolean;
     /** Several captures at once (one per display); peekaboo holds one exclusive ScreenCaptureKit lock. */
     parallelCaptures: boolean;
+    /** Sound beside the frames (`CaptureRequest.audio`) and the input device list. */
+    audio: boolean;
 }
 
 /** A change-aware screen recorder: frames only when the screen changed, as image files. */
@@ -104,6 +128,11 @@ export abstract class FrameRecorder {
     abstract displays(): Promise<DisplayInfo[]>;
     /** Resolves with the frames kept so far when `signal` aborts; throws CaptureError when nothing was recorded. */
     abstract capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult>;
+
+    /** The audio inputs and outputs, for a recorder with `supports.audio`. */
+    async audioDevices(): Promise<AudioDevices> {
+        throw new CaptureError("unavailable", `the ${this.id} recorder records no sound`);
+    }
 }
 
 /** What a recorder needs from the tool that hosts it. */

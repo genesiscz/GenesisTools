@@ -10,6 +10,9 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { Socket } from "bun";
 import { z } from "zod";
 import {
+    type AudioDevices,
+    type AudioSource,
+    type AudioState,
     type DisplayEntry,
     type DisplayMode,
     type DisplaySelection,
@@ -18,10 +21,12 @@ import {
     RECORDER_METHODS,
     RecorderControl,
     type RecorderMethod,
+    type RecorderSettingsPatch,
     type RecorderState,
     type RecorderStatus,
     RPC_ERRORS,
     RpcError,
+    type SettingsAnswer,
     type StopAnswer,
 } from "./control";
 
@@ -480,6 +485,26 @@ export class RecorderClient extends RecorderControl {
 
     override listJobs(): Promise<JobInfo[]> {
         return this.call("jobs.list");
+    }
+
+    override listAudioDevices(): Promise<AudioDevices> {
+        return this.call("audio.list");
+    }
+
+    override muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
+        return this.call("audio.mute", { source, muted });
+    }
+
+    override setAudioInput(deviceId: string): Promise<AudioState> {
+        return this.call("audio.setInput", { deviceId });
+    }
+
+    override getSettings(): Promise<SettingsAnswer> {
+        return this.call("settings.get");
+    }
+
+    override setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+        return this.call("settings.set", patch);
     }
 
     /** Connects by id; throws when no such recording runs or its socket refuses (a stale entry counts as gone). */

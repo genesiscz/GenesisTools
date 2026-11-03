@@ -9,7 +9,7 @@ import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { callRecorder, listLiveRecordings, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
+import { callRecorder, listLiveRecordings, RecorderClient, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
 import {
     CaptureError,
     type CaptureRequest,
@@ -1749,6 +1749,9 @@ describe("the meetings recorder loop", () => {
                 steps: Step[];
                 liveControl?: boolean;
                 parallel?: boolean;
+                /** The live channel also takes settings, mute and a microphone (ax-tool with those commands). */
+                liveSettings?: boolean;
+                audio?: boolean;
             },
             private readonly whenDone: () => void
         ) {
@@ -1763,6 +1766,17 @@ describe("the meetings recorder loop", () => {
                 heartbeat: false,
                 liveControl: this.script.liveControl === true,
                 parallelCaptures: this.script.parallel !== false,
+                audio: this.script.audio === true,
+            };
+        }
+
+        override async audioDevices() {
+            return {
+                inputs: [
+                    { id: "built-in-mic", name: "Built-in Microphone", channels: 1, default: true },
+                    { id: "desk-mic", name: "Desk Mic", channels: 1, default: false },
+                ],
+                outputs: [{ id: "speakers", name: "Speakers", channels: 2, default: true }],
             };
         }
 
@@ -1795,6 +1809,25 @@ describe("the meetings recorder loop", () => {
                     },
                     pause: () => this.commands.push("pause"),
                     resume: () => this.commands.push("resume"),
+                    ...(this.script.liveSettings
+                        ? {
+                              setRates: async (active: number, idle: number) => {
+                                  this.commands.push(`rates ${active} ${idle}`);
+                              },
+                              setThreshold: async (percent: number) => {
+                                  this.commands.push(`threshold ${percent}`);
+                              },
+                              setMaxLongSide: async (px: number) => {
+                                  this.commands.push(`long side ${px}`);
+                              },
+                              mute: async (source: string, muted: boolean) => {
+                                  this.commands.push(`${muted ? "mute" : "unmute"} ${source}`);
+                              },
+                              setMic: async (deviceId: string) => {
+                                  this.commands.push(`mic ${deviceId}`);
+                              },
+                          }
+                        : {}),
                 });
                 request.hooks?.onFrame?.({ path, atMs: 0, displayId, changePercent: 10, reason: "first" });
             }
@@ -1808,7 +1841,16 @@ describe("the meetings recorder loop", () => {
                 await new Promise<void>((resolve) =>
                     signal?.addEventListener("abort", () => resolve(), { once: true })
                 );
+                const track = request.audio ? join(request.outDir, "audio-mic.m4a") : undefined;
+
+                if (track) {
+                    await Bun.write(track, "m4a");
+                }
+
                 return {
+                    ...(track
+                        ? { tracks: [{ source: "mic" as const, path: track, durationMs: 900, mutedSpans: [] }] }
+                        : {}),
                     startedAtMs: Date.now(),
                     frames: streamed
                         ? [{ path: streamed, atMs: 0, displayId: current, changePercent: 10, reason: "first" }]
@@ -1843,8 +1885,15 @@ describe("the meetings recorder loop", () => {
         steps: Step[];
         failOnJpeg?: boolean;
         liveControl?: boolean;
+        liveSettings?: boolean;
+        audio?: boolean;
         /** What the test does over the socket at each hanging piece; after the last, it stops the recording. */
-        actions?: Array<(call: (method: string, params?: unknown) => Promise<unknown>) => Promise<unknown>>;
+        actions?: Array<
+            (
+                call: (method: string, params?: unknown) => Promise<unknown>,
+                live: { id: string; dir: string }
+            ) => Promise<unknown>
+        >;
     }) {
         stores += 1;
         const store = new MeetingStore(new Storage(`meetings-recorder-${stores}`));
@@ -1861,13 +1910,19 @@ describe("the meetings recorder loop", () => {
                 (error: unknown) => error
             );
         const recorder = new ScriptedRecorder(
-            { displays: options.displays, steps: options.steps, liveControl: options.liveControl },
+            {
+                displays: options.displays,
+                steps: options.steps,
+                liveControl: options.liveControl,
+                liveSettings: options.liveSettings,
+                audio: options.audio,
+            },
             () => {
                 seenLive.push(...listLiveRecordings(liveDir).map((entry) => `${entry.kind} ${entry.state}`));
                 const index = answers.length;
                 answers.push(undefined);
                 const next = options.actions?.shift() ?? ((send) => send("stop"));
-                void next(call).then((answer) => {
+                void next(call, { id: meetingLiveId(created.id), dir: liveDir }).then((answer) => {
                     answers[index] = answer;
                 });
             }
@@ -1876,6 +1931,7 @@ describe("the meetings recorder loop", () => {
             store,
             meetingId: created.id,
             capture,
+            ...(options.audio ? { audio: ["mic" as const] } : {}),
             deps: {
                 recorder,
                 toJpeg: async (_png, jpg) => {
@@ -2073,6 +2129,96 @@ describe("the meetings recorder loop", () => {
             { kind: "display", displayId: 4 },
             { kind: "display", displayId: 4 },
         ]);
+    });
+
+    test("settings change live through the running capture, or restart it when it has no such command", async () => {
+        const live = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            liveSettings: true,
+            actions: [
+                async (call) => [
+                    await call("settings.set", { activeFps: 2, idleFps: 0.5, threshold: 3 }),
+                    await call("settings.set", { ocr: { minChars: 5 } }),
+                    await call("settings.set", { activeFps: 999 }),
+                    await call("settings.get"),
+                    await call("stop"),
+                ],
+            ],
+        });
+        const [changed, ocrOnly, refused, read] = live.answers[0] as Array<{
+            applied?: string;
+            settings?: { ocr: { minChars: number } };
+        }>;
+
+        expect(changed).toMatchObject({ applied: "live", settings: { activeFps: 2, idleFps: 0.5, threshold: 3 } });
+        expect(ocrOnly?.applied).toBe("next-piece");
+        expect(refused).toMatchObject({ code: RPC_ERRORS.invalidParams });
+        expect(read?.settings?.ocr.minChars).toBe(5);
+        expect(live.recorder.commands).toEqual(["rates 2 0.5", "threshold 3"]);
+        expect(live.recorder.requests).toHaveLength(1);
+
+        const restarted = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            actions: [async (call) => await call("settings.set", { activeFps: 2 })],
+        });
+
+        expect(restarted.answers[0]).toMatchObject({ applied: "restart" });
+        expect(restarted.recorder.requests.map((request) => request.activeFps)).toEqual([1, 2]);
+    });
+
+    test("sound: mute and a microphone switch go to the running capture, its file lands in audio/, and progress reaches a subscriber", async () => {
+        const progress: string[] = [];
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            liveSettings: true,
+            audio: true,
+            actions: [
+                async (call, live) => {
+                    const client = await RecorderClient.connect(live.id, { dir: live.dir });
+                    await client.subscribe(
+                        (event) => {
+                            const params = event.params as { step?: string; done?: number; total?: number };
+                            progress.push(`${params.step} ${params.done}/${params.total}`);
+                        },
+                        ["progress"]
+                    );
+                    const answers = [
+                        await call("audio.list"),
+                        await call("audio.mute", { source: "mic", muted: true }),
+                        await call("audio.mute", { source: "system", muted: true }),
+                        await call("audio.setInput", { deviceId: "nope" }),
+                        await call("audio.setInput", { deviceId: "desk-mic" }),
+                        await client.stop(),
+                    ];
+                    client.close();
+                    return answers;
+                },
+            ],
+        });
+        const [devices, muted, notRecorded, unknown, switched, stopped] = run.answers[0] as unknown[];
+
+        expect(devices).toMatchObject({ inputs: [{ id: "built-in-mic" }, { id: "desk-mic" }] });
+        expect(muted).toMatchObject({ sources: ["mic"], muted: { mic: true, system: false } });
+        expect(notRecorded).toMatchObject({ code: RPC_ERRORS.invalidParams });
+        expect(unknown).toMatchObject({ code: RPC_ERRORS.unknownDevice });
+        expect(switched).toMatchObject({ micDevice: "desk-mic" });
+        expect(stopped).toMatchObject({
+            state: "stopped",
+            outcome: "requested",
+            job: expect.stringMatching(/^finish-/),
+        });
+        expect(run.recorder.commands).toEqual(["mute mic", "mic desk-mic"]);
+        // Only the first capture records the sound.
+        expect(run.recorder.requests.map((request) => Boolean(request.audio))).toEqual([true, false]);
+        expect(readdirSync(join(run.folder, "audio"))).toEqual([expect.stringMatching(/-d1-mic\.m4a$/)]);
+        expect(readFileSync(join(run.folder, "audio.jsonl"), "utf8")).toContain('"source":"mic"');
+        expect(run.saved?.recording).toMatchObject({ audio: { sources: ["mic"], files: 1 } });
+        expect(progress).toEqual(expect.arrayContaining(["summary 1/1", "collect 2/2"]));
     });
 });
 

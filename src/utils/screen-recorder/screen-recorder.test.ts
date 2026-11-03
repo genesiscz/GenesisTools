@@ -24,7 +24,7 @@ import {
     RpcError,
     readLiveRecording,
 } from "./live";
-import { captureErrorKind, flagsInHelp, NativeFrameRecorder, nativeArgv } from "./native";
+import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, nativeArgv } from "./native";
 import { peekabooCaptureError } from "./peekaboo";
 import { CaptureError, type CaptureRequest, type LiveCapture } from "./types";
 
@@ -174,6 +174,11 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
         }
 
         await channel?.switchDisplay(1);
+        await channel?.setRates?.(2, 0.5);
+        await channel?.setThreshold?.(3);
+        await channel?.mute?.("mic", true);
+        await channel?.setMic?.("built-in-mic");
+        await expect(channel?.setMic?.("nope")).rejects.toMatchObject({ kind: "failed" });
         await expect(channel?.switchDisplay(9)).rejects.toMatchObject({ kind: "display-missing" });
         channel?.pause();
         channel?.resume();
@@ -186,6 +191,23 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
             [1, "display-switch"],
         ]);
         expect(result.endedEarly).toBe("stopped");
+        expect(channel?.setMaxLongSide).toBeDefined();
+    });
+
+    test("the input devices come from ax-tool audio-devices, and sound needs the sidecar flags", async () => {
+        expect(await recorder.audioDevices()).toEqual({
+            inputs: [{ id: "built-in-mic", name: "Built-in Microphone", channels: 1, default: true }],
+            outputs: [{ id: "speakers", name: "Speakers", channels: 2, default: true }],
+        });
+        expect(recorder.supports.audio).toBe(true);
+        expect(
+            audioArgv(
+                request({ audio: { sources: ["mic"], micDeviceId: "built-in-mic" } }),
+                flagsInHelp("--audio --mic-device --audio-sidecar")
+            )
+        ).toEqual(["--audio", "mic", "--mic-device", "built-in-mic", "--audio-sidecar"]);
+        expect(() => audioArgv(request({ audio: { sources: ["mic"] } }), new Set())).toThrow(CaptureError);
+        expect([...flagsInHelp("mute/unmute | set-mic")]).toEqual(["mute", "set-mic"]);
     });
 });
 

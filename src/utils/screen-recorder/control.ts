@@ -17,6 +17,11 @@ export const RECORDER_METHODS = [
     "displays.switch",
     "displays.mode",
     "jobs.list",
+    "audio.list",
+    "audio.mute",
+    "audio.setInput",
+    "settings.get",
+    "settings.set",
 ] as const;
 export type RecorderMethod = (typeof RECORDER_METHODS)[number];
 
@@ -36,6 +41,7 @@ export const RPC_ERRORS = {
     alreadyPaused: 1004,
     lastDisplay: 1005,
     unsupported: 1006,
+    unknownDevice: 1007,
 } as const;
 
 export class RpcError extends Error {
@@ -61,6 +67,64 @@ export interface RecorderStatus {
 }
 
 export type DisplayEntry = DisplayInfo & { recorded: boolean };
+
+export const AUDIO_SOURCES = ["mic", "system"] as const;
+export type AudioSource = (typeof AUDIO_SOURCES)[number];
+
+export interface AudioDevice {
+    /** The device UID, which `audio.setInput` takes. */
+    id: string;
+    name: string;
+    channels: number;
+    default: boolean;
+}
+
+export interface AudioDevices {
+    inputs: AudioDevice[];
+    outputs: AudioDevice[];
+}
+
+/** What a recording records as sound: the sources, which of them are muted now, and the microphone it uses. */
+export interface AudioState {
+    sources: AudioSource[];
+    muted: Record<AudioSource, boolean>;
+    micDevice?: string;
+}
+
+/** The settings a running recording takes live; `settings.set` takes any part of them. */
+export const recorderSettingsSchema = z.object({
+    /** Frames per second while the screen changes. */
+    activeFps: z.number().min(0.5).max(120),
+    /** Frames per second while it does not. */
+    idleFps: z.number().min(0.1).max(5),
+    /** The share of the frame that must change for a new frame, in percent. */
+    threshold: z.number().min(0).max(100),
+    /** The longest side of a kept frame in pixels. */
+    maxLongSide: z.number().int().min(320).max(16_384),
+    /** A frame at least this often while nothing changes; 0 is off. */
+    heartbeatSec: z.number().min(0).max(3600),
+    ocr: z.object({
+        enabled: z.boolean(),
+        /** Vision OCR languages, in order of preference. */
+        languages: z.array(z.string().trim().min(1)).min(1),
+        /** OCR text shorter than this is stored as no text. */
+        minChars: z.number().int().min(0).max(1000),
+    }),
+});
+export type RecorderSettings = z.infer<typeof recorderSettingsSchema>;
+export const recorderSettingsPatchSchema = recorderSettingsSchema
+    .omit({ ocr: true })
+    .partial()
+    .extend({ ocr: recorderSettingsSchema.shape.ocr.partial().optional() })
+    .strict();
+export type RecorderSettingsPatch = z.infer<typeof recorderSettingsPatchSchema>;
+
+export interface SettingsAnswer {
+    settings: RecorderSettings;
+    audio: AudioState;
+    /** How the change took effect on the running captures. */
+    applied?: "live" | "restart" | "next-piece";
+}
 
 /** `all`, `follow-focus`, `main` or a screen index. */
 export const displayModeSchema = z.union([z.enum(["all", "follow-focus", "main"]), z.number().int().nonnegative()]);
@@ -143,6 +207,28 @@ export abstract class RecorderControl {
     async listJobs(): Promise<JobInfo[]> {
         return [];
     }
+
+    async listAudioDevices(): Promise<AudioDevices> {
+        return unsupported(this.kind, "audio.list");
+    }
+
+    /** Mutes or unmutes a recorded source; the track keeps its length (silence while muted). */
+    async muteAudio(_source: AudioSource, _muted: boolean): Promise<AudioState> {
+        return unsupported(this.kind, "audio.mute");
+    }
+
+    /** Records the microphone from this input device (an `audio.list` id). */
+    async setAudioInput(_deviceId: string): Promise<AudioState> {
+        return unsupported(this.kind, "audio.setInput");
+    }
+
+    async getSettings(): Promise<SettingsAnswer> {
+        return unsupported(this.kind, "settings.get");
+    }
+
+    async setSettings(_patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+        return unsupported(this.kind, "settings.set");
+    }
 }
 
 const displayIdParams = z.object({ displayId: z.number().int() });
@@ -183,6 +269,26 @@ export const RECORDER_DISPATCH: Record<
             parse(z.object({ mode: displayModeSchema }), params, "{ mode: all | follow-focus | main | <index> }").mode
         ),
     "jobs.list": (control) => control.listJobs(),
+    "audio.list": (control) => control.listAudioDevices(),
+    "audio.mute": (control, params) => {
+        const { source, muted } = parse(
+            z.object({ source: z.enum(AUDIO_SOURCES), muted: z.boolean().default(true) }),
+            params,
+            "{ source: mic | system, muted?: boolean }"
+        );
+        return control.muteAudio(source, muted);
+    },
+    "audio.setInput": (control, params) =>
+        control.setAudioInput(parse(z.object({ deviceId: z.string().min(1) }), params, "{ deviceId }").deviceId),
+    "settings.get": (control) => control.getSettings(),
+    "settings.set": (control, params) =>
+        control.setSettings(
+            parse(
+                recorderSettingsPatchSchema,
+                params,
+                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars } }"
+            )
+        ),
 };
 
 export function isRecorderMethod(name: string): name is RecorderMethod {

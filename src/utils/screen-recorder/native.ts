@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
+import { AUDIO_SOURCES, type AudioDevices, type AudioSource } from "./control";
 import { mainDisplay, outputScaleFor, parseDisplayList } from "./displays";
 import { runCaptureProcess } from "./process";
 import {
@@ -34,6 +35,16 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "--heartbeat-sec",
     "--max-mb",
     "--control-stdin",
+    "--audio",
+    "--mic-device",
+    "--audio-sidecar",
+    "audio-devices",
+    // `--control-stdin` commands, named in the same help text.
+    "mute",
+    "set-mic",
+    "set-fps",
+    "set-threshold",
+    "set-max-long-side",
 ] as const;
 export type NativeOptionalFlag = (typeof NATIVE_OPTIONAL_FLAGS)[number];
 
@@ -48,9 +59,17 @@ const nativeFrame = z.object({
     displayId: z.number().optional(),
     motionBoxes: z.array(z.tuple([z.number(), z.number(), z.number(), z.number()])).optional(),
 });
+const nativeTrack = z.object({
+    source: z.enum(AUDIO_SOURCES),
+    path: z.string().optional(),
+    durationMs: z.number().default(0),
+    peakDbfs: z.number().nullable().optional(),
+    mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
+});
 const nativeResult = z.object({
     data: z.object({
         frames: z.array(nativeFrame).default([]),
+        tracks: z.array(nativeTrack).optional(),
         cancelled: z.boolean().optional(),
         endedEarly: z.enum(CAPTURE_ENDINGS).optional(),
         stats: z.record(z.string(), z.number()).optional(),
@@ -65,7 +84,7 @@ const nativeError = z.object({ ok: z.literal(false), error: z.string(), code: z.
 const helpCache = new Map<string, Promise<Set<NativeOptionalFlag>>>();
 
 export function flagsInHelp(text: string): Set<NativeOptionalFlag> {
-    return new Set(NATIVE_OPTIONAL_FLAGS.filter((flag) => new RegExp(`${flag}(?![\\w-])`).test(text)));
+    return new Set(NATIVE_OPTIONAL_FLAGS.filter((flag) => new RegExp(`(?<![\\w-])${flag}(?![\\w-])`).test(text)));
 }
 
 function detectFlags(axTool: string[]): Promise<Set<NativeOptionalFlag>> {
@@ -184,6 +203,39 @@ export function nativeArgv(options: {
     return argv;
 }
 
+const audioDevice = z.object({
+    id: z.string(),
+    name: z.string().default(""),
+    channels: z.number().default(0),
+    default: z.boolean().default(false),
+});
+
+/** `ax-tool audio-devices`: `{ok, inputs: [...], outputs: [...]}`, each with its UID as `id`. */
+export function parseAudioDevices(data: unknown): AudioDevices {
+    const parsed = z.object({ inputs: z.array(audioDevice), outputs: z.array(audioDevice) }).parse(data);
+    return { inputs: parsed.inputs, outputs: parsed.outputs };
+}
+
+/** `--audio mic,system --mic-device <uid> --audio-sidecar`: the meetings recorder writes no movie, so sidecars. */
+export function audioArgv(request: CaptureRequest, flags: ReadonlySet<NativeOptionalFlag>): string[] {
+    const audio = request.audio;
+
+    if (!audio || audio.sources.length === 0) {
+        return [];
+    }
+
+    if (!flags.has("--audio") || !flags.has("--audio-sidecar")) {
+        throw new CaptureError("unavailable", "this ax-tool records no sound; rebuild it");
+    }
+
+    return [
+        "--audio",
+        audio.sources.join(","),
+        ...(audio.micDeviceId && flags.has("--mic-device") ? ["--mic-device", audio.micDeviceId] : []),
+        "--audio-sidecar",
+    ];
+}
+
 /** Frames left on disk by a recorder that exited without a result; their times come from the files. */
 function salvagedFrames(outDir: string, displayId: number | undefined): CaptureResult | undefined {
     if (!existsSync(outDir)) {
@@ -226,13 +278,27 @@ const controlEvent = z.discriminatedUnion("event", [
     z.object({ event: z.literal("display-switch"), from: z.number().optional(), to: z.number() }),
     z.object({ event: z.literal("error"), code: z.string().optional(), message: z.string() }),
     z.object({ event: z.literal("state") }).loose(),
+    z.object({ event: z.literal("settings") }).loose(),
 ]);
+
+const SETTINGS_TIMEOUT_MS = 5_000;
 
 /**
  * The `--control-stdin` side of one running capture: commands as JSON lines to its stdin, its stderr events back. A
  * switch resolves on the recorder's `display-switch` event and rejects on its `error` event.
  */
 export class NativeLiveCapture implements LiveCapture {
+    readonly setRates?: (active: number, idle: number) => Promise<void>;
+    readonly setThreshold?: (percent: number) => Promise<void>;
+    readonly setMaxLongSide?: (px: number) => Promise<void>;
+    readonly mute?: (source: AudioSource, muted: boolean) => Promise<void>;
+    readonly setMic?: (deviceId: string) => Promise<void>;
+    /** Settings commands waiting for the recorder's `settings` event, oldest first. */
+    private readonly pendingSettings: Array<{
+        resolve: () => void;
+        reject: (error: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+    }> = [];
     private pendingSwitch?: {
         to: number;
         resolve: () => void;
@@ -243,8 +309,50 @@ export class NativeLiveCapture implements LiveCapture {
     constructor(
         private readonly write: (text: string) => void,
         private displayId: number | undefined,
-        private readonly hooks: CaptureHooks
-    ) {}
+        private readonly hooks: CaptureHooks,
+        commands: ReadonlySet<NativeOptionalFlag> = new Set()
+    ) {
+        if (commands.has("set-fps")) {
+            this.setRates = (active, idle) => this.settingsCommand({ cmd: "set-fps", active, idle });
+        }
+
+        if (commands.has("set-threshold")) {
+            this.setThreshold = (percent) => this.settingsCommand({ cmd: "set-threshold", percent });
+        }
+
+        if (commands.has("set-max-long-side")) {
+            this.setMaxLongSide = (px) => this.settingsCommand({ cmd: "set-max-long-side", px });
+        }
+
+        if (commands.has("mute")) {
+            this.mute = (source, muted) => this.settingsCommand({ cmd: muted ? "mute" : "unmute", source });
+        }
+
+        if (commands.has("set-mic")) {
+            this.setMic = (deviceId) => this.settingsCommand({ cmd: "set-mic", deviceId });
+        }
+    }
+
+    /** One command whose answer is the recorder's next `settings` event, or its next `error` event. */
+    private settingsCommand(command: Record<string, unknown>): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const entry = {
+                resolve,
+                reject,
+                timer: setTimeout(() => {
+                    const index = this.pendingSettings.indexOf(entry);
+
+                    if (index >= 0) {
+                        this.pendingSettings.splice(index, 1);
+                    }
+
+                    reject(new CaptureError("timeout", `the recorder did not answer ${String(command.cmd)}`));
+                }, SETTINGS_TIMEOUT_MS),
+            };
+            this.pendingSettings.push(entry);
+            this.send(command);
+        });
+    }
 
     switchDisplay(displayId: number): Promise<void> {
         if (displayId === this.displayId) {
@@ -303,12 +411,30 @@ export class NativeLiveCapture implements LiveCapture {
             return;
         }
 
-        if (event.event === "error" && this.pendingSwitch) {
+        if (event.event === "settings") {
+            const pending = this.pendingSettings.shift();
+            clearTimeout(pending?.timer);
+            pending?.resolve();
+            return;
+        }
+
+        if (event.event !== "error") {
+            return;
+        }
+
+        const failure = new CaptureError(captureErrorKind(event.code, event.message), event.message);
+
+        if (this.pendingSwitch) {
             const pending = this.pendingSwitch;
             this.pendingSwitch = undefined;
             clearTimeout(pending.timer);
-            pending.reject(new CaptureError(captureErrorKind(event.code, event.message), event.message));
+            pending.reject(failure);
+            return;
         }
+
+        const pending = this.pendingSettings.shift();
+        clearTimeout(pending?.timer);
+        pending?.reject(failure);
     }
 
     private settle(to: number): void {
@@ -344,6 +470,7 @@ export class NativeFrameRecorder extends FrameRecorder {
             heartbeat: this.flags.has("--heartbeat-sec"),
             liveControl: this.flags.has("--control-stdin"),
             parallelCaptures: true,
+            audio: this.flags.has("--audio") && this.flags.has("--audio-sidecar"),
         };
     }
 
@@ -376,6 +503,25 @@ export class NativeFrameRecorder extends FrameRecorder {
         return parseDisplayList(SafeJSON.parse(result.stdout, { strict: true }));
     }
 
+    override async audioDevices(): Promise<AudioDevices> {
+        const axTool = await this.axTool();
+
+        if (!this.flags.has("audio-devices")) {
+            throw new CaptureError("unavailable", "this ax-tool has no audio-devices; rebuild it");
+        }
+
+        const result = await boundedCommand({ command: [...axTool, "audio-devices"], timeoutMs: SCREENS_TIMEOUT_MS });
+
+        if (result.status !== 0) {
+            throw new CaptureError(
+                "unavailable",
+                `ax-tool audio-devices exited ${result.status}: ${result.stderr.trim()}`
+            );
+        }
+
+        return parseAudioDevices(SafeJSON.parse(result.stdout, { strict: true }));
+    }
+
     async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
         const axTool = await this.axTool(signal);
         const byIndex = request.target.kind === "display" && !this.flags.has("--display-id");
@@ -386,6 +532,7 @@ export class NativeFrameRecorder extends FrameRecorder {
             ...axTool,
             ...nativeArgv({ request, flags: this.flags, displays }),
             ...(controlled ? ["--control-stdin"] : []),
+            ...audioArgv(request, this.flags),
         ];
         const targetId = request.target.kind === "display" ? request.target.displayId : undefined;
         const spawnedAt = Date.now();
@@ -398,7 +545,7 @@ export class NativeFrameRecorder extends FrameRecorder {
             ...(controlled && request.hooks
                 ? {
                       onStdin: (write: (text: string) => void) => {
-                          channel = new NativeLiveCapture(write, targetId, request.hooks ?? {});
+                          channel = new NativeLiveCapture(write, targetId, request.hooks ?? {}, this.flags);
                           request.hooks?.onLive?.(channel);
                       },
                       onStderrLine: (line: string) => channel?.receive(line),
@@ -418,7 +565,7 @@ export class NativeFrameRecorder extends FrameRecorder {
         const parsed = nativeResult.safeParse(json);
 
         if (run.exitCode === 0 && parsed.success) {
-            const { frames, cancelled, endedEarly, stats } = parsed.data.data;
+            const { frames, cancelled, endedEarly, stats, tracks } = parsed.data.data;
             const first = frames[0];
             const firstMtime = first ? statSync(first.path, { throwIfNoEntry: false })?.mtimeMs : undefined;
             const kept: CapturedFrame[] = frames.map((frame) => ({
@@ -437,6 +584,17 @@ export class NativeFrameRecorder extends FrameRecorder {
                 frames: kept,
                 ...(ending ? { endedEarly: ending } : {}),
                 ...(stats ? { stats } : {}),
+                ...(tracks
+                    ? {
+                          tracks: tracks.map((track) => ({
+                              source: track.source,
+                              ...(track.path ? { path: track.path } : {}),
+                              durationMs: track.durationMs,
+                              ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
+                              mutedSpans: track.mutedSpans,
+                          })),
+                      }
+                    : {}),
             };
         }
 

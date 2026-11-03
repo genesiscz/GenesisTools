@@ -34,15 +34,22 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import {
+    type AudioDevices,
+    type AudioSource,
+    type AudioState,
     type RecorderState as ControlState,
     type DisplayEntry,
     type DisplayMode,
     type DisplaySelection,
     RecorderControl,
     type RecorderMethod,
+    type RecorderSettings,
+    type RecorderSettingsPatch,
     type RecorderStatus,
     RPC_ERRORS,
     RpcError,
+    recorderSettingsSchema,
+    type SettingsAnswer,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { mainDisplay } from "@genesiscz/utils/screen-recorder/displays";
@@ -267,6 +274,8 @@ interface RunningCapture {
     live?: LiveCapture;
     /** Frames that landed and were counted live, not converted yet. */
     streamed: number;
+    /** This capture records the sound of the recording. */
+    audio: boolean;
     done: Promise<void>;
 }
 
@@ -282,6 +291,11 @@ interface MeetingControlOps {
     switchDisplay(displayId: number): Promise<DisplaySelection>;
     setDisplayMode(mode: DisplayMode): Promise<DisplaySelection>;
     listJobs(): Promise<JobInfo[]>;
+    getSettings(): Promise<SettingsAnswer>;
+    setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer>;
+    listAudioDevices(): Promise<AudioDevices>;
+    muteAudio(source: AudioSource, muted: boolean): Promise<AudioState>;
+    setAudioInput(deviceId: string): Promise<AudioState>;
 }
 
 /** The meetings recorder as a RecorderControl: displays by id, no discard, restart or target switch. */
@@ -298,6 +312,11 @@ class MeetingRecorderControl extends RecorderControl {
         "displays.switch",
         "displays.mode",
         "jobs.list",
+        "audio.list",
+        "audio.mute",
+        "audio.setInput",
+        "settings.get",
+        "settings.set",
     ];
 
     constructor(private readonly ops: MeetingControlOps) {
@@ -343,6 +362,26 @@ class MeetingRecorderControl extends RecorderControl {
     override listJobs(): Promise<JobInfo[]> {
         return this.ops.listJobs();
     }
+
+    override getSettings(): Promise<SettingsAnswer> {
+        return this.ops.getSettings();
+    }
+
+    override setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+        return this.ops.setSettings(patch);
+    }
+
+    override listAudioDevices(): Promise<AudioDevices> {
+        return this.ops.listAudioDevices();
+    }
+
+    override muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
+        return this.ops.muteAudio(source, muted);
+    }
+
+    override setAudioInput(deviceId: string): Promise<AudioState> {
+        return this.ops.setAudioInput(deviceId);
+    }
 }
 
 export interface RecorderNote {
@@ -356,7 +395,8 @@ export interface RecorderDeps {
     recorder: FrameRecorder;
     toJpeg: (png: string, jpg: string, quality: number) => Promise<void>;
     ocr: (
-        jpg: string
+        jpg: string,
+        languages: string[]
     ) => Promise<{ text: string; blocks: Array<{ text: string; confidence: number; bounds: unknown }> }>;
     notify: (note: RecorderNote) => Promise<void>;
     /** Where the live recording entry goes (the genesis-tools root's `recordings/live/` by default). */
@@ -369,11 +409,11 @@ function defaultOcrLanguages(): string[] {
     return languageSettings(meetingsConfigSchema.parse({})).ocr;
 }
 
-function defaultDeps(capture: MeetingsConfig["global"]["capture"], ocrLanguages: string[]): RecorderDeps {
+function defaultDeps(capture: MeetingsConfig["global"]["capture"]): RecorderDeps {
     return {
         recorder: FRAME_RECORDERS[capture.backend]({ axTool: async (options) => [await ensureBinaryAsync(options)] }),
         toJpeg: sipsJpeg,
-        ocr: (jpg) => recognizeText(jpg, { languages: ocrLanguages }),
+        ocr: (jpg, languages) => recognizeText(jpg, { languages }),
         notify: async (note) => {
             await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
                 log.warn({ err }, "notification failed")
@@ -401,12 +441,26 @@ export async function runRecorder(options: {
     ocrLanguages?: string[];
     /** Overrides `capture.displays`. */
     display?: DisplayPolicy;
+    /** Overrides `capture.recorders.<backend>.audio.sources`. */
+    audio?: AudioSource[];
     deps?: Partial<RecorderDeps>;
 }): Promise<RecorderState> {
     const { store, meetingId, capture } = options;
-    const deps: RecorderDeps = {
-        ...defaultDeps(capture, options.ocrLanguages ?? defaultOcrLanguages()),
-        ...options.deps,
+    const deps: RecorderDeps = { ...defaultDeps(capture), ...options.deps };
+    const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
+    /** What the captures and the OCR use now; `settings.set` changes it while the recording runs. */
+    let settings: RecorderSettings = {
+        activeFps: capture.activeFps,
+        idleFps: capture.idleFps,
+        threshold: capture.threshold * 100,
+        maxLongSide: capture.resolutionCap,
+        heartbeatSec: nativeKeys.heartbeatSec ?? 0,
+        ocr: { enabled: true, languages: options.ocrLanguages ?? defaultOcrLanguages(), minChars: 0 },
+    };
+    const audio: AudioState = {
+        sources: options.audio ?? audioConfig?.sources ?? [],
+        muted: { mic: false, system: false },
+        ...(audioConfig?.micDevice ? { micDevice: audioConfig.micDevice } : {}),
     };
     let policy = options.display ?? capture.displays;
     let chosen: number[] | undefined;
@@ -415,6 +469,8 @@ export async function runRecorder(options: {
     const framesDir = join(folder, "frames");
     const pieceDir = join(folder, ".piece");
     const ocrPath = join(folder, "ocr.jsonl");
+    const audioDir = join(folder, "audio");
+    let audioFiles = 0;
     const record = store.read(meetingId);
 
     writePidFile(files.pid, { exclusive: true });
@@ -480,6 +536,36 @@ export async function runRecorder(options: {
         return answer("restart");
     };
     const currentIds = () => chosen ?? state.displays?.map((one) => one.id) ?? [];
+    /**
+     * Applies changed settings to every running capture: each change through its live command, or, when a capture
+     * lacks one, a restart of that capture with the new settings. No capture running: the next piece takes them.
+     */
+    const applyLive = async (
+        changes: Array<((capture: LiveCapture) => Promise<void> | undefined) | undefined>
+    ): Promise<"live" | "restart" | "next-piece"> => {
+        const wanted = changes.filter((change) => change !== undefined);
+
+        if (running.size === 0 || wanted.length === 0) {
+            return "next-piece";
+        }
+
+        let restarted = false;
+
+        for (const capture of running.values()) {
+            const channel = capture.live;
+            const results = channel ? wanted.map((change) => change(channel)) : [undefined];
+
+            if (results.some((result) => result === undefined)) {
+                capture.controller.abort();
+                restarted = true;
+                continue;
+            }
+
+            await Promise.all(results);
+        }
+
+        return restarted ? "restart" : "live";
+    };
     const finishJobId = `finish-${meetingId}-${Date.now()}`;
     const stopped = Promise.withResolvers<StopAnswer>();
     const jobs = new JobRegistry((event) => live.emit("progress", { ...event }));
@@ -513,6 +599,86 @@ export async function runRecorder(options: {
                 return options.wait === false ? { state: "stopping", job: finishJobId } : await stopped.promise;
             },
             listJobs: async () => jobs.list(),
+            getSettings: async () => ({ settings, audio: { ...audio, muted: { ...audio.muted } } }),
+            setSettings: async (patch) => {
+                refuseWhenStopping();
+                const before = settings;
+                settings = recorderSettingsSchema.parse({
+                    ...settings,
+                    ...patch,
+                    ocr: { ...settings.ocr, ...patch.ocr },
+                });
+                const applied = await applyLive([
+                    settings.activeFps !== before.activeFps || settings.idleFps !== before.idleFps
+                        ? (one) => one.setRates?.(settings.activeFps, settings.idleFps)
+                        : undefined,
+                    settings.threshold !== before.threshold
+                        ? (one) => one.setThreshold?.(settings.threshold)
+                        : undefined,
+                    settings.maxLongSide !== before.maxLongSide
+                        ? (one) => one.setMaxLongSide?.(settings.maxLongSide)
+                        : undefined,
+                    // ax-tool has no live heartbeat command, so a change of it restarts the capture.
+                    settings.heartbeatSec !== before.heartbeatSec ? () => undefined : undefined,
+                ]);
+                log.info({ settings, applied }, "recorder settings changed over the socket");
+                return { settings, audio, applied };
+            },
+            listAudioDevices: async () => {
+                try {
+                    return await deps.recorder.audioDevices();
+                } catch (error) {
+                    throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
+                }
+            },
+            muteAudio: async (source, muted) => {
+                refuseWhenStopping();
+
+                if (!audio.sources.includes(source)) {
+                    throw new RpcError(RPC_ERRORS.invalidParams, `this recording records no ${source} sound`);
+                }
+
+                const capture = [...running.values()].find((one) => one.audio);
+
+                if (capture && !capture.live?.mute) {
+                    throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot mute while it records");
+                }
+
+                await capture?.live?.mute?.(source, muted).catch((error: unknown) => {
+                    throw new RpcError(RPC_ERRORS.internal, errorText(error));
+                });
+                audio.muted[source] = muted;
+                log.info({ source, muted }, "audio muted over the socket");
+                return { ...audio, muted: { ...audio.muted } };
+            },
+            setAudioInput: async (deviceId) => {
+                refuseWhenStopping();
+
+                if (!audio.sources.includes("mic")) {
+                    throw new RpcError(RPC_ERRORS.invalidParams, "this recording records no microphone");
+                }
+
+                const devices = await deps.recorder.audioDevices().catch((error: unknown) => {
+                    throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
+                });
+
+                if (!devices.inputs.some((device) => device.id === deviceId)) {
+                    throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
+                }
+
+                audio.micDevice = deviceId;
+                const capture = [...running.values()].find((one) => one.audio);
+
+                if (capture?.live?.setMic) {
+                    await capture.live.setMic(deviceId).catch((error: unknown) => {
+                        throw new RpcError(RPC_ERRORS.internal, errorText(error));
+                    });
+                } else {
+                    capture?.controller.abort();
+                }
+
+                return { ...audio, muted: { ...audio.muted } };
+            },
             pause: async () => {
                 if (stopRequested) {
                     throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
@@ -720,10 +886,14 @@ export async function runRecorder(options: {
     const startCapture = (target: PieceTarget): void => {
         const outDir = join(pieceDir, `d${target.displayId}-${++captureSeq}`);
         mkdirSync(outDir, { recursive: true });
+        // One capture records the sound: two would write the same microphone twice.
+        const withAudio =
+            audio.sources.length > 0 && deps.recorder.supports.audio && ![...running.values()].some((one) => one.audio);
         const entry: RunningCapture = {
             target,
             controller: new AbortController(),
             streamed: 0,
+            audio: withAudio,
             done: Promise.resolve(),
         };
         running.set(target.displayId, entry);
@@ -745,6 +915,12 @@ export async function runRecorder(options: {
                 if (paused) {
                     channel.pause();
                 }
+
+                for (const source of withAudio ? audio.sources : []) {
+                    if (audio.muted[source]) {
+                        void channel.mute?.(source, true).catch((err: unknown) => log.warn({ err }, "mute failed"));
+                    }
+                }
             },
         };
         entry.done = deps.recorder
@@ -752,11 +928,20 @@ export async function runRecorder(options: {
                 {
                     target: target.target,
                     durationSec: deps.pieceSec,
-                    activeFps: capture.activeFps,
-                    idleFps: capture.idleFps,
-                    thresholdPercent: capture.threshold * 100,
-                    maxLongSidePx: capture.resolutionCap,
-                    ...recorderSettings(capture, deps.recorder.id),
+                    activeFps: settings.activeFps,
+                    idleFps: settings.idleFps,
+                    thresholdPercent: settings.threshold,
+                    maxLongSidePx: settings.maxLongSide,
+                    ...nativeKeys,
+                    ...(settings.heartbeatSec > 0 ? { heartbeatSec: settings.heartbeatSec } : {}),
+                    ...(withAudio
+                        ? {
+                              audio: {
+                                  sources: audio.sources,
+                                  ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}),
+                              },
+                          }
+                        : {}),
                     outDir,
                     hooks,
                 },
@@ -765,6 +950,7 @@ export async function runRecorder(options: {
             .then(
                 async (result) => {
                     pieceOutcome.recorded = true;
+                    keepTracks(result, entry.target);
                     await jobs.task("ocr", (ctx) =>
                         keepFrames(result, entry.target, entry.streamed > 0, (done) =>
                             ctx.progress({ done, total: result.frames.length, unit: "frames" })
@@ -805,6 +991,25 @@ export async function runRecorder(options: {
     let runFrames = 0;
     let lastConnected = "";
 
+    /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
+    const keepTracks = (result: CaptureResult, target: PieceTarget): void => {
+        for (const track of result.tracks ?? []) {
+            if (!track.path || !existsSync(track.path)) {
+                continue;
+            }
+
+            const at = new Date(result.startedAtMs);
+            const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
+            mkdirSync(audioDir, { recursive: true });
+            renameSync(track.path, join(audioDir, name));
+            appendFileSync(
+                join(folder, "audio.jsonl"),
+                `${SafeJSON.stringify({ file: `audio/${name}`, source: track.source, at: at.toISOString(), durationMs: track.durationMs, mutedSpans: track.mutedSpans })}\n`
+            );
+            audioFiles += 1;
+        }
+    };
+
     /** `streamed`: the socket announced these frames as they landed already. */
     const keepFrames = async (
         result: CaptureResult,
@@ -820,12 +1025,15 @@ export async function runRecorder(options: {
             const name = frameName(at, displayId);
             const jpg = join(framesDir, name);
             await deps.toJpeg(frame.path, jpg, capture.jpegQuality);
-            const ocr = await deps.ocr(jpg).catch((err: unknown) => {
-                log.warn({ err, jpg }, "OCR failed for a frame");
-                return { text: "", blocks: [] };
-            });
+            const read = settings.ocr.enabled
+                ? await deps.ocr(jpg, settings.ocr.languages).catch((err: unknown) => {
+                      log.warn({ err, jpg }, "OCR failed for a frame");
+                      return { text: "", blocks: [] };
+                  })
+                : { text: "", blocks: [] };
+            const ocr = read.text.trim().length < settings.ocr.minChars ? { text: "", blocks: [] } : read;
 
-            if (state.frames === 0 && ocr.text.trim().length < EMPTY_FRAME_CHARS) {
+            if (settings.ocr.enabled && state.frames === 0 && read.text.trim().length < EMPTY_FRAME_CHARS) {
                 note(
                     `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
                 );
@@ -1110,6 +1318,7 @@ export async function runRecorder(options: {
                     status: "stopped",
                     stopReason: state.stopReason,
                     displayPolicy: policy,
+                    ...(audio.sources.length > 0 ? { audio: { sources: audio.sources, files: audioFiles } } : {}),
                     spans,
                     displays: [...seenDisplays].map(([id, name]) => ({
                         id,

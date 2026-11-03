@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { AUDIO_SOURCES } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
@@ -50,6 +51,14 @@ const nativeRecorderSchema = z.object({
     heartbeatSec: z.number().positive().optional(),
     /** The most megabytes of frames one capture writes. */
     maxMb: z.number().positive().optional(),
+    /** Sound beside the frames, as `.m4a` files in the meeting's `audio/`: off by default (the source records it). */
+    audio: z
+        .object({
+            sources: z.array(z.enum(AUDIO_SOURCES)).default([]),
+            /** The microphone's device UID (`ax-tool audio-devices`); unset is the system default input. */
+            micDevice: z.string().optional(),
+        })
+        .prefault({}),
 });
 
 /** Peekaboo reads only the shared capture policy. */
