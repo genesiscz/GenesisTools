@@ -4,6 +4,7 @@ import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { waitsOnHuman } from "../waiting/set";
 import { decisionOptionLabels, shownDecisionText } from "./option-labels";
 import {
     boundContext,
@@ -690,7 +691,7 @@ export function staleCrossings(rows: DecisionRecord[], config: StalenessConfig, 
     const crossings: StaleCrossing[] = [];
 
     for (const row of rows) {
-        if (kindOf(row) !== "decision" || !row.blocking || !awaitsAnswer(row)) {
+        if (kindOf(row) !== "decision" || !row.blocking || !waitsOnHuman(row)) {
             continue;
         }
 

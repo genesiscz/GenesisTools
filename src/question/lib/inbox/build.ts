@@ -13,6 +13,7 @@ import {
     kindOf,
 } from "../decisions/store";
 import type { AskForm } from "../pending/types";
+import { INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "../waiting/set";
 
 /**
  * The "Waiting for you" inbox: every session whose last reply asks a ❓ DECISION, every open or
@@ -217,30 +218,8 @@ export interface InboxSession {
     items: InboxItem[];
 }
 
-/**
- * How long a quiet session's open items keep counting as waiting. A decision left open in a session that ended ten
- * days ago is not news; it stays in that session's inbox, it just stops raising a badge. One rule for the widget's
- * badges (src/hub/lib/widget/snapshot.ts) and the hub's Inbox.
- */
-export const INBOX_STALE_MS = 72 * 60 * 60 * 1000;
-
-/**
- * Whether a session's waiting items count (the widget's badges, the hub's header): the session worked, or asked the
- * newest of them, within `INBOX_STALE_MS`. Per session, so every waiting item of a counted session counts. The one
- * rule both surfaces count with; the widget used to ask it per item by the row's last update, so a stage on an old
- * decision counted it again there and nowhere else.
- */
-export function inboxSessionFresh({
-    activityAt,
-    newestAskAt,
-    now,
-}: {
-    activityAt: number;
-    newestAskAt: number;
-    now: number;
-}): boolean {
-    return Math.max(activityAt, newestAskAt) >= now - INBOX_STALE_MS;
-}
+/** The freshness rule lives in the waiting set (`../waiting/set.ts`); re-exported for the old import path. */
+export { INBOX_STALE_MS, inboxSessionFresh };
 
 /** The session fields the inbox shows; a subset of `AgentSessionRow`. */
 export interface InboxSessionInfo {
@@ -643,6 +622,10 @@ export function buildInbox({
 
     const decisions = rows.filter((row) => kindOf(row) === "decision");
     const stored = new Map(decisions.map((row) => [decisionItemId(row.sessionId, row.number), row]));
+    /** Open rows the waiting set does not count: addressed to an agent, or a send that ended uncertain. */
+    const notWaiting = new Set(
+        decisions.filter((row) => isOpen(STATUS[row.state]) && !waitsOnHuman(row)).map((row) => row.id)
+    );
 
     for (const [sessionId, scan] of scans) {
         const at = scan.at ?? new Date(known.get(sessionId)?.mtime ?? 0).toISOString();
@@ -723,7 +706,9 @@ export function buildInbox({
             account: entry.info.account ?? null,
             sourceHome: entry.info.sourceHome ?? null,
             lastAt,
-            waiting: entry.items.filter((item) => item.kind === "form" || isOpen(item.status)).length,
+            waiting: entry.items.filter(
+                (item) => item.kind === "form" || (isOpen(item.status) && !notWaiting.has(item.id))
+            ).length,
             drafted: entry.items.filter((item) => item.kind === "decision" && hasDraft(item)).length,
             queued: entry.items.filter((item) => item.kind === "decision" && item.status === "answered").length,
             stale: !inboxSessionFresh({ activityAt: entry.activityAt, newestAskAt: Date.parse(lastAt) || 0, now }),

@@ -2,6 +2,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { clipOneLine } from "@genesiscz/utils/string";
 import { hubItemClickCommand } from "../hub-link";
+import { waitsOnHuman } from "../waiting/set";
 import { decisionNotificationId } from "./banners";
 import { type DecisionRecord, kindOf } from "./store";
 
@@ -10,22 +11,11 @@ const log = logger.child({ component: "question:decision-notify" });
 const MESSAGE_MAX = 220;
 
 /**
- * Whether a posted row waits for the human. A decision does unless it names someone else in `for`
- * (an agent, or a model like "fable"); a todo only when it says `for: "human"`, since most todos are
- * the agent's own list.
+ * Whether a posted row raises a banner: it is open (a stage never re-raises one) and the waiting set says it
+ * waits for the human (`waitsOnHuman`: the `for` rule, no uncertain delivery).
  */
 export function needsHuman(row: DecisionRecord): boolean {
-    const target = row.for?.trim().toLowerCase();
-
-    if (row.state !== "open") {
-        return false;
-    }
-
-    if (kindOf(row) === "decision") {
-        return !target || target === "human";
-    }
-
-    return target === "human";
+    return row.state === "open" && waitsOnHuman(row);
 }
 
 function label(row: DecisionRecord): string {
