@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
-import { constants, copyFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { statSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { isInteractive, parseByteSize, parseNonNegativeInt } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
@@ -11,38 +10,28 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable } from "@genesiscz/utils/table";
-import { primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
-import { buildCompareGrid, measureQuality, type QualityScore } from "@genesiscz/utils/video/quality";
+import { primaryVideo } from "@genesiscz/utils/video/media-facts";
 import {
     type AudioRequest,
-    findEncoder,
     isVideoPreset,
     parseAudioRequest,
     TARGET_BAND,
     VIDEO_PRESET_NAMES,
-    VIDEO_PRESETS,
     type VideoPreset,
 } from "@genesiscz/utils/video/reencode";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { type EncodeRow, encodeVideos } from "../encode";
+import type { EncodeRow } from "../encode";
 import { createEncodeReporter, ENCODE_FORMATS, isEncodeFormat } from "../encode-progress";
 import {
-    availablePresets,
-    cutReferences,
-    formatClock,
-    type HeightRequest,
-    missesTarget,
-    type PresetPreview,
-    planShrink,
-    presetsForContainer,
-    previewPresets,
-    type References,
-    recommendFromPreviews,
-    type ShrinkPlan,
-    type ShrinkStep,
-    settleHeight,
-} from "./preview";
+    type FinalCheck,
+    isWritten,
+    runShrinkWorkflow,
+    type ShrinkEvent,
+    ShrinkFailedError,
+    type ShrinkOutcome,
+} from "../lib/shrink";
+import { formatClock, type HeightRequest, missesTarget, type PresetPreview, type ShrinkPlan } from "./preview";
 import { PRESET_TRADE } from "./recommend";
 
 interface ShrinkFlags {
@@ -110,10 +99,6 @@ function parseHeight(value: string): HeightRequest {
     return height;
 }
 
-function audioRequestOf(plan: ShrinkPlan): AudioRequest {
-    return plan.audio.kind === "copy" ? "copy" : plan.audio.kbps;
-}
-
 function scoreText(score: { vmaf: number | null; ssim: number }): string {
     return score.vmaf === null ? `SSIM ${score.ssim.toFixed(4)}` : `VMAF ${score.vmaf.toFixed(1)}`;
 }
@@ -177,30 +162,6 @@ function openInPlayer(path: string): void {
     const child = spawn("open", [path], { stdio: "ignore", detached: true });
     child.on("error", (error) => logger.debug({ error, path }, "open could not start"));
     child.unref();
-}
-
-/**
- * Copies the grid built in the work folder beside the input under the first free `<name>.compare[-N].mp4`. The copy
- * refuses a taken name (COPYFILE_EXCL), so an existing file is never replaced, and it works when the temp folder is on
- * another volume, where a hard link or a rename would not.
- */
-function publishCompareGrid({ built, input }: { built: string; input: string }): string {
-    const stem = join(dirname(input), `${basename(input, extname(input))}.compare`);
-
-    for (let index = 1; index < 100; index++) {
-        const target = index === 1 ? `${stem}.mp4` : `${stem}-${index}.mp4`;
-
-        try {
-            copyFileSync(built, target, constants.COPYFILE_EXCL);
-            return target;
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-                throw error;
-            }
-        }
-    }
-
-    throw new Error(`${stem}.mp4 and 98 numbered names after it are all taken`);
 }
 
 async function choosePreset({
@@ -305,163 +266,110 @@ async function runShrink({ file, flags, signal }: { file: string; flags: ShrinkF
         }
     };
     const spinner = text ? out.spinner() : null;
-    const workDir = mkdtempSync(join(tmpdir(), "genesis-shrink-"));
-    let keepWorkDir = false;
+    const onEvent = (event: ShrinkEvent) => {
+        switch (event.type) {
+            case "reading":
+                spinner?.start("Reading the video");
+                return;
+            case "plan":
+                spinner?.stop("Plan ready");
+                emit({ type: "plan", ...planJson(event.plan) });
 
-    try {
-        spinner?.start("Reading the video");
-        const facts = await readMediaFacts({ input, signal });
-        let plan = await planShrink({ facts, targetBytes, heightRequest, audioRequest, windowSec, signal });
-        spinner?.stop("Plan ready");
-        emit({ type: "plan", ...planJson(plan) });
-
-        if (text) {
-            renderPlan(plan, targetBytes);
-        }
-
-        const wanted: VideoPreset[] = preset ? [preset] : [...VIDEO_PRESET_NAMES];
-        const container = presetsForContainer({ presets: wanted, input });
-        const machine = await availablePresets(container.usable);
-        const usable = machine.usable;
-
-        for (const skip of [...container.skipped, ...machine.skipped]) {
-            out.log.warn(`${skip.preset}: ${skip.reason}`);
-        }
-
-        if (usable.length === 0) {
-            out.log.error("No preset can encode this file on this machine.");
-            process.exitCode = 1;
-            return;
-        }
-
-        let previews: PresetPreview[] = [];
-        let references: References = new Map();
-
-        if (flags.preview) {
-            spinner?.start("Cutting the sample windows");
-            const onStep = (step: ShrinkStep) => {
-                if (step.type === "step") {
-                    spinner?.message(step.message);
+                if (text) {
+                    renderPlan(event.plan, targetBytes);
                 }
 
-                emit(step);
-            };
-            references = await cutReferences({ plan, workDir, onStep, signal });
-
-            if (plan.heightAuto) {
-                plan = await settleHeight({ plan, references, workDir, onStep, signal });
-                emit({ type: "height", height: plan.height });
+                return;
+            case "skip":
+                out.log.warn(`${event.skip.preset}: ${event.skip.reason}`);
+                return;
+            case "sampling":
+                spinner?.start("Cutting the sample windows");
+                return;
+            case "step":
+                spinner?.message(event.message);
+                emit(event);
+                return;
+            case "window":
+                emit(event);
+                return;
+            case "height":
+                emit({ type: "height", height: event.plan.height });
 
                 if (text) {
                     spinner?.stop("Height measured");
                     out.log.info(
-                        `Picture: ${plan.height.height === undefined ? "source size" : `${plan.height.height}p`} (${plan.height.reason}).`
+                        `Picture: ${event.plan.height.height === undefined ? "source size" : `${event.plan.height.height}p`} (${event.plan.height.reason}).`
                     );
                     spinner?.start("Encoding the sample windows");
                 }
-            }
 
-            previews = await previewPresets({ plan, references, presets: usable, workDir, onStep, signal });
-            spinner?.stop(
-                `Tried ${previews.length} preset${previews.length === 1 ? "" : "s"} on ${plan.windows.length} windows`
-            );
-        }
-
-        const recommendation = previews.length > 1 ? recommendFromPreviews(plan, previews) : null;
-        const recommended = preset ?? recommendation?.preset ?? (flags.preview ? previews[0]?.preset : "compatible");
-        emit({ type: "previews", previews: previews.map(previewJson), recommendation });
-
-        if (text && previews.length > 0) {
-            renderPreviews({ plan, previews, recommended });
-
-            if (recommendation) {
-                out.log.info(`Recommended: ${pc.green(recommendation.preset)}, ${recommendation.reason}.`);
-            }
-        }
-
-        let compareGrid: string | null = null;
-        const hardest = references.get("hardest") ?? [...references.values()][0];
-
-        if (flags.compare && hardest && previews.length > 0) {
-            spinner?.start("Building the comparison video");
-            const label = references.has("hardest") ? "hardest" : plan.windows[0]?.label;
-            const encodes = previews.flatMap((preview) =>
-                preview.windows.filter((w) => w.label === label).map((w) => w.path)
-            );
-            const sourceHeight = primaryVideo(facts)?.height ?? 720;
-            const built = join(workDir, "compare.mp4");
-            await buildCompareGrid({
-                reference: hardest,
-                encodes,
-                output: built,
-                cellHeight: Math.min(sourceHeight, 720),
-                signal,
-            });
-            compareGrid = publishCompareGrid({ built, input });
-            spinner?.stop(`Comparison: ${compareGrid}`);
-
-            if (text) {
-                out.log.info(
-                    `Cells, left to right, top to bottom: source, ${previews.map((preview) => preview.preset).join(", ")}.`
+                return;
+            case "sampled":
+                spinner?.stop(
+                    `Tried ${event.previews.length} preset${event.previews.length === 1 ? "" : "s"} on ${event.plan.windows.length} windows`
                 );
-            }
+                return;
+            case "previews":
+                emit({
+                    type: "previews",
+                    previews: event.previews.map(previewJson),
+                    recommendation: event.recommendation,
+                });
 
-            openInPlayer(compareGrid);
+                if (text && event.previews.length > 0) {
+                    renderPreviews({ plan: event.plan, previews: event.previews, recommended: event.recommended });
+
+                    if (event.recommendation) {
+                        out.log.info(
+                            `Recommended: ${pc.green(event.recommendation.preset)}, ${event.recommendation.reason}.`
+                        );
+                    }
+                }
+
+                return;
+            case "comparing":
+                spinner?.start("Building the comparison video");
+                return;
+            case "compared":
+                spinner?.stop(`Comparison: ${event.path}`);
+
+                if (text) {
+                    out.log.info(
+                        `Cells, left to right, top to bottom: source, ${event.previews.map((preview) => preview.preset).join(", ")}.`
+                    );
+                }
+
+                openInPlayer(event.path);
+                return;
         }
+    };
 
-        if (flags.previewOnly) {
-            finishJson({ format, plan, previews, recommendation, compareGrid, chosen: null, row: null, final: null });
-            return;
-        }
-
-        const chosen = preset ?? (await choosePreset({ flags, previews, recommended }));
-
-        if (!chosen) {
-            if (!isInteractive() && !flags.yes) {
-                out.log.info(
-                    `Not a terminal, so nothing was encoded. Encode the recommendation: ${tool} ${input} ${flags.to ? `--to ${flags.to} ` : ""}--yes`
-                );
-            }
-
-            finishJson({ format, plan, previews, recommendation, compareGrid, chosen: null, row: null, final: null });
-            return;
-        }
-
-        const encoder = findEncoder(VIDEO_PRESETS[chosen]);
-
-        if (!encoder) {
-            process.exitCode = 1;
-            return;
-        }
-
-        const reporter = createEncodeReporter({ format, progress: flags.progress === true || text, files: 1 });
-        const rows = await encodeVideos({
-            paths: [input],
-            encoder,
-            quality: encoder.defaultQuality,
+    try {
+        const outcome = await runShrinkWorkflow({
+            input,
             targetBytes,
-            height: plan.height.height,
-            audio: audioRequestOf(plan),
-            jobs: 1,
-            minSavingPct: 0,
+            heightRequest,
+            audioRequest,
+            windowSec,
+            preset,
+            preview: flags.preview,
+            previewOnly: flags.previewOnly === true,
+            compare: flags.compare === true,
             replace: flags.replace === true,
-            dryRun: false,
             signal,
-            onProgress: reporter.onProgress,
-            onRow: format === "jsonl" ? reporter.onRow : undefined,
-        }).finally(() => reporter.stop());
-        const row = rows[0] ?? null;
-        const final =
-            row?.output && isWritten(row) ? await verifyFinal({ plan, references, output: row.output, signal }) : null;
-
-        if (!row || !isWritten(row)) {
-            out.log.error(`The encode did not finish: ${row?.reason ?? "no result"}`);
-            process.exitCode = 1;
-        } else if (text) {
-            renderFinal({ row, targetBytes, final, previews, chosen });
-        }
-
-        finishJson({ format, plan, previews, recommendation, compareGrid, chosen, row, final });
+            onEvent,
+            choosePreset: ({ previews, recommended }) => choosePreset({ flags, previews, recommended }),
+            startEncode: () => {
+                const reporter = createEncodeReporter({ format, progress: flags.progress === true || text, files: 1 });
+                return {
+                    onProgress: reporter.onProgress,
+                    onRow: format === "jsonl" ? reporter.onRow : undefined,
+                    stop: () => reporter.stop(),
+                };
+            },
+        });
+        renderOutcome({ outcome, format, flags, tool, input, targetBytes });
     } catch (error) {
         spinner?.stop("Stopped");
 
@@ -470,54 +378,73 @@ async function runShrink({ file, flags, signal }: { file: string; flags: ShrinkF
             return;
         }
 
-        keepWorkDir = true;
-        logger.warn({ error, input, workDir }, "shrink failed");
-        out.log.error(`${error instanceof Error ? error.message : String(error)} (samples kept in ${workDir})`);
+        const workDir = error instanceof ShrinkFailedError ? error.workDir : undefined;
+        logger.warn(
+            { error: error instanceof ShrinkFailedError ? error.cause : error, input, workDir },
+            "shrink failed"
+        );
+        out.log.error(
+            `${error instanceof Error ? error.message : String(error)}${workDir ? ` (samples kept in ${workDir})` : ""}`
+        );
         process.exitCode = 1;
-    } finally {
-        if (!keepWorkDir) {
-            rmSync(workDir, { recursive: true, force: true });
-        }
     }
 }
 
-function isWritten(row: EncodeRow): boolean {
-    return row.status === "kept" || row.status === "kept-beside";
-}
-
-interface FinalCheck {
-    windows: ({ label: string } & QualityScore)[];
-}
-
-async function verifyFinal({
-    plan,
-    references,
-    output,
-    signal,
+function renderOutcome({
+    outcome,
+    format,
+    flags,
+    tool,
+    input,
+    targetBytes,
 }: {
-    plan: ShrinkPlan;
-    references: Map<string, string>;
-    output: string;
-    signal: AbortSignal;
-}): Promise<FinalCheck | null> {
-    if (references.size === 0) {
-        return null;
+    outcome: ShrinkOutcome;
+    format: string;
+    flags: ShrinkFlags;
+    tool: string;
+    input: string;
+    targetBytes: number | undefined;
+}): void {
+    if (outcome.kind === "no-preset") {
+        out.log.error("No preset can encode this file on this machine.");
+        process.exitCode = 1;
+        return;
     }
 
-    const windows: FinalCheck["windows"] = [];
+    const { plan, previews, recommendation, compareGrid } = outcome;
+    const report = { format, plan, previews, recommendation, compareGrid };
 
-    for (const window of plan.windows) {
-        const reference = references.get(window.label);
+    if (outcome.kind === "previewed") {
+        finishJson({ ...report, chosen: null, row: null, final: null });
+        return;
+    }
 
-        if (reference) {
-            windows.push({
-                label: window.label,
-                ...(await measureQuality({ distorted: output, reference, distortedWindow: window, signal })),
-            });
+    if (outcome.kind === "not-chosen") {
+        if (!isInteractive() && !flags.yes) {
+            out.log.info(
+                `Not a terminal, so nothing was encoded. Encode the recommendation: ${tool} ${input} ${flags.to ? `--to ${flags.to} ` : ""}--yes`
+            );
         }
+
+        finishJson({ ...report, chosen: null, row: null, final: null });
+        return;
     }
 
-    return { windows };
+    if (outcome.kind === "no-encoder") {
+        process.exitCode = 1;
+        return;
+    }
+
+    const { row, final, chosen } = outcome;
+
+    if (!row || !isWritten(row)) {
+        out.log.error(`The encode did not finish: ${row?.reason ?? "no result"}`);
+        process.exitCode = 1;
+    } else if (format === "text") {
+        renderFinal({ row, targetBytes, final, previews, chosen });
+    }
+
+    finishJson({ ...report, chosen, row, final });
 }
 
 function renderFinal({
