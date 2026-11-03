@@ -1,7 +1,7 @@
 import { parseTranscriptLine } from "@genesiscz/utils/ai/usage/spend/parse";
 import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import type { SessionAnalysisReader, SessionCall, SessionCompaction } from "../analysis-types";
-import { forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
+import { factsOf, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
 
 /** Claude Code writes local notices (API errors, "No response.") as assistant rows of this model: not model calls. */
 const SYNTHETIC_MODEL = "<synthetic>";
@@ -16,7 +16,7 @@ export const claudeAnalysis: SessionAnalysisReader = {
         const seen = new Set<string>();
         const items: SessionCall[] = [];
 
-        await forEachTranscriptLine(transcriptPath, (line) => {
+        const failed = await forEachTranscriptLine(transcriptPath, (line) => {
             if (!line.includes('"assistant"')) {
                 return;
             }
@@ -42,13 +42,13 @@ export const claudeAnalysis: SessionAnalysisReader = {
             });
         });
 
-        return { supported: true, items };
+        return factsOf(items, failed);
     },
 
     async compactions(transcriptPath) {
         const items: SessionCompaction[] = [];
 
-        await forEachTranscriptLine(transcriptPath, (line) => {
+        const failed = await forEachTranscriptLine(transcriptPath, (line) => {
             if (!line.includes("compact_boundary")) {
                 return;
             }
@@ -71,7 +71,7 @@ export const claudeAnalysis: SessionAnalysisReader = {
             }
         });
 
-        return { supported: true, items };
+        return factsOf(items, failed);
     },
 
     async quotaReadings() {
