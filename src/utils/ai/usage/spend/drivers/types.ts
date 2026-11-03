@@ -59,6 +59,8 @@ export interface DriverRoot {
     home?: string;
 }
 
+export type RecordedCostMeaning = "list-price" | "metering";
+
 export interface MonitorDriver {
     id: AgentId;
     /** Directory trees to walk. Missing directories are skipped, not an error. */
@@ -84,6 +86,13 @@ export interface MonitorDriver {
      * that matches nothing is unpriced and costs $0 — never a guessed rate.
      */
     priceCandidates(model: string): string[];
+    /**
+     * What a cost the agent's transcript records means. `list-price`: it IS the API list price (ccusage's semantics),
+     * so it stands as recorded. `metering`: the agent's own plan metering, not a list price, so the catalog prices the
+     * call and the recorded figure only stands in for a model the catalog cannot price. `chooseCost` in
+     * `reports/cost.ts` applies it, for the spend reports and the session analysis alike.
+     */
+    recordedCost: RecordedCostMeaning;
     /**
      * The one account row all of the agent's spend lands in, when its transcripts record no login; null when each
      * transcript home belongs to its own account. Claude's `~/.claude/projects` names no account (decision D6), so

@@ -1,6 +1,8 @@
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { spendDriver } from "../drivers";
 import { costOf, priceForCandidates, resolvePrice } from "../pricing";
 import type { PricingTable } from "../types";
-import type { CostMode, SpendEvent } from "./types";
+import type { CostMode, SourceId, SpendEvent } from "./types";
 
 export interface CostEstimate {
     costUSD: number | null;
@@ -30,19 +32,11 @@ export type CostableEvent = Pick<
 >;
 
 /**
- * Sources whose recorded cost is NOT the list price.
- *
- * Grok Build records `costUsdTicks` per turn, and it is the CLI's own metering, not xAI's list
- * rate: over the 44 grok worker turn logs on this machine, recorded / list was about 1.00-1.13
- * until 2026-09-04, then 0.17, 0.20, and 0.34 on every turn since 2026-09-16 (four grok-4.7 turns
- * fit 0.34 x $2 / $0.50 / $6 exactly; rl-grok-pr512 recorded $2.44 against a $7.18 list price,
- * 2026-10-14). Pricing grok from the catalog keeps "API-equivalent" meaning list price; the
- * recorded figure stays a fallback for a model the catalog cannot price.
+ * Whether a source's recorded cost is the list price: a coding-agent harness says so through its spend driver
+ * (`MonitorDriver.recordedCost`; Grok's is plan metering), and every other ccusage source records list prices.
  */
-const RECORDED_COST_IS_METERING: ReadonlySet<string> = new Set(["grok"]);
-
-export function recordedCostIsListPrice(source: string): boolean {
-    return !RECORDED_COST_IS_METERING.has(source);
+export function recordedCostIsListPrice(source: SourceId): boolean {
+    return !isAccountProviderAlias(source) || spendDriver(source).recordedCost === "list-price";
 }
 
 export function catalogEstimate(event: CostableEvent, pricing: PricingTable, candidates: string[]): CostEstimate {
@@ -95,10 +89,28 @@ export function eventCostEstimate(
     mode: CostMode,
     candidates: string[]
 ): CostEstimate {
-    const recorded = event.recordedCostUsd;
-    const listPrice = recordedCostIsListPrice(event.source);
+    return chooseCost({
+        source: event.source,
+        recorded: event.recordedCostUsd,
+        mode,
+        catalog: () => catalogEstimate(event, pricing, candidates),
+    });
+}
 
-    if (mode !== "calculate" && recorded !== undefined && listPrice) {
+/**
+ * The one recorded-cost rule, for the spend reports and the session analysis alike: a recorded list price stands
+ * (`recorded`); otherwise the catalog prices the call, and a recorded metering figure (`reported`) only stands in for
+ * a model the catalog cannot price. `calculate` always takes the catalog; `display` only what the agent recorded.
+ */
+export function chooseCost(input: {
+    source: SourceId;
+    recorded: number | undefined;
+    mode: CostMode;
+    catalog: () => CostEstimate;
+}): CostEstimate {
+    const { recorded, mode } = input;
+
+    if (mode !== "calculate" && recorded !== undefined && recordedCostIsListPrice(input.source)) {
         return { costUSD: recorded, longContext: false, basis: "recorded" };
     }
 
@@ -110,7 +122,7 @@ export function eventCostEstimate(
             : { costUSD: recorded, longContext: false, basis: "reported" };
     }
 
-    const catalog = catalogEstimate(event, pricing, candidates);
+    const catalog = input.catalog();
 
     if (catalog.costUSD === null && recorded !== undefined && mode !== "calculate") {
         return { costUSD: recorded, longContext: false, basis: "reported" };

@@ -35,7 +35,7 @@ import type { DriverRoot, MonitorDriver } from "./types";
  *     ccusage treats it as authoritative; here it is NOT the list price but the
  *     Grok CLI's plan metering (0.34x list since 2026-09-16), so it rides on the
  *     event as `recordedCostUsd` and prices only a model without a catalog rate
- *     (`recordedCostIsListPrice` in `reports/cost.ts`).
+ *     (`recordedCost: "metering"` below, applied by `chooseCost` in `reports/cost.ts`).
  *   - a row sums the turn's `modelCalls`, so it is `aggregate` and prices at the
  *     base band: no single request's prompt length survives.
  *   - dedup is `eventId|model`, falling back to the token fingerprint.
@@ -123,6 +123,13 @@ export const grokDriver: MonitorDriver = {
     },
 
     priceCandidates: grokPriceCandidates,
+
+    // Grok Build records `costUsdTicks` per turn, and it is the CLI's own metering, not xAI's list rate: over the 44
+    // grok worker turn logs on this machine, recorded / list was about 1.00-1.13 until 2026-09-04, then 0.17, 0.20,
+    // and 0.34 on every turn since 2026-09-16 (four grok-4.7 turns fit 0.34 x $2 / $0.50 / $6 exactly;
+    // rl-grok-pr512 recorded $2.44 against a $7.18 list price, 2026-10-14). Pricing grok from the catalog keeps
+    // "API-equivalent" meaning list price; the recorded figure stays a fallback for a model the catalog cannot price.
+    recordedCost: "metering",
 
     // Each Grok home belongs to its own account.
     sharedAccountRow: null,

@@ -21,6 +21,7 @@ function fakeDriver(options: {
         maxDepth: 4,
         createParser: () => ({ parseLine: () => undefined, snapshot: () => undefined }),
         priceCandidates: (model) => [model],
+        recordedCost: "list-price",
         sharedAccountRow: null,
         spendSessionId: (sessionId) => sessionId,
         spendLayout: { kind: "rows" },
