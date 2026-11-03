@@ -20,13 +20,23 @@ function timeout(ms: number): { promise: Promise<never>; clear: () => void } {
     return { promise, clear: () => clearTimeout(id) };
 }
 
+export interface FanOutOptions {
+    sinks?: readonly Sink[];
+    timeoutMs?: number;
+    /** False skips every sink that interrupts the user (the notification banner, the sound). Default true. */
+    interrupt?: boolean;
+}
+
 export async function runFanOut(
     entry: QaEntry,
     config: QuestionConfig,
-    sinks: Sink[] = REGISTRY,
-    timeoutMs = 2000
+    { sinks = REGISTRY, timeoutMs = 2000, interrupt = true }: FanOutOptions = {}
 ): Promise<SinkResult[]> {
     const enabled = sinks.filter((s) => {
+        if (!interrupt && s.interrupts) {
+            return false;
+        }
+
         try {
             return s.isEnabled(config);
         } catch (err) {

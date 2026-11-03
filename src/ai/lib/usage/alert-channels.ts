@@ -6,6 +6,9 @@ import { aiUsageCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 /**
  * The GenesisTools widget inbox: the alert becomes an unread message card. It lives in this tool and not in the
  * shared package, because the inbox writer is `@app/question`; the engine only knows the `AlertChannel` interface.
+ *
+ * It does not interrupt, so the engine delivers it in quiet hours too; the card is therefore written without the
+ * question sinks that do interrupt (the user's notification banner and sound).
  */
 const inboxAlertChannel: AlertChannel = {
     id: "inbox",
@@ -16,6 +19,7 @@ const inboxAlertChannel: AlertChannel = {
             text: `${alert.message}\n\nAcknowledge: ${aiUsageCommand("alerts", "ack", String(alert.id))}`,
             agentLabel: "AI usage alerts",
             source: "cli",
+            interrupt: inboxAlertChannel.interrupts,
         });
     },
 };

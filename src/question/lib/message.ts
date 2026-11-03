@@ -61,6 +61,8 @@ export interface InboxMessageInput {
     sourceMessage?: SourceMessage;
     agentLabel?: string;
     source: QaSource;
+    /** False stores the unread card without the notification banner or the sound. Default true. */
+    interrupt?: boolean;
 }
 
 /**
@@ -92,6 +94,7 @@ export async function sendInboxMessage(input: InboxMessageInput, deps: RecordDep
             sourceMessage: input.sourceMessage,
             agentLabel: input.agentLabel,
             source: input.source,
+            interrupt: input.interrupt,
         },
         deps
     );

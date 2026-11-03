@@ -6,6 +6,7 @@ import { transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
 import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas } from "@napi-rs/canvas";
+import { sendInboxMessage } from "./message";
 import { getEntryById, openReadModel } from "./read-model";
 import { recordAnswer } from "./record";
 import type { QaEntry } from "./types";
@@ -43,6 +44,17 @@ describe("recordAnswer", () => {
                 { logBase, config: { sinks: { obsidian: false, sound: false, notify: false } } }
             )
         ).rejects.toThrow(/question/i);
+    });
+
+    it("an inbox message that must not interrupt keeps its card and rings neither the banner nor the sound", async () => {
+        const logBase = mkdtempSync(join(tmpdir(), "qa-rec-"));
+        const res = await sendInboxMessage(
+            { text: "usage at 90%", title: "AI Usage Alert", source: "cli", interrupt: false },
+            { logBase, env: {}, config: { sinks: { obsidian: false, sound: true, notify: true } } }
+        );
+
+        expect(res.sinks).toEqual([]);
+        expect(readdirSync(logBase)).toHaveLength(1);
     });
 });
 
