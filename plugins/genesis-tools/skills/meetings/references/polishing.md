@@ -97,6 +97,12 @@ experimental CC0 dictionary) or `macos` (the system spell checker, macOS only). 
 download on first use to `~/.genesis-tools/downloads/transcribe/`. When the check cannot run, the tool says why and the
 term rules skip every word with a Czech letter, as before.
 
+The language is a second axis (`src/meetings/lib/word-languages.ts`, one class per language: Czech, Slovak). Each line
+gets its languages from its marker words and letters, and from its speaker: a speaker with three clear lines in a
+language has all their lines checked in it too. A word is unknown only when every language of its lines has a check
+and none knows it. Slovak uses the dictionary-sk Hunspell files (GPL-2.0, LGPL-2.1 or MPL-1.1, downloaded on first
+use), or the macOS checker with `--word-check macos` when it has Slovak. A language without a check never flags a word.
+
 ## Term rules
 
 - **Keep the words, add the meaning** (D1, D16): the original text stays and the meaning follows as
