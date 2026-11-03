@@ -102,6 +102,13 @@ async function list(opts: { project?: string; json?: boolean }): Promise<void> {
     }
 
     if (records.length === 0) {
+        const hint = new MeetingStore().layoutHint();
+
+        if (hint) {
+            ui.warn(hint);
+            return;
+        }
+
         ui.info(`No meetings yet. Create one: ${TOOL} new "<title>" or ${TOOL} new --source wisprflow:<id>`);
         return;
     }

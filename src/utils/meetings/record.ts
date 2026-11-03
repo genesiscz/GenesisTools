@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -347,14 +348,43 @@ export class MeetingStore {
     }
 
     /**
+     * What to change when `GENESIS_TOOLS_HOME` points one level too deep: the records sit in `<home>/meetings/`,
+     * while the tool reads `<home>/.genesis-tools/meetings/`. Undefined for any other layout.
+     */
+    layoutHint(): string | undefined {
+        if (!env.tools.hasExplicitHome()) {
+            return undefined;
+        }
+
+        const home = env.tools.getHome();
+        const misplaced = join(home, basename(this.root));
+
+        if (resolve(misplaced) === resolve(this.root) || !existsSync(misplaced)) {
+            return undefined;
+        }
+
+        const holdsRecords = readdirSync(misplaced, { withFileTypes: true }).some(
+            (entry) => entry.isDirectory() && existsSync(join(misplaced, entry.name, MEETING_FILE))
+        );
+
+        if (!holdsRecords) {
+            return undefined;
+        }
+
+        const parent = basename(home) === ".genesis-tools" ? dirname(home) : "the folder that holds .genesis-tools";
+        return `GENESIS_TOOLS_HOME is ${home}, so meetings are read from ${this.root}, but the records are in ${misplaced}. GENESIS_TOOLS_HOME names the folder above .genesis-tools: set it to ${parent}, or unset it.`;
+    }
+
+    /**
      * Finds a meeting by its id, a unique prefix of it, `last`, or a source reference (`wisprflow:1a2b3c4d`, matched
-     * on the start of `sources.<source>.meetingId`). Throws when a prefix fits several.
+     * on the start of `sources.<source>.meetingId`). Throws when a prefix fits several, and with `layoutHint` when
+     * nothing fits and the records sit one level off.
      */
     resolve(ref: string): MeetingRecord | undefined {
         const records = this.list();
 
         if (ref === "last") {
-            return records[0];
+            return records[0] ?? this.noMatch(ref);
         }
 
         const source = parseSourceRef(ref);
@@ -376,7 +406,18 @@ export class MeetingStore {
             );
         }
 
-        return matches[0];
+        return matches[0] ?? this.noMatch(ref);
+    }
+
+    /** Nothing fits `ref`: undefined, or the `layoutHint` as an error when the records sit one level off. */
+    private noMatch(ref: string): undefined {
+        const hint = this.layoutHint();
+
+        if (hint) {
+            throw new Error(`No meeting "${ref}". ${hint}`);
+        }
+
+        return undefined;
     }
 
     /** Creates a record. A second meeting with the same start and title gets `-2`, `-3` … on its id. */

@@ -276,3 +276,7 @@ A version 1 file is rewritten once on the first read: `global.render` moves to `
 `playback.listen.budget` still gets them, from the new places.
 
 A change that would make the file invalid is refused, and the file stays as it was.
+
+`GENESIS_TOOLS_HOME` names the folder above `.genesis-tools`. When it points at the `.genesis-tools` folder itself, so
+the records sit in `$GENESIS_TOOLS_HOME/meetings/` instead of `$GENESIS_TOOLS_HOME/.genesis-tools/meetings/`, a
+meeting that is not found and an empty `list` say where the records are and what to set.

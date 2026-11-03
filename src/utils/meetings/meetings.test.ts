@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     languageSettings,
@@ -152,6 +156,25 @@ describe("meetings config", () => {
         expect(matchProjects(config, { title: "Změny ve wiki" })).toEqual(["work"]);
         expect(matchProjects(config, { calendar: "Side" })).toEqual(["side"]);
         expect(matchProjects(config, { title: "Lunch" })).toEqual([]);
+    });
+});
+
+describe("a GENESIS_TOOLS_HOME one level too deep", () => {
+    test("no meeting says where the records are and what to set", async () => {
+        const home = join(mkdtempSync(join(tmpdir(), "gt-layout-")), ".genesis-tools");
+        mkdirSync(join(home, "meetings", "2026-11-02_15-00-planning"), { recursive: true });
+        writeFileSync(join(home, "meetings", "2026-11-02_15-00-planning", "meeting.json"), "{}");
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const records = new MeetingStore();
+
+            expect(records.layoutHint()).toContain(`set it to ${dirname(home)}`);
+            expect(() => records.resolve("last-week")).toThrow(`the records are in ${join(home, "meetings")}`);
+        });
+    });
+
+    test("the usual layout gives no hint", () => {
+        expect(new MeetingStore().layoutHint()).toBeUndefined();
     });
 });
 
