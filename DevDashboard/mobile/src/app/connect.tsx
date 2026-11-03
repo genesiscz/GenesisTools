@@ -208,7 +208,11 @@ export default function ConnectScreen() {
         }
 
         setError(result.error ?? "Pairing failed.");
-        dispatchReach({ type: "probe-fail", failure: tier ? TIERS[tier].probeFailure : "unreachable" });
+        // The failure the connect returned for the scanned tier, not the picker's tier.
+        dispatchReach({
+            type: "probe-fail",
+            failure: result.failure && result.failure !== "error" ? result.failure : "unreachable",
+        });
         return false;
     }
 

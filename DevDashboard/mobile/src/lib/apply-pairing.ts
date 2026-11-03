@@ -1,11 +1,13 @@
 import { parsePairingPayload } from "@dd/contract";
 
 import { type ConnectResult, useConnectionStore } from "@/state/connection-store";
-import { FAILURE_MESSAGE } from "@/transport/reachability";
+import { FAILURE_MESSAGE, type ProbeFailure } from "@/transport/reachability";
 
 export interface ApplyPairingResult {
     ok: boolean;
     error?: string;
+    /** What a failed connect said (the probe's failure, or "error"); absent when the link itself was refused. */
+    failure?: ProbeFailure | "error";
 }
 
 /** The secrets a pairing asks the user for; the QR and the deep link never carry them. */
@@ -56,5 +58,5 @@ export async function applyPairingUri(uri: string, secrets: PairingSecrets = {})
     });
     console.log(`[connect] applyPairingUri tier=${pairing.tier} ok=${result.ok}`);
 
-    return { ok: result.ok, error: messageOf(result) };
+    return result.ok ? { ok: true } : { ok: false, error: messageOf(result), failure: result.failure };
 }
