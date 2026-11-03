@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { notifiableWindows } from "@genesiscz/utils/ai/usage/alerts/windows";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
-import { anthropicRows, notifiableWindows, rowsOfAnswer, sessionRowsArgv } from "./poll-daemon";
+import { anthropicRows, rowsOfAnswer, sessionRowsArgv } from "./poll-daemon";
 
 /**
  * The daemon fans one poll round out to three consumers with different rules: threshold
@@ -32,6 +33,7 @@ describe("notifiableWindows", () => {
     test("flattens every window of a healthy snapshot", () => {
         expect(notifiableWindows([snapshot()])).toEqual([
             {
+                provider: "anthropic-sub",
                 // The immutable id rides along: the notification tracker keys on it,
                 // because two accounts may legitimately share a name (PR #368 t4).
                 accountId: "acc_work",
