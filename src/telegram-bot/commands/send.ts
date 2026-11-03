@@ -25,7 +25,7 @@ export function registerSendCommand(program: Command): void {
 
             const api = createTelegramApi(config);
             try {
-                await api.sendMessage(config.chatId, text, {
+                await api.sendMessage(config.chats.commands, text, {
                     parse_mode: opts.parseMode as ParseMode | undefined,
                 });
                 p.log.success("Message sent");

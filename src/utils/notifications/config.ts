@@ -1,5 +1,13 @@
 import { Storage } from "@genesiscz/utils/storage/storage";
-import type { AppChannelOverrides, ChannelConfigs, ChannelName, NotifyGlobalConfig, ResolvedChannels } from "./types";
+import { loadTelegramBotConfig, resolveTelegramTarget } from "@genesiscz/utils/telegram-bot/lib/config";
+import type {
+    AppChannelOverrides,
+    ChannelConfigs,
+    ChannelName,
+    NotifyGlobalConfig,
+    ResolvedChannels,
+    TelegramChannelConfig,
+} from "./types";
 
 const DEFAULT_CHANNELS: ChannelConfigs = {
     system: { enabled: true, sound: "Ping", title: "GenesisTools", ignoreDnD: false },
@@ -15,6 +23,25 @@ function mergeChannels(global: ChannelConfigs, overrides: AppChannelOverrides["c
         webhook: { ...global.webhook, ...overrides.webhook },
         say: { ...global.say, ...overrides.say },
     };
+}
+
+/**
+ * A switched-on Telegram channel that names no token or no chat sends through the one bot
+ * (`tools telegram-bot configure`) to its notifications chat. A channel that names both keeps them, so a notify
+ * config and a bot config that name different chats both keep working.
+ */
+async function withBotTarget(telegram: TelegramChannelConfig): Promise<TelegramChannelConfig> {
+    if (!telegram.enabled || (telegram.botToken && telegram.chatId)) {
+        return telegram;
+    }
+
+    const target = resolveTelegramTarget({
+        purpose: "notifications",
+        own: telegram,
+        bot: await loadTelegramBotConfig().catch(() => null),
+    });
+
+    return target ? { ...telegram, botToken: target.botToken, chatId: String(target.chatId) } : telegram;
 }
 
 /**
@@ -86,7 +113,8 @@ export class NotificationsConfig {
     async getChannels(app: string): Promise<ResolvedChannels> {
         const config = await this.load();
         const appOverrides = config.apps[app]?.channels ?? {};
-        return mergeChannels(config.channels, appOverrides);
+        const merged = mergeChannels(config.channels, appOverrides);
+        return { ...merged, telegram: await withBotTarget(merged.telegram) };
     }
 
     async getAppMeta(app: string): Promise<Record<string, unknown>> {
