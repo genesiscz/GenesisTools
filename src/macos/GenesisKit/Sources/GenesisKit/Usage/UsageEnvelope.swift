@@ -25,13 +25,14 @@ public struct UsageAccountKey: Codable, Hashable, Sendable, Identifiable {
 public struct UsageWarning: Codable, Equatable, Sendable, Identifiable {
     public let code: String
     public let message: String
-    public var id: String { code }
+    /// The code and the message: one code can come with two messages, and each is its own row.
+    public var id: String { code + "\u{1}" + message }
 
     /// The warnings of several doors in their order, each code and message once: two doors that both miss the
-    /// history say so once.
+    /// history say so once. The rows keep distinct `id`s, so a list can show them.
     public static func merged(_ lists: [[UsageWarning]]) -> [UsageWarning] {
         var seen = Set<String>()
-        return lists.flatMap { $0 }.filter { seen.insert($0.code + "\u{1}" + $0.message).inserted }
+        return lists.flatMap { $0 }.filter { seen.insert($0.id).inserted }
     }
 }
 
