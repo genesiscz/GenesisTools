@@ -9,6 +9,7 @@ export interface AttributedEvent {
     costUsd: number;
     tokens: number;
     unpriced: boolean;
+    model: string | null;
     /** Plugin id of the harness's provider (`anthropic-sub` for Claude). */
     provider: string;
     agent: CompactEvent["source"];
@@ -51,6 +52,7 @@ export function attributeEvents(events: readonly CompactEvent[], lookup: Session
             costUsd: event.costUsd,
             tokens: event.tokens,
             unpriced: event.unpriced === true,
+            model: event.model ?? null,
             provider: agentPluginId(event.source),
             agent: event.source,
             ...known,
