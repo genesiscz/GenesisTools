@@ -69,14 +69,21 @@ export interface HubAgentsOptions {
 const OPEN_SESSIONS_REUSE_MS = 3_000;
 let openSessionsMemo: { at: number; ids: Set<string> } | undefined;
 
-async function recentOpenSessionIds(): Promise<Set<string>> {
+/**
+ * `--session` asks about one parent, and its `open` flag is not worth a long wait: on 2026-11-02 a stalled `ps` held
+ * 84 `tools hub agents --session` calls for its whole 10 s timeout, and the mods band killed each at 15 s. A table cut
+ * at 3 s marks fewer sessions open; it never fails the call.
+ */
+const SESSION_PS_TIMEOUT_MS = 3_000;
+
+async function recentOpenSessionIds(psTimeoutMs?: number): Promise<Set<string>> {
     const now = Date.now();
 
     if (openSessionsMemo && now - openSessionsMemo.at < OPEN_SESSIONS_REUSE_MS) {
         return openSessionsMemo.ids;
     }
 
-    const ids = await openAgentSessionIds();
+    const ids = await openAgentSessionIds(undefined, { psTimeoutMs });
     openSessionsMemo = { at: now, ids };
 
     return ids;
@@ -85,7 +92,11 @@ async function recentOpenSessionIds(): Promise<Set<string>> {
 /** A failed process listing leaves every parent to its transcript clock: nothing is marked open. */
 async function readOpenSessions(options: HubAgentsOptions): Promise<Set<string>> {
     try {
-        return await (options.openSessions ?? recentOpenSessionIds)();
+        if (options.openSessions) {
+            return await options.openSessions();
+        }
+
+        return await recentOpenSessionIds(options.session ? SESSION_PS_TIMEOUT_MS : undefined);
     } catch (error) {
         logger.warn({ error }, "[hub agents] the process list is unavailable; no session is marked open");
         return new Set();
