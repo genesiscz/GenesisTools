@@ -110,9 +110,9 @@ export default function PairScreen() {
                             value={secret}
                             onChangeText={setSecret}
                             secureTextEntry={!needsCode}
-                            keyboardType={needsCode ? "number-pad" : "default"}
+                            keyboardType={needsCode ? "ascii-capable" : "default"}
                             textContentType={needsCode ? "oneTimeCode" : "password"}
-                            autoCapitalize="none"
+                            autoCapitalize={needsCode ? "characters" : "none"}
                             autoCorrect={false}
                             onSubmitEditing={submit}
                             className={inputClass}
