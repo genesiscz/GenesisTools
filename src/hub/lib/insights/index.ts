@@ -24,7 +24,8 @@ import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types"
 import { transcriptParser } from "@genesiscz/utils/ai/transcripts/load";
 import { readTail } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
-import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
+import { type AgentId, spendDriver } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { costOf, DEFAULT_PRICING, priceForCandidates, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
@@ -65,14 +66,19 @@ const STUCK_TURNS = 120;
 // The header's cost (tools ai-spend session) adds the sub-agents: for one session it read $1862 beside $548 here.
 export const INSIGHTS_PRICING_NOTE = `List prices from the model catalog (the rates ${toolCommand("ai-spend")} uses), per model call of this transcript; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill`;
 
-/** List price per call from the catalog, with its dated and context-banded rules applied. */
-export function catalogPricer(): CallPricer {
+/**
+ * List price per call from the catalog, with its dated and context-banded rules applied. The model is looked up
+ * through the harness's candidate ladder (`MonitorDriver.priceCandidates`), as the spend reports price it.
+ */
+export function catalogPricer(agent: AgentId): CallPricer {
+    const ladder = spendDriver(agent);
+
     return (call) => {
         if (!call.model) {
             return null;
         }
 
-        const entry = priceFor(call.model, DEFAULT_PRICING);
+        const entry = priceForCandidates(ladder.priceCandidates(call.model), DEFAULT_PRICING)?.entry;
 
         if (!entry) {
             return null;
@@ -239,7 +245,7 @@ async function computeInsights({
         turns: loaded.turns,
         native: loaded.native,
         defaultModel: loaded.defaultModel,
-        price: catalogPricer(),
+        price: catalogPricer(resolved.provider),
     });
     const tools = buildToolStats({ turns: loaded.turns, native: loaded.native });
     const firstPrompt = loaded.turns.find((turn) => turn.role === "user");
