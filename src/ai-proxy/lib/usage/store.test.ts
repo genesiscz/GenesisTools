@@ -17,7 +17,11 @@ import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 let dir: string;
 let timers = spyOn(globalThis, "setTimeout");
 
-function flushTimers() {
+/**
+ * The store's own flush timers. The logger schedules its midnight rollover through the same setTimeout when it opens
+ * its day file, so counting every call counts that timer too.
+ */
+function storeTimers(): Parameters<typeof setTimeout>[] {
     return timers.mock.calls.filter(
         ([callback]) => typeof callback === "function" && callback.name === "flushDailyStore"
     );
@@ -25,7 +29,7 @@ function flushTimers() {
 
 /** Drive the real scheduled callback without making every persistence test sleep for an interval. */
 function flushScheduledWrite(): void {
-    const callback = flushTimers().at(-1)?.[0];
+    const callback = storeTimers().at(-1)?.[0];
     expect(typeof callback).toBe("function");
 
     if (typeof callback === "function") {
@@ -107,8 +111,8 @@ describe("daily usage store", () => {
 
             expect(fsync).not.toHaveBeenCalled();
             expect(readFileSync(dailyFile(), "utf8")).toBe(before);
-            expect(flushTimers()).toHaveLength(1);
-            expect(flushTimers()[0][1]).toBe(250);
+            expect(storeTimers()).toHaveLength(1);
+            expect(storeTimers()[0][1]).toBe(250);
             flushScheduledWrite();
             expect(fsync).toHaveBeenCalledTimes(1);
             expect(getTodayUsageSummary("work").requests).toBe(54);
@@ -116,7 +120,7 @@ describe("daily usage store", () => {
             expect(fsync).toHaveBeenCalledTimes(1);
 
             recordUsageRequest(request());
-            expect(flushTimers()).toHaveLength(2);
+            expect(storeTimers()).toHaveLength(2);
             expect(fsync).toHaveBeenCalledTimes(1);
             flushScheduledWrite();
             expect(fsync).toHaveBeenCalledTimes(2);
