@@ -1,6 +1,7 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
+import { bindEndpoint } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import type { DecisionAnswer } from "@app/question/lib/decisions/answers";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
@@ -8,6 +9,7 @@ import type { HarvestedDecision } from "@app/question/lib/decisions/store";
 import { answerInboxDecisions } from "@app/question/lib/inbox/answer";
 import { dismissDecision, draftDecision, sendDrafts } from "@app/question/lib/inbox/drafts";
 import { type InboxDeps, loadInbox, loadSessionDecisions, waitingBlock } from "@app/question/lib/inbox/load";
+import { z } from "zod";
 
 export interface QaDecisionDeps {
     /** The decision log and its events feed. Tests point this at a scratch store. */
@@ -39,243 +41,145 @@ function refusal(err: unknown) {
     return errorResult(err, CALLER_MISTAKES.some((pattern) => pattern.test(message)) ? 400 : 500);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+/** A text the caller may leave blank: a blank one reads as absent, as before the table. */
+const optionalText = z
+    .unknown()
+    .optional()
+    .transform((value) => (typeof value === "string" && value.trim().length > 0 ? value : undefined));
+/** A session id: required, trimmed. */
+const session = z
+    .string()
+    .transform((value) => value.trim())
+    .pipe(z.string().min(1));
+/** The revision the caller showed; a newer post refuses the write. */
+const revision = z.number().int().positive().optional();
 
-function optionalString(value: unknown): string | undefined {
-    return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
+/** The same shape `tools question inbox answer --batch` takes: [{ number, option?, text?, expectedRevision? }]. */
+const answers = z.array(
+    z.object({ number: z.number(), option: optionalText, text: optionalText, expectedRevision: revision })
+);
 
-/** The same shape `tools question inbox answer --batch` takes: [{ number, option?, text? }]. */
-function parseAnswers(value: unknown): DecisionAnswer[] | null {
-    if (!Array.isArray(value)) {
-        return null;
-    }
-
-    const answers: DecisionAnswer[] = [];
-
-    for (const entry of value) {
-        if (!isRecord(entry) || typeof entry.number !== "number") {
-            return null;
-        }
-
-        const option = optionalString(entry.option);
-        const text = optionalString(entry.text);
-        const revision = entry.expectedRevision;
-        if (revision !== undefined && (typeof revision !== "number" || !Number.isInteger(revision) || revision < 1)) {
-            return null;
-        }
-
-        answers.push({
-            number: entry.number,
-            ...(option ? { option } : {}),
-            ...(text ? { text } : {}),
-            ...(typeof revision === "number" ? { expectedRevision: revision } : {}),
-        });
-    }
-
-    return answers;
+/** Drops the keys a transform left undefined, so the lib sees the same objects as before the table. */
+function defined<T extends Record<string, unknown>>(value: T): T {
+    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 /**
  * The /qa Decisions tab's door onto the hub inbox: the same list (`loadInbox`, `loadSessionDecisions`),
  * the same answer-and-deliver (`answerInboxDecisions`) and the same re-send of queued answers
- * (`sendAnsweredDecisions`) that `tools question inbox` and `tools question send` use.
+ * (`sendAnsweredDecisions`) that `tools question inbox` and `tools question send` use. Every route is bound from its
+ * endpoint table row (`contract/endpoint-table.ts`); a write with an `Idempotency-Key` returns its first answer on a
+ * retry, and the draft and dismiss writes take the revision the caller showed.
  */
 export function qaDecisionRoutes(deps: QaDecisionDeps = {}): RouteDef[] {
     const files = deps.files ?? (() => decisionFiles());
 
     return [
-        {
-            method: "GET",
-            pattern: "/api/qa/decisions",
-            handler: async (ctx) => {
-                const hours = Number.parseInt(ctx.query.get("hours") ?? "72", 10);
-
-                try {
-                    const result = await loadInbox({
-                        hours: Number.isFinite(hours) && hours > 0 ? hours : 72,
-                        ...(deps.inbox ? { deps: deps.inbox } : {}),
-                    });
-
-                    return { kind: "json", status: 200, body: result };
-                } catch (err) {
-                    return errorResult(err);
-                }
+        bindEndpoint(ENDPOINTS.qaDecisions, {
+            input: z.object({ hours: z.unknown().optional() }).transform(({ hours }) => {
+                const parsed = Number.parseInt(typeof hours === "string" ? hours : "72", 10);
+                return { hours: Number.isFinite(parsed) && parsed > 0 ? parsed : 72 };
+            }),
+            invalid: "expected ?hours=N",
+            run: ({ hours }) => loadInbox({ hours: hours ?? 72, ...(deps.inbox ? { deps: deps.inbox } : {}) }),
+        }),
+        // Every decision of one session, in every state (the hub's Decisions pane).
+        bindEndpoint(ENDPOINTS.qaDecisionsSession, {
+            input: z.object({ id: z.string() }),
+            invalid: "expected /api/qa/decisions/session/:id",
+            run: async ({ id }) => ({ sessionId: id, decisions: await loadSessionDecisions(id, deps.session) }),
+        }),
+        // Answers several decisions and delivers them as ONE message, like `inbox answer --batch`.
+        bindEndpoint(ENDPOINTS.qaDecisionsAnswer, {
+            input: z
+                .object({
+                    session,
+                    answers,
+                    provider: optionalText,
+                    cwd: optionalText,
+                    dryRun: z.unknown().optional(),
+                })
+                .transform((body) =>
+                    defined({
+                        session: body.session,
+                        answers: body.answers.map((answer) => defined(answer)),
+                        provider: body.provider,
+                        cwd: body.cwd,
+                        dryRun: body.dryRun === true,
+                    })
+                ),
+            invalid: "expected { session, answers: [{ number, option?, text? }], dryRun? }",
+            error: refusal,
+            run: (input) => {
+                const { file, events } = files();
+                return answerInboxDecisions(input, {
+                    file,
+                    events,
+                    block: deps.block ?? waitingBlock,
+                    ...(deps.deliver ? { deliver: deps.deliver } : {}),
+                });
             },
-        },
-        {
-            // Every decision of one session, in every state (the hub's Decisions pane).
-            method: "GET",
-            pattern: "/api/qa/decisions/session/:id",
-            handler: async (ctx) => {
-                const session = ctx.params.id ?? "";
-
-                try {
-                    const decisions = await loadSessionDecisions(session, deps.session);
-                    return { kind: "json", status: 200, body: { sessionId: session, decisions } };
-                } catch (err) {
-                    return errorResult(err);
-                }
-            },
-        },
-        {
-            // Answers several decisions and delivers them as ONE message, like `inbox answer --batch`.
-            method: "POST",
-            pattern: "/api/qa/decisions/answer",
-            handler: async (ctx) => {
-                const body = await ctx.readJson<unknown>().catch(() => null);
-                const session = isRecord(body) ? optionalString(body.session) : undefined;
-                const answers = isRecord(body) ? parseAnswers(body.answers) : null;
-
-                if (!isRecord(body) || !session || !answers) {
-                    return {
-                        kind: "json",
-                        status: 400,
-                        body: { error: "expected { session, answers: [{ number, option?, text? }], dryRun? }" },
-                    };
-                }
-
-                const provider = optionalString(body.provider);
-                const cwd = optionalString(body.cwd);
-
-                try {
-                    const { file, events } = files();
-                    const result = await answerInboxDecisions(
-                        {
-                            session,
-                            answers,
-                            ...(provider ? { provider } : {}),
-                            ...(cwd ? { cwd } : {}),
-                            dryRun: body.dryRun === true,
-                        },
-                        {
-                            file,
-                            events,
-                            block: deps.block ?? waitingBlock,
-                            ...(deps.deliver ? { deliver: deps.deliver } : {}),
-                        }
-                    );
-
-                    return { kind: "json", status: 200, body: result };
-                } catch (err) {
-                    return refusal(err);
-                }
-            },
-        },
-        {
-            // Re-sends answers that stayed queued (stored `answered`), like `tools question send`.
-            method: "POST",
-            pattern: "/api/qa/decisions/send",
-            handler: async (ctx) => {
-                const body = await ctx.readJson<unknown>().catch(() => null);
-                const session = isRecord(body) ? optionalString(body.session)?.trim() : undefined;
-                const provider = isRecord(body) ? optionalString(body.provider) : undefined;
-
-                if (!session) {
-                    return { kind: "json", status: 400, body: { error: "session required" } };
-                }
-
-                try {
-                    const result = await sendAnsweredDecisions({
-                        session,
-                        ...(provider ? { provider } : {}),
-                        files: files(),
-                        deps: deps.deliver,
-                    });
-                    return { kind: "json", status: 200, body: result };
-                } catch (err) {
-                    return refusal(err);
-                }
-            },
-        },
-        {
-            // Marks or clears one decision's pick and note; nothing is sent (the pick-then-send model).
-            method: "POST",
-            pattern: "/api/qa/decisions/draft",
-            handler: async (ctx) => {
-                const body = await ctx.readJson<unknown>().catch(() => null);
-                const session = isRecord(body) ? optionalString(body.session)?.trim() : undefined;
-                const number = isRecord(body) && typeof body.number === "number" ? body.number : undefined;
-
-                if (!session || number === undefined) {
-                    return {
-                        kind: "json",
-                        status: 400,
-                        body: { error: "expected { session, number, option?, text? }" },
-                    };
-                }
-
-                try {
-                    const row = await draftDecision(
-                        {
-                            session,
-                            number,
-                            ...(isRecord(body) && typeof body.option === "string" ? { option: body.option } : {}),
-                            ...(isRecord(body) && typeof body.text === "string" ? { text: body.text } : {}),
-                            ...(isRecord(body) ? { provider: optionalString(body.provider) } : {}),
-                            ...(isRecord(body) ? { cwd: optionalString(body.cwd) } : {}),
-                        },
-                        { ...files(), block: deps.block ?? waitingBlock }
-                    );
-                    return { kind: "json", status: 200, body: row };
-                } catch (err) {
-                    return refusal(err);
-                }
-            },
-        },
-        {
-            // Drops a decision that no longer matters, without sending anything.
-            method: "POST",
-            pattern: "/api/qa/decisions/dismiss",
-            handler: async (ctx) => {
-                const body = await ctx.readJson<unknown>().catch(() => null);
-                const session = isRecord(body) ? optionalString(body.session)?.trim() : undefined;
-                const number = isRecord(body) && typeof body.number === "number" ? body.number : undefined;
-
-                if (!session || number === undefined) {
-                    return { kind: "json", status: 400, body: { error: "expected { session, number }" } };
-                }
-
-                try {
-                    const row = await dismissDecision({ session, number }, files());
-                    return { kind: "json", status: 200, body: row };
-                } catch (err) {
-                    return refusal(err);
-                }
-            },
-        },
-        {
-            // Promotes every drafted answer of a session and delivers them as one message.
-            method: "POST",
-            pattern: "/api/qa/decisions/send-drafts",
-            handler: async (ctx) => {
-                const body = await ctx.readJson<unknown>().catch(() => null);
-                const session = isRecord(body) ? optionalString(body.session)?.trim() : undefined;
-
-                if (!session) {
-                    return { kind: "json", status: 400, body: { error: "session required" } };
-                }
-
-                try {
-                    const result = await sendDrafts(
-                        {
-                            session,
-                            ...(isRecord(body) ? { provider: optionalString(body.provider) } : {}),
-                            dryRun: isRecord(body) && body.dryRun === true,
-                        },
-                        {
-                            ...files(),
-                            block: deps.block ?? waitingBlock,
-                            ...(deps.deliver ? { deliver: deps.deliver } : {}),
-                        }
-                    );
-                    return { kind: "json", status: 200, body: result };
-                } catch (err) {
-                    return refusal(err);
-                }
-            },
-        },
+        }),
+        // Re-sends answers that stayed queued (stored `answered`), like `tools question send`.
+        bindEndpoint(ENDPOINTS.qaDecisionsSend, {
+            input: z
+                .object({ session, provider: optionalText })
+                .transform((body) => defined({ session: body.session, provider: body.provider })),
+            invalid: "session required",
+            error: refusal,
+            run: (input) => sendAnsweredDecisions({ ...input, files: files(), deps: deps.deliver }),
+        }),
+        // Marks or clears one decision's pick and note; nothing is sent (the pick-then-send model).
+        bindEndpoint(ENDPOINTS.qaDecisionsDraft, {
+            input: z
+                .object({
+                    session,
+                    number: z.number(),
+                    option: z.unknown().optional(),
+                    text: z.unknown().optional(),
+                    provider: optionalText,
+                    cwd: optionalText,
+                    expectedRevision: revision,
+                })
+                .transform((body) =>
+                    defined({
+                        session: body.session,
+                        number: body.number,
+                        option: typeof body.option === "string" ? body.option : undefined,
+                        text: typeof body.text === "string" ? body.text : undefined,
+                        provider: body.provider,
+                        cwd: body.cwd,
+                        expectedRevision: body.expectedRevision,
+                    })
+                ),
+            invalid: "expected { session, number, option?, text?, expectedRevision? }",
+            error: refusal,
+            run: (input) => draftDecision(input, { ...files(), block: deps.block ?? waitingBlock }),
+        }),
+        // Drops a decision that no longer matters, without sending anything.
+        bindEndpoint(ENDPOINTS.qaDecisionsDismiss, {
+            input: z
+                .object({ session, number: z.number(), expectedRevision: revision })
+                .transform((body) => defined(body)),
+            invalid: "expected { session, number, expectedRevision? }",
+            error: refusal,
+            run: (input) => dismissDecision(input, files()),
+        }),
+        // Promotes every drafted answer of a session and delivers them as one message.
+        bindEndpoint(ENDPOINTS.qaDecisionsSendDrafts, {
+            input: z
+                .object({ session, provider: optionalText, dryRun: z.unknown().optional() })
+                .transform((body) =>
+                    defined({ session: body.session, provider: body.provider, dryRun: body.dryRun === true })
+                ),
+            invalid: "session required",
+            error: refusal,
+            run: (input) =>
+                sendDrafts(input, {
+                    ...files(),
+                    block: deps.block ?? waitingBlock,
+                    ...(deps.deliver ? { deliver: deps.deliver } : {}),
+                }),
+        }),
     ];
 }

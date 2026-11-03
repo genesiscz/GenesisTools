@@ -1,4 +1,5 @@
 import { type DashboardAuthProvision, getDashboardAuthCached } from "@app/dev-dashboard/config";
+import { endpointTier, TIMEOUT_TIER_MS } from "@app/dev-dashboard/contract/endpoint-table";
 import {
     allowsBrowserProvenance,
     type CompleteDashboardAuthConfig,
@@ -28,70 +29,41 @@ const TTYD_PATH = /^\/ttyd\/([0-9a-fA-F-]{36})(?:\/|$)/;
 /**
  * SSE and other streaming routes must not use the short upstream fetch timeout.
  *
- * Every `longLived: true` route in the dashboard router belongs here, plus the
- * preview reload stream, which is not a router route. `front-proxy.test.ts`
- * derives the router's list and fails when one is missing: while
- * /api/daemon/runs/tail and /__preview_reload were absent, AbortSignal.timeout
+ * The tier of every non-board route comes from the endpoint table (`contract/endpoint-table.ts`): a row with
+ * `timeout: "stream"` has no deadline. The board streams and the preview reload stream are not table rows (the 57
+ * board routes stay out of it), so they are named here. `front-proxy.test.ts` derives the router's `longLived` list
+ * and fails when one is missing: while /api/daemon/runs/tail and /__preview_reload were absent, AbortSignal.timeout
  * tore their bodies down every 15 s mid-stream.
  */
 export function isLongLivedProxiedStream(pathname: string): boolean {
-    if (
-        pathname === "/api/qa/stream" ||
-        pathname === "/api/boards/work/wait" ||
-        pathname === "/api/ports/classify" ||
-        pathname === "/api/daemon/runs/tail" ||
-        pathname === "/api/live" ||
-        pathname === PREVIEW_RELOAD_PATH
-    ) {
+    if (pathname === "/api/boards/work/wait" || pathname === PREVIEW_RELOAD_PATH) {
         return true;
     }
 
-    // A pending-ask waiter blocks for its own budget (120s by default), which is far past the
-    // 15s upstream deadline; without this the proxy aborts the wait and the caller reads it as
-    // the question having failed.
-    if (pathname.startsWith("/api/qa/pending/") && pathname.endsWith("/wait")) {
+    if (endpointTier(pathname) === "stream") {
         return true;
     }
 
     return pathname.startsWith("/api/boards/") && pathname.endsWith("/events");
 }
 
-/** Default bound for a plain proxied request. */
-export const UPSTREAM_TIMEOUT_MS = 15_000;
+/** Default bound for a plain proxied request (the table's `default` tier). */
+export const UPSTREAM_TIMEOUT_MS = TIMEOUT_TIER_MS.default as number;
 
 /**
- * Bound for APIs that legitimately run long: /api/ports rescans and probes every
- * listener, and the macOS pulse endpoints read system counters. They are not
- * streams, so they keep a timeout — just one they can actually finish inside.
- * Measured from `dev-dashboard.bg.log`: 36 TimeoutError on /api/ports, 22 on the
- * pulse pair, 1 on /api/tmux/sessions, every one of them a public 502.
+ * Bound for APIs that legitimately run long (the table's `slow` tier): /api/ports rescans and probes every listener,
+ * and the macOS pulse endpoints read system counters. They are not streams, so they keep a timeout, just one they can
+ * actually finish inside. Measured from `dev-dashboard.bg.log`: 36 TimeoutError on /api/ports, 22 on the pulse pair,
+ * 1 on /api/tmux/sessions, every one of them a public 502.
  */
-export const SLOW_UPSTREAM_TIMEOUT_MS = 60_000;
-
-const SLOW_UPSTREAM_PATHS = new Set([
-    "/api/ports",
-    "/api/system/pulse",
-    "/api/system/pulse/history",
-    "/api/tmux/sessions",
-]);
+export const SLOW_UPSTREAM_TIMEOUT_MS = TIMEOUT_TIER_MS.slow as number;
 
 /**
- * Bound for the recorded-spend routes, which rebuild cost by walking every
- * coding-agent transcript on disk. A cold 30-day scan measures about 20s and a
- * cold 7-day one about 4s, and the answer is cached for 15s afterwards. Under
- * the 15s default the cold scan was killed at exactly 15.0s and the browser got
- * a 502 `upstream-timeout`; only a retry that landed inside the cache succeeded
- * (sweep 2026-09-04). The work is off the request thread now, so a long wait
- * here costs this one request and nothing else.
+ * Bound for the recorded-spend routes (the table's `scan` tier), which rebuild cost by walking every coding-agent
+ * transcript on disk. A cold 30-day scan measures about 20s; under the 15s default it was killed at exactly 15.0s and
+ * the browser got a 502 `upstream-timeout` (sweep 2026-09-04).
  */
-export const SCAN_UPSTREAM_TIMEOUT_MS = 120_000;
-
-const SCAN_UPSTREAM_PATHS = new Set([
-    "/api/ai/spend/totals",
-    "/api/ai/spend/series",
-    // The legacy alias reaches the same handler.
-    "/api/claude/usage/totals",
-]);
+export const SCAN_UPSTREAM_TIMEOUT_MS = TIMEOUT_TIER_MS.scan as number;
 
 /**
  * The Cache-Control for a proxied UI response, or undefined to keep the upstream's.
@@ -112,15 +84,7 @@ export function upstreamTimeoutMs(pathname: string): number | undefined {
         return undefined;
     }
 
-    if (SCAN_UPSTREAM_PATHS.has(pathname)) {
-        return SCAN_UPSTREAM_TIMEOUT_MS;
-    }
-
-    if (SLOW_UPSTREAM_PATHS.has(pathname)) {
-        return SLOW_UPSTREAM_TIMEOUT_MS;
-    }
-
-    return UPSTREAM_TIMEOUT_MS;
+    return TIMEOUT_TIER_MS[endpointTier(pathname) ?? "default"];
 }
 
 const UPSTREAM_RETRY_ATTEMPTS = 10;

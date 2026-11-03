@@ -12,6 +12,12 @@ import type {
     TodoPriority,
     TtydSession,
 } from "@app/dev-dashboard/contract/dto";
+import {
+    type Endpoint,
+    type EndpointInput,
+    type EndpointOutput,
+    fillPath,
+} from "@app/dev-dashboard/contract/endpoint-table";
 import type {
     AttentionRes,
     CmuxLayoutRes,
@@ -33,6 +39,30 @@ import type {
 } from "@app/dev-dashboard/contract/endpoints";
 import { paths, QA_STREAM_PATH } from "@app/dev-dashboard/contract/endpoints";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+/** Per-call headers of the generic `call`. */
+export interface CallOptions {
+    /** Makes a write safe to retry: the server answers a repeat with the first answer. */
+    idempotencyKey?: string;
+    /** The stored act token of an `act` row; the auth guard lets the call through on it alone. */
+    actToken?: string;
+}
+
+/** A query string from the input left over after the path params: arrays as comma lists, undefined dropped. */
+function queryOf(rest: Record<string, unknown>): string {
+    const sp = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(rest)) {
+        if (value === undefined || value === null) {
+            continue;
+        }
+
+        sp.set(key, Array.isArray(value) ? value.join(",") : String(value));
+    }
+
+    const serialized = sp.toString();
+    return serialized ? `?${serialized}` : "";
+}
 
 /** Minimal EventSource shape. Web injects `window.EventSource`; RN injects an
  * `expo/fetch`-backed adapter (see mobile plan 04). Keeps the contract transport-free. */
@@ -88,7 +118,30 @@ export function createDashboardClient(opts: DashboardClientOptions) {
         return get<T>(path, { method, body: SafeJSON.stringify(body ?? {}) });
     }
 
+    /**
+     * The one generic method: calls any row of the endpoint table (`ENDPOINTS`) with its typed input and answer.
+     * Path params come out of the input; the rest is the query of a GET or DELETE, else the JSON body.
+     */
+    function call<E extends Endpoint>(
+        endpoint: E,
+        input: EndpointInput<E>,
+        options: CallOptions = {}
+    ): Promise<EndpointOutput<E>> {
+        const { path, rest } = fillPath(endpoint.path, (input ?? {}) as Record<string, unknown>);
+        const headers: Record<string, string> = {
+            ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
+            ...(options.actToken ? { "X-GT-Act-Token": options.actToken } : {}),
+        };
+
+        if (endpoint.method === "GET" || endpoint.method === "DELETE") {
+            return get<EndpointOutput<E>>(`${path}${queryOf(rest)}`, { method: endpoint.method, headers });
+        }
+
+        return get<EndpointOutput<E>>(path, { method: endpoint.method, headers, body: SafeJSON.stringify(rest) });
+    }
+
     return {
+        call,
         // Escape hatch — any route is callable with a caller-specified type. Deferred
         // features (claude/daemon/containers/todos) use these until precisely typed.
         get,

@@ -10,6 +10,7 @@ const FILES = [
     "dto.ts",
     "ai-accounts.ts",
     "endpoints.ts",
+    "endpoint-table.ts",
     "client.ts",
     "index.ts",
     "auth-header.ts",
@@ -22,6 +23,10 @@ const FILES = [
 
 describe("contract purity", () => {
     it("never VALUE-imports from @app/dev-dashboard/lib in any contract file", () => {
+        // The endpoint table carries server types only: a value import of a server module would put it in the bundle.
+        const table = readFileSync(join(import.meta.dir, "endpoint-table.ts"), "utf8");
+        expect(table.match(/^import\s+(?!type\b)[^;]*from/gm) ?? []).toEqual([]);
+
         const offenders = FILES.filter((file) => {
             const src = readFileSync(join(import.meta.dir, file), "utf8");
 
@@ -31,8 +36,8 @@ describe("contract purity", () => {
         expect(offenders).toEqual([]);
     });
 
-    it("never imports a node:/bun: runtime module in dto.ts or client.ts", () => {
-        const offenders = ["dto.ts", "client.ts"].filter((file) => {
+    it("never imports a node:/bun: runtime module in dto.ts, client.ts or the endpoint table", () => {
+        const offenders = ["dto.ts", "client.ts", "endpoint-table.ts"].filter((file) => {
             const src = readFileSync(join(import.meta.dir, file), "utf8");
 
             return /from\s+["'](?:node:|bun:)/.test(src);
