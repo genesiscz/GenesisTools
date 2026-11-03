@@ -71,13 +71,25 @@ Host-specific values (domain, allowed email, tunnel name) live in `~/.genesis-to
 
 Cloudflare turns any front-proxy 502 into a public "Bad Gateway", so the deadline the proxy
 puts on an upstream fetch is a user-visible setting. `upstreamTimeoutMs()` in
-`lib/front-proxy.ts` gives three tiers:
+`lib/front-proxy.ts` reads the tier of each path from the endpoint table (`contract/endpoint-table.ts`, the
+`timeout` of its row). The board streams and the preview reload stream are not table rows and stay named in
+`isLongLivedProxiedStream()`.
 
 | Tier | Deadline | Paths |
 |---|---|---|
-| stream | none | `isLongLivedProxiedStream()` — `/api/qa/stream`, `/api/live`, `/api/boards/work/wait`, `/api/ports/classify`, `/api/boards/*/events` |
-| slow | 60s | `/api/ports`, `/api/system/pulse`, `/api/system/pulse/history`, `/api/tmux/sessions` |
+| stream | none | rows with `timeout: "stream"` (`/api/qa/stream`, `/api/live`, `/api/ports/classify`, `/api/daemon/runs/tail`, `/api/qa/pending/:id/wait`), plus `/api/boards/work/wait` and `/api/boards/*/events` |
+| scan | 120s | `/api/ai/spend/totals`, `/api/ai/spend/series`, `/api/claude/usage/totals` |
+| slow | 60s | `/api/ports`, `/api/system/pulse`, `/api/system/pulse/history`, `/api/tmux/sessions`, the slow gateway rows |
 | default | 15s | everything else |
+
+## The endpoint table
+
+`contract/endpoint-table.ts` holds one row per non-board endpoint the phone and the web reach:
+`{ method, path, policy, timeout }` plus its input and output types. The server binds a row with
+`bindEndpoint(row, { input: <zod>, invalid, run })` (`server/bind.ts`), so zod stays in the server. One generic
+client method calls any row: `client.call(ENDPOINTS.qaDecisionsDismiss, { session, number, expectedRevision })`.
+A `keyed-write` row answers a retry that carries the same `Idempotency-Key` with its first answer. An `act` row
+(`POST /api/act`) passes the auth guard on its `X-GT-Act-Token` alone, and the token answers one decision letter.
 
 The slow tier is measured, not guessed. Every `TimeoutError` in
 `~/.genesis-tools/logs/dev-dashboard.bg.log` up to 2026-08-31 12:30 was one of those four
