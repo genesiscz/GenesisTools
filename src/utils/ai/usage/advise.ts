@@ -125,14 +125,27 @@ function lastsOf(forecast: AccountForecast | undefined): Pick<AdviceRow, "lastsM
     return { lastsMinutes: binding?.minutesToExhaust ?? null, bindingLabel: binding?.label ?? null };
 }
 
-function modelOrder(model: string): ProfileOrder {
+/** Under this much left, a model's own window is spent: the account cannot run that model whatever its tier says. */
+const MODEL_SPENT_LEFT_PCT = 1;
+
+/** Percent left in a model's own window; a reset that already passed refilled it. */
+function modelLeftPct(window: LimitWindow, now: number): number {
+    const resetMs = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+    return Number.isFinite(resetMs) && resetMs <= now ? 100 : Math.max(0, 100 - window.percentUsed);
+}
+
+function modelOrder(model: string, now: number): ProfileOrder {
     const wanted = model.toLowerCase();
-    const scoped = (snapshot: AccountUsageSnapshot | undefined) =>
-        snapshot?.limits.find((window) => window.scopeModel?.toLowerCase().includes(wanted));
+    const leftOf = (snapshot: AccountUsageSnapshot | undefined): number => {
+        const window = snapshot?.limits.find((limit) => limit.scopeModel?.toLowerCase().includes(wanted));
+        return window ? modelLeftPct(window, now) : 0;
+    };
 
     return (rows, snapshots) => {
-        const carrying = rows.filter((row) => scoped(snapshots.get(row.accountId)) !== undefined);
-        return stableSort(carrying, (row) => 100 - (scoped(snapshots.get(row.accountId))?.percentUsed ?? 100));
+        const left = (row: RankedAccount) => leftOf(snapshots.get(row.accountId));
+        // Only an account whose own window for the model still has room carries it; none left means no pick.
+        const carrying = rows.filter((row) => left(row) >= MODEL_SPENT_LEFT_PCT);
+        return stableSort(carrying, left);
     };
 }
 
@@ -175,7 +188,7 @@ export function adviseAccounts(input: AdviseInput): AdviseData {
     );
     const profiles: Array<[string, ProfileOrder]> = [
         ...Object.entries(profilesAt(now)),
-        ...(input.models ?? []).map((model): [string, ProfileOrder] => [`model:${model}`, modelOrder(model)]),
+        ...(input.models ?? []).map((model): [string, ProfileOrder] => [`model:${model}`, modelOrder(model, now)]),
     ];
     const providers = [...new Set(ranked.map((row) => row.provider))];
 
