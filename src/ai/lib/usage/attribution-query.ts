@@ -103,7 +103,8 @@ export async function readScope(input: {
     const providers = resolveProviderList(input.opts.provider);
     const providerIds = providers ?? usagePlugins().map((entry) => entry.plugin.id);
     const store = await AiConfigStore.readOnly();
-    const db = new UsageLimitsDb();
+    // A diagnostic read: no schema, no migration, no file.
+    const db = UsageLimitsDb.readOnlyOrEmpty();
 
     try {
         const directory = usageAccountKeys(store.accounts(), providerIds, { visibleOnly: false });

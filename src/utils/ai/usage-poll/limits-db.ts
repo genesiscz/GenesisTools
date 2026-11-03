@@ -283,6 +283,14 @@ export class UsageLimitsDb {
         return new UsageLimitsDb({ readOnly: db });
     }
 
+    /**
+     * `openReadOnly`, or an empty in-memory store when there is no history (or none migrated) yet, for a door that
+     * reads several stores and answers "nothing" rather than branching: `:memory:` touches no file.
+     */
+    static readOnlyOrEmpty(): UsageLimitsDb {
+        return UsageLimitsDb.openReadOnly() ?? new UsageLimitsDb(":memory:");
+    }
+
     private ensureSchema(): void {
         const db = this.handle;
 
