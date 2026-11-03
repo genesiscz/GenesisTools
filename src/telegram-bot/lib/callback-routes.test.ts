@@ -95,6 +95,41 @@ describe("F11: decisions answered in Telegram", () => {
         expect(retry.toast).toBe("Sent b");
     });
 
+    it("keeps a long decision under Telegram's limit, and one refused post does not stop the next", async () => {
+        class RefusesFirst extends FakeTelegramMessagesApi {
+            private refused = false;
+
+            override async sendMessage(...args: Parameters<FakeTelegramMessagesApi["sendMessage"]>) {
+                if (!this.refused) {
+                    this.refused = true;
+                    throw new Error("Bad Request: message is too long");
+                }
+
+                return super.sendMessage(...args);
+            }
+        }
+        const api = new RefusesFirst();
+        const long = "x".repeat(2000);
+        const posted = await postDecisionsToTelegram(
+            [
+                decision({ id: "d_7_s-seven", number: 7, sessionId: "s-seven" }),
+                decision({
+                    id: "d_8_s-eight",
+                    number: 8,
+                    sessionId: "s-eight",
+                    prompt: long.repeat(2),
+                    options: [long, long, long],
+                }),
+            ],
+            { bot, api, store: memoryActTokenStore(), now: NOW }
+        );
+
+        expect(posted).toBe(1);
+        expect(api.messages).toHaveLength(1);
+        expect(api.messages[0].text).toContain("❓ DECISION 8");
+        expect(api.messages[0].text.length).toBeLessThanOrEqual(3800);
+    });
+
     it("edits the message of a decision closed elsewhere and drops its buttons", async () => {
         const api = new FakeTelegramMessagesApi();
         await postDecisionsToTelegram([decision({ id: "d_6_s-six", number: 6, sessionId: "s-six" })], {

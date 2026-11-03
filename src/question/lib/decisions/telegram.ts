@@ -19,10 +19,18 @@ const log = logger.child({ component: "question:decision-telegram" });
 
 /** Telegram's message limit is 4096 characters; the prompt gets this much and the rest of the text fits around it. */
 const PROMPT_MAX = 3000;
+/** One option line's text at most, so a few long options cannot push the message over the limit. */
+const OPTION_MAX = 300;
+/** The whole message at most: leaves room for the outcome or retraction line an edit appends later. */
+const TEXT_MAX = 3800;
 /** Buttons per keyboard row: letters stay large enough to hit on a phone. */
 const BUTTONS_PER_ROW = 4;
 /** The callback router's prefix for a decision letter (`src/telegram-bot/lib/callback-routes.ts`). */
 export const DECISION_CALLBACK_PREFIX = "d";
+
+function clip(value: string, max: number): string {
+    return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
 
 /**
  * The message for one decision. With `text` on, the prompt and the options go to Telegram; with it off, only the
@@ -34,18 +42,24 @@ export function decisionTelegramText(row: DecisionRecord, project: TelegramDecis
     const recommended = row.recommended ? `Recommended: ${row.recommended}` : undefined;
 
     if (!project.text) {
-        return [head, where, "Pick a letter here, or open the hub for the text.", recommended]
-            .filter(Boolean)
-            .join("\n");
+        return clip(
+            [head, where, "Pick a letter here, or open the hub for the text.", recommended].filter(Boolean).join("\n"),
+            TEXT_MAX
+        );
     }
 
     const shown = shownDecisionText({ prompt: row.prompt, options: row.options });
-    const prompt = shown.prompt.length > PROMPT_MAX ? `${shown.prompt.slice(0, PROMPT_MAX - 1)}…` : shown.prompt;
-    const options = shown.options.map((option, index) => `${String.fromCharCode(97 + index)}) ${option}`);
+    const prompt = clip(shown.prompt, PROMPT_MAX);
+    const options = shown.options.map(
+        (option, index) => `${String.fromCharCode(97 + index)}) ${clip(option, OPTION_MAX)}`
+    );
 
-    return [head, where, "", prompt, "", ...options, ...(recommended ? ["", recommended] : [])]
-        .filter((line, index) => line !== undefined && (line !== "" || index > 1))
-        .join("\n");
+    return clip(
+        [head, where, "", prompt, "", ...options, ...(recommended ? ["", recommended] : [])]
+            .filter((line, index) => line !== undefined && (line !== "" || index > 1))
+            .join("\n"),
+        TEXT_MAX
+    );
 }
 
 function keyboard(letters: { letter: string; token: string }[], recommended?: string): TelegramButton[][] {
@@ -95,25 +109,30 @@ export async function postDecisionsToTelegram(
         let posted = 0;
 
         for (const row of waiting) {
-            const project = projects[row.project as string];
-            const letters = await issueActTokens({
-                row,
-                surface: "telegram",
-                ...(deps.store ? { store: deps.store } : {}),
-                ...(deps.now === undefined ? {} : { now: deps.now }),
-            });
-            await postTelegramMessage({
-                api,
-                chatId,
-                text: decisionTelegramText(row, project),
-                buttons: keyboard(letters, row.recommended),
-                noticeId: decisionNotificationId(row),
-                ...(deps.now === undefined ? {} : { now: deps.now }),
-            });
-            posted++;
+            // One row that Telegram refuses must not stop the rows after it.
+            try {
+                const project = projects[row.project as string];
+                const letters = await issueActTokens({
+                    row,
+                    surface: "telegram",
+                    ...(deps.store ? { store: deps.store } : {}),
+                    ...(deps.now === undefined ? {} : { now: deps.now }),
+                });
+                await postTelegramMessage({
+                    api,
+                    chatId,
+                    text: decisionTelegramText(row, project),
+                    buttons: keyboard(letters, row.recommended),
+                    noticeId: decisionNotificationId(row),
+                    ...(deps.now === undefined ? {} : { now: deps.now }),
+                });
+                posted++;
+            } catch (err) {
+                log.warn({ err, id: row.id }, "could not post a decision to Telegram; it is stored");
+            }
         }
 
-        log.info({ ids: waiting.map((row) => row.id) }, "decisions posted to Telegram");
+        log.info({ ids: waiting.map((row) => row.id), posted }, "decisions posted to Telegram");
         return posted;
     } catch (err) {
         log.warn({ err }, "could not post decisions to Telegram; they are stored");
