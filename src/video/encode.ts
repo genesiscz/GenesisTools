@@ -21,14 +21,21 @@ import {
     type TrashPaths,
 } from "@genesiscz/utils/rm";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import { NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { ffmpegProgressReader } from "@genesiscz/utils/video/ffmpeg-progress";
+import { type MediaFacts, NotMediaError, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import {
+    audioBytes,
+    correctedKbps,
     decodeErrors,
+    type EncodePass,
     encodeArgs,
     judgeOutput,
+    MIN_TARGET_VIDEO_KBPS,
     savingPercent,
     skipReason,
     type VideoEncoder,
+    type VideoRate,
+    videoKbpsForTarget,
 } from "@genesiscz/utils/video/reencode";
 
 export type EncodeStatus = "planned" | "kept" | "kept-beside" | "discarded" | "skipped" | "failed";
@@ -51,15 +58,42 @@ export interface EncodeRow {
     seconds: number;
 }
 
+/** Corrected passes after the first one when a size target is missed (each pass encodes the whole file). */
+const MAX_SIZE_CORRECTIONS = 2;
+
+/** Where one input is: an encode pass with its position in the timeline, or the decode check of the result. */
+export interface EncodeProgressEvent {
+    type: "progress";
+    input: string;
+    /** "analyze" is pass 1 of a two-pass encode, which writes only statistics. */
+    phase: "analyze" | "encode" | "verify";
+    /** 0 for the first encode, 1 and 2 for size corrections. */
+    pass: number;
+    durationSec: number | null;
+    outTimeSec: number | null;
+    /** 0 to 1 within this pass; null while the duration or the position is unknown. */
+    fraction: number | null;
+    speed: number | null;
+    outputBytes: number | null;
+}
+
 export interface EncodeOptions {
     paths: string[];
     encoder: VideoEncoder;
     quality: number;
+    /** Aim the output at this many bytes instead of a constant quality. */
+    targetBytes?: number;
+    /** Scale a taller video down to this height, on the GPU. */
+    height?: number;
     jobs: number;
     minSavingPct: number;
     replace: boolean;
     dryRun: boolean;
     signal?: AbortSignal;
+    /** Called with each ffmpeg progress block and when the decode check starts. */
+    onProgress?: (event: EncodeProgressEvent) => void;
+    /** Called with each row as soon as its input is finished. */
+    onRow?: (row: EncodeRow) => void;
     /** How `--replace` asks the trash about an original; the GenesisTools trash unless a test passes another. */
     planReplace?: (input: string) => PlannedReplace;
 }
@@ -492,6 +526,68 @@ export function probeFailureRow({
     return { status: "failed", reason: `the probe failed: ${messageOf(error)}` };
 }
 
+/** Runs one ffmpeg encode (or one run of a two-pass encode) and reports its progress; the failure text, or null. */
+async function runEncodePass({
+    input,
+    output,
+    rate,
+    height,
+    pass,
+    twoPass,
+    facts,
+    options,
+}: {
+    input: string;
+    output: string;
+    rate: VideoRate;
+    height: number | undefined;
+    /** The size-correction attempt, 0 for the first. */
+    pass: number;
+    twoPass: EncodePass | undefined;
+    facts: MediaFacts;
+    options: EncodeOptions;
+}): Promise<string | null> {
+    const { encoder, onProgress } = options;
+    const phase: EncodeProgressEvent["phase"] = twoPass?.index === 1 ? "analyze" : "encode";
+    const run = await boundedCommand({
+        command: encodeArgs({
+            encoder,
+            input,
+            output,
+            rate,
+            height,
+            pass: twoPass,
+            progress: onProgress !== undefined,
+        }),
+        timeoutMs: 4 * 60 * 60_000,
+        signal: options.signal,
+        onStdout: onProgress
+            ? ffmpegProgressReader((block) =>
+                  onProgress({
+                      type: "progress",
+                      input,
+                      phase,
+                      pass,
+                      durationSec: facts.durationSec,
+                      outTimeSec: block.outTimeSec,
+                      fraction:
+                          facts.durationSec && block.outTimeSec !== null
+                              ? Math.min(1, block.outTimeSec / facts.durationSec)
+                              : null,
+                      speed: block.speed,
+                      outputBytes: phase === "analyze" ? null : block.totalBytes,
+                  })
+              )
+            : undefined,
+    });
+
+    if (run.error || run.status !== 0) {
+        return `ffmpeg failed${phase === "analyze" ? " in the analysis pass" : ""}: ${run.error?.message ?? run.stderr.slice(-300)}`;
+    }
+
+    return null;
+}
+
 async function encodeOne({ input, options }: { input: string; options: EncodeOptions }): Promise<EncodeRow> {
     const { encoder } = options;
     const started = performance.now();
@@ -530,10 +626,33 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         return finish(probeFailureRow({ input, error }));
     }
 
-    const skip = skipReason({ facts, encoder });
+    const inputHeight = primaryVideo(facts)?.height;
+    const height =
+        options.height !== undefined && (inputHeight === undefined || inputHeight > options.height)
+            ? options.height
+            : undefined;
+    const skip = skipReason({ facts, encoder, reshaping: options.targetBytes !== undefined || height !== undefined });
 
     if (skip) {
         return finish({ reason: skip });
+    }
+
+    let rate: VideoRate = { kind: "quality", quality: options.quality };
+
+    if (options.targetBytes !== undefined) {
+        const kbps = videoKbpsForTarget({ facts, targetBytes: options.targetBytes });
+
+        if (kbps === null) {
+            return finish({ reason: "no duration, so no bitrate for the size target" });
+        }
+
+        if (kbps < MIN_TARGET_VIDEO_KBPS) {
+            return finish({
+                reason: `the size target leaves ${Math.max(0, kbps)} kbit/s for the video, below ${MIN_TARGET_VIDEO_KBPS}`,
+            });
+        }
+
+        rate = { kind: "bitrate", kbps };
     }
 
     const finalPath = options.replace ? input : siblingOutput({ input, encoder });
@@ -543,28 +662,80 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
     }
 
     if (options.dryRun) {
-        return finish({ output: finalPath, status: "planned", reason: "would encode" });
+        const plan = [
+            rate.kind === "bitrate" ? `at ${rate.kbps} kbit/s` : null,
+            height === undefined ? null : `scaled to ${height}p`,
+            rate.kind === "bitrate" && encoder.twoPass ? "in two passes" : null,
+        ].filter(Boolean);
+        return finish({ output: finalPath, status: "planned", reason: ["would encode", ...plan].join(" ") });
     }
 
     let staging: Staging | null = null;
 
     try {
         staging = makeStaging({ input, encoder });
-        const temp = staging.file;
-        const run = await boundedCommand({
-            command: encodeArgs({ encoder, input, output: temp, quality: options.quality }),
-            timeoutMs: 4 * 60 * 60_000,
-            signal: options.signal,
-        });
+        const ext = extname(staging.file);
+        let temp = staging.file;
 
-        if (run.error || run.status !== 0) {
-            return finish({
-                status: "failed",
-                reason: `ffmpeg failed: ${run.error?.message ?? run.stderr.slice(-300)}`,
+        for (let pass = 0; ; pass++) {
+            const logFile = join(staging.dir, "2pass");
+            const passes: (EncodePass | undefined)[] =
+                rate.kind === "bitrate" && encoder.twoPass
+                    ? [
+                          { index: 1, logFile },
+                          { index: 2, logFile },
+                      ]
+                    : [undefined];
+            let failure: string | null = null;
+
+            for (const twoPass of passes) {
+                failure = await runEncodePass({ input, output: temp, rate, height, pass, twoPass, facts, options });
+
+                if (failure) {
+                    break;
+                }
+            }
+
+            if (failure) {
+                return finish({ status: "failed", reason: failure });
+            }
+
+            if (rate.kind !== "bitrate" || options.targetBytes === undefined) {
+                break;
+            }
+
+            const outputBytes = statSync(temp).size;
+            const next = correctedKbps({
+                kbps: rate.kbps,
+                targetBytes: options.targetBytes,
+                outputBytes,
+                audio: audioBytes(facts),
             });
+            logger.debug(
+                { input, pass, kbps: rate.kbps, outputBytes, targetBytes: options.targetBytes, next },
+                "Size-target pass finished"
+            );
+
+            if (next === null || pass >= MAX_SIZE_CORRECTIONS) {
+                break;
+            }
+
+            rate = { kind: "bitrate", kbps: next };
+            temp = join(staging.dir, `${basename(staging.file, ext)}.pass${pass + 1}${ext}`);
         }
 
         const output = await readMediaFacts({ input: temp, signal: options.signal });
+        options.onProgress?.({
+            type: "progress",
+            input,
+            phase: "verify",
+            pass: 0,
+            durationSec: facts.durationSec,
+            outTimeSec: null,
+            fraction: null,
+            speed: null,
+            outputBytes: statSync(temp).size,
+        });
         const errors = await decodeErrors({ encoder, path: temp, signal: options.signal });
         const verdict = judgeOutput({
             input: facts,
@@ -618,7 +789,9 @@ export async function encodeVideos(options: EncodeOptions): Promise<EncodeRow[]>
     const inputs = collectInputs({ paths: options.paths, encoder: options.encoder });
     const rows = new Map<string, EncodeRow>();
     await pool(inputs, options.jobs, async (input) => {
-        rows.set(input, await encodeOne({ input, options }));
+        const row = await encodeOne({ input, options });
+        rows.set(input, row);
+        options.onRow?.(row);
     });
     return inputs.map((input) => rows.get(input) as EncodeRow);
 }

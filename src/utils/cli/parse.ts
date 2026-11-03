@@ -25,6 +25,20 @@ export function parseNonNegativeNumber(value: string, flag: string, { max }: { m
     return parsed;
 }
 
+const BYTE_UNITS: Record<string, number> = { "": 1024 ** 2, k: 1024, m: 1024 ** 2, g: 1024 ** 3 };
+
+/** Parses a size flag such as `400`, `400MB`, `1.5G` or `800k` into bytes; a bare number means megabytes. */
+export function parseByteSize(value: string, flag: string): number {
+    const match = /^\s*(\d+(?:\.\d+)?)\s*([kmg]?)(?:i?b)?\s*$/i.exec(value);
+    const bytes = match ? Number(match[1]) * BYTE_UNITS[match[2].toLowerCase()] : Number.NaN;
+
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        throw new Error(`${flag} must be a size such as 400MB, 1.5GB or 800k, got "${value}"`);
+    }
+
+    return Math.round(bytes);
+}
+
 /**
  * Splits a command line into argv words, keeping a single- or double-quoted part as one word
  * (`tools a "b c"` is ["tools", "a", "b c"]). No expansion: `$HOME` and globs stay as written.

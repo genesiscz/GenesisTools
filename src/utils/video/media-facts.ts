@@ -9,6 +9,10 @@ export interface MediaStream {
     codec: string;
     /** A cover picture stored as a video stream; it is not a playable video. */
     attachedPicture: boolean;
+    /** Pixel height of a video stream, when ffprobe reports it. */
+    height?: number;
+    /** Bits per second, when the container records it. */
+    bitRate?: number;
 }
 
 export interface MediaFacts {
@@ -24,6 +28,8 @@ const ffprobeSchema = z.object({
             z.object({
                 codec_type: z.string().optional(),
                 codec_name: z.string().optional(),
+                height: z.number().optional(),
+                bit_rate: z.string().optional(),
                 disposition: z.object({ attached_pic: z.number().optional() }).optional(),
             })
         )
@@ -44,6 +50,11 @@ export function parseMediaFacts({ raw, path, bytes }: { raw: unknown; path: stri
             type: stream.codec_type ?? "unknown",
             codec: stream.codec_name ?? "unknown",
             attachedPicture: (stream.disposition?.attached_pic ?? 0) === 1,
+            height: stream.height,
+            bitRate:
+                stream.bit_rate === undefined || !Number.isFinite(Number(stream.bit_rate))
+                    ? undefined
+                    : Number(stream.bit_rate),
         })),
     };
 }

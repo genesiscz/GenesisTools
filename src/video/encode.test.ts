@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { parseByteSize } from "@genesiscz/utils/cli/parse";
 import {
     defaultRmConfig,
     identityOf,
@@ -22,16 +23,22 @@ import {
     restoreBatch,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
+import { type FfmpegProgress, ffmpegProgressReader } from "@genesiscz/utils/video/ffmpeg-progress";
 import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
 import {
+    correctedKbps,
     decodeErrors,
     encodeArgs,
     ffmpegCommand,
     findEncoder,
     judgeOutput,
     skipReason,
+    VIDEO_ENCODERS,
+    VIDEO_PRESET_NAMES,
+    VIDEO_PRESETS,
     type VideoEncoder,
+    videoKbpsForTarget,
 } from "@genesiscz/utils/video/reencode";
 import {
     collectInputs,
@@ -221,12 +228,138 @@ describe("encodeArgs", () => {
             "-encoders",
         ]);
 
-        const args = encodeArgs({ encoder, input: "/clips/a.mp4", output: "/clips/out.mp4", quality: 58 });
+        const args = encodeArgs({
+            encoder,
+            input: "/clips/a.mp4",
+            output: "/clips/out.mp4",
+            rate: { kind: "quality", quality: 58 },
+        });
         const ffmpeg = args.slice(4);
         expect(args.slice(0, 4)).toEqual(["nice", "-n", "10", "ffmpeg"]);
         expect(ffmpeg).toContain("-n");
         expect(ffmpeg).not.toContain("-y");
         expect(ffmpeg[ffmpeg.indexOf("-map") + 1]).toBe("0:V:0");
+    });
+});
+
+describe("size target and GPU scale", () => {
+    test("a resize keeps the frames on the GPU, and a bitrate is uncapped with a long GOP", () => {
+        const args = encodeArgs({
+            encoder,
+            input: "/clips/a.mp4",
+            output: "/clips/out.mp4",
+            rate: { kind: "bitrate", kbps: 420 },
+            height: 720,
+        });
+
+        expect(args).toContain("videotoolbox_vld");
+        expect(args[args.indexOf("-vf") + 1]).toBe("scale_vt=w=-2:h=720");
+        expect(args[args.indexOf("-b:v") + 1]).toBe("420k");
+        expect(args).not.toContain("-maxrate");
+        expect(args[args.indexOf("-g") + 1]).toBe("600");
+        expect(args[args.indexOf("-bf") + 1]).toBe("2");
+        expect(args[args.indexOf("-qmax") + 1]).toBe("36");
+        expect(args).not.toContain("-q:v");
+        expect(args[args.indexOf("-c:a") + 1]).toBe("copy");
+    });
+
+    test("without a resize the command has no filter and no GPU frame format", () => {
+        const args = encodeArgs({ encoder, input: "/a.mp4", output: "/b.mp4", rate: { kind: "quality", quality: 58 } });
+
+        expect(args).not.toContain("-vf");
+        expect(args).not.toContain("videotoolbox_vld");
+    });
+
+    test("a two-pass encoder writes only statistics in pass 1 and the file in pass 2", () => {
+        const x264 = VIDEO_ENCODERS.x264;
+        const rate = { kind: "bitrate", kbps: 385 } as const;
+        const first = encodeArgs({
+            encoder: x264,
+            input: "/a.mp4",
+            output: "/b.mp4",
+            rate,
+            height: 720,
+            pass: { index: 1, logFile: "/tmp/stats" },
+        });
+        const second = encodeArgs({
+            encoder: x264,
+            input: "/a.mp4",
+            output: "/b.mp4",
+            rate,
+            pass: { index: 2, logFile: "/tmp/stats" },
+        });
+
+        expect(first.slice(-4)).toEqual(["-an", "-f", "null", "-"]);
+        expect(first[first.indexOf("-vf") + 1]).toBe("scale=-2:720:flags=lanczos");
+        expect(first[first.indexOf("-pass") + 1]).toBe("1");
+        expect(second.at(-1)).toBe("/b.mp4");
+        expect(second[second.indexOf("-passlogfile") + 1]).toBe("/tmp/stats");
+    });
+
+    test("x265 carries its pass inside -x265-params, beside its own settings", () => {
+        const args = encodeArgs({
+            encoder: VIDEO_ENCODERS.x265,
+            input: "/a.mp4",
+            output: "/b.mp4",
+            rate: { kind: "bitrate", kbps: 385 },
+            pass: { index: 2, logFile: "/tmp/stats" },
+        });
+
+        expect(args[args.indexOf("-x265-params") + 1]).toBe(
+            "keyint=600:aq-mode=3:log-level=error:pass=2:stats=/tmp/stats"
+        );
+        expect(args).not.toContain("-pass");
+    });
+
+    test("every preset names an encoder in the table", () => {
+        for (const name of VIDEO_PRESET_NAMES) {
+            expect(findEncoder(VIDEO_PRESETS[name])?.codec).toBe(VIDEO_PRESETS[name]);
+        }
+    });
+
+    test("the video gets the target minus the copied audio and a container share", () => {
+        const input = facts({
+            durationSec: 6468.75,
+            streams: [
+                { type: "video", codec: "h264", attachedPicture: false, height: 1080 },
+                { type: "audio", codec: "aac", attachedPicture: false, bitRate: 128_000 },
+            ],
+        });
+
+        expect(videoKbpsForTarget({ facts: input, targetBytes: 400 * 1024 ** 2 })).toBe(385);
+        expect(videoKbpsForTarget({ facts: facts({ durationSec: null }), targetBytes: 1000 })).toBeNull();
+    });
+
+    test("a pass inside the band needs no correction, and a miss scales the rate by the video share", () => {
+        const target = 400_000_000;
+        const audio = 100_000_000;
+
+        expect(correctedKbps({ kbps: 400, targetBytes: target, outputBytes: 395_000_000, audio })).toBeNull();
+        // 296 MB with 100 MB of audio: the video took 196 MB of its 296 MB share (1% of the target goes to the container), so 400 becomes 604.
+        expect(correctedKbps({ kbps: 400, targetBytes: target, outputBytes: 296_000_000, audio })).toBe(604);
+    });
+
+    test("ffmpeg progress blocks are read across chunk boundaries, one callback per block", () => {
+        const seen: FfmpegProgress[] = [];
+        const read = ffmpegProgressReader((block) => seen.push(block));
+        const text =
+            "out_time_us=1500000\ntotal_size=4096\nspeed=21.3x\nprogress=continue\nout_time_us=N/A\nprogress=end\n";
+        const bytes = new TextEncoder().encode(text);
+        read(bytes.slice(0, 7));
+        read(bytes.slice(7, 40));
+        read(bytes.slice(40));
+
+        expect(seen).toEqual([
+            { outTimeSec: 1.5, speed: 21.3, totalBytes: 4096, ended: false },
+            { outTimeSec: null, speed: null, totalBytes: null, ended: true },
+        ]);
+    });
+
+    test("sizes parse with or without a unit, a bare number being megabytes", () => {
+        expect(parseByteSize("400", "--target-size")).toBe(400 * 1024 ** 2);
+        expect(parseByteSize("1.5GB", "--target-size")).toBe(1.5 * 1024 ** 3);
+        expect(parseByteSize("800k", "--target-size")).toBe(800 * 1024);
+        expect(() => parseByteSize("big", "--target-size")).toThrow("--target-size must be a size");
     });
 });
 
