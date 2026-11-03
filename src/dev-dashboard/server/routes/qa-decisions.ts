@@ -70,6 +70,12 @@ function defined<T extends Record<string, unknown>>(value: T): T {
     return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
+/** `?hours=N` of the inbox and the waiting queue: one parse, so the two routes cannot drift (72 when absent or bad). */
+const hoursInput = z.object({ hours: z.unknown().optional() }).transform(({ hours }) => {
+    const parsed = Number.parseInt(typeof hours === "string" ? hours : "72", 10);
+    return { hours: Number.isFinite(parsed) && parsed > 0 ? parsed : 72 };
+});
+
 /**
  * The /qa Decisions tab's door onto the hub inbox: the same list (`loadInbox`, `loadSessionDecisions`),
  * the same answer-and-deliver (`answerInboxDecisions`) and the same re-send of queued answers
@@ -82,19 +88,13 @@ export function qaDecisionRoutes(deps: QaDecisionDeps = {}): RouteDef[] {
 
     return [
         bindEndpoint(ENDPOINTS.qaDecisions, {
-            input: z.object({ hours: z.unknown().optional() }).transform(({ hours }) => {
-                const parsed = Number.parseInt(typeof hours === "string" ? hours : "72", 10);
-                return { hours: Number.isFinite(parsed) && parsed > 0 ? parsed : 72 };
-            }),
+            input: hoursInput,
             invalid: "expected ?hours=N",
             run: ({ hours }) => loadInbox({ hours: hours ?? 72, ...(deps.inbox ? { deps: deps.inbox } : {}) }),
         }),
         // The phone's answer queue: the waiting set's items and counts, so the phone number equals the notch.
         bindEndpoint(ENDPOINTS.qaWaiting, {
-            input: z.object({ hours: z.unknown().optional() }).transform(({ hours }) => {
-                const parsed = Number.parseInt(typeof hours === "string" ? hours : "72", 10);
-                return { hours: Number.isFinite(parsed) && parsed > 0 ? parsed : 72 };
-            }),
+            input: hoursInput,
             invalid: "expected ?hours=N",
             run: ({ hours }) => loadWaitingQueue({ hours: hours ?? 72, ...(deps.inbox ? { deps: deps.inbox } : {}) }),
         }),
