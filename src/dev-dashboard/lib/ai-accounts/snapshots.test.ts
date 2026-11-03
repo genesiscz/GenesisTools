@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CLAUDE_ALL_ACCOUNT_ID } from "@app/dev-dashboard/contract/ai-accounts";
-import { limitSeriesFrom, providerAccountKey, spendAccountIds } from "@app/dev-dashboard/lib/ai-accounts/snapshots";
+import { limitSeriesWire, spendAccountIds } from "@app/dev-dashboard/lib/ai-accounts/snapshots";
+import type { AccountKey } from "@genesiscz/utils/ai/usage/contract/envelope";
+import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { readLimitSeries } from "@genesiscz/utils/ai/usage-poll/series";
+import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
 
 /** Invented handles, never a live account name. */
 const ENABLED = [
@@ -55,40 +59,59 @@ describe("spendAccountIds", () => {
  * Two providers may hold an account of the same NAME, and the limits DB is keyed
  * by provider AND name. The dashboard used to resolve each row through a
  * name-only map, so whichever account came last in config lent its id and its
- * provider to the other provider's history (eve review, PR #363).
+ * provider to the other provider's history (eve review, PR #363). The mapping now
+ * lives in the core (`readLimitSeries`); these pin it through the dashboard wire.
  */
-describe("limitSeriesFrom", () => {
-    const ACCOUNTS = [
-        { id: "acc_claude_work", name: "work", provider: "anthropic-sub" },
-        { id: "acc_codex_work", name: "work", provider: "openai-sub" },
+describe("readLimitSeries through limitSeriesWire", () => {
+    const FROM = "2026-11-01T00:00:00.000Z";
+    const TO = "2026-11-01T12:00:00.000Z";
+    const CLAUDE_WORK = { provider: "anthropic-sub", accountId: "acc_claude_work", accountName: "work" };
+    const CODEX_WORK = { provider: "openai-sub", accountId: "acc_codex_work", accountName: "work" };
+    const CURRENT: AccountUsageSnapshot[] = [
+        {
+            ...CLAUDE_WORK,
+            fetchedAt: TO,
+            limits: [{ key: "five_hour", label: "5h", kind: "session", percentUsed: 10 }],
+        },
+        {
+            ...CODEX_WORK,
+            fetchedAt: TO,
+            limits: [{ key: "five_hour", label: "Session", kind: "session", percentUsed: 90 }],
+        },
     ];
+    let db: UsageLimitsDb;
 
-    const ENTRIES = [
-        { provider: "anthropic-sub", account: "work", key: "five_hour", points: [{ t: "1", percent: 10 }] },
-        { provider: "openai-sub", account: "work", key: "five_hour", points: [{ t: "1", percent: 90 }] },
-    ];
-
-    const LABELS = new Map([
-        [`${providerAccountKey("anthropic-sub", "work")}|five_hour`, "5h"],
-        [`${providerAccountKey("openai-sub", "work")}|five_hour`, "Session"],
-    ]);
-
-    test("a window the current snapshot lists as absent ends at its last point; the others carry on", () => {
-        const absent = new Set([`${providerAccountKey("anthropic-sub", "work")}|five_hour`]);
-        const [claude, codex] = limitSeriesFrom({
-            entries: ENTRIES,
-            accounts: ACCOUNTS,
-            labels: LABELS,
-            filter: {},
-            absent,
+    function put(provider: string, account: string, key: string, percent: number, at: string, kind = "session"): void {
+        db.recordSnapshotV2(account, key, percent, at, {
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider,
+            kind,
         });
+    }
 
-        expect(claude).toMatchObject({ provider: "anthropic-sub", endedAt: "1" });
-        expect(codex.endedAt).toBeUndefined();
+    function wire(accounts?: AccountKey[]) {
+        const data = readLimitSeries(
+            { from: FROM, to: TO, agg: "last", ...(accounts ? { accounts } : {}) },
+            { db, directory: [CLAUDE_WORK, CODEX_WORK], current: CURRENT }
+        );
+
+        return limitSeriesWire(data.series);
+    }
+
+    beforeEach(() => {
+        db = new UsageLimitsDb(":memory:");
+        put("anthropic-sub", "work", "five_hour", 10, "2026-11-01T01:00:00.000Z");
+        put("openai-sub", "work", "five_hour", 90, "2026-11-01T01:00:00.000Z");
+    });
+
+    afterEach(() => {
+        db.close();
     });
 
     test("each provider's history keeps its own account id, label and provider", () => {
-        const series = limitSeriesFrom({ entries: ENTRIES, accounts: ACCOUNTS, labels: LABELS, filter: {} });
+        const series = wire();
 
         expect(series.map((s) => s.accountId)).toEqual(["acc_claude_work", "acc_codex_work"]);
         expect(series.map((s) => s.provider)).toEqual(["anthropic-sub", "openai-sub"]);
@@ -96,39 +119,50 @@ describe("limitSeriesFrom", () => {
         expect(series.map((s) => s.points[0].percent)).toEqual([10, 90]);
     });
 
-    test("a provider filter drops the same-named account the DB query could not exclude", () => {
-        const series = limitSeriesFrom({
-            entries: ENTRIES,
-            accounts: ACCOUNTS,
-            labels: LABELS,
-            filter: { providers: ["claude"] },
-        });
+    test("selecting one of two same-named accounts drops the other provider's rows", () => {
+        const series = wire([CODEX_WORK]);
 
         expect(series).toHaveLength(1);
-        expect(series[0].accountId).toBe("acc_claude_work");
-        expect(series[0].provider).toBe("anthropic-sub");
+        expect(series[0]).toMatchObject({ accountId: "acc_codex_work", provider: "openai-sub" });
     });
 
-    test("an account filter selects by id, so one of two same-named accounts survives", () => {
-        const series = limitSeriesFrom({
-            entries: ENTRIES,
-            accounts: ACCOUNTS,
-            labels: LABELS,
-            filter: { accounts: ["acc_codex_work"] },
+    test("a row with no configured account keeps its own provider and falls back to the name", () => {
+        put("grok-sub", "side", "primary", 5, "2026-11-01T02:00:00.000Z", "weekly");
+
+        expect(wire().find((s) => s.provider === "grok-sub")).toMatchObject({
+            accountId: "side",
+            accountName: "side",
+            label: "primary",
         });
-
-        expect(series).toHaveLength(1);
-        expect(series[0].provider).toBe("openai-sub");
     });
 
-    test("an entry with no configured account keeps its own provider and falls back to the name", () => {
-        const orphan = [{ provider: "grok-sub", account: "side", key: "primary", points: [] }];
-        const series = limitSeriesFrom({ entries: orphan, accounts: ACCOUNTS, labels: LABELS, filter: {} });
+    test("a window that changed kind stays one line on the wire, in time order", () => {
+        put("anthropic-sub", "work", "five_hour", 40, "2026-11-01T03:00:00.000Z", "weekly");
 
-        expect(series[0]).toMatchObject({ accountId: "side", accountName: "side", provider: "grok-sub" });
+        const claude = wire([CLAUDE_WORK]);
+
+        expect(claude).toHaveLength(1);
+        expect(claude[0].points.map((p) => p.percent)).toEqual([10, 40]);
+        expect(claude[0].label).toBe("5h");
     });
 
-    test("negative control: no filter returns every provider's history", () => {
-        expect(limitSeriesFrom({ entries: ENTRIES, accounts: ACCOUNTS, labels: LABELS, filter: {} })).toHaveLength(2);
+    test("a window the newest poll lists as absent ends at its last point and keeps a readable label", () => {
+        const current: AccountUsageSnapshot[] = [
+            { ...CLAUDE_WORK, fetchedAt: TO, limits: [], absentLimits: [{ key: "five_hour", kind: "session" }] },
+            CURRENT[1],
+        ];
+        const data = readLimitSeries(
+            { from: FROM, to: TO, agg: "last" },
+            { db, directory: [CLAUDE_WORK, CODEX_WORK], current }
+        );
+        const [claude, codex] = limitSeriesWire(data.series);
+
+        expect(data.series.map((s) => s.availableNow)).toEqual(["absent", "limited"]);
+        expect(claude).toMatchObject({ provider: "anthropic-sub", endedAt: "2026-11-01T01:00:00.000Z", label: "Session (5h)" });
+        expect(codex.endedAt).toBeUndefined();
+    });
+
+    test("negative control: no selection returns every provider's history", () => {
+        expect(wire()).toHaveLength(2);
     });
 });
