@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 
 /** The file in a meeting's folder that `listen` appends one event per line to, and `--subscribe-answers` follows. */
 export const ANSWER_LOG_FILE = "questions.ndjson";
@@ -69,13 +70,10 @@ export function runningRound(events: AnswerEvent[]): AnswerEvent[] {
     return [];
 }
 
-function pidAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
+/** The pid a round recorded still runs `meetings listen`: a recycled pid is no listener. */
+function listenerAlive(pid: number): boolean {
+    const { status } = classifyPid(pid, (command) => /\bmeetings\b/.test(command) && /\blisten\b/.test(command));
+    return status === "live" || status === "unverified";
 }
 
 /**
@@ -91,7 +89,7 @@ export async function subscribeAnswers(options: {
     alive?: (pid: number) => boolean;
     livenessMs?: number;
 }): Promise<number> {
-    const alive = options.alive ?? pidAlive;
+    const alive = options.alive ?? listenerAlive;
     const backlog = readAnswerEvents(options.path);
     const running = runningRound(backlog);
     let roundPid = running[0]?.event === "round-start" ? running[0].pid : undefined;

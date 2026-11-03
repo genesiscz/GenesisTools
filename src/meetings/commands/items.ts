@@ -660,7 +660,7 @@ async function transcript(
 
         if (playLink && playLink(0) === null) {
             ui.warn(
-                `No play links: switch the router preset on with "tools browser-router presets enable meetings-play".`
+                `No play links: switch the router preset on with "${toolCommand("browser-router", "presets", "enable", "meetings-play")}".`
             );
         }
 
