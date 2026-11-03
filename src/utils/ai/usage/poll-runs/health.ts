@@ -9,6 +9,9 @@ export const LIMITS_HEALTH_SCHEMA = { verb: "limits.health", version: 1 } as con
 /** A span the window names with no poll in it shorter than this is one late tick, not a gap. */
 export const MIN_GAP_MS = 5 * 60_000;
 
+/** Polled fine for this long with no usage change: the account is idle, not broken and not unmeasured. */
+export const IDLE_AFTER_MS = 30 * 60_000;
+
 export interface HealthSpan {
     /** ISO UTC. */
     from: string;
@@ -38,6 +41,14 @@ export interface AccountHealth extends AccountKey {
     coveragePct: number;
     /** Spans of at least `MIN_GAP_MS` with no poll, oldest first. */
     gaps: HealthSpan[];
+    /**
+     * For an account polled `ok` now: `idle` when it was polled fine for the last `IDLE_AFTER_MS` and its usage did
+     * not change in that time, `active` when its usage changed within it. Null when it is not polled fine now, or
+     * was polled fine too briefly to tell.
+     */
+    activity: "active" | "idle" | null;
+    /** The newest stored reading, which the poller writes only on a change; null without one. */
+    lastChangeAt: string | null;
     /** Every run that overlaps the window, oldest first (the strip under the burn lanes). */
     runs: HealthRun[];
 }
@@ -62,6 +73,8 @@ export interface LimitsHealthInput {
     now: Date;
     heartbeatAgeMs: number | null;
     lastRoundAt: string | null;
+    /** When each account's usage last changed (`lastReadingChanges`), keyed `<provider>\0<account name>`. */
+    lastChanges: ReadonlyMap<string, string>;
 }
 
 interface Interval {
@@ -113,9 +126,28 @@ function gapsOf(spans: readonly Interval[], window: Interval): HealthSpan[] {
     return gaps;
 }
 
+function activityOf(input: {
+    outcome: PollOutcome | "unmeasured";
+    since: string | null;
+    lastChangeAt: string | null;
+    now: Date;
+}): AccountHealth["activity"] {
+    if (input.outcome !== "ok" || input.since === null) {
+        return null;
+    }
+
+    const quietFrom = input.now.getTime() - IDLE_AFTER_MS;
+
+    if (input.lastChangeAt !== null && Date.parse(input.lastChangeAt) > quietFrom) {
+        return "active";
+    }
+
+    return Date.parse(input.since) <= quietFrom ? "idle" : null;
+}
+
 function accountHealth(
     account: AccountKey,
-    input: Pick<LimitsHealthInput, "runs" | "latest" | "now">,
+    input: Pick<LimitsHealthInput, "runs" | "latest" | "now" | "lastChanges">,
     window: Interval
 ): AccountHealth {
     const mine = (run: PollRun) => run.provider === account.provider && run.accountId === account.accountId;
@@ -127,17 +159,22 @@ function accountHealth(
     const now = input.now;
     const latest = input.latest.find(mine);
     const current = latest !== undefined && now.getTime() - Date.parse(latest.to) <= RUN_CONTINUES_MS;
+    const outcome = current ? latest.outcome : "unmeasured";
+    const since = current ? latest.from : (latest?.to ?? null);
+    const lastChangeAt = input.lastChanges.get(`${account.provider}\u0000${account.accountName}`) ?? null;
 
     return {
         ...account,
-        outcome: current ? latest.outcome : "unmeasured",
-        since: current ? latest.from : (latest?.to ?? null),
+        outcome,
+        since,
         lastPollAt: latest?.to ?? null,
         source: latest?.source ?? null,
         gateUntil: current ? latest.gateUntil : null,
         reason: latest?.reason ?? null,
         coveragePct: Math.round((measuredMs / windowMs) * 1000) / 10,
         gaps: gapsOf(spans, window),
+        activity: activityOf({ outcome, since, lastChangeAt, now }),
+        lastChangeAt,
         runs: own.map((run) => ({
             from: run.from,
             to: run.to,
