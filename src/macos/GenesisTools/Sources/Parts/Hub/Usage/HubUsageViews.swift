@@ -154,13 +154,7 @@ struct UsageMain: View {
             }
         }
         .hubSurface(.content)
-        .onChange(of: preferences.settings) { old, new in
-            if old.range != new.range || old.resolution != new.resolution || old.spendStack != new.spendStack {
-                usage.rangeChanged()
-            } else {
-                usage.settingsChanged()
-            }
-        }
+        .onChange(of: preferences.settings) { _, _ in usage.preferencesChanged() }
     }
 
     @ViewBuilder
