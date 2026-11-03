@@ -1,22 +1,38 @@
 import type { WaitingFormDto } from "@dd/contract";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
-import { ReceiptLine, WriteError } from "@/features/answer-queue/components/ReceiptLine";
+import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useAnswerForm } from "@/features/answer-queue/hooks";
-import { type FormDraft, formAnswers, idempotencyKey, missingAnswers, togglePick } from "@/features/answer-queue/units";
+import {
+    type FormDraft,
+    formAnswers,
+    idempotencyKey,
+    missingAnswers,
+    type RecentReceipt,
+    togglePick,
+} from "@/features/answer-queue/units";
 import { useThemeColors } from "@/theme/colors";
 
 /**
  * A pending ask form as a native form: choice buttons per question (one or several, as the question allows) and a
  * text field where it takes free text. Send stays disabled until every required question has an answer.
  */
-export function FormCard({ form }: { form: WaitingFormDto }) {
+export function FormCard({
+    form,
+    onReceipt,
+}: {
+    form: WaitingFormDto;
+    /** Keeps the answer's receipt above the queue: an answered form leaves the queue on the next read. */
+    onReceipt: (entry: RecentReceipt) => void;
+}) {
     const c = useThemeColors();
-    const answer = useAnswerForm();
+    const testId = `answer-queue-form-${form.id}`;
+    const answer = useAnswerForm((receipt) =>
+        onReceipt({ testID: `${testId}-receipt`, label: `Ask form${form.source ? ` · ${form.source}` : ""}`, receipt })
+    );
     const [draft, setDraft] = useState<FormDraft>({});
     const missing = missingAnswers(form, draft);
     const canSend = missing.length === 0 && !answer.isPending;
-    const testId = `answer-queue-form-${form.id}`;
 
     const update = (itemId: string, patch: Partial<FormDraft[string]>) =>
         setDraft((current) => ({
@@ -94,7 +110,6 @@ export function FormCard({ form }: { form: WaitingFormDto }) {
                     {answer.isPending ? "Sending…" : "Send"}
                 </Text>
             </Pressable>
-            {answer.data ? <ReceiptLine testID={`${testId}-receipt`} receipt={answer.data} /> : null}
             {answer.isError ? <WriteError testID={`${testId}-error`} error={answer.error} /> : null}
         </View>
     );

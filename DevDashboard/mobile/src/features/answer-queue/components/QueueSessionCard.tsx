@@ -2,9 +2,9 @@ import type { WaitingSessionDto } from "@dd/contract";
 import { Pressable, Text, View } from "react-native";
 import { DecisionCard } from "@/features/answer-queue/components/DecisionCard";
 import { FormCard } from "@/features/answer-queue/components/FormCard";
-import { ReceiptLine, WriteError } from "@/features/answer-queue/components/ReceiptLine";
+import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useSendStaged } from "@/features/answer-queue/hooks";
-import { idempotencyKey, stagedOf } from "@/features/answer-queue/units";
+import { idempotencyKey, type RecentReceipt, stagedOf } from "@/features/answer-queue/units";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
@@ -14,18 +14,26 @@ import { useThemeColors } from "@/theme/colors";
  * staged pick of the session (one message, as the notch sends it). An agent's own dialog (a plan approval, a
  * permission prompt) is listed so the count adds up, and is answered on the Mac.
  */
-export function QueueSessionCard({ session }: { session: WaitingSessionDto }) {
+export function QueueSessionCard({
+    session,
+    onReceipt,
+}: {
+    session: WaitingSessionDto;
+    /** Keeps a send's receipt above the queue, where it outlives this card. */
+    onReceipt: (entry: RecentReceipt) => void;
+}) {
     const c = useThemeColors();
-    const send = useSendStaged();
     const key = session.sessionId ?? session.items[0]?.id ?? "form";
-    const staged = stagedOf(session).length;
     const testId = `answer-queue-session-${key}`;
+    const label = session.title ?? session.project ?? "Agent question";
+    const send = useSendStaged((receipt) => onReceipt({ testID: `${testId}-receipt`, label, receipt }));
+    const staged = stagedOf(session).length;
 
     return (
         <Card bezel className="gap-3" testID={testId}>
             <View className="flex-row items-center gap-2">
                 <Text className="flex-1 text-sm font-semibold" style={{ color: c.textPrimary }} numberOfLines={1}>
-                    {session.title ?? session.project ?? "Agent question"}
+                    {label}
                 </Text>
                 {session.provider ? <StatusPill label={session.provider} tone="muted" normalCase /> : null}
                 <StatusPill testID={`${testId}-count`} label={`${session.counted}`} tone="accent" normalCase />
@@ -43,7 +51,7 @@ export function QueueSessionCard({ session }: { session: WaitingSessionDto }) {
                 }
 
                 if (item.kind === "form") {
-                    return <FormCard key={item.id} form={item} />;
+                    return <FormCard key={item.id} form={item} onReceipt={onReceipt} />;
                 }
 
                 return (
@@ -78,7 +86,6 @@ export function QueueSessionCard({ session }: { session: WaitingSessionDto }) {
                     </Text>
                 </Pressable>
             ) : null}
-            {send.data ? <ReceiptLine testID={`${testId}-receipt`} receipt={send.data} /> : null}
             {send.isError ? <WriteError testID={`${testId}-error`} error={send.error} /> : null}
         </Card>
     );
