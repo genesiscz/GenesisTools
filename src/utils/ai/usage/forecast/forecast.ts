@@ -71,10 +71,17 @@ const PERIOD_MS: Record<ForecastWindowKind, number> = {
 };
 const STALE_MS: Record<ForecastWindowKind, number> = { session: 30 * 60_000, weekly: 6 * HOUR, scoped: 6 * HOUR };
 
-/** A calendar month before `ms` (UTC), the span of a monthly or credit window. */
+/**
+ * A calendar month before `ms` (UTC), the span of a monthly or credit window. The day is clamped to the shorter
+ * month (a reset on March 31 started on February 28 or 29), where `setUTCMonth` would roll over into March.
+ */
 function monthBefore(ms: number): number {
     const at = new Date(ms);
+    const day = at.getUTCDate();
+    at.setUTCDate(1);
     at.setUTCMonth(at.getUTCMonth() - 1);
+    const last = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 0)).getUTCDate();
+    at.setUTCDate(Math.min(day, last));
     return at.getTime();
 }
 
