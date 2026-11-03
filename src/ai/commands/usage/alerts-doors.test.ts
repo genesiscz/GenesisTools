@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { ackAlerts, queryAlertRules, queryAlerts, testAlertRule } from "@app/ai/lib/usage/alerts-query";
+import { recordRoundAndAlert } from "@app/ai/lib/usage/alerts-tick";
 import { queryEvents } from "@app/ai/lib/usage/events-query";
 import { queryHealth } from "@app/ai/lib/usage/limits-query";
 import { mergeAlertsConfig } from "@genesiscz/utils/ai/usage/alerts/config";
@@ -14,6 +15,7 @@ import type { UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashbo
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { removeDbFile } from "@genesiscz/utils/fs";
 import { tmpdir } from "@genesiscz/utils/paths";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 /**
  * The doors of steps U5 to U7 over a migrated store file: each answers its `usage.<verb>@1` envelope through a
@@ -234,5 +236,62 @@ describe("tools ai usage events and limits health", () => {
             lastRoundAt: new Date(NOW.getTime() - 60_000).toISOString(),
         });
         expect(health.warnings).toEqual([]);
+    });
+});
+
+describe("the daemon tick", () => {
+    test("records the round's runs, seeds from the old trackers on the first tick, and fires only what is new", async () => {
+        const delivered: StoredAlert[] = [];
+        const macos: AlertChannel = {
+            id: "macos",
+            interrupts: true,
+            deliver: async (card) => void delivered.push(card),
+        };
+        const inbox: AlertChannel = {
+            id: "inbox",
+            interrupts: false,
+            deliver: async (card) => void delivered.push(card),
+        };
+        const window = (key: string, kind: "session" | "weekly", percent: number) => ({
+            key,
+            label: key,
+            kind,
+            percentUsed: percent,
+            resetsAt: "2026-11-03T13:00:00.000Z",
+        });
+        const work = {
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            accountName: "work",
+            fetchedAt: NOW.toISOString(),
+            limits: [window("five_hour", "session", 85), window("seven_day", "weekly", 45)],
+        };
+        const tick = (now: Date) =>
+            recordRoundAndAlert({
+                db: limits,
+                snapshots: [work],
+                config: dashboard(),
+                storage: new Storage("ai-usage"),
+                now,
+                channels: { macos, inbox },
+                // The notifier already announced 80 % on the 5h window this cycle; the weekly one never.
+                trackers: async () => ({
+                    "acc_work:five_hour": {
+                        lastNotifiedThreshold: 80,
+                        lastResetEpoch: Date.parse("2026-11-03T13:00:00.000Z"),
+                    },
+                }),
+            });
+
+        const first = await tick(NOW);
+
+        expect(first.runs).toEqual({ extended: 0, started: 1 });
+        expect(first.seeded).toBe(1);
+        expect(first.fired.map((alert) => `${alert.windowKey}@${alert.severity}`)).toEqual(["seven_day@40"]);
+
+        const second = await tick(new Date(NOW.getTime() + 60_000));
+
+        expect(second).toMatchObject({ runs: { extended: 1, started: 0 }, seeded: 0, fired: [] });
+        expect(delivered.map((card) => card.windowKey)).toEqual(["seven_day"]);
     });
 });
