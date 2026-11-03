@@ -12,7 +12,7 @@ export interface TranscriptCorrections {
     /** Lines of `label` from `fromSec` to `toSec` (inclusive) belong to `speaker`. */
     ranges?: Array<{ label: string; fromSec: number; toSec: number; speaker: string }>;
     /** The line starting at `atSec` lost its first word to the line before; `speaker` says the voice of that line. */
-    joins?: Array<{ atSec: number; speaker?: string }>;
+    joins?: Array<{ atSec: number; speaker?: string; joined?: string }>;
     terms?: TermFix[];
     /** Marks on one passage of one line: a meaning after it, or the document text it reads aloud. */
     marks?: TranscriptMark[];
@@ -124,8 +124,10 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             continue;
         }
 
+        // A cut word ("dot" | "áhnu") is glued back; a sentence cut between two whole words keeps its space.
         const { word, rest } = firstWord(line.text);
-        before.text = `${before.text.trimEnd()}${word}`;
+        const between = join.joined && /\s/.test(join.joined) ? " " : "";
+        before.text = `${before.text.trimEnd()}${between}${word}`;
         before.speaker = join.speaker ?? line.speaker;
         sourceLabel.set(before, sourceLabel.get(line) ?? line.speaker);
 

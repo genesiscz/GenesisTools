@@ -40,10 +40,25 @@ platform cannot supply is skipped, never guessed.
 
 | Tier | Weight | Supplied by | What it decides |
 |---|---|---|---|
-| E1 channel | 10 | The recorder: Wispr's live segments tagged `mic` or `system`. The recording's own channels count only after the tool has calibrated, for that recording, which channel (if any) carries the microphone; a mono file, another recorder or an unclear calibration gives no energy evidence. Never assume a channel layout. | Raises a score, never decides alone. Start from the tool's values (README, "audio energy"): 90 % or more of the energy on the microphone is the user at 0.85 (0.75 where the live segments said the call), 70 % to 90 % is the user at 0.55 (ask), under 50 % is not the user. Content rules can raise the user to 95 %, never higher. Echo (similar text on both channels at once) or loud speakers at the same moment lower it. |
+| E1 channel | 10 | The recorder: Wispr's live segments tagged `mic` or `system`. The recording's own channels count only after the tool has calibrated, for that recording, which channel (if any) carries the microphone; a mono file, another recorder or an unclear calibration gives no energy evidence. Never assume a channel layout. | The user's confidence comes from the energy table below, not from the formula. Echo (similar text on both channels at once) or loud speakers at the same moment lower it. |
 | E2 attendance | 6 | The platform provider: join and leave times, one row per join, so a person who comes back is attributable again. | A person who was not in the call did not speak. When one person is left, that person spoke. 5 s tolerance. |
-| E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. An indicator that shows one person on most lines of the meeting (a pinned or stuck tile) is no evidence for that person: use it only where it changes. |
+| E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. An indicator that shows one person on most lines of the meeting (a pinned or stuck tile) is no evidence for that person: use it only where it changes. A person missing from the indicator is never evidence against that person. |
 | E4 live names | 2 | The recorder's live segments. | A weak hint. The name belongs to a live voice, not a person; at the start of a meeting and after a person leaves it is often stale. Drop it when E2 or E3 contradicts it. |
+
+### E1 energy table
+
+`energyMicShare` in `evidence --raw` is the share of the line's energy on the microphone. The confidence that the user
+said the line, and how often it was true on one measured meeting (1,144 lines):
+
+| Share on the microphone | The user | Measured |
+|---|---|---|
+| 90 % or more | 0.85 (0.75 where the live segments said the call). Content rules can raise it to 0.95. A reply of one to three words counts too. | 99 % were the user |
+| 70 % to 90 % | 0.6 to 0.75 by content; ask when it matters | 82 % |
+| 50 % to 70 % | Open: decide by content, at 0.6 or less, or ask | 42 % |
+| 10 % to 50 % | Not the user (0.75), unless the content says so | 5 % |
+| Under 10 % | Never the user | 0 % |
+
+A line that is not the user's goes to the remote candidates, and the formula below scores them.
 
 ## Inputs the agent still gathers
 
@@ -52,10 +67,13 @@ platform cannot supply is skipped, never guessed.
    about code he owns ("mám to na frontendu").
 2. The documents the meeting discussed, for the content rules R2, R3 and R12.
 3. Whatever the tool reported as missing (a platform without attendance, a recording without a second channel).
+4. A label the platform named after a person is that person's voice, but it can still hold another remote voice. Move
+   such a line by content only, at 0.75 or less.
 
 ## Content rules (for what E1 to E4 leave open)
 
-Score per candidate in the pool that E1 to E4 leave. Tiers and rules go into one sum: `net` is the weights of every tier
+Score per remote candidate in the pool that E1 to E4 leave (the user's own confidence comes from the energy table).
+Tiers and rules go into one sum: `net` is the weights of every tier
 and rule that speaks for the candidate minus the weights of those against it, and `confidence = 50 + 50 * net /
 sum(weights that apply)` when `net > 0`. A candidate with `net <= 0` is excluded.
 

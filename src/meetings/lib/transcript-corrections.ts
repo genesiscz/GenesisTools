@@ -156,6 +156,7 @@ export function correctionsOf(
                       {
                           atSec: item.atSec,
                           ...(item.speaker ? { speaker: voiceAt(item.speaker, item.atSec) ?? item.speaker } : {}),
+                          ...(item.joined ? { joined: item.joined } : {}),
                       },
                   ]
                 : []

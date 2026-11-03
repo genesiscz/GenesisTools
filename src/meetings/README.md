@@ -95,11 +95,13 @@ as an open question is.
   microphone is the user (0.85, or 0.75 where the segments said the call; E3 and E4 never overrule it), 10 % or less
   is never the user. Where the segments are mixed (neither channel holds 90 %), 70 % or more is the user (0.55, to
   ask) and under 50 % is not. A line no segment covers is the user only at 90 % or more.
-- The label's own voice: a label the platform named after a person keeps its call lines when E3 and E4 agree on
-  someone else, and keeps a mixed line whose person E3 alone shows speaking unless the microphone holds 80 % of the
-  energy. R17: when such a person talks under their own label within 10 s of another label's line, and E3 shows them
+- The label's own voice: a label the platform named after a person (`origin: platform`) is that person's voice. The
+  rules do not move its call lines to another person, even when E3 and E4 both name someone else. A mixed line under
+  it stays with that person when E3 shows only that person speaking, unless 80 % or more of the energy is on the
+  microphone (then it is the user's). R17: when such a person talks under their own label within 10 s of another label's line, and E3 shows them
   and one other present, the line is the other's (0.65).
-- `join`: a word cut between two lines ("dot" + "áhnu").
+- `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
+  value with a space ("jsem zvědavej") keeps the space.
 - `term`: a misheard term and its proposed spelling.
 - `question`: something to decide by ear (`about`: speaker, term or text), with its time range, `choices` and the
   items it `decides`. Answering it confirms each decided item with the answer (a range's speaker, a term's

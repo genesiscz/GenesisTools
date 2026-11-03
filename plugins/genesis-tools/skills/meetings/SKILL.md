@@ -51,13 +51,25 @@ Both modes share the meeting record, its items and `tools meetings listen`.
      "čte z <document>, ř. <line>" }`, D8). `proposed` fixes the words wherever they are heard; add `"scope": "line"`
      when the same words are right elsewhere. Put the words that agree with the fix into `heard` too ("nějakej
      implementátor" becomes "nějaká implementace"), or the fixed sentence breaks its grammar. A real word the word
-     check flags needs no item: list it in the glossary as `keep`.
-   - `join`: `at` (the start of the line after the cut), `joined` (the whole word), and `label` when the voice of the
-     joined line is not the label of the line after the cut.
+     check flags needs no item: note it for the glossary of step 6 as `keep`.
+   - `join`: `at` (the start of the line after the cut) and `joined`. The first word of the line after the cut moves
+     to the end of the line before it. For a cut word, `joined` is the whole word ("dotáhnu") and the parts are glued;
+     for a sentence cut between two whole words, `joined` has a space ("jsem zvědavej") and the space stays. `label` is
+     a source label: the joined line takes the voice that the ranges give to that label at that time. Leave it out to
+     use the label of the line after the cut.
+   - Store only re-attributions: a line that stays with its own label needs no range. Group consecutive lines of one
+     label that go to the same person on the same evidence into one range, with the lowest confidence of its lines;
+     start a new range where the evidence changes.
    - `question` (for a line or a word that stays under 60 % and matters, within the question budget in speakers.md):
      `from`, `to`, `about` (`speaker` or `term`), `question`, `choices`, `heard` for a term, and `decides`. Give each
      finding the question settles a `ref` (a short name such as `"r-14"`) and list the refs in `decides`; the tool
-     turns them into the new item ids, so the user's answer confirms or rejects those findings.
+     turns them into the new item ids, so the user's answer confirms or rejects those findings. Write the question in
+     the user's language, and `choices` as a JSON array (the `--choices` flag splits at commas).
+
+   The transcript applies the findings in this order: joins, ranges, quotes and meanings, term fixes, then the project
+   dictionary. So a quote or a meaning protects its words from the later fixes, and a term fix wins over a dictionary
+   entry for the same words: when the dictionary gives the wrong grammatical case on one line ("UVČ" becomes "UIčko"
+   after a genitive), store a `"scope": "line"` term fix with the right form ("UIčka").
 
    Check every `readAloud` and `identifiers` fact against the transcript before you store it: the line number can be
    off, and a match can be a false one. A context document can be newer than the meeting and already hold its

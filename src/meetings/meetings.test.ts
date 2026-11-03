@@ -563,6 +563,43 @@ describe("a join and a range on the line after the cut", () => {
     });
 });
 
+describe("a join of two whole words", () => {
+    test("keeps the space between them, while a cut word is glued back", () => {
+        const join = (joined: string, atSec: number) =>
+            meetingItemSchema.parse({
+                id: `i${atSec}`,
+                kind: "join",
+                status: "suggested",
+                suggestedAt: "2026-11-02T15:00:00.000Z",
+                atSec,
+                joined,
+                confidence: 0.9,
+                rules: [MeetingRule.Agent],
+            });
+        const entries = [
+            line("A", 0, "Tak já jsem"),
+            line("B", 10, "zvědavej, co z toho bude."),
+            line("A", 20, "Jak to dot"),
+            line("B", 30, "áhnu do konce."),
+        ];
+        const applied = applyCorrections(
+            entries,
+            correctionsOf(
+                meetingRecordSchema.parse({ ...record, items: [join("jsem zvědavej", 10), join("dotáhnu", 30)] }),
+                meetingsConfigSchema.parse({}),
+                { withSuggested: true, dictionary: false, format: "txt" }
+            )
+        );
+
+        expect(applied.entries.map((entry) => entry.text)).toEqual([
+            "Tak já jsem zvědavej,",
+            "co z toho bude.",
+            "Jak to dotáhnu",
+            "do konce.",
+        ]);
+    });
+});
+
 describe("evidence rule after a leave", () => {
     test("a live name of someone who left is dropped; the speaking indicator among those still here guesses, to listen", () => {
         const items = suggestItems({
