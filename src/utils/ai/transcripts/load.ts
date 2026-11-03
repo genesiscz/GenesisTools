@@ -70,7 +70,98 @@ export async function transcriptEnvelope(
         }
     }
 
-    return (await transcriptSnapshot(resolved))(opts);
+    return (await keptSnapshot(resolved))(opts);
+}
+
+/** Transcripts kept parsed between page requests; a parse holds every turn (about 17 MB for a 163 MB rollout). */
+const SNAPSHOT_FILES = 4;
+/** A transcript nobody paged for this long is dropped, so an idle server holds no parsed session. */
+const SNAPSHOT_IDLE_MS = 60_000;
+
+interface KeptSnapshot {
+    /** Every file of the transcript as it was before the parse: path, inode, size and mtime. */
+    stamp: string;
+    page: (opts?: SliceOptions) => TranscriptEnvelope;
+    lastUsed: number;
+}
+
+const snapshots = new Map<string, KeptSnapshot>();
+let snapshotSweep: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSnapshotSweep(): void {
+    if (snapshotSweep) {
+        return;
+    }
+
+    snapshotSweep = setTimeout(() => {
+        snapshotSweep = null;
+        const now = Date.now();
+
+        for (const [key, kept] of snapshots) {
+            if (now - kept.lastUsed > SNAPSHOT_IDLE_MS) {
+                snapshots.delete(key);
+            }
+        }
+
+        if (snapshots.size > 0) {
+            scheduleSnapshotSweep();
+        }
+    }, SNAPSHOT_IDLE_MS);
+    // Never what keeps a process alive.
+    snapshotSweep.unref?.();
+}
+
+/** The identity of every file of the transcript; null when one cannot be read (the caller then parses, uncached). */
+function transcriptStamp(resolved: ResolvedTranscript): string | null {
+    try {
+        return [...(resolved.extraFiles ?? []), resolved.filePath]
+            .map((path) => {
+                const stat = statSync(path);
+                return `${path}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+            })
+            .join("|");
+    } catch (error) {
+        logger.debug({ error, file: resolved.filePath }, "transcript snapshot: a file could not be stat'ed; not kept");
+        return null;
+    }
+}
+
+/**
+ * The parse of a transcript without a turn index, kept while its files do not change. The hub's Session Details pages
+ * one session again and again (the newest turns, "Load earlier", a refresh) and pages by the session-wide `turnCount`
+ * and `nextOffset`, so every page used to parse the whole transcript; now only the first one does, and any write (size,
+ * mtime or inode) parses it again. The stamp is read before the parse, so a write during it is seen on the next call.
+ */
+async function keptSnapshot(resolved: ResolvedTranscript): Promise<(opts?: SliceOptions) => TranscriptEnvelope> {
+    const key = `${resolved.provider}:${resolved.source}:${resolved.filePath}`;
+    const stamp = transcriptStamp(resolved);
+    const kept = snapshots.get(key);
+
+    if (stamp && kept?.stamp === stamp) {
+        kept.lastUsed = Date.now();
+        snapshots.delete(key);
+        snapshots.set(key, kept);
+        return kept.page;
+    }
+
+    const page = await transcriptSnapshot(resolved);
+
+    if (stamp) {
+        snapshots.delete(key);
+        snapshots.set(key, { stamp, page, lastUsed: Date.now() });
+
+        if (snapshots.size > SNAPSHOT_FILES) {
+            const oldest = snapshots.keys().next().value;
+
+            if (oldest !== undefined) {
+                snapshots.delete(oldest);
+            }
+        }
+
+        scheduleSnapshotSweep();
+    }
+
+    return page;
 }
 
 /**

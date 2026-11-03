@@ -69,6 +69,54 @@ describe("transcriptEnvelope", () => {
         }
     });
 
+    test("repeated pages of a transcript without a turn index parse it once, with session-wide positions", async () => {
+        const file = join(fixtureRoot(), "paged.jsonl");
+        const row = (i: number) =>
+            SafeJSON.stringify({
+                type: "response_item",
+                timestamp: "2026-09-01T10:00:00.000Z",
+                payload: {
+                    type: "message",
+                    role: i % 2 ? "assistant" : "user",
+                    content: [{ type: i % 2 ? "output_text" : "input_text", text: String(i) }],
+                },
+            });
+        writeFileSync(file, `${Array.from({ length: 5000 }, (_, i) => row(i)).join("\n")}\n`);
+        const resolved: ResolvedTranscript = {
+            provider: "codex",
+            source: "native",
+            sessionId: "paged",
+            filePath: file,
+        };
+        const parser = await transcriptParser("codex");
+        const whole = spyOn(parser, "fromFile");
+
+        try {
+            // The hub's Session Details: the newest turn, again, then a page at an offset, then "Load earlier".
+            const tail = await transcriptEnvelope(resolved, { limit: 1 });
+            const again = await transcriptEnvelope(resolved, { limit: 1 });
+            const page = await transcriptEnvelope(resolved, { offset: 2500, limit: 2 });
+            const earlier = await transcriptEnvelope(resolved, { offset: 0, limit: 1 });
+
+            expect(whole).toHaveBeenCalledTimes(1);
+            expect(tail).toMatchObject({ turnCount: 5000, nextOffset: 5000 });
+            expect(tail.turns.map((turn) => turn.text)).toEqual(["4999"]);
+            expect(again.turns.map((turn) => turn.text)).toEqual(["4999"]);
+            expect(page).toMatchObject({ turnCount: 5000, nextOffset: 2502 });
+            expect(page.turns.map((turn) => turn.text)).toEqual(["2500", "2501"]);
+            expect(earlier.turns.map((turn) => turn.text)).toEqual(["0"]);
+
+            // A write is seen at once: the grown file is read again, and its new turn counts.
+            appendFileSync(file, `${row(5000)}\n`);
+            const grown = await transcriptEnvelope(resolved, { limit: 1 });
+            expect(grown).toMatchObject({ turnCount: 5001, nextOffset: 5001 });
+            expect(grown.turns.map((turn) => turn.text)).toEqual(["5000"]);
+            expect(whole).toHaveBeenCalledTimes(2);
+        } finally {
+            whole.mockRestore();
+        }
+    });
+
     test("a bounded tail read of a large transcript with no turn index parses only its end, never every turn", async () => {
         const file = join(fixtureRoot(), "large.jsonl");
         const rows = Array.from({ length: 5000 }, (_, i) =>
