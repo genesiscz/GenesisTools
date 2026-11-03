@@ -9,7 +9,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "bun test src/",
+    "test": "bun test --isolate src/",
     "check-types": "tsc --noEmit",
     "e2e": "wdio run e2e/wdio.conf.ts",
     "e2e:appium": "appium",
@@ -64,6 +64,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@testing-library/react-native": "^14.1.0",
     "@types/react": "~19.2.2",
     "@wdio/cli": "^9.27.2",
     "@wdio/local-runner": "^9.27.2",
