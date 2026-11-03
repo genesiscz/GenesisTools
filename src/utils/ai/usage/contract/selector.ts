@@ -1,5 +1,6 @@
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage/types";
+import { aiUsageCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import type { AccountKey } from "./envelope";
 import { UsageQueryError } from "./errors";
 
@@ -70,7 +71,7 @@ function matchOne(value: string, candidates: readonly AccountKey[], opts: Select
         if (!opts.acceptPseudo) {
             throw new UsageQueryError(
                 "pseudo-account",
-                `--account ${value} names transcript spend, not an account with limit windows. It works with tools ai usage spend.`,
+                `--account ${value} names transcript spend, not an account with limit windows. It works with ${aiUsageCommand("spend")}.`,
                 { given: value }
             );
         }

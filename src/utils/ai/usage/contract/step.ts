@@ -1,3 +1,4 @@
+import { aiUsageCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { UsageQueryError } from "./errors";
 
 const UNIT_MS: Record<string, number> = {
@@ -81,7 +82,7 @@ export function parseStep(text: string | undefined): SeriesStep {
     if (CALENDAR_STEPS.has(value)) {
         throw new UsageQueryError(
             "reserved",
-            `--step ${value} is a calendar step in --tz and arrives with tools ai usage spend (build step U8). ` +
+            `--step ${value} is a calendar step in --tz and arrives with ${aiUsageCommand("spend")} (build step U8). ` +
                 `Use a fixed step such as 1h or 1d meanwhile.`,
             { given: text }
         );
