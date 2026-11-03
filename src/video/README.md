@@ -185,8 +185,10 @@ headers, and downloads every segment until the stream ends. Then it stitches the
   the CDN had already deleted are reported as gaps.
 - `--quality best|worst|<height>` picks the variant of a master playlist. `--jobs` (6) sets the parallel downloads.
 
-`state.json` holds the replayed headers, cookies included, so it is written with mode 600. Remove the parts folder when
-the output is good. Not supported: encrypted segments, byte-range playlists, and audio in a separate playlist.
+`state.json` holds the replayed headers, cookies included, so it is written with mode 600. Once the stream has ended
+and every segment is in the output, the parts folder goes to the `tools rm` trash (`tools rm restore <batch>` brings it
+back during the grace time); a stopped, live or incomplete download keeps it for a resume, and `--keep-parts` always
+keeps it. Not supported: encrypted segments, byte-range playlists, and audio in a separate playlist.
 
 ### Pick the source: the platform's recording, the page's replay, or the live stream
 

@@ -93,6 +93,9 @@ function reset(overrides: Partial<typeof fixture> = {}) {
     });
 }
 
+/** Parts folders a complete download handed to the trash, by the spy below. */
+const discarded: string[] = [];
+
 function run({ output, signal, withSource = true }: { output: string; signal?: AbortSignal; withSource?: boolean }) {
     return downloadStream({
         output,
@@ -103,6 +106,10 @@ function run({ output, signal, withSource = true }: { output: string; signal?: A
         idleTimeoutMs: 10_000,
         retryDelayMs: 1,
         pollIntervalMs: 20,
+        discardParts: (dir) => {
+            discarded.push(dir);
+            return "batch-1";
+        },
         backfill: false,
         stitchOnly: false,
         signal: signal ?? new AbortController().signal,
@@ -127,6 +134,8 @@ describe("downloadStream", () => {
         const result = await run({ output });
 
         expect(result).toMatchObject({ output, segments: SEGMENTS, failed: [], gone: [], ended: true, aborted: false });
+        expect(result.partsTrashBatch).toBe("batch-1");
+        expect(discarded.at(-1)).toBe(`${output}.parts`);
         expect(Buffer.compare(readFileSync(output), expected())).toBe(0);
     });
 
@@ -152,6 +161,7 @@ describe("downloadStream", () => {
 
         expect(result.output).toBeNull();
         expect(result.failed).toEqual([2]);
+        expect(discarded).not.toContain(`${output}.parts`);
         expect(existsSync(output)).toBe(false);
 
         // The segment comes back: a rerun from the parts folder alone fetches only it and stitches.

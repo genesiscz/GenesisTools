@@ -10,6 +10,14 @@ import {
 } from "@genesiscz/utils/hls/playlist";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    defaultRuleContext,
+    kickDrainer,
+    loadRmConfig,
+    moveToTrash,
+    resolveTarget,
+    rmCallerFromRuntime,
+} from "@genesiscz/utils/rm";
 import { z } from "zod";
 import {
     fetchPlaylist,
@@ -71,6 +79,8 @@ export interface StreamDownloadResult {
     gone: number[];
     /** Segments that still failed after the retries (network, 403, 5xx): nothing was stitched, and a rerun retries them. */
     failed: number[];
+    /** The `tools rm` batch the parts folder went to once the file was complete; null while the parts are kept. */
+    partsTrashBatch?: string | null;
     downloadedThisRun: number;
     bytesThisRun: number;
     ended: boolean;
@@ -459,6 +469,10 @@ export interface StreamDownloadOptions {
     retryDelayMs?: number;
     /** How often a live playlist is read again; default the target duration, at least 1 s. */
     pollIntervalMs?: number;
+    /** Keep `<out>.parts` after a complete download (default: it goes to the `tools rm` trash). */
+    keepParts?: boolean;
+    /** Where a complete download's parts folder goes; returns the trash batch. Tests pass a spy. */
+    discardParts?: (partsDir: string) => string | null;
     backfill: boolean;
     stitchOnly: boolean;
     signal: AbortSignal;
@@ -789,7 +803,46 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
     phase = "stitching";
     progress();
     const stitched = await stitch({ partsDir, output, signal });
-    return stitchedResult({ output, partsDir, stitched, gone: state.gone, downloadedThisRun, bytesThisRun, ended });
+    const result = stitchedResult({
+        output,
+        partsDir,
+        stitched,
+        gone: state.gone,
+        downloadedThisRun,
+        bytesThisRun,
+        ended,
+    });
+    const complete = ended && stitched.gaps.length === 0 && state.gone.length === 0;
+
+    if (complete && !options.keepParts) {
+        result.partsTrashBatch = (options.discardParts ?? discardParts)(partsDir);
+    }
+
+    return result;
+}
+
+/**
+ * Moves a finished download's parts folder to the `tools rm` trash, where `tools rm restore <batch>` brings it back
+ * during the grace time. The folder is this tool's own work data, so it needs no approval. A failed move keeps the
+ * folder and only logs it.
+ */
+function discardParts(partsDir: string): string | null {
+    try {
+        const config = loadRmConfig();
+        const caller = rmCallerFromRuntime();
+        const ctx = defaultRuleContext(config, caller, process.cwd());
+        const batch = moveToTrash([{ target: resolveTarget(partsDir, ctx.cwd), rule: "video-stream-parts" }], {
+            config,
+            caller,
+            graceMinutes: config.grace.otherMinutes,
+        });
+        kickDrainer(config);
+        logger.debug({ partsDir, batch: batch?.id }, "Parts folder moved to the trash");
+        return batch?.id ?? null;
+    } catch (error) {
+        logger.warn({ error, partsDir }, "Could not move the parts folder to the trash; it stays");
+        return null;
+    }
 }
 
 /**
