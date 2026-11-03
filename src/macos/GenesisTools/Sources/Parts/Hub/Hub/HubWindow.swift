@@ -2775,7 +2775,7 @@ private struct SessionListView: View {
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
             } else if model.mode == .usage {
-                UsageListView(usage: model.usage)
+                UsageListView(usage: model.usage, filter: model.filter)
             } else if model.mode == .agents {
                 // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
                 if NativeStaging.facesEnabled {
