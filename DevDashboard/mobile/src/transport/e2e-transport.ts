@@ -162,11 +162,14 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
             (async () => {
                 try {
                     const probeRequest: E2eRequest = { method: "GET", path: "/api/system/pulse" };
-                    await encryptedExchange(
+                    const plain = await encryptedExchange(
                         new TextEncoder().encode(encodeE2eRequest(probeRequest)),
                         opts.probeTimeoutMs === undefined ? undefined : timeoutSignal(opts.probeTimeoutMs)
                     );
-                    return true;
+                    // The Mac seals a route failure (404, 500) as a normal response: only a 2xx pulse is reachable,
+                    // as the plain tiers' probePulse requires.
+                    const inner = decodeE2eResponse(new TextDecoder().decode(plain));
+                    return inner.status >= 200 && inner.status < 300;
                 } catch {
                     return false;
                 }

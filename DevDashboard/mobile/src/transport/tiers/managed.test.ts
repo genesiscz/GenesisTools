@@ -173,6 +173,29 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
         expect(await t.reachable()).toBe(false);
     });
 
+    it("reachable() is false when the Mac answers the sealed pulse with an error status", async () => {
+        const agent = naclBoxCipher.keyPair();
+        const device = naclBoxCipher.keyPair();
+        const shim = createE2eShim({
+            cipher: naclBoxCipher,
+            agentKeys: agent,
+            resolvePeerKey: () => device.publicKey,
+            handle: async () =>
+                new TextEncoder().encode(encodeE2eResponse({ status: 500, body: '{"error":"collector failed"}' })),
+        });
+        const relayFetch = (async (_url: string, init?: RequestInit) =>
+            new Response(await shim.handleEncrypted(String(init?.body)), { status: 200 })) as unknown as typeof fetch;
+        const t = createE2eTransport({
+            relayBaseUrl: "https://relay.vendor.com/agent/abc",
+            cipher: naclBoxCipher,
+            deviceKeys: device,
+            agentPublicKey: agent.publicKey,
+            fetchImpl: relayFetch,
+        });
+
+        expect(await t.reachable()).toBe(false);
+    });
+
     it("reachable() gives up at the probe deadline when the relay never answers", async () => {
         const agent = naclBoxCipher.keyPair();
         const device = naclBoxCipher.keyPair();
