@@ -12,9 +12,9 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 // a short-lived, one-time code shown on the Mac (out-of-band TOFU). High entropy (32^8 ≈ 1.1e12)
 // + a 5-minute window + one-time consume makes online guessing through the relay infeasible.
 //
-// NOTE: against an ACTIVE malicious relay that observes the plaintext code in transit, the
-// complementary defence is the safety-number (SAS) check after pairing — see the managed-tier
-// follow-up. This module is the admission gate; SAS is the MITM detector.
+// Against an ACTIVE malicious relay: the phone seals the code to the Mac's QR-pinned public key
+// (`/api/e2e/pair` takes an `E2eEnvelope`), so the relay never reads the code and cannot bind it
+// to a key of its own. This module is the admission gate; the sealing is the MITM defence.
 
 const CODE_PATH = genesisToolsDir("dev-dashboard", "pairing-code.json");
 const DEFAULT_TTL_MS = 5 * 60_000;

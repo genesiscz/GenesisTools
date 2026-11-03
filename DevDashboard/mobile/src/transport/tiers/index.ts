@@ -94,7 +94,8 @@ export const TIERS: Record<TransportTier, TierDefinition> = {
         probeTimeoutMs: 8000,
         probeFailure: "needs-pair",
         pairing: "device-code",
-        pair: (target, deviceCode) => pairManagedDevice({ baseUrl: target.baseUrl, deviceCode }),
+        pair: (target, deviceCode) =>
+            pairManagedDevice({ baseUrl: target.baseUrl, deviceCode, agentPublicKey: target.managed?.agentPublicKey }),
         capabilities: { plainUrls: false },
         build: (target) =>
             createManagedTransport(
