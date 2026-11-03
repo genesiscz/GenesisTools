@@ -1,3 +1,4 @@
+import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadTelegramBotConfig, resolveTelegramTarget } from "@genesiscz/utils/telegram-bot/lib/config";
 import type {
@@ -38,7 +39,10 @@ async function withBotTarget(telegram: TelegramChannelConfig): Promise<TelegramC
     const target = resolveTelegramTarget({
         purpose: "notifications",
         own: telegram,
-        bot: await loadTelegramBotConfig().catch(() => null),
+        bot: await loadTelegramBotConfig().catch((err: unknown) => {
+            logger.warn({ err }, "notify: could not read the Telegram bot config; the channel keeps its own target");
+            return null;
+        }),
     });
 
     return target ? { ...telegram, botToken: target.botToken, chatId: String(target.chatId) } : telegram;
