@@ -17,7 +17,7 @@ function updatesPath(transcriptPath: string): string {
 export const grokAnalysis: SessionAnalysisReader = {
     async callTrace(transcriptPath) {
         const file = updatesPath(transcriptPath);
-        const items = await callsOfParser(
+        return callsOfParser(
             file,
             createGrokUsageParser({
                 file,
@@ -25,8 +25,6 @@ export const grokAnalysis: SessionAnalysisReader = {
                 resolveCurrentModel: () => grokCurrentModel(transcriptPath) ?? undefined,
             })
         );
-
-        return { supported: true, items };
     },
 
     async compactions() {

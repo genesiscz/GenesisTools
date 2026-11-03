@@ -1,6 +1,6 @@
 import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import type { SessionAnalysisReader, SessionCompaction, SessionQuotaReading } from "../analysis-types";
-import { callsOfParser, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
+import { callsOfParser, factsOf, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
 import { createCodexUsageParser } from "./codex-usage";
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -38,18 +38,13 @@ function readingOf(slot: string, value: unknown, t: string): SessionQuotaReading
  */
 export const codexAnalysis: SessionAnalysisReader = {
     async callTrace(transcriptPath) {
-        const items = await callsOfParser(
-            transcriptPath,
-            createCodexUsageParser({ file: transcriptPath, state: undefined })
-        );
-
-        return { supported: true, items };
+        return callsOfParser(transcriptPath, createCodexUsageParser({ file: transcriptPath, state: undefined }));
     },
 
     async compactions(transcriptPath) {
         const items: SessionCompaction[] = [];
 
-        await forEachTranscriptLine(transcriptPath, (line) => {
+        const failed = await forEachTranscriptLine(transcriptPath, (line) => {
             if (!line.includes("compacted")) {
                 return;
             }
@@ -65,7 +60,7 @@ export const codexAnalysis: SessionAnalysisReader = {
             }
         });
 
-        return { supported: true, items };
+        return factsOf(items, failed);
     },
 
     async quotaReadings(transcriptPath) {
@@ -73,7 +68,7 @@ export const codexAnalysis: SessionAnalysisReader = {
         // The last reading per slot: a primary and a secondary reading alternate in every row.
         const last = new Map<string, string>();
 
-        await forEachTranscriptLine(transcriptPath, (line) => {
+        const failed = await forEachTranscriptLine(transcriptPath, (line) => {
             if (!line.includes("rate_limits")) {
                 return;
             }
@@ -100,6 +95,6 @@ export const codexAnalysis: SessionAnalysisReader = {
             }
         });
 
-        return { supported: true, items };
+        return factsOf(items, failed);
     },
 };

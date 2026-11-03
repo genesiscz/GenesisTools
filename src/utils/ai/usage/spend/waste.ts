@@ -80,7 +80,8 @@ async function itemsOf(event: AttributedEvent): Promise<{ items: WasteItem[]; su
     const [calls, compactions] = await Promise.all([analysis.callTrace(event.file), analysis.compactions(event.file)]);
     const items = sessionWaste(factsOf(calls), factsOf(compactions));
 
-    if (identity) {
+    // A transcript that could not be read is asked again next time, never cached as a session with no waste.
+    if (identity && calls.supported) {
         wasteCache.set(event.file, identity, items);
     }
 
