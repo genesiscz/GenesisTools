@@ -210,8 +210,7 @@ public struct FocusHUDView: View {
             .shadow(color: .black.opacity(0.45), radius: 18, y: 6)
             // The card moves the window. `isMovableByWindowBackground` never saw these clicks: the card's
             // double-tap gesture and its shapes took them first, so the HUD could not be dragged (2026-11-03).
-            .overlay(PanelDragArea(identifier: "focus-hud-drag", label: "Move the Flow timer",
-                                   doubleClicked: onOpenStudio))
+            .movesWindowOnDrag()
     }
 
     private var header: some View {
