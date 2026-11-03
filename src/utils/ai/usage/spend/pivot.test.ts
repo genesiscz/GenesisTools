@@ -99,6 +99,21 @@ describe("planValues", () => {
     });
 });
 
+describe("cycleOf", () => {
+    test("one calendar month back, the day clamped to the shorter month", () => {
+        const now = new Date("2026-03-15T00:00:00Z");
+        const from = (renewsAt: string) => cycleOf({ renewsAt }, now).from.slice(0, 10);
+
+        expect(from("2027-03-31")).toBe("2027-02-28");
+        expect(from("2028-03-30")).toBe("2028-02-29");
+        expect(from("2026-03-29")).toBe("2026-02-28");
+        expect(from("2026-05-31")).toBe("2026-04-30");
+        expect(from("2026-07-31")).toBe("2026-06-30");
+        expect(from("2026-01-31")).toBe("2025-12-31");
+        expect(from("2026-11-06")).toBe("2026-10-06");
+    });
+});
+
 describe("call cost", () => {
     const pricing: PricingTable = {
         "m-a": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3, cacheWrite1h: 6 },
