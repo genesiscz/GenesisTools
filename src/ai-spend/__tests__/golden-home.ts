@@ -8,9 +8,10 @@ import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 
 /**
  * A fixed home for the byte goldens of `tools ai-spend daily`, `weekly` and `statusline`: two Claude sessions
- * over two ISO weeks and one Codex rollout, every timestamp in September 2026, so no window ever reaches the real
- * clock. The goldens were written from the code before the spend library moved into `@genesiscz/utils` (design
- * 2026-11-01, step U8); the move and every alias door must print the same bytes.
+ * over two ISO weeks and one Codex rollout, every timestamp in September 2026. The statusline reads "today" and the
+ * active block from the clock, so every child runs at `GOLDEN_NOW`, days after the fixture's last event, through
+ * `GENESIS_TOOLS_TEST_NOW`. The goldens were written from the code before the spend library moved into
+ * `@genesiscz/utils` (design 2026-11-01, step U8); the move and every alias door must print the same bytes.
  */
 
 const REPO_ROOT = join(moduleDir(import.meta), "..", "..", "..");
@@ -26,6 +27,9 @@ export const GOLDEN_ENTRYPOINTS = {
 export type GoldenEntrypoint = keyof typeof GOLDEN_ENTRYPOINTS;
 
 const WINDOW = ["--since", "2026-09-07", "--until", "2026-09-16", "--timezone", "UTC"];
+
+/** The clock every golden child runs at: after the last fixture event, so "today" and the block are empty. */
+const GOLDEN_NOW = "2026-09-20T12:00:00.000Z";
 
 /** The statusline hook of the golden session; no `cost`, so the line shows the cost ai-spend computed. */
 const STATUSLINE_HOOK = {
@@ -188,6 +192,7 @@ export async function runGoldenCase(options: {
                 LANG: "en_US.UTF-8",
                 LC_ALL: "en_US.UTF-8",
                 NO_COLOR: "1",
+                GENESIS_TOOLS_TEST_NOW: GOLDEN_NOW,
             },
             stdin: options.golden.stdin === undefined ? "ignore" : new Blob([options.golden.stdin]),
             stdout: "pipe",
