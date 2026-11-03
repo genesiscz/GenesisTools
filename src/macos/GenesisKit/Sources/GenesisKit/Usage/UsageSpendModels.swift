@@ -63,7 +63,7 @@ public struct UsagePlanCycle: Decodable, Equatable, Sendable, Identifiable {
     public let renewsInDays: Double?
     public let spendUsd: Double
     /// The plan's price per cycle from the usage config; nil until `tools ai-spend plans price` sets it.
-    public let price: Double?
+    public let price: UsagePlanPrice?
     public let paidBackX: Double?
     public let weeklyRisePct: Double?
     /// Share of the cycle's weekly capacity used, 0..1.
@@ -72,6 +72,18 @@ public struct UsagePlanCycle: Decodable, Equatable, Sendable, Identifiable {
     public let approximate: Bool?
 
     public var id: String { account.id + "\u{1}" + (plan ?? "") }
+}
+
+/// A plan's price per cycle as the usage config stores it (`PlanPrice`): minor units, so cents for USD.
+public struct UsagePlanPrice: Decodable, Equatable, Sendable {
+    public let priceMinor: Int
+    public let currency: String
+
+    /// "$20.00" for USD, "20.00 EUR" for another currency.
+    public var display: String {
+        let amount = Double(priceMinor) / 100
+        return currency == "USD" ? UsageFormat.usd(amount) : String(format: "%.2f %@", amount, currency)
+    }
 }
 
 public struct UsageCycle: Decodable, Equatable, Sendable {
