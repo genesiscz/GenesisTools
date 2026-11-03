@@ -218,6 +218,31 @@ export const USAGE_LIMITS_MIGRATIONS: Migration[] = [
     },
     {
         /**
+         * Each window's reset history, written by the alert engine from every reading (fired or not): the reset instant
+         * last read and when a different one was last seen. An alert stored with no reset time (the provider sent none)
+         * re-arms at the first reset seen after it, as the old notifier's tracker did.
+         */
+        id: "2026-11-usage-window-cycles",
+        description: "usage_window_cycles table (the reset history of each window, for the alert engine)",
+        isApplied(db) {
+            return tableExists(db, "usage_window_cycles");
+        },
+        apply(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS usage_window_cycles (
+                    provider TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    window_key TEXT NOT NULL,
+                    resets_at TEXT NOT NULL,
+                    reset_seen_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, account_id, window_key)
+                );
+            `);
+        },
+    },
+    {
+        /**
          * One row per account, window and local day (step U10, proposal 16): the day's first, last and highest reading,
          * its resets, how many cycles reached 90 %, and the minutes the poller measured. It outlives the 30-day prune
          * of `usage_snapshots`, so trends past a month stay readable; the prune never touches it.

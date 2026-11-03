@@ -93,7 +93,7 @@ export const rateLimitedRule: UsageAlertRule<"rate-limited"> = {
 
         return candidates;
     },
-    refire(previous, next, now) {
+    refire(previous, next, { now }) {
         const windowMinutes = Number(next.payload?.windowMinutes ?? 10);
         const quietMs = windowMinutes * 60_000;
         // Each new answer raises the count, so "higher" alone would alert every round of a burst; double is news.
