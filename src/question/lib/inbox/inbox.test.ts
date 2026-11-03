@@ -38,6 +38,7 @@ import {
     loadInbox,
     loadSessionDecisions,
     loadSessionInbox,
+    loadWaitingQueue,
     lookupListing,
     lookupSessionCwd,
     traceTranscript,
@@ -851,6 +852,46 @@ describe("loadInbox", () => {
         expect([first.scanned.read, second.scanned.fromCache, third.scanned.read]).toEqual([1, 1, 1]);
         const item = second.sessions[0]?.items[0];
         expect(item?.kind === "decision" ? item.number : null).toBe(3);
+    });
+
+    test("the waiting queue lists the waiting set's items with its counts, and leaves out a decision for an agent", async () => {
+        const row = { ...SESSION, provider: "claude", cwdShort: "app", model: null, filePath: "/tmp/gt-inbox/w.jsonl" };
+        const at = "2026-03-01T10:00:00.000Z";
+        const base = { sessionId: SESSION.sessionId, options: ["keep", "drop"], createdTs: at, updatedTs: at };
+        const stored = [
+            { ...base, id: "d_1", number: 1, prompt: "Keep the cache?", state: "open" as const },
+            { ...base, id: "d_2", number: 2, prompt: "Ask fable?", state: "open" as const, for: "fable" },
+            { ...base, id: "d_3", number: 3, prompt: "Ship it?", state: "drafted" as const, draftOption: "a" },
+        ];
+        const form = {
+            id: "ask_w",
+            createdAt: Date.parse(at),
+            sessionHint: SESSION.sessionId,
+            projectPath: "/tmp/gt-inbox/app",
+            cwd: "/tmp/gt-inbox/app",
+            items: [{ id: "q1", promptMarkdown: "Which port?" }],
+            status: "pending",
+        } as AskForm;
+        const deps: InboxDeps = {
+            sessions: async () => [row as AgentSessionRow],
+            tail: async () => [],
+            stat: () => ({ size: 1, mtimeMs: 1 }),
+            rows: () => stored,
+            forms: () => [form],
+            readCache: async () => null,
+            writeCache: async () => undefined,
+        };
+
+        const fresh = await loadWaitingQueue({ deps, now: Date.parse("2026-03-01T12:00:00.000Z") });
+        expect(fresh.total).toBe(3);
+        expect(fresh.sessions.map((entry) => [entry.sessionId, entry.counted, entry.title])).toEqual([
+            [SESSION.sessionId, 3, "parser work"],
+        ]);
+        expect(fresh.sessions[0]?.items.map((item) => item.id).sort()).toEqual(["ask_w", "d_1", "d_3"]);
+
+        // Five days later the quiet session's items stay listed and stop counting, as on the notch.
+        const quiet = await loadWaitingQueue({ deps, now: Date.parse("2026-03-06T12:00:00.000Z") });
+        expect([quiet.total, quiet.sessions[0]?.items.length]).toEqual([0, 3]);
     });
 
     test("the blocks it lists that the log lacks are stored (harvestListed), so every surface reads the same rows", async () => {
