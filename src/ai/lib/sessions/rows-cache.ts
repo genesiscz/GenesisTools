@@ -216,6 +216,75 @@ export function withLiveCacheClocks(rows: AgentSessionRow[], now: number): Agent
     });
 }
 
+interface LiveFacts {
+    /**
+     * False for an answer that will be written into the cache (the poll daemon's refresh through the hub
+     * server): a live tmux tab stored there would outlive the client that showed it.
+     */
+    liveLocations?: boolean;
+    /** Live cmux tabs of tmux-hosted sessions. A test that injects none gets none. */
+    tmuxLocations?: () => Promise<Map<string, TmuxCmuxLocation>>;
+    /** Running Claude session ids (`liveClaudeSessionIds`); a test that injects none gets `alive: null`. */
+    liveSessionIds?: () => Set<string> | null;
+}
+
+export interface SessionRowsAnswer {
+    fetchedAt: number;
+    cached: boolean;
+    rows: AgentSessionRow[];
+}
+
+function liveFacts(facts: LiveFacts): Required<LiveFacts> {
+    return {
+        liveLocations: facts.liveLocations ?? true,
+        tmuxLocations: facts.tmuxLocations ?? (isTestProcess() ? async () => new Map() : () => tmuxCmuxLocations()),
+        liveSessionIds: facts.liveSessionIds ?? (isTestProcess() ? () => null : () => liveClaudeSessionIds()),
+    };
+}
+
+/**
+ * The cached answer for `listing` when the file answers it and is at most `maxAgeMs` old, with the live facts
+ * applied; null otherwise. A served ask is stamped (at most twice a minute) so the daemon keeps the query warm.
+ */
+export async function cachedSessionRowsJson(
+    listing: AgentSessionRowsOptions,
+    {
+        maxAgeMs = SESSION_ROWS_MAX_AGE_MS,
+        cacheWrite = true,
+        path = sessionRowsCachePath(),
+        now = Date.now(),
+        ...facts
+    }: LiveFacts & { maxAgeMs?: number; cacheWrite?: boolean; path?: string; now?: number } = {}
+): Promise<{ answer: SessionRowsAnswer; ageMs: number } | null> {
+    const key = sessionRowsCacheKey(listing);
+    const cached = await readSessionRowsCache(path);
+
+    if (!cacheIsUsable(cached, key, now, maxAgeMs)) {
+        return null;
+    }
+
+    // The stamp tells the daemon this query is still wanted, and it is read against an hour, so
+    // rewriting the whole file on every 35 s poll would be churn for nothing.
+    if (cacheWrite && now - cached.lastRequestedAt > 30_000) {
+        const latest = await readSessionRowsCache(path);
+
+        if (latest && latest.fetchedAt === cached.fetchedAt) {
+            await writeSessionRowsCache({ ...latest, lastRequestedAt: now }, path);
+        }
+    }
+
+    const { liveLocations, tmuxLocations, liveSessionIds } = liveFacts(facts);
+    const rows = withLiveCacheClocks(cached.rows, now);
+    return {
+        ageMs: now - cached.fetchedAt,
+        answer: {
+            fetchedAt: cached.fetchedAt,
+            cached: true,
+            rows: liveLocations ? withLiveness(await withTmuxLocations(rows, tmuxLocations), liveSessionIds()) : rows,
+        },
+    };
+}
+
 /**
  * `ai usage sessions --json`: the daemon's cached answer when it is usable (and the ask stamped, at most
  * twice a minute, so the daemon keeps it warm), else a fresh list, written back for the next ask. The
@@ -227,51 +296,21 @@ export async function sessionRowsJson(
     {
         fresh = false,
         cacheWrite = true,
-        liveLocations = true,
         path = sessionRowsCachePath(),
         listRows,
-        tmuxLocations = isTestProcess() ? async () => new Map() : () => tmuxCmuxLocations(),
-        liveSessionIds = isTestProcess() ? () => null : () => liveClaudeSessionIds(),
-    }: {
+        ...facts
+    }: LiveFacts & {
         fresh?: boolean;
         cacheWrite?: boolean;
-        /**
-         * False for an answer that will be written into the cache (the poll daemon's refresh through the hub
-         * server): a live tmux tab stored there would outlive the client that showed it.
-         */
-        liveLocations?: boolean;
         path?: string;
         listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
-        /** Live cmux tabs of tmux-hosted sessions. A test that injects none gets none. */
-        tmuxLocations?: () => Promise<Map<string, TmuxCmuxLocation>>;
-        /** Running Claude session ids (`liveClaudeSessionIds`); a test that injects none gets `alive: null`. */
-        liveSessionIds?: () => Set<string> | null;
     }
-): Promise<{ fetchedAt: number; cached: boolean; rows: AgentSessionRow[] }> {
+): Promise<SessionRowsAnswer> {
     if (!fresh) {
-        const key = sessionRowsCacheKey(listing);
-        const cached = await readSessionRowsCache(path);
-        const now = Date.now();
+        const hit = await cachedSessionRowsJson(listing, { cacheWrite, path, ...facts });
 
-        if (cacheIsUsable(cached, key, now)) {
-            // The stamp tells the daemon this query is still wanted, and it is read against an hour, so
-            // rewriting the whole file on every 35 s poll would be churn for nothing.
-            if (cacheWrite && now - cached.lastRequestedAt > 30_000) {
-                const latest = await readSessionRowsCache(path);
-
-                if (latest && latest.fetchedAt === cached.fetchedAt) {
-                    await writeSessionRowsCache({ ...latest, lastRequestedAt: now }, path);
-                }
-            }
-
-            const rows = withLiveCacheClocks(cached.rows, now);
-            return {
-                fetchedAt: cached.fetchedAt,
-                cached: true,
-                rows: liveLocations
-                    ? withLiveness(await withTmuxLocations(rows, tmuxLocations), liveSessionIds())
-                    : rows,
-            };
+        if (hit) {
+            return hit.answer;
         }
     }
 
@@ -281,6 +320,7 @@ export async function sessionRowsJson(
         await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows }, path);
     }
 
+    const { liveLocations, tmuxLocations, liveSessionIds } = liveFacts(facts);
     return {
         fetchedAt: now,
         cached: false,

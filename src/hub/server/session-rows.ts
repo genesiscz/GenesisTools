@@ -39,6 +39,27 @@ export async function sessionRowsText(job: SessionRowsJob): Promise<string> {
     );
 }
 
+/**
+ * How old a cached answer the server still serves at once, while one rebuild refreshes the file behind it. The poll
+ * daemon rewrites the file every minute, so this is reached only when it fell behind or the server restarted cold.
+ */
+export const SESSION_ROWS_SERVE_STALE_MS = 10 * 60_000;
+
+/** The cached answer for a non-fresh job, and whether it is past the age a rebuild is due at; null on a miss. */
+export async function cachedSessionRowsText(job: SessionRowsJob): Promise<{ text: string; stale: boolean } | null> {
+    const { cachedSessionRowsJson, SESSION_ROWS_MAX_AGE_MS } = await import("@app/ai/lib/sessions/rows-cache");
+    const hit = await cachedSessionRowsJson(job.listing, {
+        maxAgeMs: SESSION_ROWS_SERVE_STALE_MS,
+        cacheWrite: job.cacheWrite,
+        liveLocations: job.liveLocations,
+    });
+    if (!hit) {
+        return null;
+    }
+
+    return { text: asResult(hit.answer), stale: hit.ageMs > SESSION_ROWS_MAX_AGE_MS };
+}
+
 /** A request the worker runs, inside its caller's trace id. */
 export async function answerSessionRows(request: SessionRowsRequest): Promise<SessionRowsReply> {
     const { id, traceId, ...job } = request;
@@ -57,7 +78,11 @@ const JOB_TIMEOUT_MS = 5 * 60_000;
  * Runs the session rows rebuild on one resident worker thread, off the server's event loop: a 20 to 70 s rebuild under
  * load used to hold every other door (the inbox waited 7.4 s behind it in the 2026-10-27 bench). Identical asks while
  * one runs share it, and a caller that gives up (a deadline, a cancel) leaves the rebuild running, so its rows still
- * reach the cache file for the next ask instead of being thrown away. With no worker, the job runs inline as before.
+ * reach the cache file for the next ask instead of being thrown away. With no worker, the job runs inline as before. *
+ * An ask the cache file answers is served from it on the event loop, never queued behind a rebuild on the worker. A
+ * file past its age is still served (up to `SESSION_ROWS_SERVE_STALE_MS`) while one rebuild refreshes it: the hub's
+ * minute refresh used to rebuild in the request whenever the daemon was late, 13 to 86 s each, which was 70 % of its
+ * 741 s of waiting on 2026-11-02.
  */
 export class SessionRowsRunner {
     private worker?: RowsWorker;
@@ -70,12 +95,40 @@ export class SessionRowsRunner {
         private readonly options: {
             createWorker?: () => RowsWorker;
             inline?: (job: SessionRowsJob) => Promise<string>;
+            /** The cached answer of a non-fresh job; tests replace it. */
+            cached?: (job: SessionRowsJob) => Promise<{ text: string; stale: boolean } | null>;
             idleMs?: number;
             jobTimeoutMs?: number;
         } = {}
     ) {}
 
-    run(job: SessionRowsJob, traceId?: string): Promise<string> {
+    async run(job: SessionRowsJob, traceId?: string): Promise<string> {
+        if (!job.fresh) {
+            const hit = await this.cachedAnswer(job);
+            if (hit) {
+                if (hit.stale) {
+                    this.rebuild({ ...job, fresh: true }, traceId).catch((error) => {
+                        log.warn({ error, job }, "hub server: the session rows refresh behind a stale answer failed");
+                    });
+                }
+
+                return hit.text;
+            }
+        }
+
+        return this.rebuild(job, traceId);
+    }
+
+    private async cachedAnswer(job: SessionRowsJob): Promise<{ text: string; stale: boolean } | null> {
+        try {
+            return await (this.options.cached ?? cachedSessionRowsText)(job);
+        } catch (error) {
+            log.warn({ error, job }, "hub server: the session rows cache could not answer; rebuilding");
+            return null;
+        }
+    }
+
+    private rebuild(job: SessionRowsJob, traceId?: string): Promise<string> {
         const key = SafeJSON.stringify(job, { strict: true });
         const running = this.flights.get(key);
         if (running) {
