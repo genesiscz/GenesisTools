@@ -315,10 +315,10 @@ describe("a word question finds its own occurrence of the heard words", () => {
         expect(clip.toSec).toBeGreaterThan(spot);
     });
 
-    test("a question finding keeps its priority (0..1)", () => {
+    test("a question finding keeps its priority, on the scale suggest scores its own questions", () => {
         const parsed = findingsFileSchema.parse([
-            { kind: "question", from: 10, to: 20, question: "Who?", priority: 0.8 },
+            { kind: "question", from: 10, to: 20, question: "Who?", priority: 6 },
         ]);
-        expect(findingItems(parsed, [], now)[0]).toMatchObject({ kind: "question", priority: 0.8 });
+        expect(findingItems(parsed, [], now)[0]).toMatchObject({ kind: "question", priority: 6 });
     });
 });

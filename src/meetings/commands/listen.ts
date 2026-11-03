@@ -16,18 +16,16 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
-import { clipPlayer, cutClip, meetingAudioPath, playClip } from "../lib/audio";
-import { energyMicShareFor } from "../lib/energy";
+import { clipPlayer, cutClip, playClip } from "../lib/audio";
 import {
     type AskedQuestion,
     type ListenAdapter,
     type ListenOutcome,
     ListenSession,
-    type MicShare,
     type SessionNote,
 } from "../lib/listen-session";
 import { GivenAnswerAdapter } from "../lib/listen-session-answer";
-import { speakingEvidence } from "../lib/platforms";
+import { OpenedMeeting } from "../lib/opened-meeting";
 import {
     answerVocabulary,
     askedSpotSec,
@@ -42,7 +40,6 @@ import {
     questionView,
 } from "../lib/questions";
 import { errorText, fail, TOOL } from "../lib/shared";
-import { linkedSource, meetingTranscript } from "../lib/sources";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
@@ -90,13 +87,6 @@ async function somethingElse(vocabulary: string[], context: string[]): Promise<s
         },
     });
     return typeof picked === "symbol" ? undefined : picked;
-}
-
-/** The microphone's energy share over time, when the source keeps the audio and its channels are calibrated. */
-async function micShareOf(store: MeetingStore, meeting: MeetingRecord): Promise<MicShare | undefined> {
-    const { source, sourceMeetingId } = await linkedSource(meeting);
-    const evidence = speakingEvidence(meeting, await source.evidence(sourceMeetingId));
-    return (await energyMicShareFor(store, meeting, evidence)).share;
 }
 
 /** The words around a word question's heard words: the line before (dim), the line with them marked, the line after. */
@@ -397,6 +387,7 @@ type ListenSettings = MeetingsConfig["global"]["playback"]["listen"];
 interface AdapterContext {
     store: MeetingStore;
     meeting: MeetingRecord;
+    opened: OpenedMeeting;
     opts: ListenOptions;
     first: QuestionItem;
     settings: MeetingsConfig;
@@ -420,7 +411,7 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
         const adapter = new GivenAnswerAdapter(answer, (line, tone) => (tone === "ok" ? ui.ok(line) : ui.dim(line)));
         return { adapter, budget: 1, joinRunningRound: true };
     },
-    terminal: async ({ store, meeting, first, settings }) => {
+    terminal: async ({ store, meeting, opened, first, settings }) => {
         if (!isInteractive()) {
             fail(`listen plays audio and asks in a terminal. Without one, answer a question directly:`);
             ui.raw(
@@ -456,13 +447,13 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
         const adapter = new TerminalAdapter({
             store,
             meeting,
-            audioPath: await meetingAudioPath(meeting),
+            audioPath: await opened.audioPath(),
             player,
             vocabulary: answerVocabulary(
                 meeting,
                 dictionary.entries.map((entry) => entry.value)
             ),
-            transcript: new TranscriptLines(await meetingTranscript(meeting)),
+            transcript: new TranscriptLines((await opened.meeting()).transcript),
             padSec,
             listen,
         });
@@ -505,9 +496,11 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
     try {
         const settings = await new MeetingsConfigStore().read();
+        const opened = OpenedMeeting.of(store, meeting);
         const chosen = await ADAPTERS[opts.answer === undefined ? "terminal" : "answer"]({
             store,
             meeting,
+            opened,
             opts,
             first,
             settings,
@@ -528,8 +521,8 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             listenBelow: settings.global.suggest.listenBelow,
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
             split: {
-                transcript: (current) => meetingTranscript(current),
-                micShare: (current) => micShareOf(store, current),
+                transcript: async () => (await opened.meeting()).transcript,
+                micShare: async () => (await opened.energy()).share,
             },
         });
         // Ctrl-C outside a prompt (while a clip is cut) ends the process; the exit handler still closes the round.

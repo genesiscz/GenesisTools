@@ -20,6 +20,7 @@ import {
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
@@ -971,12 +972,16 @@ describe("questions (R2.3)", () => {
 
     test("an unsure range that matters is asked, offering everyone present, the user under their own name", () => {
         const parsed = withItems([{ ...range, confidence: 0.45 }]).items[0]!;
-        const presence = [
+        const withSelf = meetingRecordSchema.parse({
+            ...record,
+            participants: [{ name: "Alice Example", self: true }],
+        });
+        const presence = CallTimeline.stored(withSelf).named([
             { name: "Bob Example", fromSec: 0, toSec: 200 },
             { name: "alice@example.com", self: true, fromSec: 0, toSec: 200 },
             { name: "Dan Example", fromSec: 150, toSec: 200 },
-        ];
-        expect(questionFor(parsed, context({ presence, selfName: "Alice Example" }))).toMatchObject({
+        ]);
+        expect(questionFor(parsed, context({ presence }))).toMatchObject({
             kind: "question",
             about: "speaker",
             fromSec: 120,

@@ -771,7 +771,10 @@ export function registerItemCommands(program: Command): void {
         .option("--choices <list>", "question: comma-separated answers to offer")
         .option("--decides <ids>", "question: comma-separated items (or batch refs) the answer confirms or rejects")
         .option("--confidence <0..1>", "how sure the finding is (required for speaker-range, join and term)")
-        .option("--priority <0..1>", "question: how much its answer matters; listen asks the highest first")
+        .option(
+            "--priority <n>",
+            "question: (1 − confidence) × impact × reach, as suggest scores its own (about 1 to 3; under 0.5 asked only with --item)"
+        )
         .option(
             "--reason <text>",
             "why: the facts and context it rests on (required for speaker-range, label, join and term)"

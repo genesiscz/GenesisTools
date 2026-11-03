@@ -163,8 +163,9 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
 In the automatic mode the tool applies these rules (`tools meetings suggest`, then `tools meetings listen`). In the
 three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`, which
 warns about a question whose text repeats another open question (name the time or quote the words instead), one that
-decides no item, and one with no priority. Give each question `priority` (0 to 1, `--priority` or the batch field):
-listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`. The
+decides no item, and one with no priority. Give each question `priority` (`--priority` or the batch field) on the scale of rule 4 above,
+(1 - confidence) x impact x reach, the one suggest uses: one unsure question is about 1 to 3, a cluster 6 or more.
+Listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`. The
 cap is one for speakers and terms together (`global.suggest.questionCap` for suggest and
 `playback.listen.roundCap` for one listen round, 12 each by default). In both, the
 agent answers only what the listen round left open, in the chat round, with the evidence.

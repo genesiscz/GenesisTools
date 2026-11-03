@@ -39,9 +39,8 @@ const IMPACT = { decision: 3, cited: 3, owner: 2 } as const;
 /** What a question needs to know about the meeting besides the item. */
 export interface QuestionContext {
     listenBelow: number;
+    /** Who was in the call, the user under their own name (`CallTimeline.named`, as `OpenedMeeting.presence` gives it). */
     presence?: Presence[];
-    /** The user's own name: an attendance stay marked `self` (Teams names it by email) is shown as this. */
-    selfName?: string;
     /** The source's transcript, on the source's own labels. */
     transcript: TranscriptEntry[];
     /** The summary's action items and decisions. */
@@ -132,7 +131,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
 
         const present = (context.presence ?? [])
             .filter((stay) => stay.fromSec <= toSec && stay.toSec >= item.fromSec)
-            .map((stay) => (stay.self && context.selfName ? context.selfName : stay.name));
+            .map((stay) => stay.name);
         const choices = [...new Set([...(item.speaker ? [item.speaker] : []), ...(item.candidates ?? []), ...present])];
         const { impact } = impactOf(text, item.label, context);
         const longest = [...lines].sort((a, b) => b.endSec - b.startSec - (a.endSec - a.startSec))[0];
@@ -713,7 +712,7 @@ export function questionWarnings(record: MeetingRecord, added: MeetingItem[]): s
 
         if (question.priority === undefined) {
             warnings.push(
-                `${label} has no priority, so listen asks it after every question that has one (--priority <0..1>).`
+                `${label} has no priority, so listen asks it after every question that has one (--priority <n>, the scale suggest uses: about 1 to 3).`
             );
         }
     }

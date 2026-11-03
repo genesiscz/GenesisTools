@@ -92,8 +92,11 @@ export const findingSchema = z.discriminatedUnion("kind", [
         choices: z.array(text).default([]),
         /** Item ids (`i3`) or the refs of findings in the same batch. */
         decides: z.array(z.string().trim().min(1)).default([]),
-        /** 0 to 1: listen asks the highest first, and one under `playback.listen.minPriority` only with `--item`. */
-        priority: z.number().min(0).max(1).optional(),
+        /**
+         * The scale suggest uses: (1 − confidence) × impact × reach, about 1 to 3 for one question and 6 or more for a
+         * cluster. Listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`.
+         */
+        priority: z.number().min(0).optional(),
         confidence: confidence.optional(),
         reason: text.optional(),
     }),
