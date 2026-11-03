@@ -100,6 +100,12 @@ struct HubRequest {
     var usageHarness: String?
     /// Usage mode: shows these accounts' lanes (`--usage-account <id or name>`, repeatable).
     var usageAccounts: [String] = []
+    /// Usage mode: shows every account, dropping a selection an earlier link or click made (`--usage-all-accounts`,
+    /// the widget's alert that names no account). A bare `--usage-section` keeps the selection: a saved place uses it.
+    var usageAllAccounts = false
+
+    /// The request names a Usage place: a section, a session, accounts, or every account.
+    var opensUsage: Bool { usageSection != nil || usageSession != nil || !usageAccounts.isEmpty || usageAllAccounts }
     /// `--set <key>=<true|false>`: a setting of the scratch copy a scripted run starts from (the PR
     /// threads list open: `--set review.prThreads.open=true`). Never written to the live settings.
     var settings: [String: Bool] = [:]
@@ -131,7 +137,7 @@ struct HubRequest {
     var launchMode: HubMode {
         if let mode { return mode }
         if agent != nil { return .agents }
-        if usageSection != nil || usageSession != nil || !usageAccounts.isEmpty { return .usage }
+        if opensUsage { return .usage }
         if pr != nil { return .prs }
         if commit != nil || worktree != nil { return .worktrees }
         return inboxItem != nil ? .inbox : .sessions
@@ -148,7 +154,7 @@ struct HubRequest {
         if prompts { parts.insert("prompts") }
         if handoff { parts.insert("handoff") }
         if rules { parts.insert("rules") }
-        if mode == .usage || usageSection != nil || usageSession != nil || !usageAccounts.isEmpty { parts.insert("usage") }
+        if mode == .usage || opensUsage { parts.insert("usage") }
         return parts
     }
 
@@ -223,6 +229,7 @@ struct HubRequest {
             case "--usage-account":
                 if let value { usageAccounts.append(value) }
                 index += 1
+            case "--usage-all-accounts": usageAllAccounts = true
             case "--set":
                 let pair = (value ?? "").split(separator: "=", maxSplits: 1).map(String.init)
                 if pair.count == 2 {
@@ -1936,18 +1943,8 @@ final class HubModel {
                     context: request.widgetContext, cwd: request.widgetCwd)
             }
         }
-        if request.usageSection != nil || request.usageSession != nil || !request.usageAccounts.isEmpty {
-            MainActor.assumeIsolated {
-                if !request.usageAccounts.isEmpty {
-                    usage.selectAccounts(named: request.usageAccounts)
-                    usage.section = .limits
-                }
-                if let id = request.usageSession {
-                    usage.openSession(id, harness: request.usageHarness)
-                } else if let section = request.usageSection.flatMap(HubUsageSection.init(rawValue:)) {
-                    usage.section = section
-                }
-            }
+        if request.opensUsage {
+            MainActor.assumeIsolated { usage.open(request) }
         }
         if let text = request.filter {
             filter = text
@@ -2066,7 +2063,7 @@ final class HubModel {
             setMode(mode)
         } else if request.inboxItem != nil {
             setMode(.inbox)
-        } else if request.usageSection != nil || request.usageSession != nil || !request.usageAccounts.isEmpty {
+        } else if request.opensUsage {
             setMode(.usage)
         }
         if let worktree = request.worktree {
