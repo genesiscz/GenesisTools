@@ -1,9 +1,9 @@
+import { ReplEngine } from "@app/node-repl/lib/engine";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
-import { ComputerReplEngine } from "../lib/computer-use/repl";
 import { ensureBinary } from "../lib/runner";
 
 /**
@@ -50,7 +50,7 @@ export function registerComputerUseCommands(program: Command, options: { primary
         .action(async (code: string | undefined, options: { file?: string; timeout: string; json?: boolean }) => {
             const timeout = z.number().int().min(1).max(300000).parse(Number(options.timeout));
             const source = options.file ? await Bun.file(options.file).text() : (code ?? (await Bun.stdin.text()));
-            const engine = new ComputerReplEngine({ defaultTimeoutMs: timeout });
+            const engine = new ReplEngine({ defaultTimeoutMs: timeout, toolsets: ["computer"] });
             try {
                 const result = await engine.run(source, timeout);
                 if (options.json) {
@@ -68,7 +68,7 @@ export function registerComputerUseCommands(program: Command, options: { primary
                     process.exitCode = 1;
                 }
             } finally {
-                engine.dispose();
+                await engine.shutdown();
             }
         });
 }

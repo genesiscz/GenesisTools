@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { ReplEngine } from "@app/node-repl/lib/engine";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { toMcpTools } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createComputerMcpServer, invokeComputerTool } from "../../mcp/server";
 import type { Observation } from "../decision/observation";
 import type { AxResult } from "../runner";
+import { computerApi, computerDescriptions } from "./descriptor";
 import { NativeMenuSession } from "./menu";
-import { ComputerReplEngine } from "./repl";
 import { computerSchemas } from "./schemas";
 import { ComputerUse, type NativeBridge } from "./session";
 
@@ -1585,8 +1587,28 @@ test("unnamed browser status text has an exact readable label without treating e
     });
     expect(changed.status).not.toBe("verified");
 });
+test('one descriptor feeds the MCP tool list and the REPL\'s help("computer")', async () => {
+    const tools = toMcpTools(computerApi);
+    expect(tools).toHaveLength(Object.keys(computerSchemas).length);
+    expect(tools.find((tool) => tool.name === "get_app_state")?.annotations).toEqual({
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+    });
+    expect(tools.find((tool) => tool.name === "verify_state")?.annotations.openWorldHint).toBe(true);
+    expect(tools.find((tool) => tool.name === "click")?.annotations.destructiveHint).toBe(true);
+    const engine = new ReplEngine({ toolsets: ["computer"] });
+    try {
+        const help = await engine.run('help("computer")');
+        expect(help.ok).toBe(true);
+        expect(help.text).toContain("- computer.get_app_state(options: {");
+        expect(help.text).toContain(computerDescriptions.get_app_state);
+    } finally {
+        await engine.shutdown();
+    }
+});
 test("Computer Use REPL bootstraps its own API and retains bindings across cells", async () => {
-    const engine = new ComputerReplEngine();
+    const engine = new ReplEngine({ toolsets: ["computer"] });
     try {
         const first = await engine.run("const retained = computer; computer.target");
         expect(first.ok).toBe(true);
