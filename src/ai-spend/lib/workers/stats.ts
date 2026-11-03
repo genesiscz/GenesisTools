@@ -20,9 +20,17 @@ import { listWorkerSessions, type WorkerSessionInfo } from "./sessions";
  * about) falls back to the cost its turns booked in the ledger, and is counted as such.
  */
 
-export type WorkerStatsDimension = "backend" | "model" | "label" | "day" | "name";
+/** `outcome` (proposal 19): a turn's ledger outcome (completed, failed, interrupted), `unknown` when none says. */
+export type WorkerStatsDimension = "backend" | "model" | "label" | "day" | "name" | "outcome";
 
-export const WORKER_STATS_DIMENSIONS: readonly WorkerStatsDimension[] = ["backend", "model", "label", "day", "name"];
+export const WORKER_STATS_DIMENSIONS: readonly WorkerStatsDimension[] = [
+    "backend",
+    "model",
+    "label",
+    "day",
+    "name",
+    "outcome",
+];
 
 export interface WorkerStatsTotals {
     sessions: number;
@@ -303,12 +311,22 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
             // Missing or overlapping turn evidence cannot establish a historical login.
             return matches.length === 1 ? matches[0].auth : "unknown";
         };
-        const values = (model: string | null, ts: string): Record<WorkerStatsDimension, string> => ({
+        // The turn whose span holds the moment names its outcome; a moment no single turn holds is `unknown`.
+        const outcomeAt = (timestamp: string): string => {
+            const time = Date.parse(timestamp);
+            const matches = sessionRows.filter((row) => {
+                const end = Date.parse(row.ts);
+                return time <= end && time >= end - (row.durationMs ?? 0);
+            });
+            return matches.length === 1 ? (matches[0].outcome ?? "unknown") : "unknown";
+        };
+        const values = (model: string | null, ts: string, outcome: string): Record<WorkerStatsDimension, string> => ({
             backend: session.backend,
             model: model || session.model || "?",
             label,
             day: zonedDay(ts, timezone),
             name: session.name,
+            outcome,
         });
         const touched = new Set<WorkerStatsGroup>();
         const events = ledgerOnly.has(sessionKey(session.backend, session.sessionId, session.name))
@@ -318,7 +336,11 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
 
         if (events === null) {
             for (const row of windowRows) {
-                const group = bucket(groups, keyOf(dimensions, values(row.model, row.ts)), dimensions);
+                const group = bucket(
+                    groups,
+                    keyOf(dimensions, values(row.model, row.ts, row.outcome ?? "unknown")),
+                    dimensions
+                );
                 addLedgerCost(group, row);
                 touched.add(group);
             }
@@ -335,14 +357,22 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
                     continue;
                 }
 
-                const group = bucket(groups, keyOf(dimensions, values(event.model, event.timestamp)), dimensions);
+                const group = bucket(
+                    groups,
+                    keyOf(dimensions, values(event.model, event.timestamp, outcomeAt(event.timestamp))),
+                    dimensions
+                );
                 addEvent(group, event, authAt(event.timestamp), pricing);
                 touched.add(group);
             }
         }
 
         for (const row of windowRows) {
-            const group = bucket(groups, keyOf(dimensions, values(row.model, row.ts)), dimensions);
+            const group = bucket(
+                groups,
+                keyOf(dimensions, values(row.model, row.ts, row.outcome ?? "unknown")),
+                dimensions
+            );
             group.turns += row.turn === null ? 0 : 1;
             group.durationMs += row.durationMs ?? 0;
             group.toolCalls += row.toolCalls ?? 0;
