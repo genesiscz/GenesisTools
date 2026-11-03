@@ -3,10 +3,14 @@ import { parseNonNegativeInt } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
-import { harStreamCandidates, readHarPlaylists } from "@genesiscz/utils/hls/har";
+import { findLogPlaylists, type HarLog, harStreamCandidates, readHar } from "@genesiscz/utils/hls/har";
+import { downloadFile, partFileFor } from "@genesiscz/utils/http/download-file";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { captureFromBrowser } from "./capture";
 import { downloadStream, partsDirFor, readState, type StreamProgress } from "./download";
+import { findProviderEvents, type ProviderEvent, providerById } from "./providers";
+import { awaitEventState, describeEvent, recordingOutputName } from "./recording";
 import { listCandidates, resolveSource, type StreamSource } from "./source";
 
 const PROGRESS_THROTTLE_MS = 200;
@@ -22,7 +26,14 @@ interface DownloadFlags {
     stitchOnly?: boolean;
     list?: boolean;
     json?: boolean;
+    chromeCdp?: string;
+    chromeCdpPort?: string;
+    chromeCdpWait: string;
+    waitRecording?: boolean | string;
 }
+
+/** How long `--wait-recording` without a value waits for a broadcast to end and its recording to appear. */
+const DEFAULT_RECORDING_WAIT_MINUTES = 240;
 
 function slugify(text: string): string {
     return text
@@ -66,7 +77,7 @@ export function registerStreamCommands(program: Command): void {
     stream
         .command("download [source]")
         .description(
-            "Download an HLS stream from a HAR file (or a playlist URL) from its oldest available segment until it ends, then stitch it. Run it again with the same --out to resume."
+            "Download a stream from a HAR file, a playlist URL, or a page in your browser (--chrome-cdp). When the HAR shows a known player (StreamYard), the platform's own full recording is downloaded once the broadcast has ended; a live HLS stream is followed from its oldest available segment until it ends, then stitched. Run it again with the same --out to resume."
         )
         .option("--out <file>", "Output file; .ts is concatenated as is, other containers go through ffmpeg -c copy")
         .option("--quality <value>", "best, worst, or a height such as 720", "best")
@@ -76,34 +87,180 @@ export function registerStreamCommands(program: Command): void {
         .option("--idle-timeout <seconds>", "Treat a live stream as ended after this long with no new segment", "120")
         .option("--no-backfill", "Start at the live window instead of the oldest segment the CDN keeps")
         .option("--stitch-only", "Download nothing; stitch the segments already in <out>.parts")
-        .option("--list", "List the HLS streams in the HAR and exit")
+        .option("--list", "List the HLS streams and player events in the HAR and exit")
+        .option(
+            "--chrome-cdp <page url>",
+            "Record the page in your own browser over its debug port (reloads its open tab, or opens one) instead of reading a HAR; the HAR is saved for later runs"
+        )
+        .option(
+            "--chrome-cdp-port <n>",
+            "The browser's debug port (default: the browser with the page open, else 9222)"
+        )
+        .option("--chrome-cdp-wait <seconds>", "Longest time the page is recorded", "30")
+        .option(
+            "--wait-recording [minutes]",
+            `While the broadcast is live or its recording is not made yet, wait for the full recording, asking every minute (default ${DEFAULT_RECORDING_WAIT_MINUTES} min)`
+        )
         .option("--json", "Print the result as JSON")
         .action(async (input: string | undefined, flags: DownloadFlags) => {
             await runDownload(input, flags);
         });
 }
 
-async function runDownload(input: string | undefined, flags: DownloadFlags): Promise<void> {
-    if (flags.list) {
-        if (!input) {
-            out.log.error("--list needs a HAR file.");
-            process.exitCode = 1;
-            return;
-        }
+function parseWaitRecording(value: boolean | string | undefined): number | undefined {
+    if (value === undefined || value === false) {
+        return undefined;
+    }
 
-        const candidates = harStreamCandidates(await readHarPlaylists(input));
+    return value === true ? DEFAULT_RECORDING_WAIT_MINUTES : parseNonNegativeInt(value, "--wait-recording");
+}
 
-        if (flags.json) {
-            out.result(candidates.map(({ headers: _headers, ...candidate }) => candidate));
-            return;
-        }
+function listHar(log: HarLog, json: boolean | undefined): void {
+    const candidates = harStreamCandidates(findLogPlaylists(log));
+    const events = findProviderEvents(log);
 
-        out.println(candidates.length ? listCandidates(candidates).join("\n") : "No HLS playlist in this HAR.");
+    if (json) {
+        out.result({
+            streams: candidates.map(({ headers: _headers, ...candidate }) => candidate),
+            events: events.map(({ request: _request, ...event }) => event),
+        });
+        return;
+    }
+
+    const lines = candidates.length ? listCandidates(candidates) : ["No HLS playlist in this HAR."];
+
+    for (const event of events) {
+        lines.push(`${describeEvent(event)}: ${event.capturedStatus} when recorded (${event.page ?? "unknown page"})`);
+    }
+
+    out.println(lines.join("\n"));
+}
+
+type RecordingOutcome = { kind: "done" } | { kind: "live"; source: StreamSource } | { kind: "fallback" };
+
+/**
+ * Asks the platform about a player event and downloads its finished recording. A live event hands its HLS stream back
+ * to the stream downloader; an event without a recording falls back to the HAR's playlists.
+ */
+async function runRecording({
+    event,
+    flags,
+    waitMinutes,
+    rerun,
+}: {
+    event: ProviderEvent;
+    flags: DownloadFlags;
+    waitMinutes?: number;
+    rerun: string;
+}): Promise<RecordingOutcome> {
+    const spinner = flags.json ? null : out.spinner();
+    spinner?.start(`Asking ${providerById(event.provider).name} about ${describeEvent(event)}`);
+
+    return await withInterrupt(
+        async (signal): Promise<RecordingOutcome> => {
+            const state = await awaitEventState({
+                event,
+                waitMinutes,
+                signal,
+                onWait: (current, nextAt) =>
+                    spinner?.message(
+                        `${current.kind === "live" ? "Still live" : "Recording not made yet"}; asking again at ${nextAt.toLocaleTimeString("en-GB")}`
+                    ),
+            });
+
+            if (signal.aborted) {
+                spinner?.stop("Stopped.");
+                process.exitCode = 130;
+                return { kind: "done" };
+            }
+
+            if (state.kind === "unavailable") {
+                spinner?.stop(`${describeEvent(event)} has no recording: ${state.reason}.`);
+                return { kind: "fallback" };
+            }
+
+            if (state.kind === "pending" || (state.kind === "live" && waitMinutes !== undefined)) {
+                const why = state.kind === "live" ? "it is still live" : state.reason;
+                spinner?.stop(`No recording of ${describeEvent(event)} yet: ${why}.`);
+                out.log.info(
+                    waitMinutes === undefined
+                        ? `Wait for it: ${rerun} --wait-recording`
+                        : `Waited ${waitMinutes} min. Wait longer: ${rerun} --wait-recording <minutes>`
+                );
+                process.exitCode = 1;
+                return { kind: "done" };
+            }
+
+            if (state.kind === "live") {
+                spinner?.stop(`${describeEvent(event)} is live; following its stream until it ends.`);
+                out.log.info(`The full recording comes after it ends: ${rerun} --wait-recording`);
+                return {
+                    kind: "live",
+                    source: { playlistUrl: state.playlistUrl, headers: state.headers, page: event.page },
+                };
+            }
+
+            const output = resolve(flags.out ?? recordingOutputName(event));
+            const started = Date.now();
+            let lastShown = 0;
+            spinner?.message(`Downloading the recording to ${output}`);
+            const result = await downloadFile({
+                url: state.url,
+                headers: state.headers,
+                output,
+                signal,
+                onProgress: ({ bytes, total, resumedFrom }) => {
+                    const now = Date.now();
+
+                    if (now - lastShown < PROGRESS_THROTTLE_MS) {
+                        return;
+                    }
+
+                    lastShown = now;
+                    const share = total ? ` of ${formatBytes(total)} (${((bytes / total) * 100).toFixed(1)}%)` : "";
+                    const rate = (bytes - resumedFrom) / Math.max(0.001, (now - started) / 1000);
+                    spinner?.message(`${formatBytes(bytes)}${share} at ${formatBytes(rate)}/s`);
+                },
+            });
+
+            if (!result.complete) {
+                spinner?.stop(`Stopped. ${formatBytes(result.bytes)} are kept in ${partFileFor(output)}`);
+                out.log.info(`Resume: ${rerun} --out ${output}`);
+                process.exitCode = 130;
+                return { kind: "done" };
+            }
+
+            if (flags.json) {
+                out.result({
+                    kind: "recording",
+                    provider: event.provider,
+                    event: event.id,
+                    title: event.title,
+                    output,
+                    bytes: result.bytes,
+                    resumedFrom: result.resumedFrom,
+                });
+                return { kind: "done" };
+            }
+
+            spinner?.stop(`Saved ${output}`);
+            out.log.info(`${formatBytes(result.bytes)}, the full recording from ${providerById(event.provider).name}.`);
+            return { kind: "done" };
+        },
+        { handleTermination: true }
+    );
+}
+
+async function runDownload(argInput: string | undefined, flags: DownloadFlags): Promise<void> {
+    if (flags.chromeCdp && argInput) {
+        out.log.error("Pass a HAR file or a playlist URL, or --chrome-cdp <page url>, not both.");
+        process.exitCode = 1;
         return;
     }
 
     const jobs = parseNonNegativeInt(flags.jobs, "--jobs");
     const idleTimeoutSec = parseNonNegativeInt(flags.idleTimeout, "--idle-timeout");
+    const waitMinutes = parseWaitRecording(flags.waitRecording);
 
     if (jobs < 1) {
         out.log.error("--jobs must be 1 or more.");
@@ -111,7 +268,65 @@ async function runDownload(input: string | undefined, flags: DownloadFlags): Pro
         return;
     }
 
-    const source = input ? await resolveSource({ input, stream: flags.stream, headerFlags: flags.header }) : undefined;
+    let input = argInput;
+    let log: HarLog | undefined;
+
+    if (flags.chromeCdp) {
+        const spinner = flags.json ? null : out.spinner();
+        spinner?.start(`Recording ${flags.chromeCdp} in your browser`);
+        const capture = await captureFromBrowser({
+            pageUrl: flags.chromeCdp,
+            port: flags.chromeCdpPort ? parseNonNegativeInt(flags.chromeCdpPort, "--chrome-cdp-port") : undefined,
+            maxSeconds: parseNonNegativeInt(flags.chromeCdpWait, "--chrome-cdp-wait"),
+        });
+        spinner?.stop(
+            `Recorded ${capture.entries} requests in the browser on port ${capture.port} (${capture.portReason}${capture.openedTab ? ", in a new tab" : ", by reloading its tab"})`
+        );
+        out.log.info(`The HAR is saved; later runs can read it: ${capture.harPath}`);
+        input = capture.harPath;
+        log = capture.log;
+    } else if (input && !/^https?:\/\//i.test(input)) {
+        log = await readHar(input);
+    }
+
+    if (flags.list) {
+        if (!log) {
+            out.log.error("--list needs a HAR file or --chrome-cdp.");
+            process.exitCode = 1;
+            return;
+        }
+
+        listHar(log, flags.json);
+        return;
+    }
+
+    let source: StreamSource | undefined;
+    const events = log ? findProviderEvents(log) : [];
+
+    if (input && events.length > 0) {
+        if (events.length > 1) {
+            out.log.warn(
+                `The HAR shows ${events.length} player events; using the newest, ${describeEvent(events.at(-1) ?? events[0])}.`
+            );
+        }
+
+        const outcome = await runRecording({
+            event: events.at(-1) ?? events[0],
+            flags,
+            waitMinutes,
+            rerun: toolCommand("video", "stream", "download", input),
+        });
+
+        if (outcome.kind === "done") {
+            return;
+        }
+
+        if (outcome.kind === "live") {
+            source = outcome.source;
+        }
+    }
+
+    source ??= input ? await resolveSource({ input, log, stream: flags.stream, headerFlags: flags.header }) : undefined;
     const outputName = flags.out ?? (source ? defaultOutputName(source) : null);
 
     if (!outputName) {

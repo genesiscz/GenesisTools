@@ -1,5 +1,11 @@
 import { isInteractive } from "@genesiscz/utils/cli";
-import { type HarPlaylist, harStreamCandidates, readHarPlaylists } from "@genesiscz/utils/hls/har";
+import {
+    findLogPlaylists,
+    type HarLog,
+    type HarPlaylist,
+    harStreamCandidates,
+    readHar,
+} from "@genesiscz/utils/hls/har";
 import { type HlsMediaPlaylist, type HlsPlaylist, type HlsVariant, parsePlaylist } from "@genesiscz/utils/hls/playlist";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -88,10 +94,13 @@ function describe(candidate: HarPlaylist, index: number): string {
  */
 export async function resolveSource({
     input,
+    log,
     stream,
     headerFlags,
 }: {
     input: string;
+    /** The HAR, when the caller has already read or recorded it. */
+    log?: HarLog;
     stream?: string;
     headerFlags: string[];
 }): Promise<StreamSource> {
@@ -101,7 +110,7 @@ export async function resolveSource({
         return { playlistUrl: input, headers: withDefaultHeaders(extraHeaders) };
     }
 
-    const all = await readHarPlaylists(input);
+    const all = findLogPlaylists(log ?? (await readHar(input)));
     const candidates = harStreamCandidates(all);
     logger.debug({ har: input, playlists: all.length, candidates: candidates.length }, "HAR playlists found");
 
