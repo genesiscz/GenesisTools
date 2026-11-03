@@ -687,6 +687,33 @@ harness only carries a local gateway header.
 | `gateway status` | Listen address, health, and whether an agent supervises it |
 | `gateway stop` | Stop listeners this process started |
 | `gateway rotate-client` | Rotate the local gateway header, then resync every harness |
+| `gateway stdio --server <name>` | Serve one HTTP server to a client that can only start a stdio command |
+
+### The stdio bridge
+
+`gateway stdio --server <name>` reads newline JSON-RPC on stdin, posts each message over HTTP and writes the
+answers to stdout. Use it for a client that can only start a command, such as Claude Desktop or Cursor:
+
+```json
+{ "command": "tools", "args": ["mcp-manager", "gateway", "stdio", "--server", "onyx"] }
+```
+
+Where the messages go depends on the server's unified entry:
+
+- An OAuth server with `auth.gateway: true`, or a gateway-hosted server, goes through the local gateway, which
+  adds the token. The bridge sends only the local gateway header.
+- Any other `http` server goes straight to its `url` with the `headers` of its unified entry. The header values
+  stay inside the bridge process: they are not in the client's config, in argv or in a log line (the log names
+  the headers, not their values).
+- A stdio or `sse` server is refused, because the client can start a stdio command itself and the bridge
+  speaks Streamable HTTP only.
+
+The bridge does not negotiate a protocol version: the client's own messages go through as written. A server
+that speaks only protocol version 2026-07-28 or later needs a client of that version, because such a server
+refuses an `initialize` of an earlier version. For a message that carries
+`_meta["io.modelcontextprotocol/protocolVersion"]`, the bridge adds the headers the 2026-07-28 HTTP transport
+requires (`MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name`), because a stdio message has no headers of its
+own. It does not add `Mcp-Param-*` headers for tool arguments marked `x-mcp-header`: those need the tool's schema.
 
 **Install it.** Without the agent, the only gateway is the in-process one `ensureGatewayUp`
 starts, and that dies with the CLI that started it. A harness launched afterwards then shows

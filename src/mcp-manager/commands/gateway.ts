@@ -5,7 +5,7 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { GATEWAY_HEADER } from "../lib/auth/constants.ts";
-import { gatewayListen } from "../lib/auth/project.ts";
+import { gatewayListen, gatewayServerUrl } from "../lib/auth/project.ts";
 import { ensureGatewayClientToken, rotateGatewayClientToken } from "../lib/auth/secrets.ts";
 import { ensureGatewayUp, gatewayHealth, stopInProcessGateways } from "../lib/gateway/ensure.ts";
 import { HOSTABLE, HOSTED_HTTP_PROVIDERS, hostedServer } from "../lib/gateway/hosted.ts";
@@ -21,6 +21,7 @@ import {
     waitForGatewayHealth,
 } from "../lib/gateway/service.ts";
 import { runStdioHttpRelay } from "../lib/gateway/stdio-relay.ts";
+import { stdioRelayRoute } from "../lib/gateway/stdio-route.ts";
 import { syncConfigToProvider } from "./sync.ts";
 
 /** `undefined` means the caller passed something that is not a usable port. */
@@ -318,7 +319,15 @@ export async function gatewayHost(serverName: string, opts: { off: boolean; prov
     ui.dim("    running sessions keep the server they started with until they restart");
 }
 
-export async function gatewayStdio(serverName: string | undefined): Promise<void> {
+interface StdioPipes {
+    stdin: AsyncIterable<Uint8Array>;
+    stdout: { write(chunk: Uint8Array): unknown };
+}
+
+export async function gatewayStdio(
+    serverName: string | undefined,
+    pipes: StdioPipes = { stdin: Bun.stdin.stream(), stdout: Bun.stdout }
+): Promise<void> {
     if (!serverName) {
         logger.error("--server required");
         process.exitCode = 1;
@@ -327,17 +336,39 @@ export async function gatewayStdio(serverName: string | undefined): Promise<void
     }
 
     const config = await readUnifiedConfig();
+    const route = stdioRelayRoute(serverName, config.mcpServers[serverName]);
+
+    if (route.kind === "refused") {
+        logger.error(route.reason);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    if (route.kind === "direct") {
+        // Header values are credentials: log their names only, and the url without its query.
+        const shown = new URL(route.url);
+        shown.search = "";
+        logger.info(
+            { server: serverName, url: shown.toString(), headers: Object.keys(route.headers) },
+            "stdio relay straight to an http mcp server"
+        );
+
+        await runStdioHttpRelay({ url: route.url, headers: route.headers, ...pipes });
+
+        return;
+    }
+
     await ensureGatewayUp(config);
     const listen = gatewayListen(config);
     const token = await ensureGatewayClientToken();
-    const target = `http://${listen.host}:${listen.port}/mcp/${encodeURIComponent(serverName)}`;
+    const target = gatewayServerUrl(listen, serverName);
 
     logger.info({ target }, "stdio trampoline to mcp gateway");
 
     await runStdioHttpRelay({
         url: target,
         headers: { [GATEWAY_HEADER]: token },
-        stdin: Bun.stdin.stream(),
-        stdout: Bun.stdout,
+        ...pipes,
     });
 }

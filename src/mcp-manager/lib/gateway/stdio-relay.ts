@@ -184,6 +184,8 @@ interface RequestMeta {
     hasId: boolean;
     id?: unknown;
     cancellationId?: unknown;
+    /** HTTP headers the body requires on this transport; see `mirroredHeaders`. */
+    headers?: Record<string, string>;
 }
 
 interface QueuedMessage {
@@ -205,13 +207,66 @@ function requestMeta(message: string): RequestMeta {
                     ? (params as Record<string, unknown>).requestId
                     : undefined;
 
-            return { hasId: "id" in record, id: record.id, cancellationId };
+            return { hasId: "id" in record, id: record.id, cancellationId, headers: mirroredHeaders(record) };
         }
     } catch (error) {
         logger.debug({ error }, "stdio relay could not read jsonrpc id");
     }
 
     return { hasId: false };
+}
+
+const PROTOCOL_VERSION_META = "io.modelcontextprotocol/protocolVersion";
+/** The request methods whose `params.name` or `params.uri` must also travel as `Mcp-Name`. */
+const NAMED_METHODS: Record<string, "name" | "uri"> = {
+    "tools/call": "name",
+    "prompts/get": "name",
+    "resources/read": "uri",
+};
+const HEADER_SAFE = /^[\x21-\x7e](?:[\x20-\x7e\t]*[\x21-\x7e])?$/;
+const BASE64_SENTINEL = /^=\?base64\?.*\?=$/s;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** A header value as the 2026-07-28 transport writes it: as-is when header-safe, else the base64 sentinel form. */
+function headerValue(value: string): string {
+    if (HEADER_SAFE.test(value) && !BASE64_SENTINEL.test(value)) {
+        return value;
+    }
+
+    return `=?base64?${Buffer.from(value, "utf8").toString("base64")}?=`;
+}
+
+/**
+ * From protocol version 2026-07-28 on, a Streamable HTTP POST repeats parts of its body as headers
+ * (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`), and the server answers 400 without them. A stdio
+ * message has no headers, so the relay derives them from the body. A message is modern when its `_meta`
+ * carries the protocol version; a legacy message (from a client of the `initialize` era) gets none.
+ * `Mcp-Param-*` headers for `x-mcp-header` tool arguments are not derived: they need the tool's schema.
+ */
+function mirroredHeaders(record: Record<string, unknown>): Record<string, string> | undefined {
+    const params = isRecord(record.params) ? record.params : {};
+    const meta = isRecord(params._meta) ? params._meta : {};
+    const version = meta[PROTOCOL_VERSION_META];
+
+    if (typeof version !== "string" || typeof record.method !== "string") {
+        return undefined;
+    }
+
+    const headers: Record<string, string> = {
+        "MCP-Protocol-Version": headerValue(version),
+        "Mcp-Method": headerValue(record.method),
+    };
+    const nameField = NAMED_METHODS[record.method];
+    const name = nameField ? params[nameField] : undefined;
+
+    if (typeof name === "string") {
+        headers["Mcp-Name"] = headerValue(name);
+    }
+
+    return headers;
 }
 
 function jsonRpcErrorLine(id: unknown, message: string): string {
@@ -342,6 +397,7 @@ export async function runStdioHttpRelay(opts: {
             Accept: "application/json, text/event-stream",
             "Content-Type": "application/json",
             ...opts.headers,
+            ...meta.headers,
         };
 
         if (sessionId) {
