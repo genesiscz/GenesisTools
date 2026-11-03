@@ -8,6 +8,7 @@ import { synchronizeHistory } from "./sync";
 import { HistorySyncRepository } from "./sync-repository";
 import {
     classifiesNoPath,
+    noAnalysis,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -55,6 +56,7 @@ function fixture() {
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         rowAnchors: noRowAnchors,
+        analysis: noAnalysis,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],

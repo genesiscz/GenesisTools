@@ -60,7 +60,12 @@ provider, so a new provider is a list of members to fill in and no feature parse
   `indexesFile` on 2026-10-31, and `readers/fixtures/session-paths.json` pins its cases for TS and Swift; Claude's
   folder layout is in `readers/claude-paths.ts`), and `rowAnchors` (the ids a row carries: uuid, message id, tool call
   ids, the open Codex turn). `followSessionContinuations` (`session-backward.ts`) walks `continuedIn` to the live
-  id, so `tools claude cmux focus`, `send` and decision delivery reach a continued session.
+  id, so `tools claude cmux focus`, `send` and decision delivery reach a continued session. Added 2026-11-03 (design
+  2026-11-01, proposal 2): `analysis`, one group of analysis facts (`analysis-types.ts`): `callTrace` (every model
+  call with its token split, deduplicated), `compactions` and `quotaReadings` (Codex `rate_limits`). Each answers
+  `{ supported: false, reason }` when the harness's files lack the fact (Claude and Grok keep no quota reading; Grok
+  keeps only a compaction count), never an empty list. The implementations are `readers/<harness>-analysis.ts`; a
+  test fake uses `noAnalysis`.
 - **What a feature gets is normalized**: `NativeHistoryEntry` (role, text, timestamp, tool, paths). Logic over it
   (decision answers in `src/question/lib/decisions/chat-answers.ts`, a reply's decision blocks) is provider-neutral
   and never names a JSONL field such as `"type":"assistant"`, `response_item`, `continued-in` or `chat_history`.

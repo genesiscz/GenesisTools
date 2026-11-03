@@ -1,6 +1,7 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import type { SessionAnalysisReader } from "./analysis-types";
 import type { DailyStats, HistoryFileStatistics, SessionMetadataRecord, TokenUsage } from "./cache-types";
 
 export type AgentKind = AccountProviderAlias;
@@ -378,6 +379,12 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
         registryDirectory(transcriptPath: string): string | null;
     };
     windowTurns(values: Record<string, unknown>[]): TranscriptTurn[];
+    /**
+     * The facts a session analysis reads from one transcript: its model calls, its compactions and the quota
+     * readings it carries (`analysis-types.ts`). A harness whose files lack a fact answers `supported: false` with the
+     * reason, so `tools ai sessions report`, `spend waste` and `limits drift` never parse a format themselves.
+     */
+    readonly analysis: SessionAnalysisReader;
     /**
      * The newest entries of a session, read from the end of its source back to the first entry `options.until`
      * accepts: the conversation after a known point (a decision's ask) without reading the whole file.

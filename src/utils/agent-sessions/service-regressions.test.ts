@@ -10,6 +10,7 @@ import { HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
 import {
     classifiesNoPath,
+    noAnalysis,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -144,6 +145,7 @@ function fixtureReader(options: {
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         rowAnchors: noRowAnchors,
+        analysis: noAnalysis,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [...new Set(options.fixtures.map((fixture) => fixture.source.root))],

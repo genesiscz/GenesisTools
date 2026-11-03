@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { DailyStats } from "@genesiscz/utils/agent-sessions/cache-types";
 import {
     classifiesNoPath,
+    noAnalysis,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -256,6 +257,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         scanInsights: null,
         classifyPath: classifiesNoPath,
         rowAnchors: noRowAnchors,
+        analysis: noAnalysis,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],

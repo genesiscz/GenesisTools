@@ -1,3 +1,4 @@
+import type { SessionAnalysisReader } from "../analysis-types";
 import type { BackwardRead, RowAnchorWalk } from "../types";
 
 /** `readBackward` for a test reader whose test never walks a session backwards. */
@@ -24,3 +25,10 @@ export function classifiesNoPath(): null {
 export function noRowAnchors(): RowAnchorWalk {
     return () => ({ messageIds: [], toolCallIds: [], turnIds: [] });
 }
+
+/** `analysis` for a test reader whose test never analyses a session: every fact answers that it cannot. */
+export const noAnalysis: SessionAnalysisReader = {
+    callTrace: async () => ({ supported: false, reason: "test reader" }),
+    compactions: async () => ({ supported: false, reason: "test reader" }),
+    quotaReadings: async () => ({ supported: false, reason: "test reader" }),
+};
