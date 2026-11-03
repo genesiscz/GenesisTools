@@ -180,6 +180,23 @@ export const USAGE_LIMITS_MIGRATIONS: Migration[] = [
     },
     {
         /**
+         * The first event a count row counts (`probe`, `probe-refused`). A count row covers one hour now, from
+         * `first_ts` to `ts`, so a window that holds the whole span counts it and a window that cuts it does not claim
+         * it. A row written before the column has NULL here and reads its `ts`, as before.
+         */
+        id: "2026-11-usage-events-first-ts",
+        description: "usage_events.first_ts (the span of an hourly count row)",
+        isApplied(db) {
+            return tableExists(db, "usage_events") && columnNames(db, "usage_events").has("first_ts");
+        },
+        apply(db) {
+            if (!columnNames(db, "usage_events").has("first_ts")) {
+                db.exec("ALTER TABLE usage_events ADD COLUMN first_ts TEXT");
+            }
+        },
+    },
+    {
+        /**
          * Every alert the engine fired (step U7): the record the old threshold notifier never kept, the dedupe
          * memory of the engine, and the feed the popover and `tools ai usage alerts` read.
          */
