@@ -101,6 +101,8 @@ final class HubUsageModel: ObservableObject {
     @Published private(set) var alerts: UsageEnvelope<UsageAlertsData>?
     @Published private(set) var advise: UsageEnvelope<UsageAdviseData>?
     @Published private(set) var pivot: UsageEnvelope<UsagePivotData>?
+    /// The Spend chart's bars, built off the main thread each time the pivot lands (never in the view body).
+    @Published private(set) var spendBars: [UsageSpendBar] = []
     @Published private(set) var waste: UsageEnvelope<UsageWasteData>?
     @Published private(set) var attribution: UsageEnvelope<UsageAttributionData>?
     @Published private(set) var drift: UsageEnvelope<UsageDriftData>?
@@ -277,7 +279,12 @@ final class HubUsageModel: ObservableObject {
                 apply = { self.advise = value }
             case .pivot:
                 let value = try await client.envelope(.pivot(range, by: settings.spendStack.rawValue), as: UsagePivotData.self)
-                apply = { self.pivot = value }
+                let pivotData = value.data
+                let bars = await Task.detached(priority: .userInitiated) { UsageSpendBar.bars(pivotData) }.value
+                apply = {
+                    self.pivot = value
+                    self.spendBars = bars
+                }
             case .waste:
                 let value = try await client.envelope(.waste(range), as: UsageWasteData.self)
                 apply = { self.waste = value }

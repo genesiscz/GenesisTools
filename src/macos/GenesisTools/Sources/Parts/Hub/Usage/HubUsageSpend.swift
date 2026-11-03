@@ -1,50 +1,94 @@
 import Charts
 import SwiftUI
 
-/// One stacked bar segment: a bucket, a group, its dollars.
-struct UsageSpendBar: Identifiable, Equatable {
+/// One stacked bar segment: a bucket, a group, its dollars. `groupId` is the pivot group's identity (or the overflow's
+/// own id); `group` is the name the chart shows, unique per series.
+struct UsageSpendBar: Identifiable, Equatable, Sendable {
     let bucket: Date
+    let groupId: String
     let group: String
     let usd: Double
-    var id: String { "\(bucket.timeIntervalSince1970)|\(group)" }
+    var id: String { "\(bucket.timeIntervalSince1970)|\(groupId)" }
+
+    /// The overflow's id: no pivot group id is empty, so it never meets a real group, one named "other" included.
+    static let overflowId = ""
 
     /// The pivot's groups as bars. A bucket key is local (`2026-10-27T06` an hour, `2026-10-27` a day); the largest
-    /// `keep` groups keep their names, the rest stack as "other".
+    /// `keep` groups keep their names, the rest stack as "other". Bars sum by group id, never by the shown name, so
+    /// two projects that shorten to one name stay two series. Built off the main thread when the pivot lands.
     static func bars(_ pivot: UsagePivotData, keep: Int = 7) -> [UsageSpendBar] {
         let ranked = pivot.groups.sorted { $0.costUsd > $1.costUsd }
-        let named = Set(ranked.prefix(keep).map(\.id))
+        let kept = Array(ranked.prefix(keep))
+        let names = displayNames(kept, by: pivot.by, overflow: ranked.count > kept.count)
+        let buckets = BucketParser(timeZone: pivot.tz)
         var sums: [String: UsageSpendBar] = [:]
         for group in ranked {
-            let name = named.contains(group.id) ? label(group, by: pivot.by) : "other"
+            let id = names[group.id] == nil ? overflowId : group.id
+            let name = names[group.id] ?? "other"
             for point in group.points {
-                guard let bucket = bucketDate(point.t, timeZone: pivot.tz) else { continue }
-                let key = "\(bucket.timeIntervalSince1970)|\(name)"
+                guard let bucket = buckets.date(point.t) else { continue }
+                let key = "\(bucket.timeIntervalSince1970)|\(id)"
                 let usd = (sums[key]?.usd ?? 0) + point.costUsd
-                sums[key] = UsageSpendBar(bucket: bucket, group: name, usd: usd)
+                sums[key] = UsageSpendBar(bucket: bucket, groupId: id, group: name, usd: usd)
             }
         }
         return sums.values.sorted { $0.bucket < $1.bucket || ($0.bucket == $1.bucket && $0.group < $1.group) }
     }
 
-    static func label(_ group: UsagePivotGroup, by: [String]) -> String {
+    /// Each kept group's shown name: its short label, or its full label when the short one is taken (by another group
+    /// or by the overflow's "other"), with a number when even that repeats.
+    static func displayNames(_ groups: [UsagePivotGroup], by: [String], overflow: Bool) -> [String: String] {
+        var taken: Set<String> = overflow ? ["other"] : []
+        var names: [String: String] = [:]
+        let shortCounts = Dictionary(groups.map { (label($0, by: by), 1) }, uniquingKeysWith: +)
+        for group in groups {
+            let short = label(group, by: by)
+            var name = shortCounts[short] == 1 && !taken.contains(short) ? short : label(group, by: by, full: true)
+            var suffix = 2
+            while taken.contains(name) {
+                name = "\(label(group, by: by, full: true)) (\(suffix))"
+                suffix += 1
+            }
+            taken.insert(name)
+            names[group.id] = name
+        }
+        return names
+    }
+
+    static func label(_ group: UsagePivotGroup, by: [String], full: Bool = false) -> String {
         by.compactMap { dimension in
-            group.key[dimension].map { dimension == "project" ? UsageFormat.project($0) : $0 }
+            group.key[dimension].map { dimension == "project" && !full ? UsageFormat.project($0) : $0 }
         }.joined(separator: " · ")
     }
 
-    private static func formatter(_ format: String, _ zone: TimeZone) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = zone
-        formatter.dateFormat = format
-        return formatter
+    /// Bucket keys to dates with one formatter per shape, made once per build rather than once per point.
+    struct BucketParser {
+        private let hour: DateFormatter
+        private let day: DateFormatter
+
+        init(timeZone: String?) {
+            let zone = timeZone.flatMap(TimeZone.init(identifier:)) ?? .current
+            hour = Self.formatter("yyyy-MM-dd'T'HH", zone)
+            day = Self.formatter("yyyy-MM-dd", zone)
+        }
+
+        func date(_ key: String) -> Date? {
+            if key.count == 13 { return hour.date(from: key) }
+            if key.count == 10 { return day.date(from: key) }
+            return UsageTime.date(key)
+        }
+
+        private static func formatter(_ format: String, _ zone: TimeZone) -> DateFormatter {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = zone
+            formatter.dateFormat = format
+            return formatter
+        }
     }
 
     static func bucketDate(_ key: String, timeZone: String?) -> Date? {
-        let zone = timeZone.flatMap(TimeZone.init(identifier:)) ?? .current
-        if key.count == 13 { return formatter("yyyy-MM-dd'T'HH", zone).date(from: key) }
-        if key.count == 10 { return formatter("yyyy-MM-dd", zone).date(from: key) }
-        return UsageTime.date(key)
+        BucketParser(timeZone: timeZone).date(key)
     }
 }
 
@@ -74,8 +118,7 @@ struct UsageSpendSection: View {
                 }
             }
             if let pivot = usage.pivot?.data, !pivot.groups.isEmpty {
-                let bars = UsageSpendBar.bars(pivot)
-                Chart(bars) { bar in
+                Chart(usage.spendBars) { bar in
                     BarMark(x: .value("Time", bar.bucket, unit: pivot.grain == "day" ? .day : pivot.grain == "week" ? .weekOfYear : .hour),
                             y: .value("Dollars", bar.usd))
                         .foregroundStyle(by: .value("Group", bar.group))
