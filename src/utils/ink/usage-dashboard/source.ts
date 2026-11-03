@@ -63,6 +63,7 @@ export function thresholdAlerts(
                 baselines: [],
                 runs: [],
                 previousRoundAt: null,
+                lastEvaluatedAt: null,
                 events: [],
                 availabilityChanges: [],
                 budgets: config.budgets,

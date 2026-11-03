@@ -31,6 +31,7 @@ export function seedThresholdAlerts(input: {
         baselines: [],
         runs: [],
         previousRoundAt: null,
+        lastEvaluatedAt: null,
         events: [],
         availabilityChanges: [],
         budgets: EMPTY_BUDGETS,

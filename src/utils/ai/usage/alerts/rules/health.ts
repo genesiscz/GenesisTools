@@ -137,7 +137,8 @@ function accountProblems(round: AlertRound, settings: AlertRuleSettings["health"
 
 /** A refused quota probe means the budget is spent: the account's readings stop until the budget rolls over. */
 function probesRefused(round: AlertRound): AlertCandidate[] {
-    const since = round.previousRoundAt ?? new Date(round.now.getTime() - 60 * 60_000).toISOString();
+    const since =
+        round.lastEvaluatedAt ?? round.previousRoundAt ?? new Date(round.now.getTime() - 60 * 60_000).toISOString();
     const seen = new Set<string>();
     const candidates: AlertCandidate[] = [];
 
