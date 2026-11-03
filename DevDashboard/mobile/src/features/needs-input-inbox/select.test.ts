@@ -1,8 +1,11 @@
 import type { AttentionItem } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
+import { fixtureQueue, resetFixtureQueue } from "@/api/fixtures/queue";
 import {
     attentionCount,
     attentionItemTestId,
+    inboxRowKey,
+    inboxSections,
     partitionAttention,
     relativeTime,
 } from "@/features/needs-input-inbox/select";
@@ -55,5 +58,25 @@ describe("relativeTime", () => {
         expect(relativeTime(now - 2 * 86_400_000, now)).toBe("2d");
         expect(relativeTime(undefined, now)).toBe("—");
         expect(relativeTime(Number.NaN, now)).toBe("—");
+    });
+});
+
+describe("inboxSections", () => {
+    it("puts every queue session in the list's data, keyed as its card was, so only visible cards mount", () => {
+        resetFixtureQueue();
+        const sessions = fixtureQueue().sessions;
+        const sections = inboxSections({ sessions, items: [item("qa:1", "agent-question")] });
+
+        expect(sections.map((section) => section.key)).toEqual(["queue", "attention"]);
+        expect(sections[0].data.map(inboxRowKey)).toEqual(["s-parser", "s-docs"]);
+        expect(sections[1].data.map(inboxRowKey)).toEqual(["qa:1"]);
+    });
+
+    it("an empty attention list is one status row under its header; an empty queue has no rows", () => {
+        const sections = inboxSections({ sessions: [], items: [] });
+
+        expect(sections[0].data).toEqual([]);
+        expect(sections[1].data).toEqual([{ kind: "status" }]);
+        expect(inboxRowKey({ kind: "status" })).toBe("attention-status");
     });
 });

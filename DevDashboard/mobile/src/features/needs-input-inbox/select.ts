@@ -1,4 +1,5 @@
-import type { AttentionItem } from "@dd/contract";
+import type { AttentionItem, WaitingSessionDto } from "@dd/contract";
+import { queueSessionKey } from "@/features/answer-queue/units";
 
 /**
  * Pure display helpers for the Needs-Input Inbox (no React, no I/O — tested in `select.test.ts`,
@@ -60,4 +61,45 @@ export function relativeTime(ts: number | undefined, now: number = Date.now()): 
     }
 
     return `${Math.round(hr / 24)}d`;
+}
+/**
+ * One row of the Needs Input list: an answer-queue session card, an attention item, or the attention section's
+ * loading, error or "All clear" line.
+ */
+export type InboxRow =
+    | { kind: "session"; session: WaitingSessionDto }
+    | { kind: "attention"; item: AttentionItem }
+    | { kind: "status" };
+
+export interface InboxSection {
+    key: "queue" | "attention";
+    data: InboxRow[];
+}
+
+/**
+ * The Needs Input screen as one virtualized list: the answer queue's sessions, then the attention items. Both are
+ * rows, never a list header, so only the cards on screen mount. An empty attention list is one status row.
+ */
+export function inboxSections({
+    sessions,
+    items,
+}: {
+    sessions: readonly WaitingSessionDto[];
+    items: readonly AttentionItem[];
+}): InboxSection[] {
+    const attention: InboxRow[] = items.map((item) => ({ kind: "attention", item }));
+
+    return [
+        { key: "queue", data: sessions.map((session) => ({ kind: "session", session })) },
+        { key: "attention", data: attention.length > 0 ? attention : [{ kind: "status" }] },
+    ];
+}
+
+/** The row's key: a session card keeps the key it had in the queue, an attention item its id. */
+export function inboxRowKey(row: InboxRow): string {
+    if (row.kind === "session") {
+        return queueSessionKey(row.session);
+    }
+
+    return row.kind === "attention" ? row.item.id : "attention-status";
 }

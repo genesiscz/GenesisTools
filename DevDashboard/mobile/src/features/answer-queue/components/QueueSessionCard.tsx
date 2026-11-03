@@ -8,6 +8,7 @@ import { useSendStaged } from "@/features/answer-queue/hooks";
 import {
     flushThenSend,
     idempotencyKey,
+    queueSessionKey,
     type RecentReceipt,
     shownDrafts,
     singleFlight,
@@ -31,7 +32,7 @@ export function QueueSessionCard({
     onReceipt: (entry: RecentReceipt) => void;
 }) {
     const c = useThemeColors();
-    const key = session.sessionId ?? session.items[0]?.id ?? "form";
+    const key = queueSessionKey(session);
     const testId = `answer-queue-session-${key}`;
     const label = session.title ?? session.project ?? "Agent question";
     const send = useSendStaged((receipt) => onReceipt({ testID: `${testId}-receipt`, label, receipt }));
