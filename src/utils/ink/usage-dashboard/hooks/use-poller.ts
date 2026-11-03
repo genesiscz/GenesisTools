@@ -1,5 +1,6 @@
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
-import { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
+import { notifiableWindows } from "@genesiscz/utils/ai/usage/alerts/windows";
+import { NotificationManager, notificationSettings } from "@genesiscz/utils/ai/usage-poll/notifications";
 import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import { logger } from "@genesiscz/utils/logger";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -31,53 +32,6 @@ export type PollOutcome =
     | { ok: true; accounts: AccountUsageSnapshot[]; at: Date }
     | { ok: false; error: string; at: Date };
 
-/** Every window that should raise a notification, flattened out of a round. */
-export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]): Array<{
-    accountId: string;
-    accountName: string;
-    key: string;
-    kind: AccountUsageSnapshot["limits"][number]["kind"];
-    label: string;
-    utilization: number;
-    resetsAt: string | null;
-}> {
-    const out: Array<{
-        accountId: string;
-        accountName: string;
-        key: string;
-        kind: AccountUsageSnapshot["limits"][number]["kind"];
-        label: string;
-        utilization: number;
-        resetsAt: string | null;
-    }> = [];
-
-    for (const snapshot of snapshots) {
-        // Stale entries replay an older fetch — notifying on them would re-fire
-        // thresholds already handled.
-        if (snapshot.stale || snapshot.error) {
-            continue;
-        }
-
-        for (const window of snapshot.limits) {
-            if (typeof window.percentUsed !== "number" || !Number.isFinite(window.percentUsed)) {
-                continue;
-            }
-
-            out.push({
-                accountId: snapshot.accountId,
-                accountName: snapshot.accountName,
-                key: window.key,
-                kind: window.kind,
-                label: window.label,
-                utilization: window.percentUsed,
-                resetsAt: window.resetsAt ?? null,
-            });
-        }
-    }
-
-    return out;
-}
-
 export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, freshOnMount }: PollerOptions) {
     const [results, setResults] = useState<PollState | null>(null);
     const [accountRefs, setAccountRefs] = useState<UsageAccountRef[]>([]);
@@ -97,9 +51,12 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, 
     const freshPendingRef = useRef(freshOnMount === true);
 
     const { config, limitsDb } = source;
+    const thresholds = config.alerts.rules.threshold;
 
     useEffect(() => {
-        notifRef.current = new NotificationManager(config.notifications);
+        notifRef.current = new NotificationManager(
+            notificationSettings({ notifications: config.notifications, alerts: { rules: { threshold: thresholds } } })
+        );
 
         // Persist tracker state across TUI launches so an over-threshold window does
         // not re-notify on every open. The ready promise is awaited by poll() so the
@@ -124,7 +81,7 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, 
                 clearInterval(pruneIntervalRef.current);
             }
         };
-    }, [config.dataRetentionDays, config.notifications, limitsDb]);
+    }, [config.dataRetentionDays, config.notifications, thresholds, limitsDb]);
 
     const poll = useCallback(
         async (force = false) => {

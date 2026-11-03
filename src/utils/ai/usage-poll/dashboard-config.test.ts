@@ -8,6 +8,7 @@ import {
     __resetDashboardConfigStores,
     hiddenFor,
     loadDashboardConfig,
+    migrateDashboardConfig,
     prominentFor,
     saveDashboardConfig,
 } from "./dashboard-config";
@@ -81,17 +82,56 @@ describe("loadDashboardConfig", () => {
         expect(prominentFor(reloaded, "openai-sub")).toEqual(["secondary"]);
     });
 
-    test("notification thresholds merge field by field", async () => {
+    test("an old notifications.thresholds config loads into alerts.rules.threshold, field by field", async () => {
         useTempHome();
         await new Storage("ai-usage-dashboard").setConfig({
-            notifications: { thresholds: { session: [55] } },
+            notifications: { macos: false, thresholds: { session: [55] } },
         });
 
         const config = await loadDashboardConfig();
 
-        expect(config.notifications.thresholds.session).toEqual([55]);
-        expect(config.notifications.thresholds.weekly).toEqual([20, 40, 60, 80]);
-        expect(config.notifications.enabled).toBe(true);
+        expect(config.alerts.rules.threshold.session).toEqual([55]);
+        expect(config.alerts.rules.threshold.weekly).toEqual([20, 40, 60, 80]);
+        expect(config.notifications).toEqual({ enabled: true, inTui: true, macos: false, sound: "Purr" });
+    });
+
+    test("the loader writes the moved thresholds back once, and a read-only load writes nothing", async () => {
+        useTempHome();
+        const storage = new Storage("ai-usage-dashboard");
+        await storage.setConfig({ notifications: { thresholds: { weekly: [50] } } });
+
+        await loadDashboardConfig({ readOnly: true });
+        expect(await storage.getConfig()).toEqual({ notifications: { thresholds: { weekly: [50] } } });
+
+        await loadDashboardConfig();
+        expect(await storage.getConfig()).toEqual({
+            notifications: {},
+            alerts: { rules: { threshold: { weekly: [50] } } },
+        });
+    });
+
+    test("migrateDashboardConfig: the new place wins, the old fills gaps, and a second run changes nothing", () => {
+        const old = {
+            notifications: { sound: "Glass", thresholds: { session: [70], weekly: [10] } },
+            alerts: { rules: { threshold: { weekly: [30] } } },
+        };
+        const first = migrateDashboardConfig(old);
+
+        expect(first.changed).toBe(true);
+        expect(first.config).toEqual({
+            notifications: { sound: "Glass" },
+            alerts: { rules: { threshold: { session: [70], weekly: [30] } } },
+        });
+
+        const second = migrateDashboardConfig(first.config);
+
+        expect(second).toEqual({ config: first.config, changed: false });
+    });
+
+    test("a new-shape config round-trips unchanged", () => {
+        const current = { alerts: { rules: { threshold: { session: [90] } } }, notifications: { enabled: false } };
+
+        expect(migrateDashboardConfig(current)).toEqual({ config: current, changed: false });
     });
     // Every load must be detached from the module constants. A caller that edits what it
     // got back used to edit DEFAULTS, and the next load in the process inherited it.
@@ -100,13 +140,13 @@ describe("loadDashboardConfig", () => {
 
         const first = await loadDashboardConfig();
         first.hiddenAccounts.push("work");
-        first.notifications.thresholds.weekly.push(99);
+        first.alerts.rules.threshold.weekly.push(99);
         prominentFor(first, "anthropic-sub").push("invented");
 
         const second = await loadDashboardConfig();
 
         expect(second.hiddenAccounts).toEqual([]);
-        expect(second.notifications.thresholds.weekly).toEqual([20, 40, 60, 80]);
+        expect(second.alerts.rules.threshold.weekly).toEqual([20, 40, 60, 80]);
         expect(prominentFor(second, "anthropic-sub")).toEqual(["five_hour", "seven_day", "seven_day_sonnet"]);
     });
 
@@ -115,8 +155,8 @@ describe("loadDashboardConfig", () => {
         await new Storage("ai-usage-dashboard").setConfig({ refreshInterval: 90 });
 
         const first = await loadDashboardConfig();
-        first.notifications.thresholds.session.push(99);
+        first.alerts.rules.threshold.session.push(99);
 
-        expect((await loadDashboardConfig()).notifications.thresholds.session).toEqual([80]);
+        expect((await loadDashboardConfig()).alerts.rules.threshold.session).toEqual([80]);
     });
 });

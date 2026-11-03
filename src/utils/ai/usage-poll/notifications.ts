@@ -152,6 +152,39 @@ class BucketTracker {
     }
 }
 
+/** What the in-TUI notifier reads: the `notifications` block plus the threshold lists, now at `alerts.rules.threshold`. */
+export type NotificationSettings = UsageDashboardConfig["notifications"] & {
+    thresholds: { session: number[]; weekly: number[] };
+};
+
+export function notificationSettings(config: {
+    notifications: UsageDashboardConfig["notifications"];
+    alerts: { rules: { threshold: { session: number[]; weekly: number[] } } };
+}): NotificationSettings {
+    const { session, weekly } = config.alerts.rules.threshold;
+    return { ...config.notifications, thresholds: { session, weekly } };
+}
+
+/** The last threshold each window was notified at, keyed `<accountId>:<key>` (older `<name>:<key>`). */
+export interface NotifiedThreshold {
+    lastNotifiedThreshold: number | null;
+    lastResetEpoch: number | null;
+}
+
+/**
+ * The notifier's saved trackers, from the current store or the pre-move one. The alert engine seeds its record from
+ * them once, so moving the daemon to the engine does not re-fire every threshold already notified.
+ */
+export async function readNotifiedThresholds(storage: Storage): Promise<Record<string, NotifiedThreshold>> {
+    const saved = await readTrackerState(storage);
+
+    if (saved?.trackers) {
+        return saved.trackers;
+    }
+
+    return (await readTrackerState(new Storage(LEGACY_TRACKER_TOOL_NAME)))?.trackers ?? {};
+}
+
 async function readTrackerState(storage: Storage): Promise<PersistedState | undefined> {
     const config = await storage.getConfig<Record<string, unknown>>();
 
@@ -165,7 +198,7 @@ export class NotificationManager {
     private _alerts: UsageAlert[] = [];
     private alertIdCounter = 0;
 
-    constructor(private config: UsageDashboardConfig["notifications"]) {}
+    constructor(private config: NotificationSettings) {}
 
     get alerts(): UsageAlert[] {
         return this._alerts.filter((a) => !a.dismissed);
