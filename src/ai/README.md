@@ -145,6 +145,24 @@ tools ai usage daemon register|unregister|status
 
 `daemon register` owns the single `ai-usage-poll` task and removes the old claude-only `claude-usage-poll` on the way through. Running it once is the whole migration. `tools claude daemon` is an alias for the same three subcommands.
 
+### `ai usage limits`: windows now, over time, the forecast and the advisor
+
+```bash
+tools ai usage limits [--provider ...] [--account ...] [--cached|--fresh] [--scored] [--json]
+tools ai usage limits series [--since 24h] [--until <when>] [--tz <zone>] [--step auto|raw|5m] [--agg last|minmax|raw] [--kind session weekly ...] [--json]
+tools ai usage limits forecast [--provider <id>] [--account <name>] [--json]
+tools ai usage limits advise [--model fable] [--cached|--fresh] [--json]
+```
+
+Every `--json` prints one envelope, `{ schema: "usage.<verb>@1", generatedAt, window?, selector, data, warnings }`, from the shared contract in `@genesiscz/utils/ai/usage/contract` (the `--since`/`--until`/`--tz` grammar, the `--account` selector, the step default). `--since` takes a duration (`90m`, `7d`), a date (local midnight in `--tz`), an ISO instant with an offset, or `today`, `yesterday`, `week` (Monday start) and `month`; `--range`, `--from`, `--to`, `--hours` and `--timezone` are hidden aliases. `--account` takes an id, a name, `provider/name` or a unique part of a name, and an ambiguous value lists its candidates.
+
+- `limits` is every account's windows now. `--scored` adds `data.ranked`: each provider's accounts ranked by its own ranker (`ACCOUNT_RANKERS` in `@genesiscz/utils/ai/usage/account-rank`; Claude's scorer, Codex and Grok the shared window ranker).
+- `limits series` is the series door `/api/ai/usage/series` also reads: points or minmax bins, the resets, the window's availability spans (`limited`, `absent`, `unknown` for rows older than the column), the current value, and a forecast with the pace band and the safe pace.
+- `limits forecast` is an alias of `tools hub forecast`: the same flags, the same runner, the same bytes. `tools hub forecast` stays the real command.
+- `limits advise` names the next account per workload (`default`, `fan-out`, `long-run`, and `model:<name>` for each `--model`), how long it lasts at the recent burn, and the weekly capacity each account leaves unused at its reset.
+
+The same answers are MCP tools under the `usage` capability (`usage_limits`, `usage_series`, `usage_forecast`, `usage_advise`); those read the last poll's file and never poll.
+
 ### `ai usage sessions`: one list across Claude, Codex and Grok
 
 ```bash
