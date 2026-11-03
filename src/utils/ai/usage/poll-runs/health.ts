@@ -56,6 +56,8 @@ export interface LimitsHealthData {
 export interface LimitsHealthInput {
     accounts: readonly AccountKey[];
     runs: readonly PollRun[];
+    /** Each account's newest run at any time (`PollRunsStore.latestRuns`): the NOW columns, whatever the window. */
+    latest: readonly PollRun[];
     window: { from: Date; to: Date };
     now: Date;
     heartbeatAgeMs: number | null;
@@ -111,12 +113,19 @@ function gapsOf(spans: readonly Interval[], window: Interval): HealthSpan[] {
     return gaps;
 }
 
-function accountHealth(account: AccountKey, runs: readonly PollRun[], window: Interval, now: Date): AccountHealth {
-    const own = runs.filter((run) => run.provider === account.provider && run.accountId === account.accountId);
+function accountHealth(
+    account: AccountKey,
+    input: Pick<LimitsHealthInput, "runs" | "latest" | "now">,
+    window: Interval
+): AccountHealth {
+    const mine = (run: PollRun) => run.provider === account.provider && run.accountId === account.accountId;
+    const own = input.runs.filter(mine);
     const spans = covered(own, window);
     const measuredMs = spans.reduce((sum, span) => sum + (span.to - span.from), 0);
     const windowMs = Math.max(1, window.to - window.from);
-    const latest = own.at(-1);
+    // The current state comes from the account's newest run, not the window's: a past window still says what is now.
+    const now = input.now;
+    const latest = input.latest.find(mine);
     const current = latest !== undefined && now.getTime() - Date.parse(latest.to) <= RUN_CONTINUES_MS;
 
     return {
@@ -169,7 +178,7 @@ export function limitsHealth(input: LimitsHealthInput): { data: LimitsHealthData
     return {
         data: {
             daemon: { heartbeatAgeMs: input.heartbeatAgeMs, alive, lastRoundAt: input.lastRoundAt },
-            accounts: input.accounts.map((account) => accountHealth(account, input.runs, window, input.now)),
+            accounts: input.accounts.map((account) => accountHealth(account, input, window)),
         },
         warnings,
     };

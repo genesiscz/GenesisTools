@@ -201,6 +201,7 @@ describe("limitsHealth", () => {
                 { provider: "openai-sub", accountId: "acc_shop", accountName: "shop" },
             ],
             runs: store.runsBetween({ from: T0, to: at(60) }),
+            latest: store.latestRuns([{ provider: "anthropic-sub", accountId: "acc_work" }]),
             window: { from: T0, to: at(60) },
             now: at(60),
             heartbeatAgeMs: 30_000,
@@ -221,10 +222,50 @@ describe("limitsHealth", () => {
         expect(shop.gaps).toEqual([{ from: T0.toISOString(), to: at(60).toISOString(), minutes: 60 }]);
     });
 
+    test("a past window reads coverage from the window and the current state from the newest run", () => {
+        const store = new PollRunsStore(limits.connection());
+        const work = { provider: "anthropic-sub", accountId: "acc_work", accountName: "work" };
+
+        for (let minute = 0; minute <= 10; minute++) {
+            store.recordRound([{ snapshot: snapshot(), source: "endpoint" }], at(minute));
+        }
+
+        const held = snapshot({ error: "held", blocked: { until: at(90).toISOString(), failures: 1 } });
+
+        for (let minute = 40; minute <= 59; minute++) {
+            store.recordRound([{ snapshot: held, source: null }], at(minute));
+        }
+
+        // The window ends before the account went into backoff: coverage is the window's, NOW is the newest run's.
+        const pastWindow = { from: T0, to: at(5) };
+        const { data } = limitsHealth({
+            accounts: [work],
+            runs: store.runsBetween({ ...pastWindow, accounts: [work] }),
+            latest: store.latestRuns([work]),
+            window: pastWindow,
+            now: at(60),
+            heartbeatAgeMs: 30_000,
+            lastRoundAt: store.lastRoundAt(),
+        });
+
+        expect(data.accounts[0]).toMatchObject({
+            outcome: "backoff",
+            lastPollAt: at(59).toISOString(),
+            gateUntil: at(90).toISOString(),
+            coveragePct: 100,
+        });
+        expect(data.accounts[0].runs.map((run) => run.outcome)).toEqual(["ok"]);
+        expect(store.runsBetween({ from: T0, to: at(60), accounts: [] })).toEqual([]);
+        expect(
+            store.runsBetween({ from: T0, to: at(60), accounts: [{ provider: "openai-sub", accountId: "acc_work" }] })
+        ).toEqual([]);
+    });
+
     test("a daemon that never ran and an empty store are warnings, never an empty success", () => {
         const { warnings } = limitsHealth({
             accounts: [],
             runs: [],
+            latest: [],
             window: { from: T0, to: at(60) },
             now: at(60),
             heartbeatAgeMs: null,

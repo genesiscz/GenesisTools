@@ -378,24 +378,28 @@ export async function queryHealth(
     const store = await AiConfigStore.readOnly();
     const candidates = usageAccountKeys(store.accounts(), providerIds, { visibleOnly: true });
     const selection = selectAccounts(opts.account, candidates);
+    const accounts = selection ?? candidates;
     const db = (deps.open ?? (() => openHistoryReadOnly()))();
     let runs: PollRun[] = [];
+    let latest: PollRun[] = [];
     let lastRoundAt: string | null = null;
 
     try {
         if (db) {
+            // Only the accounts asked about are read and hydrated, in SQL.
             const runStore = new PollRunsStore(db);
-            runs = runStore.runsBetween({ from: window.from, to: window.to, providers: providerIds });
+            runs = runStore.runsBetween({ from: window.from, to: window.to, providers: providerIds, accounts });
+            latest = runStore.latestRuns(accounts);
             lastRoundAt = runStore.lastRoundAt();
         }
     } finally {
         db?.close();
     }
 
-    const accounts = selection ?? candidates;
     const { data, warnings } = limitsHealth({
         accounts,
         runs,
+        latest,
         window,
         now,
         heartbeatAgeMs: (deps.heartbeatAgeMs ?? usageDaemonAgeMs)(),
