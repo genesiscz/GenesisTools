@@ -71,7 +71,9 @@ export function judgeRound(input: {
 /**
  * One tick of the alert engine (design 2026-11-01, step U7): judge the round, record each alert that fires in
  * `usage_alerts`, then deliver it to its rule's channels (minus the interrupting ones in quiet hours). The record is
- * written before delivery, so a channel that fails never makes the next tick fire the same alert again.
+ * written before delivery, so a channel that fails never makes the next tick fire the same alert again. Each record
+ * is a claim: the dedupe verdict is judged again inside the insert's transaction, so a process that recorded the key
+ * after this round was judged (the daemon and the usage TUI share the database) wins, and this one delivers nothing.
  */
 export async function runAlertEngine(input: {
     round: AlertRound;
@@ -83,6 +85,7 @@ export async function runAlertEngine(input: {
     only?: readonly AlertRuleId[];
 }): Promise<StoredAlert[]> {
     const fired: StoredAlert[] = [];
+    const rules = input.rules ?? ALERT_RULES;
 
     for (const { candidate, fires } of judgeRound(input)) {
         if (!fires) {
@@ -95,7 +98,17 @@ export async function runAlertEngine(input: {
             now: input.round.now,
             interrupts: (channel) => input.channels[channel].interrupts,
         });
-        const alert = input.store.insert(candidate, { firedAt: input.round.now, channels });
+        const alert = input.store.claim(
+            candidate,
+            { firedAt: input.round.now, channels },
+            (previous) => previous === null || rules[candidate.rule].refire(previous, candidate, input.round.now)
+        );
+
+        if (!alert) {
+            logger.debug({ rule: candidate.rule, dedupeKey: candidate.dedupeKey }, "[usage-alerts] already claimed");
+            continue;
+        }
+
         fired.push(alert);
 
         for (const channel of channels) {
