@@ -52,6 +52,7 @@ async function costOf(row: AgentSessionRow, now: number): Promise<SessionCostFie
                       contextTokens: context,
                       oneHour: (row.cacheLifetimeSec ?? 0) >= 3600,
                       at: new Date(now),
+                      serviceTier: last.serviceTier,
                   })
                 : null,
     };

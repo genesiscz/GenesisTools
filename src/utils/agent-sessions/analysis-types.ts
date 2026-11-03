@@ -27,6 +27,8 @@ export interface SessionCall {
     aggregate: boolean;
     /** Cost the harness itself recorded for the call, when it records one. */
     recordedCostUsd?: number;
+    /** The service tier the call ran at (Codex `priority`/`flex`), which its price depends on; absent when unknown. */
+    serviceTier?: string;
 }
 
 /** A point where the harness replaced the conversation by a summary. */

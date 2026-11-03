@@ -10,6 +10,7 @@ import {
 } from "@genesiscz/utils/ai/usage/drift/drift";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
 import type { SessionCall } from "../analysis-types";
+import { callCostUsd } from "./cost";
 import { buildSessionReport } from "./report";
 import { sessionWaste } from "./waste";
 
@@ -89,6 +90,26 @@ describe("session report", () => {
         expect(sessionWaste([call(0), call(10, { cacheRead: 0, cacheWrite: 101_000 })], []).map((i) => i.kind)).toEqual(
             ["cache-rebuild-idle"]
         );
+    });
+
+    test("a sub-agent's own transcript is scanned as its own cache; sidechain calls inside a lead are not", () => {
+        const own = [call(0, { sidechain: true }), call(10, { sidechain: true, cacheRead: 0, cacheWrite: 101_000 })];
+        expect(sessionWaste(own, []).map((item) => item.kind)).toEqual(["cache-rebuild-idle"]);
+
+        const lead = [
+            call(0),
+            call(1, { sidechain: true }),
+            call(10, { sidechain: true, cacheRead: 0, cacheWrite: 101_000 }),
+        ];
+        expect(sessionWaste(lead, [])).toEqual([]);
+    });
+
+    test("a priority call is priced at its service tier, as the spend reports price it", () => {
+        const standard = callCostUsd(call(0, { model: "grok-4.7", cacheRead: 0 }));
+        const priority = callCostUsd(call(0, { model: "grok-4.7", cacheRead: 0, serviceTier: "priority" }));
+
+        expect(standard).not.toBeNull();
+        expect(priority ?? 0).toBeGreaterThan(standard ?? 0);
     });
 });
 
