@@ -8,7 +8,7 @@ import { atomicWriteFileSync, type Storage } from "@genesiscz/utils/storage/stor
 import { accountIdForFile, resolveDriverRoots } from "./account-roots";
 import { type AgentId, type ByAgent, MONITOR_DRIVERS, type MonitorDriver } from "./drivers";
 import { findRecentTranscripts, readTail } from "./monitor";
-import { priceFor } from "./pricing";
+import { priceForCandidates } from "./pricing";
 import { totalTokensOf } from "./reports/cost";
 import { pricedEventCost } from "./reports/load";
 import { parseNativeChunk } from "./reports/native";
@@ -366,7 +366,7 @@ function readAppendedBytes(options: ReadAppendedOptions): void {
         seen.add(event.id);
         entry.recentIds.push(event.id);
 
-        const priced = driver.priceCandidates(event.model).some((candidate) => priceFor(candidate, pricing) !== null);
+        const priced = priceForCandidates(driver.priceCandidates(event.model), pricing) !== null;
         entry.events.push(
             compact(event, {
                 costUsd: pricedEventCost(event, pricing, "auto"),

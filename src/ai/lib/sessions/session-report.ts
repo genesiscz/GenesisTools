@@ -83,7 +83,7 @@ export async function printSessionReport(
         analysis.callTrace(session.filePath),
         analysis.compactions(session.filePath),
     ]);
-    const report = buildSessionReport({ calls, compactions, top: options.top });
+    const report = buildSessionReport({ calls, compactions, top: options.top, agent: session.provider });
     logger.debug(
         { session: session.sessionId, file: session.filePath, calls: report.overview.calls },
         "[ai-sessions] report"

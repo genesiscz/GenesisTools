@@ -65,6 +65,25 @@ function fromRegistry(): PricingTable {
 
 export const DEFAULT_PRICING: PricingTable = fromRegistry();
 
+/**
+ * The first of a harness's candidate models (`MonitorDriver.priceCandidates`) the table prices, with its entry. The
+ * spend reports and the session analysis both walk the ladder here, so one model is priced alike in both.
+ */
+export function priceForCandidates(
+    candidates: readonly string[],
+    pricing: PricingTable
+): { model: string; entry: ModelPriceEntry } | null {
+    for (const model of candidates) {
+        const entry = priceFor(model, pricing);
+
+        if (entry) {
+            return { model, entry };
+        }
+    }
+
+    return null;
+}
+
 export function priceFor(model: string, pricing: PricingTable): ModelPriceEntry | null {
     const exact = pricing[model];
 

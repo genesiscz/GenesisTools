@@ -87,7 +87,7 @@ async function itemsOf(event: AttributedEvent): Promise<{ items: WasteItem[]; su
 
     const analysis = resolveHistoryProvider(event.agent).reader.analysis;
     const [calls, compactions] = await Promise.all([analysis.callTrace(event.file), analysis.compactions(event.file)]);
-    const items = sessionWaste(factsOf(calls), factsOf(compactions));
+    const items = sessionWaste({ calls: factsOf(calls), compactions: factsOf(compactions), agent: event.agent });
 
     // A transcript that could not be read is asked again next time, never cached as a session with no waste.
     if (identity && calls.supported) {

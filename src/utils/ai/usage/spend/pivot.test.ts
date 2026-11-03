@@ -139,8 +139,8 @@ describe("call cost", () => {
             aggregate: false,
         };
 
-        expect(callCostUsd(call, pricing)).toBeCloseTo(3 + 0.3 + 15);
-        expect(callCostUsd({ ...call, model: "m-unknown" }, pricing)).toBeNull();
+        expect(callCostUsd(call, { agent: "claude", table: pricing })).toBeCloseTo(3 + 0.3 + 15);
+        expect(callCostUsd({ ...call, model: "m-unknown" }, { agent: "claude", table: pricing })).toBeNull();
     });
 
     test("an aggregate row takes no long-context band; one request of the same size does", () => {
@@ -165,17 +165,31 @@ describe("call cost", () => {
             aggregate: true,
         };
 
-        expect(callCostUsd(call, banded)).toBeCloseTo(0.6);
-        expect(callCostUsd({ ...call, aggregate: false }, banded)).toBeCloseTo(1.2);
+        expect(callCostUsd(call, { agent: "claude", table: banded })).toBeCloseTo(0.6);
+        expect(callCostUsd({ ...call, aggregate: false }, { agent: "claude", table: banded })).toBeCloseTo(1.2);
     });
 
     test("going cold costs the context at the write rate of its tier minus the read rate", () => {
         const at = new Date("2026-11-01T10:00:00Z");
 
-        expect(coldRebuildUsd({ model: "m-a", contextTokens: 100_000, oneHour: true, at, pricing })).toBeCloseTo(0.57);
-        expect(coldRebuildUsd({ model: "m-a", contextTokens: 100_000, oneHour: false, at, pricing })).toBeCloseTo(
-            0.345
-        );
+        expect(
+            coldRebuildUsd({
+                model: "m-a",
+                contextTokens: 100_000,
+                oneHour: true,
+                at,
+                pricing: { agent: "claude", table: pricing },
+            })
+        ).toBeCloseTo(0.57);
+        expect(
+            coldRebuildUsd({
+                model: "m-a",
+                contextTokens: 100_000,
+                oneHour: false,
+                at,
+                pricing: { agent: "claude", table: pricing },
+            })
+        ).toBeCloseTo(0.345);
     });
 });
 

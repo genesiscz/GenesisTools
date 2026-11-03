@@ -1,4 +1,5 @@
 import { findCacheLosses } from "@genesiscz/utils/ai/usage/cache-stats";
+import type { AgentId } from "@genesiscz/utils/ai/usage/spend/drivers";
 import { costOf } from "@genesiscz/utils/ai/usage/spend/pricing";
 import type { SessionCall, SessionCompaction } from "../analysis-types";
 import { priceOfCall } from "./cost";
@@ -43,7 +44,13 @@ const KIND_OF_CAUSE: Record<string, WasteKind> = {
  * The waste items of one transcript's own cache: a lead's main loop (the sub-agent calls inside it are another cache
  * and are not paired with it), or a sub-agent's own transcript, whose calls are all sidechain calls.
  */
-export function sessionWaste(calls: readonly SessionCall[], compactions: readonly SessionCompaction[]): WasteItem[] {
+export function sessionWaste(input: {
+    calls: readonly SessionCall[];
+    compactions: readonly SessionCompaction[];
+    /** The harness that wrote the transcript: its spend driver's candidate ladder prices the calls. */
+    agent: AgentId;
+}): WasteItem[] {
+    const { calls, compactions } = input;
     const ownTranscript = calls.length > 0 && calls.every((call) => call.sidechain);
     // An aggregate row sums several requests, so its cache read follows how many it made: a drop is no lost cache.
     const main = calls.filter((call) => (ownTranscript || !call.sidechain) && !call.aggregate);
@@ -51,7 +58,7 @@ export function sessionWaste(calls: readonly SessionCall[], compactions: readonl
 
     for (const loss of findCacheLosses(cacheCallsOf(main, compactions))) {
         const call = main[loss.call];
-        const price = call ? priceOfCall(call) : null;
+        const price = call ? priceOfCall(call, { agent: input.agent }) : null;
 
         if (!call || !price) {
             continue;
