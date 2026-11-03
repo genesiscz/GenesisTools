@@ -16,7 +16,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
-import { type DisplayPolicy, displayPolicySchema, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import {
+    type DisplayPolicy,
+    displayPolicySchema,
+    languageSettings,
+    type MeetingsConfig,
+    meetingsConfigSchema,
+    recorderSettings,
+} from "@genesiscz/utils/meetings/config";
 import {
     type MeetingStore,
     RECORDING_STOP_REASONS,
@@ -52,7 +59,6 @@ const MAX_FAILURES = 3;
 const FAILURE_PAUSE_MS = 5_000;
 /** The first frame's OCR finds less text than this: probably only the desktop, so the grant is likely missing. */
 const EMPTY_FRAME_CHARS = 20;
-const OCR_LANGUAGES = ["cs-CZ", "en-US"];
 
 /** Where the one running recording keeps its pid and its state. */
 export function recorderFiles(store: MeetingStore): { pid: string; state: string } {
@@ -243,11 +249,15 @@ export interface RecorderDeps {
     failurePauseMs: number;
 }
 
-function defaultDeps(capture: MeetingsConfig["global"]["capture"]): RecorderDeps {
+function defaultOcrLanguages(): string[] {
+    return languageSettings(meetingsConfigSchema.parse({})).ocr;
+}
+
+function defaultDeps(capture: MeetingsConfig["global"]["capture"], ocrLanguages: string[]): RecorderDeps {
     return {
         recorder: FRAME_RECORDERS[capture.backend]({ axTool: async (options) => [await ensureBinaryAsync(options)] }),
         toJpeg: sipsJpeg,
-        ocr: (jpg) => recognizeText(jpg, { languages: OCR_LANGUAGES }),
+        ocr: (jpg) => recognizeText(jpg, { languages: ocrLanguages }),
         notify: async (note) => {
             await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
                 log.warn({ err }, "notification failed")
@@ -271,12 +281,17 @@ export async function runRecorder(options: {
     store: MeetingStore;
     meetingId: string;
     capture: MeetingsConfig["global"]["capture"];
+    /** The Vision OCR languages of the meeting language (`languages.<code>.ocr`); the default language's when omitted. */
+    ocrLanguages?: string[];
     /** Overrides `capture.displays`. */
     display?: DisplayPolicy;
     deps?: Partial<RecorderDeps>;
 }): Promise<RecorderState> {
     const { store, meetingId, capture } = options;
-    const deps: RecorderDeps = { ...defaultDeps(capture), ...options.deps };
+    const deps: RecorderDeps = {
+        ...defaultDeps(capture, options.ocrLanguages ?? defaultOcrLanguages()),
+        ...options.deps,
+    };
     let policy = options.display ?? capture.displays;
     let chosen: number[] | undefined;
     const files = recorderFiles(store);
@@ -616,6 +631,7 @@ export async function runRecorder(options: {
                     idleFps: capture.idleFps,
                     thresholdPercent: capture.threshold * 100,
                     maxLongSidePx: capture.resolutionCap,
+                    ...recorderSettings(capture, deps.recorder.id),
                     outDir,
                     hooks,
                 },

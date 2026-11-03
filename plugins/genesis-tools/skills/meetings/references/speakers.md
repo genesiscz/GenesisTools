@@ -153,7 +153,8 @@ three-pass mode the agent applies them when it adds questions with `tools meetin
 warns about a question whose text repeats another open question (name the time or quote the words instead), one that
 decides no item, and one with no priority. Give each question `priority` (0 to 1, `--priority` or the batch field):
 listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`. The
-budget is one for speakers and terms together (`playback.listen.budget`, 12 by default). In both, the
+cap is one for speakers and terms together (`global.suggest.questionCap` for suggest and
+`playback.listen.roundCap` for one listen round, 12 each by default). In both, the
 agent answers only what the listen round left open, in the chat round, with the evidence.
 
 ## Joins and splits

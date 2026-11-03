@@ -675,6 +675,7 @@ describe("watchOnce", () => {
                 refreshed.push(`${meetingId} ${sourceRef}`);
                 return record;
             },
+            source: async () => ({ id: "wisprflow", label: "Wispr Flow" }),
             settings: async () => settings,
             liveRecording: async () => live,
             recorder: () =>

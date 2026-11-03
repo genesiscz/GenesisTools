@@ -1,24 +1,22 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { LISTEN_PLAYERS } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { meetingSource } from "./sources";
+import { PLAYERS, pickPlayer } from "./players";
+import { meetingSource, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-audio");
 
-const VLC = "/Applications/VLC.app/Contents/MacOS/VLC";
-
 /** The recording of the first linked source that keeps one on this Mac. Throws a message ready to print. */
 export async function meetingAudioPath(record: MeetingRecord): Promise<string> {
-    const [sourceId, block] =
-        Object.entries(record.sources).find(([, value]) => typeof value.meetingId === "string") ?? [];
+    const ref = sourceRefOf(record);
 
-    if (!sourceId || typeof block?.meetingId !== "string") {
+    if (!ref) {
         throw new Error(`${record.id} has no linked source with audio.`);
     }
 
-    const evidence = await (await meetingSource(sourceId)).evidence(block.meetingId);
+    const evidence = await (await meetingSource(ref.sourceId)).evidence(ref.sourceMeetingId);
 
     if (!evidence?.audioPath) {
         throw new Error(`The source keeps no audio for ${record.id} on this Mac.`);
@@ -93,25 +91,9 @@ export async function cutClip(options: {
 
 type ListenPlayer = (typeof LISTEN_PLAYERS)[number];
 
-/** How each player is found and started on a clip, from its start to its end. */
-const CLIP_PLAYERS: Record<ListenPlayer, { available: () => boolean; argv: (path: string) => string[] }> = {
-    afplay: {
-        available: () => existsSync("/usr/bin/afplay"),
-        argv: (path) => ["/usr/bin/afplay", path],
-    },
-    vlc: {
-        available: () => existsSync(VLC),
-        argv: (path) => [VLC, "--play-and-exit", path],
-    },
-    ffplay: {
-        available: () => Bun.which("ffplay") !== null,
-        argv: (path) => ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", path],
-    },
-};
-
 /** The configured player when it is there, else the first one that is. */
 export function clipPlayer(preferred: ListenPlayer, all: readonly ListenPlayer[]): ListenPlayer | undefined {
-    return [preferred, ...all.filter((name) => name !== preferred)].find((name) => CLIP_PLAYERS[name].available());
+    return pickPlayer(preferred, all)?.id;
 }
 
 /** A clip that plays now or after a delay; `stop` cancels it before it starts, or ends it while it plays. */
@@ -128,7 +110,7 @@ export function playClip(
     path: string,
     options: { delayMs?: number; repeatGapMs?: number } = {}
 ): PlayingClip {
-    const argv = CLIP_PLAYERS[player].argv(path);
+    const argv = PLAYERS[player].clipArgv(path);
     const { delayMs = 0, repeatGapMs } = options;
     let proc: Bun.Subprocess | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;

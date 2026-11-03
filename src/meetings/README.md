@@ -23,7 +23,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
-| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`global.render.unclearLabel`); `--with-suggested` applies the top reading instead. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
+| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`languages.<global.language>.render.unclearLabel`); `--with-suggested` applies the top reading instead. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
 | `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display all\|follow-focus\|main\|<index>]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
 | `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop writes the summary into the meeting |
 | `record display list\|add <id>\|remove <id>\|switch <id>\|mode <policy>` | Which displays the running recording records; a change applies at once |
@@ -65,10 +65,13 @@ permission window, and without the app it says what to install and grant. Withou
 never prompts and only says what to run.
 
 The recorder is a frame recorder from `src/utils/screen-recorder/` (`capture.backend`: `native`, GenesisTools'
-own `ax-tool capture`, by default; or `peekaboo`). It records in 30 s pieces (`capture.activeFps`, `idleFps`,
-`threshold`, `resolutionCap`), converts each frame to JPEG under the meeting's `frames/` as
-`<HH-MM-SS-mmm>-d<displayId>.jpg`, and appends Vision OCR to `ocr.jsonl` (each line names its `displayId`). Each
-capture ends at its duration plus 30 s; a hung one is stopped and counts as a failed capture.
+own `ax-tool capture`, by default; or `peekaboo`). It records in 30 s pieces with the capture policy every recorder follows (`capture.activeFps`,
+`idleFps`, `threshold`, `resolutionCap`) plus the recorder's own block (`capture.recorders.native`: `quietMs`,
+`heartbeatSec`, `maxMb`, unset keeps ax-tool's own; `capture.recorders.peekaboo` has no keys of its own), converts
+each frame to JPEG under the meeting's `frames/` as `<HH-MM-SS-mmm>-d<displayId>.jpg`, and appends Vision OCR to
+`ocr.jsonl` (each line names its `displayId`) in the OCR languages of the meeting language
+(`languages.<global.language>.ocr`, `cs-CZ` and `en-US` for `cs`). Each capture ends at its duration plus 30 s; a
+hung one is stopped and counts as a failed capture.
 
 `capture.displays` picks what is recorded: `all` (default) records every connected display at once, one capture per
 display per piece; `main`; `follow-focus` (the display of the focused window, when the recorder supports it, else the
@@ -76,7 +79,10 @@ main one); or a screen index. Each piece reads the display list again by id, so 
 the next piece and one that is removed leaves without an error. When an asked index is not connected, the main
 display stands in and the warning says since when.
 
-Frames stay on this Mac and never go into an export. When a source is linked, `record stop` stores its clock, so
+Frames stay on this Mac and never go into an export. Once a day the watcher moves the `frames/` and `ocr.jsonl` of
+each meeting whose newest frame is older than `capture.retentionDays` (30) into the GenesisTools trash (`tools rm`
+rules, restorable with `tools rm restore <batch>`); the meeting record, its items and the recording block stay. It
+never touches the meeting being recorded, and `retention-last.json` beside the meetings says when it last ran. When a source is linked, `record stop` stores its clock, so
 `screen --at` takes transcript times. A frame is taken only when the screen changes, so `screen --at` shows, per
 display, the frame still on that screen; a time outside the recorded spans says so and when the recording ran.
 
@@ -96,7 +102,8 @@ the recording's state, frames per display, spans and warning.
 ### Autostart
 
 `tools meetings autostart on` sets `sources.wisprflow.autoRecord.enabled` and starts the watcher; the daemon starts
-it at every login while it is on. Every 15 s the watcher asks Wispr Flow for a meeting it has not ended whose live
+it at every login while it is on. The watcher follows the first source in the source registry (`lib/sources.ts`)
+whose `sources.<id>.autoRecord` is on, today Wispr Flow. Every 15 s the watcher asks Wispr Flow for a meeting it has not ended whose live
 transcript changed in the last `liveWithinSec` (30). It then runs `record start --source wisprflow:<id> --yes` and
 posts a notification (`notify`, default on). It stops only the recordings it started, when Wispr Flow ends the
 meeting or stays silent for `stopAfterSilenceSec` (120). A start that failed (no grant) notifies once and is not
@@ -180,7 +187,8 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
    range cites a summary action item or decision (`global.summary` headings), +2 when the answer moves an action's
    owner. Reach counts the questions with the same signature (top two choices and the people present).
 
-`listen` asks by priority, at most `playback.listen.budget` (12) per round and none under `minPriority` (0.5). A split
+`suggest` makes at most `global.suggest.questionCap` (12) questions; `listen` asks by priority, at most
+`playback.listen.roundCap` (12) per round and none under `minPriority` (0.5). A split
 uses no budget: its parts come next and share their parent's unit, so the header shows `3/12 · part 2/4`. Each
 answer settles its look-alikes. A speaker answer gives the questions with the same signature the answer, +0.3 up to
 0.9, and closes those that reach the threshold. A word answer answers every other open word question on the same
@@ -208,7 +216,7 @@ bound to its line (`atSec`), so it never changes the same words elsewhere.
 - `read-aloud`: a passage that says a document line in order, densely on both sides (a reader may skip its code
   spans), with three prose words at least. The item's `quote` holds the line; the transcript shows its exact text
   instead of the misheard words, as a quote block in Markdown and in quotation marks elsewhere, with the source
-  (`(čte z WikiProposals, ř. 33)`, from `global.render.readAloudLabel` and `lineLabel`). The dictionary does not
+  (`(čte z WikiProposals, ř. 33)`, from `languages.<global.language>.render.readAloudLabel` and `lineLabel`). The dictionary does not
   touch the quoted text.
 - `spoken-identifier`: two or more words that say a document identifier in order ("employee only" for
   `employeesOnly`, "administration CMS schema" for `/administration/cms/schema`), or one path segment after "lomeno"
@@ -234,20 +242,37 @@ mention by default (`every`); `first` expands only the first mention in a transc
 
 ## Config
 
-`~/.genesis-tools/meetings/config.json`. Every key has a default, so the file holds only what you changed:
+`~/.genesis-tools/meetings/config.json`. Every key has a default, so the file holds only what you changed. A key
+that varies by recorder, source or language sits under that axis:
 
 ```jsonc
 {
-    "version": 1,
-    "global": { "dictionary": { "abbrExpansion": "every", "entries": [] }, "capture": { "activeFps": 1 } },
+    "version": 2,
+    "global": {
+        "dictionary": { "abbrExpansion": "every", "entries": [] },
+        "language": "cs",
+        "capture": { "backend": "native", "activeFps": 1, "retentionDays": 30, "recorders": { "native": { "maxMb": 400 } } },
+        "playback": { "listen": { "roundCap": 12 } },
+        "suggest": { "questionCap": 12 }
+    },
     "projects": {
         "work": {
             "dictionary": { "entries": [{ "type": "abbr", "value": "MOP", "substitution": "MOP (Obchodní partner podnikatel)" }] },
-            "match": { "wisprflow": { "folders": ["Work"] }, "calendar": { "titles": ["Wiki"] } }
+            "match": { "calendar": { "titles": ["Wiki"] } }
         }
     },
-    "sources": { "wisprflow": { "autoRecord": { "enabled": false } } }
+    "sources": { "wisprflow": { "autoRecord": { "enabled": false }, "match": { "work": { "folders": ["Work"] } } } },
+    "languages": { "cs": { "ocr": ["cs-CZ", "en-US"], "render": { "unclearLabel": "nejasné" }, "wordCheck": "hunspell" } }
 }
 ```
+
+`languages` has blocks for `cs` and `sk` with every default; another language is a block with every key
+(`ocr`, `render.unclearLabel`, `readAloudLabel`, `lineLabel`). `global.language` picks the block that labels the
+transcript and reads the screen.
+
+A version 1 file is rewritten once on the first read: `global.render` moves to `languages.cs.render`,
+`playback.listen.budget` to both `global.suggest.questionCap` and `playback.listen.roundCap`, and
+`projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. Code that reads `global.render` or
+`playback.listen.budget` still gets them, from the new places.
 
 A change that would make the file invalid is refused, and the file stays as it was.

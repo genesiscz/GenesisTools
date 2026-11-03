@@ -7,7 +7,12 @@ import { formatBytes, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { calendarAround } from "@genesiscz/utils/meetings/calendar";
-import { DISPLAY_POLICIES, type DisplayPolicy, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import {
+    DISPLAY_POLICIES,
+    type DisplayPolicy,
+    languageSettings,
+    MeetingsConfigStore,
+} from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { callRecorder, type LiveEntry, RpcError } from "@genesiscz/utils/screen-recorder/live";
 import type { DisplayInfo } from "@genesiscz/utils/screen-recorder/types";
@@ -374,7 +379,13 @@ async function runCommand(id: string, opts: { display?: string }): Promise<void>
     try {
         const config = await new MeetingsConfigStore().read();
         const display = opts.display === undefined ? undefined : parseDisplayPolicy(opts.display);
-        await runRecorder({ store, meetingId: id, display, capture: config.global.capture });
+        await runRecorder({
+            store,
+            meetingId: id,
+            display,
+            capture: config.global.capture,
+            ocrLanguages: languageSettings(config).ocr,
+        });
     } catch (err) {
         log.error({ err, id }, "recorder failed");
         process.exitCode = 1;

@@ -466,7 +466,7 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
             padSec,
             listen,
         });
-        return { adapter, budget: listen.budget };
+        return { adapter, budget: listen.roundCap };
     },
 };
 

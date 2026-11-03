@@ -96,7 +96,11 @@ export async function linkSource(options: {
         config: options.config,
         flag: options.project,
         current: existing?.project,
-        facts: { wisprflowFolders: meeting.folders, calendar: meeting.calendar?.calendar, title: meeting.title },
+        facts: {
+            source: { id: source.id, folders: meeting.folders },
+            calendar: meeting.calendar?.calendar,
+            title: meeting.title,
+        },
         quiet: options.quiet,
     });
     const change = `${source.label} ${meeting.sourceMeetingId}: ${meeting.transcript.length} lines, ${meeting.participants.length} people`;
