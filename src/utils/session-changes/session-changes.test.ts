@@ -24,7 +24,7 @@ import {
     type StageKind,
     storeBlobs,
 } from "./index";
-import { readClaudeTranscript } from "./transcript";
+import { emptyParseState, parseLines, readClaudeTranscript } from "./transcript";
 
 const REPO = "/tmp/fixture-repo";
 const OTHER = "/tmp/fixture-other";
@@ -918,6 +918,26 @@ describe("parseCodexRollout", () => {
             [to, ["exec-mv", "exec-up"]],
             [from, ["exec-mv"]],
         ]);
+    });
+});
+
+describe("parseLines", () => {
+    it("keeps the input of a file tool only: no rule reads another tool's input again, and a fold keeps them all", () => {
+        const state = emptyParseState();
+        parseLines(
+            jsonl([
+                prompt("p1", "go", 0),
+                use("t-read", "Read", { file_path: "/x/a.ts" }, 1),
+                use("t-bash", "Bash", { command: "ls" }, 2),
+                use("t-edit", "Edit", { file_path: "/x/a.ts", old_string: "a", new_string: "b" }, 3),
+            ]),
+            null,
+            state
+        );
+
+        expect([...state.calls.keys()]).toEqual(["t-read", "t-bash", "t-edit"]);
+        expect(state.calls.get("t-bash")?.command).toBe("ls");
+        expect([...state.inputs.keys()]).toEqual(["t-edit"]);
     });
 });
 

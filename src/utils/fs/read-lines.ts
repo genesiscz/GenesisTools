@@ -170,6 +170,16 @@ export async function* readTextChunks(path: string): AsyncGenerator<Uint8Array> 
  */
 class LineSplitter {
     private parts: Buffer[] = [];
+    private readonly markers: Buffer[] | null;
+
+    constructor(containing?: readonly string[]) {
+        this.markers = containing ? containing.map((marker) => Buffer.from(marker, "utf8")) : null;
+    }
+
+    /** True when the line's bytes hold one of the markers, or no markers were given. */
+    private wanted(line: Buffer): boolean {
+        return this.markers === null || this.markers.some((marker) => line.includes(marker));
+    }
 
     /** The lines that end in this chunk. Iterate the result fully before the next `push`. */
     *push(chunk: Uint8Array | string): Generator<string> {
@@ -180,10 +190,12 @@ class LineSplitter {
         while (newline !== -1) {
             if (this.parts.length > 0) {
                 this.parts.push(bytes.subarray(start, newline));
-                const line = Buffer.concat(this.parts).toString("utf8");
+                const line = Buffer.concat(this.parts);
                 this.parts = [];
-                yield line;
-            } else {
+                if (this.wanted(line)) {
+                    yield line.toString("utf8");
+                }
+            } else if (this.wanted(bytes.subarray(start, newline))) {
                 yield bytes.toString("utf8", start, newline);
             }
 
@@ -197,12 +209,30 @@ class LineSplitter {
         }
     }
 
-    /** The text after the last newline: an empty string when the content ended with one (or was empty). */
-    end(): string {
-        const line = Buffer.concat(this.parts).toString("utf8");
+    /**
+     * The text after the last newline: an empty string when the content ended with one (or was empty). Null when
+     * markers were given and the text holds none, the empty string included.
+     */
+    end(): string | null {
+        const line = Buffer.concat(this.parts);
         this.parts = [];
-        return line;
+        if (this.markers !== null && (line.length === 0 || !this.wanted(line))) {
+            return null;
+        }
+
+        return line.toString("utf8");
     }
+}
+
+/**
+ * Only the lines that hold one of these strings, found in the raw bytes, so every other line is never decoded. A
+ * reader that skips most lines by a marker anyway (a transcript parser that reads tool calls) decodes a fraction of
+ * the text: decoding every line of a 1.1 GB Claude session to throw most of them away was most of its peak memory.
+ * The empty line is never one of them. A byte match is a text match: in UTF-8 no character's bytes occur inside
+ * another character's bytes.
+ */
+export interface LineFilter {
+    containing?: readonly string[];
 }
 
 /**
@@ -210,14 +240,20 @@ class LineSplitter {
  * see {@link LineSplitter}. The last line is yielded also without a trailing newline, as `text.split("\n")` gives it;
  * content that ends with a newline yields a final empty line, the same way. A string chunk is read as UTF-8.
  */
-export function* splitLinesSync(chunks: Iterable<Uint8Array | string>): Generator<string> {
-    const splitter = new LineSplitter();
+export function* splitLinesSync(
+    chunks: Iterable<Uint8Array | string>,
+    { containing }: LineFilter = {}
+): Generator<string> {
+    const splitter = new LineSplitter(containing);
 
     for (const chunk of chunks) {
         yield* splitter.push(chunk);
     }
 
-    yield splitter.end();
+    const last = splitter.end();
+    if (last !== null) {
+        yield last;
+    }
 }
 
 /**
@@ -232,7 +268,7 @@ export async function* splitLines(chunks: AsyncIterable<Uint8Array | string>): A
         yield* splitter.push(chunk);
     }
 
-    yield splitter.end();
+    yield splitter.end() ?? "";
 }
 
 /**
@@ -246,9 +282,9 @@ export async function* splitLines(chunks: AsyncIterable<Uint8Array | string>): A
  */
 export function readLinesSync(
     path: string,
-    { chunkBytes = CHUNK_BYTES }: { chunkBytes?: number } = {}
+    { chunkBytes = CHUNK_BYTES, containing }: { chunkBytes?: number } & LineFilter = {}
 ): Generator<string> {
-    return splitLinesSync(readTextChunksSync(path, { chunkBytes }));
+    return splitLinesSync(readTextChunksSync(path, { chunkBytes }), { containing });
 }
 
 /**
