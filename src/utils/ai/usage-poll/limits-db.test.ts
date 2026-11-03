@@ -1042,6 +1042,21 @@ describe("UsageLimitsDb", () => {
             }
         });
 
+        test("forecast samples read only the provider/account pairs asked for, and none for an empty list", () => {
+            db.recordSnapshotV2("work", "secondary", 30, recentTimestamp(10), reading);
+            db.recordSnapshotV2("work", "secondary", 31, recentTimestamp(9), { ...reading, provider: "grok-sub" });
+            db.recordSnapshotV2("personal", "secondary", 32, recentTimestamp(8), reading);
+            const since = new Date(Date.now() - 3_600_000);
+
+            expect(
+                db
+                    .getForecastSamples({ since, accounts: [{ provider: "openai-sub", account: "work" }] })
+                    .map((s) => [s.provider, s.account, s.utilization])
+            ).toEqual([["openai-sub", "work", 30]]);
+            expect(db.getForecastSamples({ since, accounts: [] })).toEqual([]);
+            expect(db.getForecastSamples({ since }).length).toBe(3);
+        });
+
         test("a migrated store reads series and samples through a read-only handle that refuses writes", () => {
             db.recordSnapshotV2("work", "secondary", 30, recentTimestamp(10), reading);
             db.close();
