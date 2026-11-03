@@ -1,4 +1,3 @@
-import type { PairingPayload } from "@dd/contract";
 import { create } from "zustand";
 import {
     buildTransportFor,
@@ -7,6 +6,7 @@ import {
     getConnection,
     loadConnections,
     markActivated,
+    targetOf,
     updateConnection as updateSavedConnection,
     upsertConnection,
 } from "@/features/connections/store";
@@ -15,16 +15,23 @@ import type {
     SavedConnectionInput,
     SavedConnectionPatch,
 } from "@/features/connections/types";
-import { useConnection } from "@/state/connection";
-import type { DiscoveredAgent } from "@/transport/lan-discovery";
-import type { LanCredentials } from "@/transport/tiers/lan";
+import type { ProbeFailure } from "@/transport/reachability";
+import { TIERS, type TierCapabilities } from "@/transport/tiers";
 import type { Transport, TransportTier } from "@/transport/Transport";
 
-export interface TailscaleSettings {
-    tailnetHost: string;
-    port: number;
-    username: string;
-    password: string;
+export type ConnStatus = "disconnected" | "connected" | "error";
+
+/**
+ * The outcome of a connect or an activation. A failure committed nothing: the old connection stays active, the
+ * route gate stays as it was, and nothing about the new target was saved.
+ */
+export type ConnectResult =
+    | { ok: true; id: string }
+    | { ok: false; failure: ProbeFailure | "error"; error?: string };
+
+/** A connect: the row to save, plus the one-time device code a tier that pairs by code asks for. */
+export interface ConnectInput extends SavedConnectionInput {
+    deviceCode?: string;
 }
 
 interface ConnectionStoreState {
@@ -32,205 +39,196 @@ interface ConnectionStoreState {
     transport: Transport | null;
     connections: SavedConnection[];
     activeId: string | null;
+    status: ConnStatus;
     /** Monotonic ownership boundary for cache, subscriptions, and screen-local state. */
     sessionGeneration: number;
     /** False until boot-time `restore()` has resolved — the root layout shows a splash until then. */
     restored: boolean;
-    setLan: (agent: DiscoveredAgent, creds: LanCredentials) => Promise<void>;
-    setTailscale: (cfg: TailscaleSettings) => Promise<void>;
-    setCloudflared: (pairing: PairingPayload, password: string) => Promise<void>;
-    setManaged: (pairing: PairingPayload) => Promise<void>;
+    /** Build, pair when the tier asks, probe, and only then save, activate and open the gate. */
+    connect: (input: ConnectInput) => Promise<ConnectResult>;
+    /** Builds and probes a saved connection, then makes it the active one; a failed probe changes nothing. */
+    activate: (id: string) => Promise<ConnectResult>;
+    /** Rebuilds the last active connection at launch WITHOUT a probe, so an offline launch still lands in the app. */
     restore: () => Promise<void>;
     listConnections: () => Promise<SavedConnection[]>;
+    /** Saves a connection without connecting to it (the Connections screen's add form). */
     addConnection: (input: SavedConnectionInput) => Promise<string>;
-    activateConnection: (id: string) => Promise<void>;
     updateConnection: (id: string, patch: SavedConnectionPatch) => Promise<void>;
-    removeConnection: (id: string) => Promise<void>;
+    remove: (id: string) => Promise<void>;
 }
 
 /**
- * Bridges a transport into the foundation `useConnection` store so the root layout's
- * `Stack.Protected guard={baseUrl !== null}` gate opens after a successful connect. The transport
- * object lives only here (richer than the gate's primitive baseUrl/authHeader).
+ * The one connection session (M10). Connect means build, probe, then commit: persist, mark active, open the route
+ * gate. The pairing path, the Connect screen and the Connections list all go through `connect` or `activate`, so a
+ * failed probe can never leave an unreachable Mac active (the pairing rollback is gone with the defect it patched).
+ * It replaces the gate's copy store (`state/connection.ts`): the route gate reads `transport` here.
  */
-function publishToGate(transport: Transport): void {
-    const conn = useConnection.getState();
-    conn.setEndpoint(transport.tier, transport.baseUrl(), transport.authHeader() ?? null);
-    conn.setStatus("connected");
-}
-
-export const useConnectionStore = create<ConnectionStoreState>((set, get) => ({
-    tier: null,
-    transport: null,
-    connections: [],
-    activeId: null,
-    sessionGeneration: 0,
-    restored: false,
-
-    async setLan(agent, creds) {
-        const id = await upsertConnection({
-            tier: "lan",
-            label: agent.name,
-            baseUrl: agent.baseUrl,
-            host: agent.host,
-            port: agent.port,
-            username: creds.username,
-            password: creds.password,
-        });
-        await get().activateConnection(id);
-    },
-
-    async setTailscale(cfg) {
-        const baseUrl = `http://${cfg.tailnetHost}:${cfg.port}`;
-        const id = await upsertConnection({
-            tier: "tailscale",
-            baseUrl,
-            host: cfg.tailnetHost,
-            port: cfg.port,
-            username: cfg.username,
-            password: cfg.password,
-        });
-        await get().activateConnection(id);
-    },
-
-    async setCloudflared(pairing, password) {
-        const base = pairing.baseUrl.replace(/\/+$/, "");
-        const url = new URL(base);
-        const port = url.port ? Number.parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
-        const id = await upsertConnection({
-            tier: "cloudflared-self",
-            baseUrl: base,
-            host: url.hostname,
-            port,
-            username: pairing.username ?? "",
-            password,
-        });
-        await get().activateConnection(id);
-    },
-
-    async setManaged(pairing) {
-        const base = pairing.baseUrl.replace(/\/+$/, "");
-        const url = new URL(base);
-        const port = url.port ? Number.parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
-        const id = await upsertConnection({
-            tier: "managed",
-            baseUrl: base,
-            host: url.hostname,
-            port,
-            username: "",
-            // Without this the key is lost at restart and the restored connection cannot rebuild
-            // its transport at all: createManagedTransport refuses a pairing with no agent key.
-            agentPublicKey: pairing.agentPublicKey,
-        });
-        await get().activateConnection(id);
-    },
-
-    async restore() {
-        try {
-            const connections = await loadConnections();
-            const activeId = await getActiveConnectionId();
-            set({ connections, activeId });
-
-            if (!activeId) {
-                return;
-            }
-
-            const active = connections.find((c) => c.id === activeId);
-
-            if (!active) {
-                console.warn(`[connection-store] active id ${activeId} has no saved connection`);
-                set({ activeId: null });
-                return;
-            }
-
-            try {
-                const transport = await buildTransportFor(active);
-                publishToGate(transport);
-                set((state) => ({
-                    tier: transport.tier,
-                    transport,
-                    sessionGeneration: state.sessionGeneration + 1,
-                }));
-            } catch (err) {
-                // Restore failure must never crash the boot path — fall through to /connect.
-                console.warn(`[connection-store] failed to restore connection ${activeId}`, err);
-                useConnection.getState().setStatus("error");
-            }
-        } finally {
-            // Always flip `restored` so the root splash gives way to the resolved gate, even when
-            // there was nothing to restore or rebuilding the transport threw.
-            set({ restored: true });
-        }
-    },
-
-    async listConnections() {
-        const connections = await loadConnections();
-        const activeId = await getActiveConnectionId();
-        set({ connections, activeId });
-        return connections;
-    },
-
-    async addConnection(input) {
-        const id = await upsertConnection(input);
-        set({ connections: await loadConnections(), activeId: id });
-        return id;
-    },
-
-    async activateConnection(id) {
-        const conn = await getConnection(id);
-
-        if (!conn) {
-            throw new Error(`No saved connection ${id}`);
-        }
-
-        const transport = await buildTransportFor(conn);
-        await markActivated(id);
-        const connections = await loadConnections();
-        publishToGate(transport);
+export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
+    /** The commit step: the transport is live from here on. */
+    function commit(id: string, transport: Transport, connections: SavedConnection[]): void {
         set((state) => ({
             tier: transport.tier,
             transport,
             activeId: id,
             connections,
+            status: "connected",
             sessionGeneration: state.sessionGeneration + 1,
         }));
-    },
+    }
 
-    async updateConnection(id, patch) {
-        await updateSavedConnection(id, patch);
-        const connections = await loadConnections();
-        set({ connections });
+    async function probed(tier: TransportTier, transport: Transport): Promise<ConnectResult | null> {
+        const ok = await transport.reachable();
+        return ok ? null : { ok: false, failure: TIERS[tier].probeFailure };
+    }
 
-        // If we edited the live connection, rebuild its transport so the change takes effect now.
-        if (get().activeId === id) {
-            const conn = connections.find((c) => c.id === id);
+    return {
+        tier: null,
+        transport: null,
+        connections: [],
+        activeId: null,
+        status: "disconnected",
+        sessionGeneration: 0,
+        restored: false,
 
-            if (conn) {
+        async connect({ deviceCode, ...input }) {
+            const row = TIERS[input.tier];
+            const target = targetOf(input, input.password ?? "");
+
+            try {
+                if (row.pairing === "device-code") {
+                    await row.pair(target, deviceCode ?? "");
+                }
+
+                const transport = await row.build(target);
+                const failed = await probed(input.tier, transport);
+
+                if (failed) {
+                    return failed;
+                }
+
+                const id = await upsertConnection(input);
+                await markActivated(id);
+                commit(id, transport, await loadConnections());
+                return { ok: true, id };
+            } catch (err) {
+                return { ok: false, failure: "error", error: err instanceof Error ? err.message : String(err) };
+            }
+        },
+
+        async activate(id) {
+            const conn = await getConnection(id);
+
+            if (!conn) {
+                return { ok: false, failure: "error", error: `No saved connection ${id}` };
+            }
+
+            try {
                 const transport = await buildTransportFor(conn);
-                publishToGate(transport);
+                const failed = await probed(conn.tier, transport);
+
+                if (failed) {
+                    return failed;
+                }
+
+                await markActivated(id);
+                commit(id, transport, await loadConnections());
+                return { ok: true, id };
+            } catch (err) {
+                return { ok: false, failure: "error", error: err instanceof Error ? err.message : String(err) };
+            }
+        },
+
+        async restore() {
+            try {
+                const connections = await loadConnections();
+                const activeId = await getActiveConnectionId();
+                set({ connections, activeId });
+
+                if (!activeId) {
+                    return;
+                }
+
+                const active = connections.find((c) => c.id === activeId);
+
+                if (!active) {
+                    console.warn(`[connection-store] active id ${activeId} has no saved connection`);
+                    set({ activeId: null });
+                    return;
+                }
+
+                try {
+                    // No probe here on purpose: an offline launch must still land in the app on its last Mac.
+                    commit(activeId, await buildTransportFor(active), connections);
+                } catch (err) {
+                    // Restore failure must never crash the boot path — fall through to /connect.
+                    console.warn(`[connection-store] failed to restore connection ${activeId}`, err);
+                    set({ status: "error" });
+                }
+            } finally {
+                // Always flip `restored` so the root splash gives way to the resolved gate, even when
+                // there was nothing to restore or rebuilding the transport threw.
+                set({ restored: true });
+            }
+        },
+
+        async listConnections() {
+            const connections = await loadConnections();
+            const activeId = await getActiveConnectionId();
+            set({ connections, activeId });
+            return connections;
+        },
+
+        async addConnection(input) {
+            const id = await upsertConnection(input);
+            set({ connections: await loadConnections() });
+            return id;
+        },
+
+        async updateConnection(id, patch) {
+            await updateSavedConnection(id, patch);
+            const connections = await loadConnections();
+            set({ connections });
+
+            // If we edited the live connection, rebuild its transport so the change takes effect now.
+            if (get().activeId === id) {
+                const conn = connections.find((c) => c.id === id);
+
+                if (conn) {
+                    commit(id, await buildTransportFor(conn), connections);
+                }
+            }
+        },
+
+        async remove(id) {
+            await deleteSavedConnection(id);
+            const connections = await loadConnections();
+            const activeId = await getActiveConnectionId();
+            set({ connections, activeId });
+
+            // Removing the active connection drops the app back to the connect gate.
+            if (get().transport && activeId === null) {
                 set((state) => ({
-                    tier: transport.tier,
-                    transport,
+                    tier: null,
+                    transport: null,
+                    status: "disconnected",
                     sessionGeneration: state.sessionGeneration + 1,
                 }));
             }
-        }
-    },
+        },
+    };
+});
 
-    async removeConnection(id) {
-        await deleteSavedConnection(id);
-        const connections = await loadConnections();
-        const activeId = await getActiveConnectionId();
-        set({ connections, activeId });
+/** What the active connection's tier allows a screen to do; nothing when no Mac is connected. */
+export function useTierCapabilities(): TierCapabilities | null {
+    const tier = useConnectionStore((s) => s.tier);
+    return tier ? TIERS[tier].capabilities : null;
+}
 
-        // Removing the active connection drops the app back to the connect gate.
-        if (get().transport && get().activeId === null) {
-            set((state) => ({
-                tier: null,
-                transport: null,
-                sessionGeneration: state.sessionGeneration + 1,
-            }));
-            useConnection.getState().reset();
-        }
-    },
-}));
+/**
+ * The base URL a WebView or the system browser may load in plain HTTP, or null when the tier refuses it (the managed
+ * relay) or nothing is connected. Screens ask this instead of reading the transport's base URL themselves.
+ */
+export function usePlainBaseUrl(): string | null {
+    const transport = useConnectionStore((s) => s.transport);
+    return transport && TIERS[transport.tier].capabilities.plainUrls ? transport.baseUrl() : null;
+}

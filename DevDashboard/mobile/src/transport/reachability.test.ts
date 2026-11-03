@@ -11,17 +11,17 @@ describe("reachabilityReducer", () => {
     });
 
     it("a tailscale probe failure -> needs-vpn (not generic unreachable)", () => {
-        const s = reachabilityReducer({ kind: "probing" }, { type: "probe-fail", tier: "tailscale" });
+        const s = reachabilityReducer({ kind: "probing" }, { type: "probe-fail", failure: "needs-vpn" });
         expect(s).toEqual({ kind: "needs-vpn" });
     });
 
     it("a managed probe failure with no keys -> needs-pair", () => {
-        const s = reachabilityReducer({ kind: "probing" }, { type: "probe-fail", tier: "managed", paired: false });
+        const s = reachabilityReducer({ kind: "probing" }, { type: "probe-fail", failure: "needs-pair" });
         expect(s).toEqual({ kind: "needs-pair" });
     });
 
     it("a lan probe failure -> unreachable", () => {
-        const s = reachabilityReducer({ kind: "probing" }, { type: "probe-fail", tier: "lan" });
+        const s = reachabilityReducer({ kind: "probing" }, { type: "probe-fail", failure: "unreachable" });
         expect(s).toEqual({ kind: "unreachable" });
     });
 });

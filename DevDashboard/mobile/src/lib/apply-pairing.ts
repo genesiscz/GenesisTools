@@ -1,70 +1,52 @@
 import { parsePairingPayload } from "@dd/contract";
 
-import { useConnection } from "@/state/connection";
-import { useConnectionStore } from "@/state/connection-store";
+import { type ConnectResult, useConnectionStore } from "@/state/connection-store";
+import { FAILURE_MESSAGE } from "@/transport/reachability";
 
 export interface ApplyPairingResult {
     ok: boolean;
     error?: string;
 }
 
+/** The secrets a pairing asks the user for; the QR and the deep link never carry them. */
+export interface PairingSecrets {
+    /** The tunnel's Basic-auth password (cloudflared-self). */
+    password?: string;
+    /** The one-time code the Mac shows (managed). */
+    deviceCode?: string;
+}
+
+function messageOf(result: ConnectResult): string | undefined {
+    return result.ok ? undefined : (result.error ?? FAILURE_MESSAGE[result.failure]);
+}
+
 /**
- * Parse a pairing URI/JSON and connect the matching transport, then probe reachability. Shared by
- * the QR-scan path (connect screen) and the deep-link path (pair route) so both stay in lockstep —
- * the only difference is where the payload string comes from. Reads the store via getState() so it
- * works outside React (e.g. a deep-link handler firing before the screen's own state settles).
+ * Parse a pairing URI/JSON and connect through the connection session (`connect`: build, pair when the tier asks,
+ * probe, then commit). Shared by the QR-scan path (connect screen) and the deep-link path (pair route). A failed
+ * probe commits nothing, so there is nothing to roll back.
  */
-export async function applyPairingUri(uri: string, password = ""): Promise<ApplyPairingResult> {
+export async function applyPairingUri(uri: string, secrets: PairingSecrets = {}): Promise<ApplyPairingResult> {
     const pairing = parsePairingPayload(uri.trim());
 
     if (!pairing) {
         return { ok: false, error: "That is not a DevDashboard pairing code." };
     }
 
-    const previousActiveId = useConnectionStore.getState().activeId;
+    const base = pairing.baseUrl.replace(/\/+$/, "");
+    const url = new URL(base);
+    const port = url.port ? Number.parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
+    console.log(`[connect] applyPairingUri tier=${pairing.tier} baseUrl=${base}`);
+    const result = await useConnectionStore.getState().connect({
+        tier: pairing.tier,
+        baseUrl: base,
+        host: url.hostname,
+        port,
+        username: pairing.username ?? "",
+        password: secrets.password ?? "",
+        ...(secrets.deviceCode ? { deviceCode: secrets.deviceCode } : {}),
+        ...(pairing.agentPublicKey ? { tierOptions: { managed: { agentPublicKey: pairing.agentPublicKey } } } : {}),
+    });
+    console.log(`[connect] applyPairingUri tier=${pairing.tier} ok=${result.ok}`);
 
-    try {
-        console.log(`[connect] applyPairingUri tier=${pairing.tier} baseUrl=${pairing.baseUrl}`);
-        const store = useConnectionStore.getState();
-
-        if (pairing.tier === "managed") {
-            await store.setManaged(pairing);
-        } else {
-            await store.setCloudflared(pairing, password);
-        }
-
-        const transport = useConnectionStore.getState().transport;
-        const ok = transport ? await transport.reachable() : false;
-        console.log(`[connect] applyPairingUri tier=${pairing.tier} reachable=${ok}`);
-
-        if (!ok) {
-            await rollback(previousActiveId);
-        }
-
-        return { ok };
-    } catch (err) {
-        await rollback(previousActiveId);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-}
-
-/**
- * `setManaged` / `setCloudflared` persist the row, make it active and open the root layout's route
- * gate BEFORE anything is probed. Without this a failed pairing would leave the app navigated past
- * the connect screen onto an unreachable connection that survives a restart, while the screen said
- * "Pairing failed." Put the previous connection back, or close the gate when there is none.
- */
-async function rollback(previousActiveId: string | null): Promise<void> {
-    const store = useConnectionStore.getState();
-
-    if (previousActiveId && previousActiveId !== store.activeId) {
-        try {
-            await store.activateConnection(previousActiveId);
-            return;
-        } catch (err) {
-            console.warn("[connect] could not restore the previous connection after a failed pairing", err);
-        }
-    }
-
-    useConnection.getState().reset();
+    return { ok: result.ok, error: messageOf(result) };
 }
