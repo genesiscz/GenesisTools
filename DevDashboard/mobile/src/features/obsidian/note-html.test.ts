@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildNoteDocument, parseNoteMessage, shareUrl } from "@/features/obsidian/note-html";
+import { buildNoteDocument, noteShare, parseNoteMessage, shareUrl } from "@/features/obsidian/note-html";
 
 describe("buildNoteDocument", () => {
     it("embeds the server html fragment inside a full document with theme + bridge", () => {
@@ -73,5 +73,28 @@ describe("shareUrl", () => {
 
     it("returns null for a missing slug", () => {
         expect(shareUrl("http://h", null)).toBeNull();
+    });
+
+    it("returns null without a usable base URL (the managed tier), never a relative /share/<slug>", () => {
+        expect(shareUrl(null, "abc123")).toBeNull();
+        expect(shareUrl("", "abc123")).toBeNull();
+    });
+});
+
+describe("noteShare", () => {
+    it("a published note stays published on the managed tier, with no link to open or copy", () => {
+        expect(noteShare(null, "abc123")).toEqual({ published: true, url: null });
+    });
+
+    it("a published note on a plain-URL tier carries its absolute share link", () => {
+        expect(noteShare("http://mac.local:3042", "abc123")).toEqual({
+            published: true,
+            url: "http://mac.local:3042/share/abc123",
+        });
+    });
+
+    it("an unpublished note is unpublished on every tier", () => {
+        expect(noteShare("http://mac.local:3042", null)).toEqual({ published: false, url: null });
+        expect(noteShare(null, null)).toEqual({ published: false, url: null });
     });
 });
