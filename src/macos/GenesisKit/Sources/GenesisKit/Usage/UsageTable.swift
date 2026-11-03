@@ -231,8 +231,9 @@ public struct UsageTableRowView: View, Equatable {
                 Text(verbatim: UsageFormat.percent(cell.percent))
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(UsageTone.severity(cell.severity))
-                if cell.resetsAt != nil {
-                    Text(verbatim: UsageFormat.countdown(to: cell.resetsAt, now: now))
+                // A reset in the past is an old reading's; its countdown would read "now" forever.
+                if let reset = cell.resetsAt, reset > now {
+                    Text(verbatim: UsageFormat.countdown(to: reset, now: now))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.42))
                 }
