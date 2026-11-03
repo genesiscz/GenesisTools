@@ -49,6 +49,7 @@ describe("F11: decisions answered in Telegram", () => {
                 decision({ id: "d_2_s-two", number: 2, sessionId: "s-two", project: "repo-quiet" }),
                 decision({ id: "d_3_s-three", number: 3, sessionId: "s-three", project: "repo-off" }),
                 decision({ id: "d_4_s-four", number: 4, sessionId: "s-four", for: "fable" }),
+                decision({ id: "t_1_s-one", number: 1, type: "todo", for: "human" }),
             ],
             { bot, api, store, now: NOW }
         );
