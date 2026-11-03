@@ -59,4 +59,14 @@ describe("the limits verbs over the snapshots file", () => {
         expect(SafeJSON.stringify(advice.data)).not.toContain("hidden");
         expect(SafeJSON.stringify(advice.data)).not.toContain("gone");
     });
+
+    test("advice from cached snapshots with no history says it has no forecast, never that a pick lasts", async () => {
+        const advice = await queryAdvice({ cached: true, provider: ["anthropic-sub"] }, () => undefined);
+        const picks = advice.data.providers.flatMap((provider) => provider.profiles.map((profile) => profile.pick));
+
+        expect(picks.length).toBeGreaterThan(0);
+        expect(picks.map((pick) => [pick?.accountName, pick?.forecast, pick?.lastsMinutes])).toEqual(
+            picks.map(() => ["work", "unknown", null])
+        );
+    });
 });

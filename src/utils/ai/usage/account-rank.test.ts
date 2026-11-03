@@ -251,8 +251,14 @@ describe("adviseAccounts", () => {
 
         expect(byProfile).toEqual({ default: "personal", "fan-out": "work", "long-run": "personal" });
         expect(codexAdvice.profiles.find((p) => p.profile === "fan-out")?.pick).toMatchObject({
+            forecast: "exhausts",
             lastsMinutes: 95,
             bindingLabel: "5h",
+        });
+        expect(codexAdvice.profiles.find((p) => p.profile === "default")?.pick).toMatchObject({
+            accountName: "personal",
+            forecast: "lasts",
+            lastsMinutes: null,
         });
         expect(codexAdvice.unusedAtReset.map((row) => [row.accountName, row.unusedPct])).toEqual([
             ["personal", 40.5],
