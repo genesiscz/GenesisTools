@@ -2,6 +2,8 @@ import type { DispatchResult, NotificationChannel, NotificationPayload } from "@
 import { TelegramBotClient } from "@app/shops/lib/telegram-bot-client";
 import { env as appEnv } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { loadTelegramBotConfigSync, resolveTelegramTarget } from "@genesiscz/utils/telegram-bot/lib/config";
+import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 
 const log = logger.child({ component: "TelegramBotChannel" });
 
@@ -33,14 +35,27 @@ export class TelegramBotChannel implements NotificationChannel {
         this.client = config.client;
     }
 
-    static fromEnv(processEnv: Record<string, string | undefined> = appEnv.getProcessEnv()): TelegramBotChannel | null {
-        const chatId = processEnv.TELEGRAM_CHAT_ID;
-        const client = TelegramBotClient.fromEnv(processEnv);
-        if (!chatId || !client) {
+    /**
+     * `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` when the env names both. Else the one bot config
+     * (`tools telegram-bot configure`) and its notifications chat, with the env's chat when only that is set.
+     */
+    static fromEnv(
+        processEnv: Record<string, string | undefined> = appEnv.getProcessEnv(),
+        bot: TelegramBotConfig | null = loadTelegramBotConfigSync()
+    ): TelegramBotChannel | null {
+        const target = resolveTelegramTarget({
+            purpose: "notifications",
+            own: { botToken: processEnv.TELEGRAM_BOT_TOKEN, chatId: processEnv.TELEGRAM_CHAT_ID },
+            bot,
+        });
+        if (!target) {
             return null;
         }
 
-        return new TelegramBotChannel({ chatId, client });
+        return new TelegramBotChannel({
+            chatId: target.chatId,
+            client: new TelegramBotClient({ token: target.botToken }),
+        });
     }
 
     available(): boolean {

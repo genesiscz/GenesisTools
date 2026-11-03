@@ -1,16 +1,25 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { Storage } from "@genesiscz/utils/storage/storage";
-import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
+import {
+    loadTelegramBotConfig,
+    saveTelegramBotConfig,
+    telegramBotStorage,
+} from "@genesiscz/utils/telegram-bot/lib/config";
+import type { TelegramBotConfig, TelegramBotConfigV1 } from "@genesiscz/utils/telegram-bot/lib/types";
 
-/** The config holds the bot token in plaintext, so every write creates the file at 0600, never at the umask default. */
-const storage = new Storage("telegram-bot", { configFileMode: 0o600 });
+const storage = telegramBotStorage();
 
+/** The bot config in the version 2 shape (`chats` by purpose); a version 1 file is migrated in memory. */
 export async function loadTelegramConfig(): Promise<TelegramBotConfig | null> {
-    return storage.getConfig<TelegramBotConfig>();
+    return loadTelegramBotConfig();
 }
 
-export async function saveTelegramConfig(config: TelegramBotConfig): Promise<void> {
-    await storage.setConfig(config);
+export async function saveTelegramConfig(config: TelegramBotConfig | TelegramBotConfigV1): Promise<void> {
+    await saveTelegramBotConfig(config);
+}
+
+/** Every chat the bot takes updates from: the commands chat, plus the decisions chat when it is another one. */
+export function authorizedChats(config: Pick<TelegramBotConfig, "chats">): number[] {
+    return [...new Set([config.chats.commands, config.chats.decisions ?? config.chats.commands])];
 }
 
 export function notConfiguredMessage(): string {

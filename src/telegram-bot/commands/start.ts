@@ -1,5 +1,10 @@
 import { createBot } from "@app/telegram-bot/lib/bot";
-import { loadTelegramConfig, notConfiguredMessage, saveWebhookUrl } from "@app/telegram-bot/lib/config";
+import {
+    authorizedChats,
+    loadTelegramConfig,
+    notConfiguredMessage,
+    saveWebhookUrl,
+} from "@app/telegram-bot/lib/config";
 import { COMMANDS } from "@app/telegram-bot/lib/handlers/help";
 import { createTelegramApi, describeApiError } from "@app/telegram-bot/lib/webhook/api";
 import { runWebhookService } from "@app/telegram-bot/lib/webhook/service";
@@ -20,7 +25,7 @@ interface StartOptions {
 }
 
 async function startPolling(config: TelegramBotConfig): Promise<void> {
-    const bot = createBot(config.botToken, config.chatId, { apiRoot: resolveApiRoot(config.apiRoot) });
+    const bot = createBot(config.botToken, authorizedChats(config), { apiRoot: resolveApiRoot(config.apiRoot) });
 
     const me = await bot.api.getMe();
     p.log.success(`Starting bot @${me.username ?? me.first_name} (Ctrl+C to stop)`);
@@ -48,7 +53,7 @@ async function startWebhook(config: TelegramBotConfig, opts: StartOptions): Prom
     });
     await saveWebhookUrl(settings.url);
 
-    const bot = createBot(config.botToken, config.chatId, { apiRoot: resolveApiRoot(config.apiRoot) });
+    const bot = createBot(config.botToken, authorizedChats(config), { apiRoot: resolveApiRoot(config.apiRoot) });
     await bot.init();
     await bot.api.setMyCommands(COMMANDS);
     p.log.success(`Starting webhook receiver for @${bot.botInfo.username} (Ctrl+C to stop)`);
