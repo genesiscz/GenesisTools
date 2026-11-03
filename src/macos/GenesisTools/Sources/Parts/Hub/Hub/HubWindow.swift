@@ -1929,7 +1929,7 @@ final class HubModel {
         if request.usageSection != nil || request.usageSession != nil || !request.usageAccounts.isEmpty {
             MainActor.assumeIsolated {
                 if !request.usageAccounts.isEmpty {
-                    usage.pendingAccounts = request.usageAccounts
+                    usage.selectAccounts(named: request.usageAccounts)
                     usage.section = .limits
                 }
                 if let id = request.usageSession {

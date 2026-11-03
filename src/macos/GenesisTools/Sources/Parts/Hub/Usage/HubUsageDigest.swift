@@ -16,6 +16,10 @@ final class HubUsageDigestStore: ObservableObject {
     private var loadedDay: String?
     private var loadedAt: Date?
     private var loading = false
+    /// The day the newest load asked for, and its number: an older load's answer is dropped when it lands, so a day
+    /// changed (or a Refresh) while one runs never shows the other day's usage under the new heading.
+    private var requestedDay: String?
+    private var generation = 0
     private let client: UsageClient
 
     init(client: UsageClient = HubUsageModel.hubClient) {
@@ -31,12 +35,15 @@ final class HubUsageDigestStore: ObservableObject {
     }
 
     func loadIfStale(day: String) {
-        guard !loading else { return }
-        if loadedDay == day, let loadedAt, Date().timeIntervalSince(loadedAt) < Self.maxAge { return }
+        if loading, requestedDay == day { return }
+        if !loading, loadedDay == day, let loadedAt, Date().timeIntervalSince(loadedAt) < Self.maxAge { return }
         load(day: day)
     }
 
     func load(day: String) {
+        generation += 1
+        let request = generation
+        requestedDay = day
         loading = true
         let done = HubSnapshotLoads.begin("forecast")
         let span = HubPerf.begin("usage.digest.load", day, awaits: true)
@@ -44,7 +51,7 @@ final class HubUsageDigestStore: ObservableObject {
         let settings = UsagePreferences.shared.settings
         Task {
             defer {
-                loading = false
+                if generation == request { loading = false }
                 span.end()
                 done()
             }
@@ -55,12 +62,14 @@ final class HubUsageDigestStore: ObservableObject {
                 let built = await Task.detached(priority: .userInitiated) {
                     UsageLaneBuilder.build(series: seriesValue.data, settings: settings)
                 }.value
+                guard generation == request else { return }
                 self.digest = digestValue
                 lanes = Dictionary(built.map { (Self.key(provider: $0.account.provider, account: $0.account.accountName), $0.lanes) },
                                    uniquingKeysWith: { first, _ in first })
                 builtAt = Date()
                 error = nil
             } catch {
+                guard generation == request else { return }
                 self.error = "Usage digest failed: \(error.localizedDescription)"
             }
             loadedDay = day
