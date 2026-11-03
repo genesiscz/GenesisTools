@@ -125,16 +125,16 @@ describe("session report", () => {
 describe("limit drift", () => {
     test("an exclusive window is a rise of the target with no other account rising around it", () => {
         const rows = [
-            { ts: 0, account: "a", util: 10 },
-            { ts: 0, account: "b", util: 5 },
-            { ts: 60_000, account: "a", util: 11 },
-            { ts: 120_000, account: "b", util: 6 },
-            { ts: 600_000, account: "a", util: 13 },
+            { ts: 0, account: "a", series: "a", util: 10 },
+            { ts: 0, account: "b", series: "b", util: 5 },
+            { ts: 60_000, account: "a", series: "a", util: 11 },
+            { ts: 120_000, account: "b", series: "b", util: 6 },
+            { ts: 600_000, account: "a", series: "a", util: 13 },
         ];
 
-        expect(exclusiveWindows(rows, "a", { padMs: 30_000, maxWindowMs: 3_600_000 })).toEqual([
-            { from: 0, to: 60_000, delta: 1 },
-        ]);
+        expect(
+            exclusiveWindows(rows, { account: "a", series: "a" }, { padMs: 30_000, maxWindowMs: 3_600_000 })
+        ).toEqual([{ from: 0, to: 60_000, delta: 1 }]);
     });
 
     test("pooled ratio, a deterministic interval, and the overlap test", () => {
