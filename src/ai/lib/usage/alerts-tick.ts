@@ -55,6 +55,7 @@ export async function recordRoundAndAlert(input: {
         snapshots: input.snapshots,
         now,
         previousRoundAt,
+        config: input.config.alerts,
         budgets: input.config.budgets,
     });
     const fired = await runAlertEngine({

@@ -234,6 +234,30 @@ describe("the engine", () => {
         expect(fired.map((alert) => alert.accountName)).toEqual(["shop"]);
     });
 
+    test("a key another process recorded after this round was judged is not fired or delivered again", async () => {
+        // The other process (the usage TUI, say) records the alert between this round's judging and its insert.
+        class LateStore extends UsageAlertsStore {
+            override latestByDedupe(): StoredAlert | null {
+                return null;
+            }
+        }
+
+        const late = new LateStore(limits.connection());
+        await runAlertEngine({ round: round({ snapshots: [snapshot(85)] }), config: config(), store, channels });
+        macos.delivered.length = 0;
+
+        const fired = await runAlertEngine({
+            round: round({ now: minutes(1), snapshots: [snapshot(85)] }),
+            config: config(),
+            store: late,
+            channels,
+        });
+
+        expect(fired).toEqual([]);
+        expect(macos.delivered).toEqual([]);
+        expect(store.list({ from: minutes(-1), to: minutes(5) })).toHaveLength(1);
+    });
+
     test("judgeRound answers what would fire and writes nothing", () => {
         const judged = judgeRound({ round: round({ snapshots: [snapshot(85)] }), config: config(), store });
 
@@ -336,6 +360,7 @@ describe("rules over the stores", () => {
             snapshots: [],
             now: NOW,
             previousRoundAt: minutes(-2).toISOString(),
+            config: config(),
         });
         const candidates = ALERT_RULES["limit-state-change"].evaluate(built, ALERT_RULE_DEFAULTS["limit-state-change"]);
 
@@ -353,6 +378,7 @@ describe("rules over the stores", () => {
             snapshots: [held],
             now: NOW,
             previousRoundAt: minutes(-45).toISOString(),
+            config: health,
         });
 
         const fired = await runAlertEngine({ round: built, config: health, store, channels, rules: ALERT_RULES });
@@ -369,6 +395,7 @@ describe("rules over the stores", () => {
             snapshots: [held],
             now: minutes(1),
             previousRoundAt: NOW.toISOString(),
+            config: health,
         });
 
         expect(
@@ -397,11 +424,45 @@ describe("rules over the stores", () => {
             retryAfterMs: 120_000,
             at: minutes(-2),
         });
-        const built = buildAlertRound({ db: limits.connection(), snapshots: [], now: NOW, previousRoundAt: null });
+        const built = buildAlertRound({
+            db: limits.connection(),
+            snapshots: [],
+            now: NOW,
+            previousRoundAt: null,
+            config: config(),
+        });
         const candidates = ALERT_RULES["rate-limited"].evaluate(built, ALERT_RULE_DEFAULTS["rate-limited"]);
 
         expect(candidates.map((candidate) => candidate.message)).toEqual([
             "shop got 3 rate-limit answers in 10 min (ai-proxy). It cools down for 120 s.",
+        ]);
+    });
+
+    test("rate-limited: a window longer than an hour reads its events from the whole window", () => {
+        const events = new UsageEventsStore(limits.connection());
+
+        for (const minute of [-90, -70, -20]) {
+            events.insert({
+                provider: "openai-sub",
+                accountName: "shop",
+                source: "ai-proxy",
+                kind: "rate-limited",
+                at: minutes(minute),
+            });
+        }
+
+        const settings = { ...ALERT_RULE_DEFAULTS["rate-limited"], windowMinutes: 120 };
+        const built = buildAlertRound({
+            db: limits.connection(),
+            snapshots: [],
+            now: NOW,
+            previousRoundAt: null,
+            config: config({ rules: { "rate-limited": { windowMinutes: 120 } } }),
+        });
+
+        expect(built.events).toHaveLength(3);
+        expect(ALERT_RULES["rate-limited"].evaluate(built, settings).map((candidate) => candidate.message)).toEqual([
+            "shop got 3 rate-limit answers in 120 min (ai-proxy).",
         ]);
     });
 
@@ -426,6 +487,7 @@ describe("rules over the stores", () => {
             snapshots: [snapshot(10)],
             now: NOW,
             previousRoundAt: null,
+            config: config(),
         });
         const candidates = ALERT_RULES["rate-limited"].evaluate(built, ALERT_RULE_DEFAULTS["rate-limited"]);
 

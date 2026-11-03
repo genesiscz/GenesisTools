@@ -306,6 +306,7 @@ export async function testAlertRule(
                 snapshots,
                 now,
                 previousRoundAt: new PollRunsStore(db).lastRoundAt(),
+                config: dashboard.alerts,
                 budgets: dashboard.budgets,
             });
             // The event-backed rules (rate-limited, limit-state-change, health's refused probes) read every
