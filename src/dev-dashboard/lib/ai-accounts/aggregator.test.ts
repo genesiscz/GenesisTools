@@ -6,7 +6,6 @@ import type { SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
 import {
     createAiAggregator,
     createScanCache,
-    defaultSeriesStep,
     effectiveSpendGrain,
     foldSpendPoints,
     transcriptScanKey,
@@ -65,25 +64,6 @@ describe("transcriptScanKey", () => {
     });
 });
 
-describe("defaultSeriesStep", () => {
-    test("caps a 30-day window at 600 buckets", () => {
-        const step = defaultSeriesStep(WINDOW.from, WINDOW.to);
-
-        expect(step).toBeDefined();
-        expect(Math.round((Date.parse(WINDOW.to) - Date.parse(WINDOW.from)) / (step ?? 1))).toBe(600);
-    });
-
-    test("an hour window steps finer than the 30s poll, so nothing is lost", () => {
-        const step = defaultSeriesStep("2026-09-04T18:00:00.000Z", "2026-09-04T19:00:00.000Z");
-
-        expect(step).toBeLessThan(30_000);
-    });
-
-    test("an unusable window asks for no downsampling rather than a bad step", () => {
-        expect(defaultSeriesStep("nope", WINDOW.to)).toBeUndefined();
-        expect(defaultSeriesStep(WINDOW.to, WINDOW.from)).toBeUndefined();
-    });
-});
 describe("effectiveSpendGrain", () => {
     test("a single-source series keeps the grain it asked for", () => {
         expect(effectiveSpendGrain("calls", "minute")).toBe("minute");

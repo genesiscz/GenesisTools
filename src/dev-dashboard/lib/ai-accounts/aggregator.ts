@@ -13,7 +13,6 @@ import type {
     AiSpendTotalsResult,
     AiUsageResult,
     AiUsageSeriesResult,
-    LimitSeries,
     SpendAccountTotals,
     SpendBucket,
     SpendGrain,
@@ -24,8 +23,7 @@ import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@app/dev-dashboard/co
 import {
     filterSnapshots,
     flattenSnapshotsCache,
-    limitSeriesFrom,
-    providerAccountKey,
+    limitSeriesWire,
     resolveProviderFilter,
     type SnapshotFilter,
     spendAccountIds,
@@ -40,14 +38,16 @@ import { publishAiUsage } from "@app/dev-dashboard/lib/live/ai-usage-producer";
 import { getLiveHub } from "@app/dev-dashboard/lib/live/singleton";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { type AccountFeatures, absentLimitKindLabel } from "@genesiscz/utils/ai/providers/account-features";
+import type { AccountFeatures } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
 import { CLAUDE_ALL_ACCOUNT_NAME, queryUsage, spendBucketKey } from "@genesiscz/utils/ai/usage";
+import type { AccountKey } from "@genesiscz/utils/ai/usage/contract/envelope";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
+import { readLimitSeries } from "@genesiscz/utils/ai/usage-poll/series";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface UsageSeriesQuery extends SnapshotFilter {
@@ -116,6 +116,10 @@ function featuresByPlugin(): Map<string, AccountFeatures> {
     }
 
     return out;
+}
+
+function accountKeyOf(account: AccountEntry): AccountKey {
+    return { provider: account.provider, accountId: account.id, accountName: account.name };
 }
 
 function credentialKindsOf(account: AccountEntry): string[] {
@@ -407,25 +411,6 @@ const TRANSCRIPT_SCAN_TIMEOUT_MS = 60_000;
 
 const TRANSCRIPT_SCAN_WORKER = new URL("./transcript-scan-worker.ts", import.meta.url);
 
-/** Points per limit series a response may carry before it is downsampled. */
-const MAX_SERIES_POINTS = 600;
-
-/**
- * A `step` for `UsageLimitsDb.getSeries` when the caller named none, so the
- * response cannot grow without bound as the window widens. A 30-day window
- * already sits under the cap, so this changes nothing a reader can see today; it
- * exists so a 6-month custom range does not return a megabyte of JSON.
- */
-export function defaultSeriesStep(from: string, to: string): number | undefined {
-    const span = Date.parse(to) - Date.parse(from);
-
-    if (!Number.isFinite(span) || span <= 0) {
-        return undefined;
-    }
-
-    return Math.max(1, Math.floor(span / MAX_SERIES_POINTS));
-}
-
 export function createAiAggregator(): AiAggregator {
     registerBuiltInPlugins();
 
@@ -446,11 +431,11 @@ export function createAiAggregator(): AiAggregator {
     }
 
     /**
-     * Account NAMES the limits DB should be asked about. The DB is keyed by name;
-     * the dashboard filters by id, so config is what translates between them.
-     * `null` means "no filter was given, ask for everything".
+     * The accounts a series request names. The store is keyed by name; the dashboard filters
+     * by id, so config is what translates between them. `null` means "no filter was given,
+     * ask for everything", including history of accounts config no longer lists.
      */
-    function seriesAccountNames(accounts: readonly AccountEntry[], query: UsageSeriesQuery): string[] | null {
+    function seriesSelection(accounts: readonly AccountEntry[], query: UsageSeriesQuery): AccountKey[] | null {
         const providers = query.providers?.length ? new Set(query.providers.map(resolveProviderFilter)) : undefined;
         const wanted = query.accounts?.length ? new Set(query.accounts) : undefined;
 
@@ -461,7 +446,7 @@ export function createAiAggregator(): AiAggregator {
         return accounts
             .filter((account) => !providers || providers.has(account.provider))
             .filter((account) => !wanted || wanted.has(account.id) || wanted.has(account.name))
-            .map((account) => account.name);
+            .map(accountKeyOf);
     }
 
     /** The spend stores filter by account id, so the provider chips become ids first. */
@@ -581,51 +566,32 @@ export function createAiAggregator(): AiAggregator {
 
         async getUsageSeries(query: UsageSeriesQuery): Promise<AiUsageSeriesResult> {
             const accounts = await enabledAccounts();
-            const names = seriesAccountNames(accounts, query);
+            const selection = seriesSelection(accounts, query);
 
-            if (names !== null && names.length === 0) {
+            if (selection !== null && selection.length === 0) {
                 return { series: [] };
             }
 
             const current = await readCurrent();
-            const labels = new Map<string, string>(
-                current.snapshots.flatMap((snapshot) =>
-                    snapshot.limits.map(
-                        (limit) =>
-                            [
-                                `${providerAccountKey(snapshot.provider, snapshot.accountName)}|${limit.key}`,
-                                limit.label,
-                            ] as const
-                    )
-                )
+            // The same core as `tools ai usage limits series`: the step default, the id and
+            // label of each row, and the provider of a same-named account all come from there.
+            const data = readLimitSeries(
+                {
+                    from: query.from,
+                    to: query.to,
+                    agg: "last",
+                    ...(query.step === undefined ? {} : { stepMs: query.step }),
+                    ...(selection ? { accounts: selection } : {}),
+                    ...(query.keys?.length ? { keys: [...query.keys] } : {}),
+                },
+                { db: new UsageLimitsDb(), directory: accounts.map(accountKeyOf), current: current.snapshots }
             );
-            const db = new UsageLimitsDb();
-            const step = query.step ?? defaultSeriesStep(query.from, query.to);
-            const entries = db.getSeries({
-                ...(names ? { accounts: names } : {}),
-                ...(query.keys?.length ? { keys: [...query.keys] } : {}),
-                from: query.from,
-                to: query.to,
-                ...(step !== undefined ? { step } : {}),
-            });
+            const series = limitSeriesWire(data.series);
 
-            // The DB narrows by account NAME only, so the provider filter is applied
-            // again over the rows it returned; each row keeps the provider it was
-            // written under rather than borrowing one from a same-named account.
-            // A window the account no longer has keeps its old rows; its line ends and keeps a readable label.
-            const absent = new Set<string>();
-
-            for (const snapshot of current.snapshots) {
-                for (const limit of snapshot.absentLimits ?? []) {
-                    const id = `${providerAccountKey(snapshot.provider, snapshot.accountName)}|${limit.key}`;
-                    absent.add(id);
-                    labels.set(id, absentLimitKindLabel(limit));
-                }
-            }
-
-            const series: LimitSeries[] = limitSeriesFrom({ entries, accounts, labels, filter: query, absent });
-
-            logger.debug({ series: series.length, from: query.from, to: query.to }, "[ai-dashboard] limit series");
+            logger.debug(
+                { series: series.length, from: query.from, to: query.to, stepMs: data.stepMs },
+                "[ai-dashboard] limit series"
+            );
             return { series };
         },
 
