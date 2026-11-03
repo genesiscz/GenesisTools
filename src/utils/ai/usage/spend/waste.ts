@@ -62,10 +62,19 @@ function isWasteItems(value: unknown): value is WasteItem[] {
     );
 }
 
-/** Version 1: a cache-loss scan of the main loop, priced at the call's own rates. */
+/**
+ * Version 2: a sub-agent's own transcript is scanned as its own cache (version 1 cached it as no waste), and a call
+ * is priced at its service tier. A version 1 file is ignored, so every transcript is scanned again.
+ */
+export const WASTE_CACHE_VERSION = 2;
+
 const wasteCache = new FileIdentityCache<WasteItem[]>({
     limit: 20_000,
-    persist: { path: () => toolDataDir("ai-spend", "cache", "session-waste.json"), version: 1, isValue: isWasteItems },
+    persist: {
+        path: () => toolDataDir("ai-spend", "cache", "session-waste.json"),
+        version: WASTE_CACHE_VERSION,
+        isValue: isWasteItems,
+    },
 });
 
 async function itemsOf(event: AttributedEvent): Promise<{ items: WasteItem[]; supported: boolean }> {
