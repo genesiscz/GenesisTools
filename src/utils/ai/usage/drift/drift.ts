@@ -38,6 +38,12 @@ function crossesReset(a: DriftReading, b: DriftReading, slackMs: number): boolea
         return true;
     }
 
+    // An idle reading's reset is the provider's "now + window" at poll time (Codex), not a reset clock: a later
+    // reading always names a later one. Only the passed-reset test above applies to it.
+    if (a.util === 0) {
+        return false;
+    }
+
     return a.resetsAt !== null && b.resetsAt !== null && b.resetsAt > a.resetsAt + slackMs;
 }
 
