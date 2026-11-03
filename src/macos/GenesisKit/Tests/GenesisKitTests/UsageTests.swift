@@ -118,6 +118,17 @@ final class UsageTests: XCTestCase {
         XCTAssertTrue(row.limitBeforeReset)
     }
 
+    func testLimitTextNamesAnAccountThatLastsPastItsReset() throws {
+        let lasts = try JSONDecoder().decode(UsageLimitForecast.self, from: Data("""
+        {"utilization":20,"ratePctPerHour":1.5,"beforeReset":false}
+        """.utf8))
+        XCTAssertEqual(UsageTableBuilder.limitText(lasts, now: Date()), "past reset")
+        let idle = try JSONDecoder().decode(UsageLimitForecast.self, from: Data("""
+        {"utilization":20,"beforeReset":false}
+        """.utf8))
+        XCTAssertNil(UsageTableBuilder.limitText(idle, now: Date()))
+    }
+
     func testSettingsReadMissingAndUnknownValuesAsDefaults() {
         var changed = UsageSettings()
         changed.range = .week
