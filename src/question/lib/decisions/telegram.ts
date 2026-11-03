@@ -96,8 +96,15 @@ export async function postDecisionsToTelegram(
     try {
         const bot = deps.bot === undefined ? await loadTelegramBotConfig() : deps.bot;
         const projects = bot?.decisions?.projects ?? {};
+        // Decisions only: the act door answers by session and number among decisions, and a TODO's number is its own
+        // count, so a TODO 1 button would answer DECISION 1 of the same session.
         const waiting = rows.filter(
-            (row) => needsHuman(row) && row.options.length > 0 && row.project && Object.hasOwn(projects, row.project)
+            (row) =>
+                kindOf(row) === "decision" &&
+                needsHuman(row) &&
+                row.options.length > 0 &&
+                row.project &&
+                Object.hasOwn(projects, row.project)
         );
 
         if (!bot || waiting.length === 0) {
