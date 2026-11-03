@@ -1,5 +1,5 @@
 import { mkdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { type MediaFacts, primaryVideo } from "@genesiscz/utils/video/media-facts";
@@ -167,6 +167,31 @@ export async function availablePresets(
 
         if (reason) {
             skipped.push({ preset, reason });
+        } else {
+            usable.push(preset);
+        }
+    }
+
+    return { usable, skipped };
+}
+
+/**
+ * The presets whose encoder can write the input's container, and a skip for each of the others: the encode keeps the
+ * input's extension, so a preview of SVT-AV1 on a .mov could be recommended and then refused by the encode.
+ */
+export function presetsForContainer({ presets, input }: { presets: readonly VideoPreset[]; input: string }): {
+    usable: VideoPreset[];
+    skipped: PresetSkip[];
+} {
+    const ext = extname(input).toLowerCase();
+    const usable: VideoPreset[] = [];
+    const skipped: PresetSkip[] = [];
+
+    for (const preset of presets) {
+        const encoder = findEncoder(VIDEO_PRESETS[preset]);
+
+        if (encoder && !encoder.containers.includes(ext)) {
+            skipped.push({ preset, reason: `${ext || "no extension"} cannot hold ${encoder.codec}` });
         } else {
             usable.push(preset);
         }

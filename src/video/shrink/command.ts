@@ -35,6 +35,7 @@ import {
     missesTarget,
     type PresetPreview,
     planShrink,
+    presetsForContainer,
     previewPresets,
     type References,
     recommendFromPreviews,
@@ -295,14 +296,16 @@ async function runShrink({ file, flags, signal }: { file: string; flags: ShrinkF
         }
 
         const wanted: VideoPreset[] = preset ? [preset] : [...VIDEO_PRESET_NAMES];
-        const { usable, skipped } = await availablePresets(wanted);
+        const container = presetsForContainer({ presets: wanted, input });
+        const machine = await availablePresets(container.usable);
+        const usable = machine.usable;
 
-        for (const skip of skipped) {
+        for (const skip of [...container.skipped, ...machine.skipped]) {
             out.log.warn(`${skip.preset}: ${skip.reason}`);
         }
 
         if (usable.length === 0) {
-            out.log.error("No preset can run on this machine.");
+            out.log.error("No preset can encode this file on this machine.");
             process.exitCode = 1;
             return;
         }

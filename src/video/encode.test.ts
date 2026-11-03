@@ -63,6 +63,7 @@ import {
     sourceChange,
     undoCommand,
 } from "./encode";
+import { presetsForContainer } from "./shrink/preview";
 import { chooseHeight, previewCorrection, recommendPreset, windowKbps } from "./shrink/recommend";
 
 const encoder = findEncoder("hevc") as VideoEncoder;
@@ -470,6 +471,17 @@ describe("shrink sampling and choices", () => {
         expect(previewCorrection({ kbps: 200, bytes: 250_000, plannedBytes })).toBe(400);
         expect(previewCorrection({ kbps: 200, bytes: 500_000, plannedBytes })).toBeNull();
         expect(previewCorrection({ kbps: 200, bytes: 540_000, plannedBytes })).toBeNull();
+    });
+
+    test("a preset whose encoder cannot write the input's container is skipped before any preview", () => {
+        const mov = presetsForContainer({ presets: VIDEO_PRESET_NAMES, input: "/videos/talk.MOV" });
+        expect(mov.usable).toEqual(["fast", "compatible"]);
+        expect(mov.skipped).toEqual([{ preset: "small", reason: ".mov cannot hold av1" }]);
+
+        expect(presetsForContainer({ presets: VIDEO_PRESET_NAMES, input: "/videos/talk.mkv" }).skipped).toEqual([]);
+        expect(presetsForContainer({ presets: ["compatible"], input: "/videos/talk" }).skipped).toEqual([
+            { preset: "compatible", reason: "no extension cannot hold x264" },
+        ]);
     });
 
     test("the fastest preset within a VMAF point wins, and AV1 needs a 1.5 lead", () => {
