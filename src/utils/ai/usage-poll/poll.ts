@@ -11,6 +11,7 @@ import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
+import { recordUsageEvent } from "@genesiscz/utils/ai/usage/events/record";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { readerMaxStaleMs, usageDaemonAgeMs } from "./daemon-heartbeat";
@@ -64,6 +65,17 @@ export function usagePlugins(): UsagePlugin[] {
     }
 
     return out;
+}
+
+/**
+ * How a snapshot's reading was made, in its provider's words (`AccountUsageFeature.readingSource`); null for a
+ * provider this build no longer polls. The poll coverage stores it per run.
+ */
+export function readingSourceOf(
+    snapshot: AccountUsageSnapshot,
+    plugins: readonly UsagePlugin[] = usagePlugins()
+): string | null {
+    return plugins.find((entry) => entry.plugin.id === snapshot.provider)?.usage.readingSource(snapshot) ?? null;
 }
 
 export interface PollAccountsOptions {
@@ -455,12 +467,26 @@ export async function __fetchProviderSnapshots(
             );
         }
 
+        const failure = suppressed ? undefined : entry.usage.classifyFailure?.(result.reason);
+
+        if (failure?.orgBlocked) {
+            recordUsageEvent({
+                provider: providerId,
+                accountId: account.id,
+                accountName: account.name,
+                source: "poll",
+                kind: "org-blocked",
+                detail: reason,
+                at: new Date(now),
+            });
+        }
+
         return failureSnapshot({
             provider: providerId,
             account,
             reason,
             now,
-            ...(suppressed ? {} : { failure: entry.usage.classifyFailure?.(result.reason) }),
+            ...(failure === undefined ? {} : { failure }),
             holding: blockedBy.get(account.name),
             needsLogin: needsLogin.get(account.name)?.remedy,
         });

@@ -248,6 +248,8 @@ export function grokMissingCredential(account: AccountEntry): MissingCredential 
 export const grokUsage: AccountUsageFeature = {
     poll: pollGrokAccount,
     ranker: windowRanker,
+    // Grok's one path is the vendor's billing request.
+    readingSource: (snapshot) => (snapshot.error === undefined ? "billing-api" : null),
     minIntervalMs: MIN_INTERVAL_MS,
     credentialStamp: grokCredentialStamp,
     missingCredential: grokMissingCredential,

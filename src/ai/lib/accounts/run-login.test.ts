@@ -114,6 +114,7 @@ beforeEach(async () => {
             },
             usage: {
                 ranker: windowRanker,
+                readingSource: () => null,
                 poll: async (account) => {
                     pollCalls.push(account.name);
                     throw new Error("a diagnostic must never reach usage.poll");

@@ -438,6 +438,12 @@ export interface AccountUsageFeature {
      * with one long and one short window takes the shared `windowRanker` (`../usage-rank.ts`).
      */
     ranker: AccountRanker;
+    /**
+     * How a snapshot's reading was made (`endpoint`, `headers`, `app-server`, `billing-api`), or null when the
+     * snapshot carries no reading (an error row). The poll coverage records it per run, so a flat line can be traced
+     * to the path that produced it. Required: a provider with one path answers that path's name.
+     */
+    readingSource(snapshot: AccountUsageSnapshot): string | null;
     presenters?: UsagePresenters;
     /** Floor between two live polls of one account; the daemon and the shared cache enforce it. Default 30s. */
     minIntervalMs?: number;
