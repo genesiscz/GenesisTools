@@ -24,13 +24,17 @@ import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { ffmpegProgressReader } from "@genesiscz/utils/video/ffmpeg-progress";
 import { type MediaFacts, NotMediaError, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import {
+    type AudioPlan,
+    type AudioRequest,
     audioBytes,
     correctedKbps,
     decodeErrors,
     type EncodePass,
     encodeArgs,
     judgeOutput,
+    MAX_SIZE_CORRECTIONS,
     MIN_TARGET_VIDEO_KBPS,
+    planAudio,
     savingPercent,
     skipReason,
     type VideoEncoder,
@@ -58,9 +62,6 @@ export interface EncodeRow {
     seconds: number;
 }
 
-/** Corrected passes after the first one when a size target is missed (each pass encodes the whole file). */
-const MAX_SIZE_CORRECTIONS = 2;
-
 /** Where one input is: an encode pass with its position in the timeline, or the decode check of the result. */
 export interface EncodeProgressEvent {
     type: "progress";
@@ -83,8 +84,10 @@ export interface EncodeOptions {
     quality: number;
     /** Aim the output at this many bytes instead of a constant quality. */
     targetBytes?: number;
-    /** Scale a taller video down to this height, on the GPU. */
+    /** Scale a taller video down to this height (Lanczos, on the CPU for every encoder). */
     height?: number;
+    /** `--audio`: copy, re-encode at a bitrate, or decide per file; copy when unset. */
+    audio?: AudioRequest;
     jobs: number;
     minSavingPct: number;
     replace: boolean;
@@ -532,6 +535,7 @@ async function runEncodePass({
     output,
     rate,
     height,
+    audio,
     pass,
     twoPass,
     facts,
@@ -541,6 +545,7 @@ async function runEncodePass({
     output: string;
     rate: VideoRate;
     height: number | undefined;
+    audio: AudioPlan;
     /** The size-correction attempt, 0 for the first. */
     pass: number;
     twoPass: EncodePass | undefined;
@@ -556,6 +561,7 @@ async function runEncodePass({
             output,
             rate,
             height,
+            audio,
             pass: twoPass,
             progress: onProgress !== undefined,
         }),
@@ -638,9 +644,10 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
     }
 
     let rate: VideoRate = { kind: "quality", quality: options.quality };
+    const audio = planAudio({ facts, request: options.audio ?? "copy", targetBytes: options.targetBytes });
 
     if (options.targetBytes !== undefined) {
-        const kbps = videoKbpsForTarget({ facts, targetBytes: options.targetBytes });
+        const kbps = videoKbpsForTarget({ facts, targetBytes: options.targetBytes, audio });
 
         if (kbps === null) {
             return finish({ reason: "no duration, so no bitrate for the size target" });
@@ -665,6 +672,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         const plan = [
             rate.kind === "bitrate" ? `at ${rate.kbps} kbit/s` : null,
             height === undefined ? null : `scaled to ${height}p`,
+            audio.kind === "aac" ? `audio as AAC ${audio.kbps} kbit/s` : null,
             rate.kind === "bitrate" && encoder.twoPass ? "in two passes" : null,
         ].filter(Boolean);
         return finish({ output: finalPath, status: "planned", reason: ["would encode", ...plan].join(" ") });
@@ -689,7 +697,17 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
             let failure: string | null = null;
 
             for (const twoPass of passes) {
-                failure = await runEncodePass({ input, output: temp, rate, height, pass, twoPass, facts, options });
+                failure = await runEncodePass({
+                    input,
+                    output: temp,
+                    rate,
+                    height,
+                    audio,
+                    pass,
+                    twoPass,
+                    facts,
+                    options,
+                });
 
                 if (failure) {
                     break;
@@ -709,7 +727,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
                 kbps: rate.kbps,
                 targetBytes: options.targetBytes,
                 outputBytes,
-                audio: audioBytes(facts),
+                audio: audioBytes(facts, audio),
             });
             logger.debug(
                 { input, pass, kbps: rate.kbps, outputBytes, targetBytes: options.targetBytes, next },
@@ -720,7 +738,7 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
                 break;
             }
 
-            rate = { kind: "bitrate", kbps: next };
+            rate = { kind: "bitrate", kbps: next, attempt: pass + 1 };
             temp = join(staging.dir, `${basename(staging.file, ext)}.pass${pass + 1}${ext}`);
         }
 

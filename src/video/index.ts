@@ -8,10 +8,12 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import {
+    type AudioRequest,
     encoderUnavailableReason,
     findEncoder,
     isVideoEncoderCodec,
     isVideoPreset,
+    parseAudioRequest,
     VIDEO_ENCODER_CODECS,
     VIDEO_ENCODERS,
     VIDEO_PRESET_NAMES,
@@ -22,6 +24,7 @@ import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/v
 import { Command } from "commander";
 import { collectInputs, encodeVideos, exitCodeFor, renderRows, summarize } from "./encode";
 import { createEncodeReporter, ENCODE_FORMATS, isEncodeFormat } from "./encode-progress";
+import { registerShrinkCommand } from "./shrink/command";
 import { registerStreamCommands } from "./stream/command";
 
 export function registerVideoCommands(program: Command): void {
@@ -55,11 +58,13 @@ export function registerVideoCommands(program: Command): void {
         .option("--min-saving <percent>", "Discard an output that is less than this much smaller", "25")
         .option(
             "--target-size <size>",
-            "Aim each output at this size (400MB, 1.5GB; a bare number is MB) instead of --quality; the audio is copied, the video gets the rest, and a missed size is corrected by up to two more passes"
+            "Aim each output at this size (400MB, 1.5GB; a bare number is MB) instead of --quality; the video gets what the audio leaves, and a missed size is corrected by up to two more passes"
         )
+        .option("--height <px>", "Scale a taller video down to this height (Lanczos, which beat the GPU scaler)")
         .option(
-            "--height <px>",
-            "Scale a taller video down to this height (on the GPU with hevc, Lanczos on the CPU otherwise)"
+            "--audio <mode>",
+            "auto (copy, but re-encode to AAC 96 kbit/s when copied audio would take over 15% of --target-size), copy, or an AAC bitrate in kbit/s",
+            "auto"
         )
         .option(
             "--replace",
@@ -83,6 +88,7 @@ export function registerVideoCommands(program: Command): void {
                     minSaving: string;
                     targetSize?: string;
                     height?: string;
+                    audio: string;
                     replace?: boolean;
                     dryRun?: boolean;
                     progress?: boolean;
@@ -151,8 +157,10 @@ export function registerVideoCommands(program: Command): void {
 
                 let targetBytes: number | undefined;
                 let height: number | undefined;
+                let audio: AudioRequest;
 
                 try {
+                    audio = parseAudioRequest(options.audio);
                     targetBytes =
                         options.targetSize === undefined
                             ? undefined
@@ -207,6 +215,7 @@ export function registerVideoCommands(program: Command): void {
                             quality,
                             targetBytes,
                             height,
+                            audio,
                             jobs,
                             minSavingPct,
                             replace: options.replace === true,
@@ -302,6 +311,7 @@ export function registerVideoCommands(program: Command): void {
                 );
             }
         );
+    registerShrinkCommand(program);
     registerStreamCommands(program);
 }
 

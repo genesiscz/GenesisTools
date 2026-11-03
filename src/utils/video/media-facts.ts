@@ -9,8 +9,11 @@ export interface MediaStream {
     codec: string;
     /** A cover picture stored as a video stream; it is not a playable video. */
     attachedPicture: boolean;
-    /** Pixel height of a video stream, when ffprobe reports it. */
+    /** Pixel size of a video stream, when ffprobe reports it. */
+    width?: number;
     height?: number;
+    /** Frames per second of a video stream (`r_frame_rate`), when ffprobe reports a usable one. */
+    frameRate?: number;
     /** Bits per second, when the container records it. */
     bitRate?: number;
 }
@@ -28,7 +31,9 @@ const ffprobeSchema = z.object({
             z.object({
                 codec_type: z.string().optional(),
                 codec_name: z.string().optional(),
+                width: z.number().optional(),
                 height: z.number().optional(),
+                r_frame_rate: z.string().optional(),
                 bit_rate: z.string().optional(),
                 disposition: z.object({ attached_pic: z.number().optional() }).optional(),
             })
@@ -36,6 +41,13 @@ const ffprobeSchema = z.object({
         .default([]),
     format: z.object({ duration: z.string().optional() }).optional(),
 });
+
+/** `25/1` or `30000/1001` as a number; ffprobe prints `0/0` for a stream without a rate. */
+function parseFrameRate(value: string | undefined): number | undefined {
+    const [num, den] = (value ?? "").split("/").map(Number);
+    const rate = den ? num / den : Number.NaN;
+    return Number.isFinite(rate) && rate > 0 && rate < 1000 ? rate : undefined;
+}
 
 /** Turns the JSON `ffprobe -show_streams -show_format -of json` prints into facts. */
 export function parseMediaFacts({ raw, path, bytes }: { raw: unknown; path: string; bytes: number }): MediaFacts {
@@ -50,7 +62,9 @@ export function parseMediaFacts({ raw, path, bytes }: { raw: unknown; path: stri
             type: stream.codec_type ?? "unknown",
             codec: stream.codec_name ?? "unknown",
             attachedPicture: (stream.disposition?.attached_pic ?? 0) === 1,
+            width: stream.width,
             height: stream.height,
+            frameRate: parseFrameRate(stream.r_frame_rate),
             bitRate:
                 stream.bit_rate === undefined || !Number.isFinite(Number(stream.bit_rate))
                     ? undefined

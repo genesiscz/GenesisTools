@@ -26,6 +26,7 @@ import {
 import { type FfmpegProgress, ffmpegProgressReader } from "@genesiscz/utils/video/ffmpeg-progress";
 import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
+import { pickSampleWindows } from "@genesiscz/utils/video/quality";
 import {
     correctedKbps,
     decodeErrors,
@@ -33,6 +34,8 @@ import {
     ffmpegCommand,
     findEncoder,
     judgeOutput,
+    parseAudioRequest,
+    planAudio,
     skipReason,
     VIDEO_ENCODERS,
     VIDEO_PRESET_NAMES,
@@ -60,6 +63,7 @@ import {
     sourceChange,
     undoCommand,
 } from "./encode";
+import { chooseHeight, recommendPreset, windowKbps } from "./shrink/recommend";
 
 const encoder = findEncoder("hevc") as VideoEncoder;
 const madeDirs: string[] = [];
@@ -243,7 +247,7 @@ describe("encodeArgs", () => {
 });
 
 describe("size target and GPU scale", () => {
-    test("a resize keeps the frames on the GPU, and a bitrate is uncapped with a long GOP", () => {
+    test("a resize decodes on the GPU and scales with Lanczos on the CPU, and a bitrate is uncapped with a long GOP", () => {
         const args = encodeArgs({
             encoder,
             input: "/clips/a.mp4",
@@ -252,8 +256,9 @@ describe("size target and GPU scale", () => {
             height: 720,
         });
 
-        expect(args).toContain("videotoolbox_vld");
-        expect(args[args.indexOf("-vf") + 1]).toBe("scale_vt=w=-2:h=720");
+        expect(args[args.indexOf("-hwaccel") + 1]).toBe("videotoolbox");
+        expect(args).not.toContain("videotoolbox_vld");
+        expect(args[args.indexOf("-vf") + 1]).toBe("scale=-2:720:flags=lanczos");
         expect(args[args.indexOf("-b:v") + 1]).toBe("420k");
         expect(args).not.toContain("-maxrate");
         expect(args[args.indexOf("-g") + 1]).toBe("600");
@@ -261,6 +266,15 @@ describe("size target and GPU scale", () => {
         expect(args[args.indexOf("-qmax") + 1]).toBe("36");
         expect(args).not.toContain("-q:v");
         expect(args[args.indexOf("-c:a") + 1]).toBe("copy");
+    });
+
+    test("each size correction loosens the GPU QP cap, which is a size floor", () => {
+        const cap = (attempt: number) =>
+            encodeArgs({ encoder, input: "/a.mp4", output: "/b.mp4", rate: { kind: "bitrate", kbps: 300, attempt } });
+
+        expect(cap(0)[cap(0).indexOf("-qmax") + 1]).toBe("36");
+        expect(cap(1)[cap(1).indexOf("-qmax") + 1]).toBe("42");
+        expect(cap(2)).not.toContain("-qmax");
     });
 
     test("without a resize the command has no filter and no GPU frame format", () => {
@@ -360,6 +374,112 @@ describe("size target and GPU scale", () => {
         expect(parseByteSize("1.5GB", "--target-size")).toBe(1.5 * 1024 ** 3);
         expect(parseByteSize("800k", "--target-size")).toBe(800 * 1024);
         expect(() => parseByteSize("big", "--target-size")).toThrow("--target-size must be a size");
+    });
+});
+
+describe("audio plan", () => {
+    const talk = facts({
+        durationSec: 6468.75,
+        streams: [
+            { type: "video", codec: "h264", attachedPicture: false, height: 1080 },
+            { type: "audio", codec: "aac", attachedPicture: false, bitRate: 128_000 },
+        ],
+    });
+
+    test("auto re-encodes audio that would take over 15% of the target, and copies otherwise", () => {
+        expect(planAudio({ facts: talk, request: "auto", targetBytes: 400_000_000 })).toEqual({
+            kind: "aac",
+            kbps: 96,
+        });
+        expect(planAudio({ facts: talk, request: "auto", targetBytes: 2_000_000_000 })).toEqual({ kind: "copy" });
+        expect(planAudio({ facts: talk, request: "auto" })).toEqual({ kind: "copy" });
+        expect(planAudio({ facts: talk, request: "copy", targetBytes: 400_000_000 })).toEqual({ kind: "copy" });
+        expect(planAudio({ facts: talk, request: 64 })).toEqual({ kind: "aac", kbps: 64 });
+    });
+
+    test("re-encoded audio leaves the video more of the target", () => {
+        const copied = videoKbpsForTarget({ facts: talk, targetBytes: 400 * 1024 ** 2 }) ?? 0;
+        const aac = videoKbpsForTarget({ facts: talk, targetBytes: 400 * 1024 ** 2, audio: { kind: "aac", kbps: 96 } });
+
+        expect(aac).toBe(copied + 32);
+    });
+
+    test("an AAC plan replaces the audio copy in the command", () => {
+        const args = encodeArgs({
+            encoder,
+            input: "/a.mp4",
+            output: "/b.mp4",
+            rate: { kind: "bitrate", kbps: 400 },
+            audio: { kind: "aac", kbps: 96 },
+        });
+
+        expect(args[args.indexOf("-c:a") + 1]).toBe("aac");
+        expect(args[args.indexOf("-b:a") + 1]).toBe("96k");
+    });
+
+    test("--audio reads auto, copy and a bitrate, and refuses the rest", () => {
+        expect(parseAudioRequest("auto")).toBe("auto");
+        expect(parseAudioRequest("96k")).toBe(96);
+        expect(() => parseAudioRequest("loud")).toThrow("--audio takes");
+        expect(() => parseAudioRequest("4")).toThrow("16 to 512");
+    });
+});
+
+describe("shrink sampling and choices", () => {
+    test("the windows are the hardest, the median and the easiest stretch, away from the edges", () => {
+        // 200 s at 1 packet per second; the source spent the most bytes at 100 s and the fewest at 150 s.
+        const packets = Array.from({ length: 200 }, (_, second) => ({
+            ptsSec: second,
+            bytes: second >= 100 && second < 110 ? 9000 : second >= 150 && second < 160 ? 100 : 1000,
+        }));
+        const windows = pickSampleWindows({ packets, durationSec: 200, windowSec: 10 });
+
+        expect(windows.map((window) => window.label)).toEqual(["hardest", "median", "easiest"]);
+        expect(windows[0].startSec).toBe(100);
+        expect(windows[0].sourceBytes).toBe(90_000);
+        expect(windows[2].startSec).toBe(150);
+        expect(windows.every((window) => window.startSec >= 10 && window.startSec + 10 <= 190)).toBe(true);
+    });
+
+    test("a clip shorter than one window is one window over the whole clip", () => {
+        const windows = pickSampleWindows({ packets: [{ ptsSec: 0, bytes: 500 }], durationSec: 4, windowSec: 10 });
+
+        expect(windows).toHaveLength(1);
+        expect(windows[0]).toMatchObject({ startSec: 0, durationSec: 4, sourceBytes: 500 });
+    });
+
+    test("auto height drops 1080p to 720p when the target leaves 385 kbit/s at 25 fps", () => {
+        expect(chooseHeight({ kbps: 385, width: 1920, height: 1080, fps: 25 }).height).toBe(720);
+        expect(chooseHeight({ kbps: 4000, width: 1920, height: 1080, fps: 25 }).height).toBeUndefined();
+    });
+
+    test("a window gets its two-pass share of the target rate, within a quarter and four times", () => {
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 1900, overallSourceKbps: 1900 })).toBe(400);
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 4926, overallSourceKbps: 1900 })).toBe(708);
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 1, overallSourceKbps: 1900 })).toBe(100);
+        expect(windowKbps({ kbps: 400, windowSourceKbps: 0, overallSourceKbps: 1900 })).toBe(400);
+    });
+
+    test("the fastest preset within a VMAF point wins, and AV1 needs a 1.5 lead", () => {
+        expect(
+            recommendPreset([
+                { preset: "fast", score: 94.3, predictedSeconds: 300 },
+                { preset: "compatible", score: 96.4, predictedSeconds: 900 },
+                { preset: "small", score: 96.9, predictedSeconds: 2000 },
+            ])?.preset
+        ).toBe("compatible");
+        expect(
+            recommendPreset([
+                { preset: "fast", score: 95.8, predictedSeconds: 300 },
+                { preset: "compatible", score: 96.4, predictedSeconds: 900 },
+            ])?.preset
+        ).toBe("fast");
+        expect(
+            recommendPreset([
+                { preset: "compatible", score: 90, predictedSeconds: 900 },
+                { preset: "small", score: 93, predictedSeconds: 2000 },
+            ])?.preset
+        ).toBe("small");
     });
 });
 
