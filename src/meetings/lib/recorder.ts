@@ -296,6 +296,7 @@ export async function runRecorder(options: {
     );
     const spans: RecordingSpan[] = [...(record?.recording?.spans ?? [])];
     let paused = false;
+    let pausedAt: string | undefined;
     let stopRequested = false;
     let piece: AbortController | undefined;
     let wake: (() => void) | undefined;
@@ -355,6 +356,7 @@ export async function runRecorder(options: {
                 }
 
                 paused = true;
+                pausedAt = new Date().toISOString();
                 piece?.abort();
                 live.update({ state: "paused" });
                 return { state: "paused" };
@@ -441,11 +443,12 @@ export async function runRecorder(options: {
             current.recording = recording;
         });
     const openSpan = () => spans.push({ from: new Date().toISOString() });
-    const closeSpan = (stopReason: RecordingStopReason) => {
+    /** `at`: when it was asked for; the running piece converts its frames after that. */
+    const closeSpan = (stopReason: RecordingStopReason, at = new Date().toISOString()) => {
         const open = spans.at(-1);
 
         if (open && !open.to) {
-            open.to = new Date().toISOString();
+            open.to = at;
             open.stopReason = stopReason;
         }
     };
@@ -634,7 +637,7 @@ export async function runRecorder(options: {
 
         while (!stopRequested) {
             if (paused) {
-                closeSpan("paused");
+                closeSpan("paused", pausedAt);
                 state.paused = true;
                 saveState();
                 await updateRecording("paused", (recording) => {
