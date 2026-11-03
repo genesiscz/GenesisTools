@@ -238,6 +238,23 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(group.unbilledRequests, 2)
     }
 
+    func testAPlanWithAPriceDecodesBesideOneWithout() throws {
+        let plans = try JSONDecoder().decode(UsagePlansData.self, from: Data("""
+        {"plans":[
+          {"account":{"provider":"anthropic-sub","accountId":"acc_work","accountName":"work"},"plan":"max",
+           "cycle":{"from":"2026-11-01","to":"2026-12-01"},"renewsInDays":28,"spendUsd":120,
+           "price":{"priceMinor":20000,"currency":"USD"},"paidBackX":0.6},
+          {"account":{"provider":"openai-sub","accountId":"acc_side","accountName":"side"},"plan":"plus",
+           "cycle":{"from":"2026-11-01","to":"2026-12-01"},"renewsInDays":28,"spendUsd":30,
+           "price":null,"paidBackX":null}
+        ]}
+        """.utf8))
+        XCTAssertEqual(plans.plans.first?.price, UsagePlanPrice(priceMinor: 20000, currency: "USD"))
+        XCTAssertEqual(plans.plans.first?.price?.display, "$200.00")
+        XCTAssertNil(plans.plans.last?.price)
+        XCTAssertEqual(UsagePlanPrice(priceMinor: 1999, currency: "EUR").display, "19.99 EUR")
+    }
+
     func testTheConeAndTheSafePaceDrawWithoutTheProjection() {
         var settings = UsageSettings()
         settings.projection = false

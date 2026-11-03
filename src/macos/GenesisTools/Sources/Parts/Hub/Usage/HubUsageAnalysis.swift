@@ -206,7 +206,11 @@ struct UsagePlanRow: View, Equatable {
             .frame(width: 220, alignment: .leading)
             metric(UsageFormat.usd(plan.spendUsd), "list price")
             if let paid = plan.paidBackX {
-                metric(String(format: "%.1fx", paid), "paid back", tint: paid >= 1 ? ReviewPalette.added : ReviewPalette.modified)
+                metric(String(format: "%.1fx", paid), "paid back of \(plan.price?.display ?? "the price")",
+                       tint: paid >= 1 ? ReviewPalette.added : ReviewPalette.modified)
+            } else if let price = plan.price {
+                // A price in another currency has no paid-back ratio (spend is in dollars): show the price itself.
+                metric(price.display, "plan price")
             } else if let name = plan.plan {
                 CopyChip(label: "set price", value: "tools ai-spend plans price \(plan.account.provider) \(name) <amount>",
                          tooltip: "Copy the command that sets this plan's price per cycle")
@@ -356,14 +360,24 @@ struct UsageSessionSection: View {
                 }
                 let noCalls = body.unsupportedReason("callTrace") != nil
                 let noCompactions = body.unsupportedReason("compactions") != nil
+                // Calls of a model with no known rate are left out of the sums: "+?" marks them, as in Agents.
+                let unpriced = body.cost.unpricedModels ?? []
                 HStack(spacing: 18) {
-                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.totalUsd), "total")
-                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.mainUsd), "main loop")
-                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.subagentUsd), "sub-agents")
+                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.totalUsd, unknown: unpriced.count), "total")
+                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.mainUsd, unknown: unpriced.count), "main loop")
+                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.subagentUsd, unknown: unpriced.count), "sub-agents")
                     metric(noCalls ? "—" : UsageFormat.usd(body.cost.savingsUsd), "saved by the cache")
                     metric(noCalls ? "—" : String(body.overview.calls), "calls")
                     metric(body.overview.durationMinutes.map { UsageFormat.duration($0 * 60) } ?? "—", "span")
                     metric(noCompactions ? "—" : String(body.overview.compactions ?? 0), "compactions")
+                }
+                if !noCalls, !unpriced.isEmpty {
+                    Label {
+                        Text(verbatim: "No price for \(unpriced.joined(separator: ", ")): the totals leave those calls out.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
+                    .font(.system(size: 11.5)).foregroundColor(ReviewPalette.modified)
                 }
                 // A fact the transcript cannot give is named with its reason, so a dash never reads as zero.
                 ForEach((body.unsupported ?? [:]).sorted { $0.key < $1.key }, id: \.key) { fact, reason in
