@@ -133,7 +133,11 @@ describe("bindEndpoint on the act row", () => {
             {
                 input: z.object({}),
                 invalid: "bad",
-                run: async (_input, context) => ({ token: context.headers["x-gt-act-token"], run: ++runs }) as never,
+                run: async (_input, context): Promise<RouteResult> => ({
+                    kind: "json",
+                    status: 200,
+                    body: { token: context.headers["x-gt-act-token"], run: ++runs },
+                }),
             },
             new ReceiptCache()
         );

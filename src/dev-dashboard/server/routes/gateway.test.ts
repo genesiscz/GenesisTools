@@ -8,7 +8,7 @@ import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import { decideApiAuth, isActScopedRequest } from "@app/dev-dashboard/server/auth-guard";
 import { Router } from "@app/dev-dashboard/server/router";
-import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import type { RouteContext, RouteDef, RouteResult, RouteServices } from "@app/dev-dashboard/server/types";
 import { CapabilityRefusedError, HUB_CAPABILITIES } from "@app/hub/lib/capabilities/index";
 import { issueActTokens, memoryActTokenStore } from "@app/question/lib/act/tokens";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
@@ -184,13 +184,18 @@ describe("the Mac gateway", () => {
 });
 
 describe("the upload row through the generic client", () => {
+    // The upload route never reads the pulse; the collector refuses if anything does.
+    const services: RouteServices = {
+        collector: { platform: "macos", collect: () => Promise.reject(new Error("no pulse in this test")) },
+    };
+
     it("sends raw bytes with their own content type and gets the stored receipt", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-gateway-client-"));
         const router = new Router().add(
             route(gatewayRoutes({ uploadDir: () => dir }), "POST", ENDPOINTS.gatewayUpload.path)
         );
         const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) =>
-            (await routerToResponse(router, new Request(String(url), init), { services: {} as never })) ??
+            (await routerToResponse(router, new Request(String(url), init), { services })) ??
             new Response("no route", { status: 404 })) as unknown as typeof fetch;
         const client = createDashboardClient({ baseUrl: "http://agent.test", fetch: fetchImpl });
 
