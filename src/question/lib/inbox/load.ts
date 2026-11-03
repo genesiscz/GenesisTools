@@ -25,10 +25,13 @@ import {
 import { listFormsSnapshot } from "../pending/store";
 import type { AskForm } from "../pending/types";
 import { type QaRow, queryEntriesSnapshot } from "../read-model";
+import { waitingSet } from "../waiting/set";
 import {
     buildInbox,
     type InboxDecision,
+    type InboxDialog,
     type InboxForm,
+    type InboxItem,
     type InboxSession,
     inboxForm,
     scanTurns,
@@ -481,6 +484,30 @@ export async function loadInbox({
     deps?: InboxDeps;
 } = {}): Promise<InboxResult> {
     const started = performance.now();
+    const parts = await gatherInbox(hours, deps);
+    const inbox = buildInbox(parts).map((session) => ({
+        ...session,
+        items: session.items.map((item) =>
+            item.kind === "decision" ? { ...item, refs: fillExcerpts(item.refs, session.cwd ?? undefined) } : item
+        ),
+    }));
+    const elapsedMs = Math.round(performance.now() - started);
+    log.debug({ hours, ...parts.scanned, waiting: inbox.length, elapsedMs }, "inbox loaded");
+
+    return { sessions: inbox, scanned: parts.scanned, elapsedMs };
+}
+
+/** What `loadInbox` reads before it builds: the listed sessions, their scans, the rows, forms and open dialogs. */
+interface InboxParts {
+    sessions: AgentSessionRow[];
+    scans: Map<string, TranscriptScan>;
+    rows: DecisionRecord[];
+    forms: AskForm[];
+    dialogs: OpenQuestion[];
+    scanned: InboxResult["scanned"];
+}
+
+async function gatherInbox(hours: number, deps: InboxDeps): Promise<InboxParts> {
     const sessions = (await deps.sessions(hours)).filter((row) => !row.archived && row.filePath);
     const previous = (await deps.readCache()) ?? {};
     const next: ScanCache = {};
@@ -525,14 +552,91 @@ export async function loadInbox({
     const harvested = await harvestListed({ sessions, scans, rows: listed, deps });
     const rows = harvested > 0 ? deps.rows() : listed;
     const dialogs = await listDialogs(sessions, deps);
-    const inbox = buildInbox({ sessions, scans, rows, forms: await deps.forms(), dialogs }).map((session) => ({
-        ...session,
-        items: session.items.map((item) =>
-            item.kind === "decision" ? { ...item, refs: fillExcerpts(item.refs, session.cwd ?? undefined) } : item
-        ),
-    }));
-    const elapsedMs = Math.round(performance.now() - started);
-    log.debug({ hours, ...scanned, waiting: inbox.length, elapsedMs }, "inbox loaded");
 
-    return { sessions: inbox, scanned, elapsedMs };
+    return { sessions, scans, rows, forms: await deps.forms(), dialogs, scanned };
+}
+
+/** One waiting item of the phone queue: the inbox item itself, so the phone answers with the hub's fields. */
+export type WaitingQueueItem = InboxDecision | InboxForm | InboxDialog;
+
+export interface WaitingQueueSession {
+    /** The agent session; null for a form no session posted. */
+    sessionId: string | null;
+    provider: string | null;
+    title: string | null;
+    project: string | null;
+    /** The items that count in the badges, as the notch counts them. */
+    counted: number;
+    /** Newest ask first. */
+    items: WaitingQueueItem[];
+}
+
+export interface WaitingQueue {
+    /** The badge number: what the notch widget shows, decisions, forms and open dialogs (todos are not counted). */
+    total: number;
+    /** Newest ask first. */
+    sessions: WaitingQueueSession[];
+    at: string;
+}
+
+/**
+ * The phone's answer queue (`GET /api/qa/waiting`): every item the waiting set says waits for the human, grouped by
+ * session, with the waiting set's counts. The items are the hub inbox's own (`buildInbox`), so the phone stages and
+ * answers with the same ids and revisions; the counts are the waiting set's, so the phone number equals the notch.
+ */
+export async function loadWaitingQueue({
+    hours = 72,
+    deps = realInboxDeps,
+    now = Date.now(),
+}: {
+    hours?: number;
+    deps?: InboxDeps;
+    now?: number;
+} = {}): Promise<WaitingQueue> {
+    const parts = await gatherInbox(hours, deps);
+    const inbox = buildInbox({ ...parts, now });
+    const activity = new Map(parts.sessions.map((row) => [row.sessionId, row.mtime]));
+    const set = waitingSet({
+        rows: parts.rows,
+        forms: parts.forms,
+        dialogs: parts.dialogs,
+        activityAt: (session) => activity.get(session),
+        now,
+    });
+    const found = new Map<string, { item: InboxItem; session: InboxSession }>();
+
+    for (const session of inbox) {
+        for (const item of session.items) {
+            found.set(item.id, { item, session });
+        }
+    }
+
+    const sessions: WaitingQueueSession[] = [];
+    let total = 0;
+
+    for (const group of set.sessions) {
+        // The queue lists what the hub inbox lists (decisions, forms, dialogs); a todo for the human stays a banner.
+        const listed = set.items.filter((entry) => entry.noticeGroup === group.key && found.has(entry.key));
+
+        if (listed.length === 0) {
+            continue;
+        }
+
+        const counted = listed.filter((entry) => entry.counted).length;
+        const owner = found.get(listed[0].key)?.session;
+        total += counted;
+        sessions.push({
+            sessionId: group.session,
+            provider: owner?.provider ?? null,
+            title: owner?.title ?? null,
+            project: owner?.project ?? null,
+            counted,
+            items: listed.flatMap((entry) => {
+                const item = found.get(entry.key)?.item;
+                return item ? [item] : [];
+            }),
+        });
+    }
+
+    return { total, sessions, at: new Date(now).toISOString() };
 }
