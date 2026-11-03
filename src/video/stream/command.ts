@@ -1,0 +1,203 @@
+import { basename, dirname, resolve } from "node:path";
+import { parseNonNegativeInt } from "@genesiscz/utils/cli";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { formatBytes } from "@genesiscz/utils/format";
+import { harStreamCandidates, readHarPlaylists } from "@genesiscz/utils/hls/har";
+import { out } from "@genesiscz/utils/logger";
+import type { Command } from "commander";
+import { downloadStream, partsDirFor, readState, type StreamProgress } from "./download";
+import { listCandidates, resolveSource, type StreamSource } from "./source";
+
+const PROGRESS_THROTTLE_MS = 200;
+
+interface DownloadFlags {
+    out?: string;
+    quality: string;
+    stream?: string;
+    header: string[];
+    jobs: string;
+    idleTimeout: string;
+    backfill: boolean;
+    stitchOnly?: boolean;
+    list?: boolean;
+    json?: boolean;
+}
+
+function slugify(text: string): string {
+    return text
+        .replace(/^https?:\/\//i, "")
+        .replace(/[^a-z0-9]+/gi, "-")
+        .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * The page and the playlist's folder, so two streams of one page get two names and a rerun finds its parts folder:
+ * `https://example.com/watch/2` with `/live/abc123/master.m3u8` becomes `example-com-watch-2-abc123.mp4`.
+ */
+export function defaultOutputName(source: StreamSource): string {
+    const folder = basename(dirname(new URL(source.playlistUrl).pathname));
+    const parts = [source.page ? slugify(source.page).slice(-60) : "", slugify(folder).slice(-40)].filter(Boolean);
+    return `${parts.join("-") || "stream"}.mp4`;
+}
+
+function describeProgress(progress: StreamProgress): string {
+    const newest = progress.newestSequence === null ? "" : `, newest #${progress.newestSequence}`;
+
+    switch (progress.phase) {
+        case "probing":
+            return "Looking for the oldest segment the CDN still keeps";
+        case "stitching":
+            return "Stitching the segments";
+        default: {
+            const state = progress.phase === "waiting" ? "live, waiting for new segments" : progress.phase;
+            return `${progress.downloaded} segments on disk, ${progress.queued} queued, ${progress.gone} gone, ${formatBytes(progress.bytes)} this run${newest} (${state})`;
+        }
+    }
+}
+
+function collect(value: string, previous: string[]): string[] {
+    return [...previous, value];
+}
+
+export function registerStreamCommands(program: Command): void {
+    const stream = program.command("stream").description("Download HLS streams, live or recorded");
+
+    stream
+        .command("download [source]")
+        .description(
+            "Download an HLS stream from a HAR file (or a playlist URL) from its oldest available segment until it ends, then stitch it. Run it again with the same --out to resume."
+        )
+        .option("--out <file>", "Output file; .ts is concatenated as is, other containers go through ffmpeg -c copy")
+        .option("--quality <value>", "best, worst, or a height such as 720", "best")
+        .option("--stream <n>", "Which stream of the HAR: its number in --list, or a part of its URL")
+        .option("--header <line>", 'Extra request header "Name: value" (repeatable)', collect, [])
+        .option("--jobs <n>", "Segments downloaded at once", "6")
+        .option("--idle-timeout <seconds>", "Treat a live stream as ended after this long with no new segment", "120")
+        .option("--no-backfill", "Start at the live window instead of the oldest segment the CDN keeps")
+        .option("--stitch-only", "Download nothing; stitch the segments already in <out>.parts")
+        .option("--list", "List the HLS streams in the HAR and exit")
+        .option("--json", "Print the result as JSON")
+        .action(async (input: string | undefined, flags: DownloadFlags) => {
+            await runDownload(input, flags);
+        });
+}
+
+async function runDownload(input: string | undefined, flags: DownloadFlags): Promise<void> {
+    if (flags.list) {
+        if (!input) {
+            out.log.error("--list needs a HAR file.");
+            process.exitCode = 1;
+            return;
+        }
+
+        const candidates = harStreamCandidates(await readHarPlaylists(input));
+
+        if (flags.json) {
+            out.result(candidates.map(({ headers: _headers, ...candidate }) => candidate));
+            return;
+        }
+
+        out.println(candidates.length ? listCandidates(candidates).join("\n") : "No HLS playlist in this HAR.");
+        return;
+    }
+
+    const jobs = parseNonNegativeInt(flags.jobs, "--jobs");
+    const idleTimeoutSec = parseNonNegativeInt(flags.idleTimeout, "--idle-timeout");
+
+    if (jobs < 1) {
+        out.log.error("--jobs must be 1 or more.");
+        process.exitCode = 1;
+        return;
+    }
+
+    const source = input ? await resolveSource({ input, stream: flags.stream, headerFlags: flags.header }) : undefined;
+    const outputName = flags.out ?? (source ? defaultOutputName(source) : null);
+
+    if (!outputName) {
+        out.log.error("Pass a HAR file or a playlist URL, or --out of an earlier run to resume or stitch it.");
+        process.exitCode = 1;
+        return;
+    }
+
+    const output = resolve(outputName);
+
+    if (!input && !(await readState(partsDirFor(output))) && !flags.stitchOnly) {
+        out.log.error(`${partsDirFor(output)} has no earlier run to resume. Pass the HAR file or the playlist URL.`);
+        process.exitCode = 1;
+        return;
+    }
+
+    const resumeCommand = toolCommand("video", "stream", "download", ...(input ? [input] : []), "--out", output);
+    const spinner = flags.json ? null : out.spinner();
+    let lastShown = 0;
+    spinner?.start(`Output ${output}`);
+
+    await withInterrupt(
+        async (signal) => {
+            try {
+                const result = await downloadStream({
+                    output,
+                    source,
+                    quality: flags.quality,
+                    concurrency: jobs,
+                    idleTimeoutMs: idleTimeoutSec * 1000,
+                    backfill: flags.backfill,
+                    stitchOnly: flags.stitchOnly === true,
+                    signal,
+                    onProgress: (progress) => {
+                        const now = Date.now();
+
+                        if (now - lastShown >= PROGRESS_THROTTLE_MS || progress.phase === "stitching") {
+                            lastShown = now;
+                            spinner?.message(describeProgress(progress));
+                        }
+                    },
+                });
+
+                if (flags.json) {
+                    out.result(result);
+                    return;
+                }
+
+                if (result.aborted) {
+                    spinner?.stop(`Stopped. ${result.segments} segments are kept in ${result.partsDir}`);
+                    out.log.info(`Resume: ${resumeCommand}`);
+                    out.log.info(`Stitch what is there: ${resumeCommand} --stitch-only`);
+                    process.exitCode = 130;
+                    return;
+                }
+
+                spinner?.stop(`Saved ${result.output}`);
+                out.log.info(
+                    `${result.segments} segments (#${result.firstSequence} to #${result.lastSequence}), ${result.downloadedThisRun} new this run, ${formatBytes(result.bytesThisRun)}.`
+                );
+
+                if (result.gaps.length > 0) {
+                    const shown = result.gaps.slice(0, 20).join(", ");
+                    const more = result.gaps.length > 20 ? ` and ${result.gaps.length - 20} more` : "";
+                    out.log.warn(
+                        `${result.gaps.length} segments are missing (the CDN no longer had them): ${shown}${more}`
+                    );
+                }
+
+                if (!result.ended) {
+                    out.log.warn(`The stream may still be live. Download the rest: ${resumeCommand}`);
+                }
+
+                out.log.info(`The segments stay in ${result.partsDir} for a resume; remove the folder when done.`);
+            } catch (error) {
+                if (signal.aborted) {
+                    spinner?.stop("Stopped.");
+                    out.log.info(`Resume: ${resumeCommand}`);
+                    process.exitCode = 130;
+                    return;
+                }
+
+                spinner?.stop("Failed.");
+                throw error;
+            }
+        },
+        { handleTermination: true }
+    );
+}

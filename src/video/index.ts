@@ -17,6 +17,7 @@ import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { Command } from "commander";
 import { encodeVideos, exitCodeFor, renderRows, summarize } from "./encode";
+import { registerStreamCommands } from "./stream/command";
 
 export function registerVideoCommands(program: Command): void {
     program
@@ -193,10 +194,13 @@ export function registerVideoCommands(program: Command): void {
                 );
             }
         );
+    registerStreamCommands(program);
 }
 
 if (import.meta.main) {
-    const program = new Command().name("video").description("Local video inspection and evidence preparation");
+    const program = new Command()
+        .name("video")
+        .description("Local video inspection, evidence preparation and HLS stream downloads");
     registerVideoCommands(program);
     await runTool(program, { tool: "video" });
 }

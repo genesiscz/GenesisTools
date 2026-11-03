@@ -95,3 +95,31 @@ mv -n ./a.mp4 ./a.hevc.mp4 && test ! -e ./a.mp4 && tools rm restore <batch>
 
 `mv -n` never writes over an `a.hevc.mp4` that is already there, and since it exits 0 when it skips, the `test`
 lets the restore run only when the original path is free.
+
+## Download an HLS stream
+
+```sh
+tools video stream download ./page.har --list
+tools video stream download ./page.har --stream 1 --out talk.mp4
+tools video stream download https://cdn.example.com/live/abc/master.m3u8 --header "Referer: https://example.com/"
+tools video stream download --out talk.mp4 --stitch-only
+```
+
+`tools video stream download [source]` takes a HAR file (DevTools, Network, "Save all as HAR") or a playlist URL. It
+finds the HLS playlists in the HAR, replays their `Referer`, `Origin`, `User-Agent`, `Cookie` and `Authorization`
+headers, and downloads every segment until the stream ends. Then it stitches them into `--out`.
+
+- **From the start.** A live playlist lists only the last few segments, but a CDN often keeps older ones. When the
+  segment names carry their sequence number, the tool finds the oldest one the CDN still serves (a binary search) and
+  downloads from there. `--no-backfill` starts at the live window.
+- **Until the end.** It re-reads the playlist every target duration. It stops at `#EXT-X-ENDLIST`, after three 404 or
+  410 answers for the playlist, or after `--idle-timeout` seconds (120) without a new segment.
+- **Resume.** Segments go to `<out>.parts/` (written to `.part`, then renamed, so a killed run leaves no half segment).
+  Run the same command again: it skips what is on disk, downloads the rest, and stitches again. Without a source it
+  resumes from `<out>.parts/state.json`. `--stitch-only` stitches what is there. Ctrl-C stops and keeps the parts.
+- **Stitch.** A `.ts` output is the segments concatenated. Any other container goes through `ffmpeg -c copy`. Segments
+  the CDN had already deleted are reported as gaps.
+- `--quality best|worst|<height>` picks the variant of a master playlist. `--jobs` (6) sets the parallel downloads.
+
+`state.json` holds the replayed headers, cookies included, so it is written with mode 600. Remove the parts folder when
+the output is good. Not supported: encrypted segments, byte-range playlists, and audio in a separate playlist.
