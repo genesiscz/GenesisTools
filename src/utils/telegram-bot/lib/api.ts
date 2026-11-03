@@ -1,8 +1,9 @@
 import { Api } from "grammy";
 import type { ParseMode } from "./types";
 
-export function createApi(botToken: string) {
-    return new Api(botToken);
+/** `apiRoot`: a self-hosted Bot API server (the bot config's `apiRoot`); Telegram's own when omitted. */
+export function createApi(botToken: string, apiRoot?: string) {
+    return apiRoot ? new Api(botToken, { apiRoot }) : new Api(botToken);
 }
 
 export async function sendMessage(api: Api, chatId: number, text: string, parseMode?: ParseMode) {

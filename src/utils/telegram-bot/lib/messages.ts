@@ -7,6 +7,8 @@ export interface PostedMessage {
     message: number;
     /** Epoch ms of the post. */
     at: number;
+    /** The posted text, so a later edit can add a line under it. */
+    text?: string;
 }
 
 type MessageMemory = Record<string, PostedMessage>;
@@ -49,6 +51,36 @@ export async function forgetMessage(noticeId: string, now = Date.now()): Promise
         delete kept[noticeId];
         return kept;
     });
+}
+
+/**
+ * Takes the remembered notice posted as `message` in `chat` out of the memory and returns it. A button press claims its
+ * message this way first, so a retraction that the same answer triggers finds nothing and never races the press's edit.
+ */
+export async function takeMessageAt({
+    chat,
+    message,
+    now = Date.now(),
+}: {
+    chat: number;
+    message: number;
+    now?: number;
+}): Promise<{ noticeId: string; posted: PostedMessage } | null> {
+    let taken: { noticeId: string; posted: PostedMessage } | null = null;
+    await telegramBotStorage().atomicUpdate<MessageMemory>(MEMORY_FILE, (memory) => {
+        const kept = pruned(memory, now);
+
+        for (const [noticeId, posted] of Object.entries(kept)) {
+            if (posted.chat === chat && posted.message === message) {
+                taken = { noticeId, posted };
+                delete kept[noticeId];
+                break;
+            }
+        }
+
+        return kept;
+    });
+    return taken;
 }
 
 /** One inline button. `data` is at most 64 bytes (Telegram's limit), `<prefix>:<payload>` for the callback router. */
@@ -112,7 +144,7 @@ export async function postTelegramMessage({
         ...(parseMode ? { parse_mode: parseMode } : {}),
         ...(reply_markup ? { reply_markup } : {}),
     });
-    const posted = { chat: chatId, message: sent.message_id, at: now };
+    const posted: PostedMessage = { chat: chatId, message: sent.message_id, at: now, text };
 
     if (noticeId) {
         await rememberMessage(noticeId, posted);
@@ -122,18 +154,18 @@ export async function postTelegramMessage({
 }
 
 /**
- * Edits a remembered notice to `text` and drops its buttons, then forgets it. False when the notice was never posted
- * (or was forgotten): there is nothing to edit.
+ * Edits a remembered notice to `edit(original text)` and drops its buttons, then forgets it. False when the notice was
+ * never posted (or was forgotten): there is nothing to edit.
  */
 export async function retractTelegramNotice({
     api,
     noticeId,
-    text,
+    edit,
     parseMode,
 }: {
     api: TelegramMessagesApi;
     noticeId: string;
-    text: string;
+    edit: (original: string | undefined) => string;
     parseMode?: ParseMode;
 }): Promise<boolean> {
     const posted = await recallMessage(noticeId);
@@ -142,7 +174,7 @@ export async function retractTelegramNotice({
         return false;
     }
 
-    await api.editMessageText(posted.chat, posted.message, text, {
+    await api.editMessageText(posted.chat, posted.message, edit(posted.text), {
         ...(parseMode ? { parse_mode: parseMode } : {}),
         reply_markup: { inline_keyboard: [] },
     });

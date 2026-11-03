@@ -1,4 +1,6 @@
 import { createBot } from "@app/telegram-bot/lib/bot";
+import { CALLBACK_ROUTES } from "@app/telegram-bot/lib/callback-routes";
+import { createCallbackRouter } from "@app/telegram-bot/lib/callbacks";
 import {
     authorizedChats,
     loadTelegramConfig,
@@ -30,7 +32,10 @@ interface StartOptions {
 }
 
 async function startPolling(config: TelegramBotConfig): Promise<void> {
-    const bot = createBot(config.botToken, authorizedChats(config), { apiRoot: resolveApiRoot(config.apiRoot) });
+    const bot = createBot(config.botToken, authorizedChats(config), {
+        apiRoot: resolveApiRoot(config.apiRoot),
+        callbacks: createCallbackRouter(CALLBACK_ROUTES),
+    });
 
     const me = await bot.api.getMe();
     p.log.success(`Starting bot @${me.username ?? me.first_name} (Ctrl+C to stop)`);
@@ -59,7 +64,10 @@ async function startWebhook(config: TelegramBotConfig, opts: StartOptions): Prom
     });
     await saveWebhookUrl(settings.url);
 
-    const bot = createBot(config.botToken, authorizedChats(config), { apiRoot: resolveApiRoot(config.apiRoot) });
+    const bot = createBot(config.botToken, authorizedChats(config), {
+        apiRoot: resolveApiRoot(config.apiRoot),
+        callbacks: createCallbackRouter(CALLBACK_ROUTES),
+    });
     await bot.init();
     await bot.api.setMyCommands(COMMANDS);
     p.log.success(`Starting webhook receiver for @${bot.botInfo.username} (Ctrl+C to stop)`);
