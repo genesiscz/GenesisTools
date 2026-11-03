@@ -292,7 +292,7 @@ struct UsageSessionLine: View, Equatable {
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.sessionId == rhs.sessionId && lhs.costUsd == rhs.costUsd && lhs.share == rhs.share && lhs.detail == rhs.detail
-            && lhs.project == rhs.project
+            && lhs.project == rhs.project && lhs.harness == rhs.harness
     }
 
     var body: some View {
