@@ -1,7 +1,19 @@
 import type { Database } from "bun:sqlite";
+import { autoSeriesStepMs } from "@genesiscz/utils/ai/usage/contract/step";
 import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { USAGE_LIMITS_MIGRATIONS } from "./migrations";
+import {
+    groupSeriesRows,
+    type SeriesAgg,
+    type SeriesBinEntry,
+    type SeriesEntry,
+    type SeriesRow,
+    shapeBins,
+    shapePoints,
+} from "./series-rows";
+
+export type { SeriesAgg, SeriesBin, SeriesBinEntry, SeriesEntry, SeriesPoint } from "./series-rows";
 
 const schemaEnsured = new WeakSet<Database>();
 
@@ -67,27 +79,18 @@ export interface SeriesQuery {
     accounts?: string[];
     /** `LimitWindow.key` values, stored in the `bucket` column. Empty means none, not all. */
     keys?: string[];
+    /** Window kinds (`session`, `weekly`, ...), matched after a NULL kind took its neighbours'. Empty means none. */
+    kinds?: string[];
     /** ISO timestamps. */
     from: string;
     to: string;
     /**
-     * Downsample width in ms. Omitted derives one from `from`..`to` so a wide range stays
-     * bounded (see `defaultStep`); a value of 0 or less asks for every row.
+     * Bin width in ms. Omitted derives one from `from`..`to` so a wide range stays bounded
+     * (`autoSeriesStepMs`, the one default every door shares); 0 or less asks for every row.
      */
     step?: number;
-}
-
-export interface SeriesPoint {
-    t: string;
-    percent: number;
-}
-
-export interface SeriesEntry {
-    /** Plugin id the rows came from. Set even when the query did not name one. */
-    provider: string;
-    account: string;
-    key: string;
-    points: SeriesPoint[];
+    /** How a bin is drawn. Omitted is `last`, the behaviour every caller had before the modes. */
+    agg?: SeriesAgg;
 }
 
 interface SnapshotRow {
@@ -105,6 +108,18 @@ interface SnapshotRow {
     money_used_minor: number | null;
     money_limit_minor: number | null;
     money_currency: string | null;
+}
+
+interface SeriesSqlRow {
+    provider: string | null;
+    account_name: string;
+    bucket: string;
+    timestamp: string;
+    utilization: number;
+    resets_at: string | null;
+    severity: string | null;
+    scope_model: string | null;
+    kind: string | null;
 }
 
 interface SpendRow {
@@ -395,20 +410,24 @@ export class UsageLimitsDb {
     }
 
     /**
-     * Percent-over-time per (account, window key), for the dashboard charts (spec 9.4).
-     * `step` downsamples by keeping the last sample of each fixed-width bucket, so a 7-day
-     * range does not return 20k points.
+     * Percent-over-time per (provider, account, window key, kind), for the charts and the
+     * series door (spec 9.4, design 2026-11-01 section 6). `agg` picks how a bin is drawn:
+     * `last` keeps each bin's last row, `minmax` its open, close, min and max (a reset splits a
+     * bin, so a peak just before it survives), `raw` every row. Every mode reads `resets` from
+     * the full rows first, so no step hides a reset.
      *
-     * A caller that names no `step` gets `defaultStep(from, to)` rather than every row. The
-     * History tab asks for one series per provider per account per window key and never set
-     * one, so a 7-day range at the 30s poll period returned up to 20,160 points per series.
+     * A caller that names no `step` gets `autoSeriesStepMs(from, to)` rather than every row:
+     * a 7-day range at the 30s poll period would otherwise return 20,160 points per series.
      */
-    getSeries(query: SeriesQuery): SeriesEntry[] {
+    getSeries(query: SeriesQuery & { agg: "minmax" }): SeriesBinEntry[];
+    getSeries(query: SeriesQuery & { agg?: "raw" | "last" }): SeriesEntry[];
+    getSeries(query: SeriesQuery): SeriesEntry[] | SeriesBinEntry[];
+    getSeries(query: SeriesQuery): SeriesEntry[] | SeriesBinEntry[] {
         // An omitted list means "every one"; an EMPTY list means "none of them". The
         // dashboard's account checklist can deselect the last account, and `toggleAccount`
         // hands that on as `[]`. Read as "no filter", History then drew every account while
         // the filter bar said 0 selected and the Overview correctly showed none.
-        if (query.accounts?.length === 0 || query.keys?.length === 0) {
+        if (query.accounts?.length === 0 || query.keys?.length === 0 || query.kinds?.length === 0) {
             return [];
         }
 
@@ -431,49 +450,38 @@ export class UsageLimitsDb {
         }
 
         const stmt = this.claudeDb.getDb().prepare(`
-            SELECT provider, account_name, bucket, timestamp, utilization
+            SELECT provider, account_name, bucket, timestamp, utilization, resets_at, severity, scope_model, kind
             FROM usage_snapshots
             WHERE ${where.join(" AND ")}
             ORDER BY provider, account_name, bucket, timestamp ASC
         `);
-        const rows = stmt.all(...params) as Array<{
-            provider: string | null;
-            account_name: string;
-            bucket: string;
-            timestamp: string;
-            utilization: number;
-        }>;
+        const rows = stmt.all(...params) as SeriesSqlRow[];
+        // Provider belongs in the identity: an unscoped query reads every provider, and two
+        // providers that happen to share an account name and a window key would otherwise
+        // have their points interleaved into one line.
+        const shaped: SeriesRow[] = rows.map((row) => ({
+            provider: row.provider ?? DEFAULT_LIMITS_PROVIDER,
+            account: row.account_name,
+            key: row.bucket,
+            kind: row.kind,
+            scopeModel: row.scope_model,
+            t: row.timestamp,
+            percent: row.utilization,
+            resetsAt: row.resets_at,
+            severity: normalizeNullableSeverity(row.severity),
+        }));
+        const kinds = query.kinds ? new Set(query.kinds) : undefined;
+        const groups = groupSeriesRows(shaped).filter(
+            (group) => !kinds || (group.kind !== null && kinds.has(group.kind))
+        );
+        const opts = { step: query.step ?? autoSeriesStepMs(query.from, query.to), roughlyEqual: resetsAtRoughlyEqual };
 
-        const byKey = new Map<string, SeriesEntry>();
-
-        for (const row of rows) {
-            // Provider belongs in the key: an unscoped query reads every provider, and two
-            // providers that happen to share an account name and a window key would
-            // otherwise have their points interleaved into one line.
-            const provider = row.provider ?? DEFAULT_LIMITS_PROVIDER;
-            const mapKey = `${provider}\u0000${row.account_name}\u0000${row.bucket}`;
-            let entry = byKey.get(mapKey);
-
-            if (!entry) {
-                entry = { provider, account: row.account_name, key: row.bucket, points: [] };
-                byKey.set(mapKey, entry);
-            }
-
-            entry.points.push({ t: row.timestamp, percent: row.utilization });
+        if (query.agg === "minmax") {
+            return groups.map((group) => shapeBins(group, opts));
         }
 
-        const entries = [...byKey.values()];
-        const step = query.step ?? defaultStep(query.from, query.to);
-
-        if (step <= 0) {
-            return entries;
-        }
-
-        for (const entry of entries) {
-            entry.points = downsample(entry.points, step);
-        }
-
-        return entries;
+        const agg = query.agg ?? "last";
+        return groups.map((group) => shapePoints(group, agg, opts));
     }
 
     /**
@@ -610,40 +618,4 @@ export class UsageLimitsDb {
             moneyCurrency: row.money_currency,
         };
     }
-}
-
-/**
- * Points per series a caller that named no `step` is willing to hold. Well above what any
- * terminal can draw, and 28 times smaller than an undownsampled 7-day range at 30s polling.
- */
-const DEFAULT_SERIES_POINTS = 720;
-
-/** Bucket width that keeps a range under `DEFAULT_SERIES_POINTS`, or 0 when the range is unusable. */
-export function defaultStep(from: string, to: string): number {
-    const span = Date.parse(to) - Date.parse(from);
-
-    if (!Number.isFinite(span) || span <= 0) {
-        return 0;
-    }
-
-    return Math.ceil(span / DEFAULT_SERIES_POINTS);
-}
-
-function downsample(points: SeriesPoint[], step: number): SeriesPoint[] {
-    const out: SeriesPoint[] = [];
-    let currentBucket: number | null = null;
-
-    for (const point of points) {
-        const bucket = Math.floor(Date.parse(point.t) / step);
-
-        if (bucket === currentBucket) {
-            out[out.length - 1] = point;
-            continue;
-        }
-
-        currentBucket = bucket;
-        out.push(point);
-    }
-
-    return out;
 }

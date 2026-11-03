@@ -705,12 +705,17 @@ describe("UsageLimitsDb", () => {
                 to: recentTimestamp(0),
             });
 
+            // kind, scopeModel, resets and the point's resetsAt and severity arrived with the
+            // series door (design 2026-11-01): additive, the identity fields are unchanged.
             expect(series).toEqual([
                 {
                     provider: "openai-sub",
                     account: "work",
                     key: "primary",
-                    points: [{ t: expect.any(String), percent: 44 }],
+                    kind: null,
+                    scopeModel: null,
+                    resets: [],
+                    points: [{ t: expect.any(String), percent: 44, resetsAt: null, severity: null }],
                 },
             ]);
         });
@@ -820,6 +825,115 @@ describe("UsageLimitsDb", () => {
             });
 
             expect(series[0].points.map((p) => p.percent)).toEqual([2, 3]);
+        });
+    });
+
+    describe("getSeries aggregate modes (in-memory store)", () => {
+        const FROM = "2026-11-01T00:00:00.000Z";
+        const TO = "2026-11-01T12:00:00.000Z";
+        const HOUR = 3_600_000;
+        let mem: UsageLimitsDb;
+
+        function put(
+            at: string,
+            percent: number,
+            extras: { resetsAt?: string | null; severity?: string | null; kind?: string | null; key?: string } = {}
+        ): void {
+            mem.recordSnapshotV2("work", extras.key ?? "five_hour", percent, at, {
+                resetsAt: extras.resetsAt === undefined ? "2026-11-01T05:00:00.000Z" : extras.resetsAt,
+                severity: extras.severity ?? "ok",
+                scopeModel: null,
+                provider: "anthropic-sub",
+                kind: extras.kind === undefined ? "session" : extras.kind,
+            });
+        }
+
+        beforeEach(() => {
+            mem = new UsageLimitsDb(":memory:");
+            // One 5h window: a climb to 90% inside the 04:00 hour, then the 05:00 reset.
+            put("2026-11-01T04:05:00.000Z", 40);
+            put("2026-11-01T04:30:00.000Z", 90, { severity: "warning" });
+            put("2026-11-01T04:50:00.000Z", 85, { severity: "warn" });
+            put("2026-11-01T05:01:00.000Z", 2, { resetsAt: "2026-11-01T10:01:00.000Z" });
+            put("2026-11-01T05:20:00.000Z", 6, { resetsAt: "2026-11-01T10:01:00.000Z" });
+        });
+
+        afterEach(() => {
+            mem.close();
+        });
+
+        test("raw returns every row and ignores the step", () => {
+            const [entry] = mem.getSeries({ from: FROM, to: TO, step: HOUR, agg: "raw" });
+
+            expect(entry.points.map((p) => p.percent)).toEqual([40, 90, 85, 2, 6]);
+            // The old vocabulary is normalised on the way out, as on the way in.
+            expect(entry.points.map((p) => p.severity)).toEqual(["ok", "warn", "warn", "ok", "ok"]);
+        });
+
+        test("last keeps each bucket's last row, so the 90% peak is gone", () => {
+            const [entry] = mem.getSeries({ from: FROM, to: TO, step: HOUR, agg: "last" });
+
+            expect(entry.points.map((p) => p.percent)).toEqual([85, 6]);
+            expect(entry.points.map((p) => p.t)).toEqual(["2026-11-01T04:50:00.000Z", "2026-11-01T05:20:00.000Z"]);
+        });
+
+        test("minmax keeps open, close, min, max and the worst severity per bucket", () => {
+            const [entry] = mem.getSeries({ from: FROM, to: TO, step: HOUR, agg: "minmax" });
+
+            expect(entry.bins).toEqual([
+                { t: "2026-11-01T04:00:00.000Z", open: 40, close: 85, min: 40, max: 90, severity: "warn" },
+                { t: "2026-11-01T05:00:00.000Z", open: 2, close: 6, min: 2, max: 6, severity: "ok" },
+            ]);
+        });
+
+        test("minmax splits a bucket at a reset, so the peak before it survives a wide step", () => {
+            const [entry] = mem.getSeries({ from: FROM, to: TO, step: 6 * HOUR, agg: "minmax" });
+
+            expect(entry.bins).toEqual([
+                { t: "2026-11-01T00:00:00.000Z", open: 40, close: 85, min: 40, max: 90, severity: "warn" },
+                { t: "2026-11-01T05:01:00.000Z", open: 2, close: 6, min: 2, max: 6, severity: "ok" },
+            ]);
+        });
+
+        test("every mode reports the reset at the old window's end, whatever the step dropped", () => {
+            for (const agg of ["raw", "last", "minmax"] as const) {
+                const [entry] = mem.getSeries({ from: FROM, to: TO, step: 6 * HOUR, agg });
+
+                expect(entry.resets).toEqual(["2026-11-01T05:00:00.000Z"]);
+            }
+        });
+
+        test("poll jitter on resets_at is not a reset", () => {
+            put("2026-11-01T05:40:00.000Z", 7, { resetsAt: "2026-11-01T10:01:01.500Z" });
+
+            const [entry] = mem.getSeries({ from: FROM, to: TO, agg: "raw" });
+
+            expect(entry.resets).toEqual(["2026-11-01T05:00:00.000Z"]);
+        });
+
+        test("a window whose resets_at vanished after its end reset at that end", () => {
+            put("2026-11-01T10:30:00.000Z", 0, { resetsAt: null });
+
+            const [entry] = mem.getSeries({ from: FROM, to: TO, agg: "raw" });
+
+            expect(entry.resets).toEqual(["2026-11-01T05:00:00.000Z", "2026-11-01T10:01:00.000Z"]);
+        });
+
+        test("the kind is part of the identity, and a row without one takes its neighbour's", () => {
+            put("2026-11-01T06:00:00.000Z", 30, { key: "primary", kind: null, resetsAt: null });
+            put("2026-11-01T07:00:00.000Z", 31, { key: "primary", kind: "session", resetsAt: null });
+            put("2026-11-01T08:00:00.000Z", 12, { key: "primary", kind: "weekly", resetsAt: null });
+
+            const primary = mem.getSeries({ from: FROM, to: TO, keys: ["primary"], agg: "raw" });
+
+            expect(primary.map((e) => [e.kind, e.points.map((p) => p.percent)])).toEqual([
+                ["session", [30, 31]],
+                ["weekly", [12]],
+            ]);
+            expect(mem.getSeries({ from: FROM, to: TO, kinds: ["weekly"], agg: "raw" }).map((e) => e.key)).toEqual([
+                "primary",
+            ]);
+            expect(mem.getSeries({ from: FROM, to: TO, kinds: [] })).toEqual([]);
         });
     });
 

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
-import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { shellHelpLines } from "./components/help-overlay";
 import { cycleProvider, toggleAccount } from "./filters";
 import { isModalOpen, setModalOpen } from "./hooks/input-scope";
@@ -14,6 +13,7 @@ import {
     computeMaxOffset,
     formatTimePerPercent,
     groupStarts,
+    type HistorySeries,
     seriesToRows,
     shortWindowLabel,
     visibleGroupedRows,
@@ -196,7 +196,7 @@ describe("generic account section", () => {
 });
 
 describe("history rows", () => {
-    const series: SeriesEntry[] = [
+    const series: HistorySeries[] = [
         {
             provider: "openai-sub",
             account: "work",
