@@ -167,6 +167,30 @@ export function pieceTargets(options: {
     displays: DisplayInfo[];
     followFocus: boolean;
     chosen?: number[];
+    /** False: the recorder records one display at a time, so only the first (the main one when it is asked) stays. */
+    parallel?: boolean;
+}): {
+    targets: PieceTarget[];
+    fallback?: string;
+} {
+    const picked = pickTargets(options);
+
+    if (options.parallel !== false || picked.targets.length <= 1) {
+        return picked;
+    }
+
+    const main = picked.targets.find((target) => target.displayId === mainDisplay(options.displays)?.id);
+    return {
+        targets: [main ?? picked.targets[0]!],
+        fallback: "this recorder records one display at a time; only one display was recorded",
+    };
+}
+
+function pickTargets(options: {
+    policy: DisplayPolicy;
+    displays: DisplayInfo[];
+    followFocus: boolean;
+    chosen?: number[];
 }): {
     targets: PieceTarget[];
     fallback?: string;
@@ -438,6 +462,14 @@ export async function runRecorder(options: {
             "displays.add": async (params) => {
                 const display = await connected(displayIdOf(params));
                 refuseWhenStopping();
+
+                if (!deps.recorder.supports.parallelCaptures) {
+                    throw new RpcError(
+                        RPC_ERRORS.invalidParams,
+                        `the ${deps.recorder.id} recorder records one display at a time; use displays.switch`
+                    );
+                }
+
                 chosen = [...new Set([...currentIds(), display.id])];
 
                 if (!inPiece || paused || running.has(display.id)) {
@@ -728,6 +760,7 @@ export async function runRecorder(options: {
             displays,
             followFocus: deps.recorder.supports.followFocus,
             chosen,
+            parallel: deps.recorder.supports.parallelCaptures,
         });
         const connectedIds = displays.map((display) => display.id).join(",");
 

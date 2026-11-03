@@ -59,6 +59,9 @@ export class PeekabooFrameRecorder extends FrameRecorder {
         motionBoxes: false,
         heartbeat: false,
         liveControl: false,
+        // Measured 2026-11-03: a second capture fails with "Timed out waiting for the exclusive ScreenCaptureKit
+        // operation lock".
+        parallelCaptures: false,
     };
 
     async available(): Promise<{ ok: true } | { ok: false; reason: string }> {

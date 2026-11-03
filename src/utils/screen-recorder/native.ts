@@ -343,6 +343,7 @@ export class NativeFrameRecorder extends FrameRecorder {
             motionBoxes: this.flags.has("--follow-focus"),
             heartbeat: this.flags.has("--heartbeat-sec"),
             liveControl: this.flags.has("--control-stdin"),
+            parallelCaptures: true,
         };
     }
 

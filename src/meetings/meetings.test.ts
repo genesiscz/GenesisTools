@@ -36,7 +36,7 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
-import { meetingLiveId, type RecorderNote, runRecorder } from "./lib/recorder";
+import { meetingLiveId, pieceTargets, type RecorderNote, runRecorder } from "./lib/recorder";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
@@ -1739,7 +1739,12 @@ describe("the meetings recorder loop", () => {
         private notified = -1;
 
         constructor(
-            private readonly script: { displays: DisplayInfo[][]; steps: Step[]; liveControl?: boolean },
+            private readonly script: {
+                displays: DisplayInfo[][];
+                steps: Step[];
+                liveControl?: boolean;
+                parallel?: boolean;
+            },
             private readonly whenDone: () => void
         ) {
             super();
@@ -1752,6 +1757,7 @@ describe("the meetings recorder loop", () => {
                 motionBoxes: false,
                 heartbeat: false,
                 liveControl: this.script.liveControl === true,
+                parallelCaptures: this.script.parallel !== false,
             };
         }
 
@@ -2125,5 +2131,22 @@ describe("the screen at a moment, per display", () => {
 
         expect(old.recording).toMatchObject({ display: 1, frames: 12, somethingElse: true });
         expect(recordingSummary(old)[0]).toContain("stopped (failed), 12 frames");
+    });
+});
+
+describe("a recorder that records one display at a time", () => {
+    const displays = [
+        { id: 4, index: 1, name: "External", main: false, widthPt: 2560, heightPt: 1440, scale: 1 },
+        { id: 1, index: 0, name: "Built-in", main: true, widthPt: 1512, heightPt: 982, scale: 2 },
+    ];
+
+    test("all keeps only the main display and says so; a recorder with parallel captures keeps both", () => {
+        const single = pieceTargets({ policy: "all", displays, followFocus: false, parallel: false });
+        const both = pieceTargets({ policy: "all", displays, followFocus: false, parallel: true });
+
+        expect(single.targets.map((target) => target.displayId)).toEqual([1]);
+        expect(single.fallback).toContain("one display at a time");
+        expect(both.targets.map((target) => target.displayId)).toEqual([4, 1]);
+        expect(both.fallback).toBeUndefined();
     });
 });

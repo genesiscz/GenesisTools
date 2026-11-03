@@ -92,6 +92,8 @@ export interface FrameRecorderSupport {
     heartbeat: boolean;
     /** Frames as they land and commands to a running capture (`CaptureHooks`). */
     liveControl: boolean;
+    /** Several captures at once (one per display); peekaboo holds one exclusive ScreenCaptureKit lock. */
+    parallelCaptures: boolean;
 }
 
 /** A change-aware screen recorder: frames only when the screen changed, as image files. */
