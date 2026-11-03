@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import type { JobInfo } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
@@ -8,6 +9,21 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { Socket } from "bun";
 import { z } from "zod";
+import {
+    type DisplayEntry,
+    type DisplayMode,
+    type DisplaySelection,
+    isRecorderMethod,
+    RECORDER_DISPATCH,
+    RECORDER_METHODS,
+    RecorderControl,
+    type RecorderMethod,
+    type RecorderState,
+    type RecorderStatus,
+    RPC_ERRORS,
+    RpcError,
+    type StopAnswer,
+} from "./control";
 
 const { log } = logger.scoped("live-recordings");
 
@@ -15,12 +31,14 @@ export const LIVE_COMMANDS = ["pause", "resume", "stop"] as const;
 export type LiveCommand = (typeof LIVE_COMMANDS)[number];
 export const LIVE_STATES = ["recording", "paused", "stopping"] as const;
 export type LiveState = (typeof LIVE_STATES)[number];
-export const LIVE_EVENTS = ["state", "frame", "displays", "warning", "ended"] as const;
+export const LIVE_EVENTS = ["state", "frame", "displays", "warning", "progress", "ended"] as const;
 export type LiveEvent = (typeof LIVE_EVENTS)[number];
 
 /** macOS refuses a Unix socket path longer than 103 bytes. */
 const MAX_SOCKET_PATH = 103;
 const CALL_TIMEOUT_MS = 10_000;
+/** A stop that waits answers after OCR, the summary and the collect; a long backlog takes minutes. */
+const STOP_TIMEOUT_MS = 10 * 60_000;
 
 export const liveEntrySchema = z.object({
     version: z.literal(1),
@@ -38,36 +56,14 @@ export const liveEntrySchema = z.object({
     lastFrameAt: z.string().optional(),
     warning: z.string().optional(),
     folder: z.string().optional(),
-    controls: z.array(z.enum(LIVE_COMMANDS)).default([...LIVE_COMMANDS]),
+    /** The RPC methods this recording serves (`RECORDER_METHODS`); the menu bar shows a button per control. */
+    controls: z.array(z.string()).default([...LIVE_COMMANDS]),
     /** The JSON-RPC socket that controls the recording. */
     socket: z.string(),
 });
 export type LiveEntry = z.infer<typeof liveEntrySchema>;
 
-/** JSON-RPC 2.0 error codes: the standard ones, and the recorder's own from 1001. */
-export const RPC_ERRORS = {
-    parse: -32700,
-    invalidRequest: -32600,
-    methodNotFound: -32601,
-    invalidParams: -32602,
-    internal: -32603,
-    unknownDisplay: 1001,
-    notPaused: 1002,
-    alreadyStopped: 1003,
-    alreadyPaused: 1004,
-    lastDisplay: 1005,
-} as const;
-
-export class RpcError extends Error {
-    constructor(
-        readonly code: number,
-        message: string,
-        readonly data?: unknown
-    ) {
-        super(message);
-        this.name = "RpcError";
-    }
-}
+export { RPC_ERRORS, RpcError } from "./control";
 
 const rpcRequest = z.object({
     jsonrpc: z.literal("2.0"),
@@ -192,16 +188,14 @@ interface Connection {
     events?: Set<string>;
 }
 
-export type LiveMethod = (params: unknown) => unknown | Promise<unknown>;
-
 export type LiveEntryChange = Partial<
     Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "warning">
 >;
 
 /**
  * The live recording of one recorder in this process: the `<id>.json` discovery entry, written on every change, and a
- * JSON-RPC 2.0 server on its socket (one message per line). `status` and `subscribe` are built in; the recorder
- * supplies the rest (`pause`, `resume`, `stop`, `displays.*`). `close()` notifies `ended` and removes both files.
+ * JSON-RPC 2.0 server on its socket (one message per line) that serves the recorder's RecorderControl, plus
+ * `subscribe`. `close()` notifies `ended`, ends every connection after its last answer and removes both files.
  */
 export class LiveRecordingServer {
     private entry: LiveEntry;
@@ -216,8 +210,7 @@ export class LiveRecordingServer {
         title: string;
         folder?: string;
         displays?: LiveEntry["displays"];
-        controls?: LiveCommand[];
-        methods: Record<string, LiveMethod>;
+        control: RecorderControl;
         dir?: string;
     }) {
         const dir = options.dir ?? liveRecordingsDir();
@@ -230,7 +223,7 @@ export class LiveRecordingServer {
             unlinkSync(socket);
         }
 
-        const methods: Record<string, LiveMethod> = { status: () => this.current, ...options.methods };
+        const control = options.control;
         this.listener = Bun.listen<Connection>({
             unix: socket,
             socket: {
@@ -244,7 +237,7 @@ export class LiveRecordingServer {
                 },
                 data: (client, chunk) => {
                     for (const line of client.data.lines.push(chunk)) {
-                        client.data.queue = client.data.queue.then(() => this.handle(client, line, methods));
+                        client.data.queue = client.data.queue.then(() => this.handle(client, line, control));
                     }
                 },
                 drain: (client) => client.data.outbox.flush(),
@@ -270,7 +263,7 @@ export class LiveRecordingServer {
             displays: options.displays ?? [],
             frames: 0,
             ...(options.folder ? { folder: options.folder } : {}),
-            controls: options.controls ?? [...LIVE_COMMANDS],
+            controls: [...control.methods],
             socket,
         };
         this.write();
@@ -329,7 +322,14 @@ export class LiveRecordingServer {
 
         this.emit("ended", reason ? { reason } : {});
         this.closed = true;
-        this.listener.stop(true);
+
+        // Answers already written go out before the connection ends; `stop(true)` would cut them off.
+        for (const client of this.connections) {
+            client.data.outbox.flush();
+            client.end();
+        }
+
+        this.listener.stop();
 
         for (const path of [this.entryPath, this.entry.socket]) {
             if (existsSync(path)) {
@@ -348,7 +348,7 @@ export class LiveRecordingServer {
         atomicWriteFileSync(this.entryPath, SafeJSON.stringify(this.entry, null, 2));
     }
 
-    private async handle(client: Socket<Connection>, line: string, methods: Record<string, LiveMethod>): Promise<void> {
+    private async handle(client: Socket<Connection>, line: string, control: RecorderControl): Promise<void> {
         const parsed = rpcRequest.safeParse(parseOrNull(line));
         const reply = (body: Record<string, unknown>) => {
             client.data.outbox.send(`${SafeJSON.stringify({ jsonrpc: "2.0", ...body })}\n`);
@@ -369,13 +369,15 @@ export class LiveRecordingServer {
                 client.data.events = new Set(events.success ? (events.data.events ?? []) : []);
                 result = { events: [...client.data.events] };
             } else {
-                const handler = methods[method];
-
-                if (!handler) {
+                if (!isRecorderMethod(method)) {
                     throw new RpcError(RPC_ERRORS.methodNotFound, `unknown method ${method}`);
                 }
 
-                result = await handler(params);
+                if (!control.methods.includes(method)) {
+                    throw new RpcError(RPC_ERRORS.unsupported, `a ${control.kind} recording has no ${method}`);
+                }
+
+                result = await RECORDER_DISPATCH[method](control, params);
             }
 
             log.debug({ id: this.entry.id, method }, "live recording call");
@@ -405,8 +407,11 @@ interface Pending {
     timer: ReturnType<typeof setTimeout>;
 }
 
-/** A connection to a running recording's socket. */
-export class RecorderClient {
+/**
+ * A running recording over its socket, as a RecorderControl: the same methods in-process and remote, so the menu bar,
+ * a REPL and the CLI call one method set for every recorder kind. `call` and `subscribe` stay for the raw protocol.
+ */
+export class RecorderClient extends RecorderControl {
     private nextId = 1;
     private readonly pending = new Map<number, Pending>();
     private readonly listeners = new Set<(notification: LiveNotification) => void>();
@@ -415,7 +420,67 @@ export class RecorderClient {
     private outbox?: Outbox;
     private closedReason?: string;
 
-    private constructor(readonly entry: LiveEntry) {}
+    readonly kind: string;
+    readonly methods: readonly RecorderMethod[];
+
+    private constructor(readonly entry: LiveEntry) {
+        super();
+        this.kind = entry.kind;
+        this.methods = RECORDER_METHODS.filter((method) => entry.controls.includes(method));
+    }
+
+    status(): Promise<RecorderStatus> {
+        return this.call<RecorderStatus>("status");
+    }
+
+    pause(): Promise<{ state: RecorderState }> {
+        return this.call("pause");
+    }
+
+    resume(): Promise<{ state: RecorderState }> {
+        return this.call("resume");
+    }
+
+    /** Waits for post-processing unless `wait` is false; post-processing can outlast the normal call deadline. */
+    stop(options: { wait?: boolean } = {}): Promise<StopAnswer> {
+        return this.call<StopAnswer>("stop", options, options.wait === false ? CALL_TIMEOUT_MS : STOP_TIMEOUT_MS);
+    }
+
+    override discard(): Promise<StopAnswer> {
+        return this.call("discard");
+    }
+
+    override restart(): Promise<{ state: RecorderState }> {
+        return this.call("restart");
+    }
+
+    override switchTarget(target: unknown): Promise<{ state: RecorderState }> {
+        return this.call("target.switch", { target });
+    }
+
+    override listDisplays(): Promise<DisplayEntry[]> {
+        return this.call("displays.list");
+    }
+
+    override addDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.call("displays.add", { displayId });
+    }
+
+    override removeDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.call("displays.remove", { displayId });
+    }
+
+    override switchDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.call("displays.switch", { displayId });
+    }
+
+    override setDisplayMode(mode: DisplayMode): Promise<DisplaySelection> {
+        return this.call("displays.mode", { mode });
+    }
+
+    override listJobs(): Promise<JobInfo[]> {
+        return this.call("jobs.list");
+    }
 
     /** Connects by id; throws when no such recording runs or its socket refuses (a stale entry counts as gone). */
     static async connect(id: string, options: { dir?: string } = {}): Promise<RecorderClient> {

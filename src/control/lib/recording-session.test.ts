@@ -5,6 +5,8 @@ import * as fs from "node:fs/promises";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
+import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as captureRunner from "./capture-runner";
 import { nativeSegmentRecorder } from "./recording-native";
@@ -19,6 +21,7 @@ import {
     type SegmentRecorder,
     type SegmentResult,
 } from "./recording-session";
+import { SessionRecorderControl } from "./recording-session-control";
 import {
     defaultRecordingTarget,
     groupRecordingApps,
@@ -168,6 +171,74 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
         expect(joined).toHaveLength(0);
         expect(events.find((event) => event.event === "done")).toMatchObject({ segments: 1 });
+    });
+
+    it("as a RecorderControl over the socket: pause, a refused second pause, a display switch, stop as a join job", async () => {
+        const { recorder, runs } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: finder,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async ({ segments, output }) => {
+                joined.push(segments);
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            emit: (event) => {
+                events.push(event);
+                control?.observe(event);
+            },
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        const progress: string[] = [];
+        control = new SessionRecorderControl(recording, {
+            target: finder,
+            onProgress: (event) => progress.push(`${event.step} ${event.done}/${event.total}`),
+            screens: async () => ({
+                ok: true,
+                screens: [
+                    {
+                        displayID: 7,
+                        index: 0,
+                        isPrimary: true,
+                        name: "Built-in",
+                        position: { x: 0, y: 0 },
+                        resolution: { width: 1512, height: 982 },
+                        scaleFactor: 2,
+                    },
+                ],
+            }),
+        });
+        const dir = join(root, "live");
+        const server = new LiveRecordingServer({
+            id: "session-test",
+            kind: control.kind,
+            title: "Finder",
+            control,
+            dir,
+        });
+        await recording.start();
+        const client = await RecorderClient.connect("session-test", { dir });
+
+        expect(client.methods).toContain("target.switch");
+        expect(await client.pause()).toEqual({ state: "paused" });
+        await expect(client.pause()).rejects.toMatchObject({ code: RPC_ERRORS.alreadyPaused });
+        expect(await client.resume()).toEqual({ state: "recording" });
+        expect(await client.switchDisplay(7)).toMatchObject({ chosen: [7], applied: "restart" });
+        await expect(client.switchDisplay(9)).rejects.toMatchObject({ code: RPC_ERRORS.unknownDisplay });
+        expect(runs.at(-1)?.target).toMatchObject({ kind: "display", screenIndex: 0 });
+
+        const stopped = await client.stop();
+        client.close();
+        server.close();
+
+        expect(stopped).toMatchObject({ state: "stopped", outcome: "done", job: expect.stringMatching(/^join-/) });
+        expect(progress).toContain("join 1/1");
+        expect(joined).toHaveLength(1);
     });
 
     it("pause, resume, switch and stop join every segment in order, each with its own target", async () => {

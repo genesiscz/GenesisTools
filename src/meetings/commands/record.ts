@@ -14,8 +14,8 @@ import {
     MeetingsConfigStore,
 } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { callRecorder, type LiveEntry, RpcError } from "@genesiscz/utils/screen-recorder/live";
-import type { DisplayInfo } from "@genesiscz/utils/screen-recorder/types";
+import { type RecorderStatus, RpcError } from "@genesiscz/utils/screen-recorder/control";
+import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { CallTimeline } from "../lib/call-timeline";
@@ -197,8 +197,7 @@ function runningRecorder(store: MeetingStore): { id: string; meetingId: string; 
 /** One call on the recorder's socket; a refusal (not paused, unknown display) is printed and fails the command. */
 async function callRunning<T>(
     store: MeetingStore,
-    method: string,
-    params?: unknown
+    use: (recorder: RecorderClient) => Promise<T>
 ): Promise<{ result: T; meetingId: string } | undefined> {
     const running = runningRecorder(store);
 
@@ -207,8 +206,13 @@ async function callRunning<T>(
     }
 
     try {
-        const result = await callRecorder<T>({ id: running.id, method, params });
-        return { result, meetingId: running.meetingId };
+        const recorder = await RecorderClient.connect(running.id);
+
+        try {
+            return { result: await use(recorder), meetingId: running.meetingId };
+        } finally {
+            recorder.close();
+        }
     } catch (err) {
         fail(
             err instanceof RpcError
@@ -220,7 +224,9 @@ async function callRunning<T>(
 }
 
 async function pauseOrResume(command: "pause" | "resume"): Promise<void> {
-    const answer = await callRunning<{ state: string }>(new MeetingStore(), command);
+    const answer = await callRunning(new MeetingStore(), (recorder) =>
+        command === "pause" ? recorder.pause() : recorder.resume()
+    );
 
     if (answer) {
         ui.ok(
@@ -233,7 +239,7 @@ async function pauseOrResume(command: "pause" | "resume"): Promise<void> {
 
 /** Connected displays, with the ones being recorded marked. */
 async function displayList(opts: { json?: boolean }): Promise<void> {
-    const answer = await callRunning<Array<DisplayInfo & { recorded: boolean }>>(new MeetingStore(), "displays.list");
+    const answer = await callRunning(new MeetingStore(), (recorder) => recorder.listDisplays());
 
     if (!answer) {
         return;
@@ -259,9 +265,13 @@ async function displayChange(method: "add" | "remove" | "switch", rawId: string)
         return;
     }
 
-    const answer = await callRunning<{ chosen: number[] | null }>(new MeetingStore(), `displays.${method}`, {
-        displayId,
-    });
+    const answer = await callRunning(new MeetingStore(), (recorder) =>
+        method === "add"
+            ? recorder.addDisplay(displayId)
+            : method === "remove"
+              ? recorder.removeDisplay(displayId)
+              : recorder.switchDisplay(displayId)
+    );
 
     if (answer) {
         ui.ok(`Recording displays ${answer.result.chosen?.join(", ") ?? "by the policy"} from now on.`);
@@ -276,7 +286,7 @@ async function displayMode(raw: string): Promise<void> {
         return;
     }
 
-    const answer = await callRunning(new MeetingStore(), "displays.mode", { mode });
+    const answer = await callRunning(new MeetingStore(), (recorder) => recorder.setDisplayMode(mode));
 
     if (answer) {
         ui.ok(`Recording ${typeof mode === "number" ? `screen ${mode}` : mode} from now on.`);
@@ -286,13 +296,13 @@ async function displayMode(raw: string): Promise<void> {
 async function stop(): Promise<void> {
     const store = new MeetingStore();
     const current = readRecorderState(store);
-    const answer = await callRunning(store, "stop");
+    ui.dim("Stopping; the recorder converts its last frames, writes the summary and collects first.");
+    const answer = await callRunning(store, (recorder) => recorder.stop());
 
     if (!answer) {
         return;
     }
 
-    ui.dim("Asked the recorder to stop; it converts the frames of its current piece first.");
     const stopped = await waitFor(() => !readRecorderState(store).running, STOP_WAIT_MS);
 
     if (!stopped) {
@@ -308,8 +318,12 @@ async function stop(): Promise<void> {
         ui.warn(recording.warning);
     }
 
-    // The call is over: what the platform and the recording can tell is complete now.
-    if (record) {
+    // The recorder collected as its last post-processing step; a recorder without that step leaves it to us.
+    if (answer.result.notes) {
+        for (const line of answer.result.notes) {
+            ui.dim(line);
+        }
+    } else if (record) {
         await collectAndReport(store, record);
     }
 }
@@ -319,12 +333,13 @@ async function status(opts: { json?: boolean }): Promise<void> {
     const current = readRecorderState(store);
     const live =
         current.running && current.state
-            ? await callRecorder<LiveEntry>({ id: meetingLiveId(current.state.meetingId), method: "status" }).catch(
-                  (err: unknown) => {
-                      log.debug({ err }, "recorder status over its socket failed");
-                      return undefined;
-                  }
-              )
+            ? await callRecorder<RecorderStatus>({
+                  id: meetingLiveId(current.state.meetingId),
+                  method: "status",
+              }).catch((err: unknown) => {
+                  log.debug({ err }, "recorder status over its socket failed");
+                  return undefined;
+              })
             : undefined;
 
     if (opts.json) {

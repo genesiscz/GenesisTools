@@ -3,13 +3,8 @@ import { chmod, mkdir } from "node:fs/promises";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import {
-    LiveRecordingServer,
-    type LiveState,
-    liveRecordingId,
-    RPC_ERRORS,
-    RpcError,
-} from "@genesiscz/utils/screen-recorder/live";
+import { RpcError } from "@genesiscz/utils/screen-recorder/control";
+import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { ancestorPids } from "../lib/decision/frontmost";
@@ -21,6 +16,7 @@ import {
     type RecordingSessionEvent,
     recordingsDir,
 } from "../lib/recording-session";
+import { applyRecordingCommand, SessionRecorderControl } from "../lib/recording-session-control";
 import {
     defaultRecordingTarget,
     describeRecordingTarget,
@@ -136,49 +132,6 @@ function readCommands({ onLine, onEnd }: { onLine: (line: string) => void; onEnd
     };
 }
 
-const LIVE_STATE: Record<"starting" | "recording" | "paused" | "finishing", LiveState> = {
-    starting: "recording",
-    recording: "recording",
-    paused: "paused",
-    finishing: "stopping",
-};
-
-/** The session as a live recording: its socket maps pause, resume and stop onto the session's own commands. */
-function sessionLiveRecording(session: RecordingSession, title: string): LiveRecordingServer {
-    const server: LiveRecordingServer = new LiveRecordingServer({
-        id: liveRecordingId("control-session", `${process.pid}-${randomUUID().slice(0, 8)}`),
-        kind: "control-session",
-        title,
-        methods: {
-            pause: async () => {
-                if (server.current.state !== "recording") {
-                    throw new RpcError(RPC_ERRORS.alreadyPaused, `the recording is ${server.current.state}`);
-                }
-
-                await session.command({ cmd: "pause" });
-                return { state: server.current.state };
-            },
-            resume: async () => {
-                if (server.current.state !== "paused") {
-                    throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
-                }
-
-                await session.command({ cmd: "resume" });
-                return { state: server.current.state };
-            },
-            stop: async () => {
-                if (server.current.state === "stopping") {
-                    throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
-                }
-
-                void session.command({ cmd: "stop" });
-                return { state: "stopping" };
-            },
-        },
-    });
-    return server;
-}
-
 export function registerCaptureSessionCommands(capture: Command): void {
     capture
         .command("session")
@@ -202,6 +155,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
             let hostGone = false;
             let session: RecordingSession | undefined;
             let live: LiveRecordingServer | undefined;
+            let control: SessionRecorderControl | undefined;
             process.stdout.on("error", (error) => {
                 if (hostGone) {
                     return;
@@ -214,10 +168,12 @@ export function registerCaptureSessionCommands(capture: Command): void {
             const emit = (event: RecordingSessionEvent) => {
                 log.info({ event }, "recording event");
 
-                if (event.event === "state") {
-                    live?.update({ state: LIVE_STATE[event.state] });
-                } else if (event.event === "error") {
-                    live?.update({ warning: event.message });
+                control?.observe(event);
+
+                if (event.event === "state" || event.event === "error") {
+                    void control
+                        ?.status()
+                        .then((status) => live?.update({ state: status.state, warning: status.warning }));
                 }
 
                 if (hostGone) {
@@ -257,7 +213,17 @@ export function registerCaptureSessionCommands(capture: Command): void {
                     maxSeconds: boundedNumber(flags.maxSeconds, "--max-seconds", 1, RECORDING_SESSION_MAX_SECONDS),
                 });
                 log.info({ target, stopOnStdin: flags.stopOnStdin === true }, "recording session starting");
-                live = sessionLiveRecording(session, describeRecordingTarget(target));
+                const sessionControl = new SessionRecorderControl(session, {
+                    target,
+                    onProgress: (event) => live?.emit("progress", { ...event }),
+                });
+                control = sessionControl;
+                live = new LiveRecordingServer({
+                    id: liveRecordingId("control-session", `${process.pid}-${randomUUID().slice(0, 8)}`),
+                    kind: sessionControl.kind,
+                    title: describeRecordingTarget(target),
+                    control: sessionControl,
+                });
             } catch (error) {
                 emit({ event: "error", message: error instanceof Error ? error.message : String(error), fatal: true });
                 process.exitCode = 1;
@@ -265,12 +231,17 @@ export function registerCaptureSessionCommands(capture: Command): void {
             }
 
             const active = session;
+            const activeControl = control;
             const activeLive = live;
             using _live = { [Symbol.dispose]: () => activeLive?.close() };
             const outcome = await withInterrupt(
                 async (signal) => {
                     // Ctrl-C or SIGTERM keeps what was recorded: a host that quits never loses the movie.
-                    signal.addEventListener("abort", () => void active.command({ cmd: "stop" }), { once: true });
+                    const stopNow = () =>
+                        void activeControl?.stop({ wait: false }).catch((error: unknown) => {
+                            log.debug({ error }, "the session was stopping already");
+                        });
+                    signal.addEventListener("abort", stopNow, { once: true });
                     await active.start();
                     const stopReading = flags.stopOnStdin
                         ? readCommands({
@@ -281,9 +252,20 @@ export function registerCaptureSessionCommands(capture: Command): void {
                                       return;
                                   }
 
-                                  void active.command(command);
+                                  if (!activeControl) {
+                                      return;
+                                  }
+
+                                  // The same RecorderControl call the socket makes; a refusal is no failure here.
+                                  void applyRecordingCommand(activeControl, command).catch((error: unknown) => {
+                                      if (!(error instanceof RpcError)) {
+                                          emit({ event: "error", message: String(error), fatal: false });
+                                      }
+
+                                      log.debug({ error, command: command.cmd }, "session command refused");
+                                  });
                               },
-                              onEnd: () => void active.command({ cmd: "stop" }),
+                              onEnd: stopNow,
                           })
                         : undefined;
                     const result = await active.finished;

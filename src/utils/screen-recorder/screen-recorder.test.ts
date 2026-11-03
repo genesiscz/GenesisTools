@@ -5,6 +5,14 @@ import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
+import {
+    type DisplayEntry,
+    RecorderControl,
+    type RecorderMethod,
+    type RecorderState,
+    type RecorderStatus,
+    type StopAnswer,
+} from "./control";
 import { outputScaleFor, parseDisplayList } from "./displays";
 import {
     type LiveNotification,
@@ -204,28 +212,55 @@ describe("a failed peekaboo capture", () => {
     });
 });
 
+/** A recorder kind for the socket tests: pause and resume with their refusals, and a slow display list. */
+class TestControl extends RecorderControl {
+    readonly kind = "meeting";
+    readonly methods: readonly RecorderMethod[] = ["status", "pause", "resume", "stop", "displays.list", "jobs.list"];
+    state: RecorderState = "recording";
+    server?: LiveRecordingServer;
+
+    async status(): Promise<RecorderStatus> {
+        return { kind: this.kind, title: "Planning", state: this.state, displays: [], frames: 0 };
+    }
+
+    async pause(): Promise<{ state: RecorderState }> {
+        if (this.state === "paused") {
+            throw new RpcError(RPC_ERRORS.alreadyPaused, "already paused");
+        }
+
+        this.state = "paused";
+        this.server?.update({ state: this.state });
+        return { state: this.state };
+    }
+
+    async resume(): Promise<{ state: RecorderState }> {
+        this.state = "recording";
+        return { state: this.state };
+    }
+
+    async stop(): Promise<StopAnswer> {
+        return { state: "stopped", outcome: "requested" };
+    }
+
+    override async listDisplays(): Promise<DisplayEntry[]> {
+        await Bun.sleep(20);
+        return [];
+    }
+}
+
 describe("live recordings", () => {
     test("an entry and its socket answer JSON-RPC calls, send events to subscribers, and go when it closes", async () => {
         const dir = mkdtempSync(join(tmpdir(), "live-rec-"));
-        let state: "recording" | "paused" = "recording";
+        const control = new TestControl();
         const server = new LiveRecordingServer({
             id: "meeting-m1",
             kind: "meeting",
             title: "Planning",
             displays: [{ id: 1, name: "Built-in" }],
             dir,
-            methods: {
-                pause: () => {
-                    if (state === "paused") {
-                        throw new RpcError(RPC_ERRORS.alreadyPaused, "already paused");
-                    }
-
-                    state = "paused";
-                    server.update({ state });
-                    return { state };
-                },
-            },
+            control,
         });
+        control.server = server;
 
         expect(listLiveRecordings(dir).map((entry) => [entry.id, entry.state, entry.pid])).toEqual([
             ["meeting-m1", "recording", process.pid],
@@ -236,16 +271,21 @@ describe("live recordings", () => {
         const events: LiveNotification[] = [];
         await client.subscribe((event) => events.push(event), ["state", "ended"]);
 
-        expect(await client.call("status")).toMatchObject({ id: "meeting-m1", kind: "meeting", state: "recording" });
-        expect(await client.call<{ state: string }>("pause")).toEqual({ state: "paused" });
-        await expect(client.call("pause")).rejects.toMatchObject({ code: RPC_ERRORS.alreadyPaused });
+        expect(client.kind).toBe("meeting");
+        expect(client.methods).toEqual(control.methods);
+        expect(await client.status()).toMatchObject({ kind: "meeting", state: "recording" });
+        expect(await client.pause()).toEqual({ state: "paused" });
+        await expect(client.pause()).rejects.toMatchObject({ code: RPC_ERRORS.alreadyPaused });
+        await expect(client.discard()).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
         await expect(client.call("nonsense")).rejects.toMatchObject({ code: RPC_ERRORS.methodNotFound });
+        expect(await client.stop()).toEqual({ state: "stopped", outcome: "requested" });
+        expect(await client.listJobs()).toEqual([]);
 
         server.update({ frames: 3, warning: "a note" });
         server.update({ warning: undefined });
         const saved = SafeJSON.parse(readFileSync(join(dir, "meeting-m1.json"), "utf8"), { strict: true });
 
-        expect(saved).toMatchObject({ version: 1, state: "paused", frames: 3, controls: ["pause", "resume", "stop"] });
+        expect(saved).toMatchObject({ version: 1, state: "paused", frames: 3, controls: [...control.methods] });
         expect(saved).not.toHaveProperty("warning");
 
         server.close("requested");
@@ -268,12 +308,7 @@ describe("live recordings", () => {
             kind: "meeting",
             title: "Batch",
             dir,
-            methods: {
-                "displays.list": async () => {
-                    await Bun.sleep(20);
-                    return [];
-                },
-            },
+            control: new TestControl(),
         });
         let received = "";
         const socket = await Bun.connect({

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { type JobInfo, JobRegistry } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
@@ -32,8 +33,20 @@ import {
     type RecordingStopReason,
 } from "@genesiscz/utils/meetings/record";
 import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
+import {
+    type RecorderState as ControlState,
+    type DisplayEntry,
+    type DisplayMode,
+    type DisplaySelection,
+    RecorderControl,
+    type RecorderMethod,
+    type RecorderStatus,
+    RPC_ERRORS,
+    RpcError,
+    type StopAnswer,
+} from "@genesiscz/utils/screen-recorder/control";
 import { mainDisplay } from "@genesiscz/utils/screen-recorder/displays";
-import { LiveRecordingServer, liveRecordingId, RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/live";
+import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
 import {
     CaptureError,
@@ -48,6 +61,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
+import { collectRecord } from "./collect";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
 
@@ -60,6 +74,8 @@ const MAX_FAILURES = 3;
 const FAILURE_PAUSE_MS = 5_000;
 /** The first frame's OCR finds less text than this: probably only the desktop, so the grant is likely missing. */
 const EMPTY_FRAME_CHARS = 20;
+/** How long the socket stays open after the stop answer, so the answer reaches the caller. */
+const STOP_ANSWER_MS = 50;
 
 /** Where the one running recording keeps its pid and its state. */
 export function recorderFiles(store: MeetingStore): { pid: string; state: string } {
@@ -254,6 +270,81 @@ interface RunningCapture {
     done: Promise<void>;
 }
 
+/** What the meetings recorder does for each RecorderControl method; the closures of one `runRecorder` call. */
+interface MeetingControlOps {
+    status(): Promise<RecorderStatus>;
+    pause(): Promise<{ state: ControlState }>;
+    resume(): Promise<{ state: ControlState }>;
+    stop(options: { wait?: boolean }): Promise<StopAnswer>;
+    listDisplays(): Promise<DisplayEntry[]>;
+    addDisplay(displayId: number): Promise<DisplaySelection>;
+    removeDisplay(displayId: number): Promise<DisplaySelection>;
+    switchDisplay(displayId: number): Promise<DisplaySelection>;
+    setDisplayMode(mode: DisplayMode): Promise<DisplaySelection>;
+    listJobs(): Promise<JobInfo[]>;
+}
+
+/** The meetings recorder as a RecorderControl: displays by id, no discard, restart or target switch. */
+class MeetingRecorderControl extends RecorderControl {
+    readonly kind = "meeting";
+    readonly methods: readonly RecorderMethod[] = [
+        "status",
+        "pause",
+        "resume",
+        "stop",
+        "displays.list",
+        "displays.add",
+        "displays.remove",
+        "displays.switch",
+        "displays.mode",
+        "jobs.list",
+    ];
+
+    constructor(private readonly ops: MeetingControlOps) {
+        super();
+    }
+
+    status(): Promise<RecorderStatus> {
+        return this.ops.status();
+    }
+
+    pause(): Promise<{ state: ControlState }> {
+        return this.ops.pause();
+    }
+
+    resume(): Promise<{ state: ControlState }> {
+        return this.ops.resume();
+    }
+
+    stop(options: { wait?: boolean } = {}): Promise<StopAnswer> {
+        return this.ops.stop(options);
+    }
+
+    override listDisplays(): Promise<DisplayEntry[]> {
+        return this.ops.listDisplays();
+    }
+
+    override addDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.ops.addDisplay(displayId);
+    }
+
+    override removeDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.ops.removeDisplay(displayId);
+    }
+
+    override switchDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.ops.switchDisplay(displayId);
+    }
+
+    override setDisplayMode(mode: DisplayMode): Promise<DisplaySelection> {
+        return this.ops.setDisplayMode(mode);
+    }
+
+    override listJobs(): Promise<JobInfo[]> {
+        return this.ops.listJobs();
+    }
+}
+
 export interface RecorderNote {
     title: string;
     message: string;
@@ -370,15 +461,6 @@ export async function runRecorder(options: {
 
         return display;
     };
-    const displayIdOf = (params: unknown): number => {
-        const parsed = z.object({ displayId: z.number().int() }).safeParse(params);
-
-        if (!parsed.success) {
-            throw new RpcError(RPC_ERRORS.invalidParams, "give { displayId: <number> }");
-        }
-
-        return parsed.data.displayId;
-    };
     const refuseWhenStopping = () => {
         if (stopRequested) {
             throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
@@ -398,22 +480,40 @@ export async function runRecorder(options: {
         return answer("restart");
     };
     const currentIds = () => chosen ?? state.displays?.map((one) => one.id) ?? [];
+    const finishJobId = `finish-${meetingId}-${Date.now()}`;
+    const stopped = Promise.withResolvers<StopAnswer>();
+    const jobs = new JobRegistry((event) => live.emit("progress", { ...event }));
+    const liveStatus = (): RecorderStatus => {
+        const entry = live.current;
+        return {
+            kind: entry.kind,
+            title: entry.title,
+            state: entry.state,
+            displays: entry.displays,
+            frames: entry.frames,
+            ...(entry.lastFrameAt ? { lastFrameAt: entry.lastFrameAt } : {}),
+            ...(entry.warning ? { warning: entry.warning } : {}),
+            ...(entry.folder ? { folder: entry.folder } : {}),
+        };
+    };
     const live = new LiveRecordingServer({
         id: meetingLiveId(meetingId),
         kind: "meeting",
         title: record?.title || meetingId,
         folder,
         dir: deps.liveDir,
-        methods: {
-            stop: () => {
+        control: new MeetingRecorderControl({
+            status: async () => liveStatus(),
+            stop: async (options) => {
                 if (stopRequested) {
                     throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
                 }
 
                 requestStop();
-                return { state: "stopping" };
+                return options.wait === false ? { state: "stopping", job: finishJobId } : await stopped.promise;
             },
-            pause: () => {
+            listJobs: async () => jobs.list(),
+            pause: async () => {
                 if (stopRequested) {
                     throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
                 }
@@ -438,7 +538,7 @@ export async function runRecorder(options: {
                 markPaused();
                 return { state: "paused" };
             },
-            resume: () => {
+            resume: async () => {
                 if (!paused || stopRequested) {
                     throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
                 }
@@ -453,15 +553,15 @@ export async function runRecorder(options: {
                 wake?.();
                 return { state: "recording" };
             },
-            "displays.list": async () => {
+            listDisplays: async () => {
                 const recordedIds = new Set(state.displays?.map((display) => display.id) ?? []);
                 return (await deps.recorder.displays()).map((display) => ({
                     ...display,
                     recorded: recordedIds.has(display.id),
                 }));
             },
-            "displays.add": async (params) => {
-                const display = await connected(displayIdOf(params));
+            addDisplay: async (displayId) => {
+                const display = await connected(displayId);
                 refuseWhenStopping();
 
                 if (!deps.recorder.supports.parallelCaptures) {
@@ -480,8 +580,7 @@ export async function runRecorder(options: {
                 startCapture(targetOf(display));
                 return answer("started");
             },
-            "displays.remove": async (params) => {
-                const displayId = displayIdOf(params);
+            removeDisplay: async (displayId) => {
                 const current = currentIds();
 
                 if (!current.includes(displayId)) {
@@ -506,8 +605,8 @@ export async function runRecorder(options: {
                 capture.controller.abort();
                 return answer("stopped");
             },
-            "displays.switch": async (params) => {
-                const display = await connected(displayIdOf(params));
+            switchDisplay: async (displayId) => {
+                const display = await connected(displayId);
                 refuseWhenStopping();
                 const [only, ...others] = [...running.values()];
 
@@ -536,20 +635,13 @@ export async function runRecorder(options: {
                     chosen = [display.id];
                 });
             },
-            "displays.mode": (params) => {
-                const parsed = z.object({ mode: displayPolicySchema }).safeParse(params);
-
-                if (!parsed.success) {
-                    throw new RpcError(RPC_ERRORS.invalidParams, "give { mode: all | follow-focus | main | <index> }");
-                }
-
-                return restart(() => {
-                    policy = parsed.data.mode;
+            setDisplayMode: async (mode) =>
+                restart(() => {
+                    policy = mode;
                     chosen = undefined;
                     state.display = policy;
-                });
-            },
-        },
+                }),
+        }),
     });
     const requestStop = () => {
         stopRequested = true;
@@ -673,7 +765,11 @@ export async function runRecorder(options: {
             .then(
                 async (result) => {
                     pieceOutcome.recorded = true;
-                    await keepFrames(result, entry.target, entry.streamed > 0);
+                    await jobs.task("ocr", (ctx) =>
+                        keepFrames(result, entry.target, entry.streamed > 0, (done) =>
+                            ctx.progress({ done, total: result.frames.length, unit: "frames" })
+                        )
+                    ).done;
                     entry.streamed = 0;
 
                     if (result.endedEarly === "display-removed") {
@@ -710,7 +806,14 @@ export async function runRecorder(options: {
     let lastConnected = "";
 
     /** `streamed`: the socket announced these frames as they landed already. */
-    const keepFrames = async (result: CaptureResult, target: PieceTarget, streamed: boolean): Promise<void> => {
+    const keepFrames = async (
+        result: CaptureResult,
+        target: PieceTarget,
+        streamed: boolean,
+        onFrame: (done: number) => void = () => undefined
+    ): Promise<void> => {
+        let done = 0;
+
         for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
             const at = new Date(result.startedAtMs + frame.atMs);
             const displayId = frame.displayId ?? target.displayId;
@@ -750,6 +853,9 @@ export async function runRecorder(options: {
             if (!streamed) {
                 live.emit("frame", { displayId, at: at.toISOString(), file: jpg });
             }
+
+            done += 1;
+            onFrame(done);
         }
     };
 
@@ -910,10 +1016,41 @@ export async function runRecorder(options: {
     }
 
     try {
-        await finishRecording();
+        const finished = await jobs.run({
+            kind: "finish",
+            id: finishJobId,
+            initial: [] as string[],
+            steps: [
+                {
+                    name: "summary",
+                    run: async (ctx) => {
+                        await finishRecording();
+                        ctx.progress({ done: 1, total: 1, unit: "steps", message: `${state.frames} frames` });
+                        return ctx.state;
+                    },
+                },
+                {
+                    name: "collect",
+                    run: async () => {
+                        const current = store.read(meetingId);
+                        return current ? (await collectRecord(store, current)).notes.map((one) => one.text) : [];
+                    },
+                },
+            ],
+        }).done;
+        stopped.resolve({
+            state: "stopped",
+            outcome: state.stopReason,
+            job: finishJobId,
+            frames: state.frames,
+            notes: finished.state,
+        });
     } catch (err) {
         log.error({ err, meetingId }, "the recording summary could not be written");
+        stopped.resolve({ state: "stopped", outcome: state.stopReason, job: finishJobId, frames: state.frames });
     } finally {
+        // A waiting `stop` call gets its answer before the socket closes.
+        await Bun.sleep(STOP_ANSWER_MS);
         live.close(state.stopReason);
 
         if (existsSync(files.state)) {
