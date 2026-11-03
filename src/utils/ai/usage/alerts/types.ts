@@ -152,7 +152,10 @@ export interface AlertRound {
      * no pass was recorded; the event rules then fall back to `previousRoundAt`.
      */
     lastEvaluatedAt: string | null;
-    /** Usage events of the last hour, or of the rate-limited window when that is longer (`alertEventLookbackMs`). */
+    /**
+     * Usage events from the earlier of the rolling lookback (the last hour, or the rate-limited window when longer)
+     * and the alert cursor, at most 30 days back (`alertEventsFrom`). A rule with a time window filters by it.
+     */
     events: readonly UsageEventRow[];
     availabilityChanges: readonly AvailabilityChange[];
     /** The budgets of the usage config, read once per tick (empty when none are set). */

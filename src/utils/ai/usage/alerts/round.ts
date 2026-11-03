@@ -13,9 +13,32 @@ export const ALERT_SAMPLE_LOOKBACK_MS = 72 * HOUR_MS;
 const RUN_LOOKBACK_MS = 24 * HOUR_MS;
 const EVENT_LOOKBACK_MS = HOUR_MS;
 
+/**
+ * How far back a round catches up on events after failed passes: the 30 days the usage tables keep by default. A
+ * cursor older than that has nothing left to read past it.
+ */
+export const ALERT_EVENT_CATCH_UP_MS = 30 * 24 * HOUR_MS;
+
 /** The events a round reads: the last hour, or the rate-limited rule's window when it is longer. */
 export function alertEventLookbackMs(config: UsageAlertsConfig): number {
     return Math.max(EVENT_LOOKBACK_MS, config.rules["rate-limited"].windowMinutes * 60_000);
+}
+
+/**
+ * Where a round starts reading events: the earlier of the rolling lookback and the alert cursor, so the events of
+ * passes that failed for longer than the lookback still reach the pass that catches up. The catch-up stops at
+ * `ALERT_EVENT_CATCH_UP_MS`. A rule with a time window of its own (rate-limited) still filters by it.
+ */
+export function alertEventsFrom(input: { now: Date; lastEvaluatedAt: string | null; config: UsageAlertsConfig }): Date {
+    const nowMs = input.now.getTime();
+    const lookback = nowMs - alertEventLookbackMs(input.config);
+    const cursor = input.lastEvaluatedAt === null ? Number.NaN : Date.parse(input.lastEvaluatedAt);
+
+    if (!Number.isFinite(cursor) || cursor >= lookback) {
+        return new Date(lookback);
+    }
+
+    return new Date(Math.max(cursor, nowMs - ALERT_EVENT_CATCH_UP_MS));
 }
 /** With no earlier round, availability changes of the last five minutes count as this round's. */
 export const FIRST_ROUND_SINCE_MS = 5 * 60_000;
@@ -128,7 +151,7 @@ export function buildAlertRound(input: {
         previousRoundAt: input.previousRoundAt,
         lastEvaluatedAt,
         events: new UsageEventsStore(db)
-            .list({ from: new Date(nowMs - alertEventLookbackMs(input.config)), to: now })
+            .list({ from: alertEventsFrom({ now, lastEvaluatedAt, config: input.config }), to: now })
             .reverse(),
         availabilityChanges: availabilityChangesSince(db, since),
         baselines,
