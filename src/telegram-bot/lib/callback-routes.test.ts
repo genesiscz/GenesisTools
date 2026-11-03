@@ -195,6 +195,38 @@ describe("F11: decisions answered in Telegram", () => {
         expect(api.messages[0].buttons).toEqual([]);
     });
 
+    it("a later press on a message an earlier press answered keeps that outcome and only toasts the refusal", async () => {
+        const own = { ...bot, chats: { commands: 7011 } };
+        const api = new FakeTelegramMessagesApi();
+        const store = memoryActTokenStore();
+        const row = decision({ id: "d_11_s-eleven", number: 11, sessionId: "s-eleven" });
+        await postDecisionsToTelegram([row], { bot: own, api, store, now: NOW });
+
+        let answered = false;
+        const actDeps: ActDeps = {
+            store,
+            rows: () => [answered ? { ...row, state: "sent" } : row],
+            answer: async () => {
+                answered = true;
+                return { session: "s-eleven", text: "11a", channel: "cmux", delivered: true, detail: "cmux" };
+            },
+        };
+        const router = createCallbackRouter({ d: decisionPressHandler({ actDeps: async () => actDeps }) });
+        const [message] = api.messages;
+        // The first press's edit drops the buttons, so read the button data before it.
+        const data = message.buttons[0][0].data;
+        const press = (id: string) => ({ id, data, chatId: 7011, messageId: message.message });
+
+        await answerPress({ api, router, press: press("cbq-11a") });
+        const delivered = api.messages[0].text;
+        const late = await answerPress({ api, router, press: press("cbq-11b") });
+
+        expect(delivered).toContain("sent to the agent");
+        expect(late.edit).toBeUndefined();
+        expect(late.toast).toBe("Not sent");
+        expect(api.messages[0].text).toBe(delivered);
+    });
+
     it("edits the message of a decision closed elsewhere and drops its buttons", async () => {
         const api = new FakeTelegramMessagesApi();
         await postDecisionsToTelegram([decision({ id: "d_6_s-six", number: 6, sessionId: "s-six" })], {
