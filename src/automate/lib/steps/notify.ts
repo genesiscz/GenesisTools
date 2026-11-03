@@ -45,6 +45,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
             case "telegram": {
                 const { loadTelegramConfig } = await import("@app/telegram-bot/lib/config");
                 const { createApi, sendMessage } = await import("@genesiscz/utils/telegram-bot/lib/api");
+                const { telegramChatFor } = await import("@genesiscz/utils/telegram-bot/lib/config");
 
                 const config = await loadTelegramConfig();
                 if (!config) {
@@ -53,17 +54,13 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
                 }
 
                 const api = createApi(config.botToken);
+                const chatId = telegramChatFor(config, "notifications");
                 const message = ctx.interpolate(params.message ?? "");
                 const parseMode = params.parse_mode;
 
-                const sent = await sendMessage(
-                    api,
-                    config.chatId,
-                    message,
-                    parseMode as "MarkdownV2" | "HTML" | undefined
-                );
+                const sent = await sendMessage(api, chatId, message, parseMode as "MarkdownV2" | "HTML" | undefined);
 
-                return makeResult("success", { messageId: sent.message_id, chatId: config.chatId }, start);
+                return makeResult("success", { messageId: sent.message_id, chatId }, start);
             }
 
             default:
