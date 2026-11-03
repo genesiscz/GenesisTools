@@ -54,6 +54,7 @@ mock.module("@genesiscz/utils/agent-sessions/readers/codex-locate", () => ({
 }));
 
 const { addAccountFlags, addReportFlags, registerCcusageCommands } = await import("./commands");
+const { registerSpendCommand } = await import("../register");
 
 function event(overrides: Partial<SpendEvent> = {}): SpendEvent {
     return {
@@ -725,5 +726,50 @@ describe("statusline", () => {
         expect(process.exitCode ?? 0).toBe(0);
         expect(loadCalls[0].sources).toEqual(["claude"]);
         expect(stdout).toContain("Opus 4.8");
+    });
+});
+
+describe("--harness, the design name of --sources and --backend", () => {
+    async function spend(...argv: string[]): Promise<void> {
+        const program = new Command();
+        program.exitOverride();
+        registerSpendCommand(program);
+        await program.parseAsync(argv, { from: "user" });
+    }
+
+    test("--harness reads the same agents as --sources", async () => {
+        fixtureEvents = [event(), event({ source: "codex", id: "evt-2" })];
+
+        await spend("summary", "--harness", "codex", "--json");
+        await spend("summary", "--sources", "codex", "--json");
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(loadCalls.map((call) => call.sources)).toEqual([["codex"], ["codex"]]);
+    });
+
+    test("the same list under both names is one list, and two different lists are refused", async () => {
+        await spend("summary", "--harness", "codex", "--sources", "codex", "--json");
+        expect(loadCalls.map((call) => call.sources)).toEqual([["codex"]]);
+
+        await spend("summary", "--harness", "codex", "--sources", "claude", "--json");
+        expect(process.exitCode).toBe(1);
+        expect(loadCalls).toHaveLength(1);
+        expect(stderr).toContain("--harness codex and --sources claude name different lists");
+    });
+
+    test("an unknown --harness value is diagnosed under the flag the user typed", async () => {
+        await spend("series", "--harness", "nonesuch", "--grain", "day", "--json");
+
+        expect(process.exitCode).toBe(1);
+        expect(stderr).toContain("--harness");
+        expect(stderr).not.toContain("--sources");
+    });
+
+    test("workers takes --harness for --backend", async () => {
+        await spend("workers", "--harness", "nonesuch");
+
+        expect(process.exitCode).toBe(1);
+        expect(stderr).toContain("--harness");
+        expect(stderr).not.toContain("--backend");
     });
 });

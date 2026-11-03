@@ -87,8 +87,8 @@ export function parseStep(text: string | undefined): SeriesStep {
     if (CALENDAR_STEPS.has(value)) {
         throw new UsageQueryError(
             "reserved",
-            `--step ${value} is a calendar step in --tz and arrives with ${aiUsageCommand("spend")} (build step U8). ` +
-                `Use a fixed step such as 1h or 1d meanwhile.`,
+            `--step ${value} is a calendar step in --tz, which this verb does not take; calendar periods are ` +
+                `${aiUsageCommand("spend", "daily|weekly|monthly")}. Use a fixed step such as 1h or 1d.`,
             { given: text }
         );
     }

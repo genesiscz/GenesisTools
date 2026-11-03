@@ -13,6 +13,7 @@ import { createBoxTable, renderCliSection } from "@genesiscz/utils/table";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { addHarnessOption, resolveHarnessFlag } from "../harness-flag";
 import { planWorkerBackfill, planWorkerReprice } from "./backfill";
 import { formatUsd } from "./cost";
 import {
@@ -41,6 +42,7 @@ interface WorkersFlags {
     timezone?: string;
     by?: string | boolean;
     backend?: string;
+    harness?: string;
     label?: string;
     backfill?: boolean;
     reprice?: boolean;
@@ -249,14 +251,16 @@ async function runReprice(flags: WorkersFlags): Promise<void> {
 }
 
 export function registerWorkersCommand(program: Command): Command {
-    return program
+    const workers = program
         .command("workers")
         .description("Spend of headless workers (Codex, Grok and Claude workers), with a Claude estimate")
         .option(
             "--by [dims]",
             `Group by a comma list of: ${WORKER_STATS_DIMENSIONS.join(", ")} (default: backend,model)`
         )
-        .option("--backend <list>", `Only these backends: ${BACKENDS.join(", ")}`)
+        .option("--backend <list>", `Only these backends: ${BACKENDS.join(", ")}`);
+
+    return addHarnessOption(workers, "--backend")
         .option("--label <substr>", "Only sessions whose spawn --label contains this")
         .option("--until <day>", "Last day included (YYYY-MM-DD)")
         .option("--timezone <tz>", "IANA zone for the day buckets (default: this machine's)")
@@ -311,10 +315,20 @@ export function registerWorkersCommand(program: Command): Command {
                 return;
             }
 
-            const backends = flags.backend ? parseList(flags.backend, BACKENDS) : undefined;
+            const harness = resolveHarnessFlag({
+                harness: flags.harness,
+                legacy: flags.backend,
+                legacyFlag: "--backend",
+            });
 
-            if (flags.backend && !backends) {
-                out.printlnErr(suggestEnumFlag(TOOL, "--backend", BACKENDS, { given: flags.backend }));
+            if (!harness) {
+                return;
+            }
+
+            const backends = harness.raw ? parseList(harness.raw, BACKENDS) : undefined;
+
+            if (harness.raw && !backends) {
+                out.printlnErr(suggestEnumFlag(TOOL, harness.flag, BACKENDS, { given: harness.raw }));
                 process.exitCode = 1;
                 return;
             }
