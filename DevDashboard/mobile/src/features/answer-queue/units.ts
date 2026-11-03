@@ -50,6 +50,52 @@ export function withRecentReceipt(list: readonly RecentReceipt[], entry: RecentR
     return [entry, ...list.filter((kept) => kept.testID !== entry.testID)].slice(0, RECENT_RECEIPTS_MAX);
 }
 
+/** The note a decision card edits, and the server draft and revision it was written against. */
+export interface NoteState {
+    note: string;
+    base: { revision: number; draft: string };
+}
+
+export function noteStateOf(decision: Pick<WaitingDecisionDto, "revision" | "draft">): NoteState {
+    const draft = decision.draft ?? "";
+    return { note: draft, base: { revision: decision.revision, draft } };
+}
+
+/** The user changed the note since the draft it was written against. */
+export function noteIsDirty(state: NoteState): boolean {
+    return state.note.trim() !== state.base.draft.trim();
+}
+
+/**
+ * A poll brought a new draft or revision. An untouched note follows the server. A changed note keeps its text AND its
+ * old base, so its stage carries the revision it was written on and a re-posted decision refuses it with the Mac's
+ * words, instead of staging an old note against the new text.
+ */
+export function reconcileNote(state: NoteState, incoming: Pick<WaitingDecisionDto, "revision" | "draft">): NoteState {
+    const draft = incoming.draft ?? "";
+
+    if (state.base.revision === incoming.revision && state.base.draft === draft) {
+        return state;
+    }
+
+    return noteIsDirty(state) ? state : { note: draft, base: { revision: incoming.revision, draft } };
+}
+
+/**
+ * Send waits for every card to save what it holds (a note still being typed, a stage still in flight); one that fails
+ * stops the send, so a pick never goes out without the note the user just wrote. Returns whether it sent.
+ */
+export async function flushThenSend(flushes: Iterable<() => Promise<void>>, send: () => void): Promise<boolean> {
+    try {
+        await Promise.all([...flushes].map((flush) => flush()));
+    } catch {
+        return false;
+    }
+
+    send();
+    return true;
+}
+
 export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     delivered: "Delivered",
     queued: "Queued for the next turn",

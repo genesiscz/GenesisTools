@@ -1,10 +1,11 @@
 import type { WaitingSessionDto } from "@dd/contract";
+import { useCallback, useRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import { DecisionCard } from "@/features/answer-queue/components/DecisionCard";
 import { FormCard } from "@/features/answer-queue/components/FormCard";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useSendStaged } from "@/features/answer-queue/hooks";
-import { idempotencyKey, type RecentReceipt, stagedOf } from "@/features/answer-queue/units";
+import { flushThenSend, idempotencyKey, type RecentReceipt, stagedOf } from "@/features/answer-queue/units";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
@@ -28,6 +29,15 @@ export function QueueSessionCard({
     const label = session.title ?? session.project ?? "Agent question";
     const send = useSendStaged((receipt) => onReceipt({ testID: `${testId}-receipt`, label, receipt }));
     const staged = stagedOf(session).length;
+    // Each decision card's flush, by number: Send saves every note being typed and waits for stages first.
+    const flushes = useRef(new Map<number, () => Promise<void>>());
+    const registerFlush = useCallback((number: number, flush: (() => Promise<void>) | null) => {
+        if (flush) {
+            flushes.current.set(number, flush);
+        } else {
+            flushes.current.delete(number);
+        }
+    }, []);
 
     return (
         <Card bezel className="gap-3" testID={testId}>
@@ -46,7 +56,12 @@ export function QueueSessionCard({
             {session.items.map((item) => {
                 if (item.kind === "decision") {
                     return session.sessionId ? (
-                        <DecisionCard key={item.id} session={session.sessionId} decision={item} />
+                        <DecisionCard
+                            key={item.id}
+                            session={session.sessionId}
+                            decision={item}
+                            registerFlush={registerFlush}
+                        />
                     ) : null;
                 }
 
@@ -72,11 +87,13 @@ export function QueueSessionCard({
                     accessibilityLabel={`Send ${staged} staged ${staged === 1 ? "pick" : "picks"}`}
                     disabled={send.isPending}
                     onPress={() =>
-                        send.mutate({
-                            session: session.sessionId ?? "",
-                            ...(session.provider ? { provider: session.provider } : {}),
-                            key: idempotencyKey(),
-                        })
+                        void flushThenSend(flushes.current.values(), () =>
+                            send.mutate({
+                                session: session.sessionId ?? "",
+                                ...(session.provider ? { provider: session.provider } : {}),
+                                key: idempotencyKey(),
+                            })
+                        )
                     }
                     className="min-h-11 items-center justify-center rounded-lg px-4"
                     style={{ backgroundColor: c.accent, opacity: send.isPending ? 0.6 : 1 }}

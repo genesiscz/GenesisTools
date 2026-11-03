@@ -11,8 +11,11 @@ import {
     stagePick,
 } from "@/features/answer-queue/queries";
 import {
+    flushThenSend,
     formAnswers,
     missingAnswers,
+    noteStateOf,
+    reconcileNote,
     RECENT_RECEIPTS_MAX,
     receiptOf,
     stagedOf,
@@ -75,6 +78,38 @@ describe("answer queue over the fixture wire (the real client)", () => {
 });
 
 describe("answer queue rules", () => {
+    it("a note follows a re-posted decision only while untouched; a changed note keeps the revision it was written on", () => {
+        const shown = noteStateOf({ revision: 1, draft: null });
+        const typed = { ...shown, note: "keep the cache" };
+
+        expect(reconcileNote(shown, { revision: 2, draft: "from the hub" })).toEqual({
+            note: "from the hub",
+            base: { revision: 2, draft: "from the hub" },
+        });
+        expect(reconcileNote(typed, { revision: 2, draft: null })).toEqual(typed);
+        expect(reconcileNote(typed, { revision: 1, draft: null })).toBe(typed);
+    });
+
+    it("send waits for a slow note save, and a refused save stops the send", async () => {
+        const order: string[] = [];
+        const slowSave = () =>
+            new Promise<void>((resolve) =>
+                setTimeout(() => {
+                    order.push("saved");
+                    resolve();
+                }, 10)
+            );
+
+        expect(await flushThenSend([slowSave], () => order.push("sent"))).toBe(true);
+        expect(order).toEqual(["saved", "sent"]);
+
+        const refused = async () => {
+            throw new Error("DECISION 3 changed");
+        };
+        expect(await flushThenSend([refused], () => order.push("sent again"))).toBe(false);
+        expect(order).toEqual(["saved", "sent"]);
+    });
+
     it("keeps recent receipts newest first, one per card, and drops the oldest past the cap", () => {
         const entry = (testID: string, kind: "delivered" | "uncertain" = "delivered") => ({
             testID,
