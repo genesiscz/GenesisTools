@@ -19,12 +19,26 @@ export interface DriftReading {
     /** The window the reading belongs to: one account has several (unscoped, per model), each its own sequence. */
     series: string;
     util: number;
+    /** When the reading's window resets (epoch ms), or null when the provider did not say. */
+    resetsAt: number | null;
 }
 
 export interface DriftWindow {
     from: number;
     to: number;
     delta: number;
+}
+
+/**
+ * Whether a window began between two readings: the first one's reset instant passed, or the second names a later
+ * reset than the first (an early reset). Two readings of one reset instant differ by seconds, so `slackMs` absorbs it.
+ */
+function crossesReset(a: DriftReading, b: DriftReading, slackMs: number): boolean {
+    if (a.resetsAt !== null && b.ts >= a.resetsAt) {
+        return true;
+    }
+
+    return a.resetsAt !== null && b.resetsAt !== null && b.resetsAt > a.resetsAt + slackMs;
 }
 
 /**
@@ -61,8 +75,8 @@ export function exclusiveWindows(
         const b = mine[i];
         const delta = b.util - a.util;
 
-        // A drop is a reset or a flat re-poll, never use.
-        if (delta <= 0 || b.ts - a.ts > opts.maxWindowMs) {
+        // A drop is a reset or a flat re-poll, never use. A rise across a reset mixes two windows' usage.
+        if (delta <= 0 || b.ts - a.ts > opts.maxWindowMs || crossesReset(a, b, opts.padMs)) {
             continue;
         }
 
@@ -212,6 +226,7 @@ export function computeDrift(input: {
                 account: `${entry.provider}\u0000${entry.account}`,
                 series: String(index),
                 util: point.percent,
+                resetsAt: point.resetsAt === null ? null : Date.parse(point.resetsAt),
             }))
         )
         .sort((a, b) => a.ts - b.ts);
