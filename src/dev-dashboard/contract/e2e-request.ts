@@ -13,6 +13,29 @@ export interface E2eRequest {
     path: string;
     /** Raw, already-serialized request body (JSON string), if any. */
     body?: string;
+    /** Only the headers in `E2E_FORWARDED_HEADERS`, by lower-case name: what a route reads beyond the body. */
+    headers?: Record<string, string>;
+}
+
+/**
+ * The request headers that cross the sealed hop: the idempotency key (a retried write returns its first answer) and
+ * the act token. Everything else (auth, cookies, content type) is the transport's business, never the inner request.
+ */
+export const E2E_FORWARDED_HEADERS = ["idempotency-key", "x-gt-act-token"] as const;
+
+/** The forwarded headers of `headers`, by lower-case name; undefined when none is present. */
+export function forwardedE2eHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+    const picked: Record<string, string> = {};
+
+    for (const [name, value] of Object.entries(headers ?? {})) {
+        const lower = name.toLowerCase();
+
+        if ((E2E_FORWARDED_HEADERS as readonly string[]).includes(lower) && typeof value === "string") {
+            picked[lower] = value;
+        }
+    }
+
+    return Object.keys(picked).length > 0 ? picked : undefined;
 }
 
 export interface E2eResponse {
@@ -32,7 +55,11 @@ export function decodeE2eRequest(raw: string): E2eRequest {
     if (
         typeof req.method !== "string" ||
         typeof req.path !== "string" ||
-        (req.body !== undefined && typeof req.body !== "string")
+        (req.body !== undefined && typeof req.body !== "string") ||
+        (req.headers !== undefined &&
+            (typeof req.headers !== "object" ||
+                req.headers === null ||
+                Object.values(req.headers).some((value) => typeof value !== "string")))
     ) {
         throw new Error("invalid E2eRequest");
     }

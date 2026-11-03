@@ -1,4 +1,9 @@
-import { decodeE2eRequest, type E2eResponse, encodeE2eResponse } from "@app/dev-dashboard/contract/e2e-request";
+import {
+    decodeE2eRequest,
+    type E2eResponse,
+    encodeE2eResponse,
+    forwardedE2eHeaders,
+} from "@app/dev-dashboard/contract/e2e-request";
 import type { BoxCipher, KeyPair } from "@app/dev-dashboard/lib/e2e/box";
 import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import type { Router } from "@app/dev-dashboard/server/router";
@@ -48,11 +53,14 @@ export async function handleE2eRpc(rawEnvelope: string, deps: E2eRpcDeps): Promi
         handle: async (plaintext): Promise<Uint8Array> => {
             const req = decodeE2eRequest(new TextDecoder().decode(plaintext));
 
-            const init: RequestInit = { method: req.method };
+            // Only the allowlisted headers survive (the idempotency key and the act token), so a retried keyed
+            // write over the relay still returns its first answer.
+            const headers: Record<string, string> = { ...forwardedE2eHeaders(req.headers) };
+            const init: RequestInit = { method: req.method, headers };
 
             if (req.body !== undefined && !isBodylessMethod(req.method)) {
                 init.body = req.body;
-                init.headers = { "Content-Type": "application/json" };
+                headers["Content-Type"] = "application/json";
             }
 
             const synthetic = new Request(`${E2E_SYNTHETIC_ORIGIN}${req.path}`, init);
