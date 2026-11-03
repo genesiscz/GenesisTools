@@ -116,16 +116,41 @@ describe("session report", () => {
 describe("limit drift", () => {
     test("an exclusive window is a rise of the target with no other account rising around it", () => {
         const rows = [
-            { ts: 0, account: "a", series: "a", util: 10 },
-            { ts: 0, account: "b", series: "b", util: 5 },
-            { ts: 60_000, account: "a", series: "a", util: 11 },
-            { ts: 120_000, account: "b", series: "b", util: 6 },
-            { ts: 600_000, account: "a", series: "a", util: 13 },
+            { ts: 0, account: "a", series: "a", util: 10, resetsAt: null },
+            { ts: 0, account: "b", series: "b", util: 5, resetsAt: null },
+            { ts: 60_000, account: "a", series: "a", util: 11, resetsAt: null },
+            { ts: 120_000, account: "b", series: "b", util: 6, resetsAt: null },
+            { ts: 600_000, account: "a", series: "a", util: 13, resetsAt: null },
         ];
 
         expect(
             exclusiveWindows(rows, { account: "a", series: "a" }, { padMs: 30_000, maxWindowMs: 3_600_000 })
         ).toEqual([{ from: 0, to: 60_000, delta: 1 }]);
+    });
+
+    test("a rise across a reset is no window: 2 % before and 8 % after are two windows, not six points", () => {
+        const week = 7 * 24 * 3_600_000;
+        const opts = { padMs: 30_000, maxWindowMs: 3_600_000 };
+        const target = { account: "a", series: "a" };
+        // The reset at 30 s falls between the polls; the new window ends higher than the old one.
+        const passed = [
+            { ts: 0, account: "a", series: "a", util: 2, resetsAt: 30_000 },
+            { ts: 60_000, account: "a", series: "a", util: 8, resetsAt: 30_000 + week },
+        ];
+        // The provider moved the reset forward (an early reset) without the old instant having passed.
+        const moved = [
+            { ts: 0, account: "a", series: "a", util: 2, resetsAt: week },
+            { ts: 60_000, account: "a", series: "a", util: 8, resetsAt: 60_000 + week },
+        ];
+        // The same reset instant read again a few seconds apart is still one window.
+        const same = [
+            { ts: 0, account: "a", series: "a", util: 2, resetsAt: week },
+            { ts: 60_000, account: "a", series: "a", util: 8, resetsAt: week + 2_000 },
+        ];
+
+        expect(exclusiveWindows(passed, target, opts)).toEqual([]);
+        expect(exclusiveWindows(moved, target, opts)).toEqual([]);
+        expect(exclusiveWindows(same, target, opts)).toEqual([{ from: 0, to: 60_000, delta: 6 }]);
     });
 
     test("pooled ratio, a deterministic interval, and the overlap test", () => {
