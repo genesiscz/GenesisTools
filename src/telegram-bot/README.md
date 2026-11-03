@@ -40,6 +40,29 @@ Run each subcommand with `--help` for the full option list.
 
 ---
 
+## Decisions with letter buttons
+
+A project can post its ❓ DECISIONs to Telegram, one message each with one button per option letter. A press answers
+the decision through the same door as the hub (`src/question/lib/act/act.ts`), and the message then says where the
+answer went: sent to the agent, saved for the next prompt, may have arrived, or why it was not sent. A decision
+answered elsewhere loses its buttons and says so.
+
+```bash
+tools telegram-bot decisions enable <project>          # letters only (the label and the project)
+tools telegram-bot decisions enable <project> --text   # also the prompt and the option texts; Telegram stores them
+tools telegram-bot decisions disable <project>
+tools telegram-bot decisions list [--json]
+tools telegram-bot decisions chat <chatId>             # another chat than the commands chat
+```
+
+`<project>` is the decision's project, the repository folder name. The bot must run (`start` or `start --webhook`)
+to receive presses.
+
+The config (`~/.genesis-tools/telegram-bot/config.json`, version 2) nests chats by purpose:
+`chats: { commands, notifications?, decisions? }`. A version 1 file (one flat `chatId`) is read as `chats.commands` and
+written in the new shape on the next save. The notify channel and the shops alerts use their own token and chat when
+they name both, else this bot and its notifications chat.
+
 ## Two ways to receive updates
 
 A bot either polls or has a webhook. Telegram never allows both.

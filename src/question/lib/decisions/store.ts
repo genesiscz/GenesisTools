@@ -33,6 +33,7 @@ import {
     type StoredTransclusion,
     storedDecisionSchema,
 } from "./schema";
+import { retractDecisionTelegram } from "./telegram";
 
 export type DecisionState = (typeof DECISION_STATES)[number];
 export type DecisionKind = (typeof DECISION_KINDS)[number];
@@ -1268,6 +1269,7 @@ function applyUpdates({
 
     return written.then((result) => {
         retractDecisionBanners(closed);
+        retractDecisionTelegram(closed);
         return result;
     });
 }
