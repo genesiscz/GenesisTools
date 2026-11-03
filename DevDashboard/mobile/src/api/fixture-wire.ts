@@ -230,8 +230,9 @@ const ROUTES: FixtureRoute[] = [
                 fixtureDraft({
                     session: text(body.session),
                     number: numberOf(body.number),
-                    option: text(body.option) || undefined,
-                    text: text(body.text) || undefined,
+                    // An empty string clears, as on the Mac; only an absent field keeps the staged value.
+                    option: typeof body.option === "string" ? body.option : undefined,
+                    text: typeof body.text === "string" ? body.text : undefined,
                     expectedRevision: typeof body.expectedRevision === "number" ? body.expectedRevision : undefined,
                 })
             ),

@@ -161,9 +161,9 @@ export function fixtureDraft(input: {
         throw new Error(`DECISION ${input.number} changed: the agent posted a new text`);
     }
 
-    // As on the Mac (`draftDecision`): an absent pick or note keeps the staged one.
-    item.draftOption = input.option ?? item.draftOption;
-    item.draft = input.text !== undefined ? input.text : item.draft;
+    // As on the Mac (`draftDecision`): an absent pick or note keeps the staged one, and an empty one clears it.
+    item.draftOption = input.option === undefined ? item.draftOption : input.option || null;
+    item.draft = input.text === undefined ? item.draft : input.text || null;
     item.status = item.draftOption || item.draft ? "drafted" : "waiting";
 
     return {
