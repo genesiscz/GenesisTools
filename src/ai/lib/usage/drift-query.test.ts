@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AttributedEvent } from "@genesiscz/utils/ai/usage/attribution/spend-share";
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
-import type { SeriesScope } from "./attribution-query";
+
 import { queryDrift } from "./drift-query";
 
 /** `limits drift` over invented series: which peers decide that a rise of one account is its own. */
@@ -12,16 +12,22 @@ const MODEL = "claude-sonnet-4-5";
 const work: AccountKey = { provider: PROVIDER, accountId: "w", accountName: "work" };
 const side: AccountKey = { provider: PROVIDER, accountId: "s", accountName: "side" };
 
-function weekly(account: string, scopeModel: string | null, percents: number[]): SeriesEntry {
+function windowSeries(input: {
+    account: string;
+    kind: "weekly" | "session";
+    scopeModel?: string;
+    percents: number[];
+}): SeriesEntry {
+    const scopeModel = input.scopeModel ?? null;
     return {
         provider: PROVIDER,
-        account,
-        key: scopeModel ? `seven_day_${scopeModel}` : "seven_day",
-        kind: "weekly",
+        account: input.account,
+        key: input.kind === "session" ? "five_hour" : scopeModel ? `seven_day_${scopeModel}` : "seven_day",
+        kind: input.kind,
         scopeModel,
         resets: [],
         availability: [],
-        points: percents.map((percent, index) => ({
+        points: input.percents.map((percent, index) => ({
             t: new Date(Date.UTC(2026, 10, 2, 10, index * 10)).toISOString(),
             percent,
             resetsAt: null,
@@ -45,34 +51,59 @@ function spend(minute: number): AttributedEvent {
     };
 }
 
-async function windowsOfWork(sidePercents: number[]): Promise<number> {
-    const series = [weekly("work", MODEL, [10, 11, 12, 13]), weekly("side", null, sidePercents)];
-    const scope: SeriesScope = {
-        directory: [work, side],
-        selection: undefined,
-        series,
-        keyOf: (entry) => (entry.account === "work" ? work : side),
-    };
+/** The drift rows over `series`, read the way the store reads them: only the kinds the query asks it for. */
+async function driftOf(series: SeriesEntry[]) {
     const envelope = await queryDrift(
         { minWindows: "3" },
         {
             now: new Date(Date.UTC(2026, 10, 2, 12)),
             loadEvents: async () => [spend(5), spend(15), spend(25)],
-            readScope: async () => scope,
+            readScope: async ({ kinds }) => ({
+                directory: [work, side],
+                selection: undefined,
+                series: series.filter(
+                    (entry) => kinds === undefined || (entry.kind !== null && kinds.some((kind) => kind === entry.kind))
+                ),
+                keyOf: (entry) => (entry.account === "work" ? work : side),
+            }),
         }
     );
 
-    return envelope.data.rows
+    return envelope.data.rows;
+}
+
+function windowsOfWork(rows: Awaited<ReturnType<typeof driftOf>>): number {
+    return rows
         .filter((row) => row.account.accountName === "work" && row.model === "all")
         .reduce((sum, row) => sum + row.weeks.reduce((weeks, week) => weeks + week.windows, 0), 0);
 }
 
+const workScoped = windowSeries({ account: "work", kind: "weekly", scopeModel: MODEL, percents: [10, 11, 12, 13] });
+
 describe("limits drift exclusivity", () => {
     test("an unscoped peer of the provider rising makes a model-scoped window not exclusive", async () => {
-        expect(await windowsOfWork([20, 21, 22, 23])).toBe(0);
+        const peer = windowSeries({ account: "side", kind: "weekly", percents: [20, 21, 22, 23] });
+        expect(windowsOfWork(await driftOf([workScoped, peer]))).toBe(0);
     });
 
     test("a flat unscoped peer leaves the model-scoped windows exclusive", async () => {
-        expect(await windowsOfWork([20, 20, 20, 20])).toBe(3);
+        const peer = windowSeries({ account: "side", kind: "weekly", percents: [20, 20, 20, 20] });
+        expect(windowsOfWork(await driftOf([workScoped, peer]))).toBe(3);
+    });
+
+    test("another account's session window rising makes a weekly window not exclusive", async () => {
+        const target = windowSeries({ account: "work", kind: "weekly", percents: [10, 11, 12, 13] });
+        const peer = windowSeries({ account: "side", kind: "session", percents: [20, 21, 22, 23] });
+        expect(windowsOfWork(await driftOf([target, peer]))).toBe(0);
+    });
+
+    test("peers of every kind are read, but only the asked kinds (weekly by default) get rows", async () => {
+        const target = windowSeries({ account: "work", kind: "weekly", percents: [10, 11, 12, 13] });
+        const ownSession = windowSeries({ account: "work", kind: "session", percents: [30, 31, 32, 33] });
+        const peer = windowSeries({ account: "side", kind: "session", percents: [20, 20, 20, 20] });
+        const rows = await driftOf([target, ownSession, peer]);
+
+        expect(windowsOfWork(rows)).toBe(3);
+        expect(rows.map((row) => row.kind)).toEqual(rows.map(() => "weekly"));
     });
 });

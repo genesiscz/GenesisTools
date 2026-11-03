@@ -210,11 +210,13 @@ function weekOf(samples: readonly WindowSample[], week: string, settings: DriftS
 }
 
 /**
- * The drift rows of every series given. A window is exclusive against every other account's series of the same
- * provider, whatever its kind or model scope, so pass all of them in one call.
+ * The drift rows of the target series. A window is exclusive against every other account's series of the same
+ * provider, whatever its kind or model scope, so pass all of them in one call: `targets` picks which of them get rows
+ * (every series when omitted), and the rest only decide exclusivity.
  */
 export function computeDrift(input: {
     series: readonly SeriesEntry[];
+    targets?: (entry: SeriesEntry) => boolean;
     events: readonly AttributedEvent[];
     accountOf: (entry: SeriesEntry) => AccountKey;
     settings: DriftSettings;
@@ -235,6 +237,10 @@ export function computeDrift(input: {
     const rows: DriftRow[] = [];
 
     for (const [index, entry] of input.series.entries()) {
+        if (input.targets && !input.targets(entry)) {
+            continue;
+        }
+
         const account = input.accountOf(entry);
         const ownEvents = input.events.filter(
             (event) => event.account.account !== undefined && sameAccount(event.account.account, account)
