@@ -106,7 +106,7 @@ function statusOf(snapshot: WireAccountUsageSnapshot): string {
     return pc.green("ok");
 }
 
-function renderLimits(envelope: UsageEnvelope<LimitsNowData>): void {
+export function renderLimits(envelope: UsageEnvelope<LimitsNowData>): void {
     renderCliHeader("Usage limits", `${envelope.data.accounts.length} accounts · every window now`);
     const table = createBoxTable(["ACCOUNT", "WINDOWS", "STATUS"]);
 
@@ -120,6 +120,19 @@ function renderLimits(envelope: UsageEnvelope<LimitsNowData>): void {
     }
 
     out.println(table.toString());
+
+    // `--scored`: the order each provider's ranker picks, best first, with the reason it gives.
+    if (envelope.data.ranked) {
+        out.println(pc.bold("Ranked (--scored)"));
+        const ranked = createBoxTable(["#", "ACCOUNT", "TIER", "SCORE", "WHY"]);
+
+        for (const [index, row] of envelope.data.ranked.entries()) {
+            ranked.push([String(index + 1), accountLabel(row), row.tier, String(row.score), row.why]);
+        }
+
+        out.println(ranked.toString());
+    }
+
     printWarnings(envelope.warnings);
 }
 

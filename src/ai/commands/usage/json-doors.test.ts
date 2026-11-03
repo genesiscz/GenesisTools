@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, mock, setSystemTime, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { RankedAccount } from "@genesiscz/utils/ai/providers/usage-rank";
+import { usageEnvelope } from "@genesiscz/utils/ai/usage/contract";
 import type { ForecastResult } from "@genesiscz/utils/ai/usage/forecast/forecast";
+import { LIMITS_NOW_SCHEMA } from "@genesiscz/utils/ai/usage-poll/limits-now";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -130,7 +133,7 @@ mock.module("@genesiscz/utils/ai/usage/forecast/forecast", () => ({
 }));
 
 const { registerAiUsageCommand } = await import("./index");
-const { registerAiUsageLimitsCommand } = await import("./limits");
+const { registerAiUsageLimitsCommand, renderLimits } = await import("./limits");
 const { registerForecastCommand } = await import("@app/hub/commands/forecast");
 
 /** The golden files are plain text so no formatter ever rewrites their bytes. */
@@ -196,5 +199,49 @@ describe("tools ai usage limits forecast (alias of tools hub forecast)", () => {
             { provider: "openai-sub", account: "work" },
             { provider: "openai-sub", account: "work" },
         ]);
+    });
+});
+
+describe("tools ai usage limits --scored (text)", () => {
+    test("prints the ranked order with each account's tier, score and reason", async () => {
+        const ranked = (
+            accountName: string,
+            tier: RankedAccount["tier"],
+            score: number,
+            why: string
+        ): RankedAccount => ({
+            provider: "anthropic-sub",
+            accountId: `acc_${accountName}`,
+            accountName,
+            tier,
+            longHeadroomPct: 0,
+            sessionHeadroomPct: 0,
+            resetBonus: 0,
+            sessions: 0,
+            score,
+            why,
+        });
+        const envelope = usageEnvelope({
+            ...LIMITS_NOW_SCHEMA,
+            now: NOW,
+            accounts: [],
+            data: {
+                accounts: [FIXTURE[0]],
+                ranked: [
+                    ranked("personal", "ready", 81.5, "Weekly 80% left"),
+                    ranked("work", "weekly-blocked", 2, "Weekly 2% left"),
+                ],
+            },
+            warnings: [],
+        });
+        const { stdout } = await captureOutput(() => renderLimits(envelope));
+        const rankedPart = stdout.slice(stdout.indexOf("Ranked"));
+
+        expect(stdout).toContain("Ranked");
+        expect(rankedPart.indexOf("personal")).toBeGreaterThan(-1);
+        expect(rankedPart.indexOf("personal")).toBeLessThan(rankedPart.indexOf("work"));
+        expect(rankedPart).toContain("weekly-blocked");
+        expect(rankedPart).toContain("81.5");
+        expect(rankedPart).toContain("Weekly 2% left");
     });
 });
