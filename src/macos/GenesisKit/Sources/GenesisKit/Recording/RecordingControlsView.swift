@@ -204,7 +204,7 @@ public struct RecordingControlsView: View {
         .frame(maxHeight: .infinity)
         .contentShape(Rectangle())
         .allowsHitTesting(false)
-        .background(PanelDragArea(identifier: "recording.drag", label: "Move the recording controls", dragged: actions.moved))
+        .background(RecordingWindowDragArea(dragged: actions.moved))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityStatus)
         .frameProbe("recording.status")

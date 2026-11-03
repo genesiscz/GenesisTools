@@ -74,6 +74,61 @@ enum RecordingPanelLayout {
     }
 }
 
+/// A drag area that moves its window. It tracks the drag itself from each event's location: `performDrag(with:)`
+/// moved a non-activating panel only on the first drag of a show (ux ledger, 2026-10-14).
+struct RecordingWindowDragArea: NSViewRepresentable {
+    var dragged: () -> Void
+
+    func makeNSView(context: Context) -> RecordingWindowDragView {
+        let view = RecordingWindowDragView()
+        view.dragged = dragged
+        return view
+    }
+
+    func updateNSView(_ view: RecordingWindowDragView, context: Context) { view.dragged = dragged }
+}
+
+final class RecordingWindowDragView: NSView {
+    var dragged: (() -> Void)?
+    private var last: CGPoint?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.handle)
+        setAccessibilityIdentifier("recording.drag")
+        setAccessibilityLabel("Move the recording controls")
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: last == nil ? .openHand : .closedHand) }
+
+    /// Global CoreGraphics points (y down), from the event itself, so a drag delivered in the background moves it too.
+    private func location(_ event: NSEvent) -> CGPoint {
+        event.cgEvent?.location ?? CGPoint(x: NSEvent.mouseLocation.x, y: -NSEvent.mouseLocation.y)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        last = location(event)
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window, let last else { return }
+        let point = location(event)
+        window.setFrameOrigin(CGPoint(x: window.frame.minX + point.x - last.x, y: window.frame.minY - (point.y - last.y)))
+        self.last = point
+        dragged?()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        last = nil
+        window?.invalidateCursorRects(for: self)
+    }
+}
+
 /// The floating window that holds the recording controls. Out of every movie by window id (the session passes it to
 /// the recorder); `sharingType = .none` also keeps it out of legacy window captures.
 @MainActor
