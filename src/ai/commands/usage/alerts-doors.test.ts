@@ -377,35 +377,35 @@ describe("the daemon tick", () => {
         expect(delivered.map((card) => card.windowKey)).toEqual(["seven_day"]);
     });
 
-    test("a tick whose alert pass failed leaves its events to the next pass", async () => {
+    const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
+    const workSnapshot = (now: Date) => ({
+        provider: "anthropic-sub",
+        accountId: "acc_work",
+        accountName: "work",
+        fetchedAt: now.toISOString(),
+        limits: [],
+    });
+    /** One daemon tick of the `work` account with no windows; `fail` makes its alert pass throw after the poll run. */
+    const tick = (now: Date, fail = false) => {
         const quiet: AlertChannel = { id: "inbox", interrupts: false, deliver: async () => {} };
-        const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
-        const tick = (now: Date, fail = false) =>
-            recordRoundAndAlert({
-                db: limits,
-                snapshots: [
-                    {
-                        provider: "anthropic-sub",
-                        accountId: "acc_work",
-                        accountName: "work",
-                        fetchedAt: now.toISOString(),
-                        limits: [],
-                    },
-                ],
-                config: dashboard(),
-                storage: new Storage("ai-usage"),
-                now,
-                channels: { macos: { ...quiet, id: "macos" }, inbox: quiet },
-                trackers: async () => {
-                    if (fail) {
-                        throw new Error("tracker file unreadable");
-                    }
 
-                    return {};
-                },
-            });
+        return recordRoundAndAlert({
+            db: limits,
+            snapshots: [workSnapshot(now)],
+            config: dashboard(),
+            storage: new Storage("ai-usage"),
+            now,
+            channels: { macos: { ...quiet, id: "macos" }, inbox: quiet },
+            trackers: async () => {
+                if (fail) {
+                    throw new Error("tracker file unreadable");
+                }
 
-        expect((await tick(at(0))).fired).toEqual([]);
+                return {};
+            },
+        });
+    };
+    const refusedProbe = (when: Date) =>
         new UsageEventsStore(limits.connection()).insert({
             provider: "anthropic-sub",
             accountName: "work",
@@ -413,14 +413,41 @@ describe("the daemon tick", () => {
             source: "probe-budget",
             kind: "probe-refused",
             detail: "the account probe budget of 7 days is spent",
-            at: at(30),
+            at: when,
         });
+
+    test("a tick whose alert pass failed leaves its events to the next pass", async () => {
+        expect((await tick(at(0))).fired).toEqual([]);
+        refusedProbe(at(30));
         await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
 
         const next = await tick(at(120));
 
         expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
         expect((await tick(at(180))).fired).toEqual([]);
+    });
+
+    test("an alert pass that fails before any pass finished leaves its events to the next pass", async () => {
+        // An older build polled, so a poll run exists, but no alert pass ever recorded its cursor.
+        new PollRunsStore(limits.connection()).recordRound(
+            [{ snapshot: workSnapshot(at(0)), source: "endpoint" }],
+            at(0)
+        );
+        refusedProbe(at(30));
+        await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
+
+        const next = await tick(at(120));
+
+        expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
+    });
+
+    test("the very first tick failing leaves the events before it to the next pass", async () => {
+        refusedProbe(at(30));
+        await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
+
+        const next = await tick(at(120));
+
+        expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
     });
 });
 
