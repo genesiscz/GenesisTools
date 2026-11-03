@@ -166,6 +166,8 @@ public struct UsageWorkerGroup: Decodable, Equatable, Sendable, Identifiable {
     public let apiEquivalentUsd: Double
     public let billedUsd: Double
     public let unpricedRequests: Int?
+    /// Requests left out of `billedUsd`: the bill of their turn is not known.
+    public let unbilledRequests: Int?
     public let claudeOpusUsd: Double?
     public let claudeSonnetUsd: Double?
 

@@ -256,6 +256,26 @@ final class HubUsageTests: XCTestCase {
     }
 
     @MainActor
+    func testTheDriftEfficiencyLoadsGivesTheLimitsTableItsVerdict() async throws {
+        let drift = """
+        {"schema":"usage.limits.drift@1","generatedAt":"2026-11-03T10:00:00.000Z","selector":{"accounts":[]},"warnings":[],
+         "data":{"rows":[{"account":{"provider":"anthropic-sub","accountId":"acc_work","accountName":"work"},
+           "kind":"weekly","model":"all","weeks":[],"baseline":null,"verdict":"limit cut?"}]}}
+        """
+        let model = HubUsageModel(preferences: try Self.scratchPreferences(), client: UsageClient { argv in
+            if argv.contains("drift") { return Data(drift.utf8) }
+            return Data((argv.contains("--cached") ? Self.limitsJSON : "{}").utf8)
+        })
+        model.activate()
+        try await wait { model.table.rows.count == 2 }
+        XCTAssertNil(model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict)
+
+        model.section = .efficiency
+        try await wait { model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict != nil }
+        XCTAssertEqual(model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict, "limit cut?")
+    }
+
+    @MainActor
     func testADigestDayChangedWhileTheOldDayLoadsShowsTheNewDay() async throws {
         let store = HubUsageDigestStore(client: UsageClient { argv in
             guard argv.contains("digest"), let day = Self.value(after: "--day", in: argv) else {
