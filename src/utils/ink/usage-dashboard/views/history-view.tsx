@@ -87,8 +87,16 @@ export function formatTimePerPercent(deltaMs: number, deltaPercent: number): str
     return remMin > 0 ? `${hr}h${remMin}m` : `${hr}h`;
 }
 
+/** The fields `seriesToRows` reads from a `getSeries` entry. */
+export interface HistorySeries {
+    provider: string;
+    account: string;
+    key: string;
+    points: ReadonlyArray<{ t: string; percent: number }>;
+}
+
 /** Flatten `getSeries` output into newest-first rows with per-series deltas, grouped by account. */
-export function seriesToRows(series: readonly SeriesEntry[]): HistoryRow[] {
+export function seriesToRows(series: readonly HistorySeries[]): HistoryRow[] {
     const rows: HistoryRow[] = [];
 
     for (const entry of series) {
