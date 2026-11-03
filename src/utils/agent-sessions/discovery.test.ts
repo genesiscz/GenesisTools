@@ -472,12 +472,14 @@ test("Claude discovery displaces a sidecar stub of a moved session without repor
     const transcript = join(newProject, `${sessionId}.jsonl`);
     mkdirSync(oldProject, { recursive: true });
     mkdirSync(newProject, { recursive: true });
-    // What a cwd move leaves behind on the live corpus: title and agent-name records, no turn.
+    // What a cwd move leaves behind on the live corpus: title and agent-name records, and from older Claude Code
+    // releases `summary` records (a session title with its leaf uuid), no turn.
     writeFileSync(
         stub,
         [
             line({ type: "agent-name", sessionId, agentName: "fixture" }),
             line({ type: "custom-title", sessionId, customTitle: "moved session" }),
+            line({ type: "summary", summary: "moved session", leafUuid: "55555555-6666-4777-8888-999999999999" }),
         ].join("")
     );
     writeFileSync(transcript, line({ type: "user", sessionId, message: { content: "the real conversation" } }));

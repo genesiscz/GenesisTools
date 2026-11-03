@@ -15,8 +15,12 @@ function sourceHome(root: string): string {
 
 const isSubagentPath = isClaudeSubagentPath;
 
-/** Record types that make a file a transcript rather than a sidecar of one. */
-const CONVERSATION_TYPES = new Set(["user", "assistant", "summary", "system"]);
+/**
+ * Record types that make a file a transcript rather than a sidecar of one. Not `summary`: older Claude Code wrote a
+ * session's title as `{type: "summary", summary, leafUuid}`, and a copy holding only those is a title-only stub. It
+ * was the only divergent copy on the live corpus and warned on every history search (2026-11-03).
+ */
+const CONVERSATION_TYPES = new Set(["user", "assistant", "system"]);
 const STUB_MAX_BYTES = 64 * 1024;
 
 /**
