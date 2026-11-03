@@ -57,7 +57,9 @@ func axErrorName(_ err: AXError) -> String {
 /// The refusal for a missing grant, naming the app macOS holds responsible (see
 /// `permissionRefusalMessage`). Every AX command and every capture path ends here.
 func permissionRefusalExit(_ grant: PermissionGrant) -> Never {
-    jsonOutput(permissionRefusal(grant, responsible: responsibleProcess(), pid: getpid()))
+    var refusal = permissionRefusal(grant, responsible: responsibleProcess(), pid: getpid())
+    refusal["code"] = "no-permission"
+    jsonOutput(refusal)
     exit(1)
 }
 

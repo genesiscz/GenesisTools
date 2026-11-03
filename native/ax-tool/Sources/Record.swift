@@ -44,6 +44,18 @@ struct RecordOptions {
     let videoOut: String?
     let outDir: String
     let maxFrames: Int
+    /// `--display-id`: the CGDirectDisplayID to record in screen mode; wins over `--screen-index`.
+    let displayID: CGDirectDisplayID?
+    /// `--follow-focus`: record the display holding the frontmost app's focused window, switching live.
+    let followFocus: Bool
+    /// `--max-long-side`: the longer side of a kept frame in pixels, at most.
+    let maxLongSide: Int?
+    /// `--quiet-ms`: calm time before the idle rate; nil keeps the eight-still-frames rule.
+    let quietMs: Int?
+    /// `--heartbeat-sec`: keep a frame at least this often while nothing changes; 0 is off.
+    let heartbeatSec: Double
+    /// `--max-mb`: stop keeping frames after this many megabytes were written.
+    let maxMb: Double?
     /// Warnings raised before the recorder existed; they open its warning list.
     let startWarnings: [String]
 }
@@ -51,27 +63,51 @@ struct RecordOptions {
 private func recordOptions(startWarnings: [String]) -> RecordOptions {
     let mode = argValue("--mode") ?? "window"
     guard ["screen", "window", "region", "isolated"].contains(mode) else {
-        errorExit("--mode must be screen, window, region or isolated")
+        errorExit("--mode must be screen, window, region or isolated", code: "invalid-argument")
     }
     func number(_ flag: String, default fallback: Double, min lower: Double, max upper: Double) -> Double {
         guard let raw = argValue(flag) else { return fallback }
         guard let value = Double(raw), value.isFinite, value >= lower, value <= upper else {
-            errorExit("\(flag) must be a number between \(lower) and \(upper)")
+            errorExit("\(flag) must be a number between \(lower) and \(upper)", code: "invalid-argument")
         }
         return value
+    }
+    func optionalNumber(_ flag: String, min lower: Double, max upper: Double) -> Double? {
+        argValue(flag) == nil ? nil : number(flag, default: 0, min: lower, max: upper)
     }
     var region: CGRect?
     if let raw = argValue("--region") {
         let parts = raw.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
         guard parts.count == 4, parts[2] > 0, parts[3] > 0 else {
-            errorExit("--region must be x,y,w,h in global screen points")
+            errorExit("--region must be x,y,w,h in global screen points", code: "invalid-argument")
         }
         region = CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
     }
     var windowID: CGWindowID?
     if let raw = argValue("--window-id") {
-        guard let id = UInt32(raw), id > 0 else { errorExit("--window-id must be a positive integer") }
+        guard let id = UInt32(raw), id > 0 else { errorExit("--window-id must be a positive integer", code: "invalid-argument") }
         windowID = id
+    }
+    var displayID: CGDirectDisplayID?
+    if let raw = argValue("--display-id") {
+        guard let id = UInt32(raw), id > 0 else { errorExit("--display-id must be a positive CGDirectDisplayID; run `ax-tool screens`", code: "invalid-argument") }
+        displayID = id
+    }
+    let followFocus = CommandLine.arguments.contains("--follow-focus")
+    if (displayID != nil || followFocus) && mode != "screen" {
+        errorExit("--display-id and --follow-focus require --mode screen", code: "invalid-argument")
+    }
+    if displayID != nil && followFocus {
+        errorExit("--display-id and --follow-focus name different targets; pass one", code: "invalid-argument")
+    }
+    if followFocus {
+        if #unavailable(macOS 14.0) {
+            errorExit("--follow-focus needs macOS 14 or newer (SCStream.updateContentFilter)", code: "invalid-argument")
+        }
+    }
+    let maxLongSide = optionalNumber("--max-long-side", min: 16, max: 16384).map { Int($0) }
+    if maxLongSide != nil && mode == "isolated" {
+        errorExit("--max-long-side applies to screen, window and region mode; isolated mode takes --output-size", code: "invalid-argument")
     }
     let outDir = argValue("--out") ?? FileManager.default.temporaryDirectory
         .appendingPathComponent("control-record-\(UUID().uuidString)").path
@@ -100,6 +136,12 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         videoOut: videoOut,
         outDir: outDir,
         maxFrames: Int(number("--max-frames", default: 800, min: 1, max: 5000)),
+        displayID: displayID,
+        followFocus: followFocus,
+        maxLongSide: maxLongSide,
+        quietMs: optionalNumber("--quiet-ms", min: 0, max: 3_600_000).map { Int($0) },
+        heartbeatSec: number("--heartbeat-sec", default: 0, min: 0, max: 3600),
+        maxMb: optionalNumber("--max-mb", min: 0.01, max: 1_000_000),
         startWarnings: startWarnings
     )
 }
@@ -172,9 +214,42 @@ private func displayForScreenIndex(_ index: Int) -> DisplayGeometry {
     let screens = NSScreen.screens
     guard screens.indices.contains(index),
           let id = (screens[index].deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else {
-        errorExit("--screen-index outside the current display list; run `ax-tool screens`")
+        errorExit("--screen-index outside the current display list; run `ax-tool screens`", code: "display-missing")
     }
     return displayGeometry(id)
+}
+
+private func displayForID(_ id: CGDirectDisplayID) -> DisplayGeometry {
+    guard activeDisplays().contains(where: { $0.id == id }) else {
+        let known = activeDisplays().map { String($0.id) }.joined(separator: ", ")
+        errorExit("display \(id) is not connected (connected: \(known)); run `ax-tool screens`", code: "display-missing")
+    }
+    return displayGeometry(id)
+}
+
+private func displayIsActive(_ id: CGDirectDisplayID) -> Bool {
+    activeDisplays().contains { $0.id == id }
+}
+
+/// The display `--follow-focus` should record now: the frontmost app's frontmost normal window (CGWindowList is
+/// front to back, so its first layer-0 window of that pid), else the display under the mouse. Reads no AX state.
+private func currentFocusDisplay() -> CGDirectDisplayID? {
+    let displays = activeDisplays().map { DisplayFrame(id: $0.id, bounds: $0.bounds) }
+    var window: CGRect?
+    if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+       let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]],
+       let row = rows.first(where: { ($0[kCGWindowOwnerPID] as? Int32) == pid && ($0[kCGWindowLayer] as? Int) == 0 }),
+       let raw = row[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw), bounds.height > 50 {
+        window = bounds
+    }
+    return focusDisplay(window: window, mouse: CGEvent(source: nil)?.location, displays: displays)
+}
+
+/// The display reconfiguration callback is a C function pointer and captures nothing; it reaches the recording here.
+private var displayReconfigurationHandler: ((CGDirectDisplayID, CGDisplayChangeSummaryFlags) -> Void)?
+
+private let displayReconfigurationCallback: CGDisplayReconfigurationCallBack = { display, flags, _ in
+    displayReconfigurationHandler?(display, flags)
 }
 
 /// The CG window the recorder should follow: an explicit id, else the app's on-screen windows
@@ -231,6 +306,10 @@ struct KeptFrame {
     let timestampMs: Int
     let changePercent: Double
     let reason: String
+    let displayID: CGDirectDisplayID?
+    let motionBoxes: [MotionBox]
+
+    var motionBoxesJSON: [[Int]] { motionBoxes.map(\.json) }
 }
 
 /// One ScreenCaptureKit stream, the keep policy, PNG output and the optional MP4. Frames arrive
@@ -264,15 +343,105 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var videoAppendFailed = false
     private var rateChangeWarned = false
+    private var byteCapWarned = false
     private var streamError: Error?
+    private let heartbeat: HeartbeatPolicy
+    private var heartbeatTimer: DispatchSourceTimer?
+    /// The newest complete frame, held only while a heartbeat is on: a still screen delivers no new frames, so the
+    /// heartbeat keeps this one. One retained buffer out of the stream's queue depth of five.
+    private var latestBuffer: CVPixelBuffer?
+    private var lastKeptMs: Int?
+    /// The display the frames come from, `nil` for isolated captures. Changed on this queue by `displayChanged`.
+    private var currentDisplayID: CGDirectDisplayID?
+    private(set) var displaySwitches = 0
+    private(set) var heartbeatFrames = 0
     let stopped = DispatchSemaphore(value: 0)
 
-    init(options: RecordOptions, configuration: SCStreamConfiguration) {
+    init(options: RecordOptions, configuration: SCStreamConfiguration, displayID: CGDirectDisplayID? = nil) {
         self.options = options
         self.configuration = configuration
-        self.policy = KeepPolicy(thresholdPercent: options.threshold, maxFrames: options.maxFrames)
-        self.rate = FrameRatePolicy(activeFps: options.activeFps, idleFps: options.idleFps)
+        self.policy = KeepPolicy(thresholdPercent: options.threshold, maxFrames: options.maxFrames,
+                                 maxBytes: maxBytes(megabytes: options.maxMb))
+        self.rate = FrameRatePolicy(activeFps: options.activeFps, idleFps: options.idleFps, quietMs: options.quietMs)
+        self.heartbeat = HeartbeatPolicy(seconds: options.heartbeatSec)
+        self.currentDisplayID = displayID
         self.warnings = options.startWarnings
+    }
+
+    var bytesWritten: Int { queue.sync { policy.bytesWritten } }
+
+    /// The frames now come from another display: tag them with it, and keep the next one as its first frame.
+    func displayChanged(to id: CGDirectDisplayID) {
+        queue.async { [self] in
+            guard id != currentDisplayID else { return }
+            currentDisplayID = id
+            displaySwitches += 1
+            policy.restart(reason: "display-switch")
+        }
+    }
+
+    /// A new output size, set on the frame queue that also changes the frame rate. The caller hands the returned
+    /// configuration to the stream.
+    func setOutputSize(width: Int, height: Int) -> SCStreamConfiguration {
+        queue.sync {
+            configuration.width = width
+            configuration.height = height
+            return configuration
+        }
+    }
+
+    /// A warning from outside the frame queue; a repeat of the same text is dropped.
+    func warn(_ text: String) {
+        queue.async { [self] in
+            if !warnings.contains(text) {
+                warnings.append(text)
+            }
+        }
+    }
+
+    /// A stream restarted after its display went away starts without the old stream's error.
+    func clearFailure() {
+        queue.sync { streamError = nil }
+    }
+
+    func startHeartbeat() {
+        guard heartbeat.enabled else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250))
+        timer.setEventHandler { [weak self] in self?.heartbeatTick() }
+        timer.resume()
+        heartbeatTimer = timer
+    }
+
+    func stopHeartbeat() {
+        heartbeatTimer?.cancel()
+        heartbeatTimer = nil
+        queue.sync { latestBuffer = nil }
+    }
+
+    private func elapsedMs(_ timestamp: CMTime) -> Int {
+        let elapsed = CMTimeSubtract(timestamp, firstTimestamp ?? timestamp)
+        return Int((CMTimeGetSeconds(elapsed) * 1000).rounded())
+    }
+
+    private func heartbeatTick() {
+        guard let buffer = latestBuffer, firstTimestamp != nil else { return }
+        let nowMs = elapsedMs(CMClockGetTime(CMClockGetHostTimeClock()))
+        guard heartbeat.due(nowMs: nowMs, lastKeptMs: lastKeptMs), let signature = signature(of: buffer) else { return }
+        var candidate = policy
+        guard let beat = candidate.heartbeat(signature) else { return }
+        if keep(buffer, timestampMs: nowMs, decision: beat, candidate: candidate) {
+            heartbeatFrames += 1
+        }
+    }
+
+    private func signature(of pixelBuffer: CVPixelBuffer) -> FrameSignature? {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
+        return FrameSignature(bgra: UnsafeRawPointer(base), width: CVPixelBufferGetWidth(pixelBuffer),
+                              height: CVPixelBufferGetHeight(pixelBuffer),
+                              bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer), stride: 4)
     }
 
     /// Asks the live stream for a new delivery rate. Frames arrive on `queue`, so this is called
@@ -366,16 +535,14 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 warnings.append("the video writer refused a frame: \(writer?.error?.localizedDescription ?? "no writer error reported")")
             }
         }
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let signature = FrameSignature(bgra: UnsafeRawPointer(base), width: width, height: height,
-                                       bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer), stride: 4)
+        if heartbeat.enabled {
+            latestBuffer = pixelBuffer
+        }
+        guard let signature = signature(of: pixelBuffer) else { return }
+        let timestampMs = elapsedMs(timestamp)
         var candidate = policy
         let decision = candidate.consider(signature)
-        if let fps = rate.observe(kept: decision.moved) {
+        if let fps = rate.observe(kept: decision.moved, atMs: timestampMs) {
             applyRate(fps)
         }
 
@@ -383,47 +550,56 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             policy = candidate
             return
         }
-        let elapsed = CMTimeSubtract(timestamp, firstTimestamp ?? timestamp)
-        let timestampMs = Int((CMTimeGetSeconds(elapsed) * 1000).rounded())
+        keep(pixelBuffer, timestampMs: timestampMs, decision: decision, candidate: candidate)
+    }
+
+    /// Writes one kept frame and commits `candidate`. False when the frame was not admitted.
+    @discardableResult
+    private func keep(_ pixelBuffer: CVPixelBuffer, timestampMs: Int, decision: KeepPolicy.Decision,
+                      candidate: KeepPolicy) -> Bool {
         // A full-size PNG takes longer to encode than a frame lasts (a retina window: 150 to 400 ms). Encoded here, it
         // held this queue, so the stream and the movie fell to about 6 fps (2026-10-26). The encoder has its own queue;
         // only the pixels are copied out here, because the stream reuses its few buffers.
         guard admitPNG(videoConfigured: options.videoOut != nil, pending: pendingEncodes, maximum: Self.maxPendingEncodes) else {
             encoderBehind += 1
-            return
+            return false
         }
         let image = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = context.createCGImage(image, from: image.extent) else {
             warnings.append("frame at \(timestampMs) ms could not be rendered")
-            return
+            return false
         }
         policy = candidate
+        lastKeptMs = timestampMs
         reservedFrames += 1
         let index = reservedFrames
         let file = String(format: "keep-%04d.png", index)
         let url = URL(fileURLWithPath: options.outDir).appendingPathComponent(file)
         let frame = KeptFrame(index: index, file: file, timestampMs: timestampMs, changePercent: decision.changePercent,
-                              reason: decision.reason)
-        let encode = {
-            let failure: String?
-            if let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) {
-                do {
-                    try png.write(to: url, options: .atomic)
-                    failure = nil
-                } catch {
-                    failure = "frame at \(timestampMs) ms could not be written: \(error.localizedDescription)"
-                }
-            } else {
-                failure = "frame at \(timestampMs) ms could not be encoded"
+                              reason: decision.reason, displayID: currentDisplayID, motionBoxes: decision.motionBoxes)
+        let encode = { () -> (failure: String?, bytes: Int) in
+            guard let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
+                return ("frame at \(timestampMs) ms could not be encoded", 0)
             }
-            return failure
+            do {
+                try png.write(to: url, options: .atomic)
+                return (nil, png.count)
+            } catch {
+                return ("frame at \(timestampMs) ms could not be written: \(error.localizedDescription)", 0)
+            }
         }
         // On this queue: the frame is kept, or its failure is a warning.
-        func land(_ failure: String?) {
-            if let failure {
+        func land(_ result: (failure: String?, bytes: Int)) {
+            if let failure = result.failure {
                 warnings.append(failure)
-            } else {
-                kept.append(frame)
+                return
+            }
+
+            kept.append(frame)
+            policy.noteWritten(bytes: result.bytes)
+            if let maxMb = options.maxMb, policy.capReached, policy.keptCount < policy.maxFrames, !byteCapWarned {
+                byteCapWarned = true
+                warnings.append("--max-mb \(maxMb) reached after \(kept.count) frames; later frames were measured, not kept")
             }
         }
         if options.videoOut == nil {
@@ -431,13 +607,15 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         } else {
             pendingEncodes += 1
             encodeQueue.async { [self] in
-                let failure = encode()
+                let result = encode()
                 queue.async { [self] in
                     pendingEncodes -= 1
-                    land(failure)
+                    land(result)
                 }
             }
         }
+
+        return true
     }
 
     /// Waits until every kept frame is on disk and in `kept`. Call it after the stream stopped.
@@ -569,6 +747,7 @@ func writeContactSheet(_ frames: [KeptFrame], in directory: URL, to url: URL) ->
 }
 
 func cmdCaptureScreen() {
+    defaultErrorCode = "failed"
     guard #available(macOS 13.0, *) else {
         errorExit("capture needs macOS 13 or newer")
     }
@@ -601,17 +780,23 @@ func cmdCaptureScreen() {
         windowTarget = target
         display = displayContaining(CGPoint(x: target.bounds.midX, y: target.bounds.midY))
     case "region":
-        guard let region = options.region else { errorExit("region mode needs --region x,y,w,h") }
+        guard let region = options.region else { errorExit("region mode needs --region x,y,w,h", code: "invalid-argument") }
         guard let found = displayContaining(CGPoint(x: region.midX, y: region.midY)) else {
-            errorExit("no display contains the region")
+            errorExit("no display contains the region", code: "display-missing")
         }
         display = found
         sourceRect = CGRect(x: region.minX - found.bounds.minX, y: region.minY - found.bounds.minY,
                             width: region.width, height: region.height)
     default:
-        display = displayForScreenIndex(options.screenIndex ?? 0)
+        if let id = options.displayID {
+            display = displayForID(id)
+        } else if options.followFocus, let id = currentFocusDisplay() {
+            display = displayGeometry(id)
+        } else {
+            display = displayForScreenIndex(options.screenIndex ?? 0)
+        }
     }
-    guard let display else { errorExit("no display for the capture target") }
+    guard let display else { errorExit("no display for the capture target", code: "display-missing") }
 
     let indicator = RecordingIndicator(enabled: options.selection.indicator)
     indicator.update([windowTarget?.bounds ?? options.region ?? display.bounds])
@@ -621,7 +806,7 @@ func cmdCaptureScreen() {
     do {
         content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
     } catch {
-        errorExit("ScreenCaptureKit refused to enumerate content: \(error.localizedDescription)")
+        errorExit("ScreenCaptureKit refused to enumerate content: \(error.localizedDescription)", code: captureErrorCode(error))
     }
     let filter: SCContentFilter
     let pointSize: CGSize
@@ -633,7 +818,7 @@ func cmdCaptureScreen() {
         pointSize = window.frame.size
     } else {
         guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
-            errorExit("display \(display.id) is not shareable")
+            errorExit("display \(display.id) is not shareable", code: "display-missing")
         }
         let excluded = indicator.windowIDs.union(options.selection.excludedWindowIDs)
         filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
@@ -644,7 +829,7 @@ func cmdCaptureScreen() {
     // odd capture size used to mean SCStream delivered an odd CVPixelBuffer while the writer had
     // been configured one pixel smaller. The adaptor then refused every append and only a
     // generic writer-status warning said so.
-    let output = options.selection.dimensions(points: pointSize, nativeScale: display.scale, video: options.videoOut != nil)
+    let output = recordOutputSize(options, points: pointSize, scale: display.scale)
     let width = Int(output.width)
     let height = Int(output.height)
     configuration.width = width
@@ -663,7 +848,7 @@ func cmdCaptureScreen() {
         configuration.preservesAspectRatio = true
     }
 
-    let recorder = NativeRecorder(options: options, configuration: configuration)
+    let recorder = NativeRecorder(options: options, configuration: configuration, displayID: display.id)
     do {
         try recorder.prepareVideo(width: width, height: height)
     } catch {
@@ -675,7 +860,26 @@ func cmdCaptureScreen() {
         try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
         try awaitResult { try await stream.startCapture() }
     } catch {
-        errorExit("recording never started: \(error.localizedDescription)")
+        errorExit("recording never started: \(error.localizedDescription)", code: captureErrorCode(error))
+    }
+    recorder.startHeartbeat()
+    let host = ScreenStreamHost(options: options, recorder: recorder, configuration: configuration, indicator: indicator,
+                                stream: stream, display: display)
+    if options.mode == "screen" {
+        displayReconfigurationHandler = { changed, flags in
+            DispatchQueue.main.async {
+                switch displayChangeAction(changed: changed, flags: flags, recorded: host.display.id,
+                                           followFocus: options.followFocus) {
+                case .ignore:
+                    break
+                case .switchToFocus:
+                    host.displayLost = true
+                case .end:
+                    host.displayRemoved = true
+                }
+            }
+        }
+        CGDisplayRegisterReconfigurationCallback(displayReconfigurationCallback, nil)
     }
     let started = Date()
     let cancelled = runRecordingLoop(duration: options.duration) {
@@ -684,29 +888,48 @@ func cmdCaptureScreen() {
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
         }
-        return recorder.failure == nil
+        guard options.mode == "screen" else { return recorder.failure == nil }
+
+        return host.tick()
+    }
+    if options.mode == "screen" {
+        CGDisplayRemoveReconfigurationCallback(displayReconfigurationCallback, nil)
+        displayReconfigurationHandler = nil
     }
     indicator.close()
-    do {
-        try awaitResult { try await stream.stopCapture() }
-    } catch {
-        recorder.frameQueue.sync {}
-        errorExit("recording never stopped: \(error.localizedDescription)")
+    recorder.stopHeartbeat()
+    let streamFailure = recorder.failure
+    if streamFailure == nil {
+        do {
+            try awaitResult(timeoutSeconds: host.displayRemoved ? 5 : 30) { try await host.stream.stopCapture() }
+        } catch {
+            if !host.displayRemoved {
+                recorder.warn("the stream did not stop cleanly: \(error.localizedDescription)")
+            }
+        }
     }
     let stoppedAt = CMClockGetTime(CMClockGetHostTimeClock())
     let durationMs = Int((Date().timeIntervalSince(started) * 1000).rounded())
+    if let streamFailure, !host.displayRemoved {
+        recorder.warn("recording stopped early: \(streamFailure.localizedDescription)")
+    }
     // Drain the frame and encode queues so the last kept frame is on disk before the sheet is built.
     recorder.drainFrames()
     recorder.finishVideo(stoppedAt: stoppedAt)
-    if let failure = recorder.failure {
-        errorExit("recording stopped early: \(failure.localizedDescription)")
-    }
+    let endedEarly = captureEarlyEnd(cancelled: cancelled, displayRemoved: host.displayRemoved,
+                                     streamFailed: streamFailure != nil)
 
     let outURL = URL(fileURLWithPath: options.outDir)
     let frames: [[String: Any]] = recorder.kept.map { frame in
-        ["index": frame.index - 1, "file": frame.file, "path": outURL.appendingPathComponent(frame.file).path,
-         "timestampMs": frame.timestampMs, "changePercent": (frame.changePercent * 100).rounded() / 100,
-         "reason": frame.reason, "captureEngine": "ScreenCaptureKit"]
+        var row: [String: Any] = [
+            "index": frame.index - 1, "file": frame.file, "path": outURL.appendingPathComponent(frame.file).path,
+            "timestampMs": frame.timestampMs, "changePercent": (frame.changePercent * 100).rounded() / 100,
+            "reason": frame.reason, "captureEngine": "ScreenCaptureKit", "motionBoxes": frame.motionBoxesJSON,
+        ]
+        if let id = frame.displayID {
+            row["displayId"] = id
+        }
+        return row
     }
     var sheet: [String: Any] = [:]
     let sheetURL = outURL.appendingPathComponent("contact.png")
@@ -714,19 +937,39 @@ func cmdCaptureScreen() {
         sheet = ["path": sheetURL.path, "file": "contact.png", "rows": layout.rows, "columns": layout.columns,
                  "thumbSize": [200, 200], "sampledFrameIndexes": layout.sampled]
     }
+    var recordedOptions: [String: Any] = [
+        "mode": options.mode, "duration": options.duration, "activeFps": options.activeFps,
+        "idleFps": options.idleFps, "changeThresholdPercent": options.threshold, "maxFrames": options.maxFrames,
+        "width": width, "height": height, "scaleFactor": display.scale,
+        "transparent": options.selection.transparent, "codec": options.selection.codec,
+        "indicator": options.selection.indicator, "indicatorCaptured": false,
+        "displayId": display.id, "followFocus": options.followFocus, "heartbeatSec": options.heartbeatSec,
+        "quietMs": options.quietMs ?? FrameRatePolicy.defaultQuietMs(activeFps: options.activeFps),
+    ]
+    if let maxLongSide = options.maxLongSide {
+        recordedOptions["maxLongSide"] = maxLongSide
+    }
+    if let maxMb = options.maxMb {
+        recordedOptions["maxMb"] = maxMb
+    }
     var data: [String: Any] = [
         "source": "native", "captureEngine": "ScreenCaptureKit", "scope": options.mode, "cancelled": cancelled,
-        "options": ["mode": options.mode, "duration": options.duration, "activeFps": options.activeFps,
-                    "idleFps": options.idleFps, "changeThresholdPercent": options.threshold, "maxFrames": options.maxFrames,
-                    "width": width, "height": height, "scaleFactor": display.scale,
-                    "transparent": options.selection.transparent, "codec": options.selection.codec,
-                    "indicator": options.selection.indicator, "indicatorCaptured": false],
+        "options": recordedOptions,
         "frames": frames,
         "stats": ["durationMs": durationMs, "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
-                  "droppedFrames": recorder.captured - recorder.kept.count],
+                  "droppedFrames": recorder.captured - recorder.kept.count, "bytesWritten": recorder.bytesWritten,
+                  "displaySwitches": recorder.displaySwitches, "heartbeatFrames": recorder.heartbeatFrames],
         "warnings": recorder.warnings,
         "sessionDir": options.outDir,
+        "display": ["id": host.display.id],
+        "displays": host.displaysUsed,
     ]
+    if let endedEarly {
+        data["endedEarly"] = endedEarly.rawValue
+    }
+    if let streamFailure {
+        data["streamError"] = streamFailure.localizedDescription
+    }
     if !sheet.isEmpty {
         data["contactSheet"] = sheet
     }
@@ -744,6 +987,174 @@ func cmdCaptureScreen() {
     }
     jsonOutput(["success": recorder.videoSucceeded, "ok": recorder.videoSucceeded, "data": data])
     if !recorder.videoSucceeded { exit(1) }
+}
+
+/// The stream output size: the selection's size at the display scale, then capped by `--max-long-side`.
+private func recordOutputSize(_ options: RecordOptions, points: CGSize, scale: CGFloat) -> CGSize {
+    let video = options.videoOut != nil
+    let size = options.selection.dimensions(points: points, nativeScale: scale, video: video)
+    return capLongSide(size, maxLongSide: options.maxLongSide, even: video && options.selection.codec == "h264")
+}
+
+/// `no-permission` when ScreenCaptureKit says the user declined, else `failed`.
+private func captureErrorCode(_ error: Error) -> String {
+    let error = error as NSError
+    return error.domain == SCStreamErrorDomain && error.code == SCStreamError.userDeclined.rawValue ? "no-permission" : "failed"
+}
+
+/// Owns the stream of a screen, window or region recording. In screen mode it also moves the stream between
+/// displays: `--follow-focus` switches the content filter live, and a stream whose display went away starts again
+/// on the display that now holds focus. Everything here runs on the main thread.
+@available(macOS 13.0, *)
+private final class ScreenStreamHost {
+    let options: RecordOptions
+    let recorder: NativeRecorder
+    let configuration: SCStreamConfiguration
+    let indicator: RecordingIndicator
+    private(set) var stream: SCStream
+    private(set) var display: DisplayGeometry
+    private(set) var displaysUsed: [CGDirectDisplayID]
+    /// The recorded display is gone and the recording ends with `display-removed`.
+    var displayRemoved = false
+    /// The reconfiguration callback saw the recorded display leave while following focus.
+    var displayLost = false
+    private var switching = false
+    private var failedSwitch: (id: CGDirectDisplayID, at: Date)?
+    /// Ticks since the stream reported an error; a removed display can report it before the display list changes.
+    private var deadTicks = 0
+
+    init(options: RecordOptions, recorder: NativeRecorder, configuration: SCStreamConfiguration,
+         indicator: RecordingIndicator, stream: SCStream, display: DisplayGeometry) {
+        self.options = options
+        self.recorder = recorder
+        self.configuration = configuration
+        self.indicator = indicator
+        self.stream = stream
+        self.display = display
+        self.displaysUsed = [display.id]
+    }
+
+    private var excludedWindowIDs: Set<CGWindowID> { indicator.windowIDs.union(options.selection.excludedWindowIDs) }
+
+    /// One 250 ms check of a screen recording. False ends the recording.
+    func tick() -> Bool {
+        if displayRemoved {
+            return false
+        }
+
+        if options.followFocus, #available(macOS 14.0, *) {
+            follow()
+        }
+        guard recorder.failure != nil else {
+            deadTicks = 0
+            return !displayRemoved
+        }
+
+        deadTicks += 1
+        if !displayIsActive(display.id) {
+            displayRemoved = true
+            return false
+        }
+
+        // About a second for the display list to catch up with a stream that died with its display.
+        return deadTicks < 4
+    }
+
+    @available(macOS 14.0, *)
+    private func follow() {
+        guard !switching, let target = currentFocusDisplay() else { return }
+        let lost = displayLost || !displayIsActive(display.id)
+        if recorder.failure != nil {
+            if lost {
+                restart(on: target)
+            }
+            return
+        }
+
+        guard target != display.id else { return }
+        if let failedSwitch, failedSwitch.id == target, Date().timeIntervalSince(failedSwitch.at) < 5 {
+            return
+        }
+
+        switchLive(to: target)
+    }
+
+    private func adopt(_ geometry: DisplayGeometry) {
+        display = geometry
+        displayLost = false
+        if !displaysUsed.contains(geometry.id) {
+            displaysUsed.append(geometry.id)
+        }
+        indicator.update([geometry.bounds])
+    }
+
+    private func outputSize(for geometry: DisplayGeometry) -> CGSize? {
+        // A movie keeps one size from start to end; the stream letterboxes another display into it.
+        options.videoOut == nil ? recordOutputSize(options, points: geometry.bounds.size, scale: geometry.scale) : nil
+    }
+
+    @available(macOS 14.0, *)
+    private func switchLive(to target: CGDirectDisplayID) {
+        switching = true
+        let geometry = displayGeometry(target)
+        let size = outputSize(for: geometry)
+        let excluded = excludedWindowIDs
+        let stream = self.stream
+        let recorder = self.recorder
+        Task {
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
+                    throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])
+                }
+                let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
+                if let size {
+                    try await stream.updateConfiguration(recorder.setOutputSize(width: Int(size.width), height: Int(size.height)))
+                }
+                try await stream.updateContentFilter(filter)
+                recorder.displayChanged(to: target)
+                DispatchQueue.main.async {
+                    self.adopt(geometry)
+                    self.switching = false
+                }
+            } catch {
+                recorder.warn("could not switch the recording to display \(target): \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.failedSwitch = (target, Date())
+                    self.switching = false
+                }
+            }
+        }
+    }
+
+    /// A new stream on `target`, after the recorded display went away and took the stream with it.
+    private func restart(on target: CGDirectDisplayID) {
+        let geometry = displayGeometry(target)
+        do {
+            let content = try awaitResult(timeoutSeconds: 10) {
+                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            }
+            guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else { return }
+            indicator.update([geometry.bounds])
+            let excluded = excludedWindowIDs
+            let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
+            if let size = outputSize(for: geometry) {
+                _ = recorder.setOutputSize(width: Int(size.width), height: Int(size.height))
+            }
+            let next = SCStream(filter: filter, configuration: configuration, delegate: recorder)
+            try next.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
+            try awaitResult { try await next.startCapture() }
+            stream = next
+            recorder.stream = next
+            recorder.clearFailure()
+            recorder.displayChanged(to: target)
+            adopt(geometry)
+            deadTicks = 0
+        } catch {
+            recorder.warn("could not restart the recording on display \(target): \(error.localizedDescription)")
+            displayRemoved = true
+        }
+    }
 }
 
 /// Runs one async throwing call to completion from a plain command-line entry point.

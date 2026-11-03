@@ -8,16 +8,38 @@ import type { CaptureSpec } from "./capture-plan";
 export const CAPTURE_CANVAS_VALUES = ["crop", "display"] as const;
 export const CAPTURE_CODEC_VALUES = ["h264", "prores4444"] as const;
 
+/** Options only the native recorder (`ax-tool capture`) has. */
+export interface NativeCaptureOptions {
+    /** Screen mode: the CGDirectDisplayID to record (`ax-tool screens` → displayID). Wins over screenIndex. */
+    displayId?: number;
+    /** Screen mode: record the display holding the frontmost app's focused window, switching live. */
+    followFocus?: boolean;
+    /** The longer side of a kept frame in pixels, at most (16–16384). Not for isolated mode. */
+    maxLongSide?: number;
+    /** Calm time in ms before the idle frame rate (default: eight frames at the active rate). */
+    quietMs?: number;
+    /** Keep a frame at least every N seconds while nothing changes (0 = off). */
+    heartbeatSec?: number;
+    /** Stop keeping frames after N MB were written; sampling continues. */
+    maxMb?: number;
+}
+
+export type NativeCaptureSpec = CaptureSpec & NativeCaptureOptions;
+
 /**
  * argv for `ax-tool capture`, the ScreenCaptureKit recorder. The runner prepends the binary
  * path. Duration is seconds, as the plan declares it; Peekaboo 4 wants a suffix for that.
  */
-export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
+export function nativeCaptureArgv(cap: NativeCaptureSpec, outDir: string): string[] {
     const argv = ["capture", "--mode", cap.mode, "--duration", String(cap.duration), "--out", outDir];
 
     validateCaptureOptions(cap);
 
-    if ((cap.mode === "screen" || cap.mode === "isolated") && cap.screenIndex !== undefined) {
+    if (cap.mode === "screen" && cap.displayId !== undefined) {
+        argv.push("--display-id", String(cap.displayId));
+    } else if (cap.mode === "screen" && cap.followFocus) {
+        argv.push("--follow-focus");
+    } else if ((cap.mode === "screen" || cap.mode === "isolated") && cap.screenIndex !== undefined) {
         argv.push("--screen-index", String(cap.screenIndex));
     }
 
@@ -106,11 +128,23 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         argv.push("--exclude-window-ids", cap.excludeWindowIds.join(","));
     }
 
+    const tuning: [string, number | undefined][] = [
+        ["--max-long-side", cap.maxLongSide],
+        ["--quiet-ms", cap.quietMs],
+        ["--heartbeat-sec", cap.heartbeatSec],
+        ["--max-mb", cap.maxMb],
+    ];
+    for (const [flag, value] of tuning) {
+        if (value !== undefined) {
+            argv.push(flag, String(value));
+        }
+    }
+
     return argv;
 }
 
 /** Reject unsupported combinations before focus, actions, or recorder startup. */
-export function validateCaptureOptions(cap: CaptureSpec): void {
+export function validateCaptureOptions(cap: NativeCaptureSpec): void {
     if (!["screen", "window", "region", "isolated"].includes(cap.mode)) {
         throw new Error("capture.mode must be screen, window, region or isolated");
     }
@@ -121,6 +155,10 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         ["idleFps", cap.idleFps, 0.1, 5],
         ["threshold", cap.threshold, 0, 100],
         ["maxFrames", cap.maxFrames, 1, 5000],
+        ["maxLongSide", cap.maxLongSide, 16, 16384],
+        ["quietMs", cap.quietMs, 0, 3_600_000],
+        ["heartbeatSec", cap.heartbeatSec, 0, 3600],
+        ["maxMb", cap.maxMb, 0.01, 1_000_000],
     ];
     for (const [name, value, min, max] of numbers) {
         if (value !== undefined && (!Number.isFinite(value) || value < min || value > max)) {
@@ -130,6 +168,38 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
 
     if (cap.screenIndex !== undefined && (!Number.isInteger(cap.screenIndex) || cap.screenIndex < 0)) {
         throw new Error("screenIndex must be a non-negative integer from preflight");
+    }
+
+    if (
+        cap.displayId !== undefined &&
+        (!Number.isInteger(cap.displayId) || cap.displayId <= 0 || cap.displayId > 0xffffffff)
+    ) {
+        throw new Error("displayId must be a positive CGDirectDisplayID from `ax-tool screens`");
+    }
+
+    if (cap.followFocus !== undefined && typeof cap.followFocus !== "boolean") {
+        throw new Error("followFocus must be a boolean");
+    }
+
+    if ((cap.displayId !== undefined || cap.followFocus) && cap.mode !== "screen") {
+        throw new Error("displayId and followFocus require mode screen");
+    }
+
+    if (cap.displayId !== undefined && cap.followFocus) {
+        throw new Error("displayId and followFocus name different targets; pass one");
+    }
+
+    for (const [name, value] of [
+        ["maxLongSide", cap.maxLongSide],
+        ["quietMs", cap.quietMs],
+    ] as const) {
+        if (value !== undefined && !Number.isInteger(value)) {
+            throw new Error(`${name} must be an integer`);
+        }
+    }
+
+    if (cap.maxLongSide !== undefined && cap.mode === "isolated") {
+        throw new Error("maxLongSide applies to screen, window and region mode; isolated mode takes outputSize");
     }
 
     const extended = [
@@ -143,10 +213,16 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.indicator,
         cap.maxFrames,
         cap.excludeWindowIds,
+        cap.displayId,
+        cap.followFocus,
+        cap.maxLongSide,
+        cap.quietMs,
+        cap.heartbeatSec,
+        cap.maxMb,
     ];
     if (cap.backend === "peekaboo" && (cap.mode === "isolated" || extended.some((value) => value !== undefined))) {
         throw new Error(
-            "Isolated selection, output geometry, codec, transparency and indicator options require backend native"
+            "Isolated selection, output geometry, codec, transparency, indicator, displayId, followFocus and frame tuning options require backend native"
         );
     }
 

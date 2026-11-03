@@ -562,6 +562,19 @@ Add `--split all --calibrate` to collect each case/mode once and replay four con
 
 The default capture backend uses ScreenCaptureKit and the independent ComputerUse API for timed input. Build/start failures stop without changing backend. Native preflight, focus, crop lookups and action dispatch do not call Peekaboo or AppleScript. URL scripting, raw osascript and media-key rewrites are rejected before recording starts. Native input requires an explicit app and an unambiguous window/target. The old behavior remains available only through an explicitly selected `capture.backend: "peekaboo"`.
 
+Native-only `capture` options (plan field, then the `ax-tool capture` flag):
+
+| Field | Flag | Meaning |
+|---|---|---|
+| `displayId` | `--display-id <id>` | Screen mode: record the display with this CGDirectDisplayID (`ax-tool screens` prints `displayID`). Wins over `screenIndex`. An unknown id fails with code `display-missing`. |
+| `followFocus` | `--follow-focus` | Screen mode: record the display that holds the frontmost app's focused window, else the display under the mouse. Checked every 250 ms; a change switches the stream live. Not with `displayId`. |
+| `maxLongSide` | `--max-long-side <px>` | The longer side of a kept frame is at most this many pixels; the aspect ratio stays. Not in isolated mode. |
+| `quietMs` | `--quiet-ms <ms>` | Calm time before the idle frame rate. Default: eight frames at the active rate. |
+| `heartbeatSec` | `--heartbeat-sec <s>` | Keep a frame (reason `heartbeat`) at least every s seconds while nothing changes. 0 is off. |
+| `maxMb` | `--max-mb <n>` | Stop keeping frames after n MB were written. Sampling and motion continue, as with `maxFrames`. |
+
+Each frame carries `displayId` and `motionBoxes` (`[x, y, width, height]` in output pixels, at most 8, merged from the changed 4×4 sample blocks; empty for first, heartbeat and display-switch frames). A recording that ends early still prints every frame with `endedEarly`: `display-removed` (the recorded display was disconnected; with `followFocus` the recording moves to the display that now holds focus instead), `stream-error` or `stopped` (SIGINT/SIGTERM). Errors print `{"ok": false, "error", "code"}` with code `display-missing`, `no-permission`, `invalid-argument` or `failed`.
+
 ### Native visual grounding
 
 `tools control see --app APP --window-id ID --perception ocr` adds local macOS Vision OCR. `--perception-crop x,y,w,h` and `--perception-width 400` crop/resize only the OCR input; rectangles map back onto the original screenshot. Known AX text inputs are excluded from OCR candidates. No Python, icon model, download or external vision API is involved.

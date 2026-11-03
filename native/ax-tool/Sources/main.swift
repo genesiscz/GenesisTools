@@ -82,7 +82,13 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
                       keep-NNNN.png frames, contact.png, metadata.json; JSON result in the capture-runner shape
-      ax-tool screens                                         Displays in NSScreen order: index, name, scale, position, resolution
+                      screen mode: [--display-id ID] (wins over --screen-index) | [--follow-focus] (switches live to the
+                      display holding the focused window, else the one under the mouse; checked every 250 ms)
+                      [--max-long-side PX] [--quiet-ms MS] [--heartbeat-sec S] [--max-frames N] [--max-mb N]
+                      frames carry displayId and motionBoxes [[x,y,w,h]]; an early stop prints the frames with
+                      endedEarly display-removed|stream-error|stopped; errors carry code display-missing|no-permission|
+                      invalid-argument|failed
+      ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution
       ax-tool hotkey --keys <cmd,a> [--app <name>]            Key combo (--app activates target first)
       ax-tool snapshot                                        Capture mouse + focused app/window
       ax-tool restore --snapshot <json>                       Restore mouse + focus from snapshot

@@ -26,11 +26,11 @@ struct CaptureSelectionOptions {
         let requested = outputSize ?? CGSize(width: (points.width * (outputScale ?? nativeScale)).rounded(),
                                               height: (points.height * (outputScale ?? nativeScale)).rounded())
         guard requested.width >= 2, requested.height >= 2, requested.width <= 16384, requested.height <= 16384 else {
-            errorExit("output must be between 2 and 16384 pixels on each axis")
+            errorExit("output must be between 2 and 16384 pixels on each axis", code: "invalid-argument")
         }
         if video && codec == "h264" {
             if outputSize != nil && (Int(requested.width) % 2 != 0 || Int(requested.height) % 2 != 0) {
-                errorExit("H.264 output dimensions must be even; choose ProRes 4444 MOV for odd sizes")
+                errorExit("H.264 output dimensions must be even; choose ProRes 4444 MOV for odd sizes", code: "invalid-argument")
             }
             return CGSize(width: Int(requested.width) & ~1, height: Int(requested.height) & ~1)
         }
@@ -44,7 +44,7 @@ func windowIDList(_ flag: String) -> [CGWindowID]? {
     let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
     let ids = parts.compactMap { UInt32($0) }
     guard ids.count == parts.count, ids.allSatisfy({ $0 > 0 }) else {
-        errorExit("\(flag) requires positive CG window IDs separated by commas")
+        errorExit("\(flag) requires positive CG window IDs separated by commas", code: "invalid-argument")
     }
     return ids
 }
@@ -55,49 +55,49 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     var apps: [String] = []
     for (index, value) in args.enumerated() where value == "--include-app" {
         guard index + 1 < args.count, !args[index + 1].hasPrefix("--") else {
-            errorExit("--include-app needs an app name, bundle ID or PID")
+            errorExit("--include-app needs an app name, bundle ID or PID", code: "invalid-argument")
         }
         apps.append(args[index + 1])
     }
     if mode == "isolated" {
-        guard !ids.isEmpty || !apps.isEmpty else { errorExit("isolated mode needs --window-ids or --include-app") }
+        guard !ids.isEmpty || !apps.isEmpty else { errorExit("isolated mode needs --window-ids or --include-app", code: "invalid-argument") }
         let singular = ["--app", "--window-id", "--window-title", "--window-index", "--region"]
         guard singular.allSatisfy({ !CommandLine.arguments.contains($0) }) else {
-            errorExit("isolated mode uses --window-ids/--include-app, not singular window selectors or --region")
+            errorExit("isolated mode uses --window-ids/--include-app, not singular window selectors or --region", code: "invalid-argument")
         }
     } else if !ids.isEmpty || !apps.isEmpty || argValue("--canvas") != nil {
-        errorExit("--window-ids, --include-app and --canvas require isolated mode")
+        errorExit("--window-ids, --include-app and --canvas require isolated mode", code: "invalid-argument")
     }
     let canvas = argValue("--canvas") ?? "crop"
-    guard ["crop", "display"].contains(canvas) else { errorExit("--canvas must be crop or display") }
+    guard ["crop", "display"].contains(canvas) else { errorExit("--canvas must be crop or display", code: "invalid-argument") }
     var size: CGSize?
     if let raw = argValue("--output-size") {
         let raws = raw.split(separator: "x", omittingEmptySubsequences: false)
         let parts = raws.compactMap { Int($0) }
         guard raws.count == 2, parts.count == 2, parts.allSatisfy({ $0 >= 2 && $0 <= 16384 }) else {
-            errorExit("--output-size must be WIDTHxHEIGHT in pixels, each from 2 to 16384")
+            errorExit("--output-size must be WIDTHxHEIGHT in pixels, each from 2 to 16384", code: "invalid-argument")
         }
         size = CGSize(width: parts[0], height: parts[1])
     }
     var scale: CGFloat?
     if let raw = argValue("--output-scale") {
         guard size == nil, let number = Double(raw), number.isFinite, number > 0, number <= 8 else {
-            errorExit("--output-scale must be greater than 0 and at most 8, and cannot accompany --output-size")
+            errorExit("--output-scale must be greater than 0 and at most 8, and cannot accompany --output-size", code: "invalid-argument")
         }
         scale = CGFloat(number)
     }
     let transparent = args.contains("--transparent")
     let codec = argValue("--codec") ?? "h264"
-    guard ["h264", "prores4444"].contains(codec) else { errorExit("--codec must be h264 or prores4444") }
+    guard ["h264", "prores4444"].contains(codec) else { errorExit("--codec must be h264 or prores4444", code: "invalid-argument") }
     if transparent && !["window", "isolated"].contains(mode) {
-        errorExit("--transparent requires window or isolated mode")
+        errorExit("--transparent requires window or isolated mode", code: "invalid-argument")
     }
     if let video = argValue("--video-out") {
         if transparent && codec != "prores4444" {
-            errorExit("Transparent video needs --codec prores4444 and a .mov output; H.264/MP4 has no alpha")
+            errorExit("Transparent video needs --codec prores4444 and a .mov output; H.264/MP4 has no alpha", code: "invalid-argument")
         }
         if codec == "prores4444" && !video.lowercased().hasSuffix(".mov") {
-            errorExit("ProRes 4444 needs a .mov output")
+            errorExit("ProRes 4444 needs a .mov output", code: "invalid-argument")
         }
     }
     return CaptureSelectionOptions(windowIDs: Array(Set(ids)).sorted(), apps: apps, canvas: canvas,
@@ -511,7 +511,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         let index = options.screenIndex ?? 0
         guard NSScreen.screens.indices.contains(index),
               let id = (NSScreen.screens[index].deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else {
-            errorExit("--screen-index outside the current display list")
+            errorExit("--screen-index outside the current display list", code: "display-missing")
         }
         displayCanvas = CGDisplayBounds(id)
     }
@@ -587,7 +587,8 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                     "windowIds": selected.map(\.id)] as [String: Any],
         "geometry": compositor.geometryHistory,
         "frames": recorder.kept.map { ["index": $0.index - 1, "file": $0.file, "path": directory.appendingPathComponent($0.file).path,
-                                       "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason] as [String: Any] },
+                                       "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason,
+                                       "motionBoxes": $0.motionBoxesJSON] as [String: Any] },
         "stats": ["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
                   "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1] as [String: Any],
         "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings + compositor.placementWarnings },
