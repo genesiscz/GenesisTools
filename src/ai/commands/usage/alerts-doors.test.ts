@@ -386,7 +386,7 @@ describe("the daemon tick", () => {
         limits: [],
     });
     /** One daemon tick of the `work` account with no windows; `fail` makes its alert pass throw after the poll run. */
-    const tick = (now: Date, fail = false) => {
+    const tick = ({ now, fail = false }: { now: Date; fail?: boolean }) => {
         const quiet: AlertChannel = { id: "inbox", interrupts: false, deliver: async () => {} };
 
         return recordRoundAndAlert({
@@ -417,14 +417,14 @@ describe("the daemon tick", () => {
         });
 
     test("a tick whose alert pass failed leaves its events to the next pass", async () => {
-        expect((await tick(at(0))).fired).toEqual([]);
+        expect((await tick({ now: at(0) })).fired).toEqual([]);
         refusedProbe(at(30));
-        await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
+        await expect(tick({ now: at(60), fail: true })).rejects.toThrow("tracker file unreadable");
 
-        const next = await tick(at(120));
+        const next = await tick({ now: at(120) });
 
         expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
-        expect((await tick(at(180))).fired).toEqual([]);
+        expect((await tick({ now: at(180) })).fired).toEqual([]);
     });
 
     test("an alert pass that fails before any pass finished leaves its events to the next pass", async () => {
@@ -434,9 +434,9 @@ describe("the daemon tick", () => {
             at(0)
         );
         refusedProbe(at(30));
-        await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
+        await expect(tick({ now: at(60), fail: true })).rejects.toThrow("tracker file unreadable");
 
-        const next = await tick(at(120));
+        const next = await tick({ now: at(120) });
 
         expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
     });
@@ -444,22 +444,22 @@ describe("the daemon tick", () => {
     test("events older than the event lookback but after the cursor still reach the pass that catches up", async () => {
         const hours = (n: number) => at(n * 3600);
 
-        expect((await tick(at(0))).fired).toEqual([]);
+        expect((await tick({ now: at(0) })).fired).toEqual([]);
         refusedProbe(hours(3));
         // Every pass fails for over an hour after the refusal, so it falls out of the one-hour event lookback.
-        await expect(tick(hours(3.1), true)).rejects.toThrow("tracker file unreadable");
-        await expect(tick(hours(4.15), true)).rejects.toThrow("tracker file unreadable");
+        await expect(tick({ now: hours(3.1), fail: true })).rejects.toThrow("tracker file unreadable");
+        await expect(tick({ now: hours(4.15), fail: true })).rejects.toThrow("tracker file unreadable");
 
-        const next = await tick(hours(4.2));
+        const next = await tick({ now: hours(4.2) });
 
         expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
     });
 
     test("the very first tick failing leaves the events before it to the next pass", async () => {
         refusedProbe(at(30));
-        await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
+        await expect(tick({ now: at(60), fail: true })).rejects.toThrow("tracker file unreadable");
 
-        const next = await tick(at(120));
+        const next = await tick({ now: at(120) });
 
         expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
     });
