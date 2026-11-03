@@ -1,4 +1,5 @@
-import type { AlertChannelId, AlertRuleId, AlertRuleSettings } from "./types";
+import { logger } from "@genesiscz/utils/logger";
+import { ALERT_CHANNEL_IDS, type AlertChannelId, type AlertRuleId, type AlertRuleSettings } from "./types";
 
 /**
  * The `alerts` key of the usage dashboard config (`~/.genesis-tools/ai-usage-dashboard/config.json`), nested by axis:
@@ -66,7 +67,16 @@ function mergeRule<Id extends AlertRuleId>(
     id: Id,
     saved: StoredRuleSettings<AlertRuleSettings[Id]> | undefined
 ): AlertRuleSettings[Id] {
-    return { ...ALERT_RULE_DEFAULTS[id], ...saved };
+    const merged = { ...ALERT_RULE_DEFAULTS[id], ...saved };
+    // A hand-edited channel id the engine has no channel for would throw in delivery (in quiet hours, out of the
+    // round): it is dropped here, the one door every saved rule passes.
+    const channels = merged.channels.filter((channel) => (ALERT_CHANNEL_IDS as readonly string[]).includes(channel));
+
+    if (channels.length !== merged.channels.length) {
+        logger.warn({ rule: id, channels: merged.channels }, "[usage-alerts] unknown channel ids dropped");
+    }
+
+    return { ...merged, channels };
 }
 
 /** The saved alerts config over the defaults, detached from both. */
