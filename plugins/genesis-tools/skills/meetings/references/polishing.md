@@ -57,19 +57,23 @@ Work in this order; each pass finds what the previous ones miss.
    - a person's name in the wrong grammatical case. Check every name against the verb before it, even when the person
      exists: "ptát se / zeptat se / neptat se" take the genitive ("zeptat se Pavla Nováka", invented example), so an
      accusative form after them is a mishearing, not a `keep`. A form suggested by the tool or the source's summary is
-     not evidence;
+     not evidence. Check the speaker's own language first: in Slovak a masculine name ending in -a has the same
+     genitive and accusative ("spýtať sa Jožku", invented), so a Slovak speaker's "-u" form is right and stays;
    - a lower-case English word used as a place in a developer sentence ("na developu", "na masteru", invented
      examples): it names a branch or an environment, so write it as code (`develop`) with the meaning marker;
    - a domain value heard as a foreign word: check the data model's labels and codebooks (a heard English word can be the
      client's brand name in a list of offer types);
    - a garbled stretch where the speaker reads a document aloud (look for the document's section words around it).
 4. **Work-item numbers**: when a speaker says a ticket number, fetch its title (`tools azure-devops wi <id> -f md`, run
-   from the project's checkout, which holds the Azure DevOps configuration) before you judge the words around it; an
-   odd abbreviation near it is often part of the title.
+   from the project's checkout, which holds the Azure DevOps configuration; it writes its cache under the checkout's
+   `.claude/azure/`, and an existing cache entry is enough) before you judge the words around it; an odd abbreviation
+   near it is often part of the title.
 5. **Read-aloud passages**: when a speaker reads from a document, find the sentence in the document and propose it as a
    quote (D8). Quote only the part that was read: a speaker skips code spans and stops mid-line, and a quote of the
-   whole line puts words in the transcript that nobody said. A strange abbreviation inside such a passage is usually
-   the document's own word misheard.
+   whole line puts words in the transcript that nobody said. A code span that the reader did read stays in the quote.
+   When the reader skips words or adds words of their own ("jo, počkej,"), quote each stretch that matches the
+   document as its own quote and keep the reader's words between them as heard. A strange abbreviation inside such a
+   passage is usually the document's own word misheard.
 6. **Keep real words** that only look odd (invented examples: "pushnu" is a Czech verb made from "push", "dlaždice" is
    a real domain word). List them in the glossary as `keep`; in the automatic mode, reject the tool's suggestion.
 
