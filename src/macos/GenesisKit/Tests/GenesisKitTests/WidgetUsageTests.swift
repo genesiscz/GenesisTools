@@ -87,6 +87,37 @@ final class WidgetUsageTests: XCTestCase {
         XCTAssertEqual(opened, [["--usage-account", "acc_work"], ["--mode", "usage", "--usage-section", "limits", "--usage-all-accounts"]])
     }
 
+    func testTheDoorsWarningsStayOnceEachAndTheSummaryDoesNotSayEveryAccountHasRoom() async throws {
+        let noHistory = #"{"code":"no-history","message":"No poll has recorded usage history yet, so nothing is forecast."}"#
+        let noStore = #"{"code":"no-store","message":"No usage store exists here yet, so no alert was recorded."}"#
+        let limits = """
+        {"schema":"usage.limits@1","generatedAt":"2026-03-02T15:00:00.000Z","selector":{"accounts":[]},"warnings":[\(noHistory)],
+         "data":{"accounts":[]}}
+        """
+        let series = """
+        {"schema":"usage.limits.series@1","generatedAt":"2026-03-02T15:00:00.000Z","selector":{"accounts":[]},"warnings":[\(noHistory)],
+         "data":{"agg":"raw","stepMs":0,"series":[],"coverage":[],"events":[]}}
+        """
+        let alerts = """
+        {"schema":"usage.alerts@1","generatedAt":"2026-03-02T15:00:00.000Z","selector":{"accounts":[]},"warnings":[\(noStore)],
+         "data":{"unacked":0,"alerts":[]}}
+        """
+        let store = WidgetUsageStore(client: UsageClient { argv in
+            if argv.contains("alerts") { return Data(alerts.utf8) }
+            if argv.contains("series") { return Data(series.utf8) }
+            return Data(limits.utf8)
+        }, watchFolder: NSTemporaryDirectory(), openHub: { _ in })
+        store.load()
+        for _ in 0..<200 where store.loadedAt == nil { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertNotNil(store.loadedAt)
+        XCTAssertEqual(store.warnings.map(\.code), ["no-history", "no-store"])
+        XCTAssertNotEqual(store.summary, "Every account has room")
+
+        let expanded = try render(WidgetUsageModuleView(store: store, presentation: .expanded, ringWindow: .weekly)
+            .frame(width: 432), name: "widget-usage-warnings")
+        XCTAssertTrue(expanded.contains("No usage store exists here yet"), expanded)
+    }
+
     func testPreferencesDecodeWithoutTheUsageKey() throws {
         struct Holder: Decodable { let usage: WidgetUsagePreferences? }
         XCTAssertNil(try JSONDecoder().decode(Holder.self, from: Data("{}".utf8)).usage)

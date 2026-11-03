@@ -22,6 +22,8 @@ extension WidgetUsageStore {
         var parts: [String] = []
         if high > 0 { parts.append("\(Plural.count(high, "account")) over 75%") }
         if alerts > 0 { parts.append(Plural.count(alerts, "alert")) }
+        // A door that could not measure (no history, no store) is no evidence of room.
+        if !warnings.isEmpty { parts.append(Plural.count(warnings.count, "usage warning")) }
         return parts.isEmpty ? "Every account has room" : parts.joined(separator: " · ")
     }
 }
@@ -43,6 +45,9 @@ struct WidgetUsageModuleView: View {
                     header
                     ForEach([store.error, store.ackError].compactMap { $0 }, id: \.self) { error in
                         Text(verbatim: error).font(.caption2).foregroundStyle(KitPalette.removed).lineLimit(3)
+                    }
+                    ForEach(store.warnings) { warning in
+                        Text(verbatim: warning.message).font(.caption2).foregroundStyle(UsageTone.severity("warning")).lineLimit(3)
                     }
                     if store.rows.isEmpty, store.loading {
                         Label("Reading usage…", systemImage: "ellipsis").font(.caption)

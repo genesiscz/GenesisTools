@@ -10,6 +10,9 @@ public final class WidgetUsageStore: ObservableObject {
     @Published public private(set) var alerts: [UsageAlert] = []
     @Published public private(set) var loading = false
     @Published public private(set) var error: String?
+    /// What the doors said they could not measure (no history, no store), once each: an empty table with these is
+    /// missing evidence, not an account with room.
+    @Published public private(set) var warnings: [UsageWarning] = []
     /// A failed acknowledge, kept apart from `error` so the read that follows it does not clear it. It clears when an
     /// acknowledge works, or when a read finds that alert no longer open (acknowledged somewhere else).
     @Published public private(set) var ackError: String?
@@ -92,6 +95,7 @@ public final class WidgetUsageStore: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 self.rows = table.rows
                 self.alerts = alertsValue.data.alerts
+                self.warnings = UsageWarning.merged([limitsValue.warnings, seriesValue.warnings, alertsValue.warnings])
                 self.error = nil
                 if let id = self.ackFailedAlert, !self.openAlerts.contains(where: { $0.id == id }) {
                     self.ackFailedAlert = nil
