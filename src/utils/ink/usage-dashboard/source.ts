@@ -2,9 +2,16 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
-import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
+import type { MacosChannelSettings } from "@genesiscz/utils/ai/usage/alerts/channels/macos";
+import { runAlertEngine } from "@genesiscz/utils/ai/usage/alerts/engine";
+import { seedThresholdAlerts } from "@genesiscz/utils/ai/usage/alerts/legacy-seed";
+import { UsageAlertsStore } from "@genesiscz/utils/ai/usage/alerts/log";
+import type { AlertChannelTable } from "@genesiscz/utils/ai/usage/alerts/types";
+import { loadDashboardConfig, type UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { readNotifiedThresholds } from "@genesiscz/utils/ai/usage-poll/notifications";
 import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
+import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import { logger } from "@genesiscz/utils/logger";
 import type { UsageDataSource } from "./types";
 
@@ -21,6 +28,49 @@ export interface BuildUsageDataSourceOptions {
      */
     presenters?: Record<string, UsagePresenters | undefined>;
     extraTabs?: UsageDataSource["extraTabs"];
+    /**
+     * The alert channels, from the command: the inbox channel lives in a tool, which this shared package cannot
+     * import. Without it the TUI's notifier keeps its own desktop banner.
+     */
+    alertChannels?: (notifications: MacosChannelSettings) => AlertChannelTable;
+}
+
+/**
+ * The TUI's desktop alerts go through the alert engine's threshold rule, as the daemon tick's do: one record in
+ * `usage_alerts`, the same per-window seed from the notifier's trackers, and the same global switch, provider
+ * overrides, channels and quiet hours. Whichever process sees a window first announces it; the other finds the record.
+ */
+export function thresholdAlerts(
+    db: UsageLimitsDb,
+    config: UsageDashboardConfig,
+    channels: AlertChannelTable
+): NonNullable<UsageDataSource["alerts"]> {
+    return async (snapshots, now) => {
+        const store = new UsageAlertsStore(db.connection());
+        seedThresholdAlerts({
+            store,
+            trackers: await readNotifiedThresholds(usagePollStorage()),
+            snapshots,
+            settings: config.alerts.rules.threshold,
+            now,
+        });
+        // The threshold rule reads the snapshots alone, so the round carries nothing else.
+        await runAlertEngine({
+            round: {
+                now,
+                snapshots,
+                samples: [],
+                runs: [],
+                previousRoundAt: null,
+                events: [],
+                availabilityChanges: [],
+            },
+            config: config.alerts,
+            store,
+            channels,
+            only: ["threshold"],
+        });
+    };
 }
 
 /**
@@ -96,5 +146,8 @@ export async function buildUsageDataSource(opts: BuildUsageDataSourceOptions = {
         config,
         presenters: opts.presenters ?? {},
         ...(opts.extraTabs === undefined ? {} : { extraTabs: opts.extraTabs }),
+        ...(limitsDb && opts.alertChannels
+            ? { alerts: thresholdAlerts(limitsDb, config, opts.alertChannels(config.notifications)) }
+            : {}),
     };
 }

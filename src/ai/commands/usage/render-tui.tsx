@@ -1,4 +1,5 @@
 import "@genesiscz/utils/ink/react-production";
+import { alertChannels } from "@app/ai/lib/usage/alert-channels";
 import { anthropicPresenters } from "@app/claude/commands/usage/presenter";
 import type { UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { renderFullScreen } from "@genesiscz/utils/ink";
@@ -27,6 +28,7 @@ export async function renderAiUsageTui(opts: RenderAiUsageTuiOptions = {}): Prom
     const source = await buildUsageDataSource({
         ...(opts.providers === undefined ? {} : { providers: opts.providers }),
         presenters: PRESENTERS,
+        alertChannels,
     });
 
     await renderFullScreen(

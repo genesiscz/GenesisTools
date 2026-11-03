@@ -35,6 +35,12 @@ export interface UsageDataSource {
     /** By plugin id. A provider without a presenter renders the generic bars. */
     presenters: Record<string, UsagePresenters | undefined>;
     extraTabs?: Array<TabDefinition & { View: ComponentType<ExtraTabProps> }>;
+    /**
+     * Desktop alerts for a poll round, through the alert engine the daemon runs (its record, channels, switches and
+     * quiet hours). Absent when the store is unavailable or the command supplied no channels; the TUI's own
+     * notifier then keeps its desktop banner.
+     */
+    alerts?: (snapshots: readonly AccountUsageSnapshot[], now: Date) => Promise<void>;
 }
 
 /**

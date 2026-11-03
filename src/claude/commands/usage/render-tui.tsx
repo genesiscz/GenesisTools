@@ -1,4 +1,5 @@
 import "@genesiscz/utils/ink/react-production";
+import { alertChannels } from "@app/ai/lib/usage/alert-channels";
 import { SessionsView } from "@app/claude/commands/usage/components/sessions/sessions-view";
 import { anthropicPresenters } from "@app/claude/commands/usage/presenter";
 import { refreshAccountLabels } from "@app/claude/lib/config";
@@ -30,6 +31,7 @@ export async function renderUsageTui(opts: RenderUsageTuiOptions = {}): Promise<
         providers: ["anthropic-sub"],
         presenters: { "anthropic-sub": anthropicPresenters },
         extraTabs: [{ id: "sessions", label: "Sessions", shortcut: "3", View: SessionsView }],
+        alertChannels,
     });
 
     await renderFullScreen(

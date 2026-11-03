@@ -50,13 +50,18 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, 
     // every timer round too, which is what the 45s shared cache exists to prevent.
     const freshPendingRef = useRef(freshOnMount === true);
 
-    const { config, limitsDb } = source;
+    const { config, limitsDb, alerts } = source;
     const thresholds = config.alerts.rules.threshold;
+    const enginesDesktop = alerts !== undefined;
 
     useEffect(() => {
-        notifRef.current = new NotificationManager(
-            notificationSettings({ notifications: config.notifications, alerts: { rules: { threshold: thresholds } } })
-        );
+        const settings = notificationSettings({
+            notifications: config.notifications,
+            alerts: { rules: { threshold: thresholds } },
+        });
+        // With the alert engine wired, the desktop banner is the engine's (one record with the daemon); this
+        // notifier keeps only the in-TUI banners.
+        notifRef.current = new NotificationManager(enginesDesktop ? { ...settings, macos: false } : settings);
 
         // Persist tracker state across TUI launches so an over-threshold window does
         // not re-notify on every open. The ready promise is awaited by poll() so the
@@ -81,7 +86,7 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, 
                 clearInterval(pruneIntervalRef.current);
             }
         };
-    }, [config.dataRetentionDays, config.notifications, thresholds, limitsDb]);
+    }, [config.dataRetentionDays, config.notifications, thresholds, limitsDb, enginesDesktop]);
 
     const poll = useCallback(
         async (force = false) => {
@@ -115,6 +120,14 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, 
                         await notifRef.current?.processUsage(window);
                     } catch (err) {
                         logger.warn({ err, account: window.accountName }, "[ai-usage] notification failed");
+                    }
+                }
+
+                if (alerts) {
+                    try {
+                        await alerts(snapshots, at);
+                    } catch (err) {
+                        logger.warn({ err }, "[ai-usage] alert engine round failed");
                     }
                 }
 

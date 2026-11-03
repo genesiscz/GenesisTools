@@ -79,6 +79,8 @@ export async function runAlertEngine(input: {
     store: UsageAlertsStore;
     channels: AlertChannelTable;
     rules?: AlertRuleTable;
+    /** Only these rules; omitted runs every rule. The usage TUI runs `threshold` alone. */
+    only?: readonly AlertRuleId[];
 }): Promise<StoredAlert[]> {
     const fired: StoredAlert[] = [];
 

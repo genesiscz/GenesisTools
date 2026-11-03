@@ -1,13 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
+import { mergeAlertsConfig } from "@genesiscz/utils/ai/usage/alerts/config";
+import { UsageAlertsStore } from "@genesiscz/utils/ai/usage/alerts/log";
+import type { AlertChannelTable, StoredAlert } from "@genesiscz/utils/ai/usage/alerts/types";
 import { notifiableWindows } from "@genesiscz/utils/ai/usage/alerts/windows";
+import type { UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
+import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { shellHelpLines } from "./components/help-overlay";
 import { cycleProvider, toggleAccount } from "./filters";
 import { isModalOpen, setModalOpen } from "./hooks/input-scope";
 import { nextPollState } from "./hooks/use-poller";
 import { colorForPercent, colorForWindow, colorForWindowKey } from "./lib/colors";
-import { withoutHiddenAccounts } from "./source";
+import { thresholdAlerts, withoutHiddenAccounts } from "./source";
 import { formatTimeRange } from "./types";
 import { orderWindows } from "./views/account-section";
 import {
@@ -404,5 +409,40 @@ describe("filters", () => {
         expect(formatTimeRange(60)).toBe("60m");
         expect(formatTimeRange(360)).toBe("6h");
         expect(formatTimeRange(10_080)).toBe("7d");
+    });
+});
+
+describe("the TUI's desktop alerts", () => {
+    test("go through the alert engine's record: a window over its threshold is delivered once across rounds", async () => {
+        const db = new UsageLimitsDb(":memory:");
+        const delivered: StoredAlert[] = [];
+        const channels: AlertChannelTable = {
+            macos: { id: "macos", interrupts: true, deliver: async (alert) => void delivered.push(alert) },
+            inbox: { id: "inbox", interrupts: false, deliver: async () => {} },
+        };
+        const config: UsageDashboardConfig = {
+            refreshInterval: 60,
+            prominentBuckets: {},
+            hiddenBuckets: {},
+            hiddenAccounts: [],
+            defaultTab: 0,
+            historyLayout: "stacked",
+            notifications: { enabled: true, inTui: true, macos: true, sound: "Purr" },
+            alerts: mergeAlertsConfig({}),
+            dataRetentionDays: 30,
+            paceScope: "pooled",
+        };
+        const alerts = thresholdAlerts(db, config, channels);
+        const now = new Date("2026-09-04T18:00:00.000Z");
+
+        try {
+            await alerts([codex("work", 85)], now);
+            await alerts([codex("work", 86)], new Date(now.getTime() + 60_000));
+
+            expect(delivered.map((alert) => [alert.rule, alert.accountName])).toEqual([["threshold", "work"]]);
+            expect(new UsageAlertsStore(db.connection()).hasRule("threshold")).toBe(true);
+        } finally {
+            db.close();
+        }
     });
 });
