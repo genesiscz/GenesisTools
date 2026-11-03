@@ -33,7 +33,7 @@ import { LIMITS_HEALTH_SCHEMA, type LimitsHealthData, limitsHealth } from "@gene
 import { type PollRun, PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import { usageDaemonAgeMs } from "@genesiscz/utils/ai/usage-poll/daemon-heartbeat";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
-import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { lastReadingChanges, UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import {
     LIMITS_NOW_SCHEMA,
     type LimitsNowData,
@@ -393,6 +393,7 @@ export async function queryHealth(
     let runs: PollRun[] = [];
     let latest: PollRun[] = [];
     let lastRoundAt: string | null = null;
+    let lastChanges = new Map<string, string>();
 
     try {
         if (db) {
@@ -401,6 +402,7 @@ export async function queryHealth(
             runs = runStore.runsBetween({ from: window.from, to: window.to, providers: providerIds, accounts });
             latest = runStore.latestRuns(accounts);
             lastRoundAt = runStore.lastRoundAt();
+            lastChanges = lastReadingChanges(db, accounts);
         }
     } finally {
         db?.close();
@@ -414,6 +416,7 @@ export async function queryHealth(
         now,
         heartbeatAgeMs: (deps.heartbeatAgeMs ?? usageDaemonAgeMs)(),
         lastRoundAt,
+        lastChanges,
     });
 
     logger.debug(

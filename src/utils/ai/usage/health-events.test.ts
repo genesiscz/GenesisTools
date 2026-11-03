@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
-import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { lastReadingChanges, UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { readLimitSeries } from "@genesiscz/utils/ai/usage-poll/series";
 import { recordProbeRefusal, recordUsageEvent, useUsageEventsStoreForTests } from "./events/record";
 import { countByKind, partialCountByKind, UsageEventsStore } from "./events/store";
@@ -281,6 +281,7 @@ describe("limitsHealth", () => {
             now: at(60),
             heartbeatAgeMs: 30_000,
             lastRoundAt: store.lastRoundAt(),
+            lastChanges: new Map(),
         });
         const [work, shop] = data.accounts;
 
@@ -295,6 +296,65 @@ describe("limitsHealth", () => {
         expect(work.runs.map((run) => run.outcome)).toEqual(["ok", "backoff"]);
         expect(shop).toMatchObject({ outcome: "unmeasured", coveragePct: 0, lastPollAt: null });
         expect(shop.gaps).toEqual([{ from: T0.toISOString(), to: at(60).toISOString(), minutes: 60 }]);
+    });
+
+    test("an account polled fine with no usage change for half an hour is idle, one whose usage moved is active", () => {
+        const store = new PollRunsStore(limits.connection());
+        const reading = (account: string, minute: number, percent: number) =>
+            limits.recordSnapshotV2(account, "five_hour", percent, at(minute).toISOString(), {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "anthropic-sub",
+                accountId: `acc_${account}`,
+                kind: "session",
+            });
+        const accounts = [
+            { provider: "anthropic-sub", accountId: "acc_work", accountName: "work" },
+            { provider: "anthropic-sub", accountId: "acc_side", accountName: "side" },
+            { provider: "anthropic-sub", accountId: "acc_shop", accountName: "shop" },
+        ];
+
+        for (let minute = 0; minute <= 59; minute++) {
+            const entries = [
+                { snapshot: snapshot(), source: "endpoint" },
+                { snapshot: snapshot({ accountId: "acc_side", accountName: "side" }), source: "endpoint" },
+            ];
+
+            if (minute >= 45) {
+                entries.push({
+                    snapshot: snapshot({ accountId: "acc_shop", accountName: "shop" }),
+                    source: "endpoint",
+                });
+            }
+
+            store.recordRound(entries, at(minute));
+        }
+
+        // The store writes a reading only when it changed: work last moved at 0:05, side at 0:50, shop at 0:00.
+        reading("work", 0, 10);
+        reading("work", 5, 12);
+        reading("side", 0, 10);
+        reading("side", 50, 30);
+        reading("shop", 0, 10);
+
+        const { data } = limitsHealth({
+            accounts,
+            runs: store.runsBetween({ from: T0, to: at(60) }),
+            latest: store.latestRuns(accounts),
+            window: { from: T0, to: at(60) },
+            now: at(60),
+            heartbeatAgeMs: 30_000,
+            lastRoundAt: store.lastRoundAt(),
+            lastChanges: lastReadingChanges(limits.connection(), accounts),
+        });
+
+        expect(data.accounts.map((account) => [account.accountName, account.activity, account.lastChangeAt])).toEqual([
+            ["work", "idle", at(5).toISOString()],
+            ["side", "active", at(50).toISOString()],
+            // Polled for 15 minutes only: too short to call a quiet account idle.
+            ["shop", null, at(0).toISOString()],
+        ]);
     });
 
     test("a past window reads coverage from the window and the current state from the newest run", () => {
@@ -321,6 +381,7 @@ describe("limitsHealth", () => {
             now: at(60),
             heartbeatAgeMs: 30_000,
             lastRoundAt: store.lastRoundAt(),
+            lastChanges: new Map(),
         });
 
         expect(data.accounts[0]).toMatchObject({
@@ -345,6 +406,7 @@ describe("limitsHealth", () => {
             now: at(60),
             heartbeatAgeMs: null,
             lastRoundAt: null,
+            lastChanges: new Map(),
         });
 
         expect(warnings.map((warning) => warning.code)).toEqual(["daemon-down", "no-runs"]);

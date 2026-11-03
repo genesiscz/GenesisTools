@@ -253,6 +253,58 @@ function compareSeriesRows(a: SeriesRow, b: SeriesRow): number {
     return Number(Boolean(b.seed)) - Number(Boolean(a.seed));
 }
 
+interface LastChangeRow {
+    provider: string;
+    account_name: string;
+    last: string;
+}
+
+/**
+ * When each account's usage last changed: its newest stored reading. The poller writes a reading only when it differs
+ * from the stored one (`recordIfChangedV2`), so the newest row is the last change, not the last poll. Keyed
+ * `<provider>\0<account name>`; an account with no reading is absent. Reads only, so a read-only connection serves it,
+ * and a store without the table or the availability column answers nothing.
+ */
+export function lastReadingChanges(
+    db: Database,
+    accounts: ReadonlyArray<{ provider: string; accountName: string }>
+): Map<string, string> {
+    const changes = new Map<string, string>();
+    const names = [...new Set(accounts.map((account) => account.accountName))];
+
+    if (names.length === 0) {
+        return changes;
+    }
+
+    try {
+        const rows = db
+            .prepare(
+                `SELECT COALESCE(provider, ?) AS provider, account_name, MAX(timestamp) AS last
+                 FROM usage_snapshots
+                 WHERE account_name IN (${names.map(() => "?").join(", ")}) AND ${READING_ONLY}
+                 GROUP BY COALESCE(provider, ?), account_name`
+            )
+            .all(DEFAULT_LIMITS_PROVIDER, ...names, DEFAULT_LIMITS_PROVIDER) as LastChangeRow[];
+        const wanted = new Set(accounts.map((account) => `${account.provider}\u0000${account.accountName}`));
+
+        for (const row of rows) {
+            const key = `${row.provider}\u0000${row.account_name}`;
+
+            if (wanted.has(key)) {
+                changes.set(key, row.last);
+            }
+        }
+    } catch (err) {
+        if (!(err instanceof Error && /no such (table|column)/.test(err.message))) {
+            throw err;
+        }
+
+        logger.debug({ err }, "[usage-limits] no readings to date the last change from");
+    }
+
+    return changes;
+}
+
 export class UsageLimitsDb {
     /** Undefined on a read-only view, which has no writer to prune or migrate with. */
     private readonly claudeDb: ClaudeDatabase | undefined;
