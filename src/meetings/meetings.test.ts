@@ -62,6 +62,42 @@ const record = meetingRecordSchema.parse({
 });
 
 describe("suggestItems", () => {
+    test("a later round asks existing findings that the first budget left out", () => {
+        const pending = meetingRecordSchema.parse({
+            ...record,
+            items: [0, 100].map((atSec, index) => ({
+                id: `i${index + 1}`,
+                kind: "term",
+                status: "suggested",
+                heard: `API${index}`,
+                proposed: `API${index}Fixed`,
+                atSec,
+                scope: "line",
+                confidence: 0.2,
+                rules: [],
+                suggestedAt: meeting.start,
+            })),
+        });
+        const options = {
+            record: pending,
+            meeting,
+            rules: [],
+            dictionary: { abbrExpansion: "every" as const, entries: [] },
+            sourceWords: [],
+            now: meeting.start,
+            questionBudget: 1,
+        };
+        const first = suggestItems(options);
+        expect(first).toHaveLength(1);
+        expect(first[0]).toMatchObject({ kind: "question", decides: ["i1"] });
+        pending.items.push(...first);
+        const second = suggestItems(options);
+        expect(second).toHaveLength(1);
+        expect(second[0]).toMatchObject({ kind: "question", decides: ["i2"] });
+        pending.items.push(...second);
+        expect(suggestItems(options)).toEqual([]);
+    });
+
     test("a goodbye another label answered becomes a range, a cut word becomes a join, each with its rules", () => {
         const items = suggestItems({
             record,

@@ -981,7 +981,10 @@ export function suggestItems(options: {
         transcript: meeting.transcript,
         points: options.points ?? [],
     };
-    const candidates = fresh.flatMap((item) => questionFor(item, context) ?? []);
+    const askedItems = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
+    const candidates = taken
+        .filter((item) => !askedItems.has(item.id))
+        .flatMap((item) => questionFor(item, context) ?? []);
 
     // One budget for speakers and terms together: the most valuable first, none under the floor.
     const worth = selectQuestions(candidates, taken)

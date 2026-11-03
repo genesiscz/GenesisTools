@@ -95,7 +95,7 @@ describe("routerStatus", () => {
         const preset = presets({ config, check: () => true }).find((row) => row.id === "cmux-claude");
         const own = preset?.routes[0];
 
-        if (!own || own.action.type !== "run") {
+        if (own?.action.type !== "run") {
             throw new Error("cmux-claude ships one run route");
         }
 
