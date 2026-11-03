@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { MEETING_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
@@ -6,23 +5,10 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { meetingAudioPath } from "../lib/audio";
+import { pickPlayer } from "../lib/players";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-play");
-
-type Player = (typeof MEETING_PLAYERS)[number];
-
-/** How each player is found and started at a second. */
-const PLAYERS: Record<Player, { available: () => boolean; argv: (path: string, sec: number) => string[] }> = {
-    vlc: {
-        available: () => existsSync("/Applications/VLC.app/Contents/MacOS/VLC"),
-        argv: (path, sec) => ["/Applications/VLC.app/Contents/MacOS/VLC", `--start-time=${sec}`, path],
-    },
-    ffplay: {
-        available: () => Bun.which("ffplay") !== null,
-        argv: (path, sec) => ["ffplay", "-ss", String(sec), "-nodisp", "-autoexit", path],
-    },
-};
 
 async function play(ref: string, opts: { at: string; before?: string }): Promise<void> {
     const atSec = parseClock(opts.at);
@@ -43,8 +29,7 @@ async function play(ref: string, opts: { at: string; before?: string }): Promise
         const audioPath = await meetingAudioPath(record);
         const playback = (await new MeetingsConfigStore().read()).global.playback;
         const before = opts.before === undefined ? playback.beforeSec : Number(opts.before);
-        const order = [playback.player, ...MEETING_PLAYERS.filter((player) => player !== playback.player)];
-        const player = order.find((name) => PLAYERS[name].available());
+        const player = pickPlayer(playback.player, MEETING_PLAYERS);
 
         if (!player) {
             fail(`No player found (${MEETING_PLAYERS.join(", ")}). Install VLC, or ffmpeg for ffplay.`);
@@ -52,10 +37,10 @@ async function play(ref: string, opts: { at: string; before?: string }): Promise
         }
 
         const startSec = Math.max(0, atSec - before);
-        const argv = PLAYERS[player].argv(audioPath, startSec);
+        const argv = player.fromArgv(audioPath, startSec);
         Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true }).unref();
         log.debug({ argv }, "player started");
-        ui.ok(`Playing ${record.id} from ${formatClock(startSec)} in ${player}.`);
+        ui.ok(`Playing ${record.id} from ${formatClock(startSec)} in ${player.id}.`);
     } catch (err) {
         fail(errorText(err));
     }

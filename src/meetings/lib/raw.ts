@@ -18,6 +18,11 @@ export interface RawMeeting {
         end?: string;
         platform?: string;
         channelLayout?: string;
+        /**
+         * The stretches where the call's channel stayed silent while the microphone heard speech: the call played
+         * through the room, so the channel cannot tell the user from the others there.
+         */
+        callSilent?: Array<{ fromSec: number; toSec: number }>;
     };
     people: Array<{
         name: string;
@@ -69,6 +74,7 @@ export function rawMeeting(options: {
     evidence: MeetingEvidence | null;
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
+    callSilent?: Array<{ fromSec: number; toSec: number }>;
     points: SummaryPoint[];
     terms?: RawTermEvidence;
 }): RawMeeting {
@@ -98,6 +104,7 @@ export function rawMeeting(options: {
             ...(meeting.end ? { end: meeting.end } : {}),
             ...(record.platform ? { platform: record.platform } : {}),
             ...(record.evidence?.channels ? { channelLayout: record.evidence.channels.layout } : {}),
+            ...(options.callSilent ? { callSilent: options.callSilent } : {}),
         },
         people: names.map((name) => {
             const origin = originOf(name);

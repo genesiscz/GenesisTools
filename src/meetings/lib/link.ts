@@ -1,3 +1,5 @@
+import { type LinkGate, linkGate } from "@genesiscz/utils/browser-router/link-gate";
+import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
@@ -9,6 +11,7 @@ import {
     parseSourceRef,
 } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { resolveProject } from "./project";
 import { meetingSource } from "./sources";
 
@@ -86,7 +89,11 @@ export async function linkSource(options: {
         config: options.config,
         flag: options.project,
         current: existing?.project,
-        facts: { wisprflowFolders: meeting.folders, calendar: meeting.calendar?.calendar, title: meeting.title },
+        facts: {
+            source: { id: source.id, folders: meeting.folders },
+            calendar: meeting.calendar?.calendar,
+            title: meeting.title,
+        },
         quiet: options.quiet,
     });
     const change = `${source.label} ${meeting.sourceMeetingId}: ${meeting.transcript.length} lines, ${meeting.participants.length} people`;
@@ -114,4 +121,53 @@ export async function linkSource(options: {
         { command: options.command, change: `created from ${change}` }
     );
     return { record, created: true };
+}
+
+/** The `--play-links` of a transcript: a link per time that plays the meeting from there, and what to warn about. */
+export interface PlayLinks {
+    link: (atSec: number) => string | null;
+    warning?: string;
+}
+
+/**
+ * Play links for `transcript --play-links`. With the `meetings-play` preset off the links are written anyway, since
+ * switching it on makes every link in the file work, and `warning` says how; only without a link host is there none.
+ */
+export function playLinksFor(meetingId: string, gate: LinkGate = linkGate()): PlayLinks {
+    const build = (atSec: number, judged: LinkGate) =>
+        routerLink({
+            preset: "meetings-play",
+            action: "play",
+            data: { meeting: meetingId, at: formatClock(atSec) },
+            gate: judged,
+            fallback: () => "",
+        });
+    const probe = build(0, gate);
+
+    if (probe.link !== null) {
+        return { link: (atSec) => build(atSec, gate).link };
+    }
+
+    const enable = toolCommand("browser-router", "presets", "enable", "meetings-play");
+
+    if (probe.error?.code !== "preset-off") {
+        return {
+            link: () => null,
+            warning: `No play links: ${probe.error?.message ?? "the router gives none"} (${probe.error?.reason ?? ""}).`,
+        };
+    }
+
+    const row = gate.presets["meetings-play"];
+    const routed: LinkGate = {
+        ...gate,
+        presets: {
+            ...gate.presets,
+            "meetings-play": { ...row, available: true, enabled: true, routed: true, missing: [] },
+        },
+    };
+
+    return {
+        link: (atSec) => build(atSec, routed).link,
+        warning: `The play links open nothing until the router preset is on: ${enable}.`,
+    };
 }

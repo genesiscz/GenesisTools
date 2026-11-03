@@ -16,6 +16,8 @@ const clock = z.union([z.number().min(0), z.string()]).transform((value, ctx) =>
 });
 const confidence = z.number().min(0).max(1);
 const text = z.string().trim().min(1);
+/** A line's index in the source transcript: tells apart two lines that start in the same second. */
+const line = z.number().int().min(0).optional();
 /** A name for a finding that a question in the same batch can list in `decides`, before the finding has an id. */
 const ref = z
     .string()
@@ -25,7 +27,8 @@ const ref = z
 
 /**
  * One finding to store, from `items add` flags or one entry of `--from-file`. A speaker range, a join or a term is an
- * agent's judgement and needs a confidence and a reason; a question needs neither.
+ * agent's judgement and needs a confidence and a reason; a label that tracks no one person needs a reason; a question
+ * needs neither.
  */
 export const findingSchema = z.discriminatedUnion("kind", [
     z.object({
@@ -43,6 +46,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         kind: z.literal("term"),
         ref,
         at: clock,
+        line,
         heard: text,
         proposed: text.optional(),
         /** `line`: `proposed` fixes only the line at `at`. The default fixes the words wherever they are heard. */
@@ -59,11 +63,23 @@ export const findingSchema = z.discriminatedUnion("kind", [
         ref,
         /** The start of the line after the cut, whose first word ends the word cut in the line before. */
         at: clock,
+        line,
         /** The source's label whose voice speaks the joined line. Absent, the label of the line after the cut. */
         label: text.optional(),
         /** The whole word, as the joined line shows it. */
         joined: text.optional(),
         confidence,
+        reason: text,
+    }),
+    z.object({
+        kind: z.literal("label"),
+        ref,
+        from: clock,
+        to: clock,
+        /** The source's own label that does not track one person from `from` to `to`. */
+        label: text,
+        meaningless: z.literal(true),
+        confidence: confidence.optional(),
         reason: text,
     }),
     z.object({
@@ -76,12 +92,17 @@ export const findingSchema = z.discriminatedUnion("kind", [
         choices: z.array(text).default([]),
         /** Item ids (`i3`) or the refs of findings in the same batch. */
         decides: z.array(z.string().trim().min(1)).default([]),
+        /**
+         * The scale suggest uses: (1 − confidence) × impact × reach, about 1 to 3 for one question and 6 or more for a
+         * cluster. Listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`.
+         */
+        priority: z.number().min(0).optional(),
         confidence: confidence.optional(),
         reason: text.optional(),
     }),
 ]);
 export type Finding = z.output<typeof findingSchema>;
-export const FINDING_KINDS = ["speaker-range", "join", "term", "question"] as const;
+export const FINDING_KINDS = ["speaker-range", "label", "join", "term", "question"] as const;
 
 /** A file of findings: an array, or `{ findings: [...] }`. */
 export const findingsFileSchema = z.union([
@@ -146,10 +167,17 @@ export function findingItems(findings: Finding[], items: MeetingItem[], now: str
             rules: [by],
             suggestedAt: now,
             ...(finding.confidence === undefined ? {} : { confidence: finding.confidence }),
-            ...(finding.reason ? { evidence: { reason: finding.reason } } : {}),
+        };
+        const evidence = {
+            ...(finding.reason ? { reason: finding.reason } : {}),
+            ...("line" in finding && finding.line !== undefined ? { transcriptLine: finding.line } : {}),
         };
 
-        return meetingItemSchema.parse({ ...base, ...kindFields(finding, idOfRef) });
+        return meetingItemSchema.parse({
+            ...base,
+            ...(Object.keys(evidence).length > 0 ? { evidence } : {}),
+            ...kindFields(finding, idOfRef),
+        });
     });
 }
 
@@ -162,6 +190,16 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
             fromSec: finding.from,
             toSec: finding.to,
             speaker: finding.speaker,
+        };
+    }
+
+    if (finding.kind === "label") {
+        return {
+            kind: finding.kind,
+            label: finding.label,
+            fromSec: finding.from,
+            toSec: finding.to,
+            meaningless: true,
         };
     }
 
@@ -195,5 +233,6 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
         ...(finding.heard ? { heard: finding.heard } : {}),
         choices: finding.choices,
         decides: finding.decides.map((id) => idOfRef.get(id) ?? id),
+        ...(finding.priority === undefined ? {} : { priority: finding.priority }),
     };
 }

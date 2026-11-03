@@ -55,6 +55,19 @@ export enum MeetingRule {
      */
     OwnLabel = "R17",
     /**
+     * R18, a second person in the room. A platform-named label that holds a quarter or more of the microphone's sure
+     * lines (at least 30) next to call lines of its own is a second person talking into the user's microphone. Its sure
+     * microphone lines are not the user's: the people in the call are the candidates (0.4, to listen). With such a
+     * person in the room, the user's own sure microphone lines are capped at 0.7 and asked.
+     */
+    LocalVoice = "R18",
+    /**
+     * R19, label voice. Where the channels say nothing (the call's channel stayed silent for 5 min while two labels
+     * talked, `evidence.channels.callSilent`), the label with the most sure microphone lines elsewhere, leading the
+     * next by 1.25 times, stands for the user (0.5, to listen).
+     */
+    LabelVoice = "R19",
+    /**
      * RM, muted. A person the platform shows muted in every reading over a line did not say it in the call. Muted
      * people are never candidates and never "shown speaking"; with one person left whom E3 shows, the line is theirs
      * (0.9). It never overrules E1: Wispr records the microphone itself, so a muted user can still be on it.

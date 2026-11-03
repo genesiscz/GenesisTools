@@ -2,113 +2,56 @@ import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { logger, out } from "@genesiscz/utils/logger";
-import { LISTEN_PLAYERS, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
-import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { out } from "@genesiscz/utils/logger";
+import {
+    LISTEN_PLAYERS,
+    type MeetingsConfig,
+    MeetingsConfigStore,
+    resolveDictionary,
+} from "@genesiscz/utils/meetings/config";
+import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
-import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
+import { clipPlayer, cutClip, playClip } from "../lib/audio";
 import {
-    ANSWER_LOG_FILE,
-    type AnswerEvent,
-    appendAnswerEvent,
-    type RoundEndReason,
-    readAnswerEvents,
-    runningRound,
-    subscribeAnswers,
-} from "../lib/answer-log";
-import { clipPlayer, cutClip, meetingAudioPath, playClip } from "../lib/audio";
-import { energyMicShareFor } from "../lib/energy";
-import { speakingEvidence } from "../lib/platforms";
+    type AskedQuestion,
+    type ListenAdapter,
+    type ListenOutcome,
+    ListenSession,
+    type SessionNote,
+} from "../lib/listen-session";
+import { GivenAnswerAdapter } from "../lib/listen-session-answer";
+import { OpenedMeeting } from "../lib/opened-meeting";
 import {
-    answerQuestion,
     answerVocabulary,
     askedSpotSec,
     type HeardContext,
-    heardContext,
+    heardClip,
     NONE_OF_THESE,
     openQuestions,
-    propagateAnswer,
     type QuestionItem,
-    questionNumber,
-    skipQuestion,
-    splitQuestion,
+    questionIdOf,
+    questionLabel,
+    questionOccurrence,
+    questionView,
 } from "../lib/questions";
 import { errorText, fail, TOOL } from "../lib/shared";
-import { linkedSource, meetingTranscript } from "../lib/sources";
-
-const { log } = logger.scoped("meetings-listen");
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
 const OTHER = "\u0000other";
 const SKIP = "\u0000skip";
 const STOP = "\u0000stop";
-const TYPE_IT = "\u0000type";
 const SPLIT = "\u0000split";
 const DEFAULT_SUBSCRIBE_MINUTES = 120;
 /** Audio after a speaker question's span, and before it besides the tone's lead. */
 const SPEAKER_PAD_SEC = 0.3;
 const SAID_MAX_CHARS = 240;
-
-type Outcome = { answer: string; comment?: string } | "skip" | "split" | "stop" | "back";
-
-/** One decided question of the round: the items before the decision, so Esc can undo it. */
-interface Step {
-    question: QuestionItem;
-    before: MeetingItem[];
-    /** The answer given, for a later question on the same heard words. */
-    answer?: string;
-    /** A split: its parts take its place, so it does not count against the budget. */
-    split?: true;
-    /** Written when the round ends, so an undone answer leaves no correction behind. */
-    corrections: Correction[];
-}
-
-/** Writes one answer or skip; returns the questions the answer settled and the corrections it confirms. */
-async function decide(options: {
-    store: MeetingStore;
-    meetingId: string;
-    question: QuestionItem;
-    outcome: { answer: string; comment?: string } | "skip";
-    listenBelow: number;
-}): Promise<{ settled: string[]; corrections: Correction[] }> {
-    const { question, outcome } = options;
-    const now = new Date().toISOString();
-    const change = outcome === "skip" ? `${question.id} skipped` : `${question.id} → ${outcome.answer}`;
-    let corrections: Correction[] = [];
-    let settled: string[] = [];
-    await options.store.update(options.meetingId, { command: "listen", change }, (current) => {
-        if (outcome === "skip") {
-            skipQuestion(current, question.id, now);
-            return;
-        }
-
-        corrections = answerQuestion(current, question.id, { ...outcome, now });
-        settled = propagateAnswer(current, question, { answer: outcome.answer, listenBelow: options.listenBelow, now });
-    });
-    return { settled, corrections };
-}
-
-function answeredEvent(question: QuestionItem, answer: { answer: string; comment?: string }, settled: string[]) {
-    const event: AnswerEvent = {
-        event: "answered",
-        at: new Date().toISOString(),
-        item: question.id,
-        about: question.about,
-        fromSec: question.fromSec,
-        toSec: question.toSec,
-        question: question.question,
-        ...(question.heard ? { heard: question.heard } : {}),
-        answer: answer.answer,
-        ...(answer.comment ? { comment: answer.comment } : {}),
-        settled,
-    };
-    return event;
-}
 
 /** The first `listen` asks how much audio to hear around a range and keeps the answer. */
 async function padSeconds(config: MeetingsConfigStore): Promise<number | undefined> {
@@ -131,80 +74,91 @@ async function padSeconds(config: MeetingsConfigStore): Promise<number | undefin
     return Number(picked);
 }
 
-/** "Something else": pick a known name or word, or type a new one. Esc returns undefined (back to the choices). */
-async function somethingElse(vocabulary: string[]): Promise<string | undefined> {
+/**
+ * "Something else": pick a known name or word, or type a new one: the typed text is always the first row, so Enter
+ * takes it when nothing matches. Esc returns undefined (back to the choices).
+ */
+async function somethingElse(vocabulary: string[], context: string[]): Promise<string | undefined> {
     const picked = await searchSelect<string>({
-        message: "Who or what is it? (type to filter, Esc goes back)",
-        items: [{ value: TYPE_IT, label: "Type it…" }, ...vocabulary.map((value) => ({ value, label: value }))],
+        message: ["Who or what is it?", ...context].join("\n"),
+        items: vocabulary.map((value) => ({ value, label: value })),
+        typed: {
+            label: (query) => (query ? `Use "${query}" as typed` : "Type to filter, or type a new answer"),
+            resolve: (query) => query.trim() || undefined,
+        },
     });
-
-    if (typeof picked === "symbol") {
-        return undefined;
-    }
-
-    if (picked !== TYPE_IT) {
-        return picked;
-    }
-
-    const typed = await clack.text({ message: "Answer", validate: (value) => (value?.trim() ? undefined : "Empty") });
-    return clack.isCancel(typed) ? undefined : typed.trim();
-}
-
-type MicShare = (fromSec: number, toSec: number) => number | undefined;
-
-/** The microphone's energy share over time, when the source keeps the audio and its channels are calibrated. */
-async function micShareOf(store: MeetingStore, meeting: MeetingRecord): Promise<MicShare | undefined> {
-    const { source, sourceMeetingId } = await linkedSource(meeting);
-    const evidence = speakingEvidence(meeting, await source.evidence(sourceMeetingId));
-    return (await energyMicShareFor(store, meeting, evidence)).share;
-}
-
-/** How a person names a question: Q<n>, the number the polished file and the listen header use. */
-function questionLabel(record: MeetingRecord, id: string): string {
-    const n = questionNumber(record, id);
-    return n > 0 ? `Q${n}` : id;
-}
-
-/** `--item` takes Q12, 12 or the item id i42. */
-function questionIdOf(record: MeetingRecord, ref: string): string {
-    const n = /^q?(\d+)$/i.exec(ref.trim())?.[1];
-
-    if (!n) {
-        return ref;
-    }
-
-    return record.items.filter((item) => item.kind === "question")[Number(n) - 1]?.id ?? ref;
-}
-
-/** The words of the lines a speaker question asks about; a split part names its own words in the question. */
-function spokenIn(question: QuestionItem, transcript: TranscriptEntry[]): string | undefined {
-    if (question.question.startsWith('Who says "')) {
-        return undefined;
-    }
-
-    const text = transcript
-        .filter(
-            (entry) =>
-                entry.startSec !== undefined &&
-                entry.startSec >= question.fromSec - 0.5 &&
-                (entry.startSec < question.toSec || entry.startSec === question.fromSec)
-        )
-        .map((entry) => entry.text)
-        .join(" ");
-    return text.length > SAID_MAX_CHARS ? `${text.slice(0, SAID_MAX_CHARS)}…` : text || undefined;
+    return typeof picked === "symbol" ? undefined : picked;
 }
 
 /** The words around a word question's heard words: the line before (dim), the line with them marked, the line after. */
-function contextLines(context: HeardContext): string {
-    const lines = [
+function contextLines(context: HeardContext): string[] {
+    return [
         context.before ? pc.dim(context.before) : undefined,
-        `${pc.cyan(context.lead)}${pc.bold(pc.yellow(context.heard))}${pc.cyan(context.rest)}`,
+        `${context.lead}${heardMark(context.heard)}${context.rest}`,
         context.after ? pc.dim(context.after) : undefined,
+    ].filter((line) => line !== undefined);
+}
+
+/** The asked question's rows: its answers first, then the actions, each with its glyph and colour. */
+function choiceRows(options: {
+    question: QuestionItem;
+    choices: string[];
+    earlier?: { answer: string; atSec: number };
+}): ChoiceRow<string>[] {
+    const { question, earlier } = options;
+    return [
+        ...options.choices.map((choice) => ({
+            value: choice,
+            label: choice,
+            kind: "answer" as const,
+            ...(earlier && choice === earlier.answer ? { hint: `as at ${formatClock(earlier.atSec)}` } : {}),
+        })),
+        {
+            value: AGAIN,
+            label: "Play the audio again",
+            hint: "from the start",
+            kind: "action",
+            glyph: "↻",
+            paint: pc.yellow,
+        },
+        {
+            value: OTHER,
+            label: "Something else…",
+            hint: "pick a known name or word, or type a new one",
+            kind: "action",
+            glyph: "✎",
+            paint: pc.magenta,
+        },
+        {
+            value: NONE_OF_THESE,
+            label: "None of these",
+            hint: "rejects the items it decides",
+            kind: "action",
+            glyph: "⊘",
+            paint: pc.red,
+        },
+        ...(question.about === "speaker"
+            ? [
+                  {
+                      value: SPLIT,
+                      label: "Several voices",
+                      hint: "cut at each line and each change between your microphone and the call, then ask each part",
+                      kind: "action" as const,
+                      glyph: "⇆",
+                      paint: pc.cyan,
+                  },
+              ]
+            : []),
+        { value: SKIP, label: "Skip", hint: "leave it open", kind: "action", glyph: "»", paint: pc.dim },
+        {
+            value: STOP,
+            label: "Enough for now",
+            hint: "the rest stay open for the next listen",
+            kind: "action",
+            glyph: "◼",
+            paint: pc.dim,
+        },
     ];
-    return lines
-        .filter((line) => line !== undefined)
-        .map((line) => `\n  ${line}`)
-        .join("");
 }
 
 /**
@@ -225,49 +179,33 @@ async function ask(options: {
     context?: HeardContext;
     /** The answer this round gave the same heard words at another time: offered first. */
     earlier?: { answer: string; atSec: number };
-}): Promise<Outcome> {
+    /** The styled header line: question number, progress and time range. */
+    header?: string;
+}): Promise<ListenOutcome> {
     const { question, earlier } = options;
     const repeat = options.repeatGapMs === undefined ? {} : { repeatGapMs: options.repeatGapMs };
     let playing = playClip(options.player, options.clip, { delayMs: options.delayMs, ...repeat });
     const shown = options.context
         ? contextLines(options.context)
         : options.said
-          ? `\n  ${pc.cyan(`„${options.said}“`)}`
-          : "";
+          ? [pc.italic(`„${options.said}“`)]
+          : [];
     const earlierNote = earlier
-        ? `\n  ${pc.dim(`You answered the same words at ${formatClock(earlier.atSec)}: ${earlier.answer}`)}`
-        : "";
+        ? `${pc.dim("↺")} ${pc.dim(`you answered these words at ${formatClock(earlier.atSec)}: `)}${pc.cyan(earlier.answer)}`
+        : undefined;
     const choices = earlier
         ? [earlier.answer, ...question.choices.filter((choice) => choice !== earlier.answer)]
         : question.choices;
 
     try {
         while (true) {
-            const picked = await clack.select({
-                message: `${question.question} ${pc.dim("(Esc: back to the previous question)")}${shown}${earlierNote}`,
-                options: [
-                    ...choices.map((choice) => ({
-                        value: choice,
-                        label: choice,
-                        ...(earlier && choice === earlier.answer
-                            ? { hint: `as at ${formatClock(earlier.atSec)}` }
-                            : {}),
-                    })),
-                    { value: AGAIN, label: "Play the audio again", hint: "from the start" },
-                    { value: OTHER, label: "Something else…" },
-                    { value: NONE_OF_THESE, label: "None of these", hint: "rejects the items it decides" },
-                    ...(question.about === "speaker"
-                        ? [
-                              {
-                                  value: SPLIT,
-                                  label: "Several voices",
-                                  hint: "cut at each line and each change between your microphone and the call, then ask each part",
-                              },
-                          ]
-                        : []),
-                    { value: SKIP, label: "Skip" },
-                    { value: STOP, label: "Enough for now", hint: "the rest stay open for the next listen" },
-                ],
+            const picked = await choiceSelect<string>({
+                message: question.question,
+                ...(options.header ? { header: options.header } : {}),
+                context: shown,
+                ...(earlierNote ? { note: earlierNote } : {}),
+                rows: choiceRows({ question, choices, ...(earlier ? { earlier } : {}) }),
+                formatSubmitted: (row) => row.label,
             });
 
             if (clack.isCancel(picked)) {
@@ -285,7 +223,7 @@ async function ask(options: {
             }
 
             // The clip keeps playing while the answer is typed.
-            const answer = picked === OTHER ? await somethingElse(options.vocabulary) : String(picked);
+            const answer = picked === OTHER ? await somethingElse(options.vocabulary, shown) : String(picked);
 
             if (!answer) {
                 continue;
@@ -342,6 +280,188 @@ interface ListenOptions {
     timeout?: string;
 }
 
+/** The terminal: each question's clip is cut and played, and the person picks an answer in the choice select. */
+class TerminalAdapter implements ListenAdapter {
+    constructor(
+        private readonly deps: {
+            store: MeetingStore;
+            meeting: MeetingRecord;
+            audioPath: string;
+            player: (typeof LISTEN_PLAYERS)[number];
+            vocabulary: string[];
+            transcript: TranscriptLines;
+            padSec: number;
+            listen: ListenSettings;
+        }
+    ) {}
+
+    async ask(asked: AskedQuestion): Promise<ListenOutcome> {
+        const { store, meeting, transcript, listen } = this.deps;
+        const { question } = asked;
+        const view = questionView(asked.record, question, transcript, SAID_MAX_CHARS);
+        const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
+        const occurrence = questionOccurrence(asked.record, question);
+        // A word question plays the spot of its own occurrence, so a word late in a long line is in the clip.
+        const heard = (question.about === "speaker" ? undefined : heardClip(question, transcript, occurrence)) ??
+            question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
+        const spotSec = askedSpotSec(question, transcript, occurrence);
+        // A speaker question plays only the asked voice, from the tone on; a word keeps the audio around it.
+        const pad = question.about === "speaker" ? listen.beepLeadSec + SPEAKER_PAD_SEC : this.deps.padSec;
+        const inClip = spotSec >= heard.fromSec - pad && spotSec <= heard.toSec + pad;
+        await cutClip({
+            audioPath: this.deps.audioPath,
+            fromSec: heard.fromSec,
+            toSec: heard.toSec,
+            padSec: pad,
+            outPath: clip,
+            ...(listen.beep ? { toneAtSec: (inClip ? spotSec : heard.fromSec) - listen.beepLeadSec } : {}),
+        });
+        const part = asked.part ? ` · part ${asked.part.n}/${asked.part.of}` : "";
+        const priority = view.priority === undefined ? "" : ` · priority ${view.priority}`;
+        return await ask({
+            question,
+            clip,
+            player: this.deps.player,
+            vocabulary: this.deps.vocabulary,
+            delayMs: listen.delaySec * 1000,
+            ...(listen.repeat ? { repeatGapMs: listen.repeatGapSec * 1000 } : {}),
+            ...(view.said ? { said: view.said } : {}),
+            ...(view.context ? { context: view.context } : {}),
+            ...(asked.earlier ? { earlier: asked.earlier } : {}),
+            header: `${choiceChip(view.label)} ${pc.dim(`${asked.position}/${asked.total}${part} · ${view.range}${priority}`)}`,
+        });
+    }
+
+    async confirmLeave(): Promise<boolean> {
+        const leave = await clack.select({
+            message: "Leave this round? The answers are saved; the next listen goes on from here.",
+            options: [
+                { value: "stay", label: "Stay on this question" },
+                { value: "leave", label: "Leave" },
+            ],
+        });
+        return clack.isCancel(leave) || leave === "leave";
+    }
+
+    note(note: SessionNote): void {
+        const { meeting } = this.deps;
+
+        if (note.kind === "decided") {
+            ui.ok(note.outcome === "skip" ? `${note.label} skipped` : `${note.label}: ${note.outcome.answer}`);
+
+            if (note.settled.length > 0) {
+                ui.dim(`  the same answer settled ${note.settled.length} more: ${note.settled.join(" ")}`);
+            }
+
+            return;
+        }
+
+        if (note.kind === "split") {
+            ui.info(`${note.label}: split into ${note.parts} parts, one per line and voice; they come next.`);
+            return;
+        }
+
+        if (note.kind === "not-split") {
+            ui.warn(
+                `${note.label}: no second line and no change between your microphone and the call to cut at, so it stays open. Answer it with "Something else…", for example "Novák, then Dvořák".`
+            );
+            return;
+        }
+
+        if (note.kind === "undone") {
+            ui.dim(`  back to ${note.label}: its answer is undone`);
+            return;
+        }
+
+        ui.ok(`${note.decided} decided; ${note.open} open questions stay, marked in ${TOOL} transcript ${meeting.id}.`);
+
+        if (note.reason === "budget" && note.open > 0) {
+            ui.info(
+                `This round asks at most ${note.budget} questions. The next round asks the rest: ${TOOL} listen ${meeting.id}`
+            );
+        }
+    }
+}
+
+type ListenSettings = MeetingsConfig["global"]["playback"]["listen"];
+
+interface AdapterContext {
+    store: MeetingStore;
+    meeting: MeetingRecord;
+    opened: OpenedMeeting;
+    opts: ListenOptions;
+    first: QuestionItem;
+    settings: MeetingsConfig;
+}
+
+/** The adapter the session asks through, the budget it gets, and whether it joins a round already running. */
+interface AdapterChoice {
+    adapter: ListenAdapter;
+    budget: number;
+    joinRunningRound?: boolean;
+}
+
+const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promise<AdapterChoice | undefined>> = {
+    answer: async ({ opts }) => {
+        if (!opts.item || opts.answer === undefined) {
+            fail(`--answer needs --item <Q12>: it answers one question.`);
+            return undefined;
+        }
+
+        const answer = { answer: opts.answer, ...(opts.comment ? { comment: opts.comment } : {}) };
+        const adapter = new GivenAnswerAdapter(answer, (line, tone) => (tone === "ok" ? ui.ok(line) : ui.dim(line)));
+        return { adapter, budget: 1, joinRunningRound: true };
+    },
+    terminal: async ({ store, meeting, opened, first, settings }) => {
+        if (!isInteractive()) {
+            fail(`listen plays audio and asks in a terminal. Without one, answer a question directly:`);
+            ui.raw(
+                suggestCommand(TOOL, {
+                    replaceCommand: [
+                        "listen",
+                        meeting.id,
+                        "--item",
+                        questionLabel(meeting, first.id),
+                        "--answer",
+                        "<answer>",
+                    ],
+                })
+            );
+            return undefined;
+        }
+
+        const padSec = await padSeconds(new MeetingsConfigStore());
+
+        if (padSec === undefined) {
+            return undefined;
+        }
+
+        const listen = settings.global.playback.listen;
+        const player = clipPlayer(listen.player, LISTEN_PLAYERS);
+
+        if (!player) {
+            fail(`No player found (${LISTEN_PLAYERS.join(", ")}).`);
+            return undefined;
+        }
+
+        const dictionary = resolveDictionary(settings, { project: meeting.project, meeting: meeting.dictionary });
+        const adapter = new TerminalAdapter({
+            store,
+            meeting,
+            audioPath: await opened.audioPath(),
+            player,
+            vocabulary: answerVocabulary(
+                meeting,
+                dictionary.entries.map((entry) => entry.value)
+            ),
+            transcript: new TranscriptLines((await opened.meeting()).transcript),
+            padSec,
+            listen,
+        });
+        return { adapter, budget: listen.roundCap };
+    },
+};
+
 async function listen(ref: string, opts: ListenOptions): Promise<void> {
     const store = new MeetingStore();
     let meeting: MeetingRecord | undefined;
@@ -364,9 +484,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     const itemId = opts.item ? questionIdOf(meeting, opts.item) : undefined;
-    const questions = openQuestions(meeting).filter((item) => !itemId || item.id === itemId);
+    const first = openQuestions(meeting).find((item) => !itemId || item.id === itemId);
 
-    if (questions.length === 0) {
+    if (!first) {
         ui.info(
             opts.item
                 ? `${opts.item} is not an open question in ${meeting.id} (${TOOL} items ${meeting.id} --kind question)`
@@ -375,318 +495,51 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
-    const logPath = join(store.folder(meeting.id), ANSWER_LOG_FILE);
-
     try {
-        // An answer given on the command line (an agent relaying the user, or a script): no audio, no prompts.
-        if (opts.answer !== undefined) {
-            if (!opts.item) {
-                fail(`--answer needs --item <Q12>: it answers one question.`);
-                return;
-            }
-
-            const settings = await new MeetingsConfigStore().read();
-            const answer = { answer: opts.answer, ...(opts.comment ? { comment: opts.comment } : {}) };
-            const { settled, corrections } = await decide({
-                store,
-                meetingId: meeting.id,
-                question: questions[0]!,
-                outcome: answer,
-                listenBelow: settings.global.suggest.listenBelow,
-            });
-            appendCorrections(corrections);
-            appendAnswerEvent(logPath, answeredEvent(questions[0]!, answer, settled));
-
-            if (settled.length > 0) {
-                ui.dim(`the same answer settled ${settled.length} more: ${settled.join(" ")}`);
-            }
-
-            ui.ok(`${questionLabel(meeting, questions[0]!.id)} answered: ${opts.answer}`);
-            return;
-        }
-
-        if (!isInteractive()) {
-            fail(`listen plays audio and asks in a terminal. Without one, answer a question directly:`);
-            ui.raw(
-                suggestCommand(TOOL, {
-                    replaceCommand: [
-                        "listen",
-                        meeting.id,
-                        "--item",
-                        questionLabel(meeting, questions[0]!.id),
-                        "--answer",
-                        "<answer>",
-                    ],
-                })
-            );
-            return;
-        }
-
-        const config = new MeetingsConfigStore();
-        const padSec = await padSeconds(config);
-
-        if (padSec === undefined) {
-            return;
-        }
-
-        const settings = await config.read();
-        const player = clipPlayer(settings.global.playback.listen.player, LISTEN_PLAYERS);
-
-        if (!player) {
-            fail(`No player found (${LISTEN_PLAYERS.join(", ")}).`);
-            return;
-        }
-
-        const audioPath = await meetingAudioPath(meeting);
-        const dictionary = resolveDictionary(settings, { project: meeting.project, meeting: meeting.dictionary });
-        const vocabulary = answerVocabulary(
-            meeting,
-            dictionary.entries.map((entry) => entry.value)
-        );
-        const { budget, minPriority, delaySec, beep, beepLeadSec, repeat, repeatGapSec } =
-            settings.global.playback.listen;
-        const transcript: TranscriptEntry[] = await meetingTranscript(meeting);
-        await round({
-            meeting,
+        const settings = await new MeetingsConfigStore().read();
+        const opened = OpenedMeeting.of(store, meeting);
+        const chosen = await ADAPTERS[opts.answer === undefined ? "terminal" : "answer"]({
             store,
-            logPath,
+            meeting,
+            opened,
+            opts,
+            first,
+            settings,
+        });
+
+        if (!chosen) {
+            return;
+        }
+
+        const session = new ListenSession({
+            store,
+            meeting,
+            logPath: join(store.folder(meeting.id), ANSWER_LOG_FILE),
+            adapter: chosen.adapter,
             ...(itemId ? { only: itemId } : {}),
-            budget,
-            minPriority,
+            budget: chosen.budget,
+            minPriority: settings.global.playback.listen.minPriority,
             listenBelow: settings.global.suggest.listenBelow,
-            ask: async (question, earlier) => {
-                const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
-                const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
-                const spotSec = askedSpotSec(question, transcript);
-                const context =
-                    question.about === "speaker" ? undefined : heardContext(question, transcript, SAID_MAX_CHARS);
-                // A speaker question plays only the asked voice, from the tone on; a word keeps the audio around it.
-                const pad = question.about === "speaker" ? beepLeadSec + SPEAKER_PAD_SEC : padSec;
-                const inClip = spotSec >= heard.fromSec - pad && spotSec <= heard.toSec + pad;
-                await cutClip({
-                    audioPath,
-                    fromSec: heard.fromSec,
-                    toSec: heard.toSec,
-                    padSec: pad,
-                    outPath: clip,
-                    ...(beep ? { toneAtSec: (inClip ? spotSec : heard.fromSec) - beepLeadSec } : {}),
-                });
-                return await ask({
-                    question,
-                    clip,
-                    player,
-                    vocabulary,
-                    delayMs: delaySec * 1000,
-                    ...(repeat ? { repeatGapMs: repeatGapSec * 1000 } : {}),
-                    ...(question.about === "speaker" ? { said: spokenIn(question, transcript) } : {}),
-                    ...(context ? { context } : {}),
-                    ...(earlier ? { earlier } : {}),
-                });
+            ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
+            split: {
+                transcript: async () => (await opened.meeting()).transcript,
+                micShare: async () => (await opened.energy()).share,
             },
         });
+        // Ctrl-C outside a prompt (while a clip is cut) ends the process; the exit handler still closes the round.
+        const onExit = (): void => session.end("aborted");
+        const onSigint = (): void => process.exit(130);
+        process.once("exit", onExit);
+        process.once("SIGINT", onSigint);
+
+        try {
+            await session.run();
+        } finally {
+            process.off("exit", onExit);
+            process.off("SIGINT", onSigint);
+        }
     } catch (err) {
         fail(errorText(err));
-    }
-}
-
-/** One listening round: asks question after question, keeps each decision on a stack so Esc can undo it. */
-async function round(options: {
-    meeting: MeetingRecord;
-    store: MeetingStore;
-    logPath: string;
-    only?: string;
-    budget: number;
-    minPriority: number;
-    listenBelow: number;
-    ask: (question: QuestionItem, earlier?: { answer: string; atSec: number }) => Promise<Outcome>;
-}): Promise<void> {
-    const { meeting, store, logPath, only, minPriority } = options;
-    const askable = (record: MeetingRecord, passed: Set<string>, reask?: string) =>
-        openQuestions(record).find(
-            (item) =>
-                (reask ? item.id === reask : !passed.has(item.id)) &&
-                (reask !== undefined || !only || item.id === only || passed.size > 0) &&
-                (reask !== undefined || only !== undefined || (item.priority ?? minPriority) >= minPriority)
-        );
-    const steps: Step[] = [];
-    const passed = new Set<string>();
-    const total = Math.min(
-        options.budget,
-        openQuestions(meeting).filter((item) =>
-            only ? item.id === only : (item.priority ?? minPriority) >= minPriority
-        ).length || 1
-    );
-    let ended = false;
-    let reask: string | undefined;
-    let micShares: Promise<MicShare | undefined> | undefined;
-    let reason: RoundEndReason = "done";
-    const decided = (): number => steps.filter((step) => !step.split).length;
-    const earlierFor = (question: QuestionItem): { answer: string; atSec: number } | undefined => {
-        const heard = question.heard?.toLowerCase();
-        const step = heard
-            ? steps.findLast((done) => done.answer !== undefined && done.question.heard?.toLowerCase() === heard)
-            : undefined;
-        return step?.answer === undefined ? undefined : { answer: step.answer, atSec: step.question.fromSec };
-    };
-
-    const end = (why: RoundEndReason): void => {
-        if (ended) {
-            return;
-        }
-
-        ended = true;
-        appendCorrections(steps.flatMap((step) => step.corrections));
-        const open = openQuestions(store.read(meeting.id) ?? meeting).length;
-        appendAnswerEvent(logPath, {
-            event: "round-end",
-            at: new Date().toISOString(),
-            reason: why,
-            asked: decided(),
-            open,
-        });
-        ui.ok(`${decided()} decided; ${open} open questions stay, marked in ${TOOL} transcript ${meeting.id}.`);
-
-        if (why === "budget" && open > 0) {
-            ui.info(
-                `This round asks at most ${options.budget} questions. The next round asks the rest: ${TOOL} listen ${meeting.id}`
-            );
-        }
-    };
-    // Ctrl-C outside a prompt (while a clip is cut) ends the process; the exit handler still closes the round.
-    const onExit = (): void => end("aborted");
-    const onSigint = (): void => process.exit(130);
-    process.once("exit", onExit);
-    process.once("SIGINT", onSigint);
-    appendAnswerEvent(logPath, { event: "round-start", at: new Date().toISOString(), pid: process.pid, open: total });
-
-    try {
-        while (decided() < options.budget) {
-            const current = store.read(meeting.id) ?? meeting;
-            const question = askable(current, passed, reask);
-            reask = undefined;
-
-            if (!question) {
-                break;
-            }
-
-            ui.header(
-                `${decided() + 1}/${total}  ${questionLabel(current, question.id)}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
-            );
-            const outcome = await options.ask(question, earlierFor(question));
-
-            if (outcome === "stop") {
-                reason = "stopped";
-                break;
-            }
-
-            if (outcome === "back") {
-                const last = steps.pop();
-
-                if (!last) {
-                    const leave = await clack.select({
-                        message: "Leave this round? The answers are saved; the next listen goes on from here.",
-                        options: [
-                            { value: "stay", label: "Stay on this question" },
-                            { value: "leave", label: "Leave" },
-                        ],
-                    });
-
-                    if (clack.isCancel(leave) || leave === "leave") {
-                        reason = "stopped";
-                        break;
-                    }
-
-                    reask = question.id;
-                    continue;
-                }
-
-                await store.update(
-                    meeting.id,
-                    { command: "listen", change: `${last.question.id} reopened` },
-                    (next) => {
-                        next.items = last.before;
-                    }
-                );
-                passed.delete(last.question.id);
-                appendAnswerEvent(logPath, { event: "reopened", at: new Date().toISOString(), item: last.question.id });
-                ui.dim(`  back to ${questionLabel(current, last.question.id)}: its answer is undone`);
-                reask = last.question.id;
-                continue;
-            }
-
-            const before = structuredClone(current.items);
-
-            if (outcome === "split") {
-                const transcript = await meetingTranscript(current);
-                micShares ??= micShareOf(store, current);
-                const micShare = await micShares;
-                let parts = 0;
-                await store.update(
-                    meeting.id,
-                    { command: "listen", change: `${question.id} split per line and voice` },
-                    (next) => {
-                        parts = splitQuestion(next, question.id, {
-                            transcript,
-                            now: new Date().toISOString(),
-                            ...(micShare ? { micShare } : {}),
-                        }).length;
-                    }
-                );
-
-                if (parts === 0) {
-                    ui.warn(
-                        `${questionLabel(current, question.id)}: no second line and no change between your microphone and the call to cut at, so it stays open. Answer it with "Something else…", for example "Novák, then Dvořák".`
-                    );
-                    reask = question.id;
-                    continue;
-                }
-
-                steps.push({ question, before, corrections: [], split: true });
-                appendAnswerEvent(logPath, {
-                    event: "split",
-                    at: new Date().toISOString(),
-                    item: question.id,
-                    into: parts,
-                });
-                ui.info(
-                    `${questionLabel(current, question.id)}: split into ${parts} parts, one per line and voice; they come next.`
-                );
-                continue;
-            }
-
-            passed.add(question.id);
-            const { settled, corrections } = await decide({
-                store,
-                meetingId: meeting.id,
-                question,
-                outcome,
-                listenBelow: options.listenBelow,
-            });
-            steps.push({ question, before, corrections, ...(outcome === "skip" ? {} : { answer: outcome.answer }) });
-            appendAnswerEvent(
-                logPath,
-                outcome === "skip"
-                    ? { event: "skipped", at: new Date().toISOString(), item: question.id }
-                    : answeredEvent(question, outcome, settled)
-            );
-            log.info({ meeting: meeting.id, question: question.id, outcome, settled }, "question decided");
-            const label = questionLabel(current, question.id);
-            ui.ok(outcome === "skip" ? `${label} skipped` : `${label}: ${outcome.answer}`);
-
-            if (settled.length > 0) {
-                ui.dim(
-                    `  the same answer settled ${settled.length} more: ${settled.map((id) => questionLabel(current, id)).join(" ")}`
-                );
-            }
-        }
-
-        if (reason === "done" && decided() >= options.budget) {
-            reason = "budget";
-        }
-    } finally {
-        process.off("exit", onExit);
-        process.off("SIGINT", onSigint);
-        end(reason);
     }
 }
 

@@ -2,17 +2,18 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore, type ProjectConfig } from "@genesiscz/utils/meetings/config";
+import { type MeetingsConfig, MeetingsConfigStore, sourceFolders } from "@genesiscz/utils/meetings/config";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { errorText, fail } from "../lib/shared";
 
-function matchSummary(project: ProjectConfig): string {
+function matchSummary(config: MeetingsConfig, name: string): string {
+    const project = config.projects[name];
     const parts = [
-        ...(project.match?.wisprflow?.folders ?? []).map((folder) => `wisprflow folder ${folder}`),
-        ...(project.match?.calendar?.calendars ?? []).map((calendar) => `calendar ${calendar}`),
-        ...(project.match?.calendar?.titles ?? []).map((word) => `title "${word}"`),
+        ...sourceFolders(config, name).map(({ source, folder }) => `${source} folder ${folder}`),
+        ...(project?.match?.calendar?.calendars ?? []).map((calendar) => `calendar ${calendar}`),
+        ...(project?.match?.calendar?.titles ?? []).map((word) => `title "${word}"`),
     ];
     return parts.join(", ") || "—";
 }
@@ -38,7 +39,7 @@ async function listProjects(opts: { json?: boolean }): Promise<void> {
         const table = createBoxTable(["PROJECT", "DICTIONARY", "MATCH"]);
 
         for (const [name, project] of Object.entries(config.projects)) {
-            table.push([pc.white(name), String(project.dictionary?.entries.length ?? 0), matchSummary(project)]);
+            table.push([pc.white(name), String(project.dictionary?.entries.length ?? 0), matchSummary(config, name)]);
         }
 
         out.println(table.toString());
