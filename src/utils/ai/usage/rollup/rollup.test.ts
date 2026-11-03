@@ -170,6 +170,7 @@ describe("digest folds", () => {
             model,
             provider: "anthropic-sub",
             agent: "claude",
+            file: "/fixture/s.jsonl",
             owner: { sessionId: session, leadSessionId: session, subagent: false, project: "-repo" },
             account: { basis: "none", approximate: false },
         });
