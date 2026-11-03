@@ -8,7 +8,7 @@ import {
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract/envelope";
 import { autoSeriesStepMs } from "@genesiscz/utils/ai/usage/contract/step";
 import type { UsageLimitsDb } from "./limits-db";
-import type { SeriesAgg, SeriesBinEntry, SeriesEntry } from "./series-rows";
+import type { AvailabilitySpan, SeriesAgg, SeriesBinEntry, SeriesEntry } from "./series-rows";
 import type { AccountUsageSnapshot } from "./types";
 
 /** `usage.limits.series@1`: the verb and its shape version. */
@@ -31,12 +31,8 @@ export interface LimitSeriesBin {
     severity: LimitSeverity | null;
 }
 
-/** Window presence over time (design section 6). Empty until the availability column lands (U2). */
-export interface LimitAvailabilitySpan {
-    from: string;
-    to: string;
-    state: "limited" | "absent" | "unknown";
-}
+/** Window presence over time (design section 6): one span per state, from the store's `availability` column. */
+export type { AvailabilitySpan as LimitAvailabilitySpan } from "./series-rows";
 
 export interface LimitCurrent {
     utilization: number;
@@ -53,7 +49,7 @@ interface LimitSeriesItemBase extends AccountKey {
     scopeModel: string | null;
     label: string;
     periodMs: number | null;
-    availability: LimitAvailabilitySpan[];
+    availability: AvailabilitySpan[];
     /**
      * The newest poll's word on this window: `limited` when it reported the window, `absent` when it
      * listed it in `absentLimits` (the account no longer has it, so the line ends), `unknown` when it
@@ -223,7 +219,7 @@ function toItem(
         // An absent window carries no label of its own; its old rows keep a readable one.
         label: current?.window.label ?? (gone ? absentLimitKindLabel(gone) : entry.key),
         periodMs: current?.window.periodMs ?? null,
-        availability: [],
+        availability: entry.availability,
         availableNow: current ? "limited" : gone ? "absent" : "unknown",
     };
     const tail: LimitSeriesItemTail = {

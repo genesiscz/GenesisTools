@@ -98,5 +98,24 @@ export async function recordSnapshots(snapshots: readonly AccountUsageSnapshot[]
         }
     }
 
-    logger.debug({ snapshots: snapshots.length, written }, "[usage] snapshot write-through complete");
+    let absent = 0;
+
+    for (const snapshot of snapshots) {
+        if (snapshot.stale || snapshot.error) {
+            continue;
+        }
+
+        // The provider confirmed these windows gone (an account without a 5-hour limit). One row
+        // per change of state, so the series door can say when the window went away.
+        for (const limit of snapshot.absentLimits ?? []) {
+            const changed = store.recordAbsentIfChanged(snapshot.accountName, limit.key, {
+                provider: snapshot.provider,
+                accountId: snapshot.accountId || null,
+                kind: limit.kind,
+            });
+            absent += changed ? 1 : 0;
+        }
+    }
+
+    logger.debug({ snapshots: snapshots.length, written, absent }, "[usage] snapshot write-through complete");
 }
