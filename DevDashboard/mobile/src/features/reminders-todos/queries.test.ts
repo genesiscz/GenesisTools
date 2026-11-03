@@ -1,6 +1,6 @@
 import type { TodosResult } from "@dd/contract";
-import { describe, expect, it } from "bun:test";
-import { fixtureDashboardClient } from "@/api/fixture-wire";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { fixtureDashboardClient, setFixtureLatency } from "@/api/fixture-wire";
 import {
     addTodo,
     completeTodo,
@@ -17,6 +17,8 @@ import {
  * is what makes the Appium "complete removes a row" / "add appears" assertions trustworthy. Mirrors
  * features/obsidian/queries.test.ts + features/daemon/queries.test.ts.
  */
+
+beforeAll(() => setFixtureLatency(0));
 
 describe("mock dashboard client — todos", () => {
     it("todos.list() returns seeded reminders with string identifier + title + boolean is_completed", async () => {

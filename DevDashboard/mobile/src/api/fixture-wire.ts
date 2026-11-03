@@ -58,7 +58,12 @@ import { fixtureAnswerForm, fixtureDraft, fixtureQueue, fixtureSendDrafts } from
 export const FIXTURE_BASE_URL = "http://fixture.invalid";
 
 /** How long a fixture answer takes, so loading states show as they would over a network. */
-const LATENCY_MS = 120;
+let latencyMs = 120;
+
+/** Tests set 0, so a file of sequential fixture calls does not wait 120 ms on each. */
+export function setFixtureLatency(ms: number): void {
+    latencyMs = ms;
+}
 
 interface FixtureRequest {
     query: URLSearchParams;
@@ -289,7 +294,7 @@ function respond(status: number, value: unknown): Promise<Response> {
                         headers: { "Content-Type": "application/json" },
                     })
                 ),
-            LATENCY_MS
+            latencyMs
         );
     });
 }
