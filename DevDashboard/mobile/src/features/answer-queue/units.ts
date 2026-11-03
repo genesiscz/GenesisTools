@@ -30,6 +30,26 @@ export function receiptOf(send: DecisionSendDto): Receipt {
     return { kind: "queued", detail: send.error ?? null };
 }
 
+/**
+ * A receipt kept above the queue. A sent session or an answered form leaves the queue on the next read, and its card
+ * with it, so the receipt lives here until the user dismisses it; an uncertain send is never lost unread.
+ */
+export interface RecentReceipt {
+    /** The receipt line's test id, one per card (`answer-queue-session-<key>-receipt`). */
+    testID: string;
+    /** What was sent: the session title, or the form. */
+    label: string;
+    receipt: Receipt;
+}
+
+/** How many recent receipts the queue keeps; the oldest goes first. */
+export const RECENT_RECEIPTS_MAX = 5;
+
+/** Newest first; a newer receipt of the same card replaces its older one. */
+export function withRecentReceipt(list: readonly RecentReceipt[], entry: RecentReceipt): RecentReceipt[] {
+    return [entry, ...list.filter((kept) => kept.testID !== entry.testID)].slice(0, RECENT_RECEIPTS_MAX);
+}
+
 export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     delivered: "Delivered",
     queued: "Queued for the next turn",

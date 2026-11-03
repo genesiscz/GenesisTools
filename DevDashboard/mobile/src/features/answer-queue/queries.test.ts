@@ -10,7 +10,15 @@ import {
     sendStaged,
     stagePick,
 } from "@/features/answer-queue/queries";
-import { formAnswers, missingAnswers, receiptOf, stagedOf, togglePick } from "@/features/answer-queue/units";
+import {
+    formAnswers,
+    missingAnswers,
+    RECENT_RECEIPTS_MAX,
+    receiptOf,
+    stagedOf,
+    togglePick,
+    withRecentReceipt,
+} from "@/features/answer-queue/units";
 
 const client = fixtureDashboardClient;
 
@@ -67,6 +75,29 @@ describe("answer queue over the fixture wire (the real client)", () => {
 });
 
 describe("answer queue rules", () => {
+    it("keeps recent receipts newest first, one per card, and drops the oldest past the cap", () => {
+        const entry = (testID: string, kind: "delivered" | "uncertain" = "delivered") => ({
+            testID,
+            label: testID,
+            receipt: { kind, detail: null },
+        });
+        let list = withRecentReceipt([], entry("a"));
+        list = withRecentReceipt(list, entry("b"));
+        list = withRecentReceipt(list, entry("a", "uncertain"));
+
+        expect(list.map((kept) => [kept.testID, kept.receipt.kind])).toEqual([
+            ["a", "uncertain"],
+            ["b", "delivered"],
+        ]);
+
+        for (let index = 0; index < RECENT_RECEIPTS_MAX + 2; index++) {
+            list = withRecentReceipt(list, entry(`n${index}`));
+        }
+
+        expect(list).toHaveLength(RECENT_RECEIPTS_MAX);
+        expect(list[0].testID).toBe(`n${RECENT_RECEIPTS_MAX + 1}`);
+    });
+
     it("never shows an uncertain send as delivered or queued", () => {
         expect(receiptOf({ delivered: true, uncertain: true, target: "pane 1" }).kind).toBe("uncertain");
         expect(receiptOf({ delivered: true, target: "pane 1" })).toEqual({ kind: "delivered", detail: "pane 1" });
