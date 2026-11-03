@@ -33,6 +33,9 @@ import {
     packReasoningEnvelope,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import type { AiProxyAccountConfig, SessionsInConfig } from "@app/ai-proxy/lib/types";
+import { useUsageEventsStoreForTests } from "@genesiscz/utils/ai/usage/events/record";
+import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
+import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isObject } from "@genesiscz/utils/object";
@@ -817,10 +820,25 @@ describe("OpenAiSubscriptionProvider", () => {
             messages: [{ role: "user", content: "hi" }],
         });
         const req = new Request("http://localhost/v1/chat/completions", { method: "POST", body: bodyText });
-        const res = await provider.chatCompletions(req, "gpt-5.5", bodyText);
+        const limits = new UsageLimitsDb(":memory:");
+        const events = new UsageEventsStore(limits.connection());
+        useUsageEventsStoreForTests(events);
 
-        expect(res.status).toBe(200);
-        expect(authHeaders).toEqual([`Bearer ${TEST_TOKEN}`, "Bearer backup-token"]);
+        try {
+            const res = await provider.chatCompletions(req, "gpt-5.5", bodyText);
+
+            expect(res.status).toBe(200);
+            expect(authHeaders).toEqual([`Bearer ${TEST_TOKEN}`, "Bearer backup-token"]);
+            // The client saw a 200; the first login's 429 is still one rate-limit answer, counted where it arrived.
+            expect(
+                events
+                    .list({ from: new Date(0), to: new Date(Date.now() + 60_000), kinds: ["rate-limited"] })
+                    .map((event) => [event.provider, event.accountName, event.source])
+            ).toEqual([["openai-sub", account.name, "ai-proxy"]]);
+        } finally {
+            useUsageEventsStoreForTests(null);
+            limits.close();
+        }
     });
 
     it("with failover off (the default), a usage limit reaches the client in words and no other account runs", async () => {
