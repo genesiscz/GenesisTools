@@ -4,9 +4,11 @@ import {
     querySpikes,
     type SpikesOptions,
 } from "@app/ai/lib/usage/attribution-query";
+import { type DriftOptions, queryDrift } from "@app/ai/lib/usage/drift-query";
 import { LIMIT_KIND_VALUES } from "@genesiscz/utils/ai/providers/account-features";
 import type { AttributionData, SessionShare, SpikesData } from "@genesiscz/utils/ai/usage/attribution";
 import { addReservedHarnessOption, addWindowOptions, type UsageEnvelope } from "@genesiscz/utils/ai/usage/contract";
+import type { DriftData } from "@genesiscz/utils/ai/usage/drift/drift";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -137,6 +139,72 @@ export function registerAiUsageAttributionCommands(limits: Command): void {
         await guarded(["limits", "attribution"], async () => {
             const opts = command.optsWithGlobals<AttributionOptions>();
             await emit(await queryAttribution(opts), opts.json, renderAttribution);
+        });
+    });
+}
+
+function renderDrift(envelope: UsageEnvelope<DriftData>): void {
+    renderCliHeader("Limit drift", `${envelope.window?.label ?? ""} · tokens and dollars per point, exclusive windows`);
+    const table = createBoxTable([
+        "ACCOUNT",
+        "WINDOW",
+        "MODEL",
+        "WEEK",
+        "WINDOWS",
+        "TOKENS / PT",
+        "$ / PT",
+        "95% CI",
+        "VERDICT",
+    ]);
+
+    for (const row of envelope.data.rows) {
+        const latest = [...row.weeks].reverse().find((week) => week.status === "ok") ?? row.weeks.at(-1);
+        const verdict =
+            row.verdict === "limit cut?"
+                ? pc.red(row.verdict)
+                : row.verdict === "limit raised?"
+                  ? pc.green(row.verdict)
+                  : row.verdict;
+        table.push([
+            accountLabel(row.account),
+            row.kind ?? "?",
+            row.model,
+            latest?.week ?? "—",
+            String(latest?.windows ?? 0),
+            latest?.tokensPerPct ? Math.round(latest.tokensPerPct).toLocaleString() : pc.dim("—"),
+            latest?.usdPerPct ? usd(latest.usdPerPct) : pc.dim("—"),
+            latest?.ci
+                ? `${Math.round(latest.ci[0]).toLocaleString()}–${Math.round(latest.ci[1]).toLocaleString()}`
+                : pc.dim("—"),
+            verdict,
+        ]);
+    }
+
+    out.println(table.toString());
+    printWarnings(envelope.warnings);
+}
+
+/** `tools ai usage limits drift` (step U12, proposal 13). */
+export function registerAiUsageDriftCommand(limits: Command): void {
+    const drift = addWindowOptions(
+        addSelectorOptions(
+            limits
+                .command("drift")
+                .description(
+                    "What one point of a window buys in tokens and dollars per account, model and week, and whether a limit moved; --json prints usage.limits.drift@1"
+                )
+        ),
+        { since: "28d" }
+    )
+        .option("--kind [kinds...]", `Window kinds (default weekly): ${LIMIT_KIND_VALUES.join(" | ")}`)
+        .option("--min-windows <n>", "Exclusive windows a week needs for a number (default 5)")
+        .option("--pad <minutes>", "Quiet minutes around a window on the other accounts (default 5)")
+        .option("--record", "Also write the weeks into the limit_drift table");
+
+    addReservedHarnessOption(drift).action(async (_opts: DriftOptions, command: Command) => {
+        await guarded(["limits", "drift"], async () => {
+            const opts = command.optsWithGlobals<DriftOptions>();
+            await emit(await queryDrift(opts), opts.json, renderDrift);
         });
     });
 }
