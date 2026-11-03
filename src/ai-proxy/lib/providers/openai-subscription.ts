@@ -105,6 +105,7 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
+import { recordProxyUsageEvent } from "@app/ai-proxy/lib/usage/limit-events";
 import { notePrefix, setPrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { getTodayUsageSummary, getUsageSummarySince, recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { streamUsageOptions } from "@app/ai-proxy/lib/usage/stream-start-usage";
@@ -1222,6 +1223,16 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 const backoffMs = this.failover
                     ? markRateLimited(candidate.key, parseRetryAfterSeconds(attempt.headers))
                     : undefined;
+
+                if (backoffMs !== undefined) {
+                    recordProxyUsageEvent({
+                        provider: this.id,
+                        accountName: candidate.label,
+                        kind: "cooldown",
+                        retryAfterMs: backoffMs,
+                        model: concreteModel,
+                    });
+                }
                 const retryAfterSec =
                     parseRetryAfterSeconds(attempt.headers) ??
                     (backoffMs === undefined ? undefined : Math.ceil(backoffMs / 1000));

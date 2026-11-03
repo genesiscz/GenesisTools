@@ -1,6 +1,7 @@
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { UpstreamStatusError } from "@genesiscz/utils/ai/http-auth";
 import type { AbsentLimit } from "@genesiscz/utils/ai/providers/account-features";
+import { recordUsageEvent } from "@genesiscz/utils/ai/usage/events/record";
 import {
     applyPollGateOutcomes,
     blockedEntry,
@@ -252,9 +253,17 @@ export async function fetchUsage(
     if (res.status === 401 || res.status === 429) {
         const body = await res.text().catch(() => "");
 
-        // 429 is routine under shared polling — debug keeps it out of consoles.
+        // 429 is routine under shared polling — debug keeps it out of consoles. The event table keeps it findable.
         if (res.status === 429) {
             logger.debug(`${tag} 429 rate-limited: ${body.slice(0, 200)}`);
+            const retryAfterSec = Number(res.headers.get("retry-after"));
+            recordUsageEvent({
+                provider: ANTHROPIC_SUB,
+                accountName: accountHint ?? null,
+                source: "usage-client",
+                kind: "usage-429",
+                retryAfterMs: Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec * 1000 : null,
+            });
         } else {
             logger.warn(`${tag} 401 auth failed: ${body.slice(0, 200)}`);
         }
