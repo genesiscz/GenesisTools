@@ -1,8 +1,8 @@
+import { atYourPace, type PaceScope } from "@genesiscz/utils/ai/usage/forecast/burn-pace";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import { hasNoSessionLimit, type ScoredAccount } from "./account-picker";
-import { atYourPace, type PaceScope } from "./burn-pace";
 import { UsageHistoryDb } from "./history-db";
 import { accountCells, type DetailBlockPace, detailBlock, NO_SESSION_LIMIT_LEGEND, TIER_BADGE } from "./usage-table";
 

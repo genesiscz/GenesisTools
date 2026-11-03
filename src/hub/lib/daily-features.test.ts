@@ -23,7 +23,10 @@ import {
     buildForecast,
     forecastClock,
     forecastFromSamples,
+    forecastOutlook,
     forecastWindow,
+    paceBand,
+    safePctPerHour,
     type UsageSample,
     windowLabel,
 } from "./forecast";
@@ -372,6 +375,71 @@ describe("forecast", () => {
         expect(
             forecastFromSamples([sample({ utilization: 90, timestamp: isoAgo(24 * 60) })], { now: NOW })[0]?.warning
         ).toBeNull();
+    });
+
+    test("a monthly window starts a calendar month before its reset, so its samples count", () => {
+        // 20 days left of a month: the old 7-day period put the start 13 days in the future.
+        const resetsAt = new Date(NOW.getTime() + 20 * 24 * 3_600_000).toISOString();
+        const monthly = (utilization: number, minutes: number) =>
+            sample({
+                provider: "grok-sub",
+                bucket: "monthly",
+                kind: "monthly",
+                utilization,
+                timestamp: isoAgo(minutes),
+                resetsAt,
+            });
+        const window = forecastWindow([monthly(10, 5 * 24 * 60), monthly(25, 0)], NOW);
+
+        expect(window?.basis).toBe("window");
+        expect(window?.ratePctPerHour).not.toBeNull();
+        expect(window?.label).toBe("monthly");
+    });
+
+    test("a row without a stored kind keeps the bucket-name period", () => {
+        const resetsAt = new Date(NOW.getTime() + 20 * 24 * 3_600_000).toISOString();
+        const old = (utilization: number, minutes: number) =>
+            sample({
+                provider: "grok-sub",
+                bucket: "monthly",
+                kind: null,
+                utilization,
+                timestamp: isoAgo(minutes),
+                resetsAt,
+            });
+
+        expect(forecastWindow([old(10, 5 * 24 * 60), old(25, 0)], NOW)?.ratePctPerHour).toBeNull();
+    });
+
+    test("the pace band spans the 25th to 75th percentile of the active burn and needs three samples", () => {
+        const resetsAt = new Date(NOW.getTime() + 4 * 3_600_000).toISOString();
+        const rises = [0, 10, 12, 16, 30];
+        const samples = rises.map((utilization, index) =>
+            sample({ utilization, timestamp: isoAgo(40 - index * 10), resetsAt })
+        );
+
+        // Deltas over 10 min each: 1, 0.2, 0.4, 1.4 %/min = 60, 12, 24, 84 %/h.
+        expect(paceBand(samples, NOW)).toEqual({ lowPctPerHour: 21, highPctPerHour: 66 });
+        expect(paceBand(samples.slice(0, 3), NOW)).toBeNull();
+    });
+
+    test("the safe pace uses what is left over the hours to the reset", () => {
+        const resetsAt = new Date(NOW.getTime() + 4 * 3_600_000).toISOString();
+
+        expect(safePctPerHour({ utilization: 60, resetsAt, resetSinceSample: false }, NOW)).toBe(10);
+        expect(safePctPerHour({ utilization: 60, resetsAt: null, resetSinceSample: false }, NOW)).toBeNull();
+        expect(safePctPerHour({ utilization: 120, resetsAt, resetSinceSample: false }, NOW)).toBe(0);
+    });
+
+    test("forecastOutlook adds the band and the safe pace; forecastWindow keeps the hub shape", () => {
+        const resetsAt = new Date(NOW.getTime() + 4 * 3_600_000).toISOString();
+        const samples = [
+            sample({ utilization: 50, timestamp: isoAgo(20), resetsAt }),
+            sample({ utilization: 60, timestamp: isoAgo(0), resetsAt }),
+        ];
+
+        expect(forecastWindow(samples, NOW)).not.toHaveProperty("safePctPerHour");
+        expect(forecastOutlook(samples, NOW)).toMatchObject({ utilization: 60, paceBand: null, safePctPerHour: 10 });
     });
 
     test("a window whose reset passed after the last sample forecasts nothing", () => {

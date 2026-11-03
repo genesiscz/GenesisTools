@@ -1,6 +1,7 @@
 import {
     type AbsentLimit,
     absentLimitKindLabel,
+    isLimitKind,
     type LimitKind,
     type LimitSeverity,
     type LimitWindow,
@@ -100,15 +101,7 @@ export interface LimitSeriesSources {
     current: readonly AccountUsageSnapshot[];
 }
 
-const LIMIT_KINDS: Record<LimitKind, true> = { session: true, weekly: true, monthly: true, scoped: true, credit: true };
 const LIMIT_SEVERITIES: Record<LimitSeverity, true> = { ok: true, warn: true, critical: true };
-
-export function isLimitKind(value: string | null | undefined): value is LimitKind {
-    return value !== null && value !== undefined && Object.hasOwn(LIMIT_KINDS, value);
-}
-
-/** Every `LimitKind`, from a table the compiler checks for completeness. */
-export const LIMIT_KIND_VALUES: readonly LimitKind[] = Object.keys(LIMIT_KINDS).filter(isLimitKind);
 
 function isLimitSeverity(value: string | null): value is LimitSeverity {
     return value !== null && Object.hasOwn(LIMIT_SEVERITIES, value);
