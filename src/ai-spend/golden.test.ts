@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { GOLDEN_CASES, goldenPath, runGoldenCase, writeGoldenHome } from "./__tests__/golden-home";
+import { GOLDEN_CASES, goldenPath, runGoldenCase, settleWithin, writeGoldenHome } from "./__tests__/golden-home";
 
 /**
  * The bytes of `tools ai-spend daily`, `weekly` and `statusline` (Claude Code runs the statusline in its settings,
@@ -33,4 +33,22 @@ describe("tools ai-spend keeps its bytes (golden)", () => {
             expect({ name, stdout: run.stdout }).toEqual({ name, stdout: readFileSync(goldenPath(golden), "utf8") });
         }
     }, 60_000);
+});
+
+describe("a golden child that hangs", () => {
+    test("is killed at its deadline and fails naming the case", async () => {
+        const child = Bun.spawn(["sleep", "30"], {
+            env: process.env,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const started = Date.now();
+
+        await expect(settleWithin({ child, deadlineMs: 100, label: "sleeper" })).rejects.toThrow(
+            "sleeper did not finish within 100 ms"
+        );
+        expect(child.signalCode).not.toBeNull();
+        expect(Date.now() - started).toBeLessThan(10_000);
+    });
 });

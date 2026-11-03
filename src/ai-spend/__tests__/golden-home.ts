@@ -1,9 +1,11 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { type KillableProcess, killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 
 /**
@@ -169,6 +171,42 @@ export interface GoldenRun {
     code: number;
 }
 
+/** One case's child must finish by then; the test's own 60 s budget leaves room to kill it and report. */
+export const GOLDEN_DEADLINE_MS = 45_000;
+
+/** A spawned child whose two output pipes are read to the end. */
+export interface GoldenChild extends KillableProcess {
+    readonly stdout: ReadableStream<Uint8Array>;
+    readonly stderr: ReadableStream<Uint8Array>;
+    readonly exited: Promise<number>;
+}
+
+/**
+ * Both pipes and the exit status of `child`, or, past `deadlineMs`, the child killed (TERM, then KILL) and an error
+ * naming `label`, so a hung child never outlives the test that started it.
+ */
+export async function settleWithin(input: {
+    child: GoldenChild;
+    deadlineMs: number;
+    label: string;
+}): Promise<GoldenRun> {
+    const { child } = input;
+    const late = new Error(`${input.label} did not finish within ${input.deadlineMs} ms`);
+    const run = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+
+    try {
+        const [stdout, stderr, code] = await withTimeout(run, input.deadlineMs, late);
+        return { stdout, stderr, code };
+    } catch (error) {
+        if (error !== late) {
+            throw error;
+        }
+
+        const ended = await killWithEscalation(child, { graceMs: 1000 });
+        throw new Error(`${late.message}; its child was ${ended ? "killed" : "signalled and may still run"}.`);
+    }
+}
+
 /**
  * Runs one case through an entrypoint. The child gets a minimal environment, not this process's: the goldens are
  * written outside the test runner, and a variable only one side has (a colour flag, a provider home) would change
@@ -199,13 +237,11 @@ export async function runGoldenCase(options: {
             stderr: "pipe",
         }
     );
-    const [stdout, stderr, code] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-    ]);
-
-    return { stdout, stderr, code };
+    return settleWithin({
+        child,
+        deadlineMs: GOLDEN_DEADLINE_MS,
+        label: `golden case "${options.golden.name}" (${options.entrypoint})`,
+    });
 }
 
 export function goldenPath(name: string): string {
