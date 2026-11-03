@@ -90,6 +90,9 @@ describe("session report", () => {
 
         expect(waste(aggregate, [])).toEqual([]);
         expect(report.losses).toEqual([]);
+        // Their tokens still count in the cache totals and the hit rate (a Grok session is all aggregate turns).
+        expect(report.cache).toMatchObject({ requests: 2, cacheRead: 102_000, cacheWrite: 1_000, uncached: 200 });
+        expect(report.cache.hitPercent).toBeGreaterThan(90);
 
         const hour = [call(0, { cacheWrite1h: 1_000 }), call(10, { cacheRead: 0, cacheWrite: 101_000 })];
         expect(waste(hour, []).map((item) => item.kind)).not.toContain("cache-rebuild-idle");
