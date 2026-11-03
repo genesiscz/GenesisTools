@@ -96,9 +96,12 @@ struct UsageLimitsSection: View {
     @ViewBuilder
     private var spikesBlock: some View {
         let spikes = (usage.spikes?.data.spikes ?? []).sorted { $0.delta > $1.delta }
+        // The top twelve, plus the spike a chart diamond selected when it ranks lower, so its sessions still show.
+        let selected = spikes.dropFirst(12).first { $0.id == usage.selectedSpike?.id }
+        let shown = Array(spikes.prefix(12)) + (selected.map { [$0] } ?? [])
         VStack(alignment: .leading, spacing: 6) {
             UsageSectionTitle(text: "Spikes", detail: spikes.isEmpty ? "none in this range" : Plural.count(spikes.count, "spike"))
-            ForEach(spikes.prefix(12)) { spike in
+            ForEach(shown) { spike in
                 UsageSpikeRow(spike: spike, selected: usage.selectedSpike?.id == spike.id) {
                     usage.selectedSpike = usage.selectedSpike?.id == spike.id ? nil : UsageLaneBuilder.spike(spike)
                 }

@@ -19,6 +19,17 @@ final class HubUsageTests: XCTestCase {
         XCTAssertEqual(place.arguments, ["--mode", "usage", "--usage-section", "attribution"])
     }
 
+    func testASavedSessionAnalysisReopensThatSession() {
+        let selection = HubUsagePlace(section: .session, session: HubUsageSessionRef(id: "s-1", harness: "codex")).selection
+        XCTAssertEqual(HubPlace(mode: "usage", selection: selection, tab: nil).arguments,
+                       ["--mode", "usage", "--usage-session", "s-1", "--usage-harness", "codex"])
+        XCTAssertEqual(HubUsagePlace(selection: selection)?.session, HubUsageSessionRef(id: "s-1", harness: "codex"))
+        XCTAssertEqual(HubUsagePlace(selection: "session:s-2")?.session, HubUsageSessionRef(id: "s-2", harness: nil))
+        XCTAssertEqual(HubUsagePlace(section: .limits, session: HubUsageSessionRef(id: "s-1", harness: nil)).selection, "limits")
+        XCTAssertNil(HubUsagePlace(selection: "nope"))
+        XCTAssertEqual(HubRequest(["--usage-session", "s-1", "--usage-harness", "codex"]).usageHarness, "codex")
+    }
+
     /// Two providers each with an account called "work": the session's provider picks its own windows.
     func testTheForecastChipMatchesProviderAndAccount() throws {
         let json = """
@@ -201,6 +212,47 @@ final class HubUsageTests: XCTestCase {
         XCTAssertEqual(model.selectedAccounts.count, 1)
         XCTAssertEqual(model.table.rows.first { $0.id == model.selectedAccounts.first }?.account.accountName, "side")
         XCTAssertTrue(model.pendingAccounts.isEmpty)
+    }
+
+    @MainActor
+    func testANameTwoProvidersShareSelectsNothingAndTheProviderOrIdPicksOne() async throws {
+        let json = """
+        {"schema":"usage.limits@1","generatedAt":"2026-11-03T10:00:00.000Z","selector":{"accounts":[]},"warnings":[],
+         "data":{"accounts":[{"provider":"anthropic-sub","accountId":"acc_a","accountName":"work","label":"max","limits":[]},
+           {"provider":"openai-sub","accountId":"acc_o","accountName":"work","label":"plus","limits":[]}]}}
+        """
+        let model = HubUsageModel(preferences: try Self.scratchPreferences(), client: UsageClient { argv in
+            Data((argv.contains("--cached") ? json : "{}").utf8)
+        })
+        model.activate()
+        try await wait { model.table.rows.count == 2 }
+
+        model.selectAccounts(named: ["work"])
+        XCTAssertTrue(model.selectedAccounts.isEmpty)
+
+        model.selectAccounts(named: ["openai-sub/Work"])
+        XCTAssertEqual(model.table.rows.first { $0.id == model.selectedAccounts.first }?.account.accountId, "acc_o")
+
+        model.selectAccounts(named: ["acc_a"])
+        XCTAssertEqual(model.table.rows.first { $0.id == model.selectedAccounts.first }?.account.accountId, "acc_a")
+    }
+
+    @MainActor
+    func testARangeChangedInAnotherModeReadsTheNewRangeWhenUsageOpensAgain() async throws {
+        let preferences = try Self.scratchPreferences()
+        let model = HubUsageModel(preferences: preferences, client: UsageClient { argv in
+            guard argv.contains("series"), let since = Self.value(after: "--since", in: argv) else { return Data("{}".utf8) }
+            return Data(Self.seriesJSON(since: since).utf8)
+        })
+        model.activate()
+        try await wait { model.series?.window?.label == "since 24h" }
+        model.deactivate()
+
+        preferences.settings.range = .sixHours
+        model.activate()
+
+        try await wait { model.series?.window?.label == "since 6h" }
+        XCTAssertEqual(model.series?.window?.label, "since 6h")
     }
 
     @MainActor

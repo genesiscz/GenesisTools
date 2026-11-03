@@ -110,8 +110,8 @@ struct WidgetUsageModuleView: View {
                         GhostButton("Acknowledge", symbol: "checkmark", tooltip: "Mark this alert as seen", height: 20) {
                             store.acknowledge(alert)
                         }
-                        if let account = alert.accountName ?? alert.accountId {
-                            GhostButton("Open", symbol: "chart.xyaxis.line", tooltip: "Show \(account)'s burn lanes in the hub", height: 20) {
+                        if let account = alert.accountId ?? alert.accountName {
+                            GhostButton("Open", symbol: "chart.xyaxis.line", tooltip: "Show \(alert.accountName ?? account)'s burn lanes in the hub", height: 20) {
                                 store.openHub(["--usage-account", account])
                             }
                         }
