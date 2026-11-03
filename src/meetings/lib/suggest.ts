@@ -1242,7 +1242,6 @@ export function suggestItems(options: {
     const context = {
         listenBelow: options.listenBelow ?? DEFAULT_LISTEN_BELOW,
         presence: options.presence,
-        selfName: record.participants.find((person) => person.self)?.name,
         transcript: options.meeting.transcript,
         points: options.points ?? [],
     };
