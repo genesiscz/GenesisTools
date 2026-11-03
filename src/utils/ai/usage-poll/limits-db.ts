@@ -618,8 +618,9 @@ export class UsageLimitsDb {
     }
 
     /**
-     * Each window's last row before `from`, when it recorded its availability: absent windows are written once per
-     * change, so the state at the range's start is often a row before it. One indexed lookup per window.
+     * Each window's last row before `from`: absent windows are written once per change, so the state at the range's
+     * start is often a row before it. A row from before the availability column (NULL) carries `unknown`, as every
+     * reader reads NULL. One indexed lookup per window.
      */
     private seriesSeeds(from: string, filters: readonly string[], filterParams: readonly string[]): SeriesSqlRow[] {
         const windows = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
@@ -629,8 +630,7 @@ export class UsageLimitsDb {
                 SELECT provider, account_name, bucket, timestamp, utilization, resets_at, severity, scope_model, kind,
                        availability
                 FROM usage_snapshots
-                WHERE availability IS NOT NULL
-                  AND id IN (
+                WHERE id IN (
                     SELECT (
                         SELECT inner_row.id FROM usage_snapshots AS inner_row
                         WHERE inner_row.account_name = w.account_name
