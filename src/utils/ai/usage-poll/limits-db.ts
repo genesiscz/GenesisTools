@@ -52,7 +52,15 @@ export interface SnapshotV2Extras {
     /** `LimitWindow.kind`. */
     kind?: string | null;
     money?: { usedMinor: number; limitMinor?: number | null; currency: string } | null;
+    /** Omitted is `limited`: a reading of a window the account has. `recordAbsentIfChanged` writes `absent`. */
+    availability?: StoredAvailability;
 }
+
+/** What the `availability` column holds. NULL (a row from before the column) reads as `unknown`. */
+export type StoredAvailability = "limited" | "absent";
+
+/** Readers of utilization skip the rows that only mark a window gone: they carry no reading. */
+const READING_ONLY = "availability IS NOT 'absent'";
 
 export interface SpendInput {
     used_minor: number;
@@ -120,6 +128,7 @@ interface SeriesSqlRow {
     severity: string | null;
     scope_model: string | null;
     kind: string | null;
+    availability: string | null;
 }
 
 interface SpendRow {
@@ -287,8 +296,8 @@ export class UsageLimitsDb {
         const stmt = this.claudeDb.getDb().prepare(`
             INSERT INTO usage_snapshots
                 (timestamp, account_name, bucket, utilization, resets_at, severity, scope_model,
-                 provider, account_id, kind, money_used_minor, money_limit_minor, money_currency)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 provider, account_id, kind, money_used_minor, money_limit_minor, money_currency, availability)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         const result = stmt.run(
             timestamp,
@@ -303,7 +312,8 @@ export class UsageLimitsDb {
             extras.kind ?? null,
             extras.money?.usedMinor ?? null,
             extras.money?.limitMinor ?? null,
-            extras.money?.currency ?? null
+            extras.money?.currency ?? null,
+            extras.availability ?? "limited"
         );
 
         return Number(result.lastInsertRowid);
@@ -335,10 +345,13 @@ export class UsageLimitsDb {
         // The provider the INSERT will write, not the caller's optional one: an omitted
         // provider means "any provider" to the readers, so a matching row belonging to
         // another provider used to suppress this write.
-        const latest = this.getLatest(accountName, bucket, extras.provider ?? DEFAULT_LIMITS_PROVIDER);
+        const provider = extras.provider ?? DEFAULT_LIMITS_PROVIDER;
+        const latest = this.getLatest(accountName, bucket, provider);
 
         if (
             latest &&
+            // A window that comes back after an `absent` row is a state change even at the old value.
+            this.latestAvailability(accountName, bucket, provider) !== "absent" &&
             latest.utilization === utilization &&
             normalizeNullableSeverity(latest.severity) === normalizeNullableSeverity(extras.severity) &&
             (utilization === 0 || resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)) &&
@@ -356,12 +369,54 @@ export class UsageLimitsDb {
         return true;
     }
 
+    /**
+     * Records that the provider confirmed this window gone, once per change of state: one
+     * `absent` row when the window disappears, none while it stays gone. The row's utilization is
+     * 0 and means nothing; every utilization reader skips it (`READING_ONLY`).
+     */
+    recordAbsentIfChanged(
+        accountName: string,
+        bucket: string,
+        extras: { provider: string; accountId?: string | null; kind: string }
+    ): boolean {
+        if (this.latestAvailability(accountName, bucket, extras.provider) === "absent") {
+            return false;
+        }
+
+        this.recordSnapshotV2(accountName, bucket, 0, new Date().toISOString(), {
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider: extras.provider,
+            accountId: extras.accountId ?? null,
+            kind: extras.kind,
+            availability: "absent",
+        });
+        return true;
+    }
+
+    /** The availability of the newest row of a window, absent rows included; null when it has none or an old row. */
+    private latestAvailability(accountName: string, bucket: string, provider: string): string | null {
+        const row = this.claudeDb
+            .getDb()
+            .prepare(`
+                SELECT availability FROM usage_snapshots
+                WHERE account_name = ?1 AND bucket = ?2 AND provider = ?3
+                ORDER BY timestamp DESC, id DESC
+                LIMIT 1
+            `)
+            .get(accountName, bucket, provider) as { availability: string | null } | null;
+
+        return row?.availability ?? null;
+    }
+
     getLatest(accountName: string, bucket: string, provider?: string): UsageSnapshot | null {
         const stmt = this.claudeDb.getDb().prepare(`
             SELECT ${SNAPSHOT_COLUMNS}
             FROM usage_snapshots
             WHERE account_name = ?1 AND bucket = ?2
               AND (?3 IS NULL OR provider = ?3)
+              AND ${READING_ONLY}
             ORDER BY timestamp DESC
             LIMIT 1
         `);
@@ -382,6 +437,7 @@ export class UsageLimitsDb {
             WHERE account_name = ?1 AND bucket = ?2
               AND timestamp >= ?3
               AND (?4 IS NULL OR provider = ?4)
+              AND ${READING_ONLY}
             ORDER BY timestamp ASC
         `);
         const rows = stmt.all(accountName, bucket, cutoff, provider ?? null) as SnapshotRow[];
@@ -450,7 +506,8 @@ export class UsageLimitsDb {
         }
 
         const stmt = this.claudeDb.getDb().prepare(`
-            SELECT provider, account_name, bucket, timestamp, utilization, resets_at, severity, scope_model, kind
+            SELECT provider, account_name, bucket, timestamp, utilization, resets_at, severity, scope_model, kind,
+                   availability
             FROM usage_snapshots
             WHERE ${where.join(" AND ")}
             ORDER BY provider, account_name, bucket, timestamp ASC
@@ -469,12 +526,17 @@ export class UsageLimitsDb {
             percent: row.utilization,
             resetsAt: row.resets_at,
             severity: normalizeNullableSeverity(row.severity),
+            availability: storedAvailability(row.availability),
         }));
         const kinds = query.kinds ? new Set(query.kinds) : undefined;
         const groups = groupSeriesRows(shaped).filter(
             (group) => !kinds || (group.kind !== null && kinds.has(group.kind))
         );
-        const opts = { step: query.step ?? autoSeriesStepMs(query.from, query.to), roughlyEqual: resetsAtRoughlyEqual };
+        const opts = {
+            step: query.step ?? autoSeriesStepMs(query.from, query.to),
+            roughlyEqual: resetsAtRoughlyEqual,
+            to: query.to,
+        };
 
         if (query.agg === "minmax") {
             return groups.map((group) => shapeBins(group, opts));
@@ -618,4 +680,9 @@ export class UsageLimitsDb {
             moneyCurrency: row.money_currency,
         };
     }
+}
+
+/** The column as read: `limited`, `absent`, or null for a row written before it (or an unknown value). */
+function storedAvailability(value: string | null): StoredAvailability | null {
+    return value === "limited" || value === "absent" ? value : null;
 }
