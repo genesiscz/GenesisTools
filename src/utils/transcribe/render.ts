@@ -1,3 +1,4 @@
+import { TranscriptLines } from "./lines";
 import { firstName } from "./speakers";
 import type { TermSuggestion } from "./terms";
 import type { TranscriptEntry } from "./types";
@@ -9,7 +10,7 @@ export type TranscriptFormat = (typeof TRANSCRIPT_FORMATS)[number];
 const PARAGRAPH_GAP_SEC = 30;
 /** A paragraph this long breaks at the next sentence end. */
 const PARAGRAPH_CHARS = 700;
-/** A subtitle cue with no next cue to end at lasts this long at most. */
+/** A subtitle cue with no next line to end at lasts this long. */
 const LAST_CUE_SEC = 6;
 
 export interface Paragraph {
@@ -169,18 +170,24 @@ interface Cue {
     text: string;
 }
 
-/** One cue per transcript line; each ends where the next begins. Lines without a time are dropped. */
+/** One cue per transcript line, over the line's span; lines in one second share it. Lines without a time are dropped. */
 export function subtitleCues(entries: TranscriptEntry[], useFirstNames = false): Cue[] {
-    const timed = entries.filter((e) => e.startSec !== undefined && e.text.trim());
+    const lines = new TranscriptLines(entries);
+    const lastTimed = entries.findLastIndex((_entry, index) => lines.span(index) !== undefined);
 
-    return timed.map((entry, i) => {
-        const start = entry.startSec!;
-        const next = timed[i + 1]?.startSec;
-        const end = next !== undefined && next > start ? next : start + LAST_CUE_SEC;
+    return entries.flatMap((entry, index) => {
+        const span = lines.span(index);
+
+        if (!span) {
+            return [];
+        }
+
+        // A cue with no next line to end at stays on screen a little longer than the line is taken to last.
+        const last = index === lastTimed;
 
         return {
-            start,
-            end,
+            start: span.fromSec,
+            end: last ? span.fromSec + LAST_CUE_SEC : span.toSec,
             speaker: useFirstNames ? firstName(entry.speaker) : entry.speaker,
             text: entry.text.trim(),
         };

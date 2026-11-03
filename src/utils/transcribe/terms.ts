@@ -4,6 +4,7 @@ import { similarityScore } from "@genesiscz/utils/fuzzy-match";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MIN_STEM, stemOf } from "./languages/cs";
 import type { WordCheck, WordVerdict } from "./languages/word-check";
+import { heardPattern, LINE_AT_TOLERANCE_SEC } from "./lines";
 import type { TranscriptEntry } from "./types";
 
 /**
@@ -472,7 +473,7 @@ function sentencesOf(text: string): string[] {
 function exampleAt(entries: TranscriptEntry[], index: number, heard: string): TermExample {
     const entry = entries[index]!;
     const sentences = sentencesOf(entry.text);
-    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(heard).replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}])`, "iu");
+    const re = heardPattern(heard, "iu");
     const at = Math.max(
         0,
         sentences.findIndex((sentence) => re.test(sentence))
@@ -752,8 +753,6 @@ export interface TermFix {
     atSec?: number;
 }
 
-const FIX_AT_SLACK_SEC = 0.5;
-
 export const FIX_SEPARATOR = "::";
 
 /** One `--fix-term` value for a heard word and its replacement. */
@@ -802,10 +801,6 @@ export function selectFixes(specs: string[], suggestions: TermSuggestion[], minC
     });
 }
 
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Replaces whole-word occurrences only, case-insensitively, keeping every other character. */
 export function applyFixes(
     entries: TranscriptEntry[],
@@ -813,7 +808,7 @@ export function applyFixes(
 ): { entries: TranscriptEntry[]; replaced: number } {
     let replaced = 0;
     const patterns = fixes.map((fix) => ({
-        re: new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(fix.heard).replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}])`, "giu"),
+        re: heardPattern(fix.heard),
         replacement: fix.replacement,
         atSec: fix.atSec,
     }));
@@ -824,7 +819,7 @@ export function applyFixes(
         for (const { re, replacement, atSec } of patterns) {
             const elsewhere =
                 atSec !== undefined &&
-                (entry.startSec === undefined || Math.abs(entry.startSec - atSec) > FIX_AT_SLACK_SEC);
+                (entry.startSec === undefined || Math.abs(entry.startSec - atSec) > LINE_AT_TOLERANCE_SEC);
 
             if (elsewhere) {
                 continue;
