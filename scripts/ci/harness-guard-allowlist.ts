@@ -50,7 +50,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         list: 1,
         why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
     },
-    "src/ai-spend/lib/reports/types.ts": {
+    "src/utils/ai/usage/spend/reports/types.ts": {
         list: 1,
         table: 3,
         why: "keyed by SourceId, ccusage's report-source axis (17 sources, three of them harnesses), whose rows mirror ccusage's CLI per source (parity.test.ts)",

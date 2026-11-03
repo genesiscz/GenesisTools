@@ -10,9 +10,9 @@
  * Same precedent as `src/spotify/tests/cli.test.ts`, which took 75 spawns down to zero.
  */
 import { describe, expect, it } from "bun:test";
+import { SOURCE_IDS, SOURCE_REPORTS } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import { Command } from "commander";
 import { registerSpendCommand } from "../register";
-import { SOURCE_IDS, SOURCE_REPORTS } from "./types";
 
 function program(): Command {
     const root = new Command();

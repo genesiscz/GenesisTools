@@ -6,7 +6,6 @@ import {
     listAgentSessionRows,
     POLLED_LISTING_REUSE_MS,
 } from "@app/ai/lib/sessions/agent-session-rows";
-import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/lib/pricing";
 import { DASHBOARD_ACTOR, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions";
 import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
@@ -25,6 +24,7 @@ import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types"
 import { transcriptParser } from "@genesiscz/utils/ai/transcripts/load";
 import { readTail } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
+import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";

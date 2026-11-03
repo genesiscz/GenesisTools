@@ -1,8 +1,8 @@
+import type { Report } from "@genesiscz/utils/ai/usage/spend/types";
 import { formatCost, formatTokens } from "@genesiscz/utils/format";
 import { formatTable } from "@genesiscz/utils/table";
 import asciichart from "asciichart";
 import pc from "picocolors";
-import type { Report } from "./types";
 
 function pct(n: number): string {
     return `${(n * 100).toFixed(1)}%`;
