@@ -269,6 +269,7 @@ interface AddOptions {
     choices?: string;
     decides?: string;
     confidence?: string;
+    priority?: string;
     reason?: string;
 }
 
@@ -300,6 +301,7 @@ function findingFromFlags(opts: AddOptions): Record<string, unknown> {
         choices: commaList(opts.choices),
         decides: commaList(opts.decides),
         confidence: opts.confidence === undefined ? undefined : Number(opts.confidence),
+        priority: opts.priority === undefined ? undefined : Number(opts.priority),
         reason: opts.reason,
     };
     return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
@@ -765,6 +767,7 @@ export function registerItemCommands(program: Command): void {
         .option("--choices <list>", "question: comma-separated answers to offer")
         .option("--decides <ids>", "question: comma-separated items (or batch refs) the answer confirms or rejects")
         .option("--confidence <0..1>", "how sure the finding is (required for speaker-range, join and term)")
+        .option("--priority <0..1>", "question: how much its answer matters; listen asks the highest first")
         .option("--reason <text>", "why: the facts and context it rests on (required for speaker-range, join and term)")
         .action(addItems);
 

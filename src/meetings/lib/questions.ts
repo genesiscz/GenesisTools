@@ -3,10 +3,19 @@ import { voiceRuns } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { importanceOf } from "@genesiscz/utils/transcribe/importance";
+import {
+    type HeardContext,
+    type HeardOccurrence,
+    LAST_LINE_SEC,
+    TranscriptLines,
+} from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { ledgerEntryFor } from "./transcript-corrections";
+
+export type { HeardContext } from "@genesiscz/utils/transcribe/lines";
 
 /** The answer that rejects every item a question decides. */
 export const NONE_OF_THESE = "none of these";
@@ -39,15 +48,34 @@ export interface QuestionContext {
     points: SummaryPoint[];
 }
 
-/** The lines of a label from `fromSec` to `toSec`, each with its end (the next line's start). */
+const linesCache = new WeakMap<readonly TranscriptEntry[], TranscriptLines>();
+
+/** The transcript as addressed lines, built once per transcript array. */
+function linesOf(transcript: readonly TranscriptEntry[] | TranscriptLines): TranscriptLines {
+    if (transcript instanceof TranscriptLines) {
+        return transcript;
+    }
+
+    const cached = linesCache.get(transcript);
+
+    if (cached) {
+        return cached;
+    }
+
+    const lines = new TranscriptLines(transcript);
+    linesCache.set(transcript, lines);
+    return lines;
+}
+
+/** The lines of a label from `fromSec` to `toSec`, each with its end (`TranscriptLines.end`). */
 function rangeLines(context: QuestionContext, label: string, fromSec: number, toSec: number) {
-    const timed = context.transcript.filter((entry) => entry.startSec !== undefined);
-    return timed.flatMap((entry, index) =>
-        entry.speaker === label && entry.startSec! >= fromSec && entry.startSec! <= toSec
+    const lines = linesOf(context.transcript);
+    return context.transcript.flatMap((entry, index) =>
+        entry.startSec !== undefined && entry.speaker === label && entry.startSec >= fromSec && entry.startSec <= toSec
             ? [
                   {
-                      startSec: entry.startSec!,
-                      endSec: timed[index + 1]?.startSec ?? entry.startSec! + 5,
+                      startSec: entry.startSec,
+                      endSec: lines.end(index) ?? entry.startSec + LAST_LINE_SEC,
                       text: entry.text,
                   },
               ]
@@ -138,6 +166,10 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             return undefined;
         }
 
+        const lines = linesOf(context.transcript);
+        const said = lines.heardLine({ heard: item.heard, fromSec: item.atSec, toSec: item.atSec });
+        const clip = said ? lines.clip(said) : undefined;
+
         return {
             kind: "question",
             status: "suggested",
@@ -153,6 +185,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             decides: [item.id],
             rules: item.rules,
             ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
+            ...(clip ? { clip } : {}),
             signature: `term|${item.heard.toLowerCase()}`,
             evidence: {
                 impact: Math.log2(1 + occurrences) + (decision ? IMPACT.decision : 0) + (personName ? IMPACT.owner : 0),
@@ -268,14 +301,20 @@ export function splitQuestion(
         throw new Error(`${record.id} has no question ${id}`);
     }
 
-    const timed = options.transcript.filter((entry) => entry.startSec !== undefined);
+    const addressed = linesOf(options.transcript);
+    const lastTimed = options.transcript.findLastIndex((entry) => entry.startSec !== undefined);
     const ranges = record.items.filter(
         (item): item is RangeItem => item.kind === "speaker-range" && question.decides.includes(item.id)
     );
     const inQuestion = (startSec: number) =>
         startSec >= question.fromSec - 0.5 && (startSec < question.toSec || startSec === question.fromSec);
-    const lines = timed.flatMap((entry, index) => {
-        const startSec = entry.startSec!;
+    const lines = options.transcript.flatMap((entry, index) => {
+        const startSec = entry.startSec;
+
+        if (startSec === undefined) {
+            return [];
+        }
+
         const range = ranges.find(
             (candidate) =>
                 entry.speaker === candidate.label && startSec >= candidate.fromSec && startSec <= candidate.toSec
@@ -285,7 +324,9 @@ export function splitQuestion(
             return [];
         }
 
-        const next = timed[index + 1]?.startSec ?? Math.max(startSec + 5, question.toSec);
+        const end = addressed.end(index) ?? startSec + LAST_LINE_SEC;
+        // The transcript's last line has no next start: it lasts at least to the question's end.
+        const next = index >= lastTimed ? Math.max(end, question.toSec) : end;
         const toSec = range || question.toSec <= startSec ? next : Math.min(next, question.toSec);
         return [{ entry, range, fromSec: startSec, toSec }];
     });
@@ -358,23 +399,6 @@ export function splitQuestion(
     return created;
 }
 
-type JoinItem = Extract<MeetingItem, { kind: "join" }>;
-
-/** The ledger entry of a confirmed join: the two cut halves as heard, and the whole word. */
-function joinCorrection(record: MeetingRecord, item: JoinItem, now: string): Correction {
-    const evidence = item.evidence ?? {};
-    const heard = [evidence.left, evidence.right].filter((part) => typeof part === "string").join(" ");
-    return {
-        at: now,
-        meeting: record.id,
-        project: record.project,
-        kind: "join",
-        heard,
-        fixed: item.joined ?? "",
-        item: item.id,
-    };
-}
-
 /**
  * Writes an answer into the record: the question is confirmed, and each item it decides is confirmed with the answer
  * (a range's speaker, a term's spelling, a join's speaker) or rejected when the answer is "none of these". Returns
@@ -421,21 +445,14 @@ export function answerQuestion(
             item.speaker = answer;
         }
 
-        if (item.kind === "join" && item.joined) {
-            ledger.push(joinCorrection(record, item, options.now));
-        }
-
         if (item.kind === "term") {
             item.proposed = answer;
-            ledger.push({
-                at: options.now,
-                meeting: record.id,
-                project: record.project,
-                kind: "term",
-                heard: item.heard,
-                fixed: answer,
-                item: item.id,
-            });
+        }
+
+        const entry = ledgerEntryFor(record, item, options.now);
+
+        if (entry) {
+            ledger.push(entry);
         }
     }
 
@@ -466,103 +483,74 @@ export function answerVocabulary(record: MeetingRecord, dictionaryValues: string
     ].filter((value) => value.trim().length > 0);
 }
 
-/** The transcript line inside the question's range that holds its heard words, and where they start in it. */
-function heardLine(question: QuestionItem, transcript: TranscriptEntry[]): { n: number; at: number } | undefined {
-    const heard = question.heard?.toLowerCase();
-
-    if (!heard) {
+/** The `occurrence`-th whole-word occurrence of a word question's heard words in its range. */
+function heardLine(question: QuestionItem, lines: TranscriptLines, occurrence: number): HeardOccurrence | undefined {
+    if (!question.heard) {
         return undefined;
     }
 
-    for (const [n, line] of transcript.entries()) {
-        const startSec = line.startSec;
+    return lines.heardLine({ heard: question.heard, fromSec: question.fromSec, toSec: question.toSec }, occurrence);
+}
 
-        if (startSec === undefined || startSec < question.fromSec - 1 || startSec > question.toSec) {
-            continue;
-        }
+/**
+ * Which occurrence of its heard words a question asks about: questions on the same words over the same range take
+ * them in the order they were added, so two occurrences in one line get their own time and context.
+ */
+export function questionOccurrence(record: MeetingRecord, question: QuestionItem): number {
+    const heard = heardKey(question);
 
-        const at = line.text.toLowerCase().indexOf(heard);
-
-        if (at >= 0) {
-            return { n, at };
-        }
+    if (!heard) {
+        return 0;
     }
 
-    return undefined;
+    const twins = record.items.filter(
+        (item): item is QuestionItem =>
+            item.kind === "question" &&
+            heardKey(item) === heard &&
+            Math.round(item.fromSec) === Math.round(question.fromSec) &&
+            Math.round(item.toSec) === Math.round(question.toSec)
+    );
+    return Math.max(
+        0,
+        twins.findIndex((item) => item.id === question.id)
+    );
 }
 
 /**
  * The moment in the recording the question is about: for a term or text, where its heard words fall, estimated from
  * their place in the line (a source times lines, not words); for a speaker, or words not found, the range's start.
  */
-export function askedSpotSec(question: QuestionItem, transcript: TranscriptEntry[]): number {
-    const found = heardLine(question, transcript);
-    const startSec = found ? transcript[found.n]!.startSec : undefined;
-
-    if (!found || startSec === undefined) {
-        return question.fromSec;
-    }
-
-    const line = transcript[found.n]!;
-    const endSec =
-        transcript.slice(found.n + 1).find((next) => next.startSec !== undefined)?.startSec ?? question.toSec;
-    return startSec + (found.at / Math.max(1, line.text.length)) * Math.max(0, endSec - startSec);
+export function askedSpotSec(
+    question: QuestionItem,
+    transcript: readonly TranscriptEntry[] | TranscriptLines,
+    occurrence = 0
+): number {
+    const lines = linesOf(transcript);
+    const found = heardLine(question, lines, occurrence);
+    return (found ? lines.spotSec(found) : undefined) ?? question.fromSec;
 }
 
-/** The words of a heard passage in its line, with the line before and after, each cut to about `maxChars`. */
-export interface HeardContext {
-    before?: string;
-    /** The line's text up to the heard words, the heard words as the transcript has them, and the rest of the line. */
-    lead: string;
-    heard: string;
-    rest: string;
-    after?: string;
+/** The audio a word question plays: shortly before to shortly after the spot of its heard words; none when not found. */
+export function heardClip(
+    question: QuestionItem,
+    transcript: readonly TranscriptEntry[] | TranscriptLines,
+    occurrence = 0
+): { fromSec: number; toSec: number } | undefined {
+    const lines = linesOf(transcript);
+    const found = heardLine(question, lines, occurrence);
+    return found ? lines.clip(found) : undefined;
 }
 
 /** Where a word question's heard words are said: the sentence around them, so two questions on one word differ. */
 export function heardContext(
     question: QuestionItem,
-    transcript: TranscriptEntry[],
-    maxChars: number
+    transcript: readonly TranscriptEntry[] | TranscriptLines,
+    maxChars: number,
+    occurrence = 0
 ): HeardContext | undefined {
-    const found = heardLine(question, transcript);
-
-    if (!found) {
-        return undefined;
-    }
-
-    const text = transcript[found.n]!.text;
-    const end = found.at + (question.heard?.length ?? 0);
-    const side = Math.max(20, Math.floor((maxChars - (end - found.at)) / 2));
-    const lead =
-        found.at > side ? `…${text.slice(found.at - side, found.at).replace(/^\S*\s/, "")}` : text.slice(0, found.at);
-    const rest = text.length - end > side ? `${text.slice(end, end + side).replace(/\s\S*$/, "")}…` : text.slice(end);
-    const neighbour = (step: -1 | 1): string | undefined => {
-        const line = transcript[found.n + step];
-
-        if (!line?.text.trim()) {
-            return undefined;
-        }
-
-        const words = line.text.trim();
-
-        if (words.length <= maxChars) {
-            return words;
-        }
-
-        return step < 0
-            ? `…${words.slice(-maxChars).replace(/^\S*\s/, "")}`
-            : `${words.slice(0, maxChars).replace(/\s\S*$/, "")}…`;
-    };
-    const before = neighbour(-1);
-    const after = neighbour(1);
-    return {
-        ...(before ? { before } : {}),
-        lead,
-        heard: text.slice(found.at, end),
-        rest,
-        ...(after ? { after } : {}),
-    };
+    const lines = linesOf(transcript);
+    const found = heardLine(question, lines, occurrence);
+    return found ? lines.context(found, maxChars) : undefined;
 }
 
 /**
@@ -591,13 +579,17 @@ export function questionIdOf(record: MeetingRecord, ref: string): string {
 }
 
 /** The words of the lines a speaker question asks about; a split part names its own words in the question. */
-function spokenIn(question: QuestionItem, transcript: TranscriptEntry[], maxChars: number): string | undefined {
+function spokenIn(
+    question: QuestionItem,
+    transcript: readonly TranscriptEntry[] | TranscriptLines,
+    maxChars: number
+): string | undefined {
     if (question.question.startsWith('Who says "')) {
         return undefined;
     }
 
-    const text = transcript
-        .filter(
+    const text = linesOf(transcript)
+        .entries.filter(
             (entry) =>
                 entry.startSec !== undefined &&
                 entry.startSec >= question.fromSec - 0.5 &&
@@ -626,10 +618,13 @@ export interface QuestionView {
 export function questionView(
     record: MeetingRecord,
     question: QuestionItem,
-    transcript: TranscriptEntry[],
+    transcript: readonly TranscriptEntry[] | TranscriptLines,
     maxChars: number
 ): QuestionView {
-    const context = question.about === "speaker" ? undefined : heardContext(question, transcript, maxChars);
+    const context =
+        question.about === "speaker"
+            ? undefined
+            : heardContext(question, transcript, maxChars, questionOccurrence(record, question));
     const said = question.about === "speaker" ? spokenIn(question, transcript, maxChars) : undefined;
     return {
         label: questionLabel(record, question.id),
@@ -717,7 +712,9 @@ export function questionWarnings(record: MeetingRecord, added: MeetingItem[]): s
         }
 
         if (question.priority === undefined) {
-            warnings.push(`${label} has no priority, so listen asks it after every question that has one.`);
+            warnings.push(
+                `${label} has no priority, so listen asks it after every question that has one (--priority <0..1>).`
+            );
         }
     }
 

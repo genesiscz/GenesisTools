@@ -11,8 +11,8 @@ import {
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
-import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
@@ -32,11 +32,13 @@ import {
     answerVocabulary,
     askedSpotSec,
     type HeardContext,
+    heardClip,
     NONE_OF_THESE,
     openQuestions,
     type QuestionItem,
     questionIdOf,
     questionLabel,
+    questionOccurrence,
     questionView,
 } from "../lib/questions";
 import { errorText, fail, TOOL } from "../lib/shared";
@@ -296,7 +298,7 @@ class TerminalAdapter implements ListenAdapter {
             audioPath: string;
             player: (typeof LISTEN_PLAYERS)[number];
             vocabulary: string[];
-            transcript: TranscriptEntry[];
+            transcript: TranscriptLines;
             padSec: number;
             listen: ListenSettings;
         }
@@ -307,8 +309,11 @@ class TerminalAdapter implements ListenAdapter {
         const { question } = asked;
         const view = questionView(asked.record, question, transcript, SAID_MAX_CHARS);
         const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
-        const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
-        const spotSec = askedSpotSec(question, transcript);
+        const occurrence = questionOccurrence(asked.record, question);
+        // A word question plays the spot of its own occurrence, so a word late in a long line is in the clip.
+        const heard = (question.about === "speaker" ? undefined : heardClip(question, transcript, occurrence)) ??
+            question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
+        const spotSec = askedSpotSec(question, transcript, occurrence);
         // A speaker question plays only the asked voice, from the tone on; a word keeps the audio around it.
         const pad = question.about === "speaker" ? listen.beepLeadSec + SPEAKER_PAD_SEC : this.deps.padSec;
         const inClip = spotSec >= heard.fromSec - pad && spotSec <= heard.toSec + pad;
@@ -457,7 +462,7 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
                 meeting,
                 dictionary.entries.map((entry) => entry.value)
             ),
-            transcript: await meetingTranscript(meeting),
+            transcript: new TranscriptLines(await meetingTranscript(meeting)),
             padSec,
             listen,
         });

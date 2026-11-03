@@ -80,6 +80,8 @@ export const findingSchema = z.discriminatedUnion("kind", [
         choices: z.array(text).default([]),
         /** Item ids (`i3`) or the refs of findings in the same batch. */
         decides: z.array(z.string().trim().min(1)).default([]),
+        /** 0 to 1: listen asks the highest first, and one under `playback.listen.minPriority` only with `--item`. */
+        priority: z.number().min(0).max(1).optional(),
         confidence: confidence.optional(),
         reason: text.optional(),
     }),
@@ -206,5 +208,6 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
         ...(finding.heard ? { heard: finding.heard } : {}),
         choices: finding.choices,
         decides: finding.decides.map((id) => idOfRef.get(id) ?? id),
+        ...(finding.priority === undefined ? {} : { priority: finding.priority }),
     };
 }

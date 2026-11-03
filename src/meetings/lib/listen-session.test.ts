@@ -5,6 +5,7 @@ import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/u
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
+import { findingItems, findingsFileSchema } from "./findings";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -13,7 +14,7 @@ import {
     type SessionNote,
 } from "./listen-session";
 import { GivenAnswerAdapter } from "./listen-session-answer";
-import { questionWarnings } from "./questions";
+import { askedSpotSec, heardClip, type QuestionItem, questionView, questionWarnings } from "./questions";
 
 const now = "2026-11-02T15:00:00.000Z";
 let stores = 0;
@@ -270,5 +271,54 @@ describe("question warnings at items add", () => {
             expect.stringContaining("Q2 decides no item"),
             expect.stringContaining("Q2 has no priority"),
         ]);
+    });
+});
+
+function asQuestion(item: MeetingItem | undefined): QuestionItem {
+    if (item?.kind !== "question") {
+        throw new Error("not a question");
+    }
+
+    return item;
+}
+
+describe("a word question finds its own occurrence of the heard words", () => {
+    const words: TranscriptEntry[] = [
+        { speaker: "A", startSec: 50, text: "Dej to do Ada a pak taky do Ada, ne do zadání." },
+        { speaker: "B", startSec: 60, text: "Jo." },
+    ];
+
+    test("two questions on one word in one line get their own spot and context; Ada is never inside zadání", async () => {
+        const fx = await fixture([
+            question("i1", { about: "term", heard: "Ada", fromSec: 50, toSec: 54 }),
+            question("i2", { about: "term", heard: "Ada", fromSec: 50, toSec: 54 }),
+        ]);
+        const record = fx.read();
+        const [first, second] = [
+            questionView(record, asQuestion(record.items[0]), words, 240),
+            questionView(record, asQuestion(record.items[1]), words, 240),
+        ];
+
+        expect(first.context?.lead).toBe("Dej to do ");
+        expect(second.context?.lead).toBe("Dej to do Ada a pak taky do ");
+        expect(second.context?.rest).toBe(", ne do zadání.");
+    });
+
+    test("the clip covers the late occurrence's spot, not the first 4 s of the line", async () => {
+        const fx = await fixture([question("i1", { about: "term", heard: "zadání", fromSec: 50, toSec: 54 })]);
+        const asked = asQuestion(fx.read().items[0]);
+        const spot = askedSpotSec(asked, words);
+        const clip = heardClip(asked, words)!;
+
+        expect(spot).toBeGreaterThan(57);
+        expect(clip.fromSec).toBeLessThan(spot);
+        expect(clip.toSec).toBeGreaterThan(spot);
+    });
+
+    test("a question finding keeps its priority (0..1)", () => {
+        const parsed = findingsFileSchema.parse([
+            { kind: "question", from: 10, to: 20, question: "Who?", priority: 0.8 },
+        ]);
+        expect(findingItems(parsed, [], now)[0]).toMatchObject({ kind: "question", priority: 0.8 });
     });
 });
