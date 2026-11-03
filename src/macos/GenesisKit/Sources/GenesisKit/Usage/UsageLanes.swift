@@ -324,12 +324,25 @@ public struct UsageLaneGeometry: Sendable {
         return points
     }
 
-    /// The cone between the slow and the fast pace from the last reading to `end`: start, slow end, fast end.
+    /// The cone between the slow and the fast pace from the last reading to `end`, clipped at the limit: the start,
+    /// the slow pace's edge (its 100 % crossing when that comes first, then along the limit to `end`), then the fast
+    /// pace's edge back. Nil without both paces, or when the reading is already at the limit.
     public func cone(_ forecast: UsageLaneForecast, until end: Date) -> [CGPoint]? {
-        guard let low = forecast.lowPerHour, let high = forecast.highPerHour, end > forecast.start else { return nil }
+        guard let low = forecast.lowPerHour, let high = forecast.highPerHour, end > forecast.start, forecast.value < 100 else { return nil }
+        var points = [CGPoint(x: x(forecast.start), y: y(forecast.value))] + paceEdge(forecast, perHour: low, until: end)
+        for point in paceEdge(forecast, perHour: high, until: end).reversed() where point != points.last {
+            points.append(point)
+        }
+        return points
+    }
+
+    /// One pace's edge of the cone after the start: the point at `end`, or its 100 % crossing and then the limit at `end`.
+    private func paceEdge(_ forecast: UsageLaneForecast, perHour: Double, until end: Date) -> [CGPoint] {
+        if let crossing = forecast.crossing(perHour: perHour), crossing < end {
+            return [CGPoint(x: x(crossing), y: y(100)), CGPoint(x: x(end), y: y(100))]
+        }
         let hours = end.timeIntervalSince(forecast.start) / 3600
-        let start = CGPoint(x: x(forecast.start), y: y(forecast.value))
-        return [start, CGPoint(x: x(end), y: y(forecast.value + low * hours)), CGPoint(x: x(end), y: y(forecast.value + high * hours))]
+        return [CGPoint(x: x(end), y: y(forecast.value + perHour * hours))]
     }
 
     /// A straight line from the last reading at `perHour` to `end`.
