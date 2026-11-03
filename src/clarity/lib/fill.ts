@@ -113,14 +113,16 @@ export function unmappedInPeriod(
  * - `write`: the replacement changes the row.
  * - `unchanged`: Clarity already holds exactly these hours.
  * - `nothing-to-clear`: no ADO minutes this week and no requested-month hours to clear.
- * - `no-row`: the timesheet has no row for the task.
+ * - `no-row`: the timesheet has no row for the task, nor one replacement row (see `findTaskRow`).
  */
 export type FillEntryAction = "write" | "unchanged" | "nothing-to-clear" | "no-row";
 
 export interface PlannedFillEntry {
     fill: FillEntry;
     action: FillEntryAction;
-    row?: { timeEntryId: number; taskId: number };
+    row?: { timeEntryId: number; taskId: number; taskCode: string };
+    /** Mapped task ids whose hours go on `row` although it belongs to another task with the same name. */
+    replacedTaskIds: number[];
     existingSegments: TimeSegment[];
     /** The whole-period replacement, for `write` and `unchanged`. */
     segments: TimeSegment[];
@@ -169,23 +171,69 @@ function exclusiveEnd(periodFinishInclusive: string): string {
     return `${addDay(periodFinishInclusive.split("T")[0])}T00:00:00`;
 }
 
+/**
+ * The row a mapped task books on: its own, else the ONE row of a task with the same name in the same
+ * investment. Clarity closes a task for time entry and opens a renumbered copy, so weeks before the
+ * switch carry only the old id and weeks after it only the new one.
+ */
+export function findTaskRow(rows: TimeEntryRecord[], mapping: ClarityMapping): TimeEntryRecord | undefined {
+    const own = rows.find((row) => row.taskId === mapping.clarityTaskId);
+
+    if (own) {
+        return own;
+    }
+
+    const copies = rows.filter(
+        (row) => row.taskName === mapping.clarityTaskName && row.investmentCode === mapping.clarityInvestmentCode
+    );
+
+    return copies.length === 1 ? copies[0] : undefined;
+}
+
+/** One entry for the fills that book on one row, since a write replaces the row's whole period. */
+function mergeOnRow(fills: FillEntry[], timeEntry: TimeEntryRecord): FillEntry {
+    if (fills.length === 1) {
+        return fills[0];
+    }
+
+    const dayMinutes: Record<string, number> = {};
+
+    for (const fill of fills) {
+        for (const [day, minutes] of Object.entries(fill.dayMinutes)) {
+            dayMinutes[day] = (dayMinutes[day] ?? 0) + minutes;
+        }
+    }
+
+    const tracked = fills.some((fill) => fill.timelogEntries);
+
+    return {
+        mapping: (fills.find((fill) => fill.mapping.clarityTaskId === timeEntry.taskId) ?? fills[0]).mapping,
+        dayMinutes,
+        totalMinutes: fills.reduce((sum, fill) => sum + fill.totalMinutes, 0),
+        ...(tracked ? { timelogEntries: fills.flatMap((fill) => fill.timelogEntries ?? []) } : {}),
+    };
+}
+
 function planEntry({
-    fill,
+    fills,
+    timeEntry,
     record,
     month,
     year,
     missingRows,
 }: {
-    fill: FillEntry;
+    fills: FillEntry[];
+    timeEntry: TimeEntryRecord | undefined;
     record: TimesheetRecord;
     month: number;
     year: number;
     missingRows: MissingRowReporting;
 }): PlannedFillEntry {
     const periodFinishExclusive = exclusiveEnd(record.timePeriodFinish);
-    const timeEntry = (record.timeentries?._results ?? []).find(
-        (entry: TimeEntryRecord) => entry.taskId === fill.mapping.clarityTaskId
-    );
+    const fill = timeEntry ? mergeOnRow(fills, timeEntry) : fills[0];
+    const replacedTaskIds = timeEntry
+        ? fills.map((each) => each.mapping.clarityTaskId).filter((taskId) => taskId !== timeEntry.taskId)
+        : [];
     // A row with no actuals yet comes back without the series.
     const existingSegments = timeEntry?.actuals?.segmentList?.segments ?? [];
     // A week with no ADO minutes is written only to clear requested-month hours Clarity still holds.
@@ -196,13 +244,13 @@ function planEntry({
     if (!timeEntry) {
         const action = missingRows === "tasks-with-work" && nothingToClear ? "nothing-to-clear" : "no-row";
 
-        return { fill, action, existingSegments, segments: [] };
+        return { fill, action, replacedTaskIds, existingSegments, segments: [] };
     }
 
-    const row = { timeEntryId: timeEntry._internalId, taskId: timeEntry.taskId };
+    const row = { timeEntryId: timeEntry._internalId, taskId: timeEntry.taskId, taskCode: timeEntry.taskCode };
 
     if (nothingToClear) {
-        return { fill, action: "nothing-to-clear", row, existingSegments, segments: [] };
+        return { fill, action: "nothing-to-clear", row, replacedTaskIds, existingSegments, segments: [] };
     }
 
     const segments = buildMonthAwareTimeSegments({
@@ -215,7 +263,43 @@ function planEntry({
     });
     const action = replacementChangesActuals(segments, existingSegments) ? "write" : "unchanged";
 
-    return { fill, action, row, existingSegments, segments };
+    return { fill, action, row, replacedTaskIds, existingSegments, segments };
+}
+
+/** Each mapped task's row in the week; fills that land on the same row plan as one entry, in map order. */
+function planWeekEntries({
+    record,
+    fill,
+    missingRows,
+}: {
+    record: TimesheetRecord;
+    fill: FillMonth;
+    missingRows: MissingRowReporting;
+}): PlannedFillEntry[] {
+    const rows = record.timeentries?._results ?? [];
+    const onRow = new Map<number, { timeEntry: TimeEntryRecord; fills: FillEntry[] }>();
+    const groups: Array<{ timeEntry: TimeEntryRecord | undefined; fills: FillEntry[] }> = [];
+
+    for (const entry of fill.fillMap.values()) {
+        const timeEntry = findTaskRow(rows, entry.mapping);
+        const shared = timeEntry ? onRow.get(timeEntry._internalId) : undefined;
+
+        if (shared) {
+            shared.fills.push(entry);
+            continue;
+        }
+
+        const group = { timeEntry, fills: [entry] };
+        groups.push(group);
+
+        if (timeEntry) {
+            onRow.set(timeEntry._internalId, { timeEntry, fills: group.fills });
+        }
+    }
+
+    return groups.map(({ timeEntry, fills }) =>
+        planEntry({ fills, timeEntry, record, month: fill.month, year: fill.year, missingRows })
+    );
 }
 
 function planWeek({
@@ -235,9 +319,7 @@ function planWeek({
         periodStart: record.timePeriodStart,
         periodFinishInclusive: record.timePeriodFinish,
         existingNotes: record.numberOfNotes ?? 0,
-        entries: [...fill.fillMap.values()].map((entry) =>
-            planEntry({ fill: entry, record, month: fill.month, year: fill.year, missingRows })
-        ),
+        entries: planWeekEntries({ record, fill, missingRows }),
         unmappedWorkItems: unmappedInPeriod(
             fill.unmappedEntries,
             record.timePeriodStart,

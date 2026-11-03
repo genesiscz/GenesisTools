@@ -234,6 +234,16 @@ export function registerFillCommand(program: Command): void {
                     continue;
                 }
 
+                for (const entry of week.entries.filter((planned) => planned.action !== "nothing-to-clear")) {
+                    for (const taskId of entry.replacedTaskIds) {
+                        out.warn(
+                            pc.yellow(
+                                `  ${entry.fill.mapping.clarityTaskName}: timesheet ${week.timesheetId} has no row for task ${taskId}, so its hours go on task ${entry.row?.taskId}, the task with the same name`
+                            )
+                        );
+                    }
+                }
+
                 for (const entry of week.entries.filter((planned) => planned.action === "no-row")) {
                     out.error(
                         pc.red(

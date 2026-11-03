@@ -380,7 +380,7 @@ export async function executeFill(
         for (const entry of week.entries) {
             const base = {
                 clarityTaskName: entry.fill.mapping.clarityTaskName,
-                clarityTaskCode: entry.fill.mapping.clarityTaskCode,
+                clarityTaskCode: entry.row?.taskCode ?? entry.fill.mapping.clarityTaskCode,
                 timesheetId,
             };
 

@@ -8,6 +8,7 @@ import {
     type AddRowsResult,
     addTaskRows,
     type DesiredTask,
+    findOpenCopies,
     type RemoveRowsResult,
     removeTaskRows,
 } from "@app/clarity/lib/timesheet-rows";
@@ -477,10 +478,21 @@ async function runWrite({
         outcomes.push({ ...base, ...result });
     }
 
+    if (options.format !== "json") {
+        renderOutcomes(outcomes);
+    }
+
+    const copies = removeIds.length > 0 ? null : await addOpenCopies({ api, outcomes, options });
+
+    if (copies) {
+        failures += copies.failures - copies.resolved;
+        outcomes.push(...copies.outcomes);
+    }
+
     if (options.format === "json") {
         out.result(outcomes);
     } else {
-        renderOutcomes(outcomes);
+        renderOutcomes(copies?.outcomes ?? []);
         renderReceipt(rowWriteReceipt({ outcomes, date: options.timesheet === undefined ? date : undefined }));
     }
 
@@ -488,6 +500,82 @@ async function runWrite({
         out.error("Some task rows were not written. Fix the causes above and re-run.");
         process.exit(1);
     }
+}
+
+/**
+ * Clarity refuses a row for a task it closed for time entry, and opens a renumbered copy with the same
+ * name. List each closed task's copies and, once confirmed, add the single copy to the weeks that
+ * refused the closed task. `resolved` counts the refusals a copy now covers.
+ */
+async function addOpenCopies({
+    api,
+    outcomes,
+    options,
+}: {
+    api: ClarityApi;
+    outcomes: WeekOutcome[];
+    options: TasksOptions;
+}): Promise<{ outcomes: WeekOutcome[]; resolved: number; failures: number }> {
+    const none = { outcomes: [], resolved: 0, failures: 0 };
+    const closed = await findOpenCopies({ api, failed: outcomes.flatMap((outcome) => outcome.failed ?? []) });
+    const single = closed.filter((each) => each.copies.length === 1);
+    const json = options.format === "json";
+
+    if (closed.length === 0) {
+        return none;
+    }
+
+    if (!json) {
+        out.println(`\n${pc.bold("Clarity closed these tasks for time entry:")}`);
+
+        for (const { closed: task, copies } of closed) {
+            const same =
+                copies.length === 0
+                    ? pc.dim("no other task has this name")
+                    : `same name: ${copies.map((copy) => `${copy.taskId} (${copy.code})`).join(", ")}`;
+            out.println(`  ${task.taskId}  ${truncateDisplay(task.taskName ?? "", 60)}  ${same}`);
+        }
+    }
+
+    if (single.length === 0) {
+        return none;
+    }
+
+    if (!options.yes && (json || !isInteractive())) {
+        const ids = single.map((each) => each.copies[0].taskId).join(" ");
+        out.warn(`Add the open copies with: ${toolCommand("clarity tasks")} --timesheet <id> --add ${ids} --yes`);
+        return none;
+    }
+
+    const ok = await confirmWrite({
+        message: `Add the open copy of ${single.length} closed task(s) to the week(s) that refused them?`,
+        yes: options.yes,
+    });
+
+    if (!ok) {
+        return none;
+    }
+
+    const added: WeekOutcome[] = [];
+    let resolved = 0;
+    let failures = 0;
+
+    for (const outcome of outcomes) {
+        const want = single
+            .filter((each) => outcome.failed?.some((task) => task.taskId === each.closed.taskId))
+            .map((each) => ({ taskId: each.copies[0].taskId, taskName: each.copies[0].name }));
+
+        if (outcome.timesheetId === undefined || want.length === 0) {
+            continue;
+        }
+
+        const result = await addTaskRows({ api, timesheetId: outcome.timesheetId, want });
+        resolved += want.length - result.failed.length;
+        failures += result.failed.length;
+        added.push({ ...outcome, ...result, removed: undefined, blocked: undefined, missing: undefined });
+    }
+
+    return { outcomes: added, resolved, failures };
 }
 
 function renderOutcomes(outcomes: WeekOutcome[]): void {

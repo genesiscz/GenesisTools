@@ -33,6 +33,7 @@ interface Row {
     taskId: number;
     taskCode: string;
     taskName: string;
+    investmentCode?: string;
     /** date -> seconds */
     actuals?: Record<string, number>;
 }
@@ -104,6 +105,7 @@ class FakeClarity {
                                   taskId: row.taskId,
                                   taskCode: row.taskCode,
                                   taskName: row.taskName,
+                                  investmentCode: row.investmentCode ?? "P100001",
                                   actuals: row.actuals
                                       ? { segmentList: { total: segments.reduce((s, g) => s + g.value, 0), segments } }
                                       : undefined,
@@ -256,6 +258,26 @@ function augustPeriods(
             rows: rows(5, undefined, { "2026-09-01": 3600 }),
         },
     ];
+}
+
+const BetaCopy = { taskId: 700012, taskCode: "T-BETA-2", taskName: "Task Beta" };
+
+/** August, where Clarity replaced Beta in the last week with a renumbered copy of the same name. */
+function augustWithBetaReplaced(copies: Array<Partial<Row>> = [{}]): Period[] {
+    const periods = augustPeriods();
+    const last = periods[5];
+    last.rows = [
+        last.rows[0],
+        ...copies.map((copy, index) => ({
+            timeEntryId: 10_053 + index,
+            ...BetaCopy,
+            taskId: BetaCopy.taskId + index,
+            actuals: index === 0 ? { "2026-09-01": 3600 } : undefined,
+            ...copy,
+        })),
+    ];
+
+    return periods;
 }
 
 const AugustEntries = [
@@ -587,6 +609,65 @@ describe("CLI clarity fill", () => {
         expect(resultsLine(run)).toBe("Results: 4 updated, 3 note(s), 1 task(s) with no row");
     });
 
+    test("a task Clarity replaced with a renumbered copy books that week on the copy's row", async () => {
+        const active = useWorld({ periods: augustWithBetaReplaced() });
+
+        const run = await runCli(["--confirm"]);
+
+        expect(run.exitCode).toBeUndefined();
+        expect(writeSummary(active.clarity.writes)).toEqual(
+            CliAugustWrites.map((w) => (w.startsWith("555005/10052") ? "555005/10053 task 700012 total 5400" : w))
+        );
+        expect(
+            run.lines.some((line) =>
+                line.includes(
+                    "Task Beta: timesheet 555005 has no row for task 700002, so its hours go on task 700012, the task with the same name"
+                )
+            )
+        ).toBe(true);
+    });
+
+    test.each([
+        ["in another investment", [{ investmentCode: "P100002" }]],
+        ["twice in the week", [{}, {}]],
+    ])("a task with the same name %s is no replacement", async (_label, copies) => {
+        const active = useWorld({ periods: augustWithBetaReplaced(copies) });
+
+        const run = await runCli(["--confirm"]);
+
+        expect(run.exitCode).toBe(1);
+        expect(writeSummary(active.clarity.writes)).toEqual(CliAugustWrites.filter((w) => !w.startsWith("555005/")));
+        expect(
+            run.lines.some((line) => line.includes("No time entry row for task Task Beta in timesheet 555005"))
+        ).toBe(true);
+    });
+
+    test("work mapped to the old task and to its copy books once on the one row each week carries", async () => {
+        const active = useWorld({
+            periods: augustWithBetaReplaced(),
+            mappings: [...Mappings, mapping(510003, BetaCopy.taskId, BetaCopy.taskName, BetaCopy.taskCode)],
+            entries: [...AugustEntries, adoEntry(510003, "2026-08-06", 30), adoEntry(510003, "2026-08-31", 60)],
+        });
+
+        const run = await runCli(["--confirm"]);
+
+        expect(run.exitCode).toBeUndefined();
+        expect(writeSummary(active.clarity.writes)).toEqual([
+            "555000/10001 task 700001 total 7200",
+            "555001/10011 task 700001 total 10800",
+            "555001/10012 task 700002 total 7200",
+            "555005/10053 task 700012 total 9000",
+            "555003/10031 task 700001 total 0",
+        ]);
+        expect(
+            run.lines.some((line) =>
+                line.includes(
+                    "Task Beta: timesheet 555001 has no row for task 700012, so its hours go on task 700002, the task with the same name"
+                )
+            )
+        ).toBe(true);
+    });
+
     test("a week whose timesheet has no rows at all reports both tasks instead of crashing", async () => {
         const active = useWorld({ periods: augustPeriods({ p1WithoutRows: true }) });
 
@@ -830,6 +911,18 @@ describe("dashboard fill execute", () => {
             "555001 T-BETA skipped 0h (No time entry for task in timesheet 555001)",
             "999999  error 0h (Timesheet 999999 not found)",
         ]);
+    });
+
+    test("a task Clarity replaced with a renumbered copy is written on the copy's row under its code", async () => {
+        const active = useWorld({ periods: augustWithBetaReplaced() });
+
+        const result = await executeFill(8, 2026, [555005]);
+
+        expect(result.entries.map(entrySummary)).toEqual([
+            "555005 T-ALPHA skipped 0h (No minutes for this task in this week)",
+            "555005 T-BETA-2 success 1.5h",
+        ]);
+        expect(writeSummary(active.clarity.writes)).toEqual(["555005/10053 task 700012 total 5400"]);
     });
 
     test("a week whose timesheet has no rows at all skips each task instead of failing the week", async () => {

@@ -75,6 +75,12 @@ Two different things that both used to be called `tasks`:
   never added to any timesheet has no row, so the catalogue and `mappings` cannot see it; this finds
   it. A numeric term searches both `D_<id>` and `<id>_`. The `ON <date>` column says whether `--add`
   is still needed.
+- **A task Clarity replaced.** Clarity can close a task for time entry (`TMA-1026`,
+  `TASK_NOT_OPEN_FOR_TE`) and open a copy with the same name and investment under a new id. Weeks
+  before the switch carry only the old row, weeks after it only the new one. `fill` books a mapped
+  task on its own row and, when the week has none, on the one row with the same name and investment
+  code, and says so; work mapped to both ids books once on the row the week has. `tasks --add-from`
+  lists the copies of each task Clarity refused as closed and, once confirmed, adds the single copy.
 - **`mappings --assign`** reads the work item title from Azure DevOps when the month has no hours on
   it yet, instead of storing the bare id as the title.
 

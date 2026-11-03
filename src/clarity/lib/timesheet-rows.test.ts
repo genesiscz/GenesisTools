@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addTaskRows, diffCatalogue, removeTaskRows } from "@app/clarity/lib/timesheet-rows";
+import { addTaskRows, diffCatalogue, findOpenCopies, removeTaskRows } from "@app/clarity/lib/timesheet-rows";
 import type { TimesheetResponse } from "@genesiscz/utils/clarity";
 
 const ROW = {
@@ -250,5 +250,61 @@ describe("addTaskRows reads the week it is about to write", () => {
 
         expect(api.created).toEqual([]);
         expect(result.skipped).toEqual([{ taskId: 700042, taskName: "SampleTask_Release" }]);
+    });
+});
+
+describe("findOpenCopies", () => {
+    const Closed =
+        'Clarity API error 400: {"resourceId":"TMA-1026","errorCode":"timeadmin.timeentry.api.TASK_NOT_OPEN_FOR_TE"}';
+
+    function searchApi(results: Array<{ taskId: number; code: string; name: string }>) {
+        const terms: string[] = [];
+
+        return {
+            terms,
+            searchTasks: async (prefix: string) => {
+                terms.push(prefix);
+                return results.filter((task) => task.name.startsWith(prefix));
+            },
+        };
+    }
+
+    test("lists the tasks with exactly the closed task's name, without the closed task itself", async () => {
+        const api = searchApi([
+            { taskId: 700042, code: "00070705", name: "SampleTask_Release" },
+            { taskId: 700142, code: "00080705", name: "SampleTask_Release" },
+            { taskId: 700143, code: "00080706", name: "SampleTask_Release_Hotfix" },
+        ]);
+
+        const found = await findOpenCopies({
+            api,
+            failed: [{ taskId: 700042, taskName: "SampleTask_Release", error: Closed }],
+        });
+
+        expect(found).toEqual([
+            {
+                closed: { taskId: 700042, taskName: "SampleTask_Release", error: Closed },
+                copies: [{ taskId: 700142, code: "00080705", name: "SampleTask_Release" }],
+            },
+        ]);
+    });
+
+    test("searches each closed task once and skips other failures and tasks without a name", async () => {
+        const api = searchApi([{ taskId: 700142, code: "00080705", name: "SampleTask_Release" }]);
+
+        const found = await findOpenCopies({
+            api,
+            failed: [
+                { taskId: 700042, taskName: "SampleTask_Release", error: Closed },
+                { taskId: 700042, taskName: "SampleTask_Release", error: Closed },
+                { taskId: 700050, error: Closed },
+                { taskId: 700060, taskName: "SampleTask_Other", error: "API-1004 : invalid resource" },
+            ],
+        });
+
+        expect(api.terms).toEqual(["SampleTask_Release"]);
+        expect(found.map((each) => [each.closed.taskId, each.copies.map((copy) => copy.taskId)])).toEqual([
+            [700042, [700142]],
+        ]);
     });
 });
