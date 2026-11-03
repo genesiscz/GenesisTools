@@ -1,4 +1,5 @@
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import type { UsageBudgets } from "@genesiscz/utils/ai/usage/budgets/budgets";
 import type { UsageEventRow } from "@genesiscz/utils/ai/usage/events/store";
 import type { ForecastWindowKind } from "@genesiscz/utils/ai/usage/forecast/forecast";
 import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
@@ -27,6 +28,17 @@ export interface AlertRuleSettings {
     health: RuleSettingsBase & { downMinutes: number; refreshExpiryDays: number };
     /** Several rate-limit answers for one account within a few minutes. */
     "rate-limited": RuleSettingsBase & { count: number; windowMinutes: number };
+    /**
+     * A window with a budget (proposal 18) burns faster today than its allowance (`overPaceFactor` times it) or
+     * dropped below its reserve; and "use it or lose it": a window resets within `useItHours` with at least
+     * `useItMinLeftPct` left (only a budgeted window unless `useItBudgetedOnly` is false).
+     */
+    budget: RuleSettingsBase & {
+        overPaceFactor: number;
+        useItHours: number;
+        useItMinLeftPct: number;
+        useItBudgetedOnly: boolean;
+    };
 }
 
 export type AlertRuleId = keyof AlertRuleSettings;
@@ -37,6 +49,7 @@ export const ALERT_RULE_IDS: readonly AlertRuleId[] = [
     "limit-state-change",
     "health",
     "rate-limited",
+    "budget",
 ];
 
 export function isAlertRuleId(value: string): value is AlertRuleId {
@@ -113,6 +126,8 @@ export interface AlertRound {
     /** Usage events of the last hour. */
     events: readonly UsageEventRow[];
     availabilityChanges: readonly AvailabilityChange[];
+    /** The budgets of the usage config, read once per tick (empty when none are set). */
+    budgets: UsageBudgets;
 }
 
 export interface UsageAlertRule<Id extends AlertRuleId> {

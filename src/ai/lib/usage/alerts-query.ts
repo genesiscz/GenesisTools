@@ -306,6 +306,7 @@ export async function testAlertRule(
                 snapshots,
                 now,
                 previousRoundAt: new PollRunsStore(db).lastRoundAt(),
+                budgets: dashboard.budgets,
             });
             judged = judgeRound({ round, config: dashboard.alerts, store: new UsageAlertsStore(db), only: [rule] });
         } else {

@@ -1,4 +1,5 @@
 import type { AlertRuleTable } from "../types";
+import { budgetRule } from "./budget";
 import { healthRule } from "./health";
 import { limitStateChangeRule } from "./limit-state-change";
 import { predictedExhaustRule } from "./predicted-exhaust";
@@ -16,4 +17,5 @@ export const ALERT_RULES = {
     "limit-state-change": limitStateChangeRule,
     health: healthRule,
     "rate-limited": rateLimitedRule,
+    budget: budgetRule,
 } satisfies AlertRuleTable;
