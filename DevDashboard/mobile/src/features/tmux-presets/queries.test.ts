@@ -1,6 +1,6 @@
 import type { TmuxPresetSummary } from "@dd/contract";
-import { describe, expect, it } from "bun:test";
-import { fixtureDashboardClient } from "@/api/fixture-wire";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { fixtureDashboardClient, setFixtureLatency } from "@/api/fixture-wire";
 import {
     capturePreset,
     deletePreset,
@@ -17,6 +17,8 @@ import {
  * the Appium "capture adds a row" / "delete drops a row" assertions trustworthy. Mirrors
  * features/reminders-todos/queries.test.ts + features/containers/queries.test.ts.
  */
+
+beforeAll(() => setFixtureLatency(0));
 
 describe("mock dashboard client — presets", () => {
     it("presets.list() returns a { presets } array of well-formed summaries", async () => {
