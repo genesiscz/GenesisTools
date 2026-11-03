@@ -52,6 +52,6 @@ export function refuseHarness(values: string | readonly string[] | boolean | und
 
     throw new UsageQueryError(
         "reserved",
-        `--harness selects transcript data and arrives with ${aiUsageCommand("spend")} (build step U8). Limit windows belong to a provider: use --provider.`
+        `--harness selects transcript data, which ${aiUsageCommand("spend")} reads. Limit windows belong to a provider: use --provider.`
     );
 }

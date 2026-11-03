@@ -17,6 +17,7 @@ import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
+import { addHarnessOption, resolveHarnessFlag } from "./harness-flag";
 import { renderSessions, renderSummary, renderToday } from "./render";
 import { addAccountFlags, registerCcusageCommands } from "./reports/commands";
 import { registerWorkersCommand } from "./workers/command";
@@ -31,6 +32,7 @@ export interface SpendOpts {
     top?: string;
     json?: boolean;
     sources?: string;
+    harness?: string;
 }
 
 export type SpendView = "summary" | "sessions" | "today";
@@ -121,13 +123,13 @@ function emit(report: Report, opts: SpendOpts, view: SpendView): void {
 }
 
 export function addSpendOptions(cmd: Command): Command {
-    return cmd
-        .option("--since <when>", 'Include events on/after "Nd" or YYYY-MM-DD', DEFAULT_SINCE)
+    cmd.option("--since <when>", 'Include events on/after "Nd" or YYYY-MM-DD', DEFAULT_SINCE)
         .option("--model <substr>", "Filter to models containing this substring")
         .option("--project <substr>", "Filter to projects (cwd) containing this substring")
         .option("--top <n>", "Leaderboard length", "10")
-        .option("--sources <ids>", `Comma-separated subset of ${SOURCE_IDS.join(", ")} (default: all)`)
-        .option("--json", "Emit the Report as JSON to stdout");
+        .option("--sources <ids>", `Comma-separated subset of ${SOURCE_IDS.join(", ")} (default: all)`);
+
+    return addHarnessOption(cmd, "--sources").option("--json", "Emit the Report as JSON to stdout");
 }
 
 export async function runSpend(cmd: Command, view: SpendView): Promise<void> {
@@ -135,7 +137,13 @@ export async function runSpend(cmd: Command, view: SpendView): Promise<void> {
     // commander treats them as global. The action's plain opts arg therefore
     // omits flags resolved onto the parent — optsWithGlobals() merges them back.
     const opts = cmd.optsWithGlobals() as SpendOpts;
-    const sources = parseSources(opts.sources, { command: view, ids: SOURCE_IDS });
+    const harness = resolveHarnessFlag({ harness: opts.harness, legacy: opts.sources, legacyFlag: "--sources" });
+
+    if (!harness) {
+        return;
+    }
+
+    const sources = parseSources(harness.raw, { command: view, ids: SOURCE_IDS, flag: harness.flag });
 
     if (sources === null) {
         return;
@@ -182,6 +190,7 @@ interface SeriesOpts {
     account?: string[];
     allHomes?: boolean;
     sources?: string;
+    harness?: string;
     byModel?: boolean;
     json?: boolean;
 }
@@ -199,11 +208,12 @@ const SERIES_DEFAULT_DAYS = 7;
  *
  * Throwing instead would reach `runTool`'s uncaught `program.parseAsync()`, so a
  * mistyped `--sources` printed a Bun stack trace with a source excerpt where a
- * one-line flag diagnostic belongs.
+ * one-line flag diagnostic belongs. `flag` is the spelling the user typed
+ * (`--harness` or `--sources`), so the diagnostic names it.
  */
 function parseSources<T extends string>(
     raw: string | undefined,
-    { command, ids }: { command: string; ids: readonly T[] }
+    { command, ids, flag }: { command: string; ids: readonly T[]; flag: string }
 ): T[] | undefined | null {
     if (!raw) {
         return undefined;
@@ -218,7 +228,7 @@ function parseSources<T extends string>(
 
     if (unknown.length > 0) {
         out.error(
-            suggestEnumFlag(`tools ai-spend ${command}`, "--sources", ids, {
+            suggestEnumFlag(`tools ai-spend ${command}`, flag, ids, {
                 subcommand: [command],
                 given: unknown.join(", "),
             })
@@ -296,14 +306,20 @@ function registerSeriesCommand(program: Command): Command {
         .option("--from <when>", `ISO instant or YYYY-MM-DD (default: ${SERIES_DEFAULT_DAYS} days ago)`)
         .option("--to <when>", "ISO instant or YYYY-MM-DD, exclusive (default: now)")
         .option("--grain [width]", `Bucket width: ${TRANSCRIPT_GRAINS.join(" | ")}`)
-        .option("--sources <ids>", `Comma-separated subset of ${AGENT_IDS.join(", ")}`)
-        .option("--by-model", "Also split each point by model");
+        .option("--sources <ids>", `Comma-separated subset of ${AGENT_IDS.join(", ")}`);
+    addHarnessOption(series, "--sources").option("--by-model", "Also split each point by model");
 
     addAccountFlags(series).action(async (_opts: SeriesOpts, cmd: Command) => {
         const opts = cmd.optsWithGlobals() as SeriesOpts;
         // Ahead of the grain prompt: a mistyped --sources must not sit behind an
         // interactive question the user then answers for nothing.
-        const sources = parseSources(opts.sources, { command: "series", ids: AGENT_IDS });
+        const harness = resolveHarnessFlag({ harness: opts.harness, legacy: opts.sources, legacyFlag: "--sources" });
+
+        if (!harness) {
+            return;
+        }
+
+        const sources = parseSources(harness.raw, { command: "series", ids: AGENT_IDS, flag: harness.flag });
 
         if (sources === null) {
             return;
