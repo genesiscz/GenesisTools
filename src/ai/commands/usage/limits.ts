@@ -25,6 +25,7 @@ import {
 import type { LimitsNowData, WireAccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/limits-now";
 import type { LimitSeriesData, LimitSeriesItem } from "@genesiscz/utils/ai/usage-poll/series";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -295,7 +296,7 @@ export function registerAiUsageLimitsCommand(usage: Command): void {
     // same runner, so the bytes match. `tools hub forecast` stays the real command.
     limits
         .command("forecast")
-        .description(`${FORECAST_DESCRIPTION}. Alias of tools hub forecast`)
+        .description(`${FORECAST_DESCRIPTION}. Alias of ${toolCommand("hub", "forecast")}`)
         .option("--provider <id>", "only this usage provider (anthropic-sub, openai-sub, grok-sub)")
         .option("--account <name>", "only this account")
         .option("--json", "machine-readable output (the hub reads this)")
@@ -321,7 +322,10 @@ function single(flag: string, value: string | string[] | boolean | undefined): s
     const list = typeof value === "string" ? [value] : value === true ? [] : value;
 
     if (list.length !== 1) {
-        throw new UsageQueryError("bad-value", `${flag} takes one value here, as in tools hub forecast.`);
+        throw new UsageQueryError(
+            "bad-value",
+            `${flag} takes one value here, as in ${toolCommand("hub", "forecast")}.`
+        );
     }
 
     return list[0];
