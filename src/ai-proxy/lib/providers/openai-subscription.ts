@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
+import { proxyAccountRefOf } from "@app/ai-proxy/lib/account-refs";
 import { codexModelInfo } from "@app/ai-proxy/lib/codex-catalog";
 import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
 import { jsonError } from "@app/ai-proxy/lib/http-error";
@@ -109,6 +110,7 @@ import { recordProxyUsageEvent } from "@app/ai-proxy/lib/usage/limit-events";
 import { notePrefix, setPrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { getTodayUsageSummary, getUsageSummarySince, recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { streamUsageOptions } from "@app/ai-proxy/lib/usage/stream-start-usage";
+import { refToId } from "@genesiscz/utils/ai/config/refs";
 import { extractPlanType, WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import {
     fetchWhamModels,
@@ -1223,6 +1225,15 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 const backoffMs = this.failover
                     ? markRateLimited(candidate.key, parseRetryAfterSeconds(attempt.headers))
                     : undefined;
+                // Every login's answer counts, also one a later login covered for (`ProviderFailover`).
+                const linked = candidate.primary ? proxyAccountRefOf(this.account) : undefined;
+                recordProxyUsageEvent({
+                    provider: this.id,
+                    accountName: candidate.label,
+                    ...(linked ? { accountId: refToId(linked) } : {}),
+                    kind: "rate-limited",
+                    model: concreteModel,
+                });
 
                 if (backoffMs !== undefined) {
                     recordProxyUsageEvent({

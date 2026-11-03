@@ -35,6 +35,11 @@ export interface ProviderLogin {
 }
 
 /** Moving to another login when the account fails (`failover`). */
+/**
+ * A provider that moves an account between logins. It records each login's upstream 429 as a `rate-limited` usage
+ * event where the answer arrives, since a failover that succeeds hides it from the client; the request tracker then
+ * records none from the final status, so no answer is counted twice.
+ */
 export interface ProviderFailover {
     /** The logins the account moves to, in order. */
     accounts(account: AiProxyAccountConfig): string[];

@@ -6,6 +6,9 @@ import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { readClientLedger, setClientLedgerDirForTests } from "@app/ai-proxy/lib/usage/client-ledger";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
+import { useUsageEventsStoreForTests } from "@genesiscz/utils/ai/usage/events/record";
+import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
+import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const recordUsageRequest = mock((_record: UsageRequestRecord) => {});
@@ -163,6 +166,41 @@ describe("trackCompletedRequest", () => {
         const errored = recordUsageRequest.mock.calls[0][0] as UsageRequestRecord;
         expect(errored.rateLimited).toBe(false);
         expect(errored.error).toBe(true);
+    });
+
+    it("a final 429 is one rate-limited event, except from a failover provider that counted each login's answer", () => {
+        const limits = new UsageLimitsDb(":memory:");
+        const events = new UsageEventsStore(limits.connection());
+        useUsageEventsStoreForTests(events);
+        const limited = (target: typeof route) =>
+            trackCompletedRequest({
+                route: target,
+                client: "alice",
+                proxyModel: "genesiscz/model",
+                path: "/v1/responses",
+                status: 429,
+                elapsedMs: 50,
+                bodyText: SafeJSON.stringify({ model: "genesiscz/model" }),
+                responseBody: SafeJSON.stringify({ error: { message: "rate limited" } }),
+            });
+
+        try {
+            limited(route);
+            limited({
+                ...route,
+                upstreamId: "gpt-5.5",
+                account: { ...account, provider: "openai-subscription", providerSlug: "codex" },
+            });
+
+            expect(
+                events
+                    .list({ from: new Date(0), to: new Date(Date.now() + 60_000), kinds: ["rate-limited"] })
+                    .map((event) => event.provider)
+            ).toEqual(["grok-sub"]);
+        } finally {
+            useUsageEventsStoreForTests(null);
+            limits.close();
+        }
     });
 
     it("records a row for an exchange that never completed, so aborted calls stay visible", () => {

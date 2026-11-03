@@ -120,7 +120,8 @@ export function trackCompletedRequest(input: {
 
     const ref = proxyAccountRefOf(input.route.account);
 
-    if (record.rateLimited) {
+    // A failover provider recorded each login's upstream 429 itself (`ProviderFailover`).
+    if (record.rateLimited && !providerDefinition(input.route.account.provider)?.failover) {
         recordProxyUsageEvent({
             provider: input.route.account.provider,
             accountName: input.route.accountName,
