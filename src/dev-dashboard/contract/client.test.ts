@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createDashboardClient, type EventSourceLike } from "@app/dev-dashboard/contract/client";
+import { ENDPOINTS, type EndpointInput } from "@app/dev-dashboard/contract/endpoint-table";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("createDashboardClient", () => {
@@ -20,6 +21,13 @@ describe("createDashboardClient", () => {
 
         expect(pulse.cpuPct).toBe(12);
         expect(sentAuth).toBe("Basic xyz");
+    });
+
+    it("rejects, never throws, when a path parameter is missing", async () => {
+        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetch });
+        const pending = client.call(ENDPOINTS.qaPendingGet, {} as EndpointInput<typeof ENDPOINTS.qaPendingGet>);
+
+        await expect(pending).rejects.toThrow("missing path parameter id");
     });
 
     it("throws on a non-ok response with the status + body", async () => {

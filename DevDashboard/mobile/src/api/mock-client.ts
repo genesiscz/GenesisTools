@@ -709,7 +709,7 @@ export const mockDashboardClient: DashboardClient = {
     get: <T>(path: string) => escapeHatch<T>(path),
     post: <T>(path: string, _body: unknown) => escapeHatch<T>(path),
     // The generic endpoint-table call reaches the same fixtures by its filled path (M2b replaces this mock).
-    call: <E extends Endpoint>(endpoint: E, input: EndpointInput<E>) =>
+    call: async <E extends Endpoint>(endpoint: E, input: EndpointInput<E>) =>
         escapeHatch<EndpointOutput<E>>(fillPath(endpoint.path, (input ?? {}) as Record<string, unknown>).path),
 
     system: {
