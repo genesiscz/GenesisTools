@@ -18,6 +18,7 @@ import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 import { meetingSource } from "./sources";
 
@@ -49,6 +50,8 @@ const recorderStateSchema = z.object({
     bytes: z.number(),
     lastFrameAt: z.string().optional(),
     warning: z.string().optional(),
+    /** `failed`: the capture failed MAX_FAILURES times in a row; `requested`: `record stop` or a signal ended it. */
+    stopReason: z.enum(["requested", "failed"]).optional(),
 });
 export type RecorderState = z.infer<typeof recorderStateSchema>;
 
@@ -83,6 +86,27 @@ async function run(argv: string[]): Promise<{ exitCode: number; stdout: string; 
         proc.exited,
     ]);
     return { exitCode, stdout, stderr };
+}
+
+const peekabooError = z.object({ error: z.object({ code: z.string().optional(), message: z.string() }) });
+
+/** A failed capture with the capture tool's own error, which it prints as JSON on stdout (stderr holds only its log). */
+export class CaptureError extends Error {
+    /** The asked screen is not connected (a display unplugged during the meeting, or a laptop without it). */
+    readonly missingScreen: boolean;
+
+    constructor(exitCode: number, stdout: string, stderr: string) {
+        const parsed = peekabooError.safeParse(SafeJSON.parse(stdout.trim() || "null"));
+        const reason = parsed.success ? parsed.data.error.message : stderr.trim().slice(-300);
+        super(`peekaboo exited ${exitCode}: ${reason}`);
+        this.missingScreen = parsed.success && /screen index \d+ not found/i.test(parsed.data.error.message);
+    }
+}
+
+/** The frames a recording holds on disk and their size: all of its pieces, also those of an earlier start. */
+function framesOnDisk(framesDir: string): { frames: number; bytes: number } {
+    const files = readdirSync(framesDir).filter((name) => name.endsWith(".jpg"));
+    return { frames: files.length, bytes: files.reduce((sum, name) => sum + statSync(join(framesDir, name)).size, 0) };
 }
 
 /** One piece of change-aware screen capture: frames only when the screen changed, PNG files in `dir`. */
@@ -120,7 +144,7 @@ async function capturePiece(options: {
     log.debug({ exitCode: result.exitCode, dir: options.dir }, "capture piece");
 
     if (result.exitCode !== 0) {
-        throw new Error(`peekaboo exited ${result.exitCode}: ${result.stderr.trim().slice(-300)}`);
+        throw new CaptureError(result.exitCode, result.stdout, result.stderr);
     }
 
     const parsed = liveOutput.parse(SafeJSON.parse(result.stdout));
@@ -202,6 +226,8 @@ export async function runRecorder(options: {
 
     let failures = 0;
     let stopRequested = false;
+    let missingSince: string | undefined;
+    const notes: string[] = [];
     const onSignal = () => {
         stopRequested = true;
     };
@@ -213,14 +239,33 @@ export async function runRecorder(options: {
             let piece: Awaited<ReturnType<typeof capturePiece>>;
 
             try {
-                piece = await capturePiece({ dir: pieceDir, display: options.display, capture });
+                piece = await capturePiece({ dir: pieceDir, display: options.display, capture }).catch(
+                    async (err: unknown) => {
+                        // The asked display is gone: record the main one, and ask for the asked one again next piece.
+                        if (!(err instanceof CaptureError) || !err.missingScreen || options.display === 0) {
+                            throw err;
+                        }
+
+                        if (!missingSince) {
+                            missingSince = localTime(new Date().toISOString());
+                            notes.push(
+                                `display ${options.display} was not connected at ${missingSince}; the main display (0) was recorded while it was missing`
+                            );
+                        }
+
+                        return await capturePiece({ dir: pieceDir, display: 0, capture });
+                    }
+                );
                 failures = 0;
             } catch (err) {
                 failures += 1;
                 log.warn({ err, failures }, "capture piece failed");
 
                 if (failures >= MAX_FAILURES) {
-                    state.warning = `capture failed ${failures} times in a row: ${err instanceof Error ? err.message : String(err)}`;
+                    notes.push(
+                        `capture failed ${failures} times in a row: ${err instanceof Error ? err.message : String(err)}`
+                    );
+                    state.stopReason = "failed";
                     break;
                 }
 
@@ -239,7 +284,9 @@ export async function runRecorder(options: {
                 });
 
                 if (state.frames === 0 && ocr.text.trim().length < EMPTY_FRAME_CHARS) {
-                    state.warning = `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`;
+                    notes.push(
+                        `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
+                    );
                 }
 
                 appendFileSync(
@@ -261,6 +308,7 @@ export async function runRecorder(options: {
             }
 
             emptyPieceFolder(pieceDir);
+            state.warning = notes.length > 0 ? notes.join("; ") : undefined;
             saveState();
         }
     } finally {
@@ -270,7 +318,10 @@ export async function runRecorder(options: {
         rmdirSync(pieceDir);
     }
 
+    state.stopReason ??= "requested";
+    state.warning = notes.length > 0 ? notes.join("; ") : undefined;
     const stoppedAt = new Date().toISOString();
+    const total = framesOnDisk(framesDir);
     const record = store.read(meetingId);
     const linked = Object.entries(record?.sources ?? {}).find(([, block]) => typeof block.meetingId === "string");
     let clock: { source: string; startedAt: string } | undefined;
@@ -286,15 +337,19 @@ export async function runRecorder(options: {
 
     await store.update(
         meetingId,
-        { command: "record stop", change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB` },
+        {
+            command: "record stop",
+            change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB${total.frames > state.frames ? ` (${total.frames} frames, ${Math.round(total.bytes / 1_000_000)} MB in all)` : ""}${state.stopReason === "failed" ? `, ${state.warning}` : ""}`,
+        },
         (current) => {
             current.recording = {
                 ...current.recording,
                 startedAt: state.startedAt,
                 stoppedAt,
-                frames: state.frames,
-                bytes: state.bytes,
+                frames: total.frames,
+                bytes: total.bytes,
                 status: "stopped",
+                stopReason: state.stopReason,
                 ...(clock ? { clock } : {}),
                 ...(state.warning ? { warning: state.warning } : {}),
             };

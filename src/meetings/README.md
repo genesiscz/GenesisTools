@@ -66,7 +66,15 @@ never prompts and only says what to run.
 The recorder runs peekaboo's change-aware live capture in 30 s pieces (`capture.activeFps`, `idleFps`, `threshold`
 in the config), converts each frame to JPEG under the meeting's `frames/`, and appends Vision OCR to `ocr.jsonl`.
 Frames stay on this Mac and never go into an export. When a source is linked, `record stop` stores its clock, so
-`screen --at` takes transcript times.
+`screen --at` takes transcript times. A frame is taken only when the screen changes, so `screen --at` also shows the
+last frame before the window, which was still on the screen; a time outside the recorded spans (from the meeting's
+history) says so and when the recording ran.
+
+When the asked display is not connected (unplugged during the meeting, or a laptop without it), a piece records the
+main display (0) and the next piece asks for the asked one again; the warning says when it went missing. A failed
+capture names peekaboo's own error, which it prints as JSON on stdout. Three failed pieces in a row stop the
+recorder with `recording.stopReason: "failed"`; `record stop` and a signal give `"requested"`. The `frames` and
+`bytes` of the `recording` block count every frame in `frames/`, also those of an earlier start.
 
 ### Autostart
 
@@ -75,7 +83,9 @@ it at every login while it is on. Every 15 s the watcher asks Wispr Flow for a m
 transcript changed in the last `liveWithinSec` (30). It then runs `record start --source wisprflow:<id> --yes` and
 posts a notification (`notify`, default on). It stops only the recordings it started, when Wispr Flow ends the
 meeting or stays silent for `stopAfterSilenceSec` (120). A start that failed (no grant) notifies once and is not
-retried for the same meeting.
+retried for the same meeting. A recorder that stopped on its own while the meeting runs (`stopReason: "failed"`) is
+started again 2 min after it stopped, with `record start --meeting <id> --yes`, and every 2 min after that; the first
+time posts "Screen recording stopped" with the warning. A stop the user asked for stays stopped.
 
 ## Items
 

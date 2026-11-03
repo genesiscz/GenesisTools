@@ -11,12 +11,12 @@ import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { z } from "zod";
 import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
 import { readRecorderState, recorderFiles, runRecorder } from "../lib/recorder";
+import { framesAt, type OcrLine, ocrLineSchema, recordedSpans } from "../lib/screen";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-record-cmd");
@@ -226,9 +226,6 @@ async function runCommand(id: string, opts: { display?: string }): Promise<void>
     }
 }
 
-const ocrLineSchema = z.object({ file: z.string(), at: z.string(), text: z.string() });
-type OcrLine = z.infer<typeof ocrLineSchema>;
-
 async function screen(ref: string, opts: { at?: string; window?: string; json?: boolean }): Promise<void> {
     const store = new MeetingStore();
     const record = store.resolve(ref);
@@ -264,12 +261,14 @@ async function screen(ref: string, opts: { at?: string; window?: string; json?: 
         .split("\n")
         .filter((row) => row.trim())
         .map((row) => ocrLineSchema.parse(SafeJSON.parse(row, { strict: true })));
-    const near = lines.filter((line) => Math.abs(Date.parse(line.at) - target) <= (windowSec * 1000) / 2);
+    const spans = recordedSpans(record);
+    const { frames, recorded } = framesAt({ lines, spans, targetMs: target, windowMs: windowSec * 1000 });
+    const clockOf = (ms: number): string => formatClock(Math.max(0, (ms - zero) / 1000));
 
     if (opts.json) {
         out.result(
             SafeJSON.stringify(
-                near.map((line) => ({ ...line, meetingSec: (Date.parse(line.at) - zero) / 1000 })),
+                frames.map((line) => ({ ...line, meetingSec: (Date.parse(line.at) - zero) / 1000 })),
                 null,
                 2
             )
@@ -277,17 +276,16 @@ async function screen(ref: string, opts: { at?: string; window?: string; json?: 
         return;
     }
 
-    if (near.length === 0) {
-        ui.info(
-            `No frame within ${windowSec / 2} s of ${formatClock(atSec)} (the screen did not change, or nothing was recorded then).`
+    if (!recorded) {
+        const ran = spans.map((span) => `${clockOf(span.fromMs)}–${clockOf(span.toMs)}`).join(", ");
+        ui.warn(
+            `The screen was not recorded at ${formatClock(atSec)}.${ran ? ` The recording ran ${ran}.` : ""}${frames.length > 0 ? " The frames near it:" : ""}`
         );
-        return;
     }
 
-    for (const line of near) {
-        out.println(
-            `── ${formatClock((Date.parse(line.at) - zero) / 1000)}  ${join(store.folder(record.id), line.file)}`
-        );
+    for (const line of frames) {
+        const since = line.unchanged ? ` (still on the screen at ${formatClock(atSec)}: nothing changed since)` : "";
+        out.println(`── ${clockOf(Date.parse(line.at))}${since}  ${join(store.folder(record.id), line.file)}`);
         out.println(line.text.trim() || "(no text)");
     }
 }

@@ -18,10 +18,18 @@ const { log } = logger.scoped("meetings-watch");
 
 /** How often the watcher looks at the source's live recording. One database query and one file stat. */
 export const WATCH_INTERVAL_MS = 15_000;
+/** How long after a recorder stopped on its own (its capture failed) the watcher starts it again, while the meeting runs. */
+export const RETRY_AFTER_MS = 120_000;
 const TOOL_TIMEOUT_MS = 120_000;
 
 /** The recording the watcher started, so it stops only its own. */
-const autoSchema = z.object({ sourceMeetingId: z.string(), meetingId: z.string().optional(), startedAt: z.string() });
+const autoSchema = z.object({
+    sourceMeetingId: z.string(),
+    meetingId: z.string().optional(),
+    startedAt: z.string(),
+    /** When the watcher last started the recorder again after it stopped on its own. */
+    retriedAt: z.string().optional(),
+});
 type AutoRecording = z.infer<typeof autoSchema>;
 
 function autoPath(store: MeetingStore): string {
@@ -55,6 +63,8 @@ export interface WatchDeps {
     settings: () => Promise<AutoRecordSettings>;
     liveRecording: () => Promise<LiveRecording | null>;
     recorder: () => ReturnType<typeof readRecorderState>;
+    /** The `recording` block of a meeting record. */
+    recording: (meetingId: string) => Record<string, unknown> | undefined;
     run: (args: string[]) => Promise<{ success: boolean; exitCode: number | null; stderr: string }>;
     notify: (note: WatchNote) => Promise<void>;
 }
@@ -64,6 +74,7 @@ function defaultDeps(store: MeetingStore): WatchDeps {
         settings: async () => (await new MeetingsConfigStore().read()).sources.wisprflow.autoRecord,
         liveRecording: async () => (await meetingSource("wisprflow")).liveRecording(),
         recorder: () => readRecorderState(store),
+        recording: (meetingId) => store.read(meetingId)?.recording,
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
         notify: async (note) => {
             // The group names the source in the notification ledger (`tools notify history --source meetings`).
@@ -84,6 +95,45 @@ function isFresh(live: LiveRecording, withinSec: number, now: number): boolean {
  * One look: Wispr Flow records and nothing else is recording, so start (and post a notification); the recording the
  * watcher started has ended or gone silent, so stop it. A recording a person started is never stopped here.
  */
+/**
+ * The meeting still runs, but its recorder ended: a stop the user asked for stays stopped, a failed capture starts
+ * again every RETRY_AFTER_MS, with one notification for the first failure.
+ */
+async function retryFailed(options: {
+    store: MeetingStore;
+    deps: WatchDeps;
+    settings: AutoRecordSettings;
+    auto: AutoRecording & { meetingId: string };
+    now: number;
+}): Promise<WatchResult> {
+    const { store, deps, auto, now } = options;
+    const recording = deps.recording(auto.meetingId);
+
+    if (recording?.stopReason !== "failed") {
+        return "idle";
+    }
+
+    const stoppedAt = typeof recording.stoppedAt === "string" ? Date.parse(recording.stoppedAt) : 0;
+    const lastTry = Math.max(stoppedAt, auto.retriedAt ? Date.parse(auto.retriedAt) : 0);
+
+    if (now - lastTry < RETRY_AFTER_MS) {
+        return "idle";
+    }
+
+    if (options.settings.notify && !auto.retriedAt) {
+        await deps.notify({
+            title: "Screen recording stopped",
+            message: `${typeof recording.warning === "string" ? recording.warning : "The capture failed."} It starts again every ${RETRY_AFTER_MS / 60_000} min while the meeting runs.`,
+            open: store.folder(auto.meetingId),
+        });
+    }
+
+    const result = await deps.run(["meetings", "record", "start", "--meeting", auto.meetingId, "--yes"]);
+    log.info({ meeting: auto.meetingId, exitCode: result.exitCode }, "failed recording started again");
+    atomicWriteFileSync(autoPath(store), SafeJSON.stringify({ ...auto, retriedAt: new Date(now).toISOString() }));
+    return result.success ? "started" : "failed";
+}
+
 export async function watchOnce(
     store: MeetingStore,
     options: { deps?: Partial<WatchDeps>; now?: number } = {}
@@ -120,8 +170,14 @@ export async function watchOnce(
         return result.success ? "stopped" : "failed";
     }
 
-    if (!live || !isFresh(live, settings.liveWithinSec, now) || auto?.sourceMeetingId === live.sourceMeetingId) {
+    if (!live || !isFresh(live, settings.liveWithinSec, now)) {
         return "idle";
+    }
+
+    if (auto?.sourceMeetingId === live.sourceMeetingId) {
+        return auto.meetingId
+            ? await retryFailed({ store, deps, settings, auto: { ...auto, meetingId: auto.meetingId }, now })
+            : "idle";
     }
 
     const result = await deps.run([

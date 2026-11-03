@@ -25,6 +25,8 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
+import { CaptureError } from "./lib/recorder";
+import { framesAt, recordedSpans } from "./lib/screen";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -680,6 +682,45 @@ describe("watchOnce", () => {
         return { store: new MeetingStore(new Storage(`meetings-watch-${stores}`)), deps, runs, notes, posted };
     }
 
+    test("a recorder whose capture failed starts again after a pause, with one notification; a stop asked for stays", async () => {
+        const failed = {
+            status: "stopped",
+            stopReason: "failed",
+            stoppedAt: "2026-11-02T15:10:30.000Z",
+            warning: "capture failed 3 times in a row: peekaboo exited 1: Invalid input: Screen index 1 not found",
+        };
+        let recording: Record<string, unknown> = failed;
+        const h = harness({ recording: () => recording });
+        const later = (sec: number) => ({
+            now: now + sec * 1000,
+            deps: {
+                ...h.deps,
+                liveRecording: async () => ({ ...live, liveChangedAt: new Date(now + sec * 1000).toISOString() }),
+            },
+        });
+
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
+        // The recorder ends on its own; harness `run` marks it running only for a start.
+        await h.deps.run?.(["meetings", "record", "stop"]);
+
+        expect(await watchOnce(h.store, later(60))).toBe("idle");
+        expect(await watchOnce(h.store, later(160))).toBe("started");
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "start", "--meeting", "m1", "--yes"]);
+        expect(h.notes).toEqual(["Recording the screen", "Screen recording stopped"]);
+
+        await h.deps.run?.(["meetings", "record", "stop"]);
+        recording = { ...failed, stoppedAt: new Date(now + 170_000).toISOString() };
+
+        expect(await watchOnce(h.store, later(200))).toBe("idle");
+        expect(await watchOnce(h.store, later(300))).toBe("started");
+        expect(h.notes).toHaveLength(2);
+
+        await h.deps.run?.(["meetings", "record", "stop"]);
+        recording = { status: "stopped", stopReason: "requested", stoppedAt: new Date(now + 310_000).toISOString() };
+
+        expect(await watchOnce(h.store, later(900))).toBe("idle");
+    });
+
     test("off: nothing happens", async () => {
         const h = harness({ settings: async () => ({ ...settings, enabled: false }) });
 
@@ -1157,6 +1198,77 @@ describe("a word question shows where its words are said", () => {
         expect(context?.heard).toBe("Ada");
         expect(context?.lead.startsWith("…slovo")).toBe(true);
         expect(context?.rest.endsWith("konec…")).toBe(true);
+    });
+});
+
+describe("a failed screen capture", () => {
+    const stderr = "[Visualizer][INFO] Visualizer client forcing mac-app context via PEEKABOO_VISUALIZER_FORCE_APP";
+
+    test("names the capture tool's own error from its JSON, not its log line", () => {
+        const stdout = SafeJSON.stringify({
+            success: false,
+            error: { code: "INVALID_INPUT", message: "Invalid input: Screen index 1 not found" },
+            data: null,
+        });
+        const err = new CaptureError(1, stdout, stderr);
+
+        expect(err.message).toBe("peekaboo exited 1: Invalid input: Screen index 1 not found");
+        expect(err.missingScreen).toBe(true);
+    });
+
+    test("another error is no missing screen, and output without JSON keeps the log", () => {
+        const denied = SafeJSON.stringify({ success: false, error: { message: "Screen Recording permission denied" } });
+
+        expect(new CaptureError(1, denied, stderr).missingScreen).toBe(false);
+        expect(new CaptureError(1, "", stderr).message).toBe(`peekaboo exited 1: ${stderr}`);
+    });
+});
+
+describe("the screen at a moment", () => {
+    const at = (clock: string) => `2026-11-03T12:${clock}.000Z`;
+    const screenRecord = meetingRecordSchema.parse({
+        ...record,
+        history: [
+            { at: at("30:00"), command: "record start", change: "created from Wispr Flow x: 1 lines, 0 people" },
+            { at: at("30:00"), command: "record start", change: "display 1" },
+            { at: at("40:00"), command: "record stop", change: "3 frames, 1 MB" },
+            { at: at("45:00"), command: "record start", change: "display 1" },
+            { at: at("50:00"), command: "record stop", change: "1 frames, 1 MB" },
+        ],
+    });
+    const lines = [
+        { file: "frames/a.jpg", at: at("30:01"), text: "Figma" },
+        { file: "frames/b.jpg", at: at("35:00"), text: "Cursor" },
+        { file: "frames/c.jpg", at: at("39:00"), text: "GitLab" },
+        { file: "frames/d.jpg", at: at("45:01"), text: "Teams" },
+    ];
+    const spans = recordedSpans(screenRecord);
+
+    test("the recorded spans come from the history", () => {
+        expect(spans).toEqual([
+            { fromMs: Date.parse(at("30:00")), toMs: Date.parse(at("40:00")) },
+            { fromMs: Date.parse(at("45:00")), toMs: Date.parse(at("50:00")) },
+        ]);
+    });
+
+    test("with no frame near the moment, the frame still on the screen is shown", () => {
+        const { frames, recorded } = framesAt({ lines, spans, targetMs: Date.parse(at("37:00")), windowMs: 10_000 });
+
+        expect(recorded).toBe(true);
+        expect(frames).toEqual([{ ...lines[1]!, unchanged: true }]);
+    });
+
+    test("a frame near the moment is shown as it is, without the one before", () => {
+        const { frames } = framesAt({ lines, spans, targetMs: Date.parse(at("35:02")), windowMs: 10_000 });
+
+        expect(frames).toEqual([lines[1]]);
+    });
+
+    test("between two recorded spans nothing was recorded, and no frame is carried over the gap", () => {
+        const { frames, recorded } = framesAt({ lines, spans, targetMs: Date.parse(at("42:00")), windowMs: 10_000 });
+
+        expect(recorded).toBe(false);
+        expect(frames).toEqual([]);
     });
 });
 
