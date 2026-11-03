@@ -8,8 +8,11 @@ import {
 } from "@genesiscz/utils/ai/providers/account-features";
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract/envelope";
 import { autoSeriesStepMs } from "@genesiscz/utils/ai/usage/contract/step";
+import { type UsageEventRow, UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
 import { FORECAST_LOOKBACK_MS, forecastOutlook, type LimitForecast } from "@genesiscz/utils/ai/usage/forecast/forecast";
 import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
+import type { HealthRun } from "@genesiscz/utils/ai/usage/poll-runs/health";
+import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import type { UsageLimitsDb } from "./limits-db";
 import type { AvailabilitySpan, SeriesAgg, SeriesBinEntry, SeriesEntry } from "./series-rows";
 import type { AccountUsageSnapshot } from "./types";
@@ -81,6 +84,10 @@ export interface LimitSeriesData<T extends LimitSeriesItem = LimitSeriesItem> {
     stepMs: number;
     agg: SeriesAgg;
     series: T[];
+    /** Poll coverage of each account the series name (proposal 8): the strip under its lanes, from `usage_poll_runs`. */
+    coverage: Array<AccountKey & { runs: HealthRun[] }>;
+    /** The usage events of those accounts in the window (proposal 15): the markers on the lanes, newest first. */
+    events: UsageEventRow[];
 }
 
 export interface LimitSeriesRequest {
@@ -151,7 +158,7 @@ export function readLimitSeries(request: LimitSeriesRequest, sources: LimitSerie
     const stepMs = request.stepMs ?? autoSeriesStepMs(request.from, request.to);
 
     if (request.accounts?.length === 0 || request.providers?.length === 0) {
-        return { stepMs, agg: request.agg, series: [] };
+        return { stepMs, agg: request.agg, series: [], coverage: [], events: [] };
     }
 
     const names = request.accounts ? [...new Set(request.accounts.map((account) => account.accountName))] : undefined;
@@ -207,7 +214,49 @@ export function readLimitSeries(request: LimitSeriesRequest, sources: LimitSerie
         return { ...item, forecast: forecastOutlook(own, request.forecastAt) };
     });
 
-    return { stepMs, agg: request.agg, series };
+    return { stepMs, agg: request.agg, series, ...coverageAndEvents(sources.db, request, series) };
+}
+
+/** The runs and events of the accounts the series name, each read once for the whole window. */
+function coverageAndEvents(
+    db: UsageLimitsDb,
+    request: LimitSeriesRequest,
+    series: readonly LimitSeriesItem[]
+): Pick<LimitSeriesData, "coverage" | "events"> {
+    const accounts = new Map<string, AccountKey>();
+
+    for (const item of series) {
+        accounts.set(pairKey(item.provider, item.accountName), {
+            provider: item.provider,
+            accountId: item.accountId,
+            accountName: item.accountName,
+        });
+    }
+
+    if (accounts.size === 0) {
+        return { coverage: [], events: [] };
+    }
+
+    const window = { from: new Date(request.from), to: new Date(request.to) };
+    const providers = [...new Set([...accounts.values()].map((account) => account.provider))];
+    const runs = new PollRunsStore(db.connection()).runsBetween({ ...window, providers });
+    const coverage = [...accounts.values()].map((account) => ({
+        ...account,
+        runs: runs
+            .filter((run) => run.provider === account.provider && run.accountId === account.accountId)
+            .map((run) => ({ from: run.from, to: run.to, outcome: run.outcome, source: run.source, polls: run.polls })),
+    }));
+    const events = new UsageEventsStore(db.connection())
+        .list({ ...window, providers })
+        .filter(
+            (event) =>
+                accounts.has(pairKey(event.provider, event.accountName ?? "")) ||
+                [...accounts.values()].some(
+                    (account) => account.provider === event.provider && account.accountId === event.accountId
+                )
+        );
+
+    return { coverage, events };
 }
 
 /**
