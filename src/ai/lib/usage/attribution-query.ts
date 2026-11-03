@@ -30,7 +30,7 @@ import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { usageAccountKeys } from "@genesiscz/utils/ai/usage-poll/limits-now";
 import { usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
-import { aiSessionsCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
+import { aiSessionReportCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface AttributionOptions extends WindowFlags {
@@ -147,7 +147,7 @@ export async function readScope(input: {
 }
 
 export function reportCommand(sessionId: string): string {
-    return aiSessionsCommand("report", sessionId);
+    return aiSessionReportCommand(sessionId);
 }
 
 export function spendWarnings(events: readonly AttributedEvent[]): UsageWarning[] {

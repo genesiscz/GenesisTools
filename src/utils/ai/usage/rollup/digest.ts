@@ -78,6 +78,11 @@ export function digestWindows(rows: readonly DailyRow[], keyOf: (row: DailyRow) 
         const sorted = [...list].sort((a, b) => a.day.localeCompare(b.day));
         const first = sorted[0];
         const last = sorted[sorted.length - 1];
+        // A day the window was absent with no reading stores 0s, which were never measured: the period's start and end
+        // come from the first and last day with a reading (the edge days only when none has one).
+        const read = sorted.filter((row) => row.readings > 0);
+        const startRow = read[0] ?? first;
+        const endRow = read.at(-1) ?? last;
         const absentFrom = sorted.findIndex((row, index) =>
             sorted.slice(index).every((r) => r.availability === "absent")
         );
@@ -87,8 +92,8 @@ export function digestWindows(rows: readonly DailyRow[], keyOf: (row: DailyRow) 
             account: keyOf(first),
             kind: first.kind,
             key: first.bucket,
-            startPct: first.startPct,
-            endPct: last.endPct,
+            startPct: startRow.startPct,
+            endPct: endRow.endPct,
             peakPct: Math.max(...sorted.map((row) => row.peakPct)),
             resets: sorted.reduce((sum, row) => sum + row.resets, 0),
             cyclesOver90: sorted.reduce((sum, row) => sum + row.cyclesOver90, 0),

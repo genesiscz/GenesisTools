@@ -131,6 +131,45 @@ describe("dailyRowsOf", () => {
         expect(store.lastUpdatedAt()).toBe("2026-11-01T11:00:00.000Z");
     });
 
+    test("the first rollup backfills every retained day, and a later one resumes from the last day it wrote", () => {
+        const reading = { resetsAt: null, severity: null, scopeModel: null, provider: "anthropic-sub", kind: "weekly" };
+        limits.recordSnapshotV2("work", "seven_day", 10, "2026-10-28T08:00:00.000Z", reading);
+        limits.recordSnapshotV2("work", "seven_day", 20, "2026-10-30T08:00:00.000Z", reading);
+        limits.recordSnapshotV2("work", "seven_day", 30, "2026-11-02T08:00:00.000Z", reading);
+        const store = new UsageDailyStore(limits.connection());
+
+        rollUpRecentDays({ db: limits, now: new Date("2026-11-02T12:00:00Z"), tz: TZ, accountIdOf: () => "acc-work" });
+
+        expect(store.between({ from: "2026-10-01", to: "2026-11-30" }).map((r) => [r.day, r.peakPct])).toEqual([
+            ["2026-10-28", 10],
+            ["2026-10-30", 20],
+            ["2026-11-02", 30],
+        ]);
+        expect(store.lastDay(TZ)).toBe("2026-11-02");
+
+        // The daemon was down for three days: the next pass starts at 11-02, not at yesterday.
+        limits.recordSnapshotV2("work", "seven_day", 40, "2026-11-03T08:00:00.000Z", reading);
+        rollUpRecentDays({ db: limits, now: new Date("2026-11-06T12:00:00Z"), tz: TZ, accountIdOf: () => "acc-work" });
+
+        expect(store.between({ from: "2026-11-03", to: "2026-11-03" }).map((r) => r.peakPct)).toEqual([40]);
+    });
+
+    test("a renamed account keeps its daily rows under the new name", () => {
+        limits.recordSnapshotV2("work", "seven_day", 12, "2026-11-02T08:00:00.000Z", {
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider: "anthropic-sub",
+            kind: "weekly",
+        });
+        const store = new UsageDailyStore(limits.connection());
+        rollUpRecentDays({ db: limits, now: new Date("2026-11-02T12:00:00Z"), tz: TZ, accountIdOf: () => "acc-work" });
+
+        limits.renameAccount("work", "office");
+
+        expect(store.between({ from: "2026-11-02", to: "2026-11-02" }).map((r) => r.accountName)).toEqual(["office"]);
+    });
+
     test("the daemon's rollup writes yesterday and today once, then waits out its interval", () => {
         limits.recordSnapshotV2("work", "seven_day", 12, "2026-11-02T08:00:00.000Z", {
             resetsAt: null,
@@ -149,6 +188,32 @@ describe("dailyRowsOf", () => {
 });
 
 describe("digest folds", () => {
+    test("a period that starts or ends on a day with no reading takes its start and end from the read days", () => {
+        const day = (d: string, readings: number, start: number, end: number): DailyRow => ({
+            provider: "anthropic-sub",
+            accountId: "acc-work",
+            accountName: "work",
+            bucket: "five_hour",
+            kind: "session",
+            tz: TZ,
+            day: d,
+            startPct: start,
+            endPct: end,
+            peakPct: end,
+            resets: 0,
+            cyclesOver90: 0,
+            readings,
+            minutesMeasured: 60,
+            availability: readings > 0 ? "limited" : "absent",
+        });
+        const [window] = digestWindows(
+            [day("2026-11-01", 0, 0, 0), day("2026-11-02", 3, 50, 70), day("2026-11-03", 0, 0, 0)],
+            () => ({ provider: "anthropic-sub", accountId: "acc-work", accountName: "work" })
+        );
+
+        expect([window?.startPct, window?.endPct]).toEqual([50, 70]);
+    });
+
     test("a window absent for the rest of the period reads 'no limit since' its first absent day", () => {
         const base = {
             provider: "anthropic-sub",

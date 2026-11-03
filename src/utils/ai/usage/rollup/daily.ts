@@ -105,6 +105,14 @@ function cyclesOver(values: readonly number[]): number {
     return count + (peak >= CYCLE_PEAK ? 1 : 0);
 }
 
+/** The local day of the oldest reading the store keeps; null on an empty store. */
+function oldestReadingDay(db: Database, tz: string): string | null {
+    const row = db.prepare("SELECT MIN(timestamp) AS first FROM usage_snapshots").get() as {
+        first: string | null;
+    } | null;
+    return row?.first ? zonedDay(row.first, tz) : null;
+}
+
 /** The local days a span covers, its end exclusive. */
 function daysOfSpan(span: { from: string; to: string }, tz: string): string[] {
     const end = Date.parse(span.to);
@@ -283,6 +291,22 @@ export class UsageDailyStore {
         }
     }
 
+    /** The last day the rollup wrote in `tz`; null when it never wrote one there. */
+    lastDay(tz: string): string | null {
+        try {
+            const row = this.db
+                .prepare("SELECT MAX(day) AS last FROM usage_daily WHERE tz = ?")
+                .get(tz) as LastRow | null;
+            return row?.last ?? null;
+        } catch (err) {
+            if (isMissingTable(err)) {
+                return null;
+            }
+
+            throw err;
+        }
+    }
+
     /** When the rollup last wrote, ISO UTC; null before the first. */
     lastUpdatedAt(): string | null {
         try {
@@ -319,7 +343,11 @@ export function rollUpRecentDays(input: {
 
     const today = zonedDay(input.now.toISOString(), input.tz);
     const yesterday = zonedDay(new Date(dayBounds(today, input.tz).start - 3_600_000).toISOString(), input.tz);
-    const from = new Date(dayBounds(yesterday, input.tz).start);
+    // From the last day it wrote (a failed or missed tick resumes there), or on a store it never rolled, from the oldest
+    // retained reading: the prune after this pass must not drop a day nobody rolled up. Never later than yesterday.
+    const resume = store.lastDay(input.tz) ?? oldestReadingDay(connection, input.tz) ?? yesterday;
+    const first = resume < yesterday ? resume : yesterday;
+    const from = new Date(dayBounds(first, input.tz).start);
     const series = input.db.getSeries({ from: from.toISOString(), to: input.now.toISOString(), agg: "raw", step: 0 });
     const runs = new PollRunsStore(connection).runsBetween({ from, to: input.now });
     const rows = dailyRowsOf({
@@ -327,7 +355,7 @@ export function rollUpRecentDays(input: {
         tz: input.tz,
         runs,
         accountIdOf: input.accountIdOf,
-        days: new Set([yesterday, today]),
+        days: new Set(daysOfSpan({ from: from.toISOString(), to: input.now.toISOString() }, input.tz)),
     });
 
     return store.upsert(rows, input.now);

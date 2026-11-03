@@ -676,7 +676,16 @@ export class UsageLimitsDb {
             spend.run(oldName, newName);
             const afterSpend = db.prepare("SELECT changes() AS n").get() as { n: number };
 
-            return afterUsage.n + afterSpend.n;
+            // The daily rollup is never pruned, so its rows would keep the old name for good. A day the new name
+            // already holds keeps its own row; the old one then goes.
+            db.prepare("UPDATE OR IGNORE usage_daily SET account_name = ?2 WHERE account_name = ?1").run(
+                oldName,
+                newName
+            );
+            const afterDaily = db.prepare("SELECT changes() AS n").get() as { n: number };
+            db.prepare("DELETE FROM usage_daily WHERE account_name = ?1").run(oldName);
+
+            return afterUsage.n + afterSpend.n + afterDaily.n;
         });
 
         return rekey();
