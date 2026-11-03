@@ -26,7 +26,7 @@ export async function forEachTranscriptLine(path: string, visit: (line: string) 
 }
 
 /** The facts a transcript walk collected, or why it could not give them. */
-export function factsOf<T>(items: T[], failed: string | undefined): SessionFacts<T> {
+export function factsOrFailure<T>(items: T[], failed: string | undefined): SessionFacts<T> {
     return failed === undefined ? { supported: true, items } : { supported: false, reason: failed };
 }
 
@@ -77,7 +77,7 @@ export async function callsOfParser(path: string, parser: DriverLineParser): Pro
         });
     });
 
-    return factsOf(
+    return factsOrFailure(
         calls.sort((a, b) => Date.parse(a.t) - Date.parse(b.t)),
         failed
     );

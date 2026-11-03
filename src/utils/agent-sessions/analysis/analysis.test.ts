@@ -64,6 +64,32 @@ describe("session report", () => {
         expect(items.map((item) => [item.kind, item.tokens])).toEqual([["cache-rebuild-compaction", 100_000]]);
         expect(items[0]?.usd).toBeGreaterThan(0);
     });
+
+    test("a compaction to a short summary costs the summary it wrote, not the reads it dropped", () => {
+        const compacted = [
+            { t: new Date(Date.UTC(2026, 10, 1, 10, 0, 30)).toISOString(), trigger: "auto", preTokens: 100_000 },
+        ];
+        const items = sessionWaste([call(0), call(1, { input: 0, cacheRead: 0, cacheWrite: 5_000 })], compacted);
+
+        expect(items.map((item) => [item.kind, item.tokens])).toEqual([["cache-rebuild-compaction", 5_000]]);
+    });
+
+    test("aggregate rows are no cache loss, and a one-hour write survives a ten-minute gap", () => {
+        const aggregate = [call(0, { aggregate: true }), call(1, { aggregate: true, cacheRead: 2_000, cacheWrite: 0 })];
+        const report = buildSessionReport({
+            calls: { supported: true, items: aggregate },
+            compactions: { supported: false, reason: "none" },
+        });
+
+        expect(sessionWaste(aggregate, [])).toEqual([]);
+        expect(report.losses).toEqual([]);
+
+        const hour = [call(0, { cacheWrite1h: 1_000 }), call(10, { cacheRead: 0, cacheWrite: 101_000 })];
+        expect(sessionWaste(hour, []).map((item) => item.kind)).not.toContain("cache-rebuild-idle");
+        expect(sessionWaste([call(0), call(10, { cacheRead: 0, cacheWrite: 101_000 })], []).map((i) => i.kind)).toEqual(
+            ["cache-rebuild-idle"]
+        );
+    });
 });
 
 describe("limit drift", () => {

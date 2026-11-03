@@ -29,16 +29,18 @@ export interface SpendAccountsContext {
 export interface LoadSpendAccountsOptions {
     /** Walk every home on disk, including ones no account claims. */
     allHomes?: boolean;
+    /** A diagnostic read: the config's read-only view, which never migrates or writes it. */
+    readOnly?: boolean;
 }
 
 /** ai-spend runs in its own process, so the plugins have to be registered in it. */
-async function loadAgentAccounts(): Promise<AccountEntry[]> {
+async function loadAgentAccounts(readOnly: boolean): Promise<AccountEntry[]> {
     registerBuiltInPlugins();
 
     const providers = AGENT_IDS.map((id) => agentPluginId(id));
 
     try {
-        const store = await AiConfigStore.load();
+        const store = readOnly ? await AiConfigStore.readOnly() : await AiConfigStore.load();
 
         return store.accounts({ provider: providers, enabled: true });
     } catch (err) {
@@ -77,7 +79,7 @@ async function discoverHomes(accounts: AccountEntry[]): Promise<Partial<ByAgent<
 }
 
 export async function loadSpendAccountsContext(options: LoadSpendAccountsOptions = {}): Promise<SpendAccountsContext> {
-    const accounts = await loadAgentAccounts();
+    const accounts = await loadAgentAccounts(options.readOnly === true);
 
     if (!options.allHomes) {
         return { accounts };
