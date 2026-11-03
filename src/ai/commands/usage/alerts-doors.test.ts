@@ -371,6 +371,14 @@ describe("tools ai usage budgets and digest", () => {
         ]);
         expect(digestDays({ week: "2026-11-05" }, NOW, "UTC").days[0]).toBe("2026-11-02");
     });
+
+    test("--week starts on the local Monday in a zone far from UTC", () => {
+        for (const tz of ["Pacific/Kiritimati", "Pacific/Tongatapu", "Pacific/Pago_Pago"]) {
+            const { days } = digestDays({ week: "2026-11-05" }, NOW, tz);
+
+            expect({ tz, first: days[0], last: days.at(-1) }).toEqual({ tz, first: "2026-11-02", last: "2026-11-08" });
+        }
+    });
 });
 
 describe("tools ai usage sessions --cost", () => {
