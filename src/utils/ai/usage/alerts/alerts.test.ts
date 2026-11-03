@@ -4,6 +4,7 @@ import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
 import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { ALERT_RULE_DEFAULTS, inQuietHours, mergeAlertsConfig, type UsageAlertsConfig } from "./config";
 import { judgeRound, runAlertEngine } from "./engine";
 import { seedThresholdAlerts } from "./legacy-seed";
@@ -587,5 +588,14 @@ describe("config", () => {
 
         expect(merged.rules["predicted-exhaust"].leadMinutes).toEqual({ session: 30, weekly: 720, scoped: 360 });
         expect(merged.rules["predicted-exhaust"].channels).toEqual(["macos", "inbox"]);
+    });
+
+    test("a saved channel id the engine has no channel for is dropped, so delivery never meets it", async () => {
+        // A hand-edited config file, read as the loader reads it: its ids are whatever the file says.
+        const merged = mergeAlertsConfig(
+            SafeJSON.parse('{"rules":{"threshold":{"channels":["telegram","inbox","Inbox"]}}}')
+        );
+
+        expect(merged.rules.threshold.channels).toEqual(["inbox"]);
     });
 });
