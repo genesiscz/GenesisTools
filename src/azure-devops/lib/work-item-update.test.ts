@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerWorkItemUpdateCommand, resolveImages } from "@app/azure-devops/commands/workitem-update";
 import {
+    escapeMarkdownTagLikes,
     executeWorkItemUpdate,
+    firstStoredDifference,
     imageReuseMap,
     localImageSources,
     parseFieldSpec,
@@ -390,5 +392,28 @@ describe("what the read-back may forgive", () => {
                 mismatches: [{ field: "System.Description", sent: "Markdown", stored: "html" }],
             });
         }
+    });
+});
+
+describe("Markdown tag-like text", () => {
+    test("a generic is escaped in code and prose, a known HTML element stays a tag", () => {
+        const source = "Use <br> and <b>x</b>, List<FeeOrder>, `Optional<T>`\n```java\nMap<String, List<B>> m;\n```";
+        expect(escapeMarkdownTagLikes(source)).toBe(
+            "Use <br> and <b>x</b>, List&lt;FeeOrder>, `Optional&lt;T>`\n```java\nMap&lt;String, List&lt;B>> m;\n```"
+        );
+    });
+
+    test("the stored copy that lost a generic names its first different line; the escaped copy matches", () => {
+        const sent = "```java\nList<FeeOrder> orders;\n```";
+        const lost = "```java\nList orders;\n```";
+        expect(firstStoredDifference({ stored: lost, sent, format: "markdown" })).toEqual({
+            line: 2,
+            sent: "List<FeeOrder> orders;",
+            stored: "List orders;",
+        });
+        const escaped = escapeMarkdownTagLikes(sent);
+        expect(
+            sameStoredText({ stored: "```java\nList&lt;FeeOrder&gt; orders;\n```", sent: escaped, format: "markdown" })
+        ).toBe(true);
     });
 });

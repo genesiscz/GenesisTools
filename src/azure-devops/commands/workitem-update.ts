@@ -56,6 +56,12 @@ function printResult(result: WorkItemUpdateResult, asJson: boolean): void {
 
             for (const mismatch of result.mismatches ?? []) {
                 out.error(`${mismatch.field}: sent and stored differ`);
+
+                if (mismatch.firstDifference) {
+                    const { line, sent, stored } = mismatch.firstDifference;
+                    out.error(`  line ${line} sent:   ${sent}`);
+                    out.error(`  line ${line} stored: ${stored}`);
+                }
             }
         }
 

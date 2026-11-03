@@ -42,10 +42,18 @@ export interface WorkItemUpdatePlan {
     reused: { src: string; url: string }[];
 }
 
+/** A field whose read-back differs from what was sent, with the first line that differs. */
+export interface StoredMismatch {
+    field: string;
+    sent: string;
+    stored: string;
+    firstDifference?: { line: number; sent: string; stored: string };
+}
+
 export type WorkItemUpdateResult =
     | { ok: true; dryRun: true; plan: WorkItemUpdatePlan }
     | { ok: true; dryRun: false; rev: number; images: Record<string, UploadedImage>; plan: WorkItemUpdatePlan }
-    | { ok: false; error: string; mismatches?: { field: string; sent: string; stored: string }[] };
+    | { ok: false; error: string; mismatches?: StoredMismatch[] };
 
 /** An `<img>` tag's `src` in any valid HTML spelling: any case, spaces around `=`, double, single or no quotes. */
 const IMG_SRC = /(<img\b[^>]*?\bsrc\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>"']+))/gi;
@@ -172,6 +180,55 @@ function normalizeAdoText(value: string, format: "markdown" | "html"): string {
 
 const BLOCK_TAG_SPACE =
     /\s*(<\/?(?:p|div|br|hr|ul|ol|li|table|thead|tbody|tfoot|tr|td|th|h[1-6]|blockquote|pre|section|article)\b[^>]*>)\s*/gi;
+
+/** The first line where the stored text differs from the sent one, after the rewrites `sameStoredText` accepts. */
+export function firstStoredDifference(input: {
+    stored: string;
+    sent: string;
+    format: StoredTextFormat;
+}): { line: number; sent: string; stored: string } | null {
+    const normalize = (value: string) => (input.format === "plain" ? value : normalizeAdoText(value, "markdown"));
+    const sent = normalize(input.sent).split("\n");
+    const stored = normalize(input.stored).split("\n");
+
+    for (let index = 0; index < Math.max(sent.length, stored.length); index++) {
+        if (sent[index] !== stored[index]) {
+            return { line: index + 1, sent: sent[index] ?? "", stored: stored[index] ?? "" };
+        }
+    }
+
+    return null;
+}
+
+/** HTML element names Markdown may carry on purpose; any other `<Word` is text such as a Java generic. */
+const HTML_ELEMENTS = new Set(
+    (
+        "a abbr address b bdi bdo blockquote br caption cite code col colgroup dd del details dfn div dl dt em " +
+        "figcaption figure font h1 h2 h3 h4 h5 h6 hr i img ins kbd li mark ol p pre q s samp small span strike " +
+        "strong sub summary sup table tbody td tfoot th thead tr tt u ul var video"
+    ).split(" ")
+);
+
+/**
+ * A Markdown field's `<` that the server would read as a tag, escaped as `&lt;`. Azure DevOps drops a tag it does not
+ * know with its brackets, so `List<FeeOrder> orders` was stored as `List orders`, inside fenced code too (2026-11-03,
+ * work item 318845). In code (fenced blocks, inline spans) every `<` is text; in prose a known HTML element stays a tag.
+ * The server stores a `&lt;` it is sent as `&lt;`, the same form it gives a literal `<`.
+ */
+export function escapeMarkdownTagLikes(markdown: string): string {
+    const parts = markdown.split(/(^(?:```|~~~)[^\n]*\n[\s\S]*?^(?:```|~~~)[ \t]*$|`[^`\n]+`)/m);
+    return parts
+        .map((part, index) => {
+            if (index % 2 === 1) {
+                return part.replace(/<(?=[A-Za-z/])/g, "&lt;");
+            }
+
+            return part.replace(/<(\/?)([A-Za-z][\w-]*)/g, (match, slash: string, name: string) =>
+                HTML_ELEMENTS.has(name.toLowerCase()) ? match : `&lt;${slash}${name}`
+            );
+        })
+        .join("");
+}
 
 /** A numeric character reference outside Unicode (or a lone surrogate) stays as written instead of throwing. */
 function codePointOr(code: number, original: string): string {
@@ -330,7 +387,12 @@ export async function executeWorkItemUpdate(
         }
     }
 
-    const fields = input.fields.map((field) => ({ name: field.name, value: replaceImageSources(field.value, urls) }));
+    const isMarkdown = (name: string) =>
+        input.markdownFields.includes(name) || (live.multilineFieldsFormat[name] ?? "").toLowerCase() === "markdown";
+    const fields = input.fields.map((field) => {
+        const value = replaceImageSources(field.value, urls);
+        return { name: field.name, value: isMarkdown(field.name) ? escapeMarkdownTagLikes(value) : value };
+    });
     const operations = workItemPatch({
         rev: live.rev,
         fields,
@@ -350,7 +412,7 @@ export async function executeWorkItemUpdate(
 
     await client.update(input.id, operations);
     const after = await client.read(input.id);
-    const mismatches: { field: string; sent: string; stored: string }[] = [];
+    const mismatches: StoredMismatch[] = [];
 
     for (const field of fields) {
         const raw = after.fields[field.name];
@@ -363,7 +425,9 @@ export async function executeWorkItemUpdate(
         });
 
         if (!storedMatches(raw, field.value, format)) {
-            mismatches.push({ field: field.name, sent: field.value, stored: fieldText(raw) });
+            const stored = fieldText(raw);
+            const firstDifference = firstStoredDifference({ stored, sent: field.value, format }) ?? undefined;
+            mismatches.push({ field: field.name, sent: field.value, stored, firstDifference });
         }
     }
 
