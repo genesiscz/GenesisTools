@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { constants, copyFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { isInteractive, parseByteSize, parseNonNegativeInt } from "@genesiscz/utils/cli";
@@ -177,6 +177,30 @@ function openInPlayer(path: string): void {
     const child = spawn("open", [path], { stdio: "ignore", detached: true });
     child.on("error", (error) => logger.debug({ error, path }, "open could not start"));
     child.unref();
+}
+
+/**
+ * Copies the grid built in the work folder beside the input under the first free `<name>.compare[-N].mp4`. The copy
+ * refuses a taken name (COPYFILE_EXCL), so an existing file is never replaced, and it works when the temp folder is on
+ * another volume, where a hard link or a rename would not.
+ */
+function publishCompareGrid({ built, input }: { built: string; input: string }): string {
+    const stem = join(dirname(input), `${basename(input, extname(input))}.compare`);
+
+    for (let index = 1; index < 100; index++) {
+        const target = index === 1 ? `${stem}.mp4` : `${stem}-${index}.mp4`;
+
+        try {
+            copyFileSync(built, target, constants.COPYFILE_EXCL);
+            return target;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+                throw error;
+            }
+        }
+    }
+
+    throw new Error(`${stem}.mp4 and 98 numbered names after it are all taken`);
 }
 
 async function choosePreset({
@@ -360,19 +384,20 @@ async function runShrink({ file, flags, signal }: { file: string; flags: ShrinkF
 
         if (flags.compare && hardest && previews.length > 0) {
             spinner?.start("Building the comparison video");
-            compareGrid = join(dirname(input), `${basename(input, extname(input))}.compare.mp4`);
             const label = references.has("hardest") ? "hardest" : plan.windows[0]?.label;
             const encodes = previews.flatMap((preview) =>
                 preview.windows.filter((w) => w.label === label).map((w) => w.path)
             );
             const sourceHeight = primaryVideo(facts)?.height ?? 720;
+            const built = join(workDir, "compare.mp4");
             await buildCompareGrid({
                 reference: hardest,
                 encodes,
-                output: compareGrid,
+                output: built,
                 cellHeight: Math.min(sourceHeight, 720),
                 signal,
             });
+            compareGrid = publishCompareGrid({ built, input });
             spinner?.stop(`Comparison: ${compareGrid}`);
 
             if (text) {
