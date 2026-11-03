@@ -14,6 +14,7 @@ import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./doors/changes";
 import { proposalListDoor, repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { HUB_SERVER_DOORS } from "./doors/index";
 import { navConfigureDoor, navListDoor, navRecordDoor } from "./doors/nav";
+import { prShowDoor } from "./doors/prs";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
 import { type CallDoor, DoorUnsupported, doorlessPrefix, type StreamDoor } from "./doors/types";
 import { widgetCallDoor, widgetContextDoor, widgetTasksListDoor } from "./doors/widget";
@@ -405,6 +406,19 @@ describe("hub server argv", () => {
         expect(repoDoor.match(["hub", "repo", "/w/a", "--json"])).toBeNull();
         expect(repoDoor.match(["hub", "repo", "/w/a", "--max-cache-age", "1.5"])).toBeNull();
         expect(repoDoor.match(["hub", "repo"])).toBeNull();
+    });
+
+    it("hub pr show: one ref and the cache flags; anything else runs as a process", () => {
+        expect(prShowDoor.match(["hub", "pr", "show", "/w/a#12"])).toEqual({ ref: "/w/a#12", maxCacheAgeSeconds: 0 });
+        expect(prShowDoor.match(["hub", "pr", "show", "/w/a#12", "--max-cache-age", "600", "--head", "abc1"])).toEqual({
+            ref: "/w/a#12",
+            maxCacheAgeSeconds: 600,
+            headSha: "abc1",
+        });
+        expect(prShowDoor.match(["hub", "pr", "show"])).toBeNull();
+        expect(prShowDoor.match(["hub", "pr", "show", "/w/a#12", "--max-cache-age", "1.5"])).toBeNull();
+        expect(prShowDoor.match(["hub", "pr", "show", "/w/a#12", "--json"])).toBeNull();
+        expect(prShowDoor.match(["hub", "pr", "list", "/w/a"])).toBeNull();
     });
 
     it("ai usage sessions --json: whole positive numbers only; --provider stays a process", () => {
