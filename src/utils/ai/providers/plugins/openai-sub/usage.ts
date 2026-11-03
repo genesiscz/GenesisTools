@@ -547,6 +547,8 @@ export async function codexCredentialStamp(account: AccountEntry): Promise<numbe
 export const codexUsage: AccountUsageFeature = {
     poll: pollCodexAccount,
     ranker: windowRanker,
+    // Codex reports its rate limits only over a short-lived `codex app-server`.
+    readingSource: (snapshot) => (snapshot.error === undefined ? "app-server" : null),
     minIntervalMs: MIN_INTERVAL_MS,
     credentialStamp: codexCredentialStamp,
 };

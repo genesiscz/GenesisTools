@@ -123,6 +123,7 @@ describe("provider registry", () => {
                 ...NO_LOGIN_SPECIFICS,
                 usage: {
                     ranker: windowRanker,
+                    readingSource: () => null,
                     poll: async () => {
                         throw new Error("not used");
                     },

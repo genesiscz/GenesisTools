@@ -193,6 +193,7 @@ describe("__fetchProviderSnapshots", () => {
         const usage: AccountUsageFeature = {
             poll: args.poll,
             ranker: windowRanker,
+            readingSource: () => null,
             ...(args.credentialStamp === undefined ? {} : { credentialStamp: args.credentialStamp }),
             ...(args.pollsWhileGated === undefined ? {} : { pollsWhileGated: args.pollsWhileGated }),
         };
@@ -391,6 +392,7 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
     function plugin(args: { polled: string[]; stamp: number | undefined; result?: () => Promise<never> }): UsagePlugin {
         const usage: AccountUsageFeature = {
             ranker: windowRanker,
+            readingSource: () => null,
             poll: (target) => {
                 args.polled.push(target.name);
 

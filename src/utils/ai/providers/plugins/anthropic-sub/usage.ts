@@ -16,7 +16,7 @@ import { ANTHROPIC_SUB, isSubscriptionExpiredError, pollAccount } from "./api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, bucketKind } from "./buckets";
 import type { Severity } from "./limits";
 import { absentLimitsOf, normalizeLimits, normalizeSpend } from "./limits";
-import { isQuotaHeaderFailure } from "./quota-headers";
+import { isHeaderReading, isQuotaHeaderFailure } from "./quota-headers";
 import { anthropicRanker } from "./rank";
 import { previousUsageOf, upgradeCachedSnapshot } from "./snapshot-usage";
 
@@ -258,6 +258,11 @@ function longLivedCredentialUsable(credentials: AccountEntry["credentials"]): bo
 export const anthropicUsage: AccountUsageFeature = {
     poll: pollAnthropicAccount,
     ranker: anthropicRanker,
+    // The usage endpoint, or the rate-limit headers of a quota request when the endpoint could not answer.
+    readingSource: (snapshot) => {
+        const usage = previousUsageOf(snapshot);
+        return usage === undefined ? null : isHeaderReading(usage) ? "headers" : "endpoint";
+    },
     minIntervalMs: MIN_INTERVAL_MS,
     classifyFailure: classifyAnthropicFailure,
     // A long-lived token reads the rate-limit headers without the refresh path the gate guards,
