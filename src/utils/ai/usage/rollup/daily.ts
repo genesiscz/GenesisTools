@@ -201,7 +201,7 @@ function mapRow(row: DailySqlRow): DailyRow {
         accountId: row.account_id,
         accountName: row.account_name,
         bucket: row.bucket,
-        kind: row.kind,
+        kind: row.kind === "" ? null : row.kind,
         day: row.day,
         tz: row.tz,
         startPct: row.start_pct,
@@ -222,15 +222,18 @@ function isMissingTable(err: unknown): boolean {
 export class UsageDailyStore {
     constructor(private readonly db: Database) {}
 
-    /** Writes each row, replacing the same account, window and day: today's row grows through the day. */
+    /**
+     * Writes each row, replacing the same account, window, kind and day: today's row grows through the day. A missing
+     * kind is stored as '' (the key needs a value NULL would not give), and `between` reads it back as null.
+     */
     upsert(rows: readonly DailyRow[], now: Date): number {
         const statement = this.db.prepare(
             `INSERT INTO usage_daily
                 (provider, account_id, account_name, bucket, kind, day, tz, start_pct, end_pct, peak_pct, resets,
                  cycles_over_90, readings, minutes_measured, availability, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (provider, account_name, bucket, day) DO UPDATE SET
-                account_id = excluded.account_id, kind = excluded.kind, tz = excluded.tz,
+             ON CONFLICT (provider, account_name, bucket, kind, day) DO UPDATE SET
+                account_id = excluded.account_id, tz = excluded.tz,
                 start_pct = excluded.start_pct, end_pct = excluded.end_pct, peak_pct = excluded.peak_pct,
                 resets = excluded.resets, cycles_over_90 = excluded.cycles_over_90, readings = excluded.readings,
                 minutes_measured = excluded.minutes_measured, availability = excluded.availability,
@@ -243,7 +246,7 @@ export class UsageDailyStore {
                     row.accountId,
                     row.accountName,
                     row.bucket,
-                    row.kind,
+                    row.kind ?? "",
                     row.day,
                     row.tz,
                     row.startPct,
@@ -279,7 +282,7 @@ export class UsageDailyStore {
                     `SELECT provider, account_id, account_name, bucket, kind, day, tz, start_pct, end_pct, peak_pct,
                             resets, cycles_over_90, readings, minutes_measured, availability
                      FROM usage_daily WHERE day >= ? AND day <= ?${filter}
-                     ORDER BY day ASC, provider ASC, account_name ASC, bucket ASC`
+                     ORDER BY day ASC, provider ASC, account_name ASC, bucket ASC, kind ASC`
                 )
                 .all(...params) as DailySqlRow[];
 
