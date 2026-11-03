@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { voiceRuns } from "@genesiscz/utils/meetings/energy";
 import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -1025,6 +1026,81 @@ describe("questions (R2.3)", () => {
         skipQuestion(skipped, "i3", now);
         expect(skipped.items.map((item) => item.status)).toEqual(["suggested", "rejected"]);
         expect(openQuestions(skipped)).toEqual([]);
+    });
+});
+
+describe("several voices", () => {
+    const now = "2026-11-02T15:00:00.000Z";
+    const question = (fromSec: number, toSec: number) =>
+        meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec,
+                    toSec,
+                    question: "Who says this?",
+                    choices: ["Alice Example", "Bob Example"],
+                    decides: [],
+                    rules: [],
+                    suggestedAt: now,
+                },
+            ],
+        });
+    // Remote voices until 11 s, then the microphone.
+    const micShare = (fromSec: number) => (fromSec >= 11 ? 0.95 : 0.05);
+
+    test("the half-second windows give one run per side, a short flip folded into its neighbour", () => {
+        const flip = (fromSec: number) => (fromSec >= 11 ? 0.95 : fromSec >= 5 && fromSec < 5.5 ? 0.5 : 0.05);
+
+        expect(voiceRuns(flip, 0, 16)).toEqual([
+            { fromSec: 0, toSec: 11, side: "call" },
+            { fromSec: 11, toSec: 16, side: "mic" },
+        ]);
+    });
+
+    test("one long line is cut where the voice moves to the microphone, each part with its own words and audio", () => {
+        const split = question(0, 16);
+        const words =
+            "jedna dva tři čtyři pět šest sedm osm devět deset jedenáct dvanáct třináct čtrnáct patnáct šestnáct";
+        const parts = splitQuestion(split, "i1", { transcript: [line("Alice Example", 0, words)], now, micShare });
+
+        expect(parts.map((part) => [part.fromSec, part.toSec, part.decides])).toEqual([
+            [0, 11, []],
+            [11, 16, []],
+        ]);
+        expect(parts[0]!.question).toBe(
+            'Who says "jedna dva tři čtyři pět šest sedm osm devět deset jedenáct" (00:00 to 00:11, from the call)?'
+        );
+        expect(parts[1]!.question).toContain(
+            '"dvanáct třináct čtrnáct patnáct šestnáct" (00:11 to 00:16, on your microphone)'
+        );
+        expect(split.items[0]).toMatchObject({ status: "rejected" });
+    });
+
+    test("a question that decides no range is cut at the lines inside it", () => {
+        const split = question(10, 20);
+        const parts = splitQuestion(split, "i1", {
+            transcript: [line("A", 5, "před"), line("A", 10, "první"), line("B", 12, "druhá"), line("A", 20, "po")],
+            now,
+        });
+
+        expect(parts.map((part) => [part.fromSec, part.toSec])).toEqual([
+            [10, 12],
+            [12, 20],
+        ]);
+    });
+
+    test("nothing to cut leaves the question open", () => {
+        const split = question(10, 12);
+        const parts = splitQuestion(split, "i1", { transcript: [line("A", 10, "jen jedna")], now });
+
+        expect(parts).toEqual([]);
+        expect(split.items).toHaveLength(1);
+        expect(split.items[0]).toMatchObject({ status: "suggested" });
     });
 });
 

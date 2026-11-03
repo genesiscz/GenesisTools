@@ -21,6 +21,8 @@ import {
     subscribeAnswers,
 } from "../lib/answer-log";
 import { clipPlayer, cutClip, meetingAudioPath, playClip } from "../lib/audio";
+import { energyMicShareFor } from "../lib/energy";
+import { speakingEvidence } from "../lib/platforms";
 import {
     answerQuestion,
     answerVocabulary,
@@ -34,7 +36,7 @@ import {
     splitQuestion,
 } from "../lib/questions";
 import { errorText, fail, TOOL } from "../lib/shared";
-import { meetingTranscript } from "../lib/sources";
+import { linkedSource, meetingTranscript } from "../lib/sources";
 
 const { log } = logger.scoped("meetings-listen");
 
@@ -46,6 +48,9 @@ const STOP = "\u0000stop";
 const TYPE_IT = "\u0000type";
 const SPLIT = "\u0000split";
 const DEFAULT_SUBSCRIBE_MINUTES = 120;
+/** Audio after a speaker question's span, and before it besides the tone's lead. */
+const SPEAKER_PAD_SEC = 0.3;
+const SAID_MAX_CHARS = 240;
 
 type Outcome = { answer: string; comment?: string } | "skip" | "split" | "stop" | "back";
 
@@ -139,6 +144,33 @@ async function somethingElse(vocabulary: string[]): Promise<string | undefined> 
     return clack.isCancel(typed) ? undefined : typed.trim();
 }
 
+type MicShare = (fromSec: number, toSec: number) => number | undefined;
+
+/** The microphone's energy share over time, when the source keeps the audio and its channels are calibrated. */
+async function micShareOf(store: MeetingStore, meeting: MeetingRecord): Promise<MicShare | undefined> {
+    const { source, sourceMeetingId } = await linkedSource(meeting);
+    const evidence = speakingEvidence(meeting, await source.evidence(sourceMeetingId));
+    return (await energyMicShareFor(store, meeting, evidence)).share;
+}
+
+/** The words of the lines a speaker question asks about; a split part names its own words in the question. */
+function spokenIn(question: QuestionItem, transcript: TranscriptEntry[]): string | undefined {
+    if (question.question.startsWith('Who says "')) {
+        return undefined;
+    }
+
+    const text = transcript
+        .filter(
+            (entry) =>
+                entry.startSec !== undefined &&
+                entry.startSec >= question.fromSec - 0.5 &&
+                (entry.startSec < question.toSec || entry.startSec === question.fromSec)
+        )
+        .map((entry) => entry.text)
+        .join(" ");
+    return text.length > SAID_MAX_CHARS ? `${text.slice(0, SAID_MAX_CHARS)}…` : text || undefined;
+}
+
 /**
  * Shows one question, plays its clip after `delayMs`, and asks until it is answered, skipped, split or left. Esc on
  * the choices goes back to the previous question; Esc in a later step goes back to the choices.
@@ -149,21 +181,30 @@ async function ask(options: {
     player: (typeof LISTEN_PLAYERS)[number];
     vocabulary: string[];
     delayMs: number;
+    /** What is said in the asked span, shown under the question. */
+    said?: string;
 }): Promise<Outcome> {
     const { question } = options;
     let playing = playClip(options.player, options.clip, options.delayMs);
+    const said = options.said ? `\n  ${pc.cyan(`„${options.said}“`)}` : "";
 
     try {
         while (true) {
             const picked = await clack.select({
-                message: `${question.question} ${pc.dim("(Esc: back to the previous question)")}`,
+                message: `${question.question} ${pc.dim("(Esc: back to the previous question)")}${said}`,
                 options: [
                     ...question.choices.map((choice) => ({ value: choice, label: choice })),
                     { value: AGAIN, label: "Play the audio again" },
                     { value: OTHER, label: "Something else…" },
                     { value: NONE_OF_THESE, label: "None of these", hint: "rejects the items it decides" },
                     ...(question.about === "speaker"
-                        ? [{ value: SPLIT, label: "Two voices", hint: "ask each line on its own" }]
+                        ? [
+                              {
+                                  value: SPLIT,
+                                  label: "Several voices",
+                                  hint: "cut at each line and each change between your microphone and the call, then ask each part",
+                              },
+                          ]
                         : []),
                     { value: SKIP, label: "Skip" },
                     { value: STOP, label: "Enough for now", hint: "the rest stay open for the next listen" },
@@ -334,7 +375,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             dictionary.entries.map((entry) => entry.value)
         );
         const { budget, minPriority, delaySec, beep, beepLeadSec } = settings.global.playback.listen;
-        const transcript: TranscriptEntry[] = beep ? await meetingTranscript(meeting) : [];
+        const transcript: TranscriptEntry[] = await meetingTranscript(meeting);
         await round({
             meeting,
             store,
@@ -347,16 +388,25 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                 const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
                 const heard = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
                 const spotSec = askedSpotSec(question, transcript);
-                const inClip = spotSec >= heard.fromSec - padSec && spotSec <= heard.toSec + padSec;
+                // A speaker question plays only the asked voice, from the tone on; a word keeps the audio around it.
+                const pad = question.about === "speaker" ? beepLeadSec + SPEAKER_PAD_SEC : padSec;
+                const inClip = spotSec >= heard.fromSec - pad && spotSec <= heard.toSec + pad;
                 await cutClip({
                     audioPath,
                     fromSec: heard.fromSec,
                     toSec: heard.toSec,
-                    padSec,
+                    padSec: pad,
                     outPath: clip,
                     ...(beep ? { toneAtSec: (inClip ? spotSec : heard.fromSec) - beepLeadSec } : {}),
                 });
-                return await ask({ question, clip, player, vocabulary, delayMs: delaySec * 1000 });
+                return await ask({
+                    question,
+                    clip,
+                    player,
+                    vocabulary,
+                    delayMs: delaySec * 1000,
+                    ...(question.about === "speaker" ? { said: spokenIn(question, transcript) } : {}),
+                });
             },
         });
     } catch (err) {
@@ -393,6 +443,7 @@ async function round(options: {
     );
     let ended = false;
     let reask: string | undefined;
+    let micShares: Promise<MicShare | undefined> | undefined;
     let reason: RoundEndReason = "done";
 
     const end = (why: RoundEndReason): void => {
@@ -478,22 +529,37 @@ async function round(options: {
 
             if (outcome === "split") {
                 const transcript = await meetingTranscript(current);
-                let lines = 0;
+                micShares ??= micShareOf(store, current);
+                const micShare = await micShares;
+                let parts = 0;
                 await store.update(
                     meeting.id,
-                    { command: "listen", change: `${question.id} split per line` },
+                    { command: "listen", change: `${question.id} split per line and voice` },
                     (next) => {
-                        lines = splitQuestion(next, question.id, { transcript, now: new Date().toISOString() }).length;
+                        parts = splitQuestion(next, question.id, {
+                            transcript,
+                            now: new Date().toISOString(),
+                            ...(micShare ? { micShare } : {}),
+                        }).length;
                     }
                 );
+
+                if (parts === 0) {
+                    ui.warn(
+                        `${question.id}: no second line and no change between your microphone and the call to cut at, so it stays open. Answer it with "Something else…", for example "Novák, then Dvořák".`
+                    );
+                    reask = question.id;
+                    continue;
+                }
+
                 steps.push({ question, before, corrections: [] });
                 appendAnswerEvent(logPath, {
                     event: "split",
                     at: new Date().toISOString(),
                     item: question.id,
-                    into: lines,
+                    into: parts,
                 });
-                ui.info(`${question.id}: split into ${lines} questions, one per line; they come next.`);
+                ui.info(`${question.id}: split into ${parts} parts, one per line and voice; they come next.`);
                 continue;
             }
 

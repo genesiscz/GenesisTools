@@ -1,4 +1,5 @@
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
+import { voiceRuns } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { importanceOf } from "@genesiscz/utils/transcribe/importance";
@@ -231,14 +232,35 @@ export function propagateAnswer(
     return settled;
 }
 
+/** A line shorter than this is one voice; a longer one is cut where the voice moves between the channels. */
+const SPLIT_LINE_MIN_SEC = 3;
+
+/** The words of a part of a line, by its place in the line's time: the transcript has no time per word. */
+function partWords(text: string, line: { fromSec: number; toSec: number }, part: { fromSec: number; toSec: number }) {
+    const words = text.split(/\s+/).filter(Boolean);
+    const span = Math.max(0.001, line.toSec - line.fromSec);
+    const from = Math.round((words.length * (part.fromSec - line.fromSec)) / span);
+    const to = Math.round((words.length * (part.toSec - line.fromSec)) / span);
+    return words.slice(from, Math.max(from + 1, to)).join(" ");
+}
+
+const SIDE_HINT = { mic: ", on your microphone", call: ", from the call", mixed: "" } as const;
+
 /**
- * "Two voices": the question's ranges are cut into one range and one question per line, so each line is answered on
- * its own. The original ranges and the question are rejected. Returns the new questions. Mutates `record`.
+ * "Several voices": the question is cut into one question per line inside it, and a long line also where the voice
+ * moves between the microphone and the call (`micShare`). Each part shows its words and plays only its own audio.
+ * A part that is a whole line of a range the question decides gets its own range. The question and its ranges are
+ * rejected only when there are two parts or more; otherwise nothing changes and no question is returned.
+ * Mutates `record`.
  */
 export function splitQuestion(
     record: MeetingRecord,
     id: string,
-    options: { transcript: TranscriptEntry[]; now: string }
+    options: {
+        transcript: TranscriptEntry[];
+        now: string;
+        micShare?: (fromSec: number, toSec: number) => number | undefined;
+    }
 ): QuestionItem[] {
     const question = record.items.find((item): item is QuestionItem => item.id === id && item.kind === "question");
 
@@ -247,54 +269,92 @@ export function splitQuestion(
     }
 
     const timed = options.transcript.filter((entry) => entry.startSec !== undefined);
-    const created: QuestionItem[] = [];
     const ranges = record.items.filter(
         (item): item is RangeItem => item.kind === "speaker-range" && question.decides.includes(item.id)
     );
+    const inQuestion = (startSec: number) =>
+        startSec >= question.fromSec - 0.5 && (startSec < question.toSec || startSec === question.fromSec);
+    const lines = timed.flatMap((entry, index) => {
+        const startSec = entry.startSec!;
+        const range = ranges.find(
+            (candidate) =>
+                entry.speaker === candidate.label && startSec >= candidate.fromSec && startSec <= candidate.toSec
+        );
+
+        if (ranges.length > 0 ? !range : !inQuestion(startSec)) {
+            return [];
+        }
+
+        const next = timed[index + 1]?.startSec ?? Math.max(startSec + 5, question.toSec);
+        const toSec = range || question.toSec <= startSec ? next : Math.min(next, question.toSec);
+        return [{ entry, range, fromSec: startSec, toSec }];
+    });
+    const parts = lines.flatMap((line) => {
+        const runs =
+            options.micShare && line.toSec - line.fromSec >= SPLIT_LINE_MIN_SEC
+                ? voiceRuns(options.micShare, line.fromSec, line.toSec)
+                : [];
+        return runs.length > 1
+            ? runs.map((run) => ({ line, run, whole: false }))
+            : [{ line, run: { fromSec: line.fromSec, toSec: line.toSec, side: "mixed" as const }, whole: true }];
+    });
+
+    if (parts.length < 2) {
+        return [];
+    }
+
+    const created: QuestionItem[] = [];
 
     for (const range of ranges) {
         range.status = "rejected";
         range.decidedAt = options.now;
+    }
 
-        timed.forEach((entry, index) => {
-            if (entry.speaker !== range.label || entry.startSec! < range.fromSec || entry.startSec! > range.toSec) {
-                return;
-            }
+    for (const { line, run, whole } of parts) {
+        const words = whole ? line.entry.text : partWords(line.entry.text, line, run);
+        const decided =
+            whole && line.range
+                ? meetingItemSchema.parse({
+                      ...line.range,
+                      id: nextId("i", record.items),
+                      status: "suggested",
+                      fromSec: line.fromSec,
+                      toSec: line.fromSec,
+                      evidence: { ...line.range.evidence, endSec: line.toSec, splitFrom: line.range.id },
+                      suggestedAt: options.now,
+                      decidedAt: undefined,
+                  })
+                : undefined;
 
-            const endSec = timed[index + 1]?.startSec ?? entry.startSec! + 5;
-            const line = meetingItemSchema.parse({
-                ...range,
-                id: nextId("i", record.items),
-                status: "suggested",
-                fromSec: entry.startSec,
-                toSec: entry.startSec,
-                evidence: { ...range.evidence, endSec, splitFrom: range.id },
-                suggestedAt: options.now,
-                decidedAt: undefined,
-            });
-            record.items.push(line);
-            const asked = meetingItemSchema.parse({
-                ...question,
-                id: nextId("i", record.items),
-                fromSec: entry.startSec,
-                toSec: endSec,
-                question: `Who says "${entry.text.slice(0, 80)}" at ${formatClock(entry.startSec!)}?`,
-                decides: [line.id],
-                clip: undefined,
-                signature: undefined,
-                suggestedAt: options.now,
-            });
-            record.items.push(asked);
+        if (decided) {
+            record.items.push(decided);
+        }
 
-            if (asked.kind === "question") {
-                created.push(asked);
-            }
+        const asked = meetingItemSchema.parse({
+            ...question,
+            id: nextId("i", record.items),
+            status: "suggested",
+            fromSec: run.fromSec,
+            toSec: run.toSec,
+            question: `Who says "${words.length > 120 ? `${words.slice(0, 120)}…` : words}" (${formatClock(run.fromSec)} to ${formatClock(run.toSec)}${SIDE_HINT[run.side]})?`,
+            decides: decided ? [decided.id] : [],
+            answer: undefined,
+            comment: undefined,
+            clip: undefined,
+            signature: undefined,
+            suggestedAt: options.now,
+            decidedAt: undefined,
         });
+        record.items.push(asked);
+
+        if (asked.kind === "question") {
+            created.push(asked);
+        }
     }
 
     question.status = "rejected";
     question.decidedAt = options.now;
-    question.comment = `split into ${created.length} questions, one per line`;
+    question.comment = `split into ${created.length} parts, one per line and voice`;
     return created;
 }
 

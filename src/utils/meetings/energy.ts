@@ -255,3 +255,71 @@ export function micShare(
 
     return layout === "left-mic" ? share : 1 - share;
 }
+
+export interface VoiceRun {
+    fromSec: number;
+    toSec: number;
+    /** Where the voice is: the user's microphone, the call, or both at once. */
+    side: "mic" | "call" | "mixed";
+}
+
+const VOICE_WINDOW_SEC = 0.5;
+const VOICE_MIN_RUN_SEC = 1;
+const VOICE_SIDE_SHARE = 0.7;
+
+/**
+ * A span cut where the voice moves between the microphone and the call: half-second windows by their microphone
+ * share, with a run shorter than a second folded into its neighbour. A quiet window keeps the side before it. Two
+ * remote voices in a row are one run: the channels cannot tell them apart.
+ */
+export function voiceRuns(
+    share: (fromSec: number, toSec: number) => number | undefined,
+    fromSec: number,
+    toSec: number
+): VoiceRun[] {
+    const windows: VoiceRun[] = [];
+    const count = Math.ceil((toSec - fromSec) / VOICE_WINDOW_SEC);
+
+    for (let index = 0; index < count; index += 1) {
+        const start = fromSec + index * VOICE_WINDOW_SEC;
+        const end = Math.min(toSec, start + VOICE_WINDOW_SEC);
+        const mic = share(start, end);
+        const last = windows.at(-1);
+        const side: VoiceRun["side"] =
+            mic === undefined
+                ? (last?.side ?? "mixed")
+                : mic >= VOICE_SIDE_SHARE
+                  ? "mic"
+                  : mic <= 1 - VOICE_SIDE_SHARE
+                    ? "call"
+                    : "mixed";
+
+        if (last && last.side === side) {
+            last.toSec = end;
+        } else {
+            windows.push({ fromSec: start, toSec: end, side });
+        }
+    }
+
+    const runs: VoiceRun[] = [];
+
+    for (const run of windows) {
+        const last = runs.at(-1);
+
+        if (last && (last.side === run.side || run.toSec - run.fromSec < VOICE_MIN_RUN_SEC)) {
+            last.toSec = run.toSec;
+            continue;
+        }
+
+        runs.push({ ...run });
+    }
+
+    const [first, second] = runs;
+
+    if (first && second && first.toSec - first.fromSec < VOICE_MIN_RUN_SEC) {
+        second.fromSec = first.fromSec;
+        runs.shift();
+    }
+
+    return runs;
+}

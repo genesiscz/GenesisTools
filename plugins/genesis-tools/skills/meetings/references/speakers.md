@@ -134,10 +134,11 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
    under 60 %.
 6. **Budget**: about 12 questions per meeting; the user can say "enough". The rest stay suggestions and render as
    `[nejasné: "<label>"; 1) Petr 55 % 2) Pavel]` (only the known confidence is shown).
-7. **Split**: when the user hears two voices in one range, ask per line inside it. One line with two voices (a long
-   line at 40 % to 60 % microphone energy, or a turn whose last sentence answers its first) gets a range for the voice
-   that says most of it, and a question with a choice "<A>, then <B>" so the user can say where the second voice
-   starts.
+7. **Split**: when the user hears several voices in one range, "Several voices" in `listen` cuts it at each line and at
+   each change between the microphone and the call, then asks each part with its words. Two remote voices in a row
+   stay one part: the user answers it with "Something else…" ("Novák, then Dvořák"). In three-pass mode, a long line
+   at 40 % to 60 % microphone energy gets a range for the voice that says most of it and a question, so the user can
+   split it by ear.
 
 In the automatic mode the tool applies these rules (`tools meetings suggest`, then `tools meetings listen`). In the
 three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`. The
