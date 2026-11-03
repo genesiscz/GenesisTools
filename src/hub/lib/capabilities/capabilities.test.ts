@@ -60,6 +60,9 @@ describe("hub capabilities", () => {
         });
         expect(refusal(() => HUB_CAPABILITIES.agents.parse({ since: "soon" }))?.message).toContain("since:");
         expect(refusal(() => HUB_CAPABILITIES.agents.parse({ limit: "0" }))?.message).toContain("limit:");
+        // A typed caller sends numbers; they read as the same CLI values, never as absent.
+        expect(HUB_CAPABILITIES.agents.parse({ limit: 5 }).limit).toBe(5);
+        expect(refusal(() => HUB_CAPABILITIES.agents.parse({ limit: 0 }))?.message).toContain("limit:");
     });
 
     it("transcript needs a query, defaults the page to 80 and refuses an unknown provider", () => {
