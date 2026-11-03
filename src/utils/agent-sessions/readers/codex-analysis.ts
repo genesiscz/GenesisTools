@@ -70,7 +70,8 @@ export const codexAnalysis: SessionAnalysisReader = {
 
     async quotaReadings(transcriptPath) {
         const items: SessionQuotaReading[] = [];
-        let last = "";
+        // The last reading per slot: a primary and a secondary reading alternate in every row.
+        const last = new Map<string, string>();
 
         await forEachTranscriptLine(transcriptPath, (line) => {
             if (!line.includes("rate_limits")) {
@@ -92,9 +93,9 @@ export const codexAnalysis: SessionAnalysisReader = {
                 // Every token_count repeats the same reading until the next poll; keep only a change.
                 const key = reading ? `${slot}:${reading.usedPercent}:${reading.resetsAt}` : "";
 
-                if (reading && key !== last) {
+                if (reading && key !== last.get(slot)) {
                     items.push(reading);
-                    last = key;
+                    last.set(slot, key);
                 }
             }
         });
