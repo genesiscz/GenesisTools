@@ -88,6 +88,7 @@ const { buildTransportFor, getActiveConnectionId, getConnection, loadConnections
     await import("@/features/connections/store");
 const { useConnectionStore } = await import("@/state/connection-store");
 const { TIERS } = await import("@/transport/tiers");
+const { applyPairingUri } = await import("@/lib/apply-pairing");
 
 beforeEach(() => {
     kv.clear();
@@ -163,6 +164,13 @@ describe("connection session — probe before commit", () => {
         const accepted = await useConnectionStore.getState().connect({ ...input, deviceCode: "123456" });
         expect(accepted.ok).toBe(true);
         expect(paired).toEqual(["123456"]);
+    });
+
+    it("a pairing link with an address that is not a URL answers a failure instead of throwing", async () => {
+        const result = await applyPairingUri("devdashboard://pair?tier=cloudflared-self&baseUrl=not-a-url&username=tester");
+
+        expect(result).toEqual({ ok: false, error: "The pairing link has an invalid address." });
+        expect(await loadConnections()).toEqual([]);
     });
 
     it("each plain tier probes with its own deadline from the table", async () => {

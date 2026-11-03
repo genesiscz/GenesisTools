@@ -33,7 +33,15 @@ export async function applyPairingUri(uri: string, secrets: PairingSecrets = {})
     }
 
     const base = pairing.baseUrl.replace(/\/+$/, "");
-    const url = new URL(base);
+    let url: URL;
+
+    try {
+        url = new URL(base);
+    } catch (err) {
+        console.warn(`[connect] applyPairingUri: invalid baseUrl ${base}`, err);
+        return { ok: false, error: "The pairing link has an invalid address." };
+    }
+
     const port = url.port ? Number.parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
     console.log(`[connect] applyPairingUri tier=${pairing.tier} baseUrl=${base}`);
     const result = await useConnectionStore.getState().connect({
