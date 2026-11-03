@@ -42,8 +42,14 @@ export function cycleOf(plan: AccountUsageSnapshot["plan"], now: Date): PlanValu
         return { from: new Date(now.getTime() - 30 * DAY_MS).toISOString(), to: now.toISOString(), guessed: true };
     }
 
+    // One calendar month back, the day clamped to the shorter month: a cycle renewing March 31 began February 28
+    // (or 29), never March 3 as `setUTCMonth` would roll it over.
     const start = new Date(renews);
+    const day = start.getUTCDate();
+    start.setUTCDate(1);
     start.setUTCMonth(start.getUTCMonth() - 1);
+    const daysInMonth = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate();
+    start.setUTCDate(Math.min(day, daysInMonth));
     return { from: start.toISOString(), to: new Date(renews).toISOString(), guessed: false };
 }
 
