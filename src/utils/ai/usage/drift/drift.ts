@@ -16,6 +16,8 @@ export const LIMITS_DRIFT_SCHEMA = { verb: "limits.drift", version: 1 } as const
 export interface DriftReading {
     ts: number;
     account: string;
+    /** The window the reading belongs to: one account has several (unscoped, per model), each its own sequence. */
+    series: string;
     util: number;
 }
 
@@ -25,28 +27,30 @@ export interface DriftWindow {
     delta: number;
 }
 
-/** Windows where the target's bar rose and nobody else's did within `padMs` around it. */
+/**
+ * Windows where the target series rose and no window of another account (any scope) rose within `padMs` around it.
+ */
 export function exclusiveWindows(
     rows: readonly DriftReading[],
-    target: string,
+    target: { account: string; series: string },
     opts: { padMs: number; maxWindowMs: number }
 ): DriftWindow[] {
-    const mine = rows.filter((row) => row.account === target);
+    const mine = rows.filter((row) => row.series === target.series);
     const otherRises: number[] = [];
     const last = new Map<string, number>();
 
     for (const row of rows) {
-        if (row.account === target) {
+        if (row.account === target.account) {
             continue;
         }
 
-        const previous = last.get(row.account);
+        const previous = last.get(row.series);
 
         if (previous !== undefined && row.util > previous) {
             otherRises.push(row.ts);
         }
 
-        last.set(row.account, row.util);
+        last.set(row.series, row.util);
     }
 
     otherRises.sort((a, b) => a - b);
@@ -189,7 +193,10 @@ function weekOf(samples: readonly WindowSample[], week: string, settings: DriftS
     };
 }
 
-/** The drift rows of one provider's series of one window kind. */
+/**
+ * The drift rows of every series given. A window is exclusive against every other account's series of the same
+ * provider, whatever its kind or model scope, so pass all of them in one call.
+ */
 export function computeDrift(input: {
     series: readonly SeriesEntry[];
     events: readonly AttributedEvent[];
@@ -199,22 +206,23 @@ export function computeDrift(input: {
 }): DriftRow[] {
     const { settings } = input;
     const readings: DriftReading[] = input.series
-        .flatMap((entry) =>
+        .flatMap((entry, index) =>
             entry.points.map((point) => ({
                 ts: Date.parse(point.t),
                 account: `${entry.provider}\u0000${entry.account}`,
+                series: String(index),
                 util: point.percent,
             }))
         )
         .sort((a, b) => a.ts - b.ts);
     const rows: DriftRow[] = [];
 
-    for (const entry of input.series) {
+    for (const [index, entry] of input.series.entries()) {
         const account = input.accountOf(entry);
         const ownEvents = input.events.filter(
             (event) => event.account.account !== undefined && sameAccount(event.account.account, account)
         );
-        const target = `${entry.provider}\u0000${entry.account}`;
+        const target = { account: `${entry.provider}\u0000${entry.account}`, series: String(index) };
         const peers = readings.filter((reading) => reading.account.startsWith(`${entry.provider}\u0000`));
         const windows = exclusiveWindows(peers, target, {
             padMs: settings.padMinutes * 60_000,
