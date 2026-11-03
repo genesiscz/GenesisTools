@@ -354,6 +354,15 @@ export const env = {
         shouldRunShopsLiveItesco: () => isFlag("SHOPS_LIVE_ITESCO"),
         getTestAudioFile: () => getTrimmed("TEST_AUDIO_FILE"),
         /**
+         * `GENESIS_TOOLS_TEST_NOW`: an ISO instant a byte golden runs a child at, so a report that reads "today"
+         * prints the same bytes on every day. Unset or unparseable: undefined, and the caller reads the real clock.
+         */
+        getFixedNow: (): Date | undefined => {
+            const raw = getTrimmed("GENESIS_TOOLS_TEST_NOW");
+            const at = raw ? Date.parse(raw) : Number.NaN;
+            return Number.isFinite(at) ? new Date(at) : undefined;
+        },
+        /**
          * `GENESIS_TOOLS_TEST_WORKER_LOG`: where preload-test-worker-log.ts appends one JSON line per test
          * file start and end (worker, pid, the worker's live child processes). Unset: off. `1`: the
          * default path in the checkout. Read it with `bun scripts/test-worker-log.ts`.

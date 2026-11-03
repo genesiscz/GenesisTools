@@ -32,6 +32,7 @@ import { parseStatuslineHook, renderStatusline } from "@genesiscz/utils/ai/usage
 import type { PeriodGrain, ReportFlags, ReportKind, SourceId } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import { SOURCE_COST_MODE_FLAG, SOURCE_IDS, SOURCE_REPORTS } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -214,7 +215,7 @@ async function runReportPhases(cmd: Command, kind: ReportKind, source?: SourceId
 
     const timezone = timezoneRaw || systemTimeZone();
     const home = homedir();
-    const now = new Date();
+    const now = env.test.getFixedNow() ?? new Date();
     const storage = new Storage("ai-spend");
     const pricing = await prof.measureAsync("pricing", () => loadPricing(storage));
     const mode = parseCostMode(typeof flags.mode === "string" ? flags.mode : undefined);
