@@ -187,3 +187,48 @@ headers, and downloads every segment until the stream ends. Then it stitches the
 
 `state.json` holds the replayed headers, cookies included, so it is written with mode 600. Remove the parts folder when
 the output is good. Not supported: encrypted segments, byte-range playlists, and audio in a separate playlist.
+
+### Pick the source: the platform's recording, the page's replay, or the live stream
+
+```sh
+tools video stream download ./page.har --list                # every source, each checked now, with its --stream id
+tools video stream download ./page.har                       # a terminal asks which one; the best is first
+tools video stream download ./page.har --stream 71cfefd1     # a source by its id (or its number in --list)
+tools video stream download ./page.har --wait-recording      # wait (up to 240 min) for the platform's recording
+tools video stream download --chrome-cdp https://example.com/event/3 --list
+```
+
+A broadcast can be downloaded from up to three places, and they differ:
+
+- **The platform's original recording.** Some players ask their platform's API about the broadcast, and that answer is
+  in the HAR (StreamYard webinars today). The tool asks the same API again with the player's own headers. Once the
+  broadcast has ended, the answer carries the platform's own file: one MP4 in the original quality (a 1 h 47 min talk
+  was 3.75 GB at 1080p, 4.6 Mbit/s). It downloads into `<out>.part` first, and a rerun resumes it with `Range`.
+- **The page's replay.** Many pages swap the live player for a replay once the broadcast ends (a Bunny Stream player,
+  for example). It is a finished HLS stream: the same length, often re-encoded smaller (the same talk was 1.7 GB at
+  2.1 Mbit/s). A HAR or a capture made after the swap has it.
+- **The live stream.** A CDN keeps only the latest part of a live stream, so it misses the start of a long broadcast,
+  and it is gone soon after the end.
+
+`--list` shows each source with its length and height. Without `--stream`, a terminal asks which one, with the best
+first: a recording, then finished streams (longest first), then live ones, then a recording still to wait for. Without
+a terminal the best one is taken, except a recording that is not made yet: then it exits 1 and prints the commands.
+`--from-stream` offers only the HLS streams. The printed resume command keeps `--stream` and `--quality`.
+
+The player's session in a HAR lasts about a month. After that the API answers 401, and a fresh HAR is needed.
+
+`--chrome-cdp <page url>` records the HAR in your own browser instead of DevTools. It reloads the tab that has the page
+open, or opens a tab and closes it afterwards, and records the page and its embedded players (they run in their own
+process, so each one is attached separately). It stops when playlists and player answers stop coming, or after
+`--chrome-cdp-wait` seconds (30). The HAR is saved in `~/.genesis-tools/video/captures/` (mode 600), and the messages
+print the command that reruns from it. A capture also offers the platform recordings of earlier captures of the same
+page, since the page no longer loads that player once it shows the replay. The browser needs a debug port:
+`--chrome-cdp-port`, else the browser that has the page open, else 9222 (`tools chrome-devtools restart --browser brave
+--port 9222` turns it on).
+
+A new platform is one file in `stream/providers/` that implements `StreamProvider` (find its answers in a HAR, ask the
+API now) and one entry in `STREAM_PROVIDERS`.
+
+Credentials stay with their origin: the cookies and the Authorization header of a HAR go only to the origin of the
+playlist they were captured for, never to another host a playlist points at. A segment that still fails after the
+retries (not a 404) stops the stitch: the tool exits 1 with the command that retries it.

@@ -1,8 +1,5 @@
-import { isInteractive } from "@genesiscz/utils/cli";
-import { type HarPlaylist, harStreamCandidates, readHarPlaylists } from "@genesiscz/utils/hls/har";
 import { type HlsMediaPlaylist, type HlsPlaylist, type HlsVariant, parsePlaylist } from "@genesiscz/utils/hls/playlist";
 import { logger } from "@genesiscz/utils/logger";
-import * as p from "@genesiscz/utils/prompts/p";
 
 /** A browser user agent for a bare playlist URL: some CDNs refuse Bun's own. */
 const FALLBACK_USER_AGENT =
@@ -33,6 +30,38 @@ export function safeUrl(url: string): string {
     return queryAt === -1 ? url : `${url.slice(0, queryAt)}?…`;
 }
 
+/** Headers that carry the user's credentials; a HAR captured them for one origin. */
+const CREDENTIAL_HEADERS = ["cookie", "authorization"];
+
+function originOf(url: string): string | null {
+    try {
+        return new URL(url).origin;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The source's headers for a request to `url`: all of them on the playlist's own origin, and without the cookies and
+ * the Authorization header anywhere else, so a playlist that points at another host (a second CDN, or a hostile one)
+ * never receives credentials captured for the first.
+ */
+export function headersFor(url: string, source: Pick<StreamSource, "playlistUrl" | "headers">): Record<string, string> {
+    const target = originOf(url);
+
+    if (target !== null && target === originOf(source.playlistUrl)) {
+        return source.headers;
+    }
+
+    const scoped = { ...source.headers };
+
+    for (const name of CREDENTIAL_HEADERS) {
+        delete scoped[name];
+    }
+
+    return scoped;
+}
+
 export function withDefaultHeaders(headers: Record<string, string>): Record<string, string> {
     return headers["user-agent"] ? headers : { ...headers, "user-agent": FALLBACK_USER_AGENT };
 }
@@ -59,7 +88,7 @@ export async function fetchPlaylist({
     return parsePlaylist(await response.text(), response.url || url);
 }
 
-function parseHeaderFlags(flags: string[]): Record<string, string> {
+export function parseHeaderFlags(flags: string[]): Record<string, string> {
     const headers: Record<string, string> = {};
 
     for (const flag of flags) {
@@ -73,90 +102,6 @@ function parseHeaderFlags(flags: string[]): Record<string, string> {
     }
 
     return headers;
-}
-
-function describe(candidate: HarPlaylist, index: number): string {
-    const startedAt = candidate.startedAt ? new Date(candidate.startedAt) : null;
-    const at = startedAt && !Number.isNaN(startedAt.getTime()) ? ` ${startedAt.toLocaleTimeString("en-GB")}` : "";
-    const page = candidate.page ? `  (page ${candidate.page})` : "";
-    return `${index + 1}.${at} [${candidate.kind}] ${safeUrl(candidate.url)}${page}`;
-}
-
-/**
- * The stream to download: the URL itself, or the one HLS stream in the HAR. Several streams in a HAR need `--stream`
- * (a 1-based number or a URL substring), or a pick in a terminal.
- */
-export async function resolveSource({
-    input,
-    stream,
-    headerFlags,
-}: {
-    input: string;
-    stream?: string;
-    headerFlags: string[];
-}): Promise<StreamSource> {
-    const extraHeaders = parseHeaderFlags(headerFlags);
-
-    if (/^https?:\/\//i.test(input)) {
-        return { playlistUrl: input, headers: withDefaultHeaders(extraHeaders) };
-    }
-
-    const all = await readHarPlaylists(input);
-    const candidates = harStreamCandidates(all);
-    logger.debug({ har: input, playlists: all.length, candidates: candidates.length }, "HAR playlists found");
-
-    if (candidates.length === 0) {
-        throw new Error(
-            `The HAR ${input} has no HLS playlist (.m3u8). Record it while the stream plays, with "Preserve log" on.`
-        );
-    }
-
-    const chosen = await chooseCandidate({ candidates, stream });
-    return {
-        playlistUrl: chosen.url,
-        headers: withDefaultHeaders({ ...chosen.headers, ...extraHeaders }),
-        page: chosen.page,
-    };
-}
-
-export function listCandidates(candidates: HarPlaylist[]): string[] {
-    return candidates.map(describe);
-}
-
-async function chooseCandidate({
-    candidates,
-    stream,
-}: {
-    candidates: HarPlaylist[];
-    stream?: string;
-}): Promise<HarPlaylist> {
-    if (stream !== undefined) {
-        const index = /^\d+$/.test(stream) ? Number(stream) - 1 : candidates.findIndex((c) => c.url.includes(stream));
-        const chosen = candidates[index];
-
-        if (!chosen) {
-            throw new Error(`--stream ${stream} matches none of:\n${listCandidates(candidates).join("\n")}`);
-        }
-
-        return chosen;
-    }
-
-    if (candidates.length === 1) {
-        return candidates[0];
-    }
-
-    if (!isInteractive()) {
-        throw new Error(
-            `The HAR has ${candidates.length} streams. Pass --stream <number|url part>:\n${listCandidates(candidates).join("\n")}`
-        );
-    }
-
-    const picked = await p.select({
-        message: "Which stream? (the newest request is preselected)",
-        options: candidates.map((candidate, index) => ({ value: index, label: describe(candidate, index) })),
-        initialValue: candidates.length - 1,
-    });
-    return candidates[Number(picked)];
 }
 
 /** `best` (highest bandwidth, the default), `worst`, or a height such as `720` or `720p`. */
@@ -215,7 +160,7 @@ export async function resolveMedia({
             );
         }
 
-        const media = await fetchPlaylist({ url: variant.uri, headers: source.headers, signal });
+        const media = await fetchPlaylist({ url: variant.uri, headers: headersFor(variant.uri, source), signal });
 
         if (media.kind !== "media") {
             throw new Error(`The variant ${safeUrl(variant.uri)} is another master playlist`);

@@ -10,6 +10,7 @@ const harSchema = z.object({
                 pageref: z.string().optional(),
                 startedDateTime: z.string().optional(),
                 request: z.object({
+                    method: z.string().optional(),
                     url: z.string(),
                     headers: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
                 }),
@@ -51,20 +52,39 @@ function directoryOf(url: string): string {
 }
 
 /** Every HLS playlist the HAR requested, one row per URL, in request order. */
-export function findHarPlaylists(har: unknown): HarPlaylist[] {
+export type HarLog = z.infer<typeof harSchema>["log"];
+export type HarLogEntry = HarLog["entries"][number];
+
+/** The parts of a HAR the stream tools read: pages, and each request with its headers and response body. */
+export function parseHar(har: unknown): HarLog {
     const parsed = harSchema.safeParse(har);
 
     if (!parsed.success) {
         throw new Error(`Not a HAR file: ${parsed.error.issues[0]?.message ?? "unknown shape"}`);
     }
 
-    const pageList = parsed.data.log.pages ?? [];
-    const pages = new Map(pageList.map((page) => [page.id, page.title]));
-    // An iframe's requests carry no pageref; with one page in the HAR, that page played them.
-    const onlyPage = pageList.length === 1 ? pageList[0].title : undefined;
+    return parsed.data.log;
+}
+
+export async function readHar(path: string): Promise<HarLog> {
+    return parseHar(SafeJSON.parse(await Bun.file(path).text(), { strict: true }));
+}
+
+/** The page title (often its URL) of the page that made the request; an iframe request in a one-page HAR gets that page. */
+export function harEntryPage(log: HarLog, entry: HarLogEntry): string | undefined {
+    const pages = log.pages ?? [];
+    const page = entry.pageref ? pages.find((candidate) => candidate.id === entry.pageref) : undefined;
+    return page?.title ?? (pages.length === 1 ? pages[0].title : undefined);
+}
+
+export function findHarPlaylists(har: unknown): HarPlaylist[] {
+    return findLogPlaylists(parseHar(har));
+}
+
+export function findLogPlaylists(log: HarLog): HarPlaylist[] {
     const byUrl = new Map<string, HarPlaylist>();
 
-    for (const entry of parsed.data.log.entries) {
+    for (const entry of log.entries) {
         const { url } = entry.request;
         const mimeType = entry.response?.content?.mimeType?.toLowerCase() ?? "";
 
@@ -95,7 +115,8 @@ export function findHarPlaylists(har: unknown): HarPlaylist[] {
             const name = header.name.toLowerCase();
 
             if (REPLAYED_HEADERS.has(name)) {
-                headers[name] = header.value;
+                // HTTP/2 may split the cookie field into several header lines; all of them are the cookie.
+                headers[name] = name === "cookie" && headers[name] ? `${headers[name]}; ${header.value}` : header.value;
             }
         }
 
@@ -103,7 +124,7 @@ export function findHarPlaylists(har: unknown): HarPlaylist[] {
             url,
             kind,
             headers,
-            page: (entry.pageref ? pages.get(entry.pageref) : undefined) ?? onlyPage,
+            page: harEntryPage(log, entry),
             startedAt: entry.startedDateTime,
         });
     }
@@ -136,5 +157,5 @@ export function harStreamCandidates(playlists: HarPlaylist[]): HarPlaylist[] {
 }
 
 export async function readHarPlaylists(path: string): Promise<HarPlaylist[]> {
-    return findHarPlaylists(SafeJSON.parse(await Bun.file(path).text(), { strict: true }));
+    return findLogPlaylists(await readHar(path));
 }

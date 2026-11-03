@@ -13,6 +13,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import {
     fetchPlaylist,
+    headersFor,
     PlaylistHttpError,
     type ResolvedMedia,
     resolveMedia,
@@ -25,6 +26,8 @@ const SEGMENT_ATTEMPTS = 4;
 /** Consecutive 404/410 answers for the playlist that mean the stream is over. */
 const GONE_POLLS = 3;
 const SEGMENT_FILE = /^seg-(\d+)\.[a-z0-9]+$/i;
+/** How long ffmpeg may take to finish a remux after its whole input arrived. */
+const REMUX_EXIT_TIMEOUT_MS = 10 * 60_000;
 
 const stateSchema = z.object({
     version: z.literal(1),
@@ -39,6 +42,8 @@ const stateSchema = z.object({
     /** Sequence numbers the CDN answered 404 or 410 for in the last run. A resume asks for them once more. */
     gone: z.array(z.number()),
     ended: z.boolean(),
+    /** The --quality the parts were downloaded at, so a resume without one picks the same variant. */
+    quality: z.string().optional(),
     updatedAt: z.string(),
 });
 
@@ -62,6 +67,10 @@ export interface StreamDownloadResult {
     lastSequence: number | null;
     /** Sequence numbers between the first and the last segment that are not on disk. */
     gaps: number[];
+    /** Every segment the CDN answered 404 or 410 for, those before the first and after the last kept one included. */
+    gone: number[];
+    /** Segments that still failed after the retries (network, 403, 5xx): nothing was stitched, and a rerun retries them. */
+    failed: number[];
     downloadedThisRun: number;
     bytesThisRun: number;
     ended: boolean;
@@ -73,6 +82,12 @@ class SegmentHttpError extends Error {
         super(`HTTP ${status}`);
         this.name = "SegmentHttpError";
     }
+}
+
+/** Origin and path: a refreshed signed query is the same stream, another host is not. */
+function streamIdentity(url: string): string {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
 }
 
 function isGoneStatus(status: number): boolean {
@@ -104,10 +119,15 @@ export async function readState(partsDir: string): Promise<StreamState | null> {
     return parsed.data;
 }
 
-/** The state holds the request headers (cookies included), so only the owner may read it. */
+/**
+ * The state holds the request headers (cookies included), so only the owner may read it. It is written beside and
+ * renamed over the old one, so a run killed mid-write leaves the previous state, never a cut one.
+ */
 async function writeState(partsDir: string, state: StreamState): Promise<void> {
     state.updatedAt = new Date().toISOString();
-    await writeFile(join(partsDir, "state.json"), SafeJSON.stringify(state, null, 2), { mode: 0o600 });
+    const path = join(partsDir, "state.json");
+    await writeFile(`${path}.tmp`, SafeJSON.stringify(state, null, 2), { mode: 0o600 });
+    await rename(`${path}.tmp`, path);
 }
 
 async function segmentsOnDisk(partsDir: string): Promise<Map<number, string>> {
@@ -124,9 +144,17 @@ async function segmentsOnDisk(partsDir: string): Promise<Map<number, string>> {
     return found;
 }
 
-/** Wanted segments by sequence number. Workers take the oldest or the newest; `next` waits until one is added. */
-class SegmentQueue {
+/**
+ * Wanted segments by sequence number. Workers take the oldest or the newest; `next` waits until one is added. A
+ * segment a worker holds stays out of the queue until `finish`, so a live poll that lists it again cannot hand it to a
+ * second worker writing the same file.
+ */
+export class SegmentQueue {
     private readonly wanted = new Map<number, string>();
+    /** The wanted sequences in ascending order from `head`; workers take from either end, so no take scans the queue. */
+    private order: number[] = [];
+    private head = 0;
+    private readonly inFlight = new Set<number>();
     private wakers: (() => void)[] = [];
     private closed = false;
 
@@ -135,12 +163,20 @@ class SegmentQueue {
     }
 
     add(sequence: number, uri: string): void {
-        if (this.closed) {
+        if (this.closed || this.inFlight.has(sequence)) {
             return;
+        }
+
+        if (!this.wanted.has(sequence)) {
+            this.insertOrdered(sequence);
         }
 
         this.wanted.set(sequence, uri);
         this.wake();
+    }
+
+    finish(sequence: number): void {
+        this.inFlight.delete(sequence);
     }
 
     close(): void {
@@ -151,17 +187,11 @@ class SegmentQueue {
     async next(newestFirst: boolean): Promise<{ sequence: number; uri: string } | null> {
         while (true) {
             if (this.wanted.size > 0) {
-                let pick: number | null = null;
-
-                for (const sequence of this.wanted.keys()) {
-                    if (pick === null || (newestFirst ? sequence > pick : sequence < pick)) {
-                        pick = sequence;
-                    }
-                }
-
-                const sequence = pick ?? 0;
+                const sequence = (newestFirst ? this.order.pop() : this.order[this.head++]) ?? 0;
+                this.compact();
                 const uri = this.wanted.get(sequence) ?? "";
                 this.wanted.delete(sequence);
+                this.inFlight.add(sequence);
                 return { sequence, uri };
             }
 
@@ -170,6 +200,32 @@ class SegmentQueue {
             }
 
             await new Promise<void>((resolve) => this.wakers.push(resolve));
+        }
+    }
+
+    /** Binary search for the slot, then one splice: a backfill of 30,000 segments is 30,000 short searches. */
+    private insertOrdered(sequence: number): void {
+        let low = this.head;
+        let high = this.order.length;
+
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+
+            if (this.order[middle] < sequence) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+
+        this.order.splice(low, 0, sequence);
+    }
+
+    /** Drops the taken front once it is most of the array, so the array does not grow with every take. */
+    private compact(): void {
+        if (this.head > 1024 && this.head * 2 > this.order.length) {
+            this.order = this.order.slice(this.head);
+            this.head = 0;
         }
     }
 
@@ -217,15 +273,15 @@ async function downloadToFile({
 
 async function segmentExists({
     url,
-    headers,
+    headersOf,
     signal,
 }: {
     url: string;
-    headers: Record<string, string>;
+    headersOf: (url: string) => Record<string, string>;
     signal: AbortSignal;
 }): Promise<boolean> {
     const response = await fetch(url, {
-        headers: { ...headers, range: "bytes=0-0" },
+        headers: { ...headersOf(url), range: "bytes=0-0" },
         signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
     });
     await response.body?.cancel();
@@ -247,16 +303,16 @@ async function segmentExists({
  */
 async function findEarliestSegment({
     template,
-    headers,
+    headersOf,
     below,
     signal,
 }: {
     template: SegmentUriTemplate;
-    headers: Record<string, string>;
+    headersOf: (url: string) => Record<string, string>;
     below: number;
     signal: AbortSignal;
 }): Promise<number> {
-    const exists = (sequence: number) => segmentExists({ url: segmentUri(template, sequence), headers, signal });
+    const exists = (sequence: number) => segmentExists({ url: segmentUri(template, sequence), headersOf, signal });
 
     if (below <= 0 || (await exists(0))) {
         return 0;
@@ -369,10 +425,18 @@ async function remuxWithFfmpeg({
 
         await proc.stdin.end();
     } catch (error) {
+        // A half-fed ffmpeg may wait for more input forever, or finish a cut file; neither may be published.
         logger.warn({ error }, "Writing segments to ffmpeg failed");
+        proc.kill();
+        await proc.exited;
+        signal.removeEventListener("abort", kill);
+        throw error;
     }
 
+    // stdin is closed, so ffmpeg only finishes the copy; a remux that stalls past this is killed.
+    const deadline = setTimeout(kill, REMUX_EXIT_TIMEOUT_MS);
     const status = await proc.exited;
+    clearTimeout(deadline);
     signal.removeEventListener("abort", kill);
     signal.throwIfAborted();
 
@@ -387,9 +451,14 @@ export interface StreamDownloadOptions {
     output: string;
     /** Undefined on a resume: the state in the parts folder names it. */
     source?: StreamSource;
-    quality: string;
+    /** Undefined takes the quality of the parts already on disk, else `best`. */
+    quality?: string;
     concurrency: number;
     idleTimeoutMs: number;
+    /** The first wait before a failed segment is asked again; it doubles each time. */
+    retryDelayMs?: number;
+    /** How often a live playlist is read again; default the target duration, at least 1 s. */
+    pollIntervalMs?: number;
     backfill: boolean;
     stitchOnly: boolean;
     signal: AbortSignal;
@@ -400,6 +469,7 @@ function stitchedResult({
     output,
     partsDir,
     stitched,
+    gone,
     downloadedThisRun,
     bytesThisRun,
     ended,
@@ -407,6 +477,7 @@ function stitchedResult({
     output: string;
     partsDir: string;
     stitched: { segments: number; first: number; last: number; gaps: number[] };
+    gone: number[];
     downloadedThisRun: number;
     bytesThisRun: number;
     ended: boolean;
@@ -418,6 +489,8 @@ function stitchedResult({
         firstSequence: stitched.first,
         lastSequence: stitched.last,
         gaps: stitched.gaps,
+        gone,
+        failed: [],
         downloadedThisRun,
         bytesThisRun,
         ended,
@@ -449,6 +522,7 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
             output,
             partsDir,
             stitched,
+            gone: saved?.gone ?? [],
             downloadedThisRun: 0,
             bytesThisRun: 0,
             ended: saved?.ended ?? false,
@@ -459,10 +533,11 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
         throw new Error(`Nothing to resume in ${partsDir}: pass the HAR file or the playlist URL`);
     }
 
+    const quality = options.quality ?? saved?.quality ?? "best";
     let resolved: ResolvedMedia | null = null;
 
     try {
-        resolved = await resolveMedia({ source, quality: options.quality, signal });
+        resolved = await resolveMedia({ source, quality, signal });
     } catch (error) {
         const goneWithParts =
             error instanceof PlaylistHttpError &&
@@ -476,7 +551,7 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
         logger.warn({ status: error.status }, "Playlist is gone; filling gaps from the saved template, then stitching");
     }
 
-    if (saved && resolved && new URL(saved.mediaUrl).pathname !== new URL(resolved.mediaUrl).pathname) {
+    if (saved && resolved && streamIdentity(saved.mediaUrl) !== streamIdentity(resolved.mediaUrl)) {
         throw new Error(
             `${partsDir} holds another stream (${safeUrl(saved.mediaUrl)}, now ${safeUrl(resolved.mediaUrl)}). Pass another --out, or the same --quality as before.`
         );
@@ -491,11 +566,13 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
         template,
         gone: [],
         ended: playlist === null,
+        quality,
         updatedAt: "",
     };
     await writeState(partsDir, state);
 
-    const headers = source.headers;
+    // Cookies and Authorization from the HAR go only to the origin they were captured for.
+    const headersOf = (url: string) => headersFor(url, source);
     const done = new Set((await segmentsOnDisk(partsDir)).keys());
     const gone = new Set<number>();
     const failed = new Map<number, string>();
@@ -538,7 +615,7 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
 
     if (playlist && options.backfill && template && firstListed !== undefined && !playlistHasAll) {
         report("probing");
-        const earliest = await findEarliestSegment({ template, headers, below: firstListed, signal });
+        const earliest = await findEarliestSegment({ template, headersOf, below: firstListed, signal });
         logger.debug({ earliest, firstListed }, "Backfill range found");
 
         for (let sequence = earliest; sequence < firstListed; sequence++) {
@@ -554,7 +631,12 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
         const initPath = join(partsDir, `init${extname(new URL(playlist.initUri).pathname) || ".mp4"}`);
 
         if (!existsSync(initPath)) {
-            await downloadToFile({ url: playlist.initUri, headers, path: initPath, signal });
+            await downloadToFile({
+                url: playlist.initUri,
+                headers: headersOf(playlist.initUri),
+                path: initPath,
+                signal,
+            });
         }
     }
 
@@ -568,12 +650,18 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
                 return;
             }
 
+            if (done.has(item.sequence)) {
+                queue.finish(item.sequence);
+                continue;
+            }
+
             const path = segmentPath({ partsDir, sequence: item.sequence, uri: item.uri });
 
             try {
+                const headers = headersOf(item.uri);
                 const bytes = await retry(() => downloadToFile({ url: item.uri, headers, path, signal }), {
                     maxAttempts: SEGMENT_ATTEMPTS,
-                    delay: 1000,
+                    delay: options.retryDelayMs ?? 1000,
                     shouldRetry: (error) =>
                         !signal.aborted && !(error instanceof SegmentHttpError && isGoneStatus(error.status)),
                 });
@@ -592,6 +680,8 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
                     failed.set(item.sequence, item.uri);
                     logger.warn({ error, sequence: item.sequence }, "Segment failed after retries");
                 }
+            } finally {
+                queue.finish(item.sequence);
             }
 
             progress();
@@ -609,8 +699,8 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
     if (!ended && playlist) {
         ended = await followLivePlaylist({
             mediaUrl: state.mediaUrl,
-            headers,
-            targetDurationSec: playlist.targetDurationSec,
+            headers: headersOf(state.mediaUrl),
+            intervalMs: options.pollIntervalMs ?? Math.max(1000, playlist.targetDurationSec * 1000),
             idleTimeoutMs: options.idleTimeoutMs,
             template,
             signal,
@@ -635,7 +725,7 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
             const path = segmentPath({ partsDir, sequence, uri });
 
             try {
-                bytesThisRun += await downloadToFile({ url: uri, headers, path, signal });
+                bytesThisRun += await downloadToFile({ url: uri, headers: headersOf(uri), path, signal });
                 done.add(sequence);
                 downloadedThisRun++;
             } catch (error) {
@@ -668,6 +758,8 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
             firstSequence: onDisk[0] ?? null,
             lastSequence: onDisk[onDisk.length - 1] ?? null,
             gaps: [],
+            gone: state.gone,
+            failed: [...failed.keys()].sort((a, b) => a - b),
             downloadedThisRun,
             bytesThisRun,
             ended: false,
@@ -675,21 +767,40 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
         };
     }
 
+    if (failed.size > 0) {
+        // Not gone, just failing (network, 403, 5xx): a stitched file would look complete and is not.
+        const onDisk = [...done].sort((a, b) => a - b);
+        return {
+            output: null,
+            partsDir,
+            segments: onDisk.length,
+            firstSequence: onDisk[0] ?? null,
+            lastSequence: onDisk[onDisk.length - 1] ?? null,
+            gaps: [],
+            gone: state.gone,
+            failed: [...failed.keys()].sort((a, b) => a - b),
+            downloadedThisRun,
+            bytesThisRun,
+            ended,
+            aborted: false,
+        };
+    }
+
     phase = "stitching";
     progress();
     const stitched = await stitch({ partsDir, output, signal });
-    return stitchedResult({ output, partsDir, stitched, downloadedThisRun, bytesThisRun, ended });
+    return stitchedResult({ output, partsDir, stitched, gone: state.gone, downloadedThisRun, bytesThisRun, ended });
 }
 
 /**
  * Re-reads a live media playlist every target duration and hands each new segment to `want`, filling a jump past the
- * newest known segment from the template. Returns true when the stream ended (ENDLIST, or the playlist is gone) and
- * false when it went quiet for `idleTimeoutMs` or the run was cancelled.
+ * newest known segment from the template. Returns true when the stream ended (ENDLIST, the playlist is gone, or no
+ * new segment for `idleTimeoutMs`) and false when the run was cancelled.
  */
 async function followLivePlaylist({
     mediaUrl,
     headers,
-    targetDurationSec,
+    intervalMs,
     idleTimeoutMs,
     template,
     signal,
@@ -699,7 +810,7 @@ async function followLivePlaylist({
 }: {
     mediaUrl: string;
     headers: Record<string, string>;
-    targetDurationSec: number;
+    intervalMs: number;
     idleTimeoutMs: number;
     template: SegmentUriTemplate | null;
     signal: AbortSignal;
@@ -707,7 +818,6 @@ async function followLivePlaylist({
     newest: () => number;
     onPoll: (waiting: boolean) => void;
 }): Promise<boolean> {
-    const intervalMs = Math.max(1000, targetDurationSec * 1000);
     let lastNewAt = Date.now();
     let goneAnswers = 0;
 
