@@ -12,12 +12,14 @@ import {
     type CapturedFrame,
     CaptureError,
     type CaptureErrorKind,
+    type CaptureHooks,
     type CaptureRequest,
     type CaptureResult,
     type DisplayInfo,
     FrameRecorder,
     type FrameRecorderContext,
     type FrameRecorderSupport,
+    type LiveCapture,
     MAX_CAPTURE_SECONDS,
 } from "./types";
 
@@ -66,16 +68,17 @@ export function flagsInHelp(text: string): Set<NativeOptionalFlag> {
     return new Set(NATIVE_OPTIONAL_FLAGS.filter((flag) => new RegExp(`${flag}(?![\\w-])`).test(text)));
 }
 
-function detectFlags(binary: string): Promise<Set<NativeOptionalFlag>> {
-    let cached = helpCache.get(binary);
+function detectFlags(axTool: string[]): Promise<Set<NativeOptionalFlag>> {
+    const key = axTool.join("\0");
+    let cached = helpCache.get(key);
 
     if (!cached) {
-        cached = boundedCommand({ command: [binary, "--help"], timeoutMs: HELP_TIMEOUT_MS }).then((result) => {
+        cached = boundedCommand({ command: [...axTool, "--help"], timeoutMs: HELP_TIMEOUT_MS }).then((result) => {
             const flags = flagsInHelp(`${result.stdout}\n${result.stderr}`);
-            log.debug({ binary, flags: [...flags] }, "ax-tool capture options");
+            log.debug({ axTool, flags: [...flags] }, "ax-tool capture options");
             return flags;
         });
-        helpCache.set(binary, cached);
+        helpCache.set(key, cached);
     }
 
     return cached;
@@ -210,6 +213,119 @@ function salvagedFrames(outDir: string, displayId: number | undefined): CaptureR
     };
 }
 
+const SWITCH_TIMEOUT_MS = 5_000;
+
+const controlEvent = z.discriminatedUnion("event", [
+    z.object({
+        event: z.literal("frame"),
+        path: z.string(),
+        timestampMs: z.number(),
+        reason: z.string().default("change"),
+        displayId: z.number().optional(),
+    }),
+    z.object({ event: z.literal("display-switch"), from: z.number().optional(), to: z.number() }),
+    z.object({ event: z.literal("error"), code: z.string().optional(), message: z.string() }),
+    z.object({ event: z.literal("state") }).loose(),
+]);
+
+/**
+ * The `--control-stdin` side of one running capture: commands as JSON lines to its stdin, its stderr events back. A
+ * switch resolves on the recorder's `display-switch` event and rejects on its `error` event.
+ */
+export class NativeLiveCapture implements LiveCapture {
+    private pendingSwitch?: {
+        to: number;
+        resolve: () => void;
+        reject: (error: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+    };
+
+    constructor(
+        private readonly write: (text: string) => void,
+        private displayId: number | undefined,
+        private readonly hooks: CaptureHooks
+    ) {}
+
+    switchDisplay(displayId: number): Promise<void> {
+        if (displayId === this.displayId) {
+            return Promise.resolve();
+        }
+
+        this.pendingSwitch?.reject(new CaptureError("failed", "another switch replaced this one"));
+        return new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.pendingSwitch = undefined;
+                reject(new CaptureError("timeout", `the recorder did not switch to display ${displayId}`));
+            }, SWITCH_TIMEOUT_MS);
+            this.pendingSwitch = { to: displayId, resolve, reject, timer };
+            this.send({ cmd: "switch", displayId });
+        });
+    }
+
+    pause(): void {
+        this.send({ cmd: "pause" });
+    }
+
+    resume(): void {
+        this.send({ cmd: "resume" });
+    }
+
+    /** One stderr line of the recorder: an event, or its own log, which is ignored. */
+    receive(line: string): void {
+        if (!line.trimStart().startsWith("{")) {
+            return;
+        }
+
+        const parsed = controlEvent.safeParse(SafeJSON.parse(line, { strict: true }));
+
+        if (!parsed.success) {
+            return;
+        }
+
+        const event = parsed.data;
+
+        if (event.event === "frame") {
+            this.hooks.onFrame?.({
+                path: event.path,
+                atMs: event.timestampMs,
+                changePercent: 0,
+                reason: event.reason,
+                ...((event.displayId ?? this.displayId) !== undefined
+                    ? { displayId: event.displayId ?? this.displayId }
+                    : {}),
+            });
+            return;
+        }
+
+        if (event.event === "display-switch") {
+            this.displayId = event.to;
+            this.settle(event.to);
+            return;
+        }
+
+        if (event.event === "error" && this.pendingSwitch) {
+            const pending = this.pendingSwitch;
+            this.pendingSwitch = undefined;
+            clearTimeout(pending.timer);
+            pending.reject(new CaptureError(captureErrorKind(event.code, event.message), event.message));
+        }
+    }
+
+    private settle(to: number): void {
+        const pending = this.pendingSwitch;
+
+        if (pending && pending.to === to) {
+            this.pendingSwitch = undefined;
+            clearTimeout(pending.timer);
+            pending.resolve();
+        }
+    }
+
+    private send(command: Record<string, unknown>): void {
+        this.write(`${SafeJSON.stringify(command)}\n`);
+    }
+}
+
 /** `ax-tool capture --mode screen`, GenesisTools' own ScreenCaptureKit recorder. */
 export class NativeFrameRecorder extends FrameRecorder {
     readonly id = "native" as const;
@@ -226,21 +342,22 @@ export class NativeFrameRecorder extends FrameRecorder {
             // Motion boxes came with the same ax-tool release as --follow-focus.
             motionBoxes: this.flags.has("--follow-focus"),
             heartbeat: this.flags.has("--heartbeat-sec"),
+            liveControl: this.flags.has("--control-stdin"),
         };
     }
 
-    private async binary(signal?: AbortSignal): Promise<string> {
-        const binary = await this.context.axToolBinary({
+    private async axTool(signal?: AbortSignal): Promise<string[]> {
+        const axTool = await this.context.axTool({
             signal,
             onBuild: () => log.info("building ax-tool before the capture"),
         });
-        this.flags = await detectFlags(binary);
-        return binary;
+        this.flags = await detectFlags(axTool);
+        return axTool;
     }
 
     async available(): Promise<{ ok: true } | { ok: false; reason: string }> {
         try {
-            await this.binary();
+            await this.axTool();
             return { ok: true };
         } catch (error) {
             return { ok: false, reason: error instanceof Error ? error.message : String(error) };
@@ -248,8 +365,8 @@ export class NativeFrameRecorder extends FrameRecorder {
     }
 
     async displays(): Promise<DisplayInfo[]> {
-        const binary = await this.binary();
-        const result = await boundedCommand({ command: [binary, "screens"], timeoutMs: SCREENS_TIMEOUT_MS });
+        const axTool = await this.axTool();
+        const result = await boundedCommand({ command: [...axTool, "screens"], timeoutMs: SCREENS_TIMEOUT_MS });
 
         if (result.status !== 0) {
             throw new CaptureError("unavailable", `ax-tool screens exited ${result.status}: ${result.stderr.trim()}`);
@@ -259,17 +376,33 @@ export class NativeFrameRecorder extends FrameRecorder {
     }
 
     async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
-        const binary = await this.binary(signal);
+        const axTool = await this.axTool(signal);
         const byIndex = request.target.kind === "display" && !this.flags.has("--display-id");
         const byScale = request.maxLongSidePx !== undefined && !this.flags.has("--max-long-side");
         const displays = byIndex || byScale ? await this.displays() : [];
-        const argv = [binary, ...nativeArgv({ request, flags: this.flags, displays })];
+        const controlled = request.hooks !== undefined && this.flags.has("--control-stdin");
+        const argv = [
+            ...axTool,
+            ...nativeArgv({ request, flags: this.flags, displays }),
+            ...(controlled ? ["--control-stdin"] : []),
+        ];
         const targetId = request.target.kind === "display" ? request.target.displayId : undefined;
         const spawnedAt = Date.now();
+        let channel: NativeLiveCapture | undefined;
         const run = await runCaptureProcess({
             argv,
             timeoutMs: Math.min(MAX_CAPTURE_SECONDS, request.durationSec) * 1000 + CAPTURE_TIMEOUT_GRACE_MS,
             signal,
+            launch: this.context.launch,
+            ...(controlled && request.hooks
+                ? {
+                      onStdin: (write: (text: string) => void) => {
+                          channel = new NativeLiveCapture(write, targetId, request.hooks ?? {});
+                          request.hooks?.onLive?.(channel);
+                      },
+                      onStderrLine: (line: string) => channel?.receive(line),
+                  }
+                : {}),
         });
         log.debug({ exitCode: run.exitCode, argv, timedOut: run.timedOut }, "native capture");
 

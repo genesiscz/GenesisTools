@@ -17,7 +17,14 @@ import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
-import { meetingLiveId, readRecorderState, recorderFiles, runRecorder, stateDisplays } from "../lib/recorder";
+import {
+    framesOnDisk,
+    meetingLiveId,
+    readRecorderState,
+    recorderFiles,
+    runRecorder,
+    stateDisplays,
+} from "../lib/recorder";
 import { framesAtPerDisplay, type OcrLine, ocrLineSchema, recordedSpans } from "../lib/screen";
 import { errorText, fail, TOOL } from "../lib/shared";
 
@@ -335,6 +342,19 @@ async function status(opts: { json?: boolean }): Promise<void> {
     ui.dim(
         `${live?.frames ?? state.frames} frames, ${formatBytes(state.bytes)}${state.lastFrameAt ? `, last at ${localTime(state.lastFrameAt)}` : ""}`
     );
+    const framesDir = join(store.folder(state.meetingId), "frames");
+
+    if (existsSync(framesDir)) {
+        const names = new Map([...(state.displays ?? []), ...(live?.displays ?? [])].map((one) => [one.id, one.name]));
+        const perDisplay = [...framesOnDisk(framesDir).perDisplay].sort(([a], [b]) => a - b);
+
+        if (perDisplay.length > 0) {
+            ui.dim(
+                `frames per display: ${perDisplay.map(([id, count]) => `${names.get(id) ?? "display"} (${id}) ${count}`).join(", ")}`
+            );
+        }
+    }
+
     ui.dim(`folder: ${store.folder(state.meetingId)}`);
 
     if (!live) {

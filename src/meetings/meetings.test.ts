@@ -1731,16 +1731,27 @@ describe("the meetings recorder loop", () => {
     /** A recorder that follows a script per capture; after the script it waits for the stop the test sends. */
     class ScriptedRecorder extends FrameRecorder {
         readonly id = "native" as const;
-        readonly supports = { followFocus: false, displayId: true, motionBoxes: false, heartbeat: false };
         readonly requests: CaptureRequest[] = [];
+        /** What the live channel of a running capture was told (`liveControl` scripts only). */
+        readonly commands: string[] = [];
         private piece = 0;
         private notified = -1;
 
         constructor(
-            private readonly script: { displays: DisplayInfo[][]; steps: Step[] },
+            private readonly script: { displays: DisplayInfo[][]; steps: Step[]; liveControl?: boolean },
             private readonly whenDone: () => void
         ) {
             super();
+        }
+
+        get supports() {
+            return {
+                followFocus: false,
+                displayId: true,
+                motionBoxes: false,
+                heartbeat: false,
+                liveControl: this.script.liveControl === true,
+            };
         }
 
         async available() {
@@ -1758,6 +1769,24 @@ describe("the meetings recorder loop", () => {
             const step = this.script.steps[this.requests.length - 1] ?? "hang";
             const displayId = request.target.kind === "display" ? request.target.displayId : 0;
 
+            let current = displayId;
+            let streamed: string | undefined;
+
+            if (step === "hang" && this.script.liveControl) {
+                const path = join(request.outDir, "keep-0001.png");
+                streamed = path;
+                await Bun.write(path, "png");
+                request.hooks?.onLive?.({
+                    switchDisplay: async (id) => {
+                        this.commands.push(`switch ${id}`);
+                        current = id;
+                    },
+                    pause: () => this.commands.push("pause"),
+                    resume: () => this.commands.push("resume"),
+                });
+                request.hooks?.onFrame?.({ path, atMs: 0, displayId, changePercent: 10, reason: "first" });
+            }
+
             if (step === "hang") {
                 if (this.notified !== this.piece) {
                     this.notified = this.piece;
@@ -1767,7 +1796,13 @@ describe("the meetings recorder loop", () => {
                 await new Promise<void>((resolve) =>
                     signal?.addEventListener("abort", () => resolve(), { once: true })
                 );
-                return { startedAtMs: Date.now(), frames: [], endedEarly: "stopped" };
+                return {
+                    startedAtMs: Date.now(),
+                    frames: streamed
+                        ? [{ path: streamed, atMs: 0, displayId: current, changePercent: 10, reason: "first" }]
+                        : [],
+                    endedEarly: "stopped",
+                };
             }
 
             if (step === "fail") {
@@ -1795,6 +1830,7 @@ describe("the meetings recorder loop", () => {
         displays: DisplayInfo[][];
         steps: Step[];
         failOnJpeg?: boolean;
+        liveControl?: boolean;
         /** What the test does over the socket at each hanging piece; after the last, it stops the recording. */
         actions?: Array<(call: (method: string, params?: unknown) => Promise<unknown>) => Promise<unknown>>;
     }) {
@@ -1812,15 +1848,18 @@ describe("the meetings recorder loop", () => {
             callRecorder({ id: meetingLiveId(created.id), method, params, dir: liveDir }).catch(
                 (error: unknown) => error
             );
-        const recorder = new ScriptedRecorder({ displays: options.displays, steps: options.steps }, () => {
-            seenLive.push(...listLiveRecordings(liveDir).map((entry) => `${entry.kind} ${entry.state}`));
-            const index = answers.length;
-            answers.push(undefined);
-            const next = options.actions?.shift() ?? ((send) => send("stop"));
-            void next(call).then((answer) => {
-                answers[index] = answer;
-            });
-        });
+        const recorder = new ScriptedRecorder(
+            { displays: options.displays, steps: options.steps, liveControl: options.liveControl },
+            () => {
+                seenLive.push(...listLiveRecordings(liveDir).map((entry) => `${entry.kind} ${entry.state}`));
+                const index = answers.length;
+                answers.push(undefined);
+                const next = options.actions?.shift() ?? ((send) => send("stop"));
+                void next(call).then((answer) => {
+                    answers[index] = answer;
+                });
+            }
+        );
         const state = await runRecorder({
             store,
             meetingId: created.id,
@@ -1960,9 +1999,68 @@ describe("the meetings recorder loop", () => {
             expect.objectContaining({ id: 4, recorded: true }),
         ]);
         expect(unknown).toMatchObject({ code: RPC_ERRORS.unknownDisplay });
-        expect(switched).toEqual({ mode: "all", chosen: [4] });
+        expect(switched).toEqual({ mode: "all", chosen: [4], applied: "restart" });
         expect(readdirSync(join(run.folder, "frames"))).toEqual([expect.stringMatching(/-d4\.jpg$/)]);
         expect(run.recorder.requests.at(-1)?.target).toEqual({ kind: "display", displayId: 4 });
+    });
+
+    test("with a live channel, a switch and a pause go to the running capture, and frames count as they land", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            actions: [
+                async (call) => {
+                    const frames = ((await call("status")) as { frames: number }).frames;
+                    return [
+                        frames,
+                        await call("displays.remove", { displayId: 4 }),
+                        await call("displays.switch", { displayId: 4 }),
+                        await call("pause"),
+                        await call("resume"),
+                        await call("stop"),
+                    ];
+                },
+            ],
+        });
+        const [framesLive, removed, switched] = run.answers[0] as unknown[];
+
+        expect(framesLive).toBe(2);
+        expect(removed).toMatchObject({ applied: "stopped", chosen: [1] });
+        expect(switched).toMatchObject({ applied: "live", chosen: [4] });
+        expect(run.recorder.commands).toEqual(["switch 4", "pause", "resume"]);
+        // No restart: the first two captures were the only ones before the stop.
+        expect(run.recorder.requests.map((request) => request.target)).toEqual([
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 4 },
+        ]);
+        expect(run.saved?.recording?.spans?.map((span) => span.stopReason)).toEqual(["paused", "requested"]);
+        expect(readdirSync(join(run.folder, "frames")).sort()).toEqual([
+            expect.stringMatching(/-d4\.jpg$/),
+            expect.stringMatching(/-d4\.jpg$/),
+        ]);
+    });
+
+    test("a display added in mode all starts its capture at once, inside the running piece", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            actions: [
+                async (call) => [
+                    await call("displays.remove", { displayId: 4 }),
+                    await call("displays.add", { displayId: 4 }),
+                ],
+            ],
+        });
+        const [removed, added] = run.answers[0] as unknown[];
+
+        expect(removed).toMatchObject({ applied: "stopped" });
+        expect(added).toMatchObject({ applied: "started", chosen: [1, 4] });
+        expect(run.recorder.requests.map((request) => request.target)).toEqual([
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 4 },
+            { kind: "display", displayId: 4 },
+        ]);
     });
 });
 

@@ -29,6 +29,23 @@ export interface CaptureRequest {
     maxMb?: number;
     /** Where the frames go; the recorder creates it. */
     outDir: string;
+    /** Called while the capture runs, by a recorder that can (`supports.liveControl`). */
+    hooks?: CaptureHooks;
+}
+
+/** A running capture that takes commands while it records, without a restart. */
+export interface LiveCapture {
+    /** Resolves when the stream shows the display; rejects with a CaptureError (`display-missing`, `timeout`). */
+    switchDisplay(displayId: number): Promise<void>;
+    pause(): void;
+    resume(): void;
+}
+
+export interface CaptureHooks {
+    /** A frame the recorder kept, as it lands; its `path` is the recorder's own file until the capture ends. */
+    onFrame?: (frame: CapturedFrame) => void;
+    /** The capture accepts commands from now on. */
+    onLive?: (capture: LiveCapture) => void;
 }
 
 export type MotionBox = [number, number, number, number];
@@ -73,6 +90,8 @@ export interface FrameRecorderSupport {
     displayId: boolean;
     motionBoxes: boolean;
     heartbeat: boolean;
+    /** Frames as they land and commands to a running capture (`CaptureHooks`). */
+    liveControl: boolean;
 }
 
 /** A change-aware screen recorder: frames only when the screen changed, as image files. */
@@ -87,8 +106,10 @@ export abstract class FrameRecorder {
 
 /** What a recorder needs from the tool that hosts it. */
 export interface FrameRecorderContext {
-    /** The ax-tool binary, built first when its sources changed (the control tool's `ensureBinaryAsync`). */
-    axToolBinary: (options: { signal?: AbortSignal; onBuild?: () => void }) => Promise<string>;
+    /** The ax-tool command (its binary, built first when its sources changed: the control tool's `ensureBinaryAsync`). */
+    axTool: (options: { signal?: AbortSignal; onBuild?: () => void }) => Promise<string[]>;
+    /** How a capture is started; default the GenesisTools.app launcher, so the Screen Recording grant is the app's. */
+    launch?: (argv: string[]) => string[];
 }
 
 /** A capture may run this much longer than its duration before it counts as hung. */

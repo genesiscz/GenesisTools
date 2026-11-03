@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 import { outputScaleFor, parseDisplayList } from "./displays";
@@ -15,9 +16,9 @@ import {
     RpcError,
     readLiveRecording,
 } from "./live";
-import { captureErrorKind, flagsInHelp, nativeArgv } from "./native";
+import { captureErrorKind, flagsInHelp, NativeFrameRecorder, nativeArgv } from "./native";
 import { peekabooCaptureError } from "./peekaboo";
-import { CaptureError, type CaptureRequest } from "./types";
+import { CaptureError, type CaptureRequest, type LiveCapture } from "./types";
 
 const axScreens = {
     ok: true,
@@ -133,6 +134,52 @@ function captureKindOf(run: () => unknown): string | undefined {
 
     return undefined;
 }
+
+describe("native capture over --control-stdin (a fake ax-tool)", () => {
+    const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
+    const recorder = new NativeFrameRecorder({ axTool: async () => [process.execPath, fake], launch: (argv) => argv });
+
+    test("frames arrive as they land, a switch moves the running capture, and an abort keeps its frames", async () => {
+        expect(await recorder.available()).toEqual({ ok: true });
+        expect(recorder.supports.liveControl).toBe(true);
+
+        const outDir = mkdtempSync(join(tmpdir(), "fake-capture-"));
+        const streamed: Array<number | undefined> = [];
+        let channel: LiveCapture | undefined;
+        const controller = new AbortController();
+        const capture = recorder.capture(
+            {
+                ...request({ outDir, durationSec: 30 }),
+                hooks: {
+                    onFrame: (frame) => streamed.push(frame.displayId),
+                    onLive: (live) => {
+                        channel = live;
+                    },
+                },
+            },
+            controller.signal
+        );
+        const deadline = Date.now() + 5_000;
+
+        while ((streamed.length === 0 || !channel) && Date.now() < deadline) {
+            await Bun.sleep(20);
+        }
+
+        await channel?.switchDisplay(1);
+        await expect(channel?.switchDisplay(9)).rejects.toMatchObject({ kind: "display-missing" });
+        channel?.pause();
+        channel?.resume();
+        controller.abort();
+        const result = await capture;
+
+        expect(streamed).toEqual([4, 1]);
+        expect(result.frames.map((frame) => [frame.displayId, frame.reason])).toEqual([
+            [4, "first"],
+            [1, "display-switch"],
+        ]);
+        expect(result.endedEarly).toBe("stopped");
+    });
+});
 
 describe("a failed peekaboo capture", () => {
     const stderr = "[Visualizer][INFO] Visualizer client forcing mac-app context via PEEKABOO_VISUALIZER_FORCE_APP";

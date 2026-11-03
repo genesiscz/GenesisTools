@@ -28,6 +28,38 @@ function killTree(pid: number): void {
     }
 }
 
+/** Reads a pipe to its end, handing each complete line to `onLine` as it arrives. */
+async function readLines(stream: ReadableStream<Uint8Array>, onLine?: (line: string) => void): Promise<string> {
+    const decoder = new TextDecoder();
+    let text = "";
+    let pending = "";
+
+    for await (const chunk of stream) {
+        const piece = decoder.decode(chunk, { stream: true });
+        text += piece;
+
+        if (!onLine) {
+            continue;
+        }
+
+        pending += piece;
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+
+        for (const line of lines) {
+            if (line.trim()) {
+                onLine(line);
+            }
+        }
+    }
+
+    if (onLine && pending.trim()) {
+        onLine(pending);
+    }
+
+    return text;
+}
+
 /** The text of a pipe that is being read already, or "" when it is still open PIPE_DRAIN_MS after the exit. */
 async function drained(text: Promise<string>): Promise<string> {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -48,10 +80,32 @@ export async function runCaptureProcess(options: {
     argv: string[];
     timeoutMs: number;
     signal?: AbortSignal;
+    /** Default: the GenesisTools.app launcher. */
+    launch?: (argv: string[]) => string[];
+    /** Each stderr line as it comes (the recorder's events); stderr is still returned whole. */
+    onStderrLine?: (line: string) => void;
+    /** Keeps stdin open and hands over a writer for it; stdin closes when the process ends. */
+    onStdin?: (write: (text: string) => void) => void;
 }): Promise<CaptureProcessResult> {
-    const proc = Bun.spawn(wrapWithGenesisApp(options.argv), { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const launch = options.launch ?? wrapWithGenesisApp;
+    const proc = Bun.spawn(launch(options.argv), {
+        stdin: options.onStdin ? "pipe" : "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+    });
     const stdout = new Response(proc.stdout).text();
-    const stderr = new Response(proc.stderr).text();
+    const stderr = readLines(proc.stderr, options.onStderrLine);
+
+    if (options.onStdin && proc.stdin) {
+        const sink = proc.stdin;
+        options.onStdin((text) => {
+            if (proc.exitCode === null) {
+                sink.write(text);
+                void sink.flush();
+            }
+        });
+    }
+
     let timedOut = false;
     let aborted = false;
     let grace: ReturnType<typeof setTimeout> | undefined;
@@ -85,6 +139,13 @@ export async function runCaptureProcess(options: {
 
     try {
         const exitCode = await proc.exited;
+
+        if (options.onStdin && proc.stdin) {
+            await Promise.resolve(proc.stdin.end()).catch((error: unknown) =>
+                log.debug({ error }, "stdin already closed")
+            );
+        }
+
         const [out, err] = await Promise.all([drained(stdout), drained(stderr)]);
         return { exitCode, stdout: out, stderr: err, timedOut, aborted };
     } finally {
