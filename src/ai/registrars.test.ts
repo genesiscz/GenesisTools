@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { Command } from "commander";
+import { loadUsageSpendAlias } from "./commands/usage/spend";
 import { AI_REGISTRARS } from "./registrars";
 
 /**
@@ -41,6 +42,21 @@ describe("AI_REGISTRARS", () => {
         const registered = program.commands.flatMap((command) => [command.name(), ...command.aliases()]);
 
         expect(registered.sort()).toEqual(AI_REGISTRARS.flatMap((entry) => entry.names).sort());
+    });
+
+    test("usage spend mounts the tools ai-spend tree only when argv asks for it", async () => {
+        const verbs = async (argv: string[]): Promise<string[]> => {
+            const usage = new Command("usage");
+            (await loadUsageSpendAlias(argv))(usage);
+            const spend = usage.commands.find((command) => command.name() === "spend");
+
+            return spend?.commands.map((command) => command.name()) ?? ["(no spend)"];
+        };
+
+        expect(await verbs(["bun", "src/ai/index.ts", "usage", "limits"])).toEqual([]);
+        expect(await verbs(["bun", "src/ai/index.ts", "usage", "--json", "spend", "daily"])).toEqual(
+            expect.arrayContaining(["daily", "weekly", "statusline", "series", "workers", "monitor"])
+        );
     });
 
     test("requestedCommandFromArgv skips root flags such as -v", () => {
