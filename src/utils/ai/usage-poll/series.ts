@@ -8,6 +8,8 @@ import {
 } from "@genesiscz/utils/ai/providers/account-features";
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract/envelope";
 import { autoSeriesStepMs } from "@genesiscz/utils/ai/usage/contract/step";
+import { FORECAST_LOOKBACK_MS, forecastOutlook, type LimitForecast } from "@genesiscz/utils/ai/usage/forecast/forecast";
+import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import type { UsageLimitsDb } from "./limits-db";
 import type { AvailabilitySpan, SeriesAgg, SeriesBinEntry, SeriesEntry } from "./series-rows";
 import type { AccountUsageSnapshot } from "./types";
@@ -64,8 +66,11 @@ interface LimitSeriesItemTail {
     resets: string[];
     /** The newest poll's reading of this window, or null when the cache holds none. */
     current: LimitCurrent | null;
-    /** Null until the forecast moves into the core (U3). */
-    forecast: null;
+    /**
+     * The window's run-out at its recent burn, with the pace band and the safe pace (P5). Null
+     * when the request did not ask for it, the window is absent now, or it has no recent samples.
+     */
+    forecast: LimitForecast | null;
 }
 
 export type LimitSeriesPointItem = LimitSeriesItemBase & { points: LimitSeriesPoint[] } & LimitSeriesItemTail;
@@ -91,6 +96,8 @@ export interface LimitSeriesRequest {
     providers?: readonly string[];
     keys?: readonly string[];
     kinds?: readonly LimitKind[];
+    /** Forecast each window as of this instant (the 8-day lookback before it). Omitted: no forecast. */
+    forecastAt?: Date;
 }
 
 export interface LimitSeriesSources {
@@ -183,12 +190,47 @@ export function readLimitSeries(request: LimitSeriesRequest, sources: LimitSerie
         }
     }
 
-    const series = entries
+    const kept = entries
         .filter((entry) => !providers || providers.has(entry.provider))
-        .filter((entry) => !selected || selected.has(pairKey(entry.provider, entry.account)))
-        .map((entry) => toItem(entry, ids, { windows, absent }));
+        .filter((entry) => !selected || selected.has(pairKey(entry.provider, entry.account)));
+    const samples = request.forecastAt ? forecastSamples(sources.db, request, request.forecastAt) : undefined;
+    const series = kept.map((entry) => {
+        const item = toItem(entry, ids, { windows, absent });
+
+        if (!samples || !request.forecastAt || item.availableNow === "absent") {
+            return item;
+        }
+
+        const own = (samples.get(`${pairKey(entry.provider, entry.account)}\u0000${entry.key}`) ?? []).filter(
+            (sample) => entry.kind === null || sample.kind === null || sample.kind === entry.kind
+        );
+        return { ...item, forecast: forecastOutlook(own, request.forecastAt) };
+    });
 
     return { stepMs, agg: request.agg, series };
+}
+
+/** The lookback's samples in one query, grouped by provider, account and window key. */
+function forecastSamples(db: UsageLimitsDb, request: LimitSeriesRequest, at: Date): Map<string, UsageSample[]> {
+    const groups = new Map<string, UsageSample[]>();
+    const rows = db.getForecastSamples({
+        since: new Date(at.getTime() - FORECAST_LOOKBACK_MS),
+        ...(request.providers?.length === 1 ? { provider: request.providers[0] } : {}),
+        ...(request.accounts?.length === 1 ? { account: request.accounts[0].accountName } : {}),
+    });
+
+    for (const row of rows) {
+        if (Date.parse(row.timestamp) > at.getTime()) {
+            continue;
+        }
+
+        const key = `${pairKey(row.provider, row.account)}\u0000${row.bucket}`;
+        const list = groups.get(key) ?? [];
+        list.push(row);
+        groups.set(key, list);
+    }
+
+    return groups;
 }
 
 function toItem(

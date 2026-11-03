@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { autoSeriesStepMs } from "@genesiscz/utils/ai/usage/contract/step";
+import { readUsageSamples, type UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { USAGE_LIMITS_MIGRATIONS } from "./migrations";
@@ -443,6 +444,11 @@ export class UsageLimitsDb {
         const rows = stmt.all(accountName, bucket, cutoff, provider ?? null) as SnapshotRow[];
 
         return rows.map((row) => this.mapRow(row));
+    }
+
+    /** The forecast's samples since `since`, readings only, through the one query the hub forecast also runs. */
+    getForecastSamples(options: { since: Date; provider?: string; account?: string }): UsageSample[] {
+        return readUsageSamples(this.claudeDb.getDb(), options);
     }
 
     getAllAccountBuckets(provider?: string): Array<{ accountName: string; bucket: string; provider: string }> {
