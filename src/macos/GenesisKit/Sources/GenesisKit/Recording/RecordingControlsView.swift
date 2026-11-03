@@ -410,7 +410,7 @@ public struct RecordingControlsView: View {
 }
 
 /// Six dots: the grip that says the controls can be dragged.
-private struct RecordingGrip: View {
+struct RecordingGrip: View {
     var body: some View {
         Grid(horizontalSpacing: 2.5, verticalSpacing: 2.5) {
             ForEach(0..<3, id: \.self) { _ in
