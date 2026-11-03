@@ -1,4 +1,5 @@
 import { isUpstreamOutageStatus } from "@genesiscz/utils/ai/http-auth";
+import { recordUsageEvent } from "@genesiscz/utils/ai/usage/events/record";
 import { logger } from "@genesiscz/utils/logger";
 import { TRANSPORT_ERROR_CODES } from "@genesiscz/utils/net/transport-codes";
 import { pollGateCacheKey, USAGE_CACHE_TTL, usageCacheFilePath, usagePollStorage } from "./storage";
@@ -367,6 +368,8 @@ export async function applyPollGateOutcomes(args: {
      * about the accounts it excluded and pruning would wipe their backoff. */
     knownAccounts?: readonly string[];
 }): Promise<void> {
+    let written: PollGate | null = null;
+
     await mutatePollGate(args.provider, (gate) => {
         let next = args.knownAccounts ? pruneGate(gate, args.knownAccounts) : gate;
 
@@ -378,8 +381,44 @@ export async function applyPollGateOutcomes(args: {
             next = recordFailure(next, account, reason, args.now, transport);
         }
 
+        written = next;
         return next;
     });
+
+    recordBackoffEvents(args.provider, args.failures, written, args.now);
+}
+
+/**
+ * One `poll-backoff` event per failure the gate now pauses, with the pause length. The gate file keeps only the
+ * current state, so without the event a backoff that already lifted leaves no trace. Recorded after the gate lock.
+ */
+function recordBackoffEvents(
+    provider: string,
+    failures: readonly { account: string; reason: string }[],
+    gate: PollGate | null,
+    now: number
+): void {
+    if (!gate) {
+        return;
+    }
+
+    for (const { account, reason } of failures) {
+        const entry = gate[account];
+
+        if (!entry || entry.blockedUntil <= now) {
+            continue;
+        }
+
+        recordUsageEvent({
+            provider,
+            accountName: account,
+            source: "poll-gate",
+            kind: "poll-backoff",
+            retryAfterMs: entry.blockedUntil - now,
+            detail: reason,
+            at: new Date(now),
+        });
+    }
 }
 
 /**

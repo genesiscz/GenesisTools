@@ -1,5 +1,7 @@
+import { recordProbeCount, recordUsageEvent } from "@genesiscz/utils/ai/usage/events/record";
 import { USAGE_CACHE_TTL, usageCacheFilePath, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import { logger } from "@genesiscz/utils/logger";
+import { ANTHROPIC_SUB } from "./api";
 
 /**
  * A quota probe is a real inference request, so every probe spends a little of the account's own limits.
@@ -67,6 +69,7 @@ let commits: Promise<void> = Promise.resolve();
  */
 async function commitSpends(batch: PendingSpend[]): Promise<void> {
     const accepted: PendingSpend[] = [];
+    const refused: PendingSpend[] = [];
 
     try {
         const storage = usagePollStorage();
@@ -87,6 +90,7 @@ async function commitSpends(batch: PendingSpend[]): Promise<void> {
                             "[usage] quota probe refused: the budget is spent"
                         );
                         spend.reject(new ProbeBudgetExceeded(spend.account, spend.model, spent, spend.cap));
+                        refused.push(spend);
                         continue;
                     }
 
@@ -112,6 +116,27 @@ async function commitSpends(batch: PendingSpend[]): Promise<void> {
 
     for (const spend of accepted) {
         spend.resolve();
+    }
+
+    // Recorded after the lock is released: the event store is a second file, and the probe must not wait on it.
+    for (const spend of accepted) {
+        recordProbeCount({
+            provider: ANTHROPIC_SUB,
+            accountName: spend.account,
+            model: spend.model,
+            source: "probe-budget",
+        });
+    }
+
+    for (const spend of refused) {
+        recordUsageEvent({
+            provider: ANTHROPIC_SUB,
+            accountName: spend.account,
+            model: spend.model,
+            source: "probe-budget",
+            kind: "probe-refused",
+            detail: `the ${spend.cap} probe budget of 7 days is spent`,
+        });
     }
 }
 
