@@ -88,19 +88,32 @@ export function claudeBinaryCandidates(): string[] {
     ].filter((p): p is string => Boolean(p));
 }
 
-export function resolveClaudeBinaryForTeammates(candidatesFor: () => string[] = claudeBinaryCandidates): string {
-    const candidates = candidatesFor();
-
-    for (const candidate of candidates) {
+/** The first executable candidate as found (a symlink stays a symlink), or null when none is. */
+export function firstUsableClaudeBinary(candidatesFor: () => string[] = claudeBinaryCandidates): string | null {
+    for (const candidate of candidatesFor()) {
         try {
             if (!existsSync(candidate)) {
                 continue;
             }
 
             accessSync(candidate, constants.X_OK);
-            return realpathSync(candidate);
+            return candidate;
         } catch (error) {
             logger.debug({ error, candidate }, "[teammate-wrapper] candidate claude binary not usable; trying next");
+        }
+    }
+
+    return null;
+}
+
+export function resolveClaudeBinaryForTeammates(candidatesFor: () => string[] = claudeBinaryCandidates): string {
+    const usable = firstUsableClaudeBinary(candidatesFor);
+
+    if (usable) {
+        try {
+            return realpathSync(usable);
+        } catch (error) {
+            logger.debug({ error, usable }, "[teammate-wrapper] claude binary vanished while resolving it");
         }
     }
 

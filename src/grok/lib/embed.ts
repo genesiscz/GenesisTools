@@ -1,5 +1,6 @@
 import { pickLaunchAccount } from "@app/ai/lib/accounts/pick-launch-account";
 import { runBinaryDirect } from "@app/ai/lib/embed/direct-run";
+import { isAccountlessProbe } from "@app/ai/lib/embed/probe";
 import type { EmbedLauncher, EmbedLaunchInput } from "@app/ai/lib/embed/types";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -8,16 +9,6 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { grokLaunchAuth } from "./launcher";
 import { buildGrokTuiSpawn } from "./tui-resume";
 import { redactArgs, resolveGrokBinary } from "./worker";
-
-/**
- * A host's health probe (`grok --version`, `--help`) reads no login, so it runs without an account. T3 Code runs
- * `--version` on every status refresh, and a vault-only account would otherwise write and remove a grant each time.
- */
-const ACCOUNTLESS_ARGV = new Set(["--version", "-V", "--help", "-h"]);
-
-export function isAccountlessProbe(argv: readonly string[]): boolean {
-    return argv.length === 1 && ACCOUNTLESS_ARGV.has(argv[0] ?? "");
-}
 
 export interface GrokEmbedSpawnInput {
     binary: string;
