@@ -1,4 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { execTool } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -38,22 +39,10 @@ interface FocusCliPayload {
 const FOCUS_TIMEOUT_MS = 10_000;
 
 async function spawnTools(args: string[]): Promise<RunResult> {
-    const proc = Bun.spawn(["tools", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     // Without a deadline a wedged cmux (or `tools`) holds this HTTP request, the card's
-    // spinner and the child process open with no bound at all.
-    const timer = setTimeout(() => proc.kill(), FOCUS_TIMEOUT_MS);
-
-    try {
-        const [stdout, stderr, code] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
-        ]);
-
-        return { code, stdout, stderr };
-    } finally {
-        clearTimeout(timer);
-    }
+    // spinner and the child process open with no bound at all. execTool ends the whole group.
+    const result = await execTool(args, { timeout: FOCUS_TIMEOUT_MS });
+    return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr };
 }
 
 /**
