@@ -43,12 +43,14 @@ export async function queryDrift(
         minWindows: positive("--min-windows", opts.minWindows, DRIFT_DEFAULTS.minWindows),
         padMinutes: positive("--pad", opts.pad, DRIFT_DEFAULTS.padMinutes),
     };
-    const kinds = resolveKinds(opts.kind, ["weekly"]);
+    const kinds = resolveKinds(opts.kind, ["weekly"]) ?? ["weekly"];
+    // Every kind is read: another account's session or daily window rising makes a weekly rise not exclusive. Only
+    // the asked kinds get rows.
     const scope = await (deps.readScope ?? readScope)({
         opts: { ...opts, account: undefined },
         from: window.from,
         to: window.to,
-        kinds,
+        kinds: undefined,
     });
     const events = await (deps.loadEvents ?? loadAttributedSpend)({
         from: window.from,
@@ -66,6 +68,7 @@ export async function queryDrift(
     // another account of its provider rose around it.
     const rows = computeDrift({
         series: scope.series,
+        targets: (entry) => entry.kind !== null && kinds.some((kind) => kind === entry.kind),
         events,
         accountOf: scope.keyOf,
         settings,
