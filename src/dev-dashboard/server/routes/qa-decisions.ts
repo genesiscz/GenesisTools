@@ -2,6 +2,7 @@ import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { bindEndpoint } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { readWidgetState } from "@app/hub/lib/widget/storage";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
@@ -15,6 +16,7 @@ import {
     loadWaitingQueue,
     waitingBlock,
 } from "@app/question/lib/inbox/load";
+import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
 export interface QaDecisionDeps {
@@ -28,6 +30,18 @@ export interface QaDecisionDeps {
     block?: (session: string, number: number) => Promise<HarvestedDecision | null>;
     /** The delivery runner. Tests pass a fake, so a send can never type into a real pane. */
     deliver?: DeliverDeps;
+    /** The notch's "Mark all read" watermark, so the phone queue counts what the notch counts. Tests pass a fixed one. */
+    clearedAt?: () => Promise<number>;
+}
+
+/** The widget state's `inboxClearedAt`; 0 when the state cannot be read (the queue then counts everything fresh). */
+async function widgetClearedAt(): Promise<number> {
+    try {
+        return (await readWidgetState()).inboxClearedAt ?? 0;
+    } catch (err) {
+        logger.warn({ err }, "dev-dashboard: could not read the widget's Mark-all-read watermark");
+        return 0;
+    }
 }
 
 /** The lib's refusals of a caller mistake. Anything else (a crashed delivery, a torn file) is a 500. */
@@ -96,7 +110,12 @@ export function qaDecisionRoutes(deps: QaDecisionDeps = {}): RouteDef[] {
         bindEndpoint(ENDPOINTS.qaWaiting, {
             input: hoursInput,
             invalid: "expected ?hours=N",
-            run: ({ hours }) => loadWaitingQueue({ hours: hours ?? 72, ...(deps.inbox ? { deps: deps.inbox } : {}) }),
+            run: async ({ hours }) =>
+                loadWaitingQueue({
+                    hours: hours ?? 72,
+                    clearedAt: await (deps.clearedAt ?? widgetClearedAt)(),
+                    ...(deps.inbox ? { deps: deps.inbox } : {}),
+                }),
         }),
         // Every decision of one session, in every state (the hub's Decisions pane).
         bindEndpoint(ENDPOINTS.qaDecisionsSession, {
