@@ -341,6 +341,7 @@ enum HubMenuCommands {
         case .inbox: hub.inbox.load()
         case .timeline: hub.timeline.load(fresh: true)
         case .agents: hub.agents.reload()
+        case .usage: hub.usage.reload()
         case .worktrees: break
         }
     }

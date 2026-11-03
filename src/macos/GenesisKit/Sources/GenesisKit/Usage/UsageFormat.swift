@@ -85,6 +85,7 @@ public enum UsageFormat {
         case "session": return "5h"
         case "weekly": return "Week"
         case "monthly": return "Month"
+        case "credit": return "Credit"
         default: return label
         }
     }

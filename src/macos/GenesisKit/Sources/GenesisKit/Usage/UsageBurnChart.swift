@@ -90,7 +90,9 @@ public struct UsageBurnLaneView: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.62))
                 Text(verbatim: lane.absentNow ? "no limit" : UsageFormat.percent(lane.current))
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: lane.absentNow ? 9.5 : 11, design: .monospaced))
+                    .lineLimit(1)
+                    .fixedSize()
                     .foregroundStyle(lane.absentNow ? Color.white.opacity(0.4) : UsageTone.severity(lane.currentSeverity))
             }
             .frame(width: UsageBurnChart.labelWidth, alignment: .trailing)
