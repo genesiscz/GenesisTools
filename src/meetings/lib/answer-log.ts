@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
@@ -90,7 +90,15 @@ export async function subscribeAnswers(options: {
     livenessMs?: number;
 }): Promise<number> {
     const alive = options.alive ?? listenerAlive;
-    const backlog = readAnswerEvents(options.path);
+    const snapshot = existsSync(options.path) ? readFileSync(options.path) : Buffer.alloc(0);
+    const replayEnd = snapshot.lastIndexOf(10) + 1;
+    const backlog = snapshot
+        .subarray(0, replayEnd)
+        .toString("utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => SafeJSON.parse(line, { jsonl: true }))
+        .filter(isAnswerEvent);
     const running = runningRound(backlog);
     let roundPid = running[0]?.event === "round-start" ? running[0].pid : undefined;
     let asked = 0;
@@ -143,7 +151,7 @@ export async function subscribeAnswers(options: {
                     }
                 },
             },
-            { create: false, from: existsSync(options.path) ? statSync(options.path).size : 0 }
+            { create: false, from: replayEnd }
         );
         // A listener killed without its exit handler (a closed terminal) writes no round-end.
         const liveness = setInterval(() => {
@@ -160,5 +168,6 @@ export async function subscribeAnswers(options: {
         }, options.livenessMs ?? 5000);
         const deadline = setTimeout(() => finish(2), options.timeoutMs);
         tailer.start();
+        tailer.flush();
     });
 }

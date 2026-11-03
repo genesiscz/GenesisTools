@@ -116,8 +116,12 @@ export async function watchOnce(
 
         const result = await deps.run(["meetings", "record", "stop"]);
         log.info({ meeting: auto.meetingId, exitCode: result.exitCode, ended, silent }, "auto recording stopped");
-        unlinkSync(autoPath(store));
-        return result.success ? "stopped" : "failed";
+        if (result.success && !deps.recorder().running) {
+            unlinkSync(autoPath(store));
+            return "stopped";
+        }
+
+        return "failed";
     }
 
     if (!live || !isFresh(live, settings.liveWithinSec, now) || auto?.sourceMeetingId === live.sourceMeetingId) {

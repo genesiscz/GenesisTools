@@ -28,8 +28,8 @@ function unclearPassages(
         unaskedLow(item)
             ? [
                   {
-                      fromSec: 0,
-                      toSec: Number.POSITIVE_INFINITY,
+                      fromSec: item.scope === "line" && item.atSec !== undefined ? item.atSec : 0,
+                      toSec: item.scope === "line" && item.atSec !== undefined ? item.atSec : Number.POSITIVE_INFINITY,
                       heard: item.heard,
                       readings: withConfidence([item.proposed], item.confidence),
                   },

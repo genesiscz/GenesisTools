@@ -721,6 +721,17 @@ describe("watchOnce", () => {
         expect(other.runs).toEqual([]);
     });
 
+    test("a failed stop retains ownership and retries on the next tick", async () => {
+        const h = harness();
+        await watchOnce(h.store, { deps: h.deps, now });
+        const successfulRun = h.deps.run!;
+        h.deps.run = async () => ({ success: false, exitCode: 1, stderr: "timeout" });
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("failed");
+        h.deps.run = successfulRun;
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 215_000 })).toBe("stopped");
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop"]);
+    });
+
     test("a start that failed (no grant) is not retried for the same meeting", async () => {
         const h = harness({
             run: async () => ({ success: false, exitCode: 1, stderr: "Screen Recording is not granted" }),
@@ -1456,6 +1467,22 @@ describe("a term fix for one line, and a word that a question and an unlinked lo
                 format: "txt",
             })
         ).entries.map((entry) => entry.text);
+
+    test("a low-confidence line term leaves the same words elsewhere unmarked", () => {
+        const fix = item({
+            id: "i1",
+            kind: "term",
+            atSec: 10,
+            heard: "Ada",
+            proposed: "ADO",
+            scope: "line",
+            confidence: 0.2,
+            rules: [MeetingRule.Agent],
+        });
+        const result = apply([fix], [line("A", 0, "Ada řekla ne."), line("A", 10, "Je to v Ada.")]);
+        expect(result[0]).toBe("Ada řekla ne.");
+        expect(result[1]).not.toBe("Je to v Ada.");
+    });
 
     test("a fix scoped to its line leaves the same words elsewhere as heard", () => {
         const fix = item({

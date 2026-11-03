@@ -62,6 +62,27 @@ describe("answer log", () => {
         expect(readAnswerEvents(path)).toHaveLength(4);
     });
 
+    test("events appended during backlog replay are delivered exactly once", async () => {
+        const path = logFile([{ event: "round-start", at, pid: process.pid, open: 1 }]);
+        const events: string[] = [];
+        const code = await subscribeAnswers({
+            path,
+            fromStart: false,
+            timeoutMs: 1000,
+            write: (line) => {
+                const event = SafeJSON.parse(line, { jsonl: true }).event;
+                events.push(event);
+                if (event === "round-start") {
+                    appendAnswerEvent(path, answered("i1", "beta"));
+                    appendAnswerEvent(path, { event: "round-end", at, reason: "done", asked: 1, open: 0 });
+                }
+            },
+        });
+
+        expect(code).toBe(0);
+        expect(events).toEqual(["round-start", "answered", "round-end"]);
+    });
+
     test("a listener that is gone without a round-end is reported as an aborted round", async () => {
         const path = logFile([{ event: "round-start", at, pid: 424242, open: 1 }]);
         const lines: string[] = [];
