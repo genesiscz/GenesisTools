@@ -26,7 +26,7 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 ## Procedure (three-pass)
 
 1. **Export raw, never edit it.** `tools wisprflow meetings export <id> --dir <topic>/meetings/<date>-wisprflow
-   --timestamps`, without `--fix-term`. The raw `Transcript.md`, `Summary.md` and `meeting.json` stay next to the
+   --timestamps`. The raw `Transcript.md`, `Summary.md` and `meeting.json` stay next to the
    polished file. Details: [wisprflow.md](references/wisprflow.md).
 2. **Pass 1, the tool collects the facts.** `tools meetings new --source wisprflow:<id>` builds the meeting record
    (transcript, people, calendar entry, attendance and `sections[]` from the meeting platform). `tools meetings

@@ -8,10 +8,10 @@ polisher needs from it and where it falls short. Checked 2026-11-02 19:30.
 | Need | Command |
 |---|---|
 | Find the meeting | `tools wisprflow meetings list "<query>"` (`--since`, `--attendee`) |
-| Raw export, unchanged | `tools wisprflow meetings export <id> --dir <dir> --timestamps` (no `--fix-term`) |
+| Raw export, unchanged | `tools wisprflow meetings export <id> --dir <dir> --timestamps` |
 | Invitees and the Teams link | `tools wisprflow calendar search "<title>" --format json` -> `events[].attendees`, `conferenceUrl` |
-| Candidate term errors | `tools wisprflow meetings transcript <id> --vocab <file> --min-confidence 50 -o <scratch file>` |
-| Per-label stats, spans and "several people" hints | `tools wisprflow meetings speakers <id> --attendance teams` (`--gap 2m`, `--format json`). With `--attendance` it runs rule RA first (`absent-speaker`, `sole-attendee`). The spans come from silences, not from goodbyes, so still scan for leave phrases (R1) |
+| Candidate term errors | `tools meetings new --source wisprflow:<id>`, then `tools meetings suggest <meeting>` (the Wispr tool has no term check of its own any more) |
+| Per-label stats, spans and "several people" hints | `tools meetings speakers stats <meeting> --attendance teams` (`--gap 2m`, `--json`). The spans come from silences, not from goodbyes, so still scan for leave phrases (R1) |
 | Renames not yet on the server | `tools wisprflow doctor`, `--cross-check` |
 
 `<id>` is the meeting id, a share link or its slug.
@@ -29,8 +29,6 @@ polisher needs from it and where it falls short. Checked 2026-11-02 19:30.
 ## Known limits (requests are in the design document)
 
 - Read-only: no speaker rename, no per-turn re-attribution, no dictionary write.
-- The misheard-term check matches Czech words to the English developer glossary (329 suspects on the example meeting,
-  mostly false) and misses identifiers spoken with Czech suffixes or as syllables.
 - The Wispr summary's name suggestions can have the wrong grammatical case; check what the verb requires.
 - Join and leave times come from Teams (`tools ms-teams meetings attendance`), not from Wispr.
 - The raw meeting folder `~/Library/Application Support/Wispr Flow/meetings/<id>/` holds the evidence for speaker
