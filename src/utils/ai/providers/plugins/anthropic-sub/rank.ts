@@ -12,12 +12,30 @@ const TIERS: Record<AccountTier, RankTier> = {
     "no-data": "no-data",
 };
 
+/**
+ * The scorer's `dead` and `expired` groups are gates of their own, apart from its tier: a week at 99% is `dead`
+ * (headroom at most 2%) while its tier stays `ready` (`weekly-blocked` needs under 1%), and a stale payload under a
+ * dead login is `expired` with any tier. The Claude launchers skip both groups; the shared row says so in its tier,
+ * which no pick accepts.
+ */
+function tierOf(row: ScoredAccount): RankTier {
+    if (row.group === "expired" || row.subscriptionExpired) {
+        return "no-data";
+    }
+
+    if (row.group === "dead") {
+        return "weekly-blocked";
+    }
+
+    return TIERS[row.tier];
+}
+
 function toRanked(row: ScoredAccount, snapshot: AccountUsageSnapshot, sessions: number): RankedAccount {
     return {
         provider: snapshot.provider,
         accountId: snapshot.accountId,
         accountName: row.accountName,
-        tier: TIERS[row.tier],
+        tier: tierOf(row),
         longHeadroomPct: row.weeklyHeadroomPct,
         sessionHeadroomPct: row.sessionHeadroomPct,
         // The scorer already prefers capacity that refills soonest (its weekly scarcity rate); no separate bonus.
