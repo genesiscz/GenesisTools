@@ -36,7 +36,8 @@ public enum UsageDoor: Equatable, Sendable {
     case advise
     case attribution
     case drift
-    case digest(week: Bool)
+    /// `date`: the local day (or a day of the week) to read; nil is yesterday, or last week.
+    case digest(week: Bool, date: String? = nil)
     case pivot(UsageRange, by: String)
     case plans
     case proxy
@@ -57,7 +58,7 @@ public enum UsageDoor: Equatable, Sendable {
         case .advise: return ["ai", "usage", "limits", "advise", "--json"]
         case .attribution: return ["ai", "usage", "limits", "attribution", "--json"]
         case .drift: return ["ai", "usage", "limits", "drift", "--json"]
-        case .digest(let week): return ["ai", "usage", "digest", week ? "--week" : "--day", "--json"]
+        case .digest(let week, let date): return ["ai", "usage", "digest", week ? "--week" : "--day"] + (date.map { [$0] } ?? []) + ["--json"]
         case .pivot(let range, let by):
             return ["ai-spend", "pivot", "--since", range.rawValue, "--by", by, "--heatmap", "--json"]
         case .plans: return ["ai-spend", "plans", "--json"]
