@@ -3,7 +3,7 @@ import { parseWhen } from "@genesiscz/utils/ai/usage/contract/window";
 import { type PollRun, PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import { zonedDay } from "@genesiscz/utils/ai/usage/spend/reports/dates";
 import type { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
-import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
+import type { SeriesEntry, SeriesPoint } from "@genesiscz/utils/ai/usage-poll/series-rows";
 
 /**
  * The daily rollup (design 2026-11-01, step U10, proposal 16): one row per account, window and local day in
@@ -27,7 +27,7 @@ export interface DailyRow {
     endPct: number;
     peakPct: number;
     resets: number;
-    /** Reset cycles of the day whose highest reading reached 90 %. */
+    /** Reset cycles that first reached 90 % this day (a cycle crossing midnight counts on one day only). */
     cyclesOver90: number;
     readings: number;
     /** Minutes of the day the poller measured this account; null when no run says. */
@@ -94,22 +94,45 @@ function minutesIn(runs: readonly PollRun[], bounds: { start: number; end: numbe
     return any ? Math.round(ms / 60_000) : null;
 }
 
-function cyclesOver(values: readonly number[]): number {
-    let count = 0;
-    let peak = Number.NEGATIVE_INFINITY;
-    let previous: number | undefined;
+/** A new reset cycle began between two readings: a reset the series found, or a drop where no reset clock says. */
+function newCycle(previous: SeriesPoint, point: SeriesPoint, resets: readonly number[]): boolean {
+    const from = Date.parse(previous.t);
+    const to = Date.parse(point.t);
 
-    for (const value of values) {
-        if (previous !== undefined && value < previous) {
-            count += peak >= CYCLE_PEAK ? 1 : 0;
-            peak = Number.NEGATIVE_INFINITY;
-        }
-
-        peak = Math.max(peak, value);
-        previous = value;
+    if (resets.some((at) => from < at && at <= to)) {
+        return true;
     }
 
-    return count + (peak >= CYCLE_PEAK ? 1 : 0);
+    return previous.resetsAt === null && point.percent < previous.percent;
+}
+
+/**
+ * The reset cycles that reached 90 %, by local day: each cycle counts once, on the day its readings first reached
+ * 90 %, so a cycle that crosses midnight is not counted on both days. A cycle the carried reading already had at
+ * 90 % was counted on an earlier day.
+ */
+function cyclesOverByDay(entry: SeriesEntry, tz: string): Map<string, number> {
+    const counts = new Map<string, number>();
+    const resets = entry.resets.map((at) => Date.parse(at));
+    let previous = entry.carried;
+    let counted = previous !== undefined && previous.percent >= CYCLE_PEAK;
+
+    for (const point of entry.points) {
+        if (previous && newCycle(previous, point, resets)) {
+            counted = false;
+        }
+
+        const day = zonedDay(point.t, tz);
+
+        if (!counted && point.percent >= CYCLE_PEAK && day) {
+            counts.set(day, (counts.get(day) ?? 0) + 1);
+            counted = true;
+        }
+
+        previous = point;
+    }
+
+    return counts;
 }
 
 /** The local day of the oldest reading the store keeps; null on an empty store. */
@@ -190,6 +213,7 @@ export function dailyRowsOf(input: {
         }
 
         const rangeEnd = Math.max(0, ...entry.availability.map((s) => Date.parse(s.to)));
+        const cycles = cyclesOverByDay(entry, input.tz);
 
         for (const [day, points] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {
             const values = points.map((point) => point.percent);
@@ -210,7 +234,7 @@ export function dailyRowsOf(input: {
                 endPct: values[values.length - 1] ?? held ?? 0,
                 peakPct: values.length > 0 ? Math.max(...values) : (held ?? 0),
                 resets: entry.resets.filter((reset) => zonedDay(reset, input.tz) === day).length,
-                cyclesOver90: cyclesOver(values),
+                cyclesOver90: cycles.get(day) ?? 0,
                 readings: values.length,
                 minutesMeasured: minutesIn(runs, bounds),
                 availability: span?.state ?? "unknown",

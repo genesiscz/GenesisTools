@@ -144,6 +144,39 @@ describe("dailyRowsOf", () => {
         ]);
     });
 
+    test("a cycle over 90% that crosses midnight counts once, on the day it first reached 90%", () => {
+        const point = (t: string, percent: number, resetsAt: string) => ({ t, percent, resetsAt, severity: null });
+        const rows = dailyRowsOf({
+            series: [
+                {
+                    ...entry([]),
+                    resets: ["2026-11-02T03:00:00Z"],
+                    points: [
+                        point("2026-11-01T22:00:00Z", 92, "2026-11-02T03:00:00Z"),
+                        point("2026-11-02T01:00:00Z", 96, "2026-11-02T03:00:00Z"),
+                        point("2026-11-02T05:00:00Z", 10, "2026-11-02T08:00:00Z"),
+                        point("2026-11-02T07:00:00Z", 93, "2026-11-02T08:00:00Z"),
+                    ],
+                },
+                // The cycle carried into the range already reached 90% on an earlier day.
+                {
+                    ...entry([], { key: "five_hour_b" }),
+                    carried: point("2026-11-03T00:00:00Z", 95, "2026-11-03T05:00:00Z"),
+                    points: [point("2026-11-03T01:00:00Z", 97, "2026-11-03T05:00:00Z")],
+                },
+            ],
+            tz: TZ,
+            runs: [],
+            accountIdOf: () => "acc-work",
+        });
+
+        expect(rows.map((row) => [row.bucket, row.day, row.cyclesOver90])).toEqual([
+            ["five_hour", "2026-11-01", 1],
+            ["five_hour", "2026-11-02", 1],
+            ["five_hour_b", "2026-11-03", 0],
+        ]);
+    });
+
     test("one row per day with its first, last and peak reading, its resets, and the cycles that reached 90%", () => {
         const rows = dailyRowsOf({
             series: [
