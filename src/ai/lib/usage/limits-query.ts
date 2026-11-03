@@ -306,7 +306,7 @@ export async function querySeries(opts: SeriesOptions): Promise<UsageEnvelope<Li
                   },
                   { db, directory, current: snapshotsFromCache(cache) }
               )
-            : { stepMs, agg, series: [] };
+            : { stepMs, agg, series: [], coverage: [], events: [] };
     } finally {
         db?.close();
     }
