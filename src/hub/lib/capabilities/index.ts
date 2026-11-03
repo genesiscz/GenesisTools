@@ -57,6 +57,12 @@ function text(input: Readonly<Record<string, unknown>>, key: string): string | u
     return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
+/**
+ * The largest transcript page the gateway serves. The loader reads `offset + limit` turns, so an unbounded limit would
+ * hydrate a whole large session in the dashboard process; the hub's own door does not parse through here.
+ */
+export const TRANSCRIPT_PAGE_MAX = 500;
+
 /** A CLI-style value as its text: a typed caller may send a number (`{ limit: 5 }`) where the query sends "5". */
 function argText(input: Readonly<Record<string, unknown>>, key: string): string | undefined {
     const value = input[key];
@@ -213,8 +219,8 @@ export const HUB_CAPABILITIES = {
 
             const limit = wholeNumber(input, "limit", 80) as number;
 
-            if (limit < 1) {
-                throw new CapabilityRefusedError("bad-input", "limit must be above 0");
+            if (limit < 1 || limit > TRANSCRIPT_PAGE_MAX) {
+                throw new CapabilityRefusedError("bad-input", `limit must be between 1 and ${TRANSCRIPT_PAGE_MAX}`);
             }
 
             return { query, limit, offset: wholeNumber(input, "offset"), provider };

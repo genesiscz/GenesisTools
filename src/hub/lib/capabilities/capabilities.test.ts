@@ -5,6 +5,7 @@ import {
     type HubCapability,
     type HubCapabilityName,
     runCapability,
+    TRANSCRIPT_PAGE_MAX,
 } from "./index";
 
 function refusal(run: () => unknown): { code: string; message: string } | null {
@@ -80,6 +81,13 @@ describe("hub capabilities", () => {
             "bad-input"
         );
         expect(refusal(() => HUB_CAPABILITIES.transcript.parse({ query: "s", limit: "1.5" }))?.code).toBe("bad-input");
+        // A page past the cap is refused before anything is read, so a request cannot hydrate a whole session.
+        expect(HUB_CAPABILITIES.transcript.parse({ query: "s", limit: TRANSCRIPT_PAGE_MAX }).limit).toBe(
+            TRANSCRIPT_PAGE_MAX
+        );
+        expect(
+            refusal(() => HUB_CAPABILITIES.transcript.parse({ query: "s", limit: TRANSCRIPT_PAGE_MAX + 1 }))?.code
+        ).toBe("bad-input");
     });
 
     it("widget snapshot takes an optional selected key", () => {
