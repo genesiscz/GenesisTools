@@ -178,6 +178,18 @@ export function fixtureDraft(input: {
     };
 }
 
+/**
+ * The agent posts a decision again, as the Mac's store does on a re-post: a new revision, and the staged pick and note
+ * made on the old text are cleared, so the row waits again.
+ */
+export function fixtureRepost(session: string, number: number): void {
+    const item = findDecision(session, number);
+    item.revision += 1;
+    item.draftOption = null;
+    item.draft = null;
+    item.status = "waiting";
+}
+
 export function fixtureSendDrafts(input: {
     session: string;
     drafts?: { number: number; expectedRevision?: number }[];
@@ -185,18 +197,19 @@ export function fixtureSendDrafts(input: {
     const session = queue.find((entry) => entry.sessionId === input.session);
     // As on the Mac (`sendDrafts`): with `drafts`, only those decisions' drafts, each at the revision the caller showed.
     const shown = input.drafts ? new Map(input.drafts.map((entry) => [entry.number, entry])) : undefined;
-    const staged = (session?.items ?? []).filter(
-        (item): item is WaitingDecisionDto =>
-            item.kind === "decision" && item.status === "drafted" && (!shown || shown.has(item.number))
-    );
+    const decisions = (session?.items ?? []).filter((item): item is WaitingDecisionDto => item.kind === "decision");
 
-    for (const item of staged) {
-        const expected = shown?.get(item.number)?.expectedRevision;
+    // As on the Mac (`refuseStaleShown`): every shown decision is checked before any draft is picked. A re-post clears
+    // the draft, so checking only staged rows would send the other shown drafts as if the reviewed batch still stood.
+    for (const entry of input.drafts ?? []) {
+        const item = decisions.find((decision) => decision.number === entry.number);
 
-        if (expected !== undefined && expected !== item.revision) {
-            throw new Error(`DECISION ${item.number} changed: the agent posted a new text`);
+        if (item && entry.expectedRevision !== undefined && entry.expectedRevision !== item.revision) {
+            throw new Error(`DECISION ${entry.number} changed: the agent posted a new text`);
         }
     }
+
+    const staged = decisions.filter((item) => item.status === "drafted" && (!shown || shown.has(item.number)));
 
     if (!session || staged.length === 0) {
         throw new Error("nothing to send");
