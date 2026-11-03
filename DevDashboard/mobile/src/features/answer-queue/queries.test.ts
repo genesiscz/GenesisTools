@@ -20,6 +20,7 @@ import {
     keptOr,
     missingAnswers,
     pruneKept,
+    stagesOf,
     noteStateOf,
     reconcileNote,
     RECENT_RECEIPTS_MAX,
@@ -224,6 +225,37 @@ describe("answer queue rules", () => {
         pruneKept(kept, sessions.slice(1));
         expect(kept.notes.has("d_4")).toBe(false);
         expect(kept.forms.has("ask_fixture")).toBe(false);
+    });
+
+    it("a refused pick still blocks Send after the card remounts, until a later pick is accepted", async () => {
+        resetFixtureQueue();
+        const sessions = fixtureQueue().sessions;
+        const kept = keptEdits();
+        const saveNote = async () => {};
+
+        // First mount: pick a is staged, pick b is refused by the Mac.
+        const first = stagesOf(kept, "d_4");
+        first.pick.track(Promise.resolve());
+        const refused = Promise.reject(new Error("DECISION 4 changed: the agent posted a new text"));
+        refused.catch(() => undefined);
+        first.pick.track(refused);
+        await expect(flushDecision({ pick: first.pick, note: first.note, saveNote })).rejects.toThrow("changed");
+
+        // The list unmounted the card and mounted it again: the new card asks the same screen store.
+        const second = stagesOf(kept, "d_4");
+        expect(second).toBe(first);
+        await expect(flushDecision({ pick: second.pick, note: second.note, saveNote })).rejects.toThrow("changed");
+
+        // A later pick the Mac accepts clears the block, as on a card that never unmounted.
+        const accepted = Promise.resolve();
+        second.pick.track(accepted);
+        await accepted;
+        await expect(flushDecision({ pick: second.pick, note: second.note, saveNote })).resolves.toBeUndefined();
+
+        // The trackers leave with their decision, so a store never holds a failure for an item no longer shown.
+        pruneKept(kept, sessions.slice(1));
+        expect(kept.stages.has("d_4")).toBe(false);
+        expect(stagesOf(kept, "d_4")).not.toBe(first);
     });
 
     it("keeps recent receipts newest first, one per card, and drops the oldest past the cap", () => {
