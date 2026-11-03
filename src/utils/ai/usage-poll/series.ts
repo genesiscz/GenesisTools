@@ -239,7 +239,15 @@ function coverageAndEvents(
 
     const window = { from: new Date(request.from), to: new Date(request.to) };
     const providers = [...new Set([...accounts.values()].map((account) => account.provider))];
-    const runs = new PollRunsStore(db.connection()).runsBetween({ ...window, providers });
+    // Only the series' accounts are read, in SQL; the exact provider pairing is checked below.
+    const runs = new PollRunsStore(db.connection()).runsBetween({
+        ...window,
+        providers,
+        accounts: [...accounts.values()],
+    });
+    const identities = [
+        ...new Set([...accounts.values()].flatMap((account) => [account.accountId, account.accountName])),
+    ];
     const coverage = [...accounts.values()].map((account) => ({
         ...account,
         runs: runs
@@ -247,7 +255,7 @@ function coverageAndEvents(
             .map((run) => ({ from: run.from, to: run.to, outcome: run.outcome, source: run.source, polls: run.polls })),
     }));
     const events = new UsageEventsStore(db.connection())
-        .list({ ...window, providers })
+        .list({ ...window, providers, accounts: identities })
         .filter(
             (event) =>
                 accounts.has(pairKey(event.provider, event.accountName ?? "")) ||
