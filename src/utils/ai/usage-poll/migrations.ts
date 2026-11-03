@@ -210,4 +210,72 @@ export const USAGE_LIMITS_MIGRATIONS: Migration[] = [
             `);
         },
     },
+    {
+        /**
+         * One row per account, window and local day (step U10, proposal 16): the day's first, last and highest reading,
+         * its resets, how many cycles reached 90 %, and the minutes the poller measured. It outlives the 30-day prune
+         * of `usage_snapshots`, so trends past a month stay readable; the prune never touches it.
+         */
+        id: "2026-11-usage-daily",
+        description: "usage_daily table (daily rollup per account and window)",
+        isApplied(db) {
+            return tableExists(db, "usage_daily");
+        },
+        apply(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS usage_daily (
+                    provider TEXT NOT NULL,
+                    account_id TEXT,
+                    account_name TEXT NOT NULL,
+                    bucket TEXT NOT NULL,
+                    kind TEXT,
+                    day TEXT NOT NULL,
+                    tz TEXT NOT NULL,
+                    start_pct REAL NOT NULL,
+                    end_pct REAL NOT NULL,
+                    peak_pct REAL NOT NULL,
+                    resets INTEGER NOT NULL,
+                    cycles_over_90 INTEGER NOT NULL,
+                    readings INTEGER NOT NULL,
+                    minutes_measured INTEGER,
+                    availability TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, account_name, bucket, day)
+                );
+                CREATE INDEX IF NOT EXISTS idx_usage_daily_day
+                    ON usage_daily(day);
+            `);
+        },
+    },
+    {
+        /**
+         * What 1 % of a window buys, per account, model and ISO week (step U12, proposal 13): tokens and dollars per
+         * percentage point with a 95 % bootstrap interval from exclusive windows, or `insufficient` with the count.
+         */
+        id: "2026-11-limit-drift",
+        description: "limit_drift table (tokens and dollars per percent, per week)",
+        isApplied(db) {
+            return tableExists(db, "limit_drift");
+        },
+        apply(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS limit_drift (
+                    provider TEXT NOT NULL,
+                    account_id TEXT,
+                    account_name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    week TEXT NOT NULL,
+                    windows INTEGER NOT NULL,
+                    tokens_per_pct REAL,
+                    usd_per_pct REAL,
+                    ci_low REAL,
+                    ci_high REAL,
+                    status TEXT NOT NULL,
+                    computed_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, account_name, kind, model, week)
+                );
+            `);
+        },
+    },
 ];
