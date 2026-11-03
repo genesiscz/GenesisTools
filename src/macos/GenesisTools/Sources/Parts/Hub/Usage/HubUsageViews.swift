@@ -158,6 +158,9 @@ struct UsageMain: View {
         }
         .hubSurface(.content)
         .onChange(of: preferences.settings) { _, _ in usage.preferencesChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            usage.windowReturned()
+        }
     }
 
     @ViewBuilder
