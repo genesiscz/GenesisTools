@@ -469,6 +469,29 @@ describe("the seed from the old notifier", () => {
         ).toBe(0);
     });
 
+    test("a window that failed on the first tick is seeded on the tick it recovers, not announced again", async () => {
+        const side = (overrides: Partial<AccountUsageSnapshot>) =>
+            snapshot(85, { accountId: "acc_side", accountName: "side", ...overrides });
+        const trackers = {
+            "acc_work:five_hour": { lastNotifiedThreshold: 80, lastResetEpoch: Date.parse(RESET) },
+            "acc_side:five_hour": { lastNotifiedThreshold: 80, lastResetEpoch: Date.parse(RESET) },
+        };
+        const seed = (snapshots: AccountUsageSnapshot[], now: Date) =>
+            seedThresholdAlerts({ store, trackers, snapshots, settings: ALERT_RULE_DEFAULTS.threshold, now });
+
+        expect(seed([snapshot(85), side({ error: "usage endpoint 500", limits: [] })], NOW)).toBe(1);
+        expect(seed([snapshot(85), side({})], minutes(1))).toBe(1);
+        expect(
+            await runAlertEngine({
+                round: round({ now: minutes(2), snapshots: [snapshot(85), side({})] }),
+                config: config(),
+                store,
+                channels,
+            })
+        ).toEqual([]);
+        expect(seed([snapshot(85), side({})], minutes(3))).toBe(0);
+    });
+
     test("a tracker from an older cycle seeds nothing, so the new cycle still alerts", () => {
         const seeded = seedThresholdAlerts({
             store,
