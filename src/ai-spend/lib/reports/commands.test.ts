@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { homedir } from "node:os";
 import * as realCachedTitle from "@genesiscz/utils/agent-sessions/cached-title";
 import * as realCodexRollouts from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import * as realAttribution from "@genesiscz/utils/ai/usage/attribution";
 import * as realAccountsContext from "@genesiscz/utils/ai/usage/spend/accounts-context";
 import * as realConfig from "@genesiscz/utils/ai/usage/spend/config";
 import * as realEventsCache from "@genesiscz/utils/ai/usage/spend/events-cache";
@@ -29,6 +30,17 @@ mock.module("@genesiscz/utils/ai/usage/spend/reports/load-parallel", () => ({
     loadEventsParallel: async (options: LoadOptions) => {
         loadCalls.push(options);
         return fixtureEvents.filter((fixture) => !options.sources || options.sources.includes(fixture.source));
+    },
+}));
+
+type AttributedSpendInput = Parameters<typeof realAttribution.loadAttributedSpend>[0];
+const attributedCalls: AttributedSpendInput[] = [];
+
+mock.module("@genesiscz/utils/ai/usage/attribution", () => ({
+    ...realAttribution,
+    loadAttributedSpend: async (input: AttributedSpendInput) => {
+        attributedCalls.push(input);
+        return [];
     },
 }));
 
@@ -849,6 +861,18 @@ describe("--harness, the design name of --sources and --backend", () => {
         });
 
         expect(seriesCalls.map((call) => call.discoveredHomes)).toEqual([discoveredHomes]);
+    });
+
+    test("pivot and waste read only the agents --harness names", async () => {
+        attributedCalls.length = 0;
+
+        // Human output: `--json` awaits a stdout flush the spied stream never signals.
+        await spend("pivot", "--harness", "claude");
+        await spend("waste", "--sources", "codex");
+        await spend("pivot");
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(attributedCalls.map((call) => call.sources)).toEqual([["claude"], ["codex"], undefined]);
     });
 
     test("workers takes --harness for --backend", async () => {
