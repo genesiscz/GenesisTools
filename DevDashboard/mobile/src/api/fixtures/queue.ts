@@ -27,7 +27,17 @@ function choices(labels: string[], recommended: string | null) {
     });
 }
 
-function decision(number: number, prompt: string, labels: string[], recommended: string | null): WaitingDecisionDto {
+function decision({
+    number,
+    prompt,
+    labels,
+    recommended,
+}: {
+    number: number;
+    prompt: string;
+    labels: string[];
+    recommended: string | null;
+}): WaitingDecisionDto {
     return {
         kind: "decision",
         id: `d_${number}`,
@@ -57,8 +67,18 @@ function initialQueue(): WaitingSessionDto[] {
             project: "shop",
             counted: 3,
             items: [
-                decision(4, "Keep the parse cache between runs?", ["keep it", "drop it"], "a"),
-                decision(5, "Which port does the preview server take?", ["3000", "4173", "a free one"], "c"),
+                decision({
+                    number: 4,
+                    prompt: "Keep the parse cache between runs?",
+                    labels: ["keep it", "drop it"],
+                    recommended: "a",
+                }),
+                decision({
+                    number: 5,
+                    prompt: "Which port does the preview server take?",
+                    labels: ["3000", "4173", "a free one"],
+                    recommended: "c",
+                }),
                 {
                     kind: "form",
                     id: "ask_fixture",
@@ -84,7 +104,14 @@ function initialQueue(): WaitingSessionDto[] {
             title: "docs pass",
             project: "notes",
             counted: 1,
-            items: [decision(2, "Publish the draft now?", ["publish", "wait for review"], "b")],
+            items: [
+                decision({
+                    number: 2,
+                    prompt: "Publish the draft now?",
+                    labels: ["publish", "wait for review"],
+                    recommended: "b",
+                }),
+            ],
         },
     ];
 }

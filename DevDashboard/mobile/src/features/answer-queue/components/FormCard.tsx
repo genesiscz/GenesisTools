@@ -64,7 +64,11 @@ export function FormCard({
                                     accessibilityLabel={choice.label}
                                     onPress={() =>
                                         update(question.itemId, {
-                                            selected: togglePick(current.selected, choice.id, question.multiple),
+                                            selected: togglePick({
+                                                selected: current.selected,
+                                                choice: choice.id,
+                                                multiple: question.multiple,
+                                            }),
                                         })
                                     }
                                     className="min-h-11 justify-center rounded-lg border px-3 py-2"
