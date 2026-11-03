@@ -1,5 +1,5 @@
 import type { WaitingDecisionDto } from "@dd/contract";
-import { useContext, useEffect, useRef } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { KeptEditsContext, useKeptState, useStagePick } from "@/features/answer-queue/hooks";
@@ -46,6 +46,9 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
         setNoteState((state) => reconcileNote(state, { revision: decision.revision, draft: decision.draft }));
     }, [decision.revision, decision.draft, setNoteState]);
 
+    const [, setSettled] = useState(0);
+    const rerender = () => setSettled((count) => count + 1);
+
     const stageAsync = (patch: { option?: string; text?: string }, revision: number) => {
         const pending = stage.mutateAsync({
             session,
@@ -55,6 +58,8 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
             ...patch,
         });
         (patch.option === undefined ? noteStage : pickStage).track(pending);
+        // The tracker settles after the mutation's own render: render again so the refusal line follows the tracker.
+        pending.then(rerender, rerender);
         return pending;
     };
 
