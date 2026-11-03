@@ -533,6 +533,16 @@ function speakingNames(line: LineEvidence): string[] {
         .map(([name]) => name);
 }
 
+/** The people in the call with those the speaking indicator shows first; only those shown when nobody is known present. */
+function shownFirst(present: string[] | undefined, shown: string[]): string[] {
+    if (!present) {
+        return shown;
+    }
+
+    const first = present.filter((name) => shown.some((other) => sameName(other, name)));
+    return [...first, ...present.filter((name) => !first.includes(name))];
+}
+
 /**
  * Rule E1 with E3 and E4: what the audio channel says about one line.
  * - The user's microphone under another label: the line is the user.
@@ -657,7 +667,7 @@ function findingFor(options: {
                   confidence: selfMuted ? 0.85 : 0.8,
                   ...listen,
               }
-            : { candidates: present ?? shown, rules: [channel, ...rm], confidence: 0.6, ...listen };
+            : { candidates: shownFirst(present, shown), rules: [channel, ...rm], confidence: 0.6, ...listen };
     }
 
     if (labelMuted && !agreed) {

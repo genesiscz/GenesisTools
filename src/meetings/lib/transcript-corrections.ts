@@ -36,21 +36,32 @@ function unclearPassages(
               ]
             : []
     );
+    // A range with candidates and no speaker says only that the label is wrong; it is marked at any confidence, and
+    // its confidence is that the label is wrong, so no candidate carries it. A line marks once, so a range that names
+    // someone goes first.
+    const ranges = record.items.filter(
+        (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
+    );
     const unaskedRanges = opts.applied
-        ? record.items.flatMap((item): UnclearPassage[] =>
-              item.kind === "speaker-range" && unaskedLow(item)
-                  ? [
-                        {
-                            fromSec: item.fromSec,
-                            toSec: item.toSec,
-                            speaker: item.label,
-                            readings: withConfidence(
-                                item.speaker ? [item.speaker] : (item.candidates ?? []),
-                                item.confidence
-                            ),
-                        },
-                    ]
-                  : []
+        ? [...ranges.filter((item) => item.speaker), ...ranges.filter((item) => !item.speaker)].flatMap(
+              (item): UnclearPassage[] => {
+                  const nobody = !item.speaker && item.status === "suggested" && !asked.has(item.id);
+
+                  if (!nobody && !unaskedLow(item)) {
+                      return [];
+                  }
+
+                  return [
+                      {
+                          fromSec: item.fromSec,
+                          toSec: item.toSec,
+                          speaker: item.label,
+                          readings: item.speaker
+                              ? withConfidence([item.speaker], item.confidence)
+                              : (item.candidates ?? []),
+                      },
+                  ];
+              }
           )
         : [];
 
