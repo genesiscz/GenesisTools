@@ -38,6 +38,22 @@ describe("NeedsInputInboxPage", () => {
         expect(count).toBeGreaterThanOrEqual(0);
     });
 
+    // F6: the answer queue sits on top with the notch count; a staged pick sends as one message with a
+    // receipt. Runs against the fixture wire's two sessions; skips on a real Mac with nothing waiting.
+    it("stages a pick and sends it with a receipt", async function () {
+        const before = await needsInputInboxPage.queueCount();
+        if (!(await needsInputInboxPage.isExisting("answer-queue-decision-s-parser-4"))) {
+            this.skip();
+        }
+
+        await needsInputInboxPage.stage("s-parser", 4, "a");
+        await needsInputInboxPage.waitForExist("answer-queue-session-s-parser-send");
+        expect(await needsInputInboxPage.sendStaged("s-parser")).toContain("Delivered");
+        await needsInputInboxPage.waitUntil(async () => (await needsInputInboxPage.queueCount()) < before, {
+            message: "expected the queue count to drop after the send",
+        });
+    });
+
     it("renders items or the empty state", async () => {
         expect(await needsInputInboxPage.hasItemsOrEmpty()).toBe(true);
     });

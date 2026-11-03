@@ -1,13 +1,15 @@
 import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AnswerQueue } from "@/features/answer-queue/components/AnswerQueue";
 import { AttentionList } from "@/features/needs-input-inbox/components/AttentionList";
 import { useAttention, useResolveAttention } from "@/features/needs-input-inbox/hooks";
 import { Loading } from "@/ui/Loading";
 import { useThemeColors } from "@/theme/colors";
 
 /**
- * Needs-Input Inbox screen — the curated "what needs me right now" queue: the server joins today's
- * unread `action` QA entries with live agent ttyd sessions into one attention list. Tapping a
+ * Needs-Input Inbox screen — the curated "what needs me right now" queue. On top, the answer queue
+ * (F6): decisions and ask forms grouped by session, with the notch widget's count. Below, the
+ * attention list: today's unread `action` QA entries and live agent ttyd sessions. Tapping a
  * question resolves it (mark read → drops out); tapping an agent session jumps to its live terminal.
  *
  * Consumes ONLY the feature hooks (D32). Uses a bare `View` root + a `FlatList` (like the QA screen)
@@ -30,11 +32,14 @@ export function NeedsInputInboxScreen() {
     }
 
     if (attention.isError && items.length === 0) {
+        // The answer queue reads its own route, so a failed attention list never hides it.
         return (
             <View
                 testID="screen-needs-input-inbox"
-                className="flex-1 items-center justify-center gap-2 bg-dd-bg-base p-6"
+                className="flex-1 gap-2 bg-dd-bg-base p-6"
+                style={{ paddingTop: insets.top + 8 }}
             >
+                <AnswerQueue />
                 <Text
                     testID="needs-input-inbox-error"
                     className="text-base font-bold"
@@ -51,7 +56,11 @@ export function NeedsInputInboxScreen() {
 
     return (
         <View testID="screen-needs-input-inbox" className="flex-1 bg-dd-bg-base" style={{ paddingTop: insets.top + 8 }}>
-            <AttentionList items={items} onResolve={(qaId) => resolve.mutate(qaId)} />
+            <AttentionList
+                header={<AnswerQueue />}
+                items={items}
+                onResolve={(qaId) => resolve.mutate(qaId)}
+            />
         </View>
     );
 }
