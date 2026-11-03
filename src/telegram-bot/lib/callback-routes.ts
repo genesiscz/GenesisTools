@@ -67,6 +67,12 @@ export function decisionPressHandler(
             return { toast: reply.toast };
         }
 
+        // An unclaimed message (an earlier press took it, or the memory forgot it) keeps its text: a refusal says so in
+        // the toast and never overwrites the outcome an earlier press wrote there.
+        if (!claimed && receipt.outcome.kind === "refused") {
+            return { toast: reply.toast };
+        }
+
         // The outcome edit is what drops the buttons; if it fails, the retraction must still find the message.
         return claimed ? { ...reply, onEditFailed: () => rememberMessage(claimed.noticeId, claimed.posted) } : reply;
     };
