@@ -17,6 +17,16 @@ export interface HarnessFlag {
     raw: string | undefined;
 }
 
+/** A comma list as the parser reads it: entries trimmed, empty ones dropped, order and repeats ignored. */
+function listKey(raw: string): string {
+    const entries = raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+
+    return [...new Set(entries)].sort().join(",");
+}
+
 /**
  * The one list `--harness` and its older spelling give. `null` means both were given with different lists: the
  * diagnostic is printed and `process.exitCode` set, so the action returns.
@@ -30,7 +40,7 @@ export function resolveHarnessFlag({
     legacy: string | undefined;
     legacyFlag: string;
 }): HarnessFlag | null {
-    if (harness !== undefined && legacy !== undefined && harness.trim() !== legacy.trim()) {
+    if (harness !== undefined && legacy !== undefined && listKey(harness) !== listKey(legacy)) {
         out.error(`--harness ${harness} and ${legacyFlag} ${legacy} name different lists; pass one of them.`);
         process.exitCode = 1;
 
