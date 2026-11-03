@@ -50,7 +50,13 @@ export async function recordRoundAndAlert(input: {
         settings: input.config.alerts.rules.threshold,
         now,
     });
-    const round = buildAlertRound({ db: connection, snapshots: input.snapshots, now, previousRoundAt });
+    const round = buildAlertRound({
+        db: connection,
+        snapshots: input.snapshots,
+        now,
+        previousRoundAt,
+        config: input.config.alerts,
+    });
     const fired = await runAlertEngine({
         round,
         config: input.config.alerts,
