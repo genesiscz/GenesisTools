@@ -259,12 +259,16 @@ describe("answer queue rules", () => {
         const second = stagesOf(kept, "d_4");
         expect(second).toBe(first);
         await expect(flushDecision({ pick: second.pick, note: second.note, saveNote })).rejects.toThrow("changed");
+        // The remounted card has a fresh mutation with no error: the kept tracker carries the refusal it shows.
+        expect(second.pick.refusal()).toBeInstanceOf(Error);
+        expect(String(second.pick.refusal())).toContain("DECISION 4 changed");
 
         // A later pick the Mac accepts clears the block, as on a card that never unmounted.
         const accepted = Promise.resolve();
         second.pick.track(accepted);
         await accepted;
         await expect(flushDecision({ pick: second.pick, note: second.note, saveNote })).resolves.toBeUndefined();
+        expect(second.pick.refusal()).toBeNull();
 
         // The trackers leave with their decision, so a store never holds a failure for an item no longer shown.
         pruneKept(kept, sessions.slice(1));

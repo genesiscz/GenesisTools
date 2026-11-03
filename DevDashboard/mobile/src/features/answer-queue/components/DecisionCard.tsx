@@ -140,7 +140,11 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                 className="min-h-11 rounded-lg border border-dd-border bg-dd-bg-base px-3 py-2"
                 style={{ color: c.textPrimary }}
             />
-            {stage.isError ? <WriteError testID={`${testId}-error`} error={stage.error} /> : null}
+            {stage.isError || pickStage.refusal() ? (
+                // A remounted card's mutation has no error yet: the kept pick tracker still holds the refusal that
+                // blocks Send, so the card says why Send does nothing.
+                <WriteError testID={`${testId}-error`} error={stage.isError ? stage.error : pickStage.refusal()} />
+            ) : null}
         </View>
     );
 }
