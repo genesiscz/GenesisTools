@@ -77,6 +77,11 @@ export interface TranscriptEnvelope {
      * (`nextOffset === turnCount`). `truncated` cannot say that: any offset above 0 sets it.
      */
     turnCount?: number;
+    /**
+     * `"tail"`: a bounded read of the newest turns (`transcriptTailEnvelope`). It has no session-wide position, so
+     * `turnCount` and `totals` are absent and `nextOffset` counts only `turns`; never page or follow from it.
+     */
+    window?: "tail";
 }
 
 export function totalsOf(turns: readonly TranscriptTurn[]): TranscriptTotals {

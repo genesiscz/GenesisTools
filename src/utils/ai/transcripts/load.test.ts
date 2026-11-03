@@ -8,7 +8,7 @@ import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as fileScan from "./file-scan";
 import { readPrefixMark } from "./file-scan";
-import { transcriptEnvelope, transcriptSnapshot } from "./load";
+import { transcriptEnvelope, transcriptParser, transcriptSnapshot } from "./load";
 import { readRecordsAppendOnly } from "./record-cache";
 import type { ResolvedTranscript } from "./resolve";
 import { foldTurnsAppendOnly } from "./turn-fold-cache";
@@ -55,6 +55,57 @@ describe("transcriptEnvelope", () => {
             expect((await transcriptSnapshot(resolved))().turnCount).toBe(1);
         } finally {
             reader.mockRestore();
+        }
+    });
+
+    test("a bounded tail read of a large transcript with no turn index parses only its end, never every turn", async () => {
+        const file = join(fixtureRoot(), "large.jsonl");
+        const rows = Array.from({ length: 5000 }, (_, i) =>
+            SafeJSON.stringify({
+                type: "response_item",
+                timestamp: "2026-09-01T10:00:00.000Z",
+                payload: {
+                    type: "message",
+                    role: i % 2 ? "assistant" : "user",
+                    content: [{ type: i % 2 ? "output_text" : "input_text", text: String(i) }],
+                },
+            })
+        );
+        writeFileSync(file, `${rows.join("\n")}\n`);
+        const resolved: ResolvedTranscript = {
+            provider: "codex",
+            source: "native",
+            sessionId: "fixture",
+            filePath: file,
+        };
+        const parser = await transcriptParser("codex");
+        const whole = spyOn(parser, "fromFile");
+        const window = spyOn(parser, "fromLines");
+
+        try {
+            const page = await transcriptEnvelope(
+                resolved,
+                { limit: 1 },
+                { boundedTail: true, tailMinBytes: 1, tailWindows: [4096, 65_536] }
+            );
+
+            expect(page.turns.map((turn) => turn.text)).toEqual(["4999"]);
+            expect(whole).not.toHaveBeenCalled();
+            const parsed = window.mock.calls.reduce((sum, [, lines]) => sum + lines.length, 0);
+            expect(parsed).toBeGreaterThan(0);
+            expect(parsed).toBeLessThan(rows.length / 10);
+            // A window knows no session-wide position: no turn count, no totals, and it says so.
+            expect(page).toMatchObject({ window: "tail", truncated: true, terminated: null });
+            expect(page.turnCount).toBeUndefined();
+            expect(page.totals).toBeUndefined();
+
+            // Without the opt-in (the hub's paging and live follow), the page keeps its session-wide positions.
+            const exact = await transcriptEnvelope(resolved, { limit: 1 });
+            expect(exact).toMatchObject({ turnCount: 5000, nextOffset: 5000 });
+            expect(exact.window).toBeUndefined();
+        } finally {
+            whole.mockRestore();
+            window.mockRestore();
         }
     });
 
