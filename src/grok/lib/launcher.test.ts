@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { answerVersionProbe, isAccountlessProbe, type VersionProbeDeps } from "@app/ai/lib/embed/probe";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
-import { type GrokEmbedDeps, grokEmbedSpawn, isAccountlessProbe, runGrokEmbed } from "./embed";
+import { type GrokEmbedDeps, grokEmbedSpawn, runGrokEmbed } from "./embed";
 import { assertGrokLeaderAuthSafe, grokLauncher } from "./launcher";
 
 /**
@@ -177,5 +181,49 @@ describe("tools grok embed", () => {
 
         expect(isAccountlessProbe(["models"])).toBe(false);
         expect(isAccountlessProbe(["agent", "--version"])).toBe(false);
+    });
+});
+
+describe("answerVersionProbe (the embed launchers' --version)", () => {
+    const fakeChild = (
+        stdout: string,
+        code: number
+    ): { deps: VersionProbeDeps; printed: string[]; argvs: string[][] } => {
+        const printed: string[] = [];
+        const argvs: string[][] = [];
+        return {
+            printed,
+            argvs,
+            deps: {
+                spawn: (argv) => {
+                    argvs.push(argv);
+                    return { stdout: Promise.resolve(stdout), exited: Promise.resolve(code) };
+                },
+                write: (text) => printed.push(text),
+            },
+        };
+    };
+
+    test("a clean answer is printed and kept with the binary it came from", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "embed-version-")));
+        const cachePath = join(dir, "cache", "embed-version.txt");
+        const child = fakeChild("9.9.9 (Fixture)\n", 0);
+
+        const code = await answerVersionProbe({ binary: dir, env: {}, cachePath }, child.deps);
+
+        expect(code).toBe(0);
+        expect(child.argvs).toEqual([[dir, "--version"]]);
+        expect(child.printed).toEqual(["9.9.9 (Fixture)\n"]);
+        expect(readFileSync(cachePath, "utf8")).toBe(`${dir}\n${dir}\n9.9.9 (Fixture)\n`);
+    });
+
+    test("NEGATIVE CONTROL: a failed answer is printed but never kept, so the next probe asks the binary again", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "embed-version-")));
+        const cachePath = join(dir, "embed-version.txt");
+        const child = fakeChild("boom\n", 3);
+
+        expect(await answerVersionProbe({ binary: dir, env: {}, cachePath }, child.deps)).toBe(3);
+        expect(child.printed).toEqual(["boom\n"]);
+        expect(existsSync(cachePath)).toBe(false);
     });
 });

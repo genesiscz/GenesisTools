@@ -9,6 +9,7 @@ import {
     statSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { versionFastPathLines } from "@app/ai/lib/embed/probe";
 import { embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -60,6 +61,7 @@ export function renderLauncher(input: { spec: LauncherSpec; checkout: string }):
         lines.push(`export ${embedAccountEnvVar(spec.alias)}=${shellQuote(spec.account)}`);
     }
 
+    lines.push(...versionFastPathLines(spec.alias));
     lines.push(`exec ${shellQuote(join(checkout, "tools"))} ${spec.alias} embed -- "$@"`);
 
     return `${lines.join("\n")}\n`;

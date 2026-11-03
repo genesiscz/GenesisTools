@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { versionFastPathLines } from "@app/ai/lib/embed/probe";
 import { embedLauncher } from "@app/ai/lib/embed/registry";
 import { type AccountEntry, accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
@@ -362,6 +363,9 @@ describe("launchers", () => {
             "#!/bin/zsh\n" +
                 "# codex for apps that embed it (T3 Code). Written by tools t3 launchers install; rewrite it with that command.\n" +
                 'export PATH="$HOME/.bun/bin:$PATH"\n' +
+                versionFastPathLines("codex")
+                    .map((line) => `${line}\n`)
+                    .join("") +
                 "exec '/opt/GenesisTools/tools' codex embed -- \"$@\"\n"
         );
         expect(pinned).toContain("export TOOLS_CLAUDE_EMBED_ACCOUNT='it'\\''s work'\n");

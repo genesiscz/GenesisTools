@@ -1,7 +1,12 @@
+import { runBinaryDirect } from "@app/ai/lib/embed/direct-run";
+import { answerVersionProbe, embedVersionCachePath, isAccountlessProbe } from "@app/ai/lib/embed/probe";
 import type { EmbedLauncher } from "@app/ai/lib/embed/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { firstUsableClaudeBinary } from "./teammate-wrapper";
 
 /**
  * The account name `tools claude run` gets for an embed request. `tools t3 providers add` and its doctor accept an
@@ -25,6 +30,22 @@ export const claudeEmbed: EmbedLauncher = {
     hostProtocol: "claude-stream-json",
     servesProxy: true,
     async run({ request, argv }) {
+        const binary = isAccountlessProbe(argv) ? firstUsableClaudeBinary() : null;
+
+        if (binary) {
+            // No account, no vault: `tools claude start` would load both before an answer that names neither.
+            logger.info({ argv }, "[claude embed] health probe; runs without an account");
+            process.exitCode =
+                argv[0] === "--version"
+                    ? await answerVersionProbe({
+                          binary,
+                          env: env.getProcessEnv(),
+                          cachePath: embedVersionCachePath("claude"),
+                      })
+                    : await runBinaryDirect({ argv: [binary, ...argv], env: env.getProcessEnv() });
+            return;
+        }
+
         if (request.kind === "proxy") {
             const { runProxySession } = await import("@app/claude/commands/run");
             await runProxySession(request.target, { sdk: true }, argv);
