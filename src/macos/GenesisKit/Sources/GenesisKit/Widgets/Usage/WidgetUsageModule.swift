@@ -135,7 +135,8 @@ struct WidgetUsageModuleView: View {
     }
 }
 
-/// One account: its mark and name, 5h (or "no 5h"), week, the burn against the safe pace and the time to the limit.
+/// One account: its mark and name, 5h (or "no 5h"), week, then the time to the limit ("past reset" when it lasts)
+/// above the burn against the safe pace.
 struct WidgetUsageRow: View, Equatable {
     let row: UsageTableRow
     let open: () -> Void
@@ -149,10 +150,16 @@ struct WidgetUsageRow: View, Equatable {
             Spacer(minLength: 4)
             cell("5h", row.cells["session"])
             cell("wk", row.cells["weekly"])
-            Text(verbatim: row.limitBeforeReset ? (row.limitText ?? "") : (row.ratePerHour.map { UsageFormat.rate($0) } ?? ""))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(row.limitBeforeReset ? UsageTone.severity("warning") : .secondary)
-                .frame(width: 58, alignment: .trailing)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(verbatim: row.limitText ?? "—")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(row.limitBeforeReset ? UsageTone.severity("warning") : .secondary)
+                Text(verbatim: UsageFormat.pace(row.ratePerHour, safe: row.safePerHour))
+                    .font(.system(size: 8.5, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .frame(width: 92, alignment: .trailing)
         }
         .frame(height: 24)
         .contentShape(Rectangle())

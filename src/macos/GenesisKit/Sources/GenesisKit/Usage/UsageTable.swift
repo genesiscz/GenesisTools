@@ -71,7 +71,7 @@ public enum UsageTableBuilder {
                 cells[key] = UsageTableCell(percent: nil, resetsAt: nil, severity: nil, absent: true)
             }
             let mine = (series?.series ?? []).filter { $0.account.id == account.key.id || ($0.provider == account.provider && $0.accountName == account.accountName) }
-            let binding = bindingForecast(mine)
+            let binding = bindingForecast(mine, now: now)
             let sparkSource = mine.first { $0.kind == "session" && $0.availableNow != "absent" } ?? mine.first { $0.kind == "weekly" }
             let spark = sparkSource.map { item in (item.bins?.map(\.close) ?? item.points?.map(\.v) ?? []) } ?? []
             let accountHealth = health?.accounts.first { $0.account.id == account.key.id }
@@ -90,11 +90,20 @@ public enum UsageTableBuilder {
     }
 
     /// The window that decides the account: the one that runs out first before its reset, else the 5h (when the
-    /// account has one), else the week.
-    static func bindingForecast(_ items: [UsageSeriesItem]) -> UsageLimitForecast? {
-        let forecasts = items.filter { $0.availableNow != "absent" }.compactMap { item in item.forecast.map { (item, $0) } }
+    /// account has one), else the week. A stale forecast, or one whose reset has passed (since its last sample, or by
+    /// the clock), says nothing about the window now, as the lanes and the hub forecast already treat it.
+    static func bindingForecast(_ items: [UsageSeriesItem], now: Date) -> UsageLimitForecast? {
+        let forecasts = items.filter { $0.availableNow != "absent" }
+            .compactMap { item in item.forecast.map { (item, $0) } }
+            .filter { isCurrent($0.1, now: now) }
         let early = forecasts.filter { $0.1.beforeReset }.min { ($0.1.exhaustAt ?? "") < ($1.1.exhaustAt ?? "") }
         return (early ?? forecasts.first { $0.0.kind == "session" } ?? forecasts.first { $0.0.kind == "weekly" })?.1
+    }
+
+    static func isCurrent(_ forecast: UsageLimitForecast, now: Date) -> Bool {
+        if forecast.stale == true || forecast.resetSinceSample == true { return false }
+        guard let reset = UsageTime.date(forecast.resetsAt) else { return true }
+        return reset > now
     }
 
     static func limitText(_ forecast: UsageLimitForecast?, now: Date) -> String? {
