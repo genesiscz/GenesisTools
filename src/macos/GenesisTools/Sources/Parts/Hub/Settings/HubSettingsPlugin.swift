@@ -16,6 +16,8 @@ package final class HubSettingsPlugin: FeatureSettingsPlugin {
         // A running hub follows a change at once.
         host.register(section: HubSettingsPages.section())
         host.register(section: PRActivitySettingsPages.section(store: notify))
+        // The hub's Usage mode draws with these (GenesisKit Usage/UsagePreferences.swift).
+        host.register(section: UsageSettingsPages.section())
     }
 
     /// The PR activity page reads `tools hub notify status` when it appears; a snapshot of it waits for that.

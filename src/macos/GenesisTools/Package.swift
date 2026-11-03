@@ -18,13 +18,16 @@ struct AppPart {
     let path: String
     /// Parts a build with this one makes too (parts.ts `requires`). Never a code dependency: the targets stay apart.
     var requires: [String] = []
+    /// Optional GenesisKit libraries this part imports besides the full kit (`GenesisKitCharts` for the hub's Usage
+    /// mode sunburst). An app compiles a library only when a linked part names it.
+    var kits: [String] = []
 }
 
 let allParts: [AppPart] = [
     // The feature settings window (`--features`): General, Background, About, plus each linked part's plug-in.
     AppPart(id: "features", target: "GenesisToolsFeatures", path: "Sources/Parts/Features"),
     // The hub, the widget and Clicky have pages in that window, so a build with one of them makes it too.
-    AppPart(id: "hub", target: "GenesisToolsHub", path: "Sources/Parts/Hub", requires: ["features"]),
+    AppPart(id: "hub", target: "GenesisToolsHub", path: "Sources/Parts/Hub", requires: ["features"], kits: ["GenesisKitCharts"]),
     AppPart(id: "widget", target: "GenesisToolsWidget", path: "Sources/Parts/Widget", requires: ["features"]),
     AppPart(id: "clicky", target: "GenesisToolsClicky", path: "Sources/Parts/Clicky", requires: ["features"]),
     AppPart(id: "markdown", target: "GenesisToolsMarkdown", path: "Sources/Parts/Markdown"),
@@ -53,9 +56,11 @@ let hostTarget: Target = .target(
 )
 let fullKit: Target.Dependency = .product(name: "GenesisKit", package: "GenesisKit")
 
-// Every part links the host and the full kit, and nothing else; the host links only GenesisKitBase.
+// Every part links the host, the full kit and the optional kit libraries it names, and nothing else; the host links
+// only GenesisKitBase.
 let partTargets: [Target] = allParts.map { appPart in
-    .target(name: appPart.target, dependencies: [.target(name: "GenesisToolsHost"), fullKit], path: appPart.path)
+    let kits = appPart.kits.map { Target.Dependency.product(name: $0, package: "GenesisKit") }
+    return .target(name: appPart.target, dependencies: [.target(name: "GenesisToolsHost"), fullKit] + kits, path: appPart.path)
 }
 
 let executableDependencies: [Target.Dependency] =

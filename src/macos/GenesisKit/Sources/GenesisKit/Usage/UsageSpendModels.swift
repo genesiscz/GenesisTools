@@ -57,7 +57,8 @@ public struct UsagePlansData: Decodable, Equatable, Sendable {
 /// One subscription account's current billing cycle: list-price spend against the plan's price.
 public struct UsagePlanCycle: Decodable, Equatable, Sendable, Identifiable {
     public let account: UsageAccountKey
-    public let plan: String
+    /// Nil when the account's login recorded no plan name.
+    public let plan: String?
     public let cycle: UsageCycle
     public let renewsInDays: Double?
     public let spendUsd: Double
@@ -70,7 +71,7 @@ public struct UsagePlanCycle: Decodable, Equatable, Sendable, Identifiable {
     public let usdPerWeeklyPoint: Double?
     public let approximate: Bool?
 
-    public var id: String { account.id + "\u{1}" + plan }
+    public var id: String { account.id + "\u{1}" + (plan ?? "") }
 }
 
 public struct UsageCycle: Decodable, Equatable, Sendable {
@@ -195,6 +196,11 @@ public struct UsageAttributionBar: Decodable, Equatable, Sendable, Identifiable 
     public let unattributed: UsageUnattributed?
 
     public var id: String { account.id + "\u{1}" + key }
+}
+
+/// A bar is one choice of a picker: hashed by its identity, equal by its whole value.
+extension UsageAttributionBar: Hashable {
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 public struct UsageProjectShare: Decodable, Equatable, Sendable, Identifiable {

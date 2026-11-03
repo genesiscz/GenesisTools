@@ -373,8 +373,11 @@ public struct NativeMatrixHeatmap: View {
     private let rows: [String]
     private let columns: [String]
     private let cells: [NativeHeatmapCell]
-    public init(rows: [String], columns: [String], cells: [NativeHeatmapCell]) {
-        self.rows = rows; self.columns = columns; self.cells = cells
+    private let valueText: (Double) -> String
+    /// - Parameter valueText: a cell's value in the hover label; Clicky's key presses by default.
+    public init(rows: [String], columns: [String], cells: [NativeHeatmapCell],
+                valueText: @escaping (Double) -> String = { NativeChartSampling.valueText($0) + " presses" }) {
+        self.rows = rows; self.columns = columns; self.cells = cells; self.valueText = valueText
     }
     public var body: some View {
         let values = Dictionary(cells.map { ($0.id, $0.value) }, uniquingKeysWith: +)
@@ -392,7 +395,7 @@ public struct NativeMatrixHeatmap: View {
                     Text(rows[row]).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 32, alignment: .leading)
                     ForEach(columns.indices, id: \.self) { column in
                         let value = values["\(row).\(column)", default: 0]
-                        let label = "\(rows[row]), \(columns[column]):00 · \(NativeChartSampling.valueText(value)) presses"
+                        let label = "\(rows[row]), \(columns[column]):00 · \(valueText(value))"
                         RoundedRectangle(cornerRadius: 3)
                             .fill(.mint.opacity(value == 0 ? 0.06 : 0.15 + 0.85 * pow(value / peak, 0.6)))
                             .frame(maxWidth: .infinity).frame(height: 23)

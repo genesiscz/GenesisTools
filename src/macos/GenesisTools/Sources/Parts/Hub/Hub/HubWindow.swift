@@ -92,6 +92,12 @@ struct HubRequest {
     /// `--timeline-action diff` for a review comment's "Open in the diff"), else the row's click.
     var timelineOpen: String?
     var timelineAction: String?
+    /// Usage mode: opens this section (`--usage-section spend`) or one session's analysis (`--usage-session <id>`,
+    /// Usage/HubUsageModel.swift).
+    var usageSection: String?
+    var usageSession: String?
+    /// Usage mode: shows these accounts' lanes (`--usage-account <id or name>`, repeatable).
+    var usageAccounts: [String] = []
     /// `--set <key>=<true|false>`: a setting of the scratch copy a scripted run starts from (the PR
     /// threads list open: `--set review.prThreads.open=true`). Never written to the live settings.
     var settings: [String: Bool] = [:]
@@ -123,6 +129,7 @@ struct HubRequest {
     var launchMode: HubMode {
         if let mode { return mode }
         if agent != nil { return .agents }
+        if usageSection != nil || usageSession != nil || !usageAccounts.isEmpty { return .usage }
         if pr != nil { return .prs }
         if commit != nil || worktree != nil { return .worktrees }
         return inboxItem != nil ? .inbox : .sessions
@@ -139,6 +146,7 @@ struct HubRequest {
         if prompts { parts.insert("prompts") }
         if handoff { parts.insert("handoff") }
         if rules { parts.insert("rules") }
+        if mode == .usage || usageSection != nil || usageSession != nil || !usageAccounts.isEmpty { parts.insert("usage") }
         return parts
     }
 
@@ -202,6 +210,16 @@ struct HubRequest {
             case "--decision", "--question": inboxItem = value; index += 1
             case "--timeline-open": timelineOpen = value; index += 1
             case "--timeline-action": timelineAction = value; index += 1
+            case "--usage-section":
+                usageSection = value
+                if let value, HubUsageSection(rawValue: value) == nil {
+                    problems.append("usage-section=\(value) is no usage section (\(HubUsageSection.allCases.map(\.rawValue).joined(separator: ", ")))")
+                }
+                index += 1
+            case "--usage-session": usageSession = value; index += 1
+            case "--usage-account":
+                if let value { usageAccounts.append(value) }
+                index += 1
             case "--set":
                 let pair = (value ?? "").split(separator: "=", maxSplits: 1).map(String.init)
                 if pair.count == 2 {
@@ -517,10 +535,11 @@ struct HubNotice: Equatable {
 /// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
 /// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
 enum HubMode: String, CaseIterable {
-    case sessions, worktrees, prs, inbox, timeline, agents
+    case sessions, worktrees, prs, inbox, timeline, agents, usage
 
     var title: String {
         switch self {
+        case .usage: return "Usage"
         case .sessions: return "Sessions"
         case .worktrees: return "Worktrees"
         case .prs: return "PRs"
@@ -539,6 +558,7 @@ enum HubMode: String, CaseIterable {
         case .inbox: return waiting > 0 ? "Inbox: sessions waiting for your answer (\(waiting))" : "Inbox: sessions waiting for your answer (none right now)"
         case .timeline: return "Activity: sessions, commits, pushes, PR events, review comments, decisions and CI results across your projects, by day"
         case .agents: return "Agents: every session's sub-agents, teammates and codex or grok workers, live, each with its whole transcript"
+        case .usage: return "Usage: every AI account's limits, burn and forecast, spend over time, who ate the bar, plans and workers"
         }
     }
 }
@@ -797,12 +817,19 @@ final class HubModel {
     let timeline: HubTimelineModel
     /// Agents mode state (`tools hub agents`), Hub/HubAgents.swift.
     let agents: HubAgentsModel
+    /// Usage mode state (`tools ai usage … --json`), Usage/HubUsageModel.swift.
+    let usage: HubUsageModel
 
     init(wantedSession: String?, tab: HubTab) {
         prs = MainActor.assumeIsolated { PRsModel() }
         inbox = MainActor.assumeIsolated { HubInboxModel() }
         timeline = MainActor.assumeIsolated { HubTimelineModel() }
         agents = MainActor.assumeIsolated { HubAgentsModel() }
+        // A scripted run reads and writes its scratch copy of the settings, and tells no other process.
+        usage = MainActor.assumeIsolated {
+            HubUsageModel(preferences: HubDefaults.isolated
+                ? UsagePreferences(defaults: HubDefaults.store, broadcasts: false, observeExternalChanges: false) : .shared)
+        }
         self.wantedSession = wantedSession
         self.tab = tab
         if !panes.contains(tab) {
@@ -1052,6 +1079,7 @@ final class HubModel {
         case .inbox: return HubNavEntry(mode: .inbox, selection: inbox.selectedID ?? Self.wholeList)
         case .timeline: return HubNavEntry(mode: .timeline, selection: Self.wholeList)
         case .agents: return HubNavEntry(mode: .agents, selection: agents.selectedID ?? Self.wholeList)
+        case .usage: return HubNavEntry(mode: .usage, selection: usage.section.rawValue)
         }
     }
 
@@ -1146,6 +1174,8 @@ final class HubModel {
             inbox.selectedID = id == Self.wholeList ? nil : id
         case .timeline:
             break
+        case .usage:
+            if let section = HubUsageSection(rawValue: id) { usage.section = section }
         case .agents:
             if id == Self.wholeList {
                 agents.selectedID = nil
@@ -1204,6 +1234,8 @@ final class HubModel {
             name = id == Self.wholeList ? "Inbox" : "Inbox: " + (inbox.sessions.first { $0.id == id }?.displayTitle ?? "a session")
         case .timeline:
             name = "Activity"
+        case .usage:
+            name = "Usage: " + (HubUsageSection(rawValue: id)?.title ?? id)
         case .agents:
             name = id == Self.wholeList ? "Agents" : agents.selectedMain.map { "main of " + $0.displayTitle } ?? ("agent " + (agents.selected?.node.title ?? String((AgentTree.split(id)?.child ?? id).prefix(12))))
         }
@@ -1268,6 +1300,7 @@ final class HubModel {
             } else {
                 agents.deactivate()
             }
+            if next == .usage { usage.activate() } else { usage.deactivate() }
         }
         if next == .inbox {
             MainActor.assumeIsolated { inbox.loadIfStale() }
@@ -1687,6 +1720,11 @@ final class HubModel {
                 }
             }
             setMode(.agents)
+        } else if initialMode == .usage {
+            // The Usage mode reads its doors when it opens; a snapshot waits for them (`HubSnapshotLoads` "usage").
+            setMode(.usage)
+            onSettled?()
+            onSettled = nil
         } else if initialMode == .inbox || initialMode == .timeline {
             let settle: () -> Void = { [weak self] in
                 self?.onSettled?()
@@ -1891,6 +1929,19 @@ final class HubModel {
                     context: request.widgetContext, cwd: request.widgetCwd)
             }
         }
+        if request.usageSection != nil || request.usageSession != nil || !request.usageAccounts.isEmpty {
+            MainActor.assumeIsolated {
+                if !request.usageAccounts.isEmpty {
+                    usage.pendingAccounts = request.usageAccounts
+                    usage.section = .limits
+                }
+                if let id = request.usageSession {
+                    usage.openSession(id)
+                } else if let section = request.usageSection.flatMap(HubUsageSection.init(rawValue:)) {
+                    usage.section = section
+                }
+            }
+        }
         if let text = request.filter {
             filter = text
         }
@@ -2008,6 +2059,8 @@ final class HubModel {
             setMode(mode)
         } else if request.inboxItem != nil {
             setMode(.inbox)
+        } else if request.usageSection != nil || request.usageSession != nil || !request.usageAccounts.isEmpty {
+            setMode(.usage)
         }
         if let worktree = request.worktree {
             setMode(.worktrees)
@@ -2307,6 +2360,9 @@ struct HubRootView: View {
             } else if model.mode == .timeline {
                 TimelineMain(model: model, timeline: model.timeline)
                     .flexiblePane(neighbourOf: "hub.sidebar")
+            } else if model.mode == .usage {
+                UsageMain(model: model, usage: model.usage)
+                    .flexiblePane(neighbourOf: "hub.sidebar")
             } else if model.mode == .agents {
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.
                 AgentsMain(model: model, agents: model.agents)
@@ -2390,7 +2446,7 @@ extension HubModel {
     var snapshotShowsDiff: Bool {
         switch mode {
         case .prs: return true
-        case .inbox, .timeline: return false
+        case .inbox, .timeline, .usage: return false
         case .worktrees: return selectedWorktree != WorktreeCleanup.selectionID && review != nil
         case .agents: return (agents.selectedMain != nil || agents.selected?.parent != nil) && panes.contains(.changes) && review != nil
         case .sessions: return selected != nil && selectedID != AgentProcs.selectionID && panes.contains(.changes) && review != nil
@@ -2403,7 +2459,7 @@ extension HubModel {
     var showsTitlebarHeader: Bool {
         switch mode {
         case .prs: return prs.selected != nil
-        case .inbox, .timeline: return true
+        case .inbox, .timeline, .usage: return true
         case .agents: return agents.selected != nil || agents.selectedMain != nil
         case .worktrees:
             return worktrees.contains { $0.path == selectedWorktree }
@@ -2451,7 +2507,7 @@ private struct HubModePicker: View {
 
     static let symbols: [HubMode: String] = [
         .sessions: "text.bubble", .worktrees: "arrow.triangle.branch", .prs: "arrow.triangle.pull",
-        .inbox: "tray", .timeline: "clock", .agents: "person.2",
+        .inbox: "tray", .timeline: "clock", .agents: "person.2", .usage: "chart.bar.xaxis",
     ]
 
     /// Six titles need about 340 pt at the small control size; narrower, the row shows icons.
@@ -2607,6 +2663,7 @@ private struct SessionListView: View {
         case .inbox: return "Filter waiting sessions and questions…"
         case .timeline: return "Filter the activity: title, project, branch, author, sha…"
         case .agents: return "Filter agents, sessions, models, accounts…"
+        case .usage: return "Filter accounts…"
         case .worktrees, .prs: return "Filter repos, branches…"
         }
     }
@@ -2720,6 +2777,8 @@ private struct SessionListView: View {
                             select: { model.timeline.project = $0 == Self.allProjects ? nil : $0 },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
+            } else if model.mode == .usage {
+                UsageListView(usage: model.usage)
             } else if model.mode == .agents {
                 // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
                 if NativeStaging.facesEnabled {

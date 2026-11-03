@@ -48,6 +48,8 @@ struct HubPlace: Codable, Equatable {
             return ["--mode", "prs"] + (picked.map { ["--pr", $0] } ?? [])
         case .inbox, .timeline:
             return ["--mode", mode.rawValue]
+        case .usage:
+            return ["--mode", "usage"] + (picked.map { ["--usage-section", $0] } ?? [])
         case .agents:
             guard let picked, let key = AgentTree.split(picked) else { return ["--mode", "agents"] }
             if key.child == AgentTree.mainChild, let parent = key.parent {

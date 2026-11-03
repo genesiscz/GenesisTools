@@ -248,7 +248,8 @@ public enum UsageLaneBuilder {
             beforeReset: forecast.beforeReset)
     }
 
-    static func spike(_ spike: UsageSpike) -> UsageLaneSpike? {
+    /// A spike of `limits spikes` as the lanes mark it; the Spikes list picks through the same value as a diamond.
+    public static func spike(_ spike: UsageSpike) -> UsageLaneSpike? {
         guard let from = UsageTime.date(spike.from), let to = UsageTime.date(spike.to) else { return nil }
         let minutes = Int((to.timeIntervalSince(from) / 60).rounded())
         let top = spike.sessions.first
