@@ -37,11 +37,15 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 { registerAiUsageLimitsCommand },
                 { registerAiUsageSessionsCommand },
                 { registerUsageDaemonCommands },
+                { registerAiUsageEventsCommand },
+                { registerAiUsageAlertsCommand },
             ] = await Promise.all([
                 import("./commands/usage/index"),
                 import("./commands/usage/limits"),
                 import("./commands/usage/sessions"),
                 import("./commands/usage/daemon"),
+                import("./commands/usage/events"),
+                import("./commands/usage/alerts"),
             ]);
 
             return (program: Command) => {
@@ -50,6 +54,8 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 registerAiUsageLimitsCommand(usageCmd);
                 registerAiUsageSessionsCommand(usageCmd);
                 registerUsageDaemonCommands(usageCmd);
+                registerAiUsageEventsCommand(usageCmd);
+                registerAiUsageAlertsCommand(usageCmd);
             };
         },
     },
