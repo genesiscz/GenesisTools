@@ -20,6 +20,7 @@ import { resolveHistoryProvider } from "./provider";
 import { readSessionsContinuedIn } from "./session-backward";
 import {
     classifiesNoPath,
+    noAnalysis,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -59,6 +60,7 @@ test("a registered fourth history provider can be resolved without an account al
             classifyPath: classifiesNoPath,
             readChanges: noSessionChanges,
             rowAnchors: noRowAnchors,
+            analysis: noAnalysis,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [],

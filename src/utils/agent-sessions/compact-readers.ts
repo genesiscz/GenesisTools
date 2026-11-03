@@ -2,16 +2,19 @@ import { deferredReadChanges, deferredWindowTurns } from "@genesiscz/utils/harne
 import { nativeSessionRoots, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
 import { readCompatibilityTranscript } from "./reader-compat";
 import { createClaudeHistoryOperations } from "./readers/claude";
+import { claudeAnalysis } from "./readers/claude-analysis";
 import { claudeDialog } from "./readers/claude-dialog";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { claudeClassifyPath } from "./readers/claude-paths";
 import { readClaudeStatistics } from "./readers/claude-statistics";
 import { createCodexHistoryOperations } from "./readers/codex";
+import { codexAnalysis } from "./readers/codex-analysis";
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { importNativeCodexSession } from "./readers/codex-import";
 import { codexClassifyPath } from "./readers/codex-locate";
 import { readCodexStatistics } from "./readers/codex-statistics";
 import { createGrokHistoryOperations } from "./readers/grok";
+import { grokAnalysis } from "./readers/grok-analysis";
 import { grokDialog } from "./readers/grok-dialog";
 import { discoverGrokHistorySources, grokClassifyPath } from "./readers/grok-discovery";
 import { readGrokStatistics } from "./readers/grok-statistics";
@@ -33,6 +36,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     kind: "claude",
     // Claude permission prompts are delivered through hooks, not a transcript event log.
     dialog: claudeDialog,
+    analysis: claudeAnalysis,
     windowTurns: deferredWindowTurns(import.meta, "./readers/claude-window-turns", "claudeWindowTurns"),
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
@@ -54,6 +58,7 @@ export const codexHistoryReader = createCompactHistoryReader({
         sessionAlive: () => null,
         registryDirectory: () => null,
     },
+    analysis: codexAnalysis,
     windowTurns: deferredWindowTurns(import.meta, "./readers/codex-turns", "codexNativeLinesToTurns"),
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
@@ -70,6 +75,7 @@ export const codexHistoryReader = createCompactHistoryReader({
 export const grokHistoryReader = createCompactHistoryReader({
     kind: "grok",
     dialog: grokDialog,
+    analysis: grokAnalysis,
     windowTurns: deferredWindowTurns(import.meta, "../ai/transcripts/grok", "grokNativeLinesToTurns"),
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,

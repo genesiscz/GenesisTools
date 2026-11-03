@@ -9,6 +9,7 @@ import { synchronizeHistory } from "./sync";
 import { HistorySyncRepository } from "./sync-repository";
 import {
     classifiesNoPath,
+    noAnalysis,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -79,6 +80,7 @@ function createFixture(): {
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
+        analysis: noAnalysis,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
@@ -444,6 +446,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
+        analysis: noAnalysis,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
