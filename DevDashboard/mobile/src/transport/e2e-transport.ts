@@ -4,6 +4,7 @@ import {
     decodeE2eResponse,
     encodeEnvelope,
     encodeE2eRequest,
+    forwardedE2eHeaders,
     type BoxCipher,
     type DashboardClient,
     type E2eRequest,
@@ -95,10 +96,16 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
         // query value repeating the relay base (a callback or redirect parameter) was cut mid-query
         // and the agent received a mangled path.
         const path = url.startsWith(opts.relayBaseUrl) ? url.slice(opts.relayBaseUrl.length) : url;
+        const sent: Record<string, string> = {};
+        new Headers(init?.headers).forEach((value, name) => {
+            sent[name] = value;
+        });
+        const headers = forwardedE2eHeaders(sent);
         const request: E2eRequest = {
             method: init?.method ?? "GET",
             path,
             body: init?.body ? String(init.body) : undefined,
+            ...(headers ? { headers } : {}),
         };
         const plain = await encryptedExchange(new TextEncoder().encode(encodeE2eRequest(request)));
         const response = decodeE2eResponse(new TextDecoder().decode(plain));
