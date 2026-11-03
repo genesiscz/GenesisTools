@@ -17,13 +17,19 @@ export interface CreateBotOptions {
     rateLimiter?: RateLimiter;
 }
 
-export function createBot(token: string, authorizedChatId: number, options: CreateBotOptions = {}): Bot {
+/** `authorizedChats`: the commands chat and the decisions chat (`authorizedChats` in `../lib/config`). */
+export function createBot(
+    token: string,
+    authorizedChats: number | readonly number[],
+    options: CreateBotOptions = {}
+): Bot {
     const bot = new Bot(token, { botInfo: options.botInfo, client: { apiRoot: options.apiRoot } });
     const rateLimiter = options.rateLimiter ?? createRateLimiter();
+    const allowed = new Set(typeof authorizedChats === "number" ? [authorizedChats] : authorizedChats);
 
     bot.use(async (ctx, next) => {
         const chatId = ctx.chat?.id;
-        if (chatId !== authorizedChatId) {
+        if (chatId === undefined || !allowed.has(chatId)) {
             logger.debug(
                 { chatId, updateId: ctx.update.update_id },
                 "telegram-bot: dropped an update from a chat that is not allowed"

@@ -12,7 +12,7 @@ export function registerConfigureCommand(program: Command): void {
 
             const existing = await loadTelegramConfig();
             if (existing) {
-                p.log.info(`Already configured: @${existing.botUsername ?? "bot"} (chat ${existing.chatId})`);
+                p.log.info(`Already configured: @${existing.botUsername ?? "bot"} (chat ${existing.chats.commands})`);
                 const overwrite = await p.confirm({
                     message: "Are you sure you want to overwrite the current configuration?",
                 });
@@ -96,7 +96,7 @@ export function registerConfigureCommand(program: Command): void {
 
             await saveTelegramConfig({
                 botToken: token as string,
-                chatId,
+                chats: { commands: chatId },
                 botUsername,
                 configuredAt: new Date().toISOString(),
             });
