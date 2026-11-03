@@ -169,7 +169,7 @@ The same answers are MCP tools under the `usage` capability (`usage_limits`, `us
 ### `ai usage events`: rate limits, cooldowns and probes
 
 ```bash
-tools ai usage events [--since 24h] [--kind usage-429 rate-limited cooldown poll-backoff org-blocked probe-refused probe] [--provider ...] [--account ...] [--limit 50] [--json]
+tools ai usage events [--since 24h] [--kind usage-429 rate-limited cooldown poll-backoff org-blocked probe-refused probe] [--provider ...] [--account ...] [--limit <n>] [--json]
 ```
 
 Facts that lived only as day-log text, newest first, as `usage.events@1` with counts per kind: the usage endpoint's 429s, the proxy's rate-limited answers and the cooldowns it took, the poll gate's pauses, organization blocks, refused quota probes, and one row per account, model and day counting the probes sent. `recordUsageEvent` (`@genesiscz/utils/ai/usage/events/record`) writes them where they happen and never throws; the proxy maps its provider names to plugin ids first. `--account` matches an id or a name exactly, proxy account names included.
