@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { z } from "zod";
 import { outputScaleFor, parseDisplayList } from "./displays";
 import {
     type LiveNotification,
@@ -211,6 +212,48 @@ describe("live recordings", () => {
         expect(existsSync(join(dir, "meeting-m1.json"))).toBe(false);
         expect(existsSync(join(dir, "meeting-m1.sock"))).toBe(false);
         await expect(RecorderClient.connect("meeting-m1", { dir })).rejects.toThrow(/No running recording/);
+    });
+
+    test("several requests in one write get one answer each, in their order", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "live-rec-"));
+        const server = new LiveRecordingServer({
+            id: "batch",
+            kind: "meeting",
+            title: "Batch",
+            dir,
+            methods: {
+                "displays.list": async () => {
+                    await Bun.sleep(20);
+                    return [];
+                },
+            },
+        });
+        let received = "";
+        const socket = await Bun.connect({
+            unix: server.current.socket,
+            socket: {
+                data: (_socket, chunk) => {
+                    received += new TextDecoder().decode(chunk);
+                },
+            },
+        });
+        socket.write(
+            '{"jsonrpc":"2.0","id":1,"method":"subscribe"}\n{"jsonrpc":"2.0","id":2,"method":"displays.list"}\r\n{"jsonrpc":"2.0","id":3,"method":"status"}\n'
+        );
+        const deadline = Date.now() + 2_000;
+
+        while (received.split("\n").filter(Boolean).length < 3 && Date.now() < deadline) {
+            await Bun.sleep(10);
+        }
+
+        const ids = received
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => z.object({ id: z.number() }).parse(SafeJSON.parse(line, { strict: true })).id);
+        socket.end();
+        server.close();
+
+        expect(ids).toEqual([1, 2, 3]);
     });
 
     test("an entry whose process is gone is not listed, and a socket nobody listens on counts as gone", async () => {

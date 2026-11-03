@@ -158,7 +158,7 @@ class LineBuffer {
         this.pending += this.decoder.decode(chunk, { stream: true });
         const lines = this.pending.split("\n");
         this.pending = lines.pop() ?? "";
-        return lines.filter((line) => line.trim());
+        return lines.map((line) => line.replace(/\r$/, "")).filter((line) => line.trim());
     }
 }
 
@@ -186,6 +186,8 @@ class Outbox {
 interface Connection {
     lines: LineBuffer;
     outbox: Outbox;
+    /** The requests of one connection are answered one after another, in the order they came. */
+    queue: Promise<void>;
     /** The events this connection subscribed to (empty: all of them); undefined until it calls `subscribe`. */
     events?: Set<string>;
 }
@@ -233,12 +235,16 @@ export class LiveRecordingServer {
             unix: socket,
             socket: {
                 open: (client) => {
-                    client.data = { lines: new LineBuffer(), outbox: new Outbox((bytes) => client.write(bytes)) };
+                    client.data = {
+                        lines: new LineBuffer(),
+                        outbox: new Outbox((bytes) => client.write(bytes)),
+                        queue: Promise.resolve(),
+                    };
                     this.connections.add(client);
                 },
                 data: (client, chunk) => {
                     for (const line of client.data.lines.push(chunk)) {
-                        void this.handle(client, line, methods);
+                        client.data.queue = client.data.queue.then(() => this.handle(client, line, methods));
                     }
                 },
                 drain: (client) => client.data.outbox.flush(),
