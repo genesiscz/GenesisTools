@@ -4,12 +4,14 @@ import { type DeliverDeps, isLiveDelivery, type LocatedDelivery, locateDelivery 
 import { optionLetters } from "../decisions/read";
 import { providerOf, type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
+    type DecisionRecord,
     type HarvestedDecision,
     harvestDecisions,
     kindOf,
     type PromptReceipt,
     readDecisions,
     recordDelivery,
+    staleRevisionError,
     updateDecisions,
 } from "../decisions/store";
 import { isDrafted, promotedDraft } from "./staged";
@@ -185,6 +187,25 @@ export interface ShownDraft {
     expectedRevision?: number;
 }
 
+/**
+ * Refuses the whole send when the agent re-posted any decision the caller showed, before a draft is promoted. A
+ * re-post clears the staged pick and puts the row back to `open`, so it is no longer a draft: checking only the drafts
+ * would send the other shown decisions as if the batch the user reviewed still stood.
+ */
+function refuseStaleShown(rows: readonly DecisionRecord[], shown: readonly ShownDraft[]): void {
+    for (const entry of shown) {
+        if (entry.expectedRevision === undefined) {
+            continue;
+        }
+
+        const row = rows.find((candidate) => kindOf(candidate) === "decision" && candidate.number === entry.number);
+
+        if (row && (row.revision ?? 1) !== entry.expectedRevision) {
+            throw staleRevisionError(entry.number);
+        }
+    }
+}
+
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
 const WAIT_STEP_MS = 1_000;
 
@@ -217,6 +238,7 @@ export async function sendDrafts(
 
     const sessionRows = readDecisions(deps.file).filter((row) => row.sessionId === input.session);
     const shown = input.drafts ? new Map(input.drafts.map((entry) => [entry.number, entry])) : undefined;
+    refuseStaleShown(sessionRows, input.drafts ?? []);
     const drafted = sessionRows.filter((row) => isDrafted(row) && (!shown || shown.has(row.number)));
     // The rows name the provider when the caller did not: the wait and the send below must look up one harness.
     const provider = providerOf(input.provider, sessionRows) ?? undefined;
