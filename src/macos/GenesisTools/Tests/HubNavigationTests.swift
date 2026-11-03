@@ -277,7 +277,7 @@ final class HubNavigationTests: XCTestCase {
 
     /// What a request names and the hub cannot open is said, never dropped without a word.
     func testARequestNamesWhatItCannotOpen() {
-        XCTAssertEqual(HubRequest(["--mode", "pr"]).problems, ["mode=pr is no hub mode (sessions, worktrees, prs, inbox, timeline, agents)"])
+        XCTAssertEqual(HubRequest(["--mode", "pr"]).problems, ["mode=pr is no hub mode (sessions, worktrees, prs, inbox, timeline, agents, usage)"])
         XCTAssertEqual(HubRequest(["--tab", "diff"]).problems, ["tab=diff is no hub tab (transcript, changes, files, decisions)"])
         XCTAssertEqual(HubRequest(["--reveal", "a.swift"]).problems, ["reveal=a.swift opens a file in a PR's review: the link names no PR (pr=)"])
         XCTAssertEqual(HubRequest(["--pr", "acme/app#7", "--reveal", "a.swift", "--mode", "prs", "--tab", "files"]).problems, [])

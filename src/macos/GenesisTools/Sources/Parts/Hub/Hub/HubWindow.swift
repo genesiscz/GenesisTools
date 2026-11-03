@@ -3276,7 +3276,7 @@ struct SessionDetailView: View {
                 if model.panes.contains(.transcript) {
                     // The account row below hides with the transcript open; the forecast stays in sight.
                     // In a narrow window it gives way first, before the pane buttons' titles.
-                    HubForecastChip(account: session.account)
+                    HubForecastChip(account: session.account, provider: Harness(rawValue: session.provider)?.plugin)
                         .layoutPriority(-1)
                 }
                 if let notice = model.headerNotice {
@@ -3295,7 +3295,7 @@ struct SessionDetailView: View {
     private var accountRow: some View {
         HStack(spacing: 8) {
             chip("person.crop.circle", session.account ?? "no pin")
-            HubForecastChip(account: session.account)
+            HubForecastChip(account: session.account, provider: Harness(rawValue: session.provider)?.plugin)
             if let sessionModel = session.model {
                 chip("cpu", sessionModel)
             }

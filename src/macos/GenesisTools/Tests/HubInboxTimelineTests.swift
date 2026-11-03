@@ -137,7 +137,7 @@ final class HubInboxTimelineTests: XCTestCase {
 
     func testModesMatchTheCLI() {
         // src/hub/lib/open.ts HUB_MODES and src/hub/lib/timeline.ts TIMELINE_KINDS.
-        XCTAssertEqual(HubMode.allCases.map(\.rawValue), ["sessions", "worktrees", "prs", "inbox", "timeline", "agents"])
+        XCTAssertEqual(HubMode.allCases.map(\.rawValue), ["sessions", "worktrees", "prs", "inbox", "timeline", "agents", "usage"])
         XCTAssertEqual(TimelineKind.allCases.map(\.rawValue), ["session.start", "session.turn", "commit", "push", "pr", "thread", "decision", "ci"])
     }
 }

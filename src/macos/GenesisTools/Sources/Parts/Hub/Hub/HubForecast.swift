@@ -163,10 +163,18 @@ final class HubForecastStore: ObservableObject {
     @Published private(set) var loading = false
     private var loadedAt: Date?
 
-    /// The accounts named `name` (the session's pinned account), current windows only.
-    func account(named name: String?) -> HubForecastAccount? {
+    /// The session's pinned account, by provider and name, current windows only.
+    func account(provider: String?, named name: String?) -> HubForecastAccount? {
+        Self.match(accounts, provider: provider, name: name)
+    }
+
+    /// Keyed by provider and account: a Claude account and a Codex account may share a name, and the name alone gave
+    /// the session the other provider's windows. Without a provider only a name no other provider uses answers.
+    nonisolated static func match(_ accounts: [HubForecastAccount], provider: String?, name: String?) -> HubForecastAccount? {
         guard let name, !name.isEmpty else { return nil }
-        return accounts.first { $0.account == name && !$0.current.isEmpty }
+        let named = accounts.filter { $0.account == name && !$0.current.isEmpty }
+        if let provider { return named.first { $0.provider == provider } }
+        return named.count == 1 ? named.first : nil
     }
 
     func loadIfStale(maxAge: TimeInterval = HubForecastStore.maxAge) {
@@ -198,10 +206,12 @@ final class HubForecastStore: ObservableObject {
 /// is left out of the chip (a compact strip) and named in the tooltip.
 struct HubForecastChip: View {
     let account: String?
+    /// The account's provider (`anthropic-sub`, `openai-sub`): the session's harness plugin.
+    let provider: String?
     @ObservedObject private var store = HubForecastStore.shared
 
     var body: some View {
-        if let entry = store.account(named: account), let window = entry.headline {
+        if let entry = store.account(provider: provider, named: account), let window = entry.headline {
             HStack(spacing: 3) {
                 // A stale number gets a clock, not a gauge: it is an old reading, not a level now.
                 Image(systemName: window.beforeReset ? "exclamationmark.triangle.fill" : window.stale ? "clock.arrow.circlepath" : "gauge.with.dots.needle.33percent")
@@ -230,9 +240,12 @@ struct HubForecastSummary: View {
     }
 }
 
-/// The digest's Usage section: every account with a current window, one row per window.
+/// The digest's Usage section: every account with a current window, one row per window, with the cone of its headline
+/// window (Settings → AI usage → "Cone in the Today digest").
 struct HubForecastList: View {
     @ObservedObject private var store = HubForecastStore.shared
+    @ObservedObject private var usage = HubUsageDigestStore.shared
+    @ObservedObject private var preferences = UsagePreferences.shared
 
     var body: some View {
         let accounts = store.accounts.filter { !$0.current.isEmpty }
@@ -246,7 +259,11 @@ struct HubForecastList: View {
                     .foregroundColor(ReviewPalette.dim)
             }
             ForEach(accounts) { entry in
-                HubForecastRow(entry: entry)
+                HubForecastRow(
+                    entry: entry,
+                    cone: preferences.settings.digestCone
+                        ? usage.lane(provider: entry.provider, account: entry.account, bucket: entry.headline?.bucket) : nil,
+                    now: usage.builtAt)
             }
         }
     }
@@ -256,6 +273,9 @@ struct HubForecastList: View {
 /// limit for, as a table shows a missing value).
 struct HubForecastRow: View {
     let entry: HubForecastAccount
+    /// The headline window's last 6 hours with its forecast cone; nil draws none.
+    var cone: UsageLane?
+    var now = Date()
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -281,6 +301,9 @@ struct HubForecastRow: View {
                 }
             }
             Spacer(minLength: 0)
+            if let cone {
+                HubForecastCone(lane: cone, now: now)
+            }
         }
         .frame(minHeight: 22)
         .liveRow()

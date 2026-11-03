@@ -5,7 +5,7 @@ The GenesisTools.app agent hub. `tools hub` opens the hub window (it builds the 
 ## Open the hub at a place
 
     tools hub                                        # the hub window; a running hub comes forward instead
-    tools hub open --mode prs                        # sessions|worktrees|prs|inbox|timeline|agents
+    tools hub open --mode prs                        # sessions|worktrees|prs|inbox|timeline|agents|usage
     tools hub open --session <id or prefix> --tab changes
     tools hub open --pr owner/repo#42                # a PR or MR: 42, owner/repo#42, group/app!12, or its page URL
     tools hub open --pr owner/repo#42 --reveal src/x.ts      # that file in the PR's review
