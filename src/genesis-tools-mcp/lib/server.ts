@@ -310,6 +310,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     fetch: (name) => name.startsWith("fetch_"),
     alza: (name) => name.startsWith("alza_"),
     waze: (name) => name.startsWith("waze_"),
+    usage: (name) => name.startsWith("usage_"),
 };
 
 /**
@@ -339,6 +340,7 @@ let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
 let fetchModule: Promise<typeof import("@app/fetch/mcp/genesis-tools")> | undefined;
 let alzaModule: Promise<typeof import("@app/alza/mcp/genesis-tools")> | undefined;
 let wazeModule: Promise<typeof import("@app/waze/mcp/genesis-tools")> | undefined;
+let usageEntries: Promise<Record<string, ToolEntry>> | undefined;
 
 /**
  * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
@@ -403,6 +405,15 @@ async function closeLoadedGroups(): Promise<void> {
     }
 }
 
+/**
+ * The usage tools import the limits store, the forecast and the rankers, so they load only for a capability list
+ * that can expose them: unset (everything) or one naming `usage`.
+ */
+function loadUsageEntries(): Promise<Record<string, ToolEntry>> {
+    usageEntries ??= import("@app/ai/mcp/genesis-tools").then((module) => module.usageToolEntries());
+    return usageEntries;
+}
+
 /** One registry per instructions variant; a resident server builds it once, not per request. */
 async function toolRegistry(
     context: InstructionContext,
@@ -413,7 +424,8 @@ async function toolRegistry(
     const withFetch = capabilities === undefined || capabilities.includes("fetch");
     const withAlza = capabilities?.includes("alza") ?? false;
     const withWaze = capabilities?.includes("waze") ?? false;
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}:${withAlza}:${withWaze}`;
+    const withUsage = capabilities === undefined || capabilities.includes("usage");
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}:${withAlza}:${withWaze}:${withUsage}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
@@ -422,6 +434,7 @@ async function toolRegistry(
             ...(withFetch ? await loadFetchEntries() : {}),
             ...(withAlza ? await loadAlzaEntries() : {}),
             ...(withWaze ? await loadWazeEntries() : {}),
+            ...(withUsage ? await loadUsageEntries() : {}),
             ...buildToolRegistry(context),
         };
         registries.set(key, registry);

@@ -164,3 +164,23 @@ describe("a standalone server's tool in the shared registry", () => {
         await expect(failing.handler({})).rejects.toThrow("Error: signed out");
     });
 });
+
+describe("the usage capability", () => {
+    test("usage enables the usage_* family and nothing else", () => {
+        const withUsage = registry(
+            "question_answer",
+            "usage_limits",
+            "usage_series",
+            "usage_forecast",
+            "usage_advise",
+            "control_run"
+        );
+
+        expect(Object.keys(filterRegistryByCapabilities(withUsage, ["usage"])).sort()).toEqual([
+            "usage_advise",
+            "usage_forecast",
+            "usage_limits",
+            "usage_series",
+        ]);
+    });
+});
