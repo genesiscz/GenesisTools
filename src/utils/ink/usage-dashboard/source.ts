@@ -60,6 +60,7 @@ export function thresholdAlerts(
                 now,
                 snapshots,
                 samples: [],
+                baselines: [],
                 runs: [],
                 previousRoundAt: null,
                 events: [],

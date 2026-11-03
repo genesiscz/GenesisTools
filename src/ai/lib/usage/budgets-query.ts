@@ -24,7 +24,7 @@ import {
     type UsageWarning,
     usageEnvelope,
 } from "@genesiscz/utils/ai/usage/contract";
-import { readUsageSamples, type UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
+import { readSampleSeeds, readUsageSamples, type UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import {
     loadDashboardConfig,
     type UsageDashboardConfig,
@@ -131,7 +131,10 @@ export async function queryBudgets(
     let samples: UsageSample[] = [];
 
     try {
-        samples = db ? readUsageSamples(db, { since: new Date(dayStart.getTime() - 86_400_000) }) : [];
+        // The readings of the last day, after each window's last reading before them: a window idle for days still
+        // has its value at midnight, instead of 0 and its whole utilization read as today's burn.
+        const since = new Date(dayStart.getTime() - 86_400_000);
+        samples = db ? [...readSampleSeeds(db, { before: since }), ...readUsageSamples(db, { since })] : [];
     } finally {
         db?.close();
     }
@@ -311,6 +314,11 @@ export async function setBudget(opts: BudgetEditOptions): Promise<BudgetEdit> {
     const kind = resolveKind(opts.kind);
     const reservePct = percent("--reserve", opts.reserve);
     const dailyAllowancePct = percent("--daily", opts.daily);
+
+    // A session window has no daily allowance (`windowPace` answers no-target), so the target could never alert.
+    if (kind === "session" && dailyAllowancePct !== undefined) {
+        throw new UsageQueryError("bad-value", "--daily does not apply to a session window; give it --reserve <pct>.");
+    }
 
     if (reservePct === undefined && dailyAllowancePct === undefined) {
         throw new UsageQueryError(

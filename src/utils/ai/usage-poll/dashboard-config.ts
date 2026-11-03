@@ -253,9 +253,19 @@ export async function saveDashboardConfig(config: UsageDashboardConfig): Promise
     await store().setConfig(config);
 }
 
-/** Edits the saved config under the store's lock (a budget set from the CLI); keys the edit does not touch stay. */
+/**
+ * Edits the saved config under the store's lock (a budget set from the CLI); keys the edit does not touch stay. On a
+ * Mac that never saved the new config, the edit starts from the claude-era preferences, as the first load would: an
+ * edit that started from nothing would create the file without them, and the one-time copy never runs again.
+ */
 export async function updateDashboardConfig(edit: (stored: StoredConfig) => void): Promise<void> {
+    const legacy = await legacyStore().getConfig<StoredConfig>();
+
     await store().atomicConfigUpdate<StoredConfig>((current) => {
+        if (Object.keys(current).length === 0 && legacy) {
+            Object.assign(current, merge(legacy));
+        }
+
         edit(current);
     });
 }
