@@ -293,8 +293,7 @@ final class HubUsageModel: ObservableObject {
             case .workers, .report: return []
             }
         }
-        var seen = Set<String>()
-        return all.flatMap { $0 }.filter { seen.insert($0.code + $0.message).inserted }
+        return UsageWarning.merged(all)
     }
 
     var sectionErrors: [String] { section.doors(settings).compactMap { errors[$0] } }
