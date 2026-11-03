@@ -105,6 +105,15 @@ export function teamsAttendanceFromJson(
     };
 }
 
+/** Whether a text is `tools ms-teams meetings attendance --json` output. */
+function readsTeamsAttendance(raw: string): boolean {
+    try {
+        return attendanceSchema.safeParse(SafeJSON.parse(raw, { strict: true })).success;
+    } catch {
+        return false;
+    }
+}
+
 export const teamsPlatform: MeetingPlatform = {
     id: "teams",
     label: "Microsoft Teams",
@@ -125,5 +134,11 @@ export const teamsPlatform: MeetingPlatform = {
         }
 
         return teamsAttendanceFromJson(result.stdout, target, toolCommand("ms-teams"));
+    },
+
+    attendanceFile: {
+        format: `${toolCommand("ms-teams", "meetings", "attendance", "--json")} output`,
+        reads: readsTeamsAttendance,
+        attendance: teamsAttendanceFromJson,
     },
 };

@@ -7,10 +7,8 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { loadPresence } from "../lib/attendance";
-import { storeAttendance } from "../lib/collect";
+import { CallTimeline } from "../lib/call-timeline";
 import { errorText, fail, TOOL } from "../lib/shared";
-import { meetingSource } from "../lib/sources";
 
 async function attendance(ref: string, opts: { from?: string; json?: boolean }): Promise<void> {
     const store = new MeetingStore();
@@ -26,17 +24,8 @@ async function attendance(ref: string, opts: { from?: string; json?: boolean }):
         let current = record;
 
         if (opts.from) {
-            const linked = Object.entries(record.sources).find(([, block]) => typeof block.meetingId === "string");
-            const start =
-                linked && typeof linked[1].meetingId === "string"
-                    ? (
-                          await await meetingSource(linked[0]).then((source) =>
-                              source.load(linked[1].meetingId as string)
-                          )
-                      ).start
-                    : record.start;
-            const loaded = await loadPresence({ title: record.calendar?.title ?? record.title, start }, opts.from);
-            current = await storeAttendance({ store, record, loaded, from: opts.from });
+            const timeline = await CallTimeline.forRecord(record);
+            current = await timeline.store(store, await timeline.stays(opts.from), opts.from);
             ui.ok(
                 `${record.id}: ${current.attendance?.people.length ?? 0} stays, ${current.sections?.length ?? 0} sections stored.`
             );
@@ -79,7 +68,7 @@ export function registerAttendanceCommand(program: Command): void {
         )
         .option(
             "--from <platform|file>",
-            `${MEETING_PLATFORM_IDS.join(", ")} (teams asks ${toolCommand("ms-teams")} by the title; facetime reads the call history), or a file of ${toolCommand("ms-teams", "meetings", "attendance", "--json")} output`
+            `${MEETING_PLATFORM_IDS.join(", ")} (teams asks ${toolCommand("ms-teams")} by the title; facetime reads the call history), or a platform's export file: teams:<file> for ${toolCommand("ms-teams", "meetings", "attendance", "--json")} output (a bare path is read in the meeting's platform's format, else in the one format it fits)`
         )
         .option("--json", "print JSON")
         .action(attendance);

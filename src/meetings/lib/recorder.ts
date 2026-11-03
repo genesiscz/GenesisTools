@@ -47,7 +47,8 @@ import {
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
-import { meetingSource } from "./sources";
+import { CallTimeline } from "./call-timeline";
+import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
 
 const { log } = logger.scoped("meetings-recorder");
@@ -943,17 +944,16 @@ export async function runRecorder(options: {
         const stoppedAt = new Date().toISOString();
         const total = existsSync(framesDir) ? framesOnDisk(framesDir) : { frames: 0, bytes: 0, perDisplay: new Map() };
         const current = store.read(meetingId);
-        const linked = Object.entries(current?.sources ?? {}).find(([, block]) => typeof block.meetingId === "string");
-        let clock: { source: string; startedAt: string } | undefined;
-
-        if (linked && typeof linked[1].meetingId === "string") {
-            const source = await meetingSource(linked[0]);
-            const sourceClock = await source.recordingClock(linked[1].meetingId).catch((err: unknown) => {
-                log.warn({ err }, "recording clock unavailable");
-                return null;
-            });
-            clock = sourceClock ? { source: source.id, startedAt: sourceClock.startedAt } : undefined;
-        }
+        const ref = current ? sourceRefOf(current) : undefined;
+        const sourceClock = ref
+            ? await CallTimeline.sourceClock({
+                  source: await meetingSource(ref.sourceId),
+                  sourceMeetingId: ref.sourceMeetingId,
+              })
+            : undefined;
+        const clock = sourceClock?.source
+            ? { source: sourceClock.source, startedAt: sourceClock.startedAt }
+            : undefined;
 
         const failed = state.stopReason === "failed" || state.stopReason === "error";
         const notifyFailure = failed && !current?.recording?.failureNotifiedAt;

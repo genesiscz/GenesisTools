@@ -25,18 +25,18 @@ function rangesText(ranges: PresenceRange[]): string {
         .join("; ");
 }
 
-function hintText(hint: SpeakerHint): string {
+function hintText(hint: SpeakerHint, attendance: string): string {
     if (hint.kind === "label-drift") {
         return `${hint.person}: in the call but silent under their own label from ${formatClock(Math.max(0, hint.fromSec))} to ${formatClock(hint.toSec)} (${MeetingRule.LabelDrift}), so their voice is probably under other labels`;
     }
 
     if (hint.kind === "absent-speaker") {
-        return `${hint.label}: speaks while ${hint.label} was not in the call (Teams attendance), so these lines are someone else: ${rangesText(hint.ranges)}`;
+        return `${hint.label}: speaks while ${hint.label} was not in the call (${attendance}), so these lines are someone else: ${rangesText(hint.ranges)}`;
     }
 
     if (hint.kind === "sole-attendee") {
         const person = hint.self ? `you (${hint.person})` : hint.person;
-        return `${hint.label}: only ${person} was in the call (Teams attendance), so these lines are ${person}: ${rangesText(hint.ranges)}`;
+        return `${hint.label}: only ${person} was in the call (${attendance}), so these lines are ${person}: ${rangesText(hint.ranges)}`;
     }
 
     const note = ORIGIN_NOTE[hint.strength];
@@ -68,7 +68,15 @@ function hintText(hint: SpeakerHint): string {
 }
 
 /** The speaker table and its hints, for any source: `tools meetings speakers` and `tools wisprflow meetings speakers`. */
-export function printSpeakerStats(stats: SpeakerStats, options: { untimedHint?: string } = {}): void {
+export function printSpeakerStats(
+    stats: SpeakerStats,
+    options: {
+        untimedHint?: string;
+        /** Where the stays came from, as the hints name it: `Microsoft Teams attendance`. */
+        attendance?: string;
+    } = {}
+): void {
+    const attendance = options.attendance ?? "attendance";
     const table = createBoxTable([
         "SPEAKER",
         "#",
@@ -109,9 +117,9 @@ export function printSpeakerStats(stats: SpeakerStats, options: { untimedHint?: 
 
     for (const hint of stats.hints) {
         if (hint.strength === "weak") {
-            ui.dim(hintText(hint));
+            ui.dim(hintText(hint, attendance));
         } else {
-            ui.warn(hintText(hint));
+            ui.warn(hintText(hint, attendance));
         }
     }
 }

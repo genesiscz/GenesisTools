@@ -18,6 +18,7 @@ import { callRecorder, type LiveEntry, RpcError } from "@genesiscz/utils/screen-
 import type { DisplayInfo } from "@genesiscz/utils/screen-recorder/types";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
+import { CallTimeline } from "../lib/call-timeline";
 import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
@@ -416,7 +417,7 @@ async function screen(ref: string, opts: { at?: string; window?: string; json?: 
         return;
     }
 
-    const zero = Date.parse(record.recording?.clock?.startedAt ?? record.start);
+    const zero = (await CallTimeline.forRecord(record)).zeroMs;
     const target = zero + atSec * 1000;
     const lines: OcrLine[] = readFileSync(ocrPath, "utf8")
         .split("\n")

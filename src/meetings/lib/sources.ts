@@ -20,19 +20,39 @@ export async function meetingSource(id: string): Promise<TranscriptSource> {
     return MEETING_SOURCES[id]();
 }
 
-/** The first linked source that names a meeting of its own, with that meeting's id. Throws a message ready to print. */
-export async function linkedSource(
-    record: MeetingRecord
-): Promise<{ source: TranscriptSource; sourceMeetingId: string }> {
+/** Which source a record's transcript comes from: the first source block that names a meeting of its own. */
+export interface SourceRef {
+    sourceId: string;
+    sourceMeetingId: string;
+}
+
+/** The record's linked source meeting, without loading the source; undefined when no source names one. */
+export function sourceRefOf(record: MeetingRecord): SourceRef | undefined {
     for (const [sourceId, block] of Object.entries(record.sources)) {
         if (typeof block.meetingId === "string") {
-            return { source: await meetingSource(sourceId), sourceMeetingId: block.meetingId };
+            return { sourceId, sourceMeetingId: block.meetingId };
         }
     }
 
-    throw new Error(
-        `${record.id} has no source with a transcript. Link one: ${toolCommand("meetings", "link", record.id, "wisprflow:<id>")}`
-    );
+    return undefined;
+}
+
+export interface LinkedSource {
+    source: TranscriptSource;
+    sourceMeetingId: string;
+}
+
+/** The first linked source that names a meeting of its own, with that meeting's id. Throws a message ready to print. */
+export async function linkedSource(record: MeetingRecord): Promise<LinkedSource> {
+    const ref = sourceRefOf(record);
+
+    if (!ref) {
+        throw new Error(
+            `${record.id} has no source with a transcript. Link one: ${toolCommand("meetings", "link", record.id, "wisprflow:<id>")}`
+        );
+    }
+
+    return { source: await meetingSource(ref.sourceId), sourceMeetingId: ref.sourceMeetingId };
 }
 
 /** The linked source's transcript, on its own labels. */

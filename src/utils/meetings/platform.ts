@@ -34,6 +34,16 @@ export interface PlatformAttendance {
     note: string;
 }
 
+/** A file of attendance in a platform's own export format, for `--attendance <file>`. */
+export interface AttendanceFileReader {
+    /** What the file is, for messages: `tools ms-teams meetings attendance --json output`. */
+    readonly format: string;
+    /** Whether the text is in this format at all. */
+    reads(raw: string): boolean;
+    /** The attendance of the call nearest the meeting; null when no call in the file is near it. */
+    attendance(raw: string, target: AttendanceTarget, from: string): PlatformAttendance | null;
+}
+
 export interface MeetingPlatform {
     id: MeetingPlatformId;
     label: string;
@@ -42,4 +52,6 @@ export interface MeetingPlatform {
     sourceNames: readonly string[];
     /** Who was in the call and when; null when the platform keeps no such call. Throws when it cannot be read. */
     attendance(target: AttendanceTarget): Promise<PlatformAttendance | null>;
+    /** Reads this platform's attendance export from a file; absent when the platform has no such export. */
+    readonly attendanceFile?: AttendanceFileReader;
 }

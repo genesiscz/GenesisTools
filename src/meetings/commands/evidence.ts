@@ -3,22 +3,18 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
-import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { energyMicShareFor } from "../lib/energy";
-import { speakingEvidence } from "../lib/platforms";
-import { presenceFor } from "../lib/presence";
+import { OpenedMeeting } from "../lib/opened-meeting";
 import { rawMeeting } from "../lib/raw";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
-import { meetingSource } from "../lib/sources";
+import { sourceRefOf } from "../lib/sources";
 import { rawTerms } from "../lib/suggest";
-import { DEFAULT_WORD_CHECK, WORD_CHECKS, wordCheckFor } from "../lib/word-check";
+import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const FORMATS = ["table", "json"] as const;
 /** The user's microphone recognized this many times more words than their own label holds: they are spread over others. */
@@ -49,25 +45,25 @@ async function evidence(
             return;
         }
 
-        const [sourceId, block] =
-            Object.entries(record.sources).find(([, value]) => typeof value.meetingId === "string") ?? [];
-
-        if (!sourceId || typeof block?.meetingId !== "string") {
+        if (!sourceRefOf(record)) {
             fail(`${record.id} has no linked source. Link one: ${TOOL} link ${record.id} wisprflow:<id>`);
             return;
         }
 
-        const source = await meetingSource(sourceId);
-        const meeting = await source.load(block.meetingId);
-        const found = speakingEvidence(record, await source.evidence(block.meetingId));
+        const opened = OpenedMeeting.of(store, record);
+        // The rules read what collect stores (platform, attendance, channels): --raw shows the same inputs.
+        await opened.collectWhenIncomplete();
+        const { source } = await opened.linked();
+        const meeting = await opened.meeting();
+        const found = await opened.evidence();
 
         if (!found) {
             fail(`${source.label} keeps no speaker evidence for this meeting on this Mac.`);
             return;
         }
 
-        const presence = await presenceFor(record, meeting, opts.attendance);
-        const energy = await energyMicShareFor(store, record, found);
+        const presence = await opened.presence(opts.attendance);
+        const energy = await opened.energy();
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
         if (opts.raw) {
@@ -83,18 +79,16 @@ async function evidence(
                 return;
             }
 
-            const config = await new MeetingsConfigStore().read();
-            const points = meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [];
-            const current = store.read(record.id) ?? record;
-            const opened = await wordCheckFor(choice, meeting.transcript);
+            const current = opened.record;
+            const check = await opened.wordCheck(choice);
 
             try {
                 const terms = rawTerms({
                     meeting,
                     record: current,
-                    dictionary: resolveDictionary(config, { project: current.project, meeting: current.dictionary }),
-                    sourceWords: await source.dictionary(),
-                    ...(opened.check ? { wordCheck: opened.check } : { unavailable: opened.reason }),
+                    dictionary: await opened.dictionary(),
+                    sourceWords: await opened.sourceWords(),
+                    ...(check.check ? { wordCheck: check.check } : { unavailable: check.reason }),
                 });
                 const raw = rawMeeting({
                     record: current,
@@ -102,12 +96,13 @@ async function evidence(
                     evidence: found,
                     presence,
                     energyMicShare: energy.share,
-                    points,
+                    callSilent: await opened.silentCallSpans(),
+                    points: await opened.summaryPoints(),
                     terms,
                 });
                 out.result(SafeJSON.stringify(raw, null, 2));
             } finally {
-                opened.check?.dispose();
+                check.check?.dispose();
             }
 
             return;
@@ -198,7 +193,10 @@ export function registerEvidenceCommand(program: Command): void {
         .command("evidence")
         .argument("<meeting>", "meeting id, a unique prefix, last, or wisprflow:<id>")
         .description("Which voice each label's lines are, by audio channel and the platform's speaking indicator")
-        .option("--attendance <teams|file>", "who was in the call and when (Teams)")
+        .option(
+            "--attendance <platform|file>",
+            "who was in the call and when: a platform (teams) or its export file (teams:<file>)"
+        )
         .option("--files", "also list the evidence files and their sizes")
         .option(
             "--raw",

@@ -222,6 +222,12 @@ export const meetingRecordSchema = z.object({
                     systemMedian: z.number().optional(),
                     segments: z.object({ mic: z.number(), system: z.number() }),
                     reason: z.string().optional(),
+                    /**
+                     * The stretches of 5 min or more where the call's channel stayed silent while the microphone
+                     * heard speech (`silentCallSpans`): the call played through the room, so E1 says nothing there.
+                     * Absent in records calibrated before it was stored.
+                     */
+                    callSilent: z.array(z.object({ fromSec: z.number(), toSec: z.number() })).optional(),
                 })
                 .optional(),
         })

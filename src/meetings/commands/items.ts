@@ -6,8 +6,9 @@ import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
+import { isMeetingPlatformId } from "@genesiscz/utils/meetings/platform";
 import {
     ITEM_STATUSES,
     type MeetingItem,
@@ -30,22 +31,18 @@ import {
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
-import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
-import { collectAndReport } from "../lib/collect";
-import { energyMicShareFor } from "../lib/energy";
 import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
-import { speakingEvidence } from "../lib/platforms";
-import { presenceFor } from "../lib/presence";
+import { OpenedMeeting } from "../lib/opened-meeting";
+import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionIdOf, questionLabel, questionWarnings } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
-import { linkedSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
 import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "../lib/transcript-corrections";
-import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice, wordCheckFor } from "../lib/word-check";
+import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
 
@@ -66,10 +63,8 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
     }
 }
 
-async function loadTranscript(record: MeetingRecord): Promise<SourceMeeting> {
-    const { source, sourceMeetingId } = await linkedSource(record);
-    log.debug({ meeting: record.id, source: source.id, sourceMeetingId }, "loading transcript");
-    return source.load(sourceMeetingId);
+async function loadTranscript(store: MeetingStore, record: MeetingRecord): Promise<SourceMeeting> {
+    return OpenedMeeting.of(store, record).meeting();
 }
 
 function itemWhat(item: MeetingItem): string {
@@ -117,8 +112,8 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
 }
 
 /** The word check for the term rules, or undefined when it is off or cannot run (said once, with the reason). */
-async function termWordCheck(choice: WordCheckChoice, meeting: SourceMeeting): Promise<WordCheck | undefined> {
-    const opened = await wordCheckFor(choice, meeting.transcript);
+async function termWordCheck(choice: WordCheckChoice, meeting: OpenedMeeting): Promise<WordCheck | undefined> {
+    const opened = await meeting.wordCheck(choice);
 
     if (!opened.check && choice !== "off") {
         ui.warn(`The word check is off (${opened.reason}); the term rules skip every word with a Czech letter.`);
@@ -161,30 +156,25 @@ async function suggest(
 
     try {
         // The platform, attendance and channel layout first, when the record lacks any of them.
-        const collected =
-            record.platform && record.attendance && record.evidence?.channels
-                ? record
-                : await collectAndReport(store, record);
-        const { source, sourceMeetingId } = await linkedSource(collected);
-        const meeting = await source.load(sourceMeetingId);
-        const config = await new MeetingsConfigStore().read();
-        const evidence = rules.includes("evidence")
-            ? speakingEvidence(collected, await source.evidence(sourceMeetingId))
-            : null;
-        const wordCheck = rules.includes("terms") ? await termWordCheck(wordCheckChoice, meeting) : undefined;
+        const opened = OpenedMeeting.of(store, record);
+        const collected = await opened.collectWhenIncomplete();
+        const meeting = await opened.meeting();
+        const config = await opened.config();
+        const evidence = rules.includes("evidence") ? await opened.evidence() : null;
+        const wordCheck = rules.includes("terms") ? await termWordCheck(wordCheckChoice, opened) : undefined;
         const fresh = suggestItems({
             record: collected,
             meeting,
             rules,
-            dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }),
-            sourceWords: await source.dictionary(),
-            presence: await presenceFor(collected, meeting, opts.attendance),
+            dictionary: await opened.dictionary(),
+            sourceWords: await opened.sourceWords(),
+            presence: await opened.presence(opts.attendance),
             evidence,
-            energyMicShare: (await energyMicShareFor(store, collected, evidence)).share,
+            energyMicShare: (await opened.energy()).share,
             listenBelow: config.global.suggest.listenBelow,
             questionBudget: config.global.playback.listen.budget,
             minPriority: config.global.playback.listen.minPriority,
-            points: meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [],
+            points: await opened.summaryPoints(),
             wordCheck,
             sourceLabels: config.global.render,
             now: new Date().toISOString(),
@@ -352,7 +342,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
     }
 
     // The transcript anchors each join and line-bound term to one line; with no source at hand, items are added as given.
-    const meeting = await loadTranscript(record).catch((err: unknown) => {
+    const meeting = await loadTranscript(store, record).catch((err: unknown) => {
         log.debug({ err, meeting: record.id }, "no transcript to check the anchors against");
         return undefined;
     });
@@ -558,7 +548,8 @@ async function decide(
 }
 
 async function speakersStats(ref: string, opts: { gap?: string; attendance?: string; json?: boolean }): Promise<void> {
-    const record = requireMeeting(new MeetingStore(), ref);
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
 
     if (!record) {
         return;
@@ -572,11 +563,12 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
     }
 
     try {
-        const meeting = await loadTranscript(record);
+        const opened = OpenedMeeting.of(store, record);
+        const meeting = await opened.meeting();
         const stats = speakerStats(meeting.transcript, {
             gapSec,
             participants: meeting.speakers,
-            presence: await presenceFor(record, meeting, opts.attendance),
+            presence: await opened.presence(opts.attendance),
         });
 
         if (opts.json) {
@@ -584,7 +576,9 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
             return;
         }
 
-        printSpeakerStats(stats);
+        const from = opts.attendance ?? record.attendance?.from;
+        const platform = from && isMeetingPlatformId(from) ? MEETING_PLATFORMS[from].label : undefined;
+        printSpeakerStats(stats, platform ? { attendance: `${platform} attendance` } : {});
     } catch (err) {
         fail(errorText(err));
     }
@@ -630,7 +624,8 @@ async function transcript(
         frontmatter?: boolean;
     }
 ): Promise<void> {
-    const record = requireMeeting(new MeetingStore(), ref);
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
     const format = await resolveEnum({
         value: opts.format,
         fallback: "md",
@@ -644,7 +639,7 @@ async function transcript(
     }
 
     try {
-        const meeting = await loadTranscript(record);
+        const meeting = await loadTranscript(store, record);
         const config = await new MeetingsConfigStore().read();
         const applied = correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
         reportOutcomes(applied.outcomes);
@@ -726,7 +721,10 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("Run the rules on the meeting's transcript and add what they find as suggested items")
         .option("--rules <list>", `which rule sets: ${SUGGEST_RULES.join(",")} (default all)`)
-        .option("--attendance <teams|file>", "who was in the call and when (Teams), for rule RA")
+        .option(
+            "--attendance <platform|file>",
+            "who was in the call and when, for rule RA: a platform (teams) or its export file (teams:<file>)"
+        )
         .option(
             "--word-check <provider>",
             `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default ${DEFAULT_WORD_CHECK})`
@@ -800,7 +798,10 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("Per label: origin, turns, spoken time and spans, with hints")
         .option("--gap <duration>", "a pause shorter than this keeps two turns in one span", "2m")
-        .option("--attendance <teams|file>", "who was in the call and when (Teams)")
+        .option(
+            "--attendance <platform|file>",
+            "who was in the call and when: a platform (teams) or its export file (teams:<file>)"
+        )
         .option("--json", "print JSON")
         .action(speakersStats);
 
