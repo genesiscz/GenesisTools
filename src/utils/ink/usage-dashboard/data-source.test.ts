@@ -431,6 +431,8 @@ describe("the TUI's desktop alerts", () => {
             alerts: mergeAlertsConfig({}),
             dataRetentionDays: 30,
             paceScope: "pooled",
+            budgets: { global: {}, providers: {} },
+            providers: {},
         };
         const alerts = thresholdAlerts(db, config, channels);
         const now = new Date("2026-09-04T18:00:00.000Z");
