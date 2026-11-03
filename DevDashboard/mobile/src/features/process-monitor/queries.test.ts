@@ -1,6 +1,6 @@
 import type { ProcessesRes } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import {
     DEFAULT_LIMIT,
     PROCESSES_INTERVAL_MS,
@@ -24,7 +24,7 @@ describe("process-monitor query keys", () => {
 
 describe("process-monitor query factory", () => {
     it("builds the sort-keyed list key + interval + a queryFn returning a ProcessesRes (rss desc)", async () => {
-        const opts = processesQuery(mockDashboardClient, "rss");
+        const opts = processesQuery(fixtureDashboardClient, "rss");
         expect([...opts.queryKey]).toEqual([...processMonitorKeys.list("rss", DEFAULT_LIMIT)]);
         expect(opts.refetchInterval).toBe(PROCESSES_INTERVAL_MS);
         expect(typeof opts.queryFn).toBe("function");
@@ -36,7 +36,7 @@ describe("process-monitor query factory", () => {
     });
 
     it("name sort returns a ProcessesRes ascending by name", async () => {
-        const opts = processesQuery(mockDashboardClient, "name");
+        const opts = processesQuery(fixtureDashboardClient, "name");
         const data = await (opts.queryFn as unknown as () => Promise<ProcessesRes>)();
         expect(data.sort).toBe("name");
         const names = data.processes.map((p) => p.name.toLowerCase());
@@ -47,12 +47,12 @@ describe("process-monitor query factory", () => {
 
 describe("mock dashboard client — processes namespace", () => {
     it("list(rss) puts the largest-RSS process first", async () => {
-        const res = await mockDashboardClient.processes.list("rss", DEFAULT_LIMIT);
+        const res = await fixtureDashboardClient.processes.list("rss", DEFAULT_LIMIT);
         expect(res.sort).toBe("rss");
         expect(res.processes[0].name).toBe("node (metro)");
     });
 
     it("kill returns { ok: true }", async () => {
-        expect(await mockDashboardClient.processes.kill(4821, "node")).toEqual({ ok: true });
+        expect(await fixtureDashboardClient.processes.kill(4821, "node")).toEqual({ ok: true });
     });
 });

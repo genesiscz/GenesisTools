@@ -15,7 +15,7 @@ import { queryOptions } from "@tanstack/react-query";
  * callers exposed as `*Mutation` factories the hooks wrap in `useMutation` — components NEVER call
  * the raw client or raw `useMutation`/`useQuery` (hard D32 rule).
  *
- * Sessions come from THREE domains the contract already exposes (mock-client covers all of them):
+ * Sessions come from THREE domains the contract already exposes (the fixture wire covers all of them):
  *   - `tmux.sessions()`  → tmux hub sessions (+ their ttyd/cmux bindings)
  *   - `ttyd.list()`      → live ttyd PTYs (the actual things a WebView driver attaches to)
  *   - `cmux.snapshot()`  → cmux workspaces/panes (surfaced for parity with the web dashboard)

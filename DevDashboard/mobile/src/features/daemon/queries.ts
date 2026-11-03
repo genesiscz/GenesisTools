@@ -10,12 +10,9 @@ import { queryOptions } from "@tanstack/react-query";
  * features use generic `client.get<T>(path)` (the contract says so). We supply `T` explicitly
  * (`DaemonOverview`, `RunSummary[]`, `LogEntry[]`) and build paths via `paths.*`.
  *
- * MOCK GAPS (flagged, NOT fixed — mock-client.ts is shared/read-only):
- *  - `/api/daemon/status` → the mock returns a real `DaemonOverview` (running, no tasks).
- *  - `/api/daemon/runs` and `/api/daemon/runs/log` do NOT prefix-match `/api/daemon/status`, so the
- *    mock falls through to `{}` (an empty object, NOT `[]`). The `asArray` guard coerces those to
- *    `[]` so the runs list + log viewer render empty instead of crashing on `.map`. A real device
- *    returns true arrays. See 20-impl-09-rest-notes.md.
+ * Shape guard: the fixture wire (`src/api/fixture-wire.ts`) answers each daemon path with its own
+ * fixture. The `asArray` guard still coerces an empty `{}` to `[]`, so an older Mac agent renders an
+ * empty runs list instead of crashing on `.map`.
  *
  * Polling: 10 s status (it changes on install/start/stop), 15 s runs (new runs append), runs-log is
  * fetched on demand (no interval — the log of a finished run is static).
