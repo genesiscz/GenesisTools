@@ -26,7 +26,10 @@ export interface WindowForecast {
     utilization: number;
     resetsAt: string | null;
     lastSampleAt: string;
+    /** Readings of the whole lookback, earlier reset cycles included. */
     samples: number;
+    /** Readings of the current reset cycle: the only ones the rate reads, so the only evidence about this cycle. */
+    cycleSamples: number;
     /** Percent per hour; null when the samples show no burn. */
     ratePctPerHour: number | null;
     basis: ForecastBasis | null;
@@ -177,6 +180,7 @@ export function forecastWindow(samples: readonly UsageSample[], now: Date = new 
     const resetMs = last.resetsAt ? Date.parse(last.resetsAt) : Number.NaN;
     const hasReset = Number.isFinite(resetMs);
     const resetSinceSample = hasReset && resetMs <= nowMs;
+    const { windowStart, values } = currentWindow(samples, now);
     const base: WindowForecast = {
         bucket: last.bucket,
         kind,
@@ -185,6 +189,7 @@ export function forecastWindow(samples: readonly UsageSample[], now: Date = new 
         resetsAt: last.resetsAt,
         lastSampleAt: last.timestamp,
         samples: samples.length,
+        cycleSamples: values.length,
         ratePctPerHour: null,
         basis: null,
         exhaustAt: null,
@@ -201,7 +206,6 @@ export function forecastWindow(samples: readonly UsageSample[], now: Date = new 
         return base;
     }
 
-    const { windowStart, values } = currentWindow(samples, now);
     let ratePerMinute: number | null = null;
     let basis: ForecastBasis | null = null;
 
