@@ -99,7 +99,8 @@ public struct UsageSeriesItem: Decodable, Equatable, Sendable, Identifiable {
     public let forecast: UsageLimitForecast?
 
     public var account: UsageAccountKey { UsageAccountKey(provider: provider, accountId: accountId, accountName: accountName) }
-    public var id: String { account.id + "\u{1}" + key }
+    /// The kind is part of it: a window whose kind changed in the range (a Codex plan change) is two series.
+    public var id: String { account.id + "\u{1}" + key + "\u{1}" + (kind ?? "") }
 
     /// A scoped window (Fable, Opus) sits behind the "Scoped windows" setting.
     public var isScoped: Bool { kind == "scoped" || scopeModel != nil }
