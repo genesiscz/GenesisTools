@@ -13,6 +13,8 @@ export interface AttributedEvent {
     /** Plugin id of the harness's provider (`anthropic-sub` for Claude). */
     provider: string;
     agent: CompactEvent["source"];
+    /** The transcript the event came from. */
+    file: string;
     owner: TranscriptOwner;
     account: SessionAccount;
 }
@@ -55,6 +57,7 @@ export function attributeEvents(events: readonly CompactEvent[], lookup: Session
             model: event.model ?? null,
             provider: agentPluginId(event.source),
             agent: event.source,
+            file: event.file,
             ...known,
         });
     }

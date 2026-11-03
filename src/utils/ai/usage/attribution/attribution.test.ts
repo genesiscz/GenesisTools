@@ -42,7 +42,7 @@ function series(points: Array<[string, number]>, resets: string[] = []): SeriesE
     };
 }
 
-const report = (id: string) => `report ${id}`;
+const report = (id: string): string => `report ${id}`;
 
 function sessionAccountOf(session: SessionRef, with_: SessionAccountLookup) {
     const driver = session.agent === "claude" ? claudeDriver : codexDriver;
