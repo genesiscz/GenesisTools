@@ -15,7 +15,8 @@ export function priceOfCall(call: SessionCall, pricing: PricingTable = DEFAULT_P
 
     const contextTokens = call.aggregate ? undefined : call.input + call.cacheRead + call.cacheWrite;
 
-    return resolvePrice(entry, { at: new Date(call.t), contextTokens });
+    // The service tier too, as the spend reports price it: a priority call is not billed at the standard rate.
+    return resolvePrice(entry, { at: new Date(call.t), contextTokens, serviceTier: call.serviceTier });
 }
 
 /**
@@ -55,6 +56,7 @@ export function coldRebuildUsd(input: {
     contextTokens: number;
     oneHour: boolean;
     at: Date;
+    serviceTier?: string;
     pricing?: PricingTable;
 }): number | null {
     const entry = priceFor(input.model, input.pricing ?? DEFAULT_PRICING);
@@ -63,7 +65,11 @@ export function coldRebuildUsd(input: {
         return null;
     }
 
-    const price = resolvePrice(entry, { at: input.at, contextTokens: input.contextTokens });
+    const price = resolvePrice(entry, {
+        at: input.at,
+        contextTokens: input.contextTokens,
+        serviceTier: input.serviceTier,
+    });
     const write = input.oneHour ? (price.cacheWrite1h ?? price.cacheWrite) : price.cacheWrite;
     return (input.contextTokens * (write - price.cacheRead)) / 1_000_000;
 }

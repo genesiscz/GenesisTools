@@ -38,10 +38,14 @@ const KIND_OF_CAUSE: Record<string, WasteKind> = {
     "model changed": "cache-rebuild-model",
 };
 
-/** The waste items of one session's main loop (sub-agent calls are another cache and are not paired with it). */
+/**
+ * The waste items of one transcript's own cache: a lead's main loop (the sub-agent calls inside it are another cache
+ * and are not paired with it), or a sub-agent's own transcript, whose calls are all sidechain calls.
+ */
 export function sessionWaste(calls: readonly SessionCall[], compactions: readonly SessionCompaction[]): WasteItem[] {
+    const ownTranscript = calls.length > 0 && calls.every((call) => call.sidechain);
     // An aggregate row sums several requests, so its cache read follows how many it made: a drop is no lost cache.
-    const main = calls.filter((call) => !call.sidechain && !call.aggregate);
+    const main = calls.filter((call) => (ownTranscript || !call.sidechain) && !call.aggregate);
     const items: WasteItem[] = [];
 
     for (const loss of findCacheLosses(cacheCallsOf(main, compactions))) {

@@ -55,6 +55,7 @@ export function callOfDriverEvent(event: DriverUsageEvent): SessionCall {
         sidechain: event.isSidechain === true,
         aggregate: event.aggregate === true,
         ...(event.recordedCostUsd === undefined ? {} : { recordedCostUsd: event.recordedCostUsd }),
+        ...(event.serviceTier === undefined ? {} : { serviceTier: event.serviceTier }),
     };
 }
 
