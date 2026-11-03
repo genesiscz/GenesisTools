@@ -697,7 +697,7 @@ export class UsageLimitsDb {
      * alerts). Their tables exist once this class has opened the file; they never create a table themselves.
      */
     connection(): Database {
-        return this.claudeDb.getDb();
+        return this.handle;
     }
 
     recordSpendIfChanged(accountName: string, spend: SpendInput, provider?: string): boolean {
