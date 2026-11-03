@@ -1,6 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
-import { pickRanked, rankAccounts } from "@genesiscz/utils/ai/usage/account-rank";
+import { scoreAccounts, sortGrouped } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/scorer";
+import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
+import {
+    ACCOUNT_RANKERS,
+    pickRanked,
+    rankAccounts,
+    rankerFor,
+    windowRanker,
+} from "@genesiscz/utils/ai/usage/account-rank";
 
 const NOW = new Date("2026-10-25T20:00:00.000Z");
 const inHours = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000).toISOString();
@@ -93,5 +101,53 @@ describe("rankAccounts (Grok)", () => {
             ["personal", "ready", 60],
             ["work", "ready", 10],
         ]);
+    });
+});
+
+describe("ACCOUNT_RANKERS", () => {
+    function claude(name: string, fiveHour: number, weekly: number): AccountUsageSnapshot {
+        const native = {
+            five_hour: { utilization: fiveHour, resets_at: inHours(3) },
+            seven_day: { utilization: weekly, resets_at: inHours(60) },
+        };
+
+        return {
+            provider: "anthropic-sub",
+            accountId: `acc_${name}`,
+            accountName: name,
+            fetchedAt: NOW.toISOString(),
+            limits: [
+                { key: "five_hour", label: "5h", kind: "session", percentUsed: fiveHour, resetsAt: inHours(3) },
+                { key: "seven_day", label: "Weekly", kind: "weekly", percentUsed: weekly, resetsAt: inHours(60) },
+            ],
+            native,
+        };
+    }
+
+    it("ranks Claude accounts in the scorer's grouped order, with the scorer's reasons", () => {
+        const snapshots = [claude("work", 10, 90), claude("personal", 20, 30)];
+        const ranked = rankAccounts(snapshots, { now: NOW });
+        const scored = sortGrouped(scoreAccounts(snapshots.map(snapshotToAccountUsage), { now: NOW }));
+
+        expect(ranked.map((row) => [row.accountName, row.tier, row.why])).toEqual(
+            scored.map((row) => [row.accountName, row.tier, row.why])
+        );
+        expect(ranked[0]).toMatchObject({ provider: "anthropic-sub", accountId: "acc_personal" });
+    });
+
+    it("a mixed list ranks each provider with its own ranker, one provider after another", () => {
+        const ranked = rankAccounts([codex("work", 0, 50), claude("side", 10, 20), codex("shop", 0, 10)], { now: NOW });
+
+        expect(ranked.map((row) => [row.provider, row.accountName])).toEqual([
+            ["openai-sub", "shop"],
+            ["openai-sub", "work"],
+            ["anthropic-sub", "side"],
+        ]);
+    });
+
+    it("routes by plugin id, and an unknown provider gets the shared window ranker", () => {
+        expect(rankerFor("anthropic-sub")).toBe(ACCOUNT_RANKERS.claude);
+        expect(rankerFor("grok-sub")).toBe(windowRanker);
+        expect(rankerFor("someday-sub")).toBe(windowRanker);
     });
 });
