@@ -78,7 +78,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public init(
         binaryPath: String, stateRoot: String? = nil, flowRuntime: FlowFocusRuntime? = nil,
         micLauncher: String? = nil, openHub: @escaping (WidgetSession?) -> Void,
-        openDestination: ((WidgetSession, String, String?) -> Void)? = nil, model injected: WidgetModel? = nil
+        openDestination: ((WidgetSession, String, String?) -> Void)? = nil,
+        openUsage: (([String]) -> Void)? = nil, model injected: WidgetModel? = nil
     ) {
         model = injected ?? WidgetModel(binaryPath: binaryPath, stateRoot: stateRoot)
         let runtime = flowRuntime ?? .shared
@@ -168,7 +169,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             try modules.register(tasks.taskModule())
             try modules.register(FlowWidget.module(runtime: runtime))
             try modules.register(voiceNotes.voiceNotesModule())
-            let usage = WidgetUsageStore(client: .bridge(binaryPath: binaryPath))
+            // The host routes a Usage launch (`--mode usage`, `--usage-account <id>`) like its other hub launches, so
+            // its part guard applies and a preview opens the real hub, not itself.
+            let usage = WidgetUsageStore(
+                client: .bridge(binaryPath: binaryPath), openHub: openUsage ?? WidgetUsageStore.launchHub)
             self.usage = usage
             try modules.register(usage.usageModule { [weak model] in
                 model?.snapshot?.state.preferences.usage?.ringWindow ?? .weekly
