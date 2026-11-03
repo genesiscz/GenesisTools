@@ -57,6 +57,12 @@ function text(input: Readonly<Record<string, unknown>>, key: string): string | u
     return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
+/** A CLI-style value as its text: a typed caller may send a number (`{ limit: 5 }`) where the query sends "5". */
+function argText(input: Readonly<Record<string, unknown>>, key: string): string | undefined {
+    const value = input[key];
+    return typeof value === "number" && Number.isFinite(value) ? String(value) : text(input, key);
+}
+
 function wholeNumber(input: Readonly<Record<string, unknown>>, key: string, fallback?: number): number | undefined {
     const value = input[key];
 
@@ -164,8 +170,8 @@ export const HUB_CAPABILITIES = {
         rules: READ_ONLY,
         parse(input): AgentsInput {
             return {
-                hours: parsedWith(text(input, "since"), "since", hoursArg),
-                limit: parsedWith(text(input, "limit"), "limit", limitArg),
+                hours: parsedWith(argText(input, "since"), "since", hoursArg),
+                limit: parsedWith(argText(input, "limit"), "limit", limitArg),
                 session: text(input, "session"),
                 agent: text(input, "agent"),
             };
