@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBot, handleUpdate } from "@app/telegram-bot/lib/bot";
+import { createCallbackRouter } from "@app/telegram-bot/lib/callbacks";
 import { getStorage, loadTelegramConfig, saveTelegramConfig } from "@app/telegram-bot/lib/config";
 import { createRateLimiter } from "@app/telegram-bot/lib/security";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -973,6 +974,45 @@ describe("webhook receiver end to end", () => {
 });
 
 describe("bot pipeline", () => {
+    it("takes only button presses from the decisions chat, never a command", async () => {
+        const fake = startFakeTelegram();
+        const pressed: number[] = [];
+        const bot = createBot(
+            fakeToken(),
+            { commands: 42, presses: [42, -100777] },
+            {
+                apiRoot: fake.apiRoot,
+                callbacks: createCallbackRouter({
+                    d: async (press) => {
+                        pressed.push(press.chatId);
+                        return { toast: "ok" };
+                    },
+                }),
+            }
+        );
+        await bot.init();
+
+        await handleUpdate(bot, messageUpdate(1, -100777, "/help"));
+        await handleUpdate(bot, {
+            update_id: 2,
+            callback_query: {
+                id: "press-1",
+                chat_instance: "instance",
+                data: "d:token",
+                from: { id: 7, is_bot: false, first_name: "Tester" },
+                message: {
+                    message_id: 9,
+                    date: Math.floor(Date.now() / 1000),
+                    chat: { id: -100777, type: "supergroup", title: "Decisions" },
+                },
+            },
+        });
+        await fake.stop();
+
+        expect(fake.calls.filter((call) => call.method === "sendMessage")).toEqual([]);
+        expect(pressed).toEqual([-100777]);
+    });
+
     it("rate limits a command for an allowed chat and never charges a chat that is not allowed", async () => {
         const fake = startFakeTelegram();
         const checked: string[] = [];

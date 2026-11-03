@@ -20,18 +20,25 @@ export interface CreateBotOptions {
     callbacks?: CallbackRouter;
 }
 
-/** `authorizedChats`: the commands chat and the decisions chat (`authorizedChats` in `../lib/config`). */
-export function createBot(
-    token: string,
-    authorizedChats: number | readonly number[],
-    options: CreateBotOptions = {}
-): Bot {
+/** Which chats the bot takes updates from, by kind: messages (commands) and button presses. */
+export interface BotChats {
+    /** The only chat whose messages reach a command handler (`/run` and `/tools` run tools on this Mac). */
+    commands: number;
+    /** Chats whose button presses reach the callback router: the commands chat and the decisions chat. */
+    presses: readonly number[];
+}
+
+/** `chats`: one chat for everything, or the commands chat and the press chats (`botChats` in `../lib/config`). */
+export function createBot(token: string, chats: number | BotChats, options: CreateBotOptions = {}): Bot {
     const bot = new Bot(token, { botInfo: options.botInfo, client: { apiRoot: options.apiRoot } });
     const rateLimiter = options.rateLimiter ?? createRateLimiter();
-    const allowed = new Set(typeof authorizedChats === "number" ? [authorizedChats] : authorizedChats);
+    const byKind = typeof chats === "number" ? { commands: chats, presses: [chats] } : chats;
+    const commandChats = new Set([byKind.commands]);
+    const pressChats = new Set([byKind.commands, ...byKind.presses]);
 
     bot.use(async (ctx, next) => {
         const chatId = ctx.chat?.id;
+        const allowed = ctx.callbackQuery ? pressChats : commandChats;
         if (chatId === undefined || !allowed.has(chatId)) {
             logger.debug(
                 { chatId, updateId: ctx.update.update_id },
