@@ -24,6 +24,54 @@ const { e2eRoutes, loadPeers } = await import("@app/dev-dashboard/server/routes/
 const { savePairingCode } = await import("@app/dev-dashboard/lib/e2e/pairing-code");
 const { SafeJSON } = await import("@genesiscz/utils/json");
 
+describe("managed tier idempotency (real Agent rpc, real bound route)", () => {
+    it("a retried keyed write over the relay returns its first answer and runs once", async () => {
+        const { Router } = await import("@app/dev-dashboard/server/router");
+        const { ReceiptCache, withTableIdempotency } = await import("@app/dev-dashboard/server/bind");
+        const { handleE2eRpc } = await import("@app/dev-dashboard/server/transport/e2e-rpc");
+        const { ENDPOINTS } = await import("@dd/contract");
+        const agent = naclBoxCipher.keyPair();
+        const device = naclBoxCipher.keyPair();
+        let runs = 0;
+        // A keyed-write row of the table, keyed by the same receipt cache the Mac's routes use.
+        const [dismiss] = withTableIdempotency(
+            [
+                {
+                    method: "POST",
+                    pattern: ENDPOINTS.qaDecisionsDismiss.path,
+                    handler: async () => ({ kind: "json", status: 200, body: { run: ++runs } }),
+                },
+            ],
+            new ReceiptCache()
+        );
+        const router = new Router().add(dismiss);
+        const relayFetch = (async (_url: string, init?: RequestInit) => {
+            const responseEnvelope = await handleE2eRpc(String(init?.body), {
+                cipher: naclBoxCipher,
+                agentKeys: agent,
+                resolvePeerKey: () => device.publicKey,
+                router,
+                services: {} as never,
+            });
+            return new Response(responseEnvelope, { status: 200 });
+        }) as unknown as typeof fetch;
+        const client = createE2eTransport({
+            relayBaseUrl: "https://relay.vendor.com/agent/abc",
+            cipher: naclBoxCipher,
+            deviceKeys: device,
+            agentPublicKey: agent.publicKey,
+            fetchImpl: relayFetch,
+        }).client();
+        const input = { session: "s-one", number: 1 } as never;
+
+        const first = await client.call(ENDPOINTS.qaDecisionsDismiss, input, { idempotencyKey: "retry-1" });
+        const retry = await client.call(ENDPOINTS.qaDecisionsDismiss, input, { idempotencyKey: "retry-1" });
+
+        expect(retry).toEqual(first);
+        expect(runs).toBe(1);
+    });
+});
+
 describe("managed pairing admission (real Agent pair route)", () => {
     async function post(body: string, agent: { publicKey: Uint8Array; secretKey: Uint8Array }) {
         const [route] = e2eRoutes({ cipher: naclBoxCipher, agentKeys: async () => agent });
