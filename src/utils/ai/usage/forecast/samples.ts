@@ -10,6 +10,11 @@ export interface UsageSample {
     timestamp: string;
 }
 
+/** One column of `PRAGMA table_info`, as far as the readers here look. */
+interface ColumnRow {
+    name: string;
+}
+
 interface SampleRow {
     provider: string;
     account_name: string;
@@ -40,7 +45,7 @@ export interface UsageSampleQuery {
  * value at the lookback's start (a budget's "used at midnight") would otherwise read 0.
  */
 export function readSampleSeeds(db: Database, options: { before: Date }): UsageSample[] {
-    const columns = db.prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>;
+    const columns = db.prepare<ColumnRow, []>("PRAGMA table_info(usage_snapshots)").all();
     const readingsOnly = columns.some((column) => column.name === "availability")
         ? "AND availability IS NOT 'absent'"
         : "";
@@ -82,7 +87,7 @@ export function readUsageSamples(db: Database, options: UsageSampleQuery): Usage
         : "";
     // A store the availability migration has not reached yet has no such column (this read is
     // read-only and never migrates); its rows are all readings.
-    const columns = db.prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>;
+    const columns = db.prepare<ColumnRow, []>("PRAGMA table_info(usage_snapshots)").all();
     const readingsOnly = columns.some((column) => column.name === "availability")
         ? "AND availability IS NOT 'absent'"
         : "";
