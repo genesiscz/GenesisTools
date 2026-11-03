@@ -73,9 +73,13 @@ it("keeps a refused pick blocking Send across card unmount and remount until a p
     expect(flushes.size).toBe(0);
     card = await mount();
     await act(async () => { await expect(flush()).rejects.toThrow("Mac refused pick b"); });
+    // The remounted card's mutation has no error: the kept tracker's refusal is what tells the user why Send waits.
+    const errorId = `answer-queue-decision-session-${decision.number}-error`;
+    expect(card.getByTestId(errorId).props.children).toBe("Mac refused pick b");
 
     await pick("a");
     await act(async () => { await expect(flush()).resolves.toBeUndefined(); });
+    expect(card.queryByTestId(errorId)).toBeNull();
     expect(picks).toEqual(["a", "b", "a"]);
     await card.unmount();
     queryClient.clear();
