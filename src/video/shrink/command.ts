@@ -17,11 +17,12 @@ import {
     parseAudioRequest,
     TARGET_BAND,
     VIDEO_PRESET_NAMES,
+    type VideoEncoder,
     type VideoPreset,
 } from "@genesiscz/utils/video/reencode";
 import type { Command } from "commander";
 import pc from "picocolors";
-import type { EncodeRow } from "../encode";
+import { type EncodeRow, trashLine } from "../encode";
 import { createEncodeReporter, ENCODE_FORMATS, isEncodeFormat } from "../encode-progress";
 import {
     type FinalCheck,
@@ -438,13 +439,14 @@ function renderOutcome({
         return;
     }
 
-    const { row, final, chosen } = outcome;
+    const { row, final, chosen, encoder } = outcome;
 
     if (!row || !isWritten(row)) {
-        out.log.error(`The encode did not finish: ${row?.reason ?? "no result"}`);
+        const restore = row ? trashLine({ row, encoder }) : null;
+        out.log.error(`The encode did not finish: ${row?.reason ?? "no result"}${restore ? `\n${restore}` : ""}`);
         process.exitCode = 1;
     } else if (format === "text") {
-        renderFinal({ row, targetBytes, final, previews, chosen });
+        renderFinal({ row, encoder, targetBytes, final, previews, chosen });
     }
 
     finishJson({ ...report, chosen, row, final });
@@ -452,12 +454,14 @@ function renderOutcome({
 
 function renderFinal({
     row,
+    encoder,
     targetBytes,
     final,
     previews,
     chosen,
 }: {
     row: EncodeRow;
+    encoder: VideoEncoder;
     targetBytes: number | undefined;
     final: FinalCheck | null;
     previews: PresetPreview[];
@@ -469,6 +473,16 @@ function renderFinal({
         `${missed ? pc.yellow("Done, over the size") : pc.green("Done")}: ${row.output}`,
         `${formatBytes(bytes)}${targetBytes === undefined ? "" : ` (${((bytes / targetBytes) * 100).toFixed(0)}% of the target)`}, from ${formatBytes(row.inputBytes ?? 0)}.`,
     ];
+
+    if (row.status === "kept-beside") {
+        lines.push(`The original was not replaced: ${row.reason}.`);
+    }
+
+    const undo = trashLine({ row, encoder });
+
+    if (undo) {
+        lines.push(undo);
+    }
 
     if (final) {
         const preview = previews.find((entry) => entry.preset === chosen);

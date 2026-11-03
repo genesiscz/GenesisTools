@@ -870,6 +870,24 @@ export function undoCommand({
     return `mv -n ${result} ${shellQuote(siblingOutput({ input, encoder }))} && test ! -e ${result} && ${restore}`;
 }
 
+/**
+ * The line that gets a `--replace` original back from the trash: `restore` after a failed install (the original is
+ * only in the trash), `undo` after a written result (the result moves aside first); null when nothing was trashed.
+ */
+export function trashLine({ row, encoder }: { row: EncodeRow; encoder: VideoEncoder }): string | null {
+    if (!row.trashBatch) {
+        return null;
+    }
+
+    const restore = toolCommand("rm", "restore", row.trashBatch);
+
+    if (row.status === "failed") {
+        return `restore ${basename(row.input)}: ${restore}`;
+    }
+
+    return `undo ${basename(row.input)}: ${undoCommand({ input: row.input, encoder, restore })}`;
+}
+
 export function renderRows({
     rows,
     summary,
@@ -896,15 +914,10 @@ export function renderRows({
     out.println(table.toString());
 
     for (const row of rows) {
-        if (!row.trashBatch) {
-            continue;
-        }
+        const line = trashLine({ row, encoder });
 
-        if (row.status === "failed") {
-            out.println(`restore ${basename(row.input)}: ${toolCommand("rm", "restore", row.trashBatch)}`);
-        } else {
-            const restore = toolCommand("rm", "restore", row.trashBatch);
-            out.println(`undo ${basename(row.input)}: ${undoCommand({ input: row.input, encoder, restore })}`);
+        if (line) {
+            out.println(line);
         }
     }
 

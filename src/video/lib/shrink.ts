@@ -9,6 +9,7 @@ import {
     findEncoder,
     VIDEO_PRESET_NAMES,
     VIDEO_PRESETS,
+    type VideoEncoder,
     type VideoPreset,
 } from "@genesiscz/utils/video/reencode";
 import { type EncodeProgressEvent, type EncodeRow, encodeVideos } from "../encode";
@@ -99,7 +100,13 @@ export type ShrinkOutcome =
     | ({ kind: "previewed" } & ShrinkReport)
     | ({ kind: "not-chosen" } & ShrinkReport)
     | ({ kind: "no-encoder"; chosen: VideoPreset } & ShrinkReport)
-    | ({ kind: "encoded"; chosen: VideoPreset; row: EncodeRow | null; final: FinalCheck | null } & ShrinkReport);
+    | ({
+          kind: "encoded";
+          chosen: VideoPreset;
+          encoder: VideoEncoder;
+          row: EncodeRow | null;
+          final: FinalCheck | null;
+      } & ShrinkReport);
 
 /** A shrink that failed for a reason other than the signal; its samples stay in `workDir` for a look. */
 export class ShrinkFailedError extends Error {
@@ -261,7 +268,7 @@ async function shrinkIn({ options, workDir }: { options: ShrinkOptions; workDir:
         }
     }
 
-    return { kind: "encoded", chosen, row, final, ...report };
+    return { kind: "encoded", chosen, encoder, row, final, ...report };
 }
 
 /**

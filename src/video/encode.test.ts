@@ -62,6 +62,7 @@ import {
     siblingOutput,
     snapshotSource,
     sourceChange,
+    trashLine,
     undoCommand,
 } from "./encode";
 import { presetsForContainer } from "./shrink/preview";
@@ -562,6 +563,17 @@ describe("exitCodeFor", () => {
     test("a failed file fails the run; skips and discards do not", () => {
         expect(exitCodeFor([row("skipped"), row("discarded"), row("kept"), row("kept-beside")])).toBe(0);
         expect(exitCodeFor([row("kept"), row("failed")])).toBe(1);
+    });
+
+    test("a trashed original gets an undo line after a written result and a restore line after a failed one", () => {
+        const batch = "20261103-000000-1-1";
+        expect(trashLine({ row: row("kept"), encoder })).toBeNull();
+        expect(trashLine({ row: { ...row("kept"), trashBatch: batch }, encoder })).toBe(
+            `undo a.mp4: ${undoCommand({ input: "/clips/a.mp4", encoder, restore: `tools rm restore ${batch}` })}`
+        );
+        expect(trashLine({ row: { ...row("failed"), trashBatch: batch }, encoder })).toBe(
+            `restore a.mp4: tools rm restore ${batch}`
+        );
     });
 });
 
