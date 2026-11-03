@@ -1,9 +1,22 @@
 import { RATE_LIMIT_EVENT_KINDS, type UsageEventRow } from "@genesiscz/utils/ai/usage/events/store";
 import { ALERT_RULE_DEFAULTS } from "../config";
-import type { AlertCandidate, AlertRuleSettings, UsageAlertRule } from "../types";
+import type { AlertCandidate, AlertRound, AlertRuleSettings, UsageAlertRule } from "../types";
 
-function accountOf(event: UsageEventRow): string {
-    return event.accountId ?? event.accountName ?? "";
+/**
+ * One account, however its writer named it. The proxy's request tracker writes the linked account id, the usage
+ * endpoint and the cooldown writer only the name, so a name the round's snapshots know becomes that account's id;
+ * a name no snapshot knows (a proxy-only account) stays a name.
+ */
+function identityOf(round: AlertRound): (event: UsageEventRow) => string {
+    const idByName = new Map(
+        round.snapshots.map((snapshot) => [`${snapshot.provider}\u0000${snapshot.accountName}`, snapshot.accountId])
+    );
+
+    return (event) =>
+        event.accountId ??
+        (event.accountName === null ? undefined : idByName.get(`${event.provider}\u0000${event.accountName}`)) ??
+        event.accountName ??
+        "";
 }
 
 /**
@@ -19,6 +32,7 @@ export const rateLimitedRule: UsageAlertRule<"rate-limited"> = {
         const since = new Date(round.now.getTime() - settings.windowMinutes * 60_000).toISOString();
         const recent = round.events.filter((event) => event.ts >= since);
         const groups = new Map<string, UsageEventRow[]>();
+        const accountOf = identityOf(round);
 
         for (const event of recent) {
             if (!RATE_LIMIT_EVENT_KINDS.includes(event.kind)) {
@@ -39,7 +53,9 @@ export const rateLimitedRule: UsageAlertRule<"rate-limited"> = {
             }
 
             const first = events[0];
-            const name = first.accountName ?? first.accountId ?? first.provider;
+            const accountId = events.find((event) => event.accountId !== null)?.accountId ?? null;
+            const accountName = events.find((event) => event.accountName !== null)?.accountName ?? null;
+            const name = accountName ?? accountId ?? first.provider;
             const sources = [...new Set(events.map((event) => event.source))].join(", ");
             const cooldown = recent.find(
                 (event) =>
@@ -55,8 +71,8 @@ export const rateLimitedRule: UsageAlertRule<"rate-limited"> = {
             candidates.push({
                 rule: "rate-limited",
                 provider: first.provider,
-                accountId: first.accountId,
-                accountName: first.accountName,
+                accountId: accountId ?? (accountOf(first) === accountName ? null : accountOf(first)),
+                accountName,
                 windowKind: null,
                 windowKey: null,
                 dedupeKey: `rate-limited:${first.provider}:${accountOf(first)}`,

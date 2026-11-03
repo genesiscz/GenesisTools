@@ -404,6 +404,39 @@ describe("rules over the stores", () => {
             "shop got 3 rate-limit answers in 10 min (ai-proxy). It cools down for 120 s.",
         ]);
     });
+
+    test("rate-limited: an id-bearing and a name-only answer for one account count together", () => {
+        const events = new UsageEventsStore(limits.connection());
+        const insert = (minute: number, kind: "usage-429" | "rate-limited" | "cooldown", withId: boolean) =>
+            events.insert({
+                provider: "anthropic-sub",
+                accountName: "work",
+                ...(withId ? { accountId: "acc_work" } : {}),
+                source: kind === "usage-429" ? "usage-client" : "ai-proxy",
+                kind,
+                ...(kind === "cooldown" ? { retryAfterMs: 60_000 } : {}),
+                at: minutes(minute),
+            });
+        insert(-8, "usage-429", false);
+        insert(-6, "usage-429", false);
+        insert(-3, "rate-limited", true);
+        insert(-3, "cooldown", false);
+        const built = buildAlertRound({
+            db: limits.connection(),
+            snapshots: [snapshot(10)],
+            now: NOW,
+            previousRoundAt: null,
+        });
+        const candidates = ALERT_RULES["rate-limited"].evaluate(built, ALERT_RULE_DEFAULTS["rate-limited"]);
+
+        expect(candidates.map((candidate) => [candidate.dedupeKey, candidate.accountId, candidate.message])).toEqual([
+            [
+                "rate-limited:anthropic-sub:acc_work",
+                "acc_work",
+                "work got 3 rate-limit answers in 10 min (usage-client, ai-proxy). It cools down for 60 s.",
+            ],
+        ]);
+    });
 });
 
 describe("the seed from the old notifier", () => {
