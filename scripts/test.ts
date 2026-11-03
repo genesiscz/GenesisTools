@@ -222,6 +222,9 @@ if (workerLog) {
  * Targeted runs (explicit paths) are untouched.
  */
 const LOAD_SENSITIVE_FILES = [
+    // Native background QoS and Chrome shutdown stall under parallel process pressure.
+    "src/daemon/lib/runner.test.ts",
+    "src/chrome-devtools/lib/headless.test.ts",
     "src/utils/fs/disk-usage.test.ts",
     "src/utils/fs/watcher.test.ts",
     // CI's parallel workers timed out seven real-child cases in these suites.
