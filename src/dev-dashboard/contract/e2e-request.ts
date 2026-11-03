@@ -40,6 +40,29 @@ export function decodeE2eRequest(raw: string): E2eRequest {
     return req;
 }
 
+/**
+ * The pairing admission a phone seals to the Mac's QR-pinned public key and posts to `/api/e2e/pair` as an
+ * `E2eEnvelope`. The relay sees neither the one-time code nor a key it could swap: a box opened with the envelope's
+ * `epk` proves the code came from the holder of that key's secret half.
+ */
+export interface E2ePairAdmission {
+    deviceCode: string;
+}
+
+export function encodeE2ePairAdmission(admission: E2ePairAdmission): string {
+    return SafeJSON.stringify(admission, { strict: true });
+}
+
+export function decodeE2ePairAdmission(raw: string): E2ePairAdmission {
+    const admission = SafeJSON.parse(raw, { strict: true }) as E2ePairAdmission;
+
+    if (typeof admission?.deviceCode !== "string" || admission.deviceCode === "") {
+        throw new Error("invalid E2ePairAdmission");
+    }
+
+    return admission;
+}
+
 export function encodeE2eResponse(res: E2eResponse): string {
     return SafeJSON.stringify(res, { strict: true });
 }

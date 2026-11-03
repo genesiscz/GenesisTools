@@ -1,3 +1,12 @@
+import { decodeEnvelope } from "@app/dev-dashboard/contract/e2e-envelope";
+import { decodeE2ePairAdmission } from "@app/dev-dashboard/contract/e2e-request";
+import {
+    type BoxCipher,
+    fromBase64,
+    type KeyPair,
+    loadOrCreateAgentKeys,
+    naclBoxCipher,
+} from "@app/dev-dashboard/lib/e2e/box";
 import { verifyAndConsumePairingCode } from "@app/dev-dashboard/lib/e2e/pairing-code";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
@@ -36,28 +45,71 @@ async function addPeer(publicKeyB64: string): Promise<void> {
     );
 }
 
-export function e2eRoutes(): RouteDef[] {
+export interface E2ePairDeps {
+    cipher: BoxCipher;
+    /** The Mac's keypair, whose public half the phone pinned from the pairing QR. */
+    agentKeys: () => Promise<KeyPair>;
+}
+
+/** Opens a sealed admission; null when it is not sealed to this Mac by the key it names. */
+function openAdmission(
+    envelope: string,
+    deps: { cipher: BoxCipher; agentKeys: KeyPair }
+): { publicKey: string; deviceCode: string } | null {
+    const env = decodeEnvelope(envelope);
+    const plain = deps.cipher.open({
+        ciphertext: fromBase64(env.ct),
+        nonce: fromBase64(env.n),
+        senderPublicKey: fromBase64(env.epk),
+        recipientSecretKey: deps.agentKeys.secretKey,
+    });
+
+    return plain ? { publicKey: env.epk, ...decodeE2ePairAdmission(new TextDecoder().decode(plain)) } : null;
+}
+
+export function e2eRoutes(
+    deps: E2ePairDeps = { cipher: naclBoxCipher, agentKeys: () => loadOrCreateAgentKeys() }
+): RouteDef[] {
     return [
         {
             method: "POST",
             pattern: "/api/e2e/pair",
             handler: async (ctx) => {
                 try {
-                    const body = await ctx.readJson<{ publicKey?: string; deviceCode?: string }>();
+                    const body = await ctx.readJson<{ envelope?: string }>();
 
-                    if (!body.publicKey || !body.deviceCode) {
-                        return { kind: "json", status: 400, body: { error: "publicKey and deviceCode required" } };
+                    if (typeof body.envelope !== "string" || body.envelope === "") {
+                        return { kind: "json", status: 400, body: { error: "a sealed envelope is required" } };
+                    }
+
+                    // The code and the phone's key travel sealed to the Mac's QR-pinned key: the relay terminates
+                    // TLS, so a plaintext code would let an active relay forward it with its own key instead.
+                    let admission: { publicKey: string; deviceCode: string } | null;
+
+                    try {
+                        admission = openAdmission(body.envelope, {
+                            cipher: deps.cipher,
+                            agentKeys: await deps.agentKeys(),
+                        });
+                    } catch (err) {
+                        logger.warn({ err }, "dev-dashboard: e2e pair rejected — malformed admission");
+                        return { kind: "json", status: 400, body: { error: "malformed pairing request" } };
+                    }
+
+                    if (!admission) {
+                        logger.warn("dev-dashboard: e2e pair rejected — not sealed to this Mac by the key it names");
+                        return { kind: "json", status: 403, body: { error: "invalid or expired pairing code" } };
                     }
 
                     // ADMISSION GATE: only a device presenting the short-lived, one-time code shown on
                     // the Mac (out-of-band) may be paired. Without this, anyone reaching the Agent —
                     // including the untrusted vendor relay — could self-pair and break the no-see claim.
-                    if (!(await verifyAndConsumePairingCode(body.deviceCode))) {
+                    if (!(await verifyAndConsumePairingCode(admission.deviceCode))) {
                         logger.warn("dev-dashboard: e2e pair rejected — invalid or expired device code");
                         return { kind: "json", status: 403, body: { error: "invalid or expired pairing code" } };
                     }
 
-                    await addPeer(body.publicKey);
+                    await addPeer(admission.publicKey);
 
                     return { kind: "json", status: 200, body: { ok: true } };
                 } catch (err) {
