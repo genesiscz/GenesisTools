@@ -277,6 +277,18 @@ export function applyToolResult(
     }
 }
 
+/**
+ * A line `parseLines` reads holds one of these; it skips every other line before parsing. Most bytes of a transcript
+ * are lines no rule reads (attachments, snapshots, titles). All ASCII, so a byte search finds them as a string search
+ * does (the fold looks for them in the raw bytes and decodes only the lines that hold one).
+ */
+export const PARSED_LINE_MARKERS = ['"promptId"', '"tool_use"', '"file-history-'] as const;
+
+/** True when `parseLines` reads this line at all. */
+export function isParsedLine(line: string): boolean {
+    return PARSED_LINE_MARKERS.some((marker) => line.includes(marker));
+}
+
 export function parseLines(
     content: string | Iterable<string>,
     agentId: string | null,
@@ -285,11 +297,7 @@ export function parseLines(
     hooks: ParseHooks = {}
 ): void {
     for (const line of typeof content === "string" ? content.split("\n") : content) {
-        // Most bytes of a transcript are lines no rule reads (attachments, snapshots, titles).
-        if (
-            line.length === 0 ||
-            (!line.includes('"promptId"') && !line.includes('"tool_use"') && !line.includes('"file-history-'))
-        ) {
+        if (line.length === 0 || !isParsedLine(line)) {
             continue;
         }
 

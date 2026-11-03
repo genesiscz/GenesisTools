@@ -5,6 +5,7 @@ import { newestLoadedModuleMtime } from "@genesiscz/utils/bun/loaded-modules";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { physFootprintBytes } from "@genesiscz/utils/process/footprint";
+import { releaseMemory } from "@genesiscz/utils/process/release-memory";
 import { profiler } from "@genesiscz/utils/profile";
 import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -56,6 +57,25 @@ const DRAIN_DEADLINE_MS = 10_000;
 /** What macOS charges this process; RSS overstates a bun process by the pages it already gave back. */
 function footprintBytes(): number {
     return physFootprintBytes() ?? process.memoryUsage.rss();
+}
+
+/**
+ * How often the memory check also logs the process's memory, so a growth curve exists for a later look. The
+ * `[profile:cli] hub serve` exit line carries only the PEAK RSS (`maxRSS`), which counts pages the allocator already
+ * gave back and every shared library page: 1.3 to 1.7 GB there on 2026-11-02 was a 550 to 650 MB footprint.
+ */
+const MEMORY_LOG_EVERY_MS = 10 * 60_000;
+
+/** RSS now and at its peak, and the JS heap, for the memory log lines (bytes). */
+function memoryFields(): { rss: number; peakRss: number; heapUsed: number; external: number } {
+    const usage = process.memoryUsage();
+    return {
+        rss: usage.rss,
+        // `maxRSS` is in KB.
+        peakRss: process.resourceUsage().maxRSS * 1024,
+        heapUsed: usage.heapUsed,
+        external: usage.external,
+    };
 }
 const CRASH_LIMIT = 5;
 const CRASH_WINDOW_MS = 10 * 60_000;
@@ -436,12 +456,37 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
     chmodSync(options.socketPath, 0o600);
     log.info({ socket: options.socketPath, pid: process.pid, doors: options.doors.length }, "hub server listening");
 
+    let memoryLoggedAt = startedAt;
+    /** The footprint that made the last check drop the caches; null while the server is under its cap. */
+    let releasedAbove: number | null = null;
     const check = setInterval(() => {
         const footprint = footprintBytes();
-        if (footprint > options.maxFootprintBytes) {
-            log.warn({ footprint, max: options.maxFootprintBytes }, "hub server over its memory cap; restarting");
+        if (footprint <= options.maxFootprintBytes) {
+            releasedAbove = null;
+        } else if (releasedAbove === null) {
+            // A restart drops the caches and the process; dropping only the caches keeps the server when they were
+            // what crossed the cap (a Changes-pane ask of a big session), and the next ask rebuilds them either way.
+            // The allocator hands the pages back over seconds (measured: 276 MB, 223 MB 1 s after, 176 MB 15 s
+            // after), so the verdict waits for the next check.
+            releasedAbove = footprint;
+            const released = releaseMemory();
+            Bun.gc(true);
+            log.info(
+                { footprint, released, max: options.maxFootprintBytes, ...memoryFields() },
+                "hub server over its memory cap; dropped its caches, restarts if still over at the next check"
+            );
+        } else {
+            log.warn(
+                { footprint, releasedAbove, max: options.maxFootprintBytes, ...memoryFields() },
+                "hub server over its memory cap; restarting"
+            );
             void drain("memory");
             return;
+        }
+
+        if (Date.now() - memoryLoggedAt >= MEMORY_LOG_EVERY_MS) {
+            memoryLoggedAt = Date.now();
+            log.info({ footprint, calls, ...memoryFields() }, "hub server memory");
         }
 
         if (options.sourceRoot && newestLoadedModuleMtime(options.sourceRoot) > startedAt) {

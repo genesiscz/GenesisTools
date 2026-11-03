@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { repoRootOf } from "@genesiscz/utils/git/repo-root";
+import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { analyzeCommand, type CommandAnalysis, isLockOrManifest, namedBy } from "./command";
 import { type PathRuleContext, pathExclusion, rootOf } from "./rules";
 import { fileToolVia, isShellTool } from "./transcript";
@@ -568,6 +569,10 @@ interface FileTrace {
  */
 const ANALYSES_SESSIONS_KEPT = 4;
 const analysesBySession = new Map<string, Map<string, KeptAnalysis>>();
+// A resident process over its memory cap drops them rather than restart (`releaseMemory`).
+onReleaseMemory("session-changes shell analyses", () => {
+    analysesBySession.clear();
+});
 
 interface KeptAnalysis {
     command: string;
