@@ -9,6 +9,7 @@ import {
     type E2eRequest,
     type KeyPair,
 } from "@dd/contract";
+import { timeoutSignal } from "@/lib/abort-timeout";
 import { fromBase64, toBase64 } from "@/transport/e2e/box-cipher";
 import { createReconnectingEventSource } from "@/transport/event-source";
 import { createQaStream } from "@/transport/qa-stream";
@@ -31,6 +32,8 @@ export interface E2eTransportOptions {
     /** expo/fetch by default; tests inject a loopback to the Agent shim. */
     fetchImpl?: typeof fetch;
     probe?: () => Promise<boolean>;
+    /** The deadline of the liveness probe (the tier row's `probeTimeoutMs`); the request is aborted past it. */
+    probeTimeoutMs?: number;
     /** Encrypted relay stream seam for tests and platform adapters. */
     streamSseImpl?: (options: StreamSseOptions) => { close(): void };
     sseRetryMs?: number;
@@ -40,7 +43,7 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
     const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as typeof fetch);
 
     /** Seal an inner-request envelope; POST to the relay's RPC endpoint; open the response envelope. */
-    async function encryptedExchange(plaintext: Uint8Array): Promise<Uint8Array> {
+    async function encryptedExchange(plaintext: Uint8Array, signal?: AbortSignal): Promise<Uint8Array> {
         const nonce = opts.cipher.randomNonce();
         const ct = opts.cipher.seal({
             plaintext,
@@ -59,6 +62,7 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-dd-e2e": "1" },
             body: reqEnvelope,
+            ...(signal ? { signal } : {}),
         });
 
         const raw = await res.text();
@@ -151,7 +155,10 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
             (async () => {
                 try {
                     const probeRequest: E2eRequest = { method: "GET", path: "/api/system/pulse" };
-                    await encryptedExchange(new TextEncoder().encode(encodeE2eRequest(probeRequest)));
+                    await encryptedExchange(
+                        new TextEncoder().encode(encodeE2eRequest(probeRequest)),
+                        opts.probeTimeoutMs === undefined ? undefined : timeoutSignal(opts.probeTimeoutMs)
+                    );
                     return true;
                 } catch {
                     return false;
