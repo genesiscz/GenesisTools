@@ -236,4 +236,22 @@ final class HubUsageTests: XCTestCase {
         XCTAssertEqual(bars.map(\.usd), [6, 4])
         XCTAssertNotNil(UsageSpendBar.bucketDate("2026-10-27T06", timeZone: "UTC"))
     }
+
+    func testSpendBarsKeepTwoProjectsWithOneShortNameApartAndARealOtherOutOfTheOverflow() throws {
+        let json = """
+        {"by":["project"],"grain":"day","tz":"UTC","total":{"costUsd":10,"tokens":0,"unpriced":0},"heatmap":null,"groups":[
+          {"key":{"project":"/work/client/api"},"costUsd":4,"tokens":0,"unpriced":0,"points":[{"t":"2026-03-01","costUsd":4,"tokens":0}]},
+          {"key":{"project":"/personal/api"},"costUsd":3,"tokens":0,"unpriced":0,"points":[{"t":"2026-03-01","costUsd":3,"tokens":0}]},
+          {"key":{"project":"other"},"costUsd":2,"tokens":0,"unpriced":0,"points":[{"t":"2026-03-01","costUsd":2,"tokens":0}]},
+          {"key":{"project":"/work/tail"},"costUsd":1,"tokens":0,"unpriced":0,"points":[{"t":"2026-03-01","costUsd":1,"tokens":0}]}]}
+        """
+        let pivot = try JSONDecoder().decode(UsagePivotData.self, from: Data(json.utf8))
+        let bars = UsageSpendBar.bars(pivot, keep: 3)
+        XCTAssertEqual(bars.count, 4)
+        XCTAssertEqual(Set(bars.map(\.groupId)).count, 4)
+        XCTAssertEqual(Set(bars.map(\.group)).count, 4)
+        XCTAssertEqual(bars.first { $0.groupId == UsageSpendBar.overflowId }?.usd, 1)
+        XCTAssertEqual(bars.first { $0.group == "other" }?.groupId, UsageSpendBar.overflowId)
+        XCTAssertEqual(bars.map(\.usd).reduce(0, +), 10)
+    }
 }
