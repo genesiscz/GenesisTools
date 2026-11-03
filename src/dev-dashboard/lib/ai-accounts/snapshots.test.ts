@@ -81,13 +81,13 @@ describe("readLimitSeries through limitSeriesWire", () => {
     ];
     let db: UsageLimitsDb;
 
-    function put(provider: string, account: string, key: string, percent: number, at: string, kind = "session"): void {
-        db.recordSnapshotV2(account, key, percent, at, {
+    function put(row: { provider: string; account: string; key: string; percent: number; at: string; kind?: string }) {
+        db.recordSnapshotV2(row.account, row.key, row.percent, row.at, {
             resetsAt: null,
             severity: null,
             scopeModel: null,
-            provider,
-            kind,
+            provider: row.provider,
+            kind: row.kind ?? "session",
         });
     }
 
@@ -102,8 +102,14 @@ describe("readLimitSeries through limitSeriesWire", () => {
 
     beforeEach(() => {
         db = new UsageLimitsDb(":memory:");
-        put("anthropic-sub", "work", "five_hour", 10, "2026-11-01T01:00:00.000Z");
-        put("openai-sub", "work", "five_hour", 90, "2026-11-01T01:00:00.000Z");
+        put({
+            provider: "anthropic-sub",
+            account: "work",
+            key: "five_hour",
+            percent: 10,
+            at: "2026-11-01T01:00:00.000Z",
+        });
+        put({ provider: "openai-sub", account: "work", key: "five_hour", percent: 90, at: "2026-11-01T01:00:00.000Z" });
     });
 
     afterEach(() => {
@@ -127,7 +133,14 @@ describe("readLimitSeries through limitSeriesWire", () => {
     });
 
     test("a row with no configured account keeps its own provider and falls back to the name", () => {
-        put("grok-sub", "side", "primary", 5, "2026-11-01T02:00:00.000Z", "weekly");
+        put({
+            provider: "grok-sub",
+            account: "side",
+            key: "primary",
+            percent: 5,
+            at: "2026-11-01T02:00:00.000Z",
+            kind: "weekly",
+        });
 
         expect(wire().find((s) => s.provider === "grok-sub")).toMatchObject({
             accountId: "side",
@@ -137,7 +150,14 @@ describe("readLimitSeries through limitSeriesWire", () => {
     });
 
     test("a window that changed kind stays one line on the wire, in time order", () => {
-        put("anthropic-sub", "work", "five_hour", 40, "2026-11-01T03:00:00.000Z", "weekly");
+        put({
+            provider: "anthropic-sub",
+            account: "work",
+            key: "five_hour",
+            percent: 40,
+            at: "2026-11-01T03:00:00.000Z",
+            kind: "weekly",
+        });
 
         const claude = wire([CLAUDE_WORK]);
 
