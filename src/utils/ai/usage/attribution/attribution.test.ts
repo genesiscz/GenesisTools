@@ -173,11 +173,25 @@ describe("who ate the bar", () => {
             reportCommand: report,
         });
 
-        expect(riseSince(entry, Date.parse("2026-11-01T09:00:00Z"))).toBe(22);
+        // 2 at the reset (the use before the first reading after it), +10, then +12 after a correction.
+        expect(riseSince(entry, Date.parse("2026-11-01T09:00:00Z"))).toBe(24);
         expect(bar.sinceReset).toBe(true);
         expect(bar.totalUsd).toBe(40);
-        expect(bar.usdPerPercent).toBeCloseTo(40 / 22);
-        expect(bar.projects).toEqual([{ project: "-repo", costUsd: 40, share: 1, barPercent: 22 }]);
+        expect(bar.usdPerPercent).toBeCloseTo(40 / 24);
+        expect(bar.projects).toEqual([{ project: "-repo", costUsd: 40, share: 1, barPercent: 24 }]);
+        // One reading after the reset is still the rise since it.
+        expect(
+            riseSince(
+                series(
+                    [
+                        ["2026-11-01T08:00:00Z", 90],
+                        ["2026-11-01T10:00:00Z", 10],
+                    ],
+                    ["2026-11-01T09:00:00Z"]
+                ),
+                Date.parse("2026-11-01T09:00:00Z")
+            )
+        ).toBe(10);
 
         // An earlier end (`--until`) leaves out the dollars after it.
         const until = attributeBar({
