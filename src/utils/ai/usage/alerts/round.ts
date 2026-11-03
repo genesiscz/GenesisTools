@@ -95,6 +95,8 @@ export function buildAlertRound(input: {
     snapshots: readonly AccountUsageSnapshot[];
     now: Date;
     previousRoundAt: string | null;
+    /** The end of the last finished alert pass (`UsageAlertsStore.lastEvaluatedAt`); omitted is none. */
+    lastEvaluatedAt?: string | null;
     /** The alerts config the round is judged by: its rules decide how far back the events are read. */
     config: UsageAlertsConfig;
     /** The usage config's budgets; required, so a caller cannot silently judge none. */
@@ -114,7 +116,9 @@ export function buildAlertRound(input: {
         }
     }
 
-    const since = input.previousRoundAt ? new Date(input.previousRoundAt) : new Date(nowMs - FIRST_ROUND_SINCE_MS);
+    const lastEvaluatedAt = input.lastEvaluatedAt ?? null;
+    const sinceAt = lastEvaluatedAt ?? input.previousRoundAt;
+    const since = sinceAt ? new Date(sinceAt) : new Date(nowMs - FIRST_ROUND_SINCE_MS);
 
     return {
         now,
@@ -122,6 +126,7 @@ export function buildAlertRound(input: {
         samples,
         runs: new PollRunsStore(db).runsBetween({ from: new Date(nowMs - RUN_LOOKBACK_MS), to: now }),
         previousRoundAt: input.previousRoundAt,
+        lastEvaluatedAt,
         events: new UsageEventsStore(db)
             .list({ from: new Date(nowMs - alertEventLookbackMs(input.config)), to: now })
             .reverse(),

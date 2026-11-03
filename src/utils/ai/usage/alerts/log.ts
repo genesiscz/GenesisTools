@@ -38,6 +38,13 @@ interface AlertSqlRow {
     ack_at: string | null;
 }
 
+/** The one cursor row: the daemon's alert pass. */
+const ENGINE_CURSOR = "engine";
+
+interface CursorSqlRow {
+    evaluated_at: string;
+}
+
 interface WindowCycleSqlRow {
     resets_at: string;
     reset_seen_at: string | null;
@@ -306,6 +313,34 @@ export class UsageAlertsStore {
         });
 
         write.immediate();
+    }
+
+    /** The end of the last alert pass that finished, or null (none recorded, or no cursor table yet). */
+    lastEvaluatedAt(): string | null {
+        try {
+            const row = this.db
+                .prepare("SELECT evaluated_at FROM usage_alert_cursor WHERE name = ?")
+                .get(ENGINE_CURSOR) as CursorSqlRow | null;
+
+            return row?.evaluated_at ?? null;
+        } catch (err) {
+            if (isMissingTable(err)) {
+                return null;
+            }
+
+            throw err;
+        }
+    }
+
+    /** Records an alert pass that finished at `at`. The cursor only moves forward. */
+    markEvaluated(at: Date): void {
+        this.db
+            .prepare(
+                `INSERT INTO usage_alert_cursor (name, evaluated_at) VALUES (?, ?)
+                 ON CONFLICT (name) DO UPDATE SET evaluated_at = excluded.evaluated_at
+                 WHERE excluded.evaluated_at > usage_alert_cursor.evaluated_at`
+            )
+            .run(ENGINE_CURSOR, at.toISOString());
     }
 
     /** Marks alerts acknowledged; `ids` omitted acknowledges every open one. Returns how many changed. */

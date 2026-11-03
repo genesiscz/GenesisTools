@@ -45,6 +45,7 @@ function round(overrides: Partial<AlertRound> = {}): AlertRound {
         baselines: [],
         runs: [],
         previousRoundAt: null,
+        lastEvaluatedAt: null,
         events: [],
         availabilityChanges: [],
         budgets: { global: {}, providers: {} },
