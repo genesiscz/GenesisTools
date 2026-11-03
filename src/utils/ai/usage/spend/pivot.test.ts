@@ -18,6 +18,7 @@ function event(at: string, usd: number, extra: Partial<AttributedEvent> = {}): A
         model: "m-a",
         provider: "anthropic-sub",
         agent: "claude",
+        file: "/fixture/s1.jsonl",
         owner: { sessionId: "s1", leadSessionId: "s1", subagent: false, project: "-repo" },
         account: { account: WORK, basis: "pin", approximate: true },
         ...extra,

@@ -21,6 +21,13 @@ import {
 } from "@genesiscz/utils/ai/usage/spend/pivot";
 import { type PlanValue, planValues } from "@genesiscz/utils/ai/usage/spend/plans";
 import type { TranscriptGrain } from "@genesiscz/utils/ai/usage/spend/series";
+import {
+    isWasteDimension,
+    type SpendWaste,
+    scanSpendWaste,
+    WASTE_DIMENSIONS,
+    type WasteDimension,
+} from "@genesiscz/utils/ai/usage/spend/waste";
 import { loadDashboardConfig, updateDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
@@ -29,6 +36,7 @@ import { usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { aiSessionsCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -380,8 +388,109 @@ function registerProxy(program: Command): void {
         });
 }
 
+interface WasteOpts extends WindowFlags {
+    by?: string | boolean;
+    top?: string;
+    json?: boolean;
+}
+
+function renderWaste(envelope: UsageEnvelope<SpendWaste>): void {
+    const waste = envelope.data;
+    renderCliHeader(
+        "Waste ledger",
+        `${envelope.window?.label ?? ""} · ${usd(waste.total.usd)} avoidable in ${waste.total.items} cache rebuilds`
+    );
+    const table = createBoxTable([...waste.by.map((dim) => dim.toUpperCase()), "AVOIDABLE", "TOKENS", "ITEMS"]);
+
+    for (const group of waste.groups.slice(0, 30)) {
+        table.push([
+            ...waste.by.map((dim) => truncateDisplay(group.key[dim] ?? "", 32)),
+            usd(group.usd),
+            group.tokens.toLocaleString(),
+            String(group.items),
+        ]);
+    }
+
+    out.println(table.toString());
+    out.println(pc.bold("Top leaks"));
+
+    for (const item of waste.top.slice(0, 5)) {
+        out.println(
+            `  ${usd(item.usd)} ${item.kind} ${item.agent} ${item.sessionId.slice(0, 8)} ${pc.dim(item.evidence)}`
+        );
+        out.println(`    ${pc.dim(item.next)}`);
+    }
+}
+
+function registerWaste(program: Command): void {
+    addWindowOptions(
+        program
+            .command("waste")
+            .description(
+                "Avoidable spend: every cache rebuild after an idle gap, a compaction or a model change, priced and rolled up"
+            )
+            .option("--by [dims]", `Comma list of: ${WASTE_DIMENSIONS.join(", ")} (default kind,account)`)
+            .option("--top <n>", "How many of the costliest items to list (default 10)")
+            .option("--json", "Print usage.spend.waste@1"),
+        { since: "7d" }
+    ).action(async (_opts: WasteOpts, command: Command) => {
+        const opts = command.optsWithGlobals<WasteOpts>();
+        const by = splitList(typeof opts.by === "string" ? opts.by : undefined);
+        const bad = by.find((dim) => !isWasteDimension(dim));
+
+        if (opts.by === true || bad !== undefined) {
+            out.printlnErr(
+                suggestEnumFlag(TOOL, "--by", WASTE_DIMENSIONS, {
+                    subcommand: ["waste"],
+                    ...(bad ? { given: bad } : {}),
+                })
+            );
+            process.exitCode = 1;
+            return;
+        }
+
+        await guarded(async () => {
+            const now = new Date();
+            const window = resolveWindow(opts, { now, defaultSince: "7d" });
+            const top = opts.top === undefined ? 10 : Number(opts.top);
+
+            if (!Number.isInteger(top) || top < 1) {
+                throw new UsageQueryError("bad-value", `--top "${opts.top}" is not a positive whole number.`);
+            }
+
+            const events = await loadAttributedSpend({ from: window.from, now, directory: await accountDirectory() });
+            const dims: WasteDimension[] = by.length > 0 ? by.filter(isWasteDimension) : ["kind", "account"];
+            const waste = await scanSpendWaste({
+                events,
+                from: window.from.getTime(),
+                to: window.to.getTime(),
+                by: dims,
+                tz: window.tz,
+                reportCommand: (sessionId) => aiSessionsCommand("report", sessionId),
+                top,
+            });
+            const warnings: UsageWarning[] =
+                waste.sessions.unsupported > 0
+                    ? [
+                          {
+                              code: "unsupported",
+                              message: `${waste.sessions.unsupported} transcripts give no call trace.`,
+                          },
+                      ]
+                    : [];
+
+            await emit(
+                usageEnvelope({ verb: "spend.waste", version: 1, now, window, accounts: [], data: waste, warnings }),
+                opts.json,
+                renderWaste
+            );
+        });
+    });
+}
+
 export function registerSpendVerbs(program: Command): void {
     registerPivot(program);
     registerPlans(program);
     registerProxy(program);
+    registerWaste(program);
 }

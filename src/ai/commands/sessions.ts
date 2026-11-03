@@ -9,6 +9,7 @@ import { DEFAULT_TURN_LIMIT, type TranscriptProvider } from "@genesiscz/utils/ai
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { registerSessionsReportCommand } from "./sessions-report";
 
 function parseProvider(value: string | undefined): TranscriptProvider | undefined {
     if (!value) {
@@ -251,4 +252,6 @@ export function registerSessionsCommands(program: Command): void {
                 }
             }
         );
+
+    registerSessionsReportCommand(sessions);
 }

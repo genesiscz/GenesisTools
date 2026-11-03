@@ -1,0 +1,151 @@
+import { describe, expect, test } from "bun:test";
+import type { AttributedEvent } from "@genesiscz/utils/ai/usage/attribution/spend-share";
+import {
+    bootstrapCI,
+    ciOverlap,
+    computeDrift,
+    DRIFT_DEFAULTS,
+    exclusiveWindows,
+    pooled,
+} from "@genesiscz/utils/ai/usage/drift/drift";
+import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
+import type { SessionCall } from "../analysis-types";
+import { buildSessionReport } from "./report";
+import { sessionWaste } from "./waste";
+
+/** The provider-neutral analysis over invented calls: the report, the waste items, and the drift statistics. */
+
+const MODEL = "claude-sonnet-4-5";
+
+function call(minute: number, extra: Partial<SessionCall> = {}): SessionCall {
+    return {
+        id: `c${minute}`,
+        t: new Date(Date.UTC(2026, 10, 1, 10, minute)).toISOString(),
+        model: MODEL,
+        input: 100,
+        cacheRead: 100_000,
+        cacheWrite: 1_000,
+        output: 500,
+        sidechain: false,
+        aggregate: false,
+        ...extra,
+    };
+}
+
+describe("session report", () => {
+    test("totals, the main and sub-agent split, the tags of a cold call, and a cache loss after a long gap", () => {
+        const calls = [
+            call(0),
+            call(1),
+            call(2, { sidechain: true }),
+            call(80, { cacheRead: 0, cacheWrite: 101_000, output: 40_000 }),
+        ];
+        const report = buildSessionReport({
+            calls: { supported: true, items: calls },
+            compactions: { supported: false, reason: "test harness keeps none" },
+        });
+
+        expect(report.overview).toMatchObject({ calls: 4, subagentCalls: 1, compactions: null, durationMinutes: 80 });
+        expect(report.cost.unpricedModels).toEqual([]);
+        expect(report.cost.subagentUsd).toBeGreaterThan(0);
+        expect(report.cost.totalUsd).toBeCloseTo(report.cost.mainUsd + report.cost.subagentUsd);
+        expect(report.topCalls[0]?.tags).toEqual(["cold-cache", "large-cache-write", "very-high-output"]);
+        expect(report.losses.map((loss) => loss.cause)).toEqual(["idle"]);
+        expect(report.gaps).toEqual([{ after: calls[1].t, minutes: 79 }]);
+        expect(report.unsupported).toEqual({ compactions: "test harness keeps none" });
+    });
+
+    test("waste prices a rebuild at write minus read and names its cause; a compaction is its own kind", () => {
+        const items = sessionWaste(
+            [call(0), call(1, { cacheRead: 0, cacheWrite: 101_000 }), call(70, { cacheRead: 0, cacheWrite: 101_000 })],
+            [{ t: new Date(Date.UTC(2026, 10, 1, 10, 0, 30)).toISOString(), trigger: "auto", preTokens: 100_000 }]
+        );
+
+        expect(items.map((item) => [item.kind, item.tokens])).toEqual([["cache-rebuild-compaction", 100_000]]);
+        expect(items[0]?.usd).toBeGreaterThan(0);
+    });
+});
+
+describe("limit drift", () => {
+    test("an exclusive window is a rise of the target with no other account rising around it", () => {
+        const rows = [
+            { ts: 0, account: "a", util: 10 },
+            { ts: 0, account: "b", util: 5 },
+            { ts: 60_000, account: "a", util: 11 },
+            { ts: 120_000, account: "b", util: 6 },
+            { ts: 600_000, account: "a", util: 13 },
+        ];
+
+        expect(exclusiveWindows(rows, "a", { padMs: 30_000, maxWindowMs: 3_600_000 })).toEqual([
+            { from: 0, to: 60_000, delta: 1 },
+        ]);
+    });
+
+    test("pooled ratio, a deterministic interval, and the overlap test", () => {
+        const samples = [
+            { delta: 1, value: 100 },
+            { delta: 2, value: 220 },
+            { delta: 1, value: 90 },
+        ];
+
+        expect(pooled(samples)).toBe(102.5);
+        expect(bootstrapCI(samples)).toEqual(bootstrapCI(samples));
+        expect(ciOverlap([1, 2], [3, 4])).toBe(false);
+        expect(ciOverlap([1, 3], [2, 4])).toBe(true);
+    });
+
+    test("computeDrift counts one week's exclusive windows and calls a week with too few insufficient", () => {
+        const series: SeriesEntry = {
+            provider: "anthropic-sub",
+            account: "work",
+            key: "seven_day",
+            kind: "weekly",
+            scopeModel: null,
+            resets: [],
+            availability: [],
+            points: [0, 10, 20, 30].map((minute, index) => ({
+                t: new Date(Date.UTC(2026, 10, 2, 10, minute)).toISOString(),
+                percent: 10 + index,
+                resetsAt: null,
+                severity: null,
+            })),
+        };
+        const event = (minute: number): AttributedEvent => ({
+            at: Date.UTC(2026, 10, 2, 10, minute),
+            costUsd: 1,
+            tokens: 1000,
+            unpriced: false,
+            model: MODEL,
+            provider: "anthropic-sub",
+            agent: "claude",
+            file: "/fixture/s.jsonl",
+            owner: { sessionId: "s", leadSessionId: "s", subagent: false, project: "-repo" },
+            account: {
+                account: { provider: "anthropic-sub", accountId: "w", accountName: "work" },
+                basis: "pin",
+                approximate: true,
+            },
+        });
+        const rows = computeDrift({
+            series: [series],
+            events: [event(5), event(15), event(25)],
+            accountOf: () => ({ provider: "anthropic-sub", accountId: "w", accountName: "work" }),
+            settings: { ...DRIFT_DEFAULTS, minWindows: 3 },
+            tz: "UTC",
+        });
+
+        expect(rows.map((row) => [row.model, row.weeks[0]?.windows, row.weeks[0]?.tokensPerPct, row.verdict])).toEqual([
+            ["all", 3, 1000, "steady"],
+            [MODEL, 3, 1000, "steady"],
+        ]);
+        expect(
+            computeDrift({
+                series: [series],
+                events: [event(5)],
+                accountOf: () => rows[0].account,
+                settings: DRIFT_DEFAULTS,
+                tz: "UTC",
+            })[0]?.verdict
+        ).toBe("insufficient");
+    });
+});
