@@ -306,6 +306,7 @@ export async function testAlertRule(
                 snapshots,
                 now,
                 previousRoundAt: new PollRunsStore(db).lastRoundAt(),
+                lastEvaluatedAt: new UsageAlertsStore(db).lastEvaluatedAt(),
                 config: dashboard.alerts,
                 budgets: dashboard.budgets,
             });

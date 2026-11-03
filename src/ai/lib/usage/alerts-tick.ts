@@ -21,7 +21,9 @@ export interface UsageTickResult {
 /**
  * The daemon tick's new stages (design 2026-11-01, section 7): record the round's poll runs, then run the alert
  * engine over the round. The previous round's end is read before this round is recorded, so the health rule can see
- * a span nobody polled. Each stage reads only what the round needs, which keeps the tick inside its budget.
+ * a span nobody polled. The events the round judges start at the alert cursor, which moves only after the engine
+ * finished: a failed pass leaves its events to the next one (the dedupe keys make the replay safe). Each stage reads
+ * only what the round needs, which keeps the tick inside its budget.
  */
 export async function recordRoundAndAlert(input: {
     db: UsageLimitsDb;
@@ -42,6 +44,7 @@ export async function recordRoundAndAlert(input: {
         now
     );
     const store = new UsageAlertsStore(connection);
+    const lastEvaluatedAt = store.lastEvaluatedAt();
     // Every tick: the seed is per window, and a window that could not be read on the first tick still needs it.
     const seeded = seedThresholdAlerts({
         store,
@@ -55,6 +58,7 @@ export async function recordRoundAndAlert(input: {
         snapshots: input.snapshots,
         now,
         previousRoundAt,
+        lastEvaluatedAt,
         config: input.config.alerts,
         budgets: input.config.budgets,
     });
@@ -64,6 +68,7 @@ export async function recordRoundAndAlert(input: {
         store,
         channels: input.channels ?? alertChannels(input.config.notifications),
     });
+    store.markEvaluated(now);
 
     return { runs, seeded, fired };
 }

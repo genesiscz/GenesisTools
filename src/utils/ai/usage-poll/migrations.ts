@@ -243,6 +243,26 @@ export const USAGE_LIMITS_MIGRATIONS: Migration[] = [
     },
     {
         /**
+         * Where the daemon's alert pass got to: the instant of the last pass that finished. Events after it are the next
+         * pass's, so a pass that failed (or a process killed mid-pass) leaves its events to the pass after it. It is
+         * apart from `usage_poll_runs`, which records the polls whether or not alerts were judged.
+         */
+        id: "2026-11-usage-alert-cursor",
+        description: "usage_alert_cursor table (the last finished alert pass)",
+        isApplied(db) {
+            return tableExists(db, "usage_alert_cursor");
+        },
+        apply(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS usage_alert_cursor (
+                    name TEXT PRIMARY KEY,
+                    evaluated_at TEXT NOT NULL
+                );
+            `);
+        },
+    },
+    {
+        /**
          * One row per account, window and local day (step U10, proposal 16): the day's first, last and highest reading,
          * its resets, how many cycles reached 90 %, and the minutes the poller measured. It outlives the 30-day prune
          * of `usage_snapshots`, so trends past a month stay readable; the prune never touches it.

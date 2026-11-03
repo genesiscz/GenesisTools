@@ -376,6 +376,52 @@ describe("the daemon tick", () => {
         expect(second).toMatchObject({ runs: { extended: 1, started: 0 }, seeded: 0, fired: [] });
         expect(delivered.map((card) => card.windowKey)).toEqual(["seven_day"]);
     });
+
+    test("a tick whose alert pass failed leaves its events to the next pass", async () => {
+        const quiet: AlertChannel = { id: "inbox", interrupts: false, deliver: async () => {} };
+        const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
+        const tick = (now: Date, fail = false) =>
+            recordRoundAndAlert({
+                db: limits,
+                snapshots: [
+                    {
+                        provider: "anthropic-sub",
+                        accountId: "acc_work",
+                        accountName: "work",
+                        fetchedAt: now.toISOString(),
+                        limits: [],
+                    },
+                ],
+                config: dashboard(),
+                storage: new Storage("ai-usage"),
+                now,
+                channels: { macos: { ...quiet, id: "macos" }, inbox: quiet },
+                trackers: async () => {
+                    if (fail) {
+                        throw new Error("tracker file unreadable");
+                    }
+
+                    return {};
+                },
+            });
+
+        expect((await tick(at(0))).fired).toEqual([]);
+        new UsageEventsStore(limits.connection()).insert({
+            provider: "anthropic-sub",
+            accountName: "work",
+            model: "haiku",
+            source: "probe-budget",
+            kind: "probe-refused",
+            detail: "the account probe budget of 7 days is spent",
+            at: at(30),
+        });
+        await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
+
+        const next = await tick(at(120));
+
+        expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
+        expect((await tick(at(180))).fired).toEqual([]);
+    });
 });
 
 describe("tools ai usage budgets and digest", () => {
