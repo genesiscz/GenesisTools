@@ -2,8 +2,16 @@ import { describe, expect, test } from "bun:test";
 import type { SessionPin } from "../../agent-sessions/pins";
 import { fetchAgentCmuxTree } from "../agent-tree";
 import type { SessionCmuxRefs } from "../session-refs";
+import { fetchCmuxTree } from "../tree";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveWindow, CmuxLiveWorkspace } from "./live-snapshot";
 import { buildCmuxHierarchy } from "./tree";
+import {
+    type CmuxTreeBackoff,
+    TREE_BACKOFF_FIRST_MS,
+    TREE_BACKOFF_MAX_MS,
+    type TreeBackoffStore,
+    treeBackoffDelayMs,
+} from "./tree-backoff";
 
 function pane(id: string, workspaceId: string): CmuxLivePane {
     return { id, workspaceId, title: "zsh", active: false, surfaceCount: 1, surfaces: [] };
@@ -238,5 +246,103 @@ describe("fetchAgentCmuxTree", () => {
         const surfaces = tree.windows[0].workspaces[0].panes[0].surfaces;
 
         expect(surfaces.map((s) => s.sessionId?.slice(0, 8) ?? null)).toEqual(["aaaaaaaa", null, null]);
+    });
+});
+
+describe("fetchCmuxTree backoff after cmux does not answer", () => {
+    const dead: CmuxLiveSnapshot = {
+        fetchedAt: "2026-11-02T11:20:09.000Z",
+        available: false,
+        error: "cmux live snapshot: the cmux app is running (pid 42) but its socket does not answer",
+        unresponsive: { state: "socket-dead", appPid: 42 },
+        workspaces: [],
+        panes: [],
+    };
+    const alive = snapshotOf([workspace("workspace:1")], [pane("pane:1", "workspace:1")]);
+
+    function memoryStore(): TreeBackoffStore & { record: CmuxTreeBackoff | null } {
+        return {
+            record: null,
+            read() {
+                return this.record;
+            },
+            write(record) {
+                this.record = record;
+            },
+        };
+    }
+
+    test("a dead socket is asked once per doubling delay, and a success clears the memory", async () => {
+        const backoff = memoryStore();
+        let clock = 1_000_000;
+        let calls = 0;
+        let next = dead;
+        const deps = {
+            backoff,
+            appPid: () => 42,
+            now: () => clock,
+            fetchSnapshot: async () => {
+                calls++;
+                return next;
+            },
+        };
+
+        expect((await fetchCmuxTree(deps)).available).toBe(false);
+        expect(calls).toBe(1);
+        expect(backoff.record?.until).toBe(clock + TREE_BACKOFF_FIRST_MS);
+
+        clock += TREE_BACKOFF_FIRST_MS - 1;
+        const skipped = await fetchCmuxTree(deps);
+        expect(calls).toBe(1);
+        expect(skipped.available).toBe(false);
+        expect(skipped.error).toContain("its socket does not answer");
+        expect(skipped.error).toContain("the next try is after");
+
+        clock += 1;
+        await fetchCmuxTree(deps);
+        expect(calls).toBe(2);
+        expect(backoff.record?.failures).toBe(2);
+        expect(backoff.record?.until).toBe(clock + 2 * TREE_BACKOFF_FIRST_MS);
+
+        clock = backoff.record?.until ?? clock;
+        next = alive;
+        expect((await fetchCmuxTree(deps)).available).toBe(true);
+        expect(calls).toBe(3);
+        expect(backoff.record).toBeNull();
+    });
+
+    test("a restarted cmux (another pid) is asked at once", async () => {
+        const backoff = memoryStore();
+        backoff.record = { failures: 3, until: Date.now() + 60_000, state: "socket-dead", appPid: 42, error: "dead" };
+        let calls = 0;
+        const tree = await fetchCmuxTree({
+            backoff,
+            appPid: () => 43,
+            fetchSnapshot: async () => {
+                calls++;
+                return alive;
+            },
+        });
+
+        expect(calls).toBe(1);
+        expect(tree.available).toBe(true);
+        expect(backoff.record).toBeNull();
+    });
+
+    test("a failure that is not cmux hanging leaves no memory", async () => {
+        const backoff = memoryStore();
+        await fetchCmuxTree({
+            backoff,
+            fetchSnapshot: async () => ({ ...dead, unresponsive: { state: "not-running" } }),
+        });
+
+        expect(backoff.record).toBeNull();
+    });
+
+    test("the delay doubles from 20 s and stops at 5 min", () => {
+        expect([1, 2, 3, 4, 5, 6, 10].map(treeBackoffDelayMs)).toEqual([
+            20_000, 40_000, 80_000, 160_000, 300_000, 300_000, 300_000,
+        ]);
+        expect(TREE_BACKOFF_MAX_MS).toBe(300_000);
     });
 });

@@ -1,5 +1,5 @@
 import { type CmuxRunResult, type CmuxTimeoutOpt, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
-import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
+import { type CmuxHealthState, CmuxUnresponsiveError, ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -92,6 +92,8 @@ export interface CmuxLiveSnapshot {
     fetchedAt: string;
     available: boolean;
     error?: string;
+    /** Set when the failure was cmux itself not answering (the probe's verdict and the app pid it saw). */
+    unresponsive?: { state: CmuxHealthState; appPid?: number };
     /** Populated in `allWindows` mode; the default snapshot covers only the key window. */
     windows?: CmuxLiveWindow[];
     workspaces: CmuxLiveWorkspace[];
@@ -543,7 +545,18 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.debug({ err: message }, "cmux live snapshot failed");
+        const unresponsive =
+            err instanceof CmuxUnresponsiveError
+                ? { state: err.health.state, ...(err.health.appPid !== undefined ? { appPid: err.health.appPid } : {}) }
+                : undefined;
 
-        return { fetchedAt, available: false, error: message, workspaces: [], panes: [] };
+        return {
+            fetchedAt,
+            available: false,
+            error: message,
+            ...(unresponsive ? { unresponsive } : {}),
+            workspaces: [],
+            panes: [],
+        };
     }
 }
