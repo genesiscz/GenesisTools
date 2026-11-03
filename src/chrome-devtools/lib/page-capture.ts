@@ -3,6 +3,7 @@
  * process (an out-of-process iframe), whose requests a page-level `Network.enable` never sees. Each such frame is
  * auto-attached as a flat session and gets its own `Network.enable`.
  */
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { BROWSER_DEVTOOLS_PORT } from "@genesiscz/utils/net/ports";
 import { Conn, localDebuggerUrl, newTab, type Target, targets } from "./cdp.ts";
@@ -49,9 +50,15 @@ export async function chooseCdpPort({ pageUrl, port }: { pageUrl: string; port?:
     const ports = discoverListeningCdpPorts();
 
     if (ports.length === 0) {
-        throw new Error(
-            "No browser listens on a debug port. Restart it with one: tools chrome-devtools restart --browser brave --port 9222"
+        const restart = toolCommand(
+            "chrome-devtools",
+            "restart",
+            "--browser",
+            "brave",
+            "--port",
+            String(BROWSER_DEVTOOLS_PORT)
         );
+        throw new Error(`No browser listens on a debug port. Restart it with one: ${restart}`);
     }
 
     const wanted = comparableUrl(pageUrl);
