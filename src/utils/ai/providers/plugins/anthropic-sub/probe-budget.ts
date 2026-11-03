@@ -1,4 +1,4 @@
-import { recordProbeCount, recordUsageEvent } from "@genesiscz/utils/ai/usage/events/record";
+import { recordProbeCount, recordProbeRefusal } from "@genesiscz/utils/ai/usage/events/record";
 import { USAGE_CACHE_TTL, usageCacheFilePath, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import { logger } from "@genesiscz/utils/logger";
 import { ANTHROPIC_SUB } from "./api";
@@ -129,12 +129,11 @@ async function commitSpends(batch: PendingSpend[]): Promise<void> {
     }
 
     for (const spend of refused) {
-        recordUsageEvent({
+        recordProbeRefusal({
             provider: ANTHROPIC_SUB,
             accountName: spend.account,
             model: spend.model,
             source: "probe-budget",
-            kind: "probe-refused",
             detail: `the ${spend.cap} probe budget of 7 days is spent`,
         });
     }

@@ -18,7 +18,7 @@ export type UsageEventKind =
     | "poll-backoff"
     /** The provider refused the account at the organization level (a 403). */
     | "org-blocked"
-    /** A quota probe the probe budget refused. */
+    /** Quota probes the probe budget refused on one local day (a daily count row). */
     | "probe-refused"
     /** Quota probes sent on one local day (a daily count row). */
     | "probe";
@@ -68,7 +68,7 @@ export interface UsageEventRow {
     retryAfterMs: number | null;
     model: string | null;
     detail: string | null;
-    /** Local `YYYY-MM-DD` of a daily count row; null on a single event. */
+    /** Local `YYYY-MM-DD` of a daily count row (`probe`, `probe-refused`); null on a single event. */
     day: string | null;
     count: number;
 }
@@ -140,21 +140,31 @@ export class UsageEventsStore {
     }
 
     /**
-     * Adds `by` to the daily count row of `(provider, account, kind, model, day)`, creating it on the first probe of
-     * the day. Read and write run in one immediate transaction, so two processes probing at once never write two
-     * rows for one day.
+     * Adds `by` to the daily count row of `(provider, account, kind, model, day)`, creating it on the first event of
+     * the day. A given `detail` replaces the row's; an omitted one keeps it. Read and write run in one immediate
+     * transaction, so two processes at once never write two rows for one day.
      */
     bumpDaily(event: UsageEventInput & { day: string; by?: number }): void {
         const at = (event.at ?? new Date()).toISOString();
         const by = event.by ?? 1;
+        const detail = event.detail?.slice(0, DETAIL_MAX) ?? null;
         const bump = this.db.transaction(() => {
             const updated = this.db
                 .prepare(
-                    `UPDATE usage_events SET count = count + ?, ts = ?
+                    `UPDATE usage_events SET count = count + ?, ts = ?, detail = COALESCE(?, detail)
                      WHERE day = ? AND provider = ? AND kind = ?
                        AND account_name IS ? AND model IS ?`
                 )
-                .run(by, at, event.day, event.provider, event.kind, event.accountName ?? null, event.model ?? null);
+                .run(
+                    by,
+                    at,
+                    detail,
+                    event.day,
+                    event.provider,
+                    event.kind,
+                    event.accountName ?? null,
+                    event.model ?? null
+                );
 
             if (updated.changes > 0) {
                 return;
@@ -162,8 +172,8 @@ export class UsageEventsStore {
 
             this.db
                 .prepare(
-                    `INSERT INTO usage_events (ts, provider, account_id, account_name, source, kind, model, day, count)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    `INSERT INTO usage_events (ts, provider, account_id, account_name, source, kind, model, detail, day, count)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
                 )
                 .run(
                     at,
@@ -173,6 +183,7 @@ export class UsageEventsStore {
                     event.source,
                     event.kind,
                     event.model ?? null,
+                    detail,
                     event.day,
                     by
                 );
