@@ -1,6 +1,7 @@
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
 import { asResult } from "@genesiscz/utils/cli/result";
+import { HUB_CAPABILITIES } from "../../lib/capabilities/index";
 import { parseArgv, stringFlag, wholeNumber } from "../argv";
 import { type CallDoor, failed, ok, type StreamDoor } from "./types";
 
@@ -55,13 +56,7 @@ export const transcriptFetchDoor: CallDoor<FetchArgs> = {
     },
     async run(args, { signal }) {
         try {
-            const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");
-            const { transcriptEnvelope } = await import("@genesiscz/utils/ai/transcripts/load");
-            // A cancel stops the work at each stage: before resolving, and before reading the page.
-            signal.throwIfAborted();
-            const resolved = await resolveTranscript(args.query, {}, args.provider);
-            signal.throwIfAborted();
-            return ok(asResult(await transcriptEnvelope(resolved, { offset: args.offset, limit: args.limit })));
+            return ok(asResult(await HUB_CAPABILITIES.transcript.run(args, { signal })));
         } catch (error) {
             return failed(error);
         }
