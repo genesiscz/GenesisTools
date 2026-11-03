@@ -1,6 +1,6 @@
 import type { TodosResult } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import {
     addTodo,
     completeTodo,
@@ -20,7 +20,7 @@ import {
 
 describe("mock dashboard client — todos", () => {
     it("todos.list() returns seeded reminders with string identifier + title + boolean is_completed", async () => {
-        const { lists, reminders } = await mockDashboardClient.todos.list();
+        const { lists, reminders } = await fixtureDashboardClient.todos.list();
         expect(reminders.length).toBeGreaterThan(0);
         expect(lists.length).toBeGreaterThan(0);
 
@@ -33,36 +33,36 @@ describe("mock dashboard client — todos", () => {
 
     it("todos.add({ title }) returns a { reminderId } and the new title appears in a subsequent list", async () => {
         const title = `Unit added ${Date.now()}`;
-        const before = (await mockDashboardClient.todos.list()).reminders.length;
+        const before = (await fixtureDashboardClient.todos.list()).reminders.length;
 
-        const { reminderId } = await mockDashboardClient.todos.add({ title });
+        const { reminderId } = await fixtureDashboardClient.todos.add({ title });
         expect(typeof reminderId).toBe("string");
 
-        const after = await mockDashboardClient.todos.list();
+        const after = await fixtureDashboardClient.todos.list();
         expect(after.reminders.length).toBe(before + 1);
         expect(after.reminders.some((r) => r.title === title)).toBe(true);
     });
 
     it("todos.complete(id) returns { ok: true } AND drops the row from a subsequent list (stateful mock)", async () => {
-        const { reminderId } = await mockDashboardClient.todos.add({ title: "to be completed" });
-        expect((await mockDashboardClient.todos.list()).reminders.some((r) => r.identifier === reminderId)).toBe(true);
+        const { reminderId } = await fixtureDashboardClient.todos.add({ title: "to be completed" });
+        expect((await fixtureDashboardClient.todos.list()).reminders.some((r) => r.identifier === reminderId)).toBe(true);
 
-        const res = await mockDashboardClient.todos.complete(reminderId);
+        const res = await fixtureDashboardClient.todos.complete(reminderId);
         expect(res.ok).toBe(true);
 
-        const after = await mockDashboardClient.todos.list();
+        const after = await fixtureDashboardClient.todos.list();
         expect(after.reminders.some((r) => r.identifier === reminderId)).toBe(false);
     });
 
     it("todos.requestAccess() resolves with a granted flag", async () => {
-        const res = await mockDashboardClient.todos.requestAccess();
+        const res = await fixtureDashboardClient.todos.requestAccess();
         expect(typeof res.granted).toBe("boolean");
     });
 });
 
 describe("todos query factory", () => {
     it("todosListQuery builds the list key (unique 'todos' root) + interval + a queryFn returning a TodosResult", async () => {
-        const opts = todosListQuery(mockDashboardClient);
+        const opts = todosListQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...todosKeys.list(false)]);
         expect(opts.queryKey[0]).toBe("todos");
         expect(opts.refetchInterval).toBe(TODOS_INTERVAL_MS);
@@ -81,18 +81,18 @@ describe("todos query factory", () => {
 
 describe("todos mutation callers", () => {
     it("addTodo(client, { title }) resolves to { reminderId }", async () => {
-        const res = await addTodo(mockDashboardClient, { title: "via caller" });
+        const res = await addTodo(fixtureDashboardClient, { title: "via caller" });
         expect(typeof res.reminderId).toBe("string");
     });
 
     it("completeTodo(client, id) resolves to { ok: true }", async () => {
-        const { reminderId } = await addTodo(mockDashboardClient, { title: "complete via caller" });
-        const res = await completeTodo(mockDashboardClient, reminderId);
+        const { reminderId } = await addTodo(fixtureDashboardClient, { title: "complete via caller" });
+        const res = await completeTodo(fixtureDashboardClient, reminderId);
         expect(res.ok).toBe(true);
     });
 
     it("requestTodosAccess(client) resolves", async () => {
-        const res = await requestTodosAccess(mockDashboardClient);
+        const res = await requestTodosAccess(fixtureDashboardClient);
         expect(res).toBeDefined();
     });
 });

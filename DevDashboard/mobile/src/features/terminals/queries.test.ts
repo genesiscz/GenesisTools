@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import {
     CMUX_INTERVAL_MS,
     SESSIONS_INTERVAL_MS,
@@ -25,7 +25,7 @@ import { createConnectionQueryClient } from "@/lib/query-client";
 
 describe("terminals mock fixtures (the data screens consume)", () => {
     it("tmux.sessions returns hub sessions with ttyd/cmux bindings", async () => {
-        const res = await mockDashboardClient.tmux.sessions();
+        const res = await fixtureDashboardClient.tmux.sessions();
 
         expect(res.sessions.length).toBeGreaterThan(0);
         const dev = res.sessions.find((s) => s.name === "dev");
@@ -34,7 +34,7 @@ describe("terminals mock fixtures (the data screens consume)", () => {
     });
 
     it("ttyd.list returns live PTYs with an attachable id", async () => {
-        const res = await mockDashboardClient.ttyd.list();
+        const res = await fixtureDashboardClient.ttyd.list();
 
         expect(res.sessions.length).toBeGreaterThan(0);
         expect(res.sessions[0]?.id).toBeTruthy();
@@ -42,7 +42,7 @@ describe("terminals mock fixtures (the data screens consume)", () => {
     });
 
     it("cmux.snapshot exposes workspaces + panes + surfaces", async () => {
-        const res = await mockDashboardClient.cmux.snapshot();
+        const res = await fixtureDashboardClient.cmux.snapshot();
 
         expect(res.snapshot.available).toBe(true);
         expect(res.snapshot.workspaces.length).toBeGreaterThan(0);
@@ -50,32 +50,32 @@ describe("terminals mock fixtures (the data screens consume)", () => {
     });
 
     it("cmux.layout exposes the window/workspace/pane tree", async () => {
-        const res = await mockDashboardClient.cmux.layout();
+        const res = await fixtureDashboardClient.cmux.layout();
 
         expect(res.layout.available).toBe(true);
         expect(res.layout.windows[0]?.workspaces[0]?.panes.length).toBeGreaterThan(0);
     });
 
     it("ttyd.spawn returns the created session", async () => {
-        const res = await spawnTtyd(mockDashboardClient, { tmuxSessionName: "dev" });
+        const res = await spawnTtyd(fixtureDashboardClient, { tmuxSessionName: "dev" });
 
         expect(res.session.id).toBeTruthy();
     });
 
     it("ttyd.kill resolves ok", async () => {
-        const res = await killTtyd(mockDashboardClient, { id: "ttyd-1" });
+        const res = await killTtyd(fixtureDashboardClient, { id: "ttyd-1" });
 
         expect(res.ok).toBe(true);
     });
 
     it("ttyd.rename resolves ok", async () => {
-        const res = await renameTtyd(mockDashboardClient, { id: "ttyd-1", name: "renamed" });
+        const res = await renameTtyd(fixtureDashboardClient, { id: "ttyd-1", name: "renamed" });
 
         expect(res.ok).toBe(true);
     });
 
     it("tmux.create echoes the requested session name", async () => {
-        const res = await createTmux(mockDashboardClient, { name: "scratch" });
+        const res = await createTmux(fixtureDashboardClient, { name: "scratch" });
 
         expect(res.sessionName).toBe("scratch");
     });
@@ -83,7 +83,7 @@ describe("terminals mock fixtures (the data screens consume)", () => {
 
 describe("terminals queryOptions factories", () => {
     it("tmuxSessionsQuery has the tmux key and the sessions interval", () => {
-        const q = tmuxSessionsQuery(mockDashboardClient);
+        const q = tmuxSessionsQuery(fixtureDashboardClient);
 
         expect([...q.queryKey]).toEqual([...terminalsKeys.tmux]);
         expect(q.refetchInterval).toBe(SESSIONS_INTERVAL_MS);
@@ -91,15 +91,15 @@ describe("terminals queryOptions factories", () => {
     });
 
     it("ttydListQuery has the ttyd key", () => {
-        const q = ttydListQuery(mockDashboardClient);
+        const q = ttydListQuery(fixtureDashboardClient);
 
         expect([...q.queryKey]).toEqual([...terminalsKeys.ttyd]);
         expect(q.refetchInterval).toBe(SESSIONS_INTERVAL_MS);
     });
 
     it("cmux factories carry the cmux interval and distinct keys", () => {
-        const snap = cmuxSnapshotQuery(mockDashboardClient);
-        const layout = cmuxLayoutQuery(mockDashboardClient);
+        const snap = cmuxSnapshotQuery(fixtureDashboardClient);
+        const layout = cmuxLayoutQuery(fixtureDashboardClient);
 
         expect([...snap.queryKey]).toEqual([...terminalsKeys.cmux.snapshot]);
         expect([...layout.queryKey]).toEqual([...terminalsKeys.cmux.layout]);
@@ -108,7 +108,7 @@ describe("terminals queryOptions factories", () => {
     });
 
     it("the factory queryFn actually calls through to the client", async () => {
-        const q = tmuxSessionsQuery(mockDashboardClient);
+        const q = tmuxSessionsQuery(fixtureDashboardClient);
         const res = await (q.queryFn as () => Promise<{ sessions: unknown[] }>)();
 
         expect(Array.isArray(res.sessions)).toBe(true);

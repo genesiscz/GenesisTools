@@ -1,6 +1,6 @@
 import type { AccountUsage } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import {
     claudeUsageKeys,
     HISTORY_INTERVAL_MS,
@@ -11,20 +11,15 @@ import {
 } from "@/features/claude-usage/queries";
 
 /**
- * Proves the claude-usage data layer flows through the D32 escape-hatch seam WITHOUT a React
- * renderer. Exercises the mock client's `get` escape hatch directly + the `queryOptions` factories'
- * queryFns against it (exactly what `useQuery` calls). Mirrors pulse/queries.test.ts.
- *
- * MOCK GAP, asserted (mock-client.ts is shared/read-only — flagged in notes, NOT edited):
- *  - `/api/claude/usage` → the mock returns `[MOCK_USAGE]` (a real AccountUsage[]).
- *  - `/api/claude/usage/history` is a PREFIX of `/api/claude/usage`, so the mock ALSO returns
- *    `[MOCK_USAGE]` for it — the wrong shape. The factory's `asHistory` guard coerces that to
- *    `{ series: [] }` so the chart renders empty instead of crashing. We assert that coercion here.
+ * Proves the claude-usage data layer through the real contract client over the fixture wire,
+ * WITHOUT a React renderer: the `queryOptions` factories' queryFns (exactly what `useQuery` calls).
+ * The fixture wire routes each path exactly, so `/api/claude/usage/history` gets its own
+ * `MultiBucketHistoryResult` instead of the account array the old mock's prefix match returned.
  */
 
-describe("mock dashboard client — claude usage (escape hatch)", () => {
+describe("fixture dashboard client — claude usage", () => {
     it("get(/api/claude/usage) returns a believable account array", async () => {
-        const accounts = await mockDashboardClient.get<AccountUsage[]>("/api/claude/usage");
+        const accounts = await fixtureDashboardClient.get<AccountUsage[]>("/api/claude/usage");
         expect(Array.isArray(accounts)).toBe(true);
         expect(accounts[0].accountName.length).toBeGreaterThan(0);
     });
@@ -32,7 +27,7 @@ describe("mock dashboard client — claude usage (escape hatch)", () => {
 
 describe("claude-usage query factories", () => {
     it("usageAccountsQuery builds the accounts key + interval + a queryFn returning the array", async () => {
-        const opts = usageAccountsQuery(mockDashboardClient);
+        const opts = usageAccountsQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...claudeUsageKeys.usage]);
         expect(opts.refetchInterval).toBe(USAGE_INTERVAL_MS);
         expect(typeof opts.queryFn).toBe("function");
@@ -42,15 +37,13 @@ describe("claude-usage query factories", () => {
     });
 
     it("usageHistoryQuery encodes account + minutes into the key", () => {
-        const opts = usageHistoryQuery(mockDashboardClient, "main", 1440);
+        const opts = usageHistoryQuery(fixtureDashboardClient, "main", 1440);
         expect([...opts.queryKey]).toEqual(["claude-usage", "history", "main", 1440]);
         expect(opts.refetchInterval).toBe(HISTORY_INTERVAL_MS);
     });
 
-    it("usageHistoryQuery's queryFn coerces the mock's wrong-shape payload to { series: [] }", async () => {
-        // The mock's /history prefix-matches /api/claude/usage and returns an AccountUsage[], NOT a
-        // MultiBucketHistoryResult — the `asHistory` guard must turn that into an empty result.
-        const opts = usageHistoryQuery(mockDashboardClient, "main", 60);
+    it("usageHistoryQuery's queryFn reads the history fixture, not the account array", async () => {
+        const opts = usageHistoryQuery(fixtureDashboardClient, "main", 60);
         const data = await (opts.queryFn as unknown as () => Promise<{ series: unknown[] }>)();
         expect(Array.isArray(data.series)).toBe(true);
         expect(data.series).toHaveLength(0);
@@ -59,7 +52,7 @@ describe("claude-usage query factories", () => {
 
 describe("claude-usage queries — recorded spend totals", () => {
     it("reaches the totals fixture, not the account-usage one the prefix would have matched", async () => {
-        const options = usageTotalsQuery(mockDashboardClient, 1440);
+        const options = usageTotalsQuery(fixtureDashboardClient, 1440);
         const result = await options.queryFn!({} as never);
 
         expect(result.total.events).toBeGreaterThan(0);
@@ -71,11 +64,11 @@ describe("claude-usage queries — recorded spend totals", () => {
         expect(claudeUsageKeys.totals(60)).not.toEqual(claudeUsageKeys.totals(1440));
         // Spread both sides: `queryOptions` brands its queryKey with the dataTag symbols, so the
         // branded type and the plain key tuple are not comparable as-is.
-        expect([...usageTotalsQuery(mockDashboardClient, 60).queryKey]).toEqual([...claudeUsageKeys.totals(60)]);
+        expect([...usageTotalsQuery(fixtureDashboardClient, 60).queryKey]).toEqual([...claudeUsageKeys.totals(60)]);
     });
 
     it("coerces a payload with no `total` to the empty shape instead of crashing the card", async () => {
-        const stub = { get: async () => [{ accountName: "work" }] } as unknown as typeof mockDashboardClient;
+        const stub = { get: async () => [{ accountName: "work" }] } as unknown as typeof fixtureDashboardClient;
         const result = await usageTotalsQuery(stub, 60).queryFn!({} as never);
 
         expect(result.total.events).toBe(0);

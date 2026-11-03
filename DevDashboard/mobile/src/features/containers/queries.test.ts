@@ -1,6 +1,6 @@
 import type { ContainersResult } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { CONTAINERS_INTERVAL_MS, containersKeys, containersQuery } from "@/features/containers/queries";
 
 /**
@@ -12,7 +12,7 @@ import { CONTAINERS_INTERVAL_MS, containersKeys, containersQuery } from "@/featu
 
 describe("mock dashboard client — containers (escape hatch)", () => {
     it("get(/api/containers) returns a well-formed ContainersResult", async () => {
-        const result = await mockDashboardClient.get<ContainersResult>("/api/containers");
+        const result = await fixtureDashboardClient.get<ContainersResult>("/api/containers");
         expect(typeof result.dockerAvailable).toBe("boolean");
         expect(Array.isArray(result.containers)).toBe(true);
     });
@@ -20,7 +20,7 @@ describe("mock dashboard client — containers (escape hatch)", () => {
 
 describe("containers query factory", () => {
     it("builds the list key + interval + a queryFn returning a ContainersResult", async () => {
-        const opts = containersQuery(mockDashboardClient);
+        const opts = containersQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...containersKeys.list]);
         expect(opts.refetchInterval).toBe(CONTAINERS_INTERVAL_MS);
         expect(typeof opts.queryFn).toBe("function");

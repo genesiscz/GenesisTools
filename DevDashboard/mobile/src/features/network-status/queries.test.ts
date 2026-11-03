@@ -1,11 +1,11 @@
 import type { NetStatusRes } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { NET_STATUS_INTERVAL_MS, netStatusKeys, netStatusQuery } from "@/features/network-status/queries";
 
 describe("network-status mock client", () => {
     it("returns a believable NetStatus in range", async () => {
-        const s = await mockDashboardClient.get<NetStatusRes>("/api/net/status");
+        const s = await fixtureDashboardClient.get<NetStatusRes>("/api/net/status");
         expect(["healthy", "degraded", "down"]).toContain(s.quality);
         expect(s.transport).toBe("lan");
         expect(s.latencyMs as number).toBeGreaterThan(0);
@@ -16,7 +16,7 @@ describe("network-status mock client", () => {
 
 describe("network-status query factory", () => {
     it("builds the key + interval + a queryFn that routes to the client", async () => {
-        const opts = netStatusQuery(mockDashboardClient);
+        const opts = netStatusQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...netStatusKeys.status]);
         expect(opts.refetchInterval).toBe(NET_STATUS_INTERVAL_MS);
         const data = await (opts.queryFn as unknown as () => Promise<NetStatusRes>)();

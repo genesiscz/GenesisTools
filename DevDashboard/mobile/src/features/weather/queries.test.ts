@@ -1,6 +1,6 @@
 import type { WeatherRes } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { WEATHER_INTERVAL_MS, weatherFeatureKeys, weatherSnapshotQuery } from "@/features/weather/queries";
 
 /**
@@ -11,7 +11,7 @@ import { WEATHER_INTERVAL_MS, weatherFeatureKeys, weatherSnapshotQuery } from "@
 
 describe("mock dashboard client — weather", () => {
     it("weather() returns a labelled snapshot with a numeric/null temp", async () => {
-        const w = await mockDashboardClient.weather();
+        const w = await fixtureDashboardClient.weather();
         expect(typeof w.label).toBe("string");
         expect(w.label.length).toBeGreaterThan(0);
         expect(typeof w.description).toBe("string");
@@ -22,7 +22,7 @@ describe("mock dashboard client — weather", () => {
 
 describe("weather query factory", () => {
     it("builds the distinct weather-card key + 10-min interval + a queryFn that calls the client", async () => {
-        const opts = weatherSnapshotQuery(mockDashboardClient);
+        const opts = weatherSnapshotQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...weatherFeatureKeys.snapshot]);
         // Distinct root from pulse's ["weather"] — guards the D32 unique-root rule (see notes).
         expect(opts.queryKey[0]).toBe("weather-card");

@@ -1,6 +1,6 @@
 import type { LogEntry, RunSummary } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import {
     BACKLOG_LIMIT,
     buildLogBacklogQuery,
@@ -12,7 +12,7 @@ import {
 
 describe("build-log-tail query factories", () => {
     it("buildLogRunsQuery builds the runs key + interval, returns the mock fixture runs", async () => {
-        const opts = buildLogRunsQuery(mockDashboardClient);
+        const opts = buildLogRunsQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...buildLogKeys.runs(RUNS_LIMIT)]);
         expect(opts.refetchInterval).toBe(RUNS_INTERVAL_MS);
         const data = await (opts.queryFn as unknown as () => Promise<RunSummary[]>)();
@@ -21,11 +21,11 @@ describe("build-log-tail query factories", () => {
     });
 
     it("buildLogBacklogQuery is disabled with no logFile, keyed by logFile otherwise", async () => {
-        const disabled = buildLogBacklogQuery(mockDashboardClient, null);
+        const disabled = buildLogBacklogQuery(fixtureDashboardClient, null);
         expect(disabled.enabled).toBe(false);
         expect([...disabled.queryKey]).toEqual([...buildLogKeys.backlog("")]);
 
-        const enabled = buildLogBacklogQuery(mockDashboardClient, "sync/mock.jsonl");
+        const enabled = buildLogBacklogQuery(fixtureDashboardClient, "sync/mock.jsonl");
         expect(enabled.enabled).toBe(true);
         const log = await (enabled.queryFn as unknown as () => Promise<LogEntry[]>)();
         expect(Array.isArray(log)).toBe(true);

@@ -1,6 +1,6 @@
 import type { PulseRes } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import {
     HISTORY_INTERVAL_LONG_MS,
     HISTORY_INTERVAL_MS,
@@ -23,7 +23,7 @@ import {
 
 describe("mock dashboard client", () => {
     it("pulse returns a believable snapshot in range", async () => {
-        const snap = await mockDashboardClient.system.pulse();
+        const snap = await fixtureDashboardClient.system.pulse();
         expect(snap.cpuPct).not.toBeNull();
         expect(snap.cpuPct as number).toBeGreaterThanOrEqual(0);
         expect(snap.cpuPct as number).toBeLessThanOrEqual(100);
@@ -33,7 +33,7 @@ describe("mock dashboard client", () => {
     });
 
     it("pulseHistory returns ascending points within the window", async () => {
-        const series = await mockDashboardClient.system.pulseHistory("cpu", 30);
+        const series = await fixtureDashboardClient.system.pulseHistory("cpu", 30);
         expect(series.metric).toBe("cpu");
         expect(series.points.length).toBeGreaterThan(1);
         const times = series.points.map((p) => Date.parse(p.ts));
@@ -48,23 +48,23 @@ describe("mock dashboard client", () => {
     });
 
     it("weather returns a labelled snapshot", async () => {
-        const w = await mockDashboardClient.weather();
+        const w = await fixtureDashboardClient.weather();
         expect(w.label).toContain("mock");
         expect(typeof w.description).toBe("string");
     });
 
     it("covers the endpoints parallel features consume (tmux/ttyd/cmux/obsidian/qa)", async () => {
-        expect((await mockDashboardClient.tmux.sessions()).sessions.length).toBeGreaterThan(0);
-        expect((await mockDashboardClient.ttyd.list()).sessions.length).toBeGreaterThan(0);
-        expect((await mockDashboardClient.cmux.snapshot()).snapshot.available).toBe(true);
-        expect((await mockDashboardClient.cmux.layout()).layout.windows.length).toBeGreaterThan(0);
-        expect((await mockDashboardClient.obsidian.tree()).entries.length).toBeGreaterThan(0);
-        expect((await mockDashboardClient.qa.log()).entries.length).toBeGreaterThan(0);
+        expect((await fixtureDashboardClient.tmux.sessions()).sessions.length).toBeGreaterThan(0);
+        expect((await fixtureDashboardClient.ttyd.list()).sessions.length).toBeGreaterThan(0);
+        expect((await fixtureDashboardClient.cmux.snapshot()).snapshot.available).toBe(true);
+        expect((await fixtureDashboardClient.cmux.layout()).layout.windows.length).toBeGreaterThan(0);
+        expect((await fixtureDashboardClient.obsidian.tree()).entries.length).toBeGreaterThan(0);
+        expect((await fixtureDashboardClient.qa.log()).entries.length).toBeGreaterThan(0);
     });
 
     it("qa.subscribe emits a fixture entry then can be closed", async () => {
         const received = await new Promise<boolean>((resolve) => {
-            const sub = mockDashboardClient.qa.subscribe(() => resolve(true));
+            const sub = fixtureDashboardClient.qa.subscribe(() => resolve(true));
             setTimeout(() => {
                 sub.close();
                 resolve(false);
@@ -73,11 +73,12 @@ describe("mock dashboard client", () => {
         expect(received).toBe(true);
     });
 
-    it("get/post escape hatch path-switches the deferred routes", async () => {
-        const containers = await mockDashboardClient.get<{ dockerAvailable: boolean }>("/api/containers");
+    it("the fixture wire routes each path exactly, and a path with no fixture is a visible 404", async () => {
+        const containers = await fixtureDashboardClient.get<{ dockerAvailable: boolean }>("/api/containers");
         expect(typeof containers.dockerAvailable).toBe("boolean");
-        const unknown = await mockDashboardClient.get<Record<string, unknown>>("/api/nope");
-        expect(unknown).toEqual({});
+        await expect(fixtureDashboardClient.get<Record<string, unknown>>("/api/nope")).rejects.toThrow(
+            "/api/nope -> 404"
+        );
     });
 });
 
@@ -87,7 +88,7 @@ describe("pulse query factories", () => {
     // renderer, no awkward QueryFunctionContext construction.
 
     it("pulseQuery builds the snap key + interval + a queryFn that calls the client", async () => {
-        const opts = pulseQuery(mockDashboardClient);
+        const opts = pulseQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...pulseKeys.snap]);
         expect(opts.refetchInterval).toBe(SNAP_INTERVAL_MS);
         expect(typeof opts.queryFn).toBe("function");
@@ -99,17 +100,17 @@ describe("pulse query factories", () => {
     });
 
     it("pulseHistoryQuery encodes metric + minutes into the key", () => {
-        const opts = pulseHistoryQuery(mockDashboardClient, "mem_free", 120);
+        const opts = pulseHistoryQuery(fixtureDashboardClient, "mem_free", 120);
         expect([...opts.queryKey]).toEqual(["pulse", "history", "mem_free", 120]);
     });
 
     it("pulseHistoryQuery uses the long interval only for the 24h range", () => {
-        expect(pulseHistoryQuery(mockDashboardClient, "cpu", 30).refetchInterval).toBe(HISTORY_INTERVAL_MS);
-        expect(pulseHistoryQuery(mockDashboardClient, "cpu", 1440).refetchInterval).toBe(HISTORY_INTERVAL_LONG_MS);
+        expect(pulseHistoryQuery(fixtureDashboardClient, "cpu", 30).refetchInterval).toBe(HISTORY_INTERVAL_MS);
+        expect(pulseHistoryQuery(fixtureDashboardClient, "cpu", 1440).refetchInterval).toBe(HISTORY_INTERVAL_LONG_MS);
     });
 
     it("weatherQuery builds the weather key + interval", () => {
-        const opts = weatherQuery(mockDashboardClient);
+        const opts = weatherQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...pulseKeys.weather]);
         expect(opts.refetchInterval).toBe(WEATHER_INTERVAL_MS);
         expect(typeof opts.queryFn).toBe("function");

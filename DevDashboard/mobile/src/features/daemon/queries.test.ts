@@ -1,6 +1,6 @@
 import type { DaemonOverview, LogEntry, RunSummary } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import {
     DEFAULT_RUNS_LIMIT,
     daemonKeys,
@@ -25,13 +25,13 @@ import {
 
 describe("mock dashboard client — daemon (escape hatch)", () => {
     it("get(/api/daemon/status) returns a believable DaemonOverview", async () => {
-        const overview = await mockDashboardClient.get<DaemonOverview>("/api/daemon/status");
+        const overview = await fixtureDashboardClient.get<DaemonOverview>("/api/daemon/status");
         expect(typeof overview.status.running).toBe("boolean");
         expect(Array.isArray(overview.tasks)).toBe(true);
     });
 
     it("get(/api/daemon/runs) now returns a fixture run array (mock serves the build-log picker)", async () => {
-        const raw = await mockDashboardClient.get<unknown>("/api/daemon/runs?limit=25");
+        const raw = await fixtureDashboardClient.get<unknown>("/api/daemon/runs?limit=25");
         expect(Array.isArray(raw)).toBe(true);
         expect((raw as unknown[]).length).toBeGreaterThan(0);
     });
@@ -39,7 +39,7 @@ describe("mock dashboard client — daemon (escape hatch)", () => {
 
 describe("daemon query factories", () => {
     it("daemonStatusQuery builds the status key + interval + a queryFn returning the overview", async () => {
-        const opts = daemonStatusQuery(mockDashboardClient);
+        const opts = daemonStatusQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...daemonKeys.status]);
         expect(opts.refetchInterval).toBe(STATUS_INTERVAL_MS);
         const data = await (opts.queryFn as unknown as () => Promise<DaemonOverview>)();
@@ -47,7 +47,7 @@ describe("daemon query factories", () => {
     });
 
     it("daemonRunsQuery encodes the limit + returns the mock's fixture runs", async () => {
-        const opts = daemonRunsQuery(mockDashboardClient);
+        const opts = daemonRunsQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual(["daemon", "runs", DEFAULT_RUNS_LIMIT]);
         expect(opts.refetchInterval).toBe(RUNS_INTERVAL_MS);
         const data = await (opts.queryFn as unknown as () => Promise<RunSummary[]>)();
@@ -56,11 +56,11 @@ describe("daemon query factories", () => {
     });
 
     it("daemonRunLogQuery is disabled with no logFile, returns [] otherwise (mock gap guarded)", async () => {
-        const disabled = daemonRunLogQuery(mockDashboardClient, null);
+        const disabled = daemonRunLogQuery(fixtureDashboardClient, null);
         expect(disabled.enabled).toBe(false);
         expect([...disabled.queryKey]).toEqual(["daemon", "run-log", ""]);
 
-        const enabled = daemonRunLogQuery(mockDashboardClient, "sync-2026.jsonl");
+        const enabled = daemonRunLogQuery(fixtureDashboardClient, "sync-2026.jsonl");
         expect(enabled.enabled).toBe(true);
         const log = await (enabled.queryFn as unknown as () => Promise<LogEntry[]>)();
         expect(Array.isArray(log)).toBe(true);
