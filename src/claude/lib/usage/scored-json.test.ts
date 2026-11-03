@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { registerUsageCommand } from "@app/claude/commands/usage";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
+import { GOLDEN_FIXTURE, GOLDEN_NOW } from "./__fixtures__/scored-accounts";
 import { scoreAccounts, sortGrouped } from "./account-picker";
 import type { AccountUsage } from "./api";
 
@@ -72,4 +76,16 @@ test("scored json of an account without a 5-hour limit: no limits.session, the a
     expect(wire.sessionHeadroomPct).toBe(100);
     expect(wire.sessionUsableFraction).toBe(1);
     expect(wire.cooling).toBe(false);
+});
+
+/**
+ * The bytes of `tools claude usage --json --scored`'s `accounts`, which Genesis decodes. Pinned before the
+ * ranker moved into the anthropic-sub plugin (design 2026-11-01, step U4): one scorer, the same output.
+ */
+
+test("scored accounts keep their bytes (golden)", () => {
+    const golden = readFileSync(join(moduleDir(import.meta), "__fixtures__", "scored-accounts.golden"), "utf8");
+    const scored = sortGrouped(scoreAccounts(GOLDEN_FIXTURE, { now: GOLDEN_NOW }));
+
+    expect(`${SafeJSON.stringify(scored)}\n`).toBe(golden);
 });
