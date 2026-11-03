@@ -5,6 +5,7 @@ import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useStagePick } from "@/features/answer-queue/hooks";
 import {
     idempotencyKey,
+    latestStage,
     type NoteState,
     noteIsDirty,
     noteStateOf,
@@ -29,7 +30,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
     const c = useThemeColors();
     const stage = useStagePick();
     const [noteState, setNoteState] = useState<NoteState>(() => noteStateOf(decision));
-    const inFlight = useRef<Promise<unknown> | null>(null);
+    const lastStage = useRef(latestStage()).current;
     const testId = `answer-queue-decision-${session}-${decision.number}`;
 
     // The card is keyed by the decision id, which stays when the agent re-posts it or another surface edits the draft.
@@ -45,7 +46,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
             key: idempotencyKey(),
             ...patch,
         });
-        inFlight.current = pending;
+        lastStage.track(pending);
         return pending;
     };
 
@@ -63,7 +64,8 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
     // The session card calls the latest flush; the ref keeps one stable function registered.
     const flushRef = useRef(async () => {});
     flushRef.current = async () => {
-        await inFlight.current?.catch(() => undefined);
+        // A failed pick stops the send: its error shows on this card, and the earlier pick must not go out instead.
+        await lastStage.settled();
         await saveNote();
     };
 

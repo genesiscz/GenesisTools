@@ -12,6 +12,7 @@ import {
 } from "@/features/answer-queue/queries";
 import {
     flushThenSend,
+    latestStage,
     singleFlight,
     formAnswers,
     missingAnswers,
@@ -97,6 +98,19 @@ describe("answer queue rules", () => {
         });
         expect(reconcileNote(typed, { revision: 2, draft: null })).toEqual(typed);
         expect(reconcileNote(typed, { revision: 1, draft: null })).toBe(typed);
+    });
+
+    it("a failed pick in flight stops the send until a later pick succeeds", async () => {
+        const stage = latestStage();
+        const refused = Promise.reject(new Error("DECISION 4 changed"));
+        stage.track(refused);
+        let sent = 0;
+
+        expect(await flushThenSend([() => stage.settled()], () => sent++)).toBe(false);
+
+        stage.track(Promise.resolve());
+        expect(await flushThenSend([() => stage.settled()], () => sent++)).toBe(true);
+        expect(sent).toBe(1);
     });
 
     it("a second Send tap while the first still flushes does nothing", async () => {
