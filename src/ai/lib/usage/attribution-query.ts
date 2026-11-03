@@ -238,7 +238,7 @@ export async function queryAttribution(
                 account: scope.keyOf(entry),
                 events,
                 from: window.from,
-                now,
+                to: window.to,
                 reportCommand,
             })
         )
