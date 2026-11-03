@@ -102,7 +102,8 @@ export async function issueActTokens({
                 session: row.sessionId,
                 number: row.number,
                 option: letter,
-                ...(row.revision === undefined ? {} : { revision: row.revision }),
+                // A row with no revision is revision 1 everywhere else, so an older button refuses a re-posted text.
+                revision: row.revision ?? 1,
                 ...(row.provider ? { provider: row.provider } : {}),
                 surface,
                 issuedAt: now,
