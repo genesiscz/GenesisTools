@@ -17,7 +17,7 @@ import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
-import { addHarnessOption, resolveHarnessFlag } from "./harness-flag";
+import { addHarnessOption, harnessSources, parseSources, resolveHarnessFlag } from "./harness-flag";
 import { renderSessions, renderSummary, renderToday } from "./render";
 import { addAccountFlags, registerCcusageCommands } from "./reports/commands";
 import { registerWorkersCommand } from "./workers/command";
@@ -203,44 +203,6 @@ interface MonitorOpts {
 
 const SERIES_DEFAULT_DAYS = 7;
 
-/**
- * `null` means "rejected, diagnostic already printed" and the action returns.
- *
- * Throwing instead would reach `runTool`'s uncaught `program.parseAsync()`, so a
- * mistyped `--sources` printed a Bun stack trace with a source excerpt where a
- * one-line flag diagnostic belongs. `flag` is the spelling the user typed
- * (`--harness` or `--sources`), so the diagnostic names it.
- */
-function parseSources<T extends string>(
-    raw: string | undefined,
-    { command, ids, flag }: { command: string; ids: readonly T[]; flag: string }
-): T[] | undefined | null {
-    if (!raw) {
-        return undefined;
-    }
-
-    const wanted = raw
-        .split(",")
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0);
-    const known = (value: string): value is T => (ids as readonly string[]).includes(value);
-    const unknown = wanted.filter((value) => !known(value));
-
-    if (unknown.length > 0) {
-        out.error(
-            suggestEnumFlag(`tools ai-spend ${command}`, flag, ids, {
-                subcommand: [command],
-                given: unknown.join(", "),
-            })
-        );
-        process.exitCode = 1;
-
-        return null;
-    }
-
-    return wanted.filter(known);
-}
-
 async function resolveGrain(raw: string | true | undefined): Promise<TranscriptGrain | null> {
     if (typeof raw === "string" && (TRANSCRIPT_GRAINS as readonly string[]).includes(raw)) {
         return raw as TranscriptGrain;
@@ -405,6 +367,21 @@ export function registerSpendCommand(program: Command): Command {
         // Root also defines --json (addSpendOptions), so commander binds it there;
         // optsWithGlobals() merges it back — same as runSpend above.
         const opts = cmd.optsWithGlobals() as MonitorOpts;
+
+        // The monitor answers every agent at once (its `agents` key splits them); a filter it cannot apply is refused.
+        const filter = harnessSources({ cmd, command: "monitor", ids: AGENT_IDS });
+
+        if (filter !== undefined) {
+            if (filter !== null) {
+                out.error(
+                    "monitor reports every agent in one answer; --harness does not apply. Read `agents` in --json."
+                );
+                process.exitCode = 1;
+            }
+
+            return;
+        }
+
         const storage = new Storage("ai-spend");
         const pricing = await prof.measureAsync("pricing", () => loadPricing(storage));
         const context = await prof.measureAsync("monitor:accounts", () =>
