@@ -114,6 +114,15 @@ PLAN CONTRACT (TypeScript)
     codec?: "h264" | "prores4444";
     indicator?: boolean;
       screenIndex?: number;       // screen mode: index from \`peekaboo list screens --json\`
+      displayId?: number;         // screen mode, native: CGDirectDisplayID (\`ax-tool screens\` displayID); wins over screenIndex
+      followFocus?: boolean;      // screen mode, native: record the display holding the focused window, switching live
+      maxLongSide?: number;       // native: longer side of a kept frame in pixels, at most (16-16384; not isolated)
+      quietMs?: number;           // native: calm ms before the idle rate (default 8 frames at the active rate)
+      heartbeatSec?: number;      // native: keep a frame at least every N s while nothing changes (0 = off)
+      maxMb?: number;             // native: stop keeping frames after N MB written; sampling continues
+      audio?: ("system" | "mic")[]; // native, not isolated: audio tracks in videoOut and/or .m4a sidecars
+      micDevice?: string;         // native: input UID from \`ax-tool audio-devices\` (needs audio "mic")
+      audioSidecar?: boolean;     // native: also write audio-<source>.m4a next to the frames
       app?: string;               // window mode
       windowTitle?: string;       // window mode narrowing
       windowIndex?: number;       // window mode narrowing. AX-ordered, so the native recorder
@@ -463,6 +472,24 @@ export interface CaptureSpec {
     maxFrames?: number;
     /** CG window ids the movie never shows, such as a host's own recording controls (native backend). */
     excludeWindowIds?: number[];
+    /** Screen mode, native: the CGDirectDisplayID to record; wins over screenIndex. */
+    displayId?: number;
+    /** Screen mode, native: record the display holding the frontmost app's focused window, switching live. */
+    followFocus?: boolean;
+    /** Native: the longer side of a kept frame in pixels, at most (16–16384). Not for isolated mode. */
+    maxLongSide?: number;
+    /** Native: calm time in ms before the idle frame rate (default: eight frames at the active rate). */
+    quietMs?: number;
+    /** Native: keep a frame at least every N seconds while nothing changes (0 = off). */
+    heartbeatSec?: number;
+    /** Native: stop keeping frames after N MB were written; sampling continues. */
+    maxMb?: number;
+    /** Native, not isolated: audio sources, each its own track in videoOut and/or an `.m4a` sidecar. */
+    audio?: ("system" | "mic")[];
+    /** Native: the microphone's input UID from `ax-tool audio-devices`; needs audio "mic". */
+    micDevice?: string;
+    /** Native: also write `audio-<source>.m4a` next to the frames. */
+    audioSidecar?: boolean;
     countdownSec?: number;
     noRemote?: boolean;
     captureEngine?: "cg" | "sc";

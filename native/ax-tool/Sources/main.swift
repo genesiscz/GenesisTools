@@ -82,7 +82,20 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
                       keep-NNNN.png frames, contact.png, metadata.json; JSON result in the capture-runner shape
-      ax-tool screens                                         Displays in NSScreen order: index, name, scale, position, resolution
+                      screen mode: [--display-id ID] (wins over --screen-index) | [--follow-focus] (switches live to the
+                      display holding the focused window, else the one under the mouse; checked every 250 ms)
+                      [--max-long-side PX] [--quiet-ms MS] [--heartbeat-sec S] [--max-frames N] [--max-mb N]
+                      frames carry displayId and motionBoxes [[x,y,w,h]]; an early stop prints the frames with
+                      endedEarly display-removed|stream-error|stopped; errors carry code display-missing|no-permission|
+                      invalid-argument|failed
+                      [--control-stdin] JSON-line commands on stdin: {"cmd":"switch","displayId":N} | pause | resume |
+                      stop | status | mute/unmute {"source":"mic"|"system"} | set-mic {"deviceId"} |
+                      set-fps {"active","idle"} | set-threshold {"percent"} | set-max-long-side {"px"};
+                      JSON-line events on stderr (frame, state, settings, display-switch, error); stdin EOF stops
+                      [--audio system,mic] [--mic-device UID] [--audio-sidecar]  audio tracks in the movie and/or
+                      audio-<source>.m4a; the result lists tracks with durationMs, peakDbfs and mutedSpans
+      ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution
+      ax-tool audio-devices                                   Audio inputs and outputs: id (UID), name, channels, default
       ax-tool hotkey --keys <cmd,a> [--app <name>]            Key combo (--app activates target first)
       ax-tool snapshot                                        Capture mouse + focused app/window
       ax-tool restore --snapshot <json>                       Restore mouse + focus from snapshot
@@ -167,7 +180,7 @@ if command == "quit-app" {
 // list, which every command used to report as a fact about the target ("no windows for X").
 // The exceptions read no AX state: `screens` (NSScreen), `capture` (ScreenCaptureKit, gated
 // on Screen Recording inside Record.swift) and `ocr --image` (a file on disk).
-let axFreeCommands: Set<String> = ["screens", "capture"]
+let axFreeCommands: Set<String> = ["screens", "capture", "audio-devices"]
 if !axFreeCommands.contains(command) && !(command == "ocr" && argValue("--image") != nil) {
     // NSWorkspace answers without Accessibility, so a typo in --app is reported as a typo rather
     // than hidden behind the missing grant. `resolveAppPid` never touches the target.
@@ -214,6 +227,10 @@ if command == "hittest" {
 // `screens` has no app, and `capture` needs one only in window mode.
 if command == "screens" {
     cmdScreens()
+    exit(0)
+}
+if command == "audio-devices" {
+    cmdAudioDevices()
     exit(0)
 }
 if command == "capture" {

@@ -16,8 +16,16 @@ func jsonOutput(_ dict: [String: Any]) {
     }
 }
 
-func errorExit(_ message: String) -> Never {
-    jsonOutput(["ok": false, "error": message])
+/// The `code` an error carries when its call site names none. `capture` sets it to "failed", so every capture error
+/// has a code (display-missing, no-permission, invalid-argument, failed); other commands print none.
+var defaultErrorCode: String?
+
+func errorExit(_ message: String, code: String? = nil) -> Never {
+    var payload: [String: Any] = ["ok": false, "error": message]
+    if let code = code ?? defaultErrorCode {
+        payload["code"] = code
+    }
+    jsonOutput(payload)
     exit(1)
 }
 
