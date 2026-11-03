@@ -2,6 +2,7 @@ import * as p from "@clack/prompts";
 import { logger } from "@genesiscz/utils/logger";
 import { Bot, BotError, type CommandContext, type Context } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
+import { type CallbackRouter, registerCallbackRouter } from "./callbacks";
 import { registerHelpCommand } from "./handlers/help";
 import { registerRunCommand } from "./handlers/run";
 import { registerStatusCommand } from "./handlers/status";
@@ -15,6 +16,8 @@ export interface CreateBotOptions {
     /** Skips the `getMe` call that `bot.init()` would make. */
     botInfo?: UserFromGetMe;
     rateLimiter?: RateLimiter;
+    /** Routes button presses by their `<prefix>:` (the decision letters). Without it a press gets no answer. */
+    callbacks?: CallbackRouter;
 }
 
 /** `authorizedChats`: the commands chat and the decisions chat (`authorizedChats` in `../lib/config`). */
@@ -71,6 +74,10 @@ export function createBot(
     registerRunCommand(bot);
     registerToolsCommand(bot);
     registerHelpCommand(bot);
+
+    if (options.callbacks) {
+        registerCallbackRouter(bot, options.callbacks);
+    }
 
     return bot;
 }

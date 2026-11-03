@@ -58,7 +58,7 @@ Both modes run the same handler pipeline: the chat allowlist, the rate limits, t
 - Listens on `127.0.0.1` only, on the registered port (entry `telegram-webhook` in `src/utils/ui/dashboards.ts`; `webhook status` prints it). Only the tunnel connector on this Mac reaches it.
 - `--url` is the public https URL Telegram delivers to. It is stored in the config, so later runs need no flag. No host is built in, because this repo is public.
 - `--path` defaults to the path of the URL. The tunnel forwards the path unchanged, so the two must be equal.
-- Calls `setWebhook` at start with the URL, the secret token and `allowed_updates: ["message"]`, which is all the handlers read.
+- Calls `setWebhook` at start with the URL, the secret token and `allowed_updates: ["message", "callback_query"]`: commands and button presses, which is all the handlers read. Polling and the setup poll of `configure` pass the same list, because Telegram keeps the last one it was given.
 - A clean stop (Ctrl+C or SIGTERM) leaves the webhook set. Telegram then queues updates while the bot is down and retries them. `--delete-on-exit` removes it instead.
 
 ### Security model

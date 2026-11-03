@@ -1,8 +1,12 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
-/** The handlers read nothing but messages (commands). Anything else Telegram could send is never delivered. */
-export const WEBHOOK_ALLOWED_UPDATES = ["message"] as const;
+/**
+ * The update kinds the bot reads: messages (commands) and button presses (`callback_query`, the decision letters).
+ * Telegram remembers the last list it was given (webhook or `getUpdates`), so every path passes this one: the
+ * webhook registration, the polling loop and the setup poll of `configure`. Anything else is never delivered.
+ */
+export const WEBHOOK_ALLOWED_UPDATES = ["message", "callback_query"] as const;
 
 export const WEBHOOK_RECEIVER_PORT: number = WEB_SERVICES["telegram-webhook"].port;
 
