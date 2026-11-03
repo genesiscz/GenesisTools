@@ -57,6 +57,14 @@ describe("answer queue over the fixture wire (the real client)", () => {
         expect((await queue()).total).toBe(3);
     });
 
+    it("clears a staged note with an empty string, so a send never carries the old text", async () => {
+        await stagePick(client, { session: "s-parser", number: 4, option: "a", text: "old note", expectedRevision: 1, key: "c1" });
+        await stagePick(client, { session: "s-parser", number: 4, text: "", expectedRevision: 1, key: "c2" });
+
+        const staged = stagedOf((await queue()).sessions[0]);
+        expect(staged.map((item) => [item.draftOption, item.draft])).toEqual([["a", null]]);
+    });
+
     it("refuses a stage on a revision the agent replaced, and a send with nothing staged", async () => {
         await expect(
             stagePick(client, { session: "s-parser", number: 4, option: "b", expectedRevision: 9, key: "k4" })
