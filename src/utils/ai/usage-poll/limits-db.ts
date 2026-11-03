@@ -126,6 +126,16 @@ interface SnapshotRow {
     money_currency: string | null;
 }
 
+export interface AccountIdRow {
+    provider: string;
+    accountName: string;
+    accountId: string;
+}
+
+interface StoredAccountIdRow {
+    account_id: string;
+}
+
 interface SeriesSqlRow {
     provider: string | null;
     account_name: string;
@@ -521,6 +531,25 @@ export class UsageLimitsDb {
     /** The forecast's samples since `since`, readings only, through the one query the hub forecast also runs. */
     getForecastSamples(options: UsageSampleQuery): UsageSample[] {
         return readUsageSamples(this.handle, options);
+    }
+
+    /**
+     * The account id the stored rows carry for each (provider, account name): the newest non-null one. An account
+     * removed from config has no directory entry, so its rows are where its immutable id survives. A pair whose rows
+     * carry no id (all written before the column) is left out.
+     */
+    storedAccountIds(pairs: ReadonlyArray<{ provider: string; accountName: string }>): AccountIdRow[] {
+        const stmt = this.handle.prepare(`
+            SELECT account_id FROM usage_snapshots
+            WHERE (provider = ?1 OR (provider IS NULL AND ?1 = ?3)) AND account_name = ?2 AND account_id IS NOT NULL
+            ORDER BY timestamp DESC, id DESC
+            LIMIT 1
+        `);
+
+        return pairs.flatMap((pair) => {
+            const row = stmt.get(pair.provider, pair.accountName, DEFAULT_LIMITS_PROVIDER) as StoredAccountIdRow | null;
+            return row ? [{ provider: pair.provider, accountName: pair.accountName, accountId: row.account_id }] : [];
+        });
     }
 
     getAllAccountBuckets(provider?: string): Array<{ accountName: string; bucket: string; provider: string }> {

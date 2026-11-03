@@ -350,4 +350,42 @@ describe("the series door", () => {
         ]);
         expect(data.events.map((event) => event.accountName)).toEqual(["work"]);
     });
+
+    test("an account removed from config keeps its stored id, so its coverage runs still join", () => {
+        for (const [minute, accountId] of [
+            [1, null],
+            [2, "acc_side"],
+        ] as const) {
+            limits.recordSnapshotV2("side", "five_hour", 40 + minute, at(minute).toISOString(), {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "anthropic-sub",
+                accountId,
+                kind: "session",
+            });
+        }
+
+        new PollRunsStore(limits.connection()).recordRound(
+            [{ snapshot: snapshot({ accountId: "acc_side", accountName: "side" }), source: "endpoint" }],
+            at(2)
+        );
+
+        const data = readLimitSeries(
+            { from: T0.toISOString(), to: at(10).toISOString(), agg: "raw" },
+            { db: limits, directory: [], current: [] }
+        );
+
+        expect(data.series.map((item) => [item.accountName, item.accountId])).toEqual([["side", "acc_side"]]);
+        expect(data.coverage).toEqual([
+            {
+                provider: "anthropic-sub",
+                accountId: "acc_side",
+                accountName: "side",
+                runs: [
+                    { from: at(2).toISOString(), to: at(2).toISOString(), outcome: "ok", source: "endpoint", polls: 1 },
+                ],
+            },
+        ]);
+    });
 });
