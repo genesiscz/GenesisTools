@@ -601,4 +601,40 @@ describe("qa decision routes", () => {
         expect(runs.at(-1)).toEqual(["codex", "steer", "--name", "w1", "--json", "--prompt-file", expect.any(String)]);
         expect(prompts.at(-1)).toBe(relayedAnswerText("DECISION 2: a) yes"));
     });
+
+    it("POST send-drafts with the drafts the phone shows sends only those, never a draft the queue hides", async () => {
+        const { file, events } = scratchFiles();
+        await postDecisions(file, events, {
+            sessionId: "s-beta",
+            decisions: [
+                { prompt: "Which port?", options: ["3000", "4000"] },
+                { prompt: "Retry the build?", options: ["yes", "no"], for: "agent" },
+            ],
+        });
+        const draft = decisionRoute("POST", "/api/qa/decisions/draft");
+        const sendDrafts = decisionRoute("POST", "/api/qa/decisions/send-drafts");
+        // The human decision is staged on the phone; the agent-addressed one was staged on another surface.
+        await draft.handler(makeCtx({ body: { session: "s-beta", number: 1, option: "b" } }));
+        await draft.handler(makeCtx({ body: { session: "s-beta", number: 2, option: "a" } }));
+
+        const stale = asJson(
+            await sendDrafts.handler(
+                makeCtx({ body: { session: "s-beta", drafts: [{ number: 1, expectedRevision: 7 }] } })
+            )
+        );
+        expect(stale.status).toBe(400);
+        expect(String(stale.body.error)).toStartWith("DECISION 1 changed");
+        expect(runs).toEqual([]);
+
+        const sent = asJson(
+            await sendDrafts.handler(
+                makeCtx({ body: { session: "s-beta", drafts: [{ number: 1, expectedRevision: 1 }] } })
+            )
+        );
+        expect(sent.body).toMatchObject({ channel: "cmux", delivered: true, numbers: [1], promoted: [1] });
+
+        const rows = readDecisions(file);
+        expect(rows.find((row) => row.number === 1)?.state).toBe("sent");
+        expect(rows.find((row) => row.number === 2)).toMatchObject({ state: "drafted", draftOption: "a" });
+    });
 });

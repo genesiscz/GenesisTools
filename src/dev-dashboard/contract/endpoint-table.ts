@@ -245,11 +245,16 @@ export const ENDPOINTS = {
         "/api/qa/decisions/dismiss",
         "keyed-write"
     ),
-    qaDecisionsSendDrafts: row<{ session: string; provider?: string; dryRun?: boolean }, DecisionSendDto>(
-        "POST",
-        "/api/qa/decisions/send-drafts",
-        "keyed-write"
-    ),
+    qaDecisionsSendDrafts: row<
+        {
+            session: string;
+            provider?: string;
+            dryRun?: boolean;
+            /** Only the drafts of these decisions, at the revision the caller shows; absent: every draft. */
+            drafts?: Array<{ number: number; expectedRevision?: number }>;
+        },
+        DecisionSendDto
+    >("POST", "/api/qa/decisions/send-drafts", "keyed-write"),
     /** Answers one decision letter from a stored act token (the Telegram button, a banner, the phone). */
     act: row<Record<string, never>, ActReceiptDto>("POST", "/api/act", "act"),
 

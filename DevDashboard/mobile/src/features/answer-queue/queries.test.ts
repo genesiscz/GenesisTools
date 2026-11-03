@@ -21,6 +21,7 @@ import {
     reconcileNote,
     RECENT_RECEIPTS_MAX,
     receiptOf,
+    shownDrafts,
     stagedOf,
     togglePick,
     withRecentReceipt,
@@ -55,9 +56,27 @@ describe("answer queue over the fixture wire (the real client)", () => {
         const staged = stagedOf((await queue()).sessions[0]);
         expect(staged.map((item) => [item.number, item.draftOption, item.draft])).toEqual([[4, "a", "keep it warm"]]);
 
-        const receipt = await sendStaged(client, { session: "s-parser", provider: "claude", key: "k3" });
+        const receipt = await sendStaged(client, {
+            session: "s-parser",
+            provider: "claude",
+            drafts: shownDrafts((await queue()).sessions[0]),
+            key: "k3",
+        });
         expect(receipt.kind).toBe("delivered");
         expect((await queue()).total).toBe(3);
+    });
+
+    it("a send names the decisions the card shows, so a draft the queue hides stays staged", async () => {
+        await stagePick(client, { session: "s-parser", number: 4, option: "a", expectedRevision: 1, key: "h1" });
+        await stagePick(client, { session: "s-parser", number: 5, option: "b", expectedRevision: 1, key: "h2" });
+        const session = (await queue()).sessions[0];
+        // The card shows only DECISION 4 (DECISION 5 stands for a draft another surface staged on a hidden decision).
+        const shown = { ...session, items: session.items.filter((item) => item.kind !== "decision" || item.number === 4) };
+        expect(shownDrafts(shown)).toEqual([{ number: 4, expectedRevision: 1 }]);
+
+        await sendStaged(client, { session: "s-parser", drafts: shownDrafts(shown), key: "h3" });
+        const after = stagedOf((await queue()).sessions[0]);
+        expect(after.map((item) => [item.number, item.draftOption])).toEqual([[5, "b"]]);
     });
 
     it("clears a staged note with an empty string, so a send never carries the old text", async () => {
@@ -72,7 +91,10 @@ describe("answer queue over the fixture wire (the real client)", () => {
         await expect(
             stagePick(client, { session: "s-parser", number: 4, option: "b", expectedRevision: 9, key: "k4" })
         ).rejects.toThrow("400");
-        await expect(sendStaged(client, { session: "s-docs", key: "k5" })).rejects.toThrow("nothing to send");
+        const docs = (await queue()).sessions[1];
+        await expect(sendStaged(client, { session: "s-docs", drafts: shownDrafts(docs), key: "k5" })).rejects.toThrow(
+            "nothing to send"
+        );
     });
 
     it("answers an ask form, which leaves the queue", async () => {

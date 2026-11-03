@@ -190,6 +190,14 @@ export function stagedOf(session: WaitingSessionDto): WaitingDecisionDto[] {
     return decisionsOf(session).filter((item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()));
 }
 
+/**
+ * The decisions a session card shows, each at the revision it shows: a send passes them, so the Mac sends exactly
+ * these drafts. A draft staged on another surface for a decision the queue hides stays staged.
+ */
+export function shownDrafts(session: WaitingSessionDto): { number: number; expectedRevision: number }[] {
+    return decisionsOf(session).map((item) => ({ number: item.number, expectedRevision: item.revision }));
+}
+
 /** One answer per question of a form, as the user filled it. */
 export interface FormDraft {
     [itemId: string]: { selected: string[]; text: string };
