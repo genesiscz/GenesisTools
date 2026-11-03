@@ -9,6 +9,7 @@ import {
     extractLatestUsageFromSse,
     extractUsageFromJsonBody,
 } from "@app/ai-proxy/lib/usage/extract";
+import { recordProxyUsageEvent } from "@app/ai-proxy/lib/usage/limit-events";
 import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { writeTranscript } from "@app/ai-proxy/lib/usage/transcripts";
@@ -118,6 +119,16 @@ export function trackCompletedRequest(input: {
     recordUsageRequest(record);
 
     const ref = proxyAccountRefOf(input.route.account);
+
+    if (record.rateLimited) {
+        recordProxyUsageEvent({
+            provider: input.route.account.provider,
+            accountName: input.route.accountName,
+            ...(ref ? { accountId: refToId(ref) } : {}),
+            kind: "rate-limited",
+            model: upstreamModel,
+        });
+    }
 
     recordClientUsage({
         client: input.client,
