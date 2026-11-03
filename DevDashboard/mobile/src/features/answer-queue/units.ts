@@ -209,16 +209,40 @@ export function queueSessionKey(session: WaitingSessionDto): string {
 }
 
 /**
- * The edits the cards hold before they reach the Mac (a note being typed, a form being filled), by item id. The queue
- * is a virtualized list, so a card that scrolls far away unmounts; its edit lives here and the remount reads it back.
+ * The edits the cards hold before they reach the Mac (a note being typed, a form being filled), and each decision's
+ * stage trackers, by item id. The queue is a virtualized list, so a card that scrolls far away unmounts; what it held
+ * lives here and the remount reads it back.
  */
 export interface KeptEdits {
     notes: Map<string, NoteState>;
     forms: Map<string, FormDraft>;
+    stages: Map<string, DecisionStages>;
+}
+
+/**
+ * A decision card's pick and note trackers (`latestStage`). Kept with the edits: a refused pick must keep Send blocked
+ * after the card remounts, or the pick staged before it goes out alone.
+ */
+export interface DecisionStages {
+    pick: StageTracker;
+    note: StageTracker;
 }
 
 export function keptEdits(): KeptEdits {
-    return { notes: new Map(), forms: new Map() };
+    return { notes: new Map(), forms: new Map(), stages: new Map() };
+}
+
+/** The kept stage trackers of a decision, made on first use and kept until its item leaves the queue. */
+export function stagesOf(kept: KeptEdits, key: string): DecisionStages {
+    const found = kept.stages.get(key);
+
+    if (found) {
+        return found;
+    }
+
+    const made = { pick: latestStage(), note: latestStage() };
+    kept.stages.set(key, made);
+    return made;
 }
 
 /** The kept edit for `key`, or `init()` when the card has none yet. */
@@ -230,7 +254,7 @@ export function keptOr<T>(map: Map<string, T>, key: string, init: () => T): T {
 export function pruneKept(kept: KeptEdits, sessions: readonly WaitingSessionDto[]): void {
     const live = new Set(sessions.flatMap((session) => session.items.map((item) => item.id)));
 
-    for (const map of [kept.notes, kept.forms]) {
+    for (const map of [kept.notes, kept.forms, kept.stages]) {
         for (const key of [...map.keys()]) {
             if (!live.has(key)) {
                 map.delete(key);
