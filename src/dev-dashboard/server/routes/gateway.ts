@@ -1,0 +1,131 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+    ENDPOINTS,
+    type Endpoint,
+    TIMEOUT_TIER_MS,
+    type UploadReceipt,
+} from "@app/dev-dashboard/contract/endpoint-table";
+import { ACT_TOKEN_HEADER } from "@app/dev-dashboard/server/auth-guard";
+import { bindEndpoint, IDEMPOTENCY_HEADER } from "@app/dev-dashboard/server/bind";
+import { errorResult } from "@app/dev-dashboard/server/routes/error";
+import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
+import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { z } from "zod";
+
+/**
+ * The gateway row of each hub capability. Typed by the capability names, so a capability without a row (or a row for
+ * a capability that does not exist) is a compile error; adding one is one entry here and one in `ENDPOINTS`.
+ */
+export const GATEWAY_ROWS = {
+    agents: ENDPOINTS.gatewayAgents,
+    transcript: ENDPOINTS.gatewayTranscript,
+    procs: ENDPOINTS.gatewayProcs,
+    stuck: ENDPOINTS.gatewayStuck,
+    forecast: ENDPOINTS.gatewayForecast,
+    prompts: ENDPOINTS.gatewayPrompts,
+    widgetSnapshot: ENDPOINTS.gatewayWidgetSnapshot,
+} as const satisfies Record<HubCapabilityName, Endpoint>;
+
+/** What the upload route stores. Anything else is refused: the phone sends photos, screenshots and documents. */
+const UPLOAD_TYPES: Readonly<Record<string, string>> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/heic": "heic",
+    "application/pdf": "pdf",
+    "text/plain": "txt",
+};
+
+function capabilityError(err: unknown): RouteResult {
+    if (err instanceof CapabilityRefusedError) {
+        return errorResult(err, err.code === "not-found" ? 404 : 400);
+    }
+
+    return errorResult(err);
+}
+
+export interface GatewayDeps {
+    /** The act door's dependencies. Tests pass a memory token store and a fake answer. */
+    act?: () => Promise<ActDeps>;
+    /** Where uploads go; `~/.genesis-tools/dev-dashboard/uploads/<day>/` when omitted. */
+    uploadDir?: () => string;
+    /** Runs a capability; tests pass a fake so no hub reader runs. */
+    run?: typeof runCapability;
+}
+
+/**
+ * The Mac mobile gateway: every hub capability the phone needs, each one row of the endpoint table bound to its
+ * capability module (the same module the hub door mounts), the act route (`POST /api/act`, answered on a stored act
+ * token) and one upload route with a size cap (`requestBodyLimit`).
+ */
+export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
+    const run = deps.run ?? runCapability;
+    const capabilityRoutes = (Object.keys(GATEWAY_ROWS) as HubCapabilityName[]).map((name) => {
+        const row = GATEWAY_ROWS[name];
+        return bindEndpoint(row, {
+            input: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).optional()),
+            invalid: "expected query parameters",
+            error: capabilityError,
+            run: (input) => run(name, input, { signal: AbortSignal.timeout(TIMEOUT_TIER_MS[row.timeout] ?? 60_000) }),
+        });
+    });
+
+    return [
+        ...capabilityRoutes,
+        bindEndpoint(ENDPOINTS.act, {
+            input: z.object({}),
+            invalid: "expected an empty JSON body",
+            run: async (_input, ctx: RouteContext) => {
+                const token = ctx.headers[ACT_TOKEN_HEADER];
+                const key = ctx.headers[IDEMPOTENCY_HEADER];
+
+                if (!token) {
+                    return { kind: "json", status: 401, body: { error: `${ACT_TOKEN_HEADER} required` } };
+                }
+
+                if (!key) {
+                    return { kind: "json", status: 400, body: { error: `${IDEMPOTENCY_HEADER} required` } };
+                }
+
+                return act({ token, key: `http:${key}`, deps: await (deps.act ?? realActDeps)() });
+            },
+        }),
+        bindEndpoint(ENDPOINTS.gatewayUpload, {
+            input: z.object({}),
+            invalid: "expected a raw body",
+            body: "raw",
+            run: async (_input, ctx): Promise<UploadReceipt | RouteResult> => {
+                const contentType = (ctx.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
+                const extension = UPLOAD_TYPES[contentType];
+
+                if (!extension) {
+                    return {
+                        kind: "json",
+                        status: 415,
+                        body: { error: `expected one of ${Object.keys(UPLOAD_TYPES).join(", ")}` },
+                    };
+                }
+
+                const bytes = await ctx.readRawBody();
+
+                if (bytes.byteLength === 0) {
+                    return { kind: "json", status: 400, body: { error: "empty upload" } };
+                }
+
+                // Named by content, so a replayed upload writes the same file again: the write is idempotent.
+                const sha256 = createHash("sha256").update(bytes).digest("hex");
+                const dir =
+                    deps.uploadDir?.() ??
+                    toolDataDir("dev-dashboard", "uploads", new Date().toISOString().slice(0, 10));
+                mkdirSync(dir, { recursive: true });
+                const path = join(dir, `${sha256.slice(0, 16)}.${extension}`);
+                writeFileSync(path, bytes, { mode: 0o600 });
+                return { path, bytes: bytes.byteLength, sha256, contentType };
+            },
+        }),
+    ];
+}
