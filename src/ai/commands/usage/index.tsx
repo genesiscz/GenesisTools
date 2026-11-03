@@ -1,8 +1,9 @@
 import { formatLimitLine } from "@app/ai/lib/accounts/last-usage";
+import { usageProviderValues } from "@app/ai/lib/usage/provider-values";
 import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
 import { absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
-import { PROVIDER_ALIASES, resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
-import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
+import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
+import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
@@ -20,11 +21,6 @@ export interface AiUsageOptions {
     scored?: boolean;
 }
 
-/** Aliases plus plugin ids, so `--provider claude` and `--provider anthropic-sub` both work. */
-function providerValues(): string[] {
-    return [...new Set([...Object.keys(PROVIDER_ALIASES), ...usagePlugins().map((entry) => entry.plugin.id)])].sort();
-}
-
 /**
  * `tools ai usage`: the dashboard across every provider that reports quota (spec 7.5).
  * The TUI is the default; `--json` and `--no-tui` stay importable without Ink, which is
@@ -32,7 +28,7 @@ function providerValues(): string[] {
  */
 export function registerAiUsageCommand(usage: Command): void {
     usage
-        .option("--provider [name...]", `Limit to these providers: ${providerValues().join(" | ")}`)
+        .option("--provider [name...]", `Limit to these providers: ${usageProviderValues().join(" | ")}`)
         .option("--account <name...>", "Limit to these account names")
         .option("-f, --filter <account...>", "Alias of --account, kept for scripts")
         .option("--range [value]", `History range: ${RANGE_VALUES.join(" | ")}`)
@@ -52,12 +48,12 @@ export function registerAiUsageCommand(usage: Command): void {
             // print the same thing (gap/cli).
             const named = Array.isArray(opts.provider) ? opts.provider : [];
             const bareProvider = opts.provider !== undefined && named.length === 0;
-            const known = new Set(providerValues());
+            const known = new Set(usageProviderValues());
             const unknown = named.filter((name) => !known.has(name));
 
             if (bareProvider || unknown.length > 0) {
                 out.printlnErr(
-                    suggestEnumFlag("tools ai usage", "--provider", providerValues(), {
+                    suggestEnumFlag("tools ai usage", "--provider", usageProviderValues(), {
                         subcommand: ["usage"],
                         ...(unknown[0] === undefined ? {} : { given: unknown[0] }),
                     })

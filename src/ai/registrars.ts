@@ -32,16 +32,22 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
         // `daemon` subcommands own the one `ai-usage-poll` task (spec sections 6.5 and 7.5).
         names: ["usage"],
         load: async () => {
-            const [{ registerAiUsageCommand }, { registerAiUsageSessionsCommand }, { registerUsageDaemonCommands }] =
-                await Promise.all([
-                    import("./commands/usage/index"),
-                    import("./commands/usage/sessions"),
-                    import("./commands/usage/daemon"),
-                ]);
+            const [
+                { registerAiUsageCommand },
+                { registerAiUsageLimitsCommand },
+                { registerAiUsageSessionsCommand },
+                { registerUsageDaemonCommands },
+            ] = await Promise.all([
+                import("./commands/usage/index"),
+                import("./commands/usage/limits"),
+                import("./commands/usage/sessions"),
+                import("./commands/usage/daemon"),
+            ]);
 
             return (program: Command) => {
                 const usageCmd = program.command("usage").description("Usage limits for every AI provider");
                 registerAiUsageCommand(usageCmd);
+                registerAiUsageLimitsCommand(usageCmd);
                 registerAiUsageSessionsCommand(usageCmd);
                 registerUsageDaemonCommands(usageCmd);
             };
