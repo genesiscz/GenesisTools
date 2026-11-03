@@ -86,7 +86,15 @@ describe("job runner", () => {
             kind: "test",
             initial: null,
             inputs: [input],
-            steps: [{ name: "export", run: async (ctx) => (ctx.claim(input), null) }],
+            steps: [
+                {
+                    name: "export",
+                    run: async (ctx) => {
+                        ctx.claim(input);
+                        return null;
+                    },
+                },
+            ],
         });
         await expect(job.done).rejects.toThrow(OverwriteInputError);
         expect(job.state).toBe("failed");
@@ -109,7 +117,13 @@ describe("job runner", () => {
                         return 1;
                     },
                 },
-                { name: "never", run: async () => (ran.push("never"), 2) },
+                {
+                    name: "never",
+                    run: async () => {
+                        ran.push("never");
+                        return 2;
+                    },
+                },
             ],
         });
         await Bun.sleep(1);
