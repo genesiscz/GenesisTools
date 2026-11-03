@@ -87,6 +87,17 @@ final class WidgetUsageTests: XCTestCase {
         XCTAssertEqual(opened, [["--usage-account", "acc_work"], ["--mode", "usage", "--usage-section", "limits", "--usage-all-accounts"]])
     }
 
+    func testAnAlertWithOnlyANameOpensItAsProviderSlashName() throws {
+        var opened: [[String]] = []
+        let store = store(opened: { opened.append($0) })
+        // Two providers may each have an account called "work": the name alone selects neither in the hub.
+        let named = #"{"id":10,"rule":"exhaust","provider":"anthropic-sub","accountName":"work","level":"warning","title":"t","message":"m","firedAt":"2026-03-02T14:00:00.000Z","ackAt":null}"#
+        let nameOnly = #"{"id":11,"rule":"exhaust","accountName":"work","level":"warning","title":"t","message":"m","firedAt":"2026-03-02T14:00:00.000Z","ackAt":null}"#
+        store.openAlert(try JSONDecoder().decode(UsageAlert.self, from: Data(named.utf8)))
+        store.openAlert(try JSONDecoder().decode(UsageAlert.self, from: Data(nameOnly.utf8)))
+        XCTAssertEqual(opened, [["--usage-account", "anthropic-sub/work"], ["--usage-account", "work"]])
+    }
+
     func testTheDoorsWarningsStayOnceEachAndTheSummaryDoesNotSayEveryAccountHasRoom() async throws {
         let noHistory = #"{"code":"no-history","message":"No poll has recorded usage history yet, so nothing is forecast."}"#
         let noStore = #"{"code":"no-store","message":"No usage store exists here yet, so no alert was recorded."}"#
