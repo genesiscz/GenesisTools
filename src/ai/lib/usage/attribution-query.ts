@@ -49,7 +49,7 @@ export interface SpikesOptions extends AttributionOptions {
 /** The attribution doors read a week of history by default: a weekly window's last reset falls inside it. */
 const ATTRIBUTION_LOOKBACK = "8d";
 
-function positive(flag: string, raw: string | undefined, fallback: number): number {
+export function positive(flag: string, raw: string | undefined, fallback: number): number {
     if (raw === undefined) {
         return fallback;
     }
@@ -63,7 +63,10 @@ function positive(flag: string, raw: string | undefined, fallback: number): numb
     return value;
 }
 
-function resolveKinds(raw: string[] | boolean | undefined, fallback: LimitKind[] | undefined): LimitKind[] | undefined {
+export function resolveKinds(
+    raw: string[] | boolean | undefined,
+    fallback: LimitKind[] | undefined
+): LimitKind[] | undefined {
     const enumFlag = { flag: "--kind", values: LIMIT_KIND_VALUES };
 
     if (raw === true) {
@@ -83,7 +86,7 @@ function resolveKinds(raw: string[] | boolean | undefined, fallback: LimitKind[]
     return list.length > 0 ? list.filter(isLimitKind) : fallback;
 }
 
-interface SeriesScope {
+export interface SeriesScope {
     directory: AccountKey[];
     selection: AccountKey[] | undefined;
     series: SeriesEntry[];
@@ -91,7 +94,7 @@ interface SeriesScope {
 }
 
 /** The raw readings of the selected accounts and kinds, the account directory (history orphans included). */
-async function readScope(input: {
+export async function readScope(input: {
     opts: AttributionOptions;
     from: Date;
     to: Date;
@@ -142,11 +145,11 @@ async function readScope(input: {
     }
 }
 
-function reportCommand(sessionId: string): string {
+export function reportCommand(sessionId: string): string {
     return aiSessionsCommand("report", sessionId);
 }
 
-function spendWarnings(events: readonly AttributedEvent[]): UsageWarning[] {
+export function spendWarnings(events: readonly AttributedEvent[]): UsageWarning[] {
     const warnings: UsageWarning[] = [
         {
             code: "attribution-by-last-pin",
