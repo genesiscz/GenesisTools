@@ -182,6 +182,20 @@ export function readLimitSeries(request: LimitSeriesRequest, sources: LimitSerie
     const ids = new Map(
         sources.directory.map((account) => [pairKey(account.provider, account.accountName), account.accountId])
     );
+    const orphans = new Map<string, { provider: string; accountName: string }>();
+
+    for (const entry of entries) {
+        const pair = pairKey(entry.provider, entry.account);
+
+        if (!ids.has(pair)) {
+            orphans.set(pair, { provider: entry.provider, accountName: entry.account });
+        }
+    }
+
+    // An account removed from config: its stored rows still carry its immutable id, which the poll runs are keyed by.
+    for (const found of sources.db.storedAccountIds([...orphans.values()])) {
+        ids.set(pairKey(found.provider, found.accountName), found.accountId);
+    }
     const windows = new Map<string, CurrentWindow>();
     const absent = new Map<string, AbsentLimit>();
 
