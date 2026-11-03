@@ -50,6 +50,24 @@ class NeedsInputInboxPage extends BasePage {
         return Number.parseInt(text.trim(), 10);
     }
 
+    /** The answer queue's count pill (the notch widget's number), parsed. */
+    async queueCount(): Promise<number> {
+        const text = await this.getText("answer-queue-count");
+        return Number.parseInt(text.trim(), 10);
+    }
+
+    /** Stages option `letter` of decision `number` in session `session` (one tap; nothing is sent). */
+    async stage(session: string, number: number, letter: string): Promise<void> {
+        await this.tap(`answer-queue-decision-${session}-${number}-option-${letter}`);
+    }
+
+    /** Taps the session's "Send N staged" button and waits for its receipt line. */
+    async sendStaged(session: string): Promise<string> {
+        await this.tap(`answer-queue-session-${session}-send`);
+        await this.waitForExist(`answer-queue-session-${session}-receipt`);
+        return this.getText(`answer-queue-session-${session}-receipt`);
+    }
+
     /** At least one item card OR the empty state is present. */
     async hasItemsOrEmpty(): Promise<boolean> {
         const ids = await this.discoverItemIds(1);
