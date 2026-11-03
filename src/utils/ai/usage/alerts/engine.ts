@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { deliveryChannels, ruleEnabledFor, type UsageAlertsConfig } from "./config";
 import type { UsageAlertsStore } from "./log";
+import { advanceWindowCycle, windowCycleKey } from "./refire";
 import { ALERT_RULES } from "./rules";
 import {
     ALERT_RULE_IDS,
@@ -9,8 +10,12 @@ import {
     type AlertRound,
     type AlertRuleId,
     type AlertRuleTable,
+    type RefireContext,
     type StoredAlert,
+    type WindowCycle,
+    type WindowRef,
 } from "./types";
+import { notifiableWindows } from "./windows";
 
 /** A candidate with the engine's verdict, for `tools ai usage alerts test`. */
 export interface JudgedCandidate {
@@ -40,17 +45,57 @@ function evaluateRule<Id extends AlertRuleId>(
 }
 
 /**
+ * The reset history of every window the round read, advanced by this round's readings, keyed by `windowCycleKey`.
+ * Reads the store and writes nothing; `runAlertEngine` saves it.
+ */
+export function roundWindowCycles(
+    store: Pick<UsageAlertsStore, "windowCycle">,
+    round: AlertRound
+): Map<string, WindowRef & WindowCycle> {
+    const cycles = new Map<string, WindowRef & WindowCycle>();
+
+    for (const window of notifiableWindows(round.snapshots)) {
+        const ref: WindowRef = { provider: window.provider, accountId: window.accountId, windowKey: window.key };
+        const key = windowCycleKey(ref);
+        const advanced = advanceWindowCycle(cycles.get(key) ?? store.windowCycle(ref), window.resetsAt, round.now);
+
+        if (advanced) {
+            cycles.set(key, { ...ref, ...advanced });
+        }
+    }
+
+    return cycles;
+}
+
+function refireContext(
+    candidate: AlertCandidate,
+    round: AlertRound,
+    cycles: ReadonlyMap<string, WindowCycle>
+): RefireContext {
+    const { provider, accountId, windowKey } = candidate;
+    const cycle =
+        provider !== null && accountId !== null && windowKey !== null
+            ? cycles.get(windowCycleKey({ provider, accountId, windowKey }))
+            : undefined;
+
+    return { now: round.now, resetSeenAt: cycle?.resetSeenAt ?? null };
+}
+
+/**
  * Every candidate of the enabled rules with the engine's dedupe verdict, and nothing written. The engine's firing
  * path and the `alerts test` diagnostic share it, so the test answers exactly what the daemon would do.
  */
 export function judgeRound(input: {
     round: AlertRound;
     config: UsageAlertsConfig;
-    store: Pick<UsageAlertsStore, "latestByDedupe">;
+    store: Pick<UsageAlertsStore, "latestByDedupe" | "windowCycle">;
     only?: readonly AlertRuleId[];
     rules?: AlertRuleTable;
+    /** The round's window reset history; omitted reads it from the store. */
+    cycles?: ReadonlyMap<string, WindowCycle>;
 }): JudgedCandidate[] {
     const rules = input.rules ?? ALERT_RULES;
+    const cycles = input.cycles ?? roundWindowCycles(input.store, input.round);
     const judged: JudgedCandidate[] = [];
 
     for (const id of input.only ?? ALERT_RULE_IDS) {
@@ -60,7 +105,9 @@ export function judgeRound(input: {
 
         for (const candidate of evaluateRule(rules, id, input.round, input.config)) {
             const previous = input.store.latestByDedupe(candidate.dedupeKey);
-            const fires = previous === null || rules[id].refire(previous, candidate, input.round.now);
+            const fires =
+                previous === null ||
+                rules[id].refire(previous, candidate, refireContext(candidate, input.round, cycles));
             judged.push({ candidate, fires, previous });
         }
     }
@@ -69,7 +116,8 @@ export function judgeRound(input: {
 }
 
 /**
- * One tick of the alert engine (design 2026-11-01, step U7): judge the round, record each alert that fires in
+ * One tick of the alert engine (design 2026-11-01, step U7): save the reset history of the round's windows (every
+ * reading, fired or not), judge the round, record each alert that fires in
  * `usage_alerts`, then deliver it to its rule's channels (minus the interrupting ones in quiet hours). The record is
  * written before delivery, so a channel that fails never makes the next tick fire the same alert again. Each record
  * is a claim: the dedupe verdict is judged again inside the insert's transaction, so a process that recorded the key
@@ -86,8 +134,10 @@ export async function runAlertEngine(input: {
 }): Promise<StoredAlert[]> {
     const fired: StoredAlert[] = [];
     const rules = input.rules ?? ALERT_RULES;
+    const cycles = roundWindowCycles(input.store, input.round);
+    input.store.saveWindowCycles([...cycles.values()], input.round.now);
 
-    for (const { candidate, fires } of judgeRound(input)) {
+    for (const { candidate, fires } of judgeRound({ ...input, cycles })) {
         if (!fires) {
             continue;
         }
@@ -101,7 +151,9 @@ export async function runAlertEngine(input: {
         const alert = input.store.claim(
             candidate,
             { firedAt: input.round.now, channels },
-            (previous) => previous === null || rules[candidate.rule].refire(previous, candidate, input.round.now)
+            (previous) =>
+                previous === null ||
+                rules[candidate.rule].refire(previous, candidate, refireContext(candidate, input.round, cycles))
         );
 
         if (!alert) {

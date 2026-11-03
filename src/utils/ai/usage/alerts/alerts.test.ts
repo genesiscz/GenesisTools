@@ -159,6 +159,55 @@ describe("threshold rule through the engine", () => {
         expect(after).toHaveLength(1);
     });
 
+    test("an alert fired with no reset time re-arms at the first reset seen after it, not when a reset time appears", async () => {
+        const fiveHour = (percent: number, resetsAt: string | undefined) =>
+            snapshot(percent, {
+                limits: [{ key: "five_hour", label: "5h", kind: "session", percentUsed: percent, resetsAt }],
+            });
+        const tick = (now: Date, percent: number, resetsAt: string | undefined) =>
+            runAlertEngine({
+                round: round({ now, snapshots: [fiveHour(percent, resetsAt)] }),
+                config: config(),
+                store,
+                channels,
+            });
+
+        expect(await tick(NOW, 85, undefined)).toHaveLength(1);
+        // The provider starts sending the reset time: nothing proves the window reset, so nothing fires.
+        expect(await tick(minutes(10), 86, RESET)).toEqual([]);
+        expect(await tick(minutes(20), 87, RESET)).toEqual([]);
+        // The window reset: a new cycle, though the stored alert still has no cycle of its own.
+        expect(await tick(minutes(200), 85, "2026-11-03T18:00:00.000Z")).toHaveLength(1);
+        expect(await tick(minutes(210), 86, "2026-11-03T18:00:00.000Z")).toEqual([]);
+    });
+
+    test("judging a round reads the window's reset history and writes none of it", async () => {
+        const fiveHour = (percent: number, resetsAt: string | undefined) =>
+            snapshot(percent, {
+                limits: [{ key: "five_hour", label: "5h", kind: "session", percentUsed: percent, resetsAt }],
+            });
+
+        await runAlertEngine({
+            round: round({ snapshots: [fiveHour(85, undefined)] }),
+            config: config(),
+            store,
+            channels,
+        });
+        await runAlertEngine({
+            round: round({ now: minutes(10), snapshots: [fiveHour(86, RESET)] }),
+            config: config(),
+            store,
+            channels,
+        });
+
+        const reset = round({ now: minutes(200), snapshots: [fiveHour(85, "2026-11-03T18:00:00.000Z")] });
+
+        expect(judgeRound({ round: reset, config: config(), store }).map(({ fires }) => fires)).toEqual([true]);
+        expect(store.windowCycle({ provider: "anthropic-sub", accountId: "acc_work", windowKey: "five_hour" })).toEqual(
+            { resetsAt: RESET, resetSeenAt: null }
+        );
+    });
+
     test("a weekly window uses the weekly list and re-fires as it climbs it", async () => {
         const weekly = (percent: number) =>
             snapshot(percent, {
@@ -337,8 +386,8 @@ describe("predicted-exhaust rule", () => {
         const later = { ...previous, payload: { exhaustAt: "2026-11-03T10:20:00.000Z" } };
         const muchEarlier = { ...previous, payload: { exhaustAt: "2026-11-03T10:05:00.000Z" } };
 
-        expect(rule.refire(previous, later, NOW)).toBe(false);
-        expect(rule.refire(previous, muchEarlier, NOW)).toBe(true);
+        expect(rule.refire(previous, later, { now: NOW, resetSeenAt: null })).toBe(false);
+        expect(rule.refire(previous, muchEarlier, { now: NOW, resetSeenAt: null })).toBe(true);
     });
 });
 

@@ -89,6 +89,28 @@ export interface AlertCandidate {
     payload?: Record<string, unknown>;
 }
 
+/** One window of one account, the key of its reset history. */
+export interface WindowRef {
+    provider: string;
+    accountId: string;
+    windowKey: string;
+}
+
+/** A window's reset history (`usage_window_cycles`). */
+export interface WindowCycle {
+    /** The reset instant of the newest reading that had one. */
+    resetsAt: string;
+    /** When a reading last showed a different cycle than the one before it; null until a reset was seen. */
+    resetSeenAt: string | null;
+}
+
+/** What a rule's `refire` knows beside the two alerts. */
+export interface RefireContext {
+    now: Date;
+    /** When a reset of the candidate's window was last seen (its reset history, this round included); null if never. */
+    resetSeenAt: string | null;
+}
+
 /** A row of `usage_alerts`. */
 export interface StoredAlert extends AlertCandidate {
     id: number;
@@ -139,7 +161,7 @@ export interface UsageAlertRule<Id extends AlertRuleId> {
     defaults: AlertRuleSettings[Id];
     evaluate(round: AlertRound, settings: AlertRuleSettings[Id]): AlertCandidate[];
     /** Whether a candidate fires again after `previous`, the last alert with its dedupe key. */
-    refire(previous: StoredAlert, next: AlertCandidate, now: Date): boolean;
+    refire(previous: StoredAlert, next: AlertCandidate, context: RefireContext): boolean;
 }
 
 export type AlertRuleTable = { [Id in AlertRuleId]: UsageAlertRule<Id> };

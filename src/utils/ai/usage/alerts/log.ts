@@ -8,6 +8,8 @@ import {
     type AlertLevel,
     isAlertRuleId,
     type StoredAlert,
+    type WindowCycle,
+    type WindowRef,
 } from "./types";
 
 /**
@@ -34,6 +36,11 @@ interface AlertSqlRow {
     payload: string | null;
     channels: string | null;
     ack_at: string | null;
+}
+
+interface WindowCycleSqlRow {
+    resets_at: string;
+    reset_seen_at: string | null;
 }
 
 const COLUMNS =
@@ -249,6 +256,56 @@ export class UsageAlertsStore {
 
             throw err;
         }
+    }
+
+    /** A window's reset history, or null when none was recorded (or the store has no such table yet). */
+    windowCycle(window: WindowRef): WindowCycle | null {
+        try {
+            const row = this.db
+                .prepare(
+                    `SELECT resets_at, reset_seen_at FROM usage_window_cycles
+                     WHERE provider = ? AND account_id = ? AND window_key = ?`
+                )
+                .get(window.provider, window.accountId, window.windowKey) as WindowCycleSqlRow | null;
+
+            return row ? { resetsAt: row.resets_at, resetSeenAt: row.reset_seen_at } : null;
+        } catch (err) {
+            if (isMissingTable(err)) {
+                return null;
+            }
+
+            throw err;
+        }
+    }
+
+    /** Writes the reset history of each window, in one transaction. */
+    saveWindowCycles(cycles: ReadonlyArray<WindowRef & WindowCycle>, at: Date): void {
+        if (cycles.length === 0) {
+            return;
+        }
+
+        const upsert = this.db.prepare(
+            `INSERT INTO usage_window_cycles (provider, account_id, window_key, resets_at, reset_seen_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (provider, account_id, window_key) DO UPDATE SET
+                resets_at = excluded.resets_at,
+                reset_seen_at = excluded.reset_seen_at,
+                updated_at = excluded.updated_at`
+        );
+        const write = this.db.transaction(() => {
+            for (const cycle of cycles) {
+                upsert.run(
+                    cycle.provider,
+                    cycle.accountId,
+                    cycle.windowKey,
+                    cycle.resetsAt,
+                    cycle.resetSeenAt,
+                    at.toISOString()
+                );
+            }
+        });
+
+        write.immediate();
     }
 
     /** Marks alerts acknowledged; `ids` omitted acknowledges every open one. Returns how many changed. */
