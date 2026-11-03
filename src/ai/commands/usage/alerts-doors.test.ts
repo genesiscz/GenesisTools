@@ -443,6 +443,20 @@ describe("tools ai usage budgets and digest", () => {
         ).rejects.toThrow(UsageQueryError);
     });
 
+    test("list answers from a history file the usage poll never reached: no usage_snapshots is no samples", async () => {
+        await setBudget({ spendDaily: "30" });
+        // Indexed session history, but no usage poll yet: the history file exists, its usage tables do not.
+        const historyOnly = new Database(":memory:");
+
+        try {
+            const listed = await queryBudgets({}, { now: NOW, open: () => historyOnly, todaySpend: async () => [] });
+
+            expect(listed.data.spend).toEqual([{ scope: "global", dailyUsd: 30, todayUsd: 0, ratio: 0 }]);
+        } finally {
+            await removeBudget({ spend: true });
+        }
+    });
+
     test("--day defaults to yesterday and --week to the Monday-to-Sunday week before this one", () => {
         expect(digestDays({ opts: {}, now: NOW, tz: "UTC" })).toEqual({ period: "day", days: ["2026-11-02"] });
         expect(digestDays({ opts: { week: true }, now: NOW, tz: "UTC" }).days).toEqual([

@@ -46,6 +46,13 @@ export interface UsageSampleQuery {
  */
 export function readSampleSeeds(db: Database, options: { before: Date }): UsageSample[] {
     const columns = db.prepare<ColumnRow, []>("PRAGMA table_info(usage_snapshots)").all();
+
+    // A history file the usage poll never reached has no `usage_snapshots` yet (the history and the usage store
+    // migrate separately, and this read never migrates): no readings, not an error.
+    if (columns.length === 0) {
+        return [];
+    }
+
     const readingsOnly = columns.some((column) => column.name === "availability")
         ? "AND availability IS NOT 'absent'"
         : "";
@@ -88,6 +95,12 @@ export function readUsageSamples(db: Database, options: UsageSampleQuery): Usage
     // A store the availability migration has not reached yet has no such column (this read is
     // read-only and never migrates); its rows are all readings.
     const columns = db.prepare<ColumnRow, []>("PRAGMA table_info(usage_snapshots)").all();
+
+    // No `usage_snapshots` yet (no usage poll on this machine): no readings, as in `readSampleSeeds`.
+    if (columns.length === 0) {
+        return [];
+    }
+
     const readingsOnly = columns.some((column) => column.name === "availability")
         ? "AND availability IS NOT 'absent'"
         : "";
