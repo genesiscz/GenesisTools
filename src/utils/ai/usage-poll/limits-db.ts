@@ -409,8 +409,10 @@ export class UsageLimitsDb {
 
         if (
             latest &&
-            // A window that comes back after an `absent` row is a state change even at the old value.
-            this.latestAvailability(accountName, bucket, provider) !== "absent" &&
+            // Only a `limited` row is the same fact again. A window back after an `absent` row is a state change
+            // even at the old value, and after a row from before the column (NULL, read as unknown) the first
+            // limited reading is recorded, or an idle window would stay unknown for good.
+            this.latestAvailability(accountName, bucket, provider) === "limited" &&
             latest.utilization === utilization &&
             normalizeNullableSeverity(latest.severity) === normalizeNullableSeverity(extras.severity) &&
             (utilization === 0 || resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)) &&
@@ -606,6 +608,7 @@ export class UsageLimitsDb {
         const opts = {
             step: query.step ?? autoSeriesStepMs(query.from, query.to),
             roughlyEqual: resetsAtRoughlyEqual,
+            from: query.from,
             to: query.to,
         };
 
