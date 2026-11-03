@@ -481,21 +481,36 @@ describe("CLI clarity fill", () => {
         expect(p3Alpha.days).toHaveLength(7);
         expect(nonZeroDays(p3Alpha)).toEqual([]);
 
-        // P1 already carries a note; P2 wrote nothing; P3 booked no ADO entry of its own.
+        // P1 already carries a note; P2 already holds its hours but has no note; P3 booked no ADO entry of its own.
         expect(active.clarity.notes.map((n) => [n.timesheetId, n.userId])).toEqual([
             [555000, 900001],
+            [555002, 900001],
             [555005, 900001],
         ]);
         expect(active.clarity.notes[0].text).toContain("weekend release");
-        expect(active.clarity.notes[1].text).toContain("month end");
+        expect(active.clarity.notes[2].text).toContain("month end");
         expect(active.clarity.notes[0].text).not.toContain("alpha work");
         expect(
             run.lines.some((line) => line.includes("Timesheet 555001 already carries 1 note(s), not adding another"))
         ).toBe(true);
-        expect(resultsLine(run)).toBe("Results: 5 updated, 2 note(s)");
+        expect(resultsLine(run)).toBe("Results: 5 updated, 3 note(s)");
 
         // Discovery reads every week lacking an entry count; the CLI then reads the one it lacks.
         expect(active.clarity.getTimesheetCalls).toEqual([555000, 555001, 555002, 555003, 555005, 555004]);
+    });
+
+    test("a re-run's note lists the rows Clarity already holds, not only the ones it writes", async () => {
+        const periods = augustPeriods();
+        periods[1].rows[0].actuals = { "2026-08-04": 7200, "2026-08-05": 3600 };
+        const active = useWorld({ periods });
+
+        const run = await runCli(["--confirm"]);
+
+        expect(run.exitCode).toBeUndefined();
+        expect(writeSummary(active.clarity.writes)).not.toContain("555001/10011 task 700001 total 10800");
+        const note = active.clarity.notes.find((each) => each.timesheetId === 555001);
+        expect(note?.text).toContain("alpha work");
+        expect(note?.text).toContain("beta review");
     });
 
     test("a dry run previews the weeks and writes nothing", async () => {
@@ -549,8 +564,8 @@ describe("CLI clarity fill", () => {
         const p1Note = active.clarity.notes.find((note) => note.timesheetId === 555001);
         expect(p1Note?.text).toContain("beta review");
         expect(p1Note?.text).not.toContain("alpha work");
-        expect(active.clarity.notes.map((n) => n.timesheetId)).toEqual([555000, 555001, 555005]);
-        expect(resultsLine(run)).toBe("Results: 4 updated, 3 note(s), 1 failed");
+        expect(active.clarity.notes.map((n) => n.timesheetId)).toEqual([555000, 555001, 555002, 555005]);
+        expect(resultsLine(run)).toBe("Results: 4 updated, 4 note(s), 1 failed");
         expect(run.lines.some((line) => line.includes("Some hours were not booked"))).toBe(true);
     });
 
@@ -606,7 +621,7 @@ describe("CLI clarity fill", () => {
         expect(
             run.lines.some((line) => line.includes("No time entry row for task Task Beta in timesheet 555001"))
         ).toBe(true);
-        expect(resultsLine(run)).toBe("Results: 4 updated, 3 note(s), 1 task(s) with no row");
+        expect(resultsLine(run)).toBe("Results: 4 updated, 4 note(s), 1 task(s) with no row");
     });
 
     test("a task Clarity replaced with a renumbered copy books that week on the copy's row", async () => {

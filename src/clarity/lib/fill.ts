@@ -506,8 +506,11 @@ export async function executeFillPlan({
     const notes: FillNoteOutcome[] = [];
 
     for (const week of weeks) {
-        // The note documents what was booked: unmapped work and failed writes stay out of it.
-        const booked = week.entries.filter((entry) => writes.get(entry)?.status === "success");
+        // The note documents what Clarity holds after the run: rows this run wrote and rows that already
+        // held these hours (a re-run). Unmapped work and failed writes stay out of it.
+        const booked = week.entries.filter(
+            (entry) => entry.action === "unchanged" || writes.get(entry)?.status === "success"
+        );
         const text = weekNote(week, booked);
 
         if (!text) {
