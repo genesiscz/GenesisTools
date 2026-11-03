@@ -10,9 +10,11 @@ import type { AlertRound, AlertRuleSettings } from "./types";
  * threshold alert at all and fires a banner for every window already over a threshold, the burst the notifier's own
  * legacy read existed to prevent.
  *
- * Runs only while `usage_alerts` holds no threshold row. For each threshold candidate of the round whose tracker
- * (keyed `<accountId>:<key>`, or the older `<accountName>:<key>`) already notified this reset cycle at that level or
- * higher, it records an acknowledged, undelivered alert at the tracker's level, so the engine treats it as fired.
+ * Per window, not per store: a candidate whose dedupe key already has a row in `usage_alerts` is the engine's from
+ * then on and is skipped. Any other threshold candidate of the round whose tracker (keyed `<accountId>:<key>`, or the
+ * older `<accountName>:<key>`) already notified this reset cycle at that level or higher gets an acknowledged,
+ * undelivered alert at the tracker's level, so the engine treats it as fired. A window that failed or sat below its
+ * threshold on the first tick is still seeded on the tick it first qualifies.
  */
 export function seedThresholdAlerts(input: {
     store: UsageAlertsStore;
@@ -21,10 +23,6 @@ export function seedThresholdAlerts(input: {
     settings: AlertRuleSettings["threshold"];
     now: Date;
 }): number {
-    if (input.store.hasRule("threshold")) {
-        return 0;
-    }
-
     const round: AlertRound = {
         now: input.now,
         snapshots: input.snapshots,
@@ -37,6 +35,10 @@ export function seedThresholdAlerts(input: {
     let seeded = 0;
 
     for (const candidate of thresholdRule.evaluate(round, input.settings)) {
+        if (input.store.latestByDedupe(candidate.dedupeKey)) {
+            continue;
+        }
+
         const tracker =
             input.trackers[`${candidate.accountId}:${candidate.windowKey}`] ??
             input.trackers[`${candidate.accountName}:${candidate.windowKey}`];
