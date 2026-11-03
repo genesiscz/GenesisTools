@@ -1,4 +1,5 @@
 import { loadTelegramConfig, saveTelegramConfig } from "@app/telegram-bot/lib/config";
+import { WEBHOOK_ALLOWED_UPDATES } from "@app/telegram-bot/lib/webhook/settings";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { Api } from "grammy";
@@ -75,11 +76,18 @@ export function registerConfigureCommand(program: Command): void {
                     const updates = await api.getUpdates({
                         offset: nextOffset,
                         timeout: 30,
-                        allowed_updates: ["message"],
+                        // The full list: Telegram keeps the last list it was given, and a ["message"] here once
+                        // kept every later button press from arriving.
+                        allowed_updates: [...WEBHOOK_ALLOWED_UPDATES],
                     });
-                    if (updates.length > 0) {
-                        chatId = updates[updates.length - 1].message?.chat.id ?? null;
+                    const lastMessage = updates.findLast((update) => update.message)?.message;
+                    if (lastMessage) {
+                        chatId = lastMessage.chat.id;
                         break;
+                    }
+
+                    if (updates.length > 0) {
+                        nextOffset = updates[updates.length - 1].update_id + 1;
                     }
                 } catch {
                     // Retry on poll errors

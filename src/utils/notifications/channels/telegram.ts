@@ -8,8 +8,9 @@ export async function dispatchTelegram(event: NotificationEvent, config: Telegra
     }
 
     try {
-        const { createApi, sendMessage } = await import("@genesiscz/utils/telegram-bot/lib/api");
+        const { createApi } = await import("@genesiscz/utils/telegram-bot/lib/api");
         const { formatTelegramNotification } = await import("@genesiscz/utils/telegram-bot/lib/formatting");
+        const { postTelegramMessage } = await import("@genesiscz/utils/telegram-bot/lib/messages");
         const api = createApi(config.botToken);
 
         const text = formatTelegramNotification({ title: event.title, message: event.message });
@@ -21,7 +22,14 @@ export async function dispatchTelegram(event: NotificationEvent, config: Telegra
             return false;
         }
 
-        await sendMessage(api, chatId, text, "MarkdownV2");
+        // With a stable id the message is remembered, so a retraction in another process can edit it.
+        await postTelegramMessage({
+            api,
+            chatId,
+            text,
+            parseMode: "MarkdownV2",
+            ...(event.id ? { noticeId: event.id } : {}),
+        });
 
         return true;
     } catch (err) {
