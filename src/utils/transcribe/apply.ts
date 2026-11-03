@@ -108,7 +108,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     };
 
     // Ranges name the source's labels: each line is matched by the label it came with, so a line a range moved to a
-    // name that is also a label ("Martin Foltýn") is not moved again by that label's ranges. A join that names the
+    // name that is also a label ("Alice Example") is not moved again by that label's ranges. A join that names the
     // voice settles its line.
     const sourceLabel = new Map(lines.map((line) => [line, line.speaker]));
     const voiced = new Set<TranscriptEntry>();

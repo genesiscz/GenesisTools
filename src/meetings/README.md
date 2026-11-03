@@ -105,7 +105,7 @@ as an open question is.
 - `term`: a misheard term and its proposed spelling.
 - `question`: something to decide by ear (`about`: speaker, term or text), with its time range, `choices` and the
   items it `decides`. Answering it confirms each decided item with the answer (a range's speaker, a term's
-  spelling); "none of these" rejects them; a skip leaves them as they were; "Two voices" splits it per line.
+  spelling); "none of these" rejects them; a skip leaves them as they were; "Several voices" cuts it at each line inside it and, in a line of 3 s or more, at each change between the microphone and the call (half-second energy windows); each part shows its words and plays only its own audio. Two remote voices in a row stay one part. With nothing to cut, the question stays open. A speaker question shows the words of its span and plays only that span, from the tone on.
 
 The rules are one documented enum, `MeetingRule` in `src/utils/meetings/rules.ts`. Two rules that reach the same item
 merge into one, with the confidence 1 − (1 − a)(1 − b), at most 0.95.

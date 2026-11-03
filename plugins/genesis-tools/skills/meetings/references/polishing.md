@@ -27,7 +27,7 @@ ONE file, `<date>-<Title>.polished.md`, next to the untouched raw export. Sectio
    lines for the evidence and the confidence.
 9. **Unresolved**: every `[nejasné: ...]`, numbered `U1`, `U2`, … so the user can answer "U3 b)". Each entry: the
    number, the timestamp, the asked words in **bold** with their sentence, then each reading on its own bullet line
-   (`- a) Filip Kalina 55 %`, `- b) …`, and a last "someone else" or "something else"), and `→ Q<n>` when a listen
+   (`- a) Petr Novák 55 %`, `- b) …`, and a last "someone else" or "something else"), and `→ Q<n>` when a listen
    question asks it.
 10. **Open questions for the user**: numbered `Q1`, `Q2`, …, where `Q<n>` is the record's n-th question item (the
     number `tools meetings listen` shows in its header), then the questions that are not by ear, with their options as
