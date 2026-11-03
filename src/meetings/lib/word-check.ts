@@ -1,22 +1,138 @@
+import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { DEFAULT_SPELL_PROVIDER, SPELL_PROVIDER_IDS } from "@genesiscz/utils/transcribe/languages/spell";
-import { openWordCheck, type WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
+import type { WordCheck, WordVerdict } from "@genesiscz/utils/transcribe/languages/word-check";
 import { transcriptWords } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { DEFAULT_WORD_LANGUAGE, lineLanguages, WORD_LANGUAGES } from "./word-languages";
 
 /** The word checks `--word-check` offers: each spell provider, or none. */
 export const WORD_CHECKS = [...SPELL_PROVIDER_IDS, "off"] as const;
 export type WordCheckChoice = (typeof WORD_CHECKS)[number];
 export const DEFAULT_WORD_CHECK: WordCheckChoice = DEFAULT_SPELL_PROVIDER;
 
-/** The word check over a transcript's words, or why there is none. The caller disposes the check. */
+export function isWordCheckChoice(value: unknown): value is WordCheckChoice {
+    return typeof value === "string" && (WORD_CHECKS as readonly string[]).includes(value);
+}
+
+/** One provider for every language (`--word-check`), or each language's own (`languages.<code>.wordCheck`). */
+export type WordCheckSelection = WordCheckChoice | { perLanguage: (code: string) => WordCheckChoice };
+
+/** The provider a language's config block names, else the default; an unknown name is the default too. */
+export function configuredWordCheck(config: Pick<MeetingsConfig, "languages">, code: string): WordCheckChoice {
+    const named = config.languages[code]?.wordCheck;
+    return isWordCheckChoice(named) ? named : DEFAULT_WORD_CHECK;
+}
+
+/** Each language's configured provider: what the commands use when `--word-check` is not given. */
+export function configuredWordChecks(config: Pick<MeetingsConfig, "languages">): WordCheckSelection {
+    return { perLanguage: (code) => configuredWordCheck(config, code) };
+}
+
+/**
+ * One check over a transcript in several languages: a word is checked in the languages of the lines it occurs in,
+ * and is unknown only when every one of them has a check and none knows it. A word heard in lines of a language
+ * without a check is never flagged.
+ */
+class LanguageWordCheck implements WordCheck {
+    readonly provider: string;
+    readonly language: string;
+
+    constructor(
+        private readonly checks: Map<string, WordCheck>,
+        private readonly languagesOf: Map<string, Set<string>>
+    ) {
+        const first = [...checks.values()][0];
+        this.provider = first?.provider ?? "none";
+        this.language = [...new Set([...languagesOf.values()].flatMap((codes) => [...codes]))].sort().join("+");
+    }
+
+    verdict(word: string): WordVerdict {
+        const codes = this.languagesOf.get(word.toLowerCase()) ?? new Set([DEFAULT_WORD_LANGUAGE]);
+        let unknown: WordVerdict | undefined;
+
+        for (const code of codes) {
+            const check = this.checks.get(code);
+
+            if (!check) {
+                return { class: "spoken", count: 0, via: `${code}: no word check, not flagged` };
+            }
+
+            const verdict = check.verdict(word);
+
+            if (verdict.class !== "unknown") {
+                return verdict;
+            }
+
+            unknown ??= verdict;
+        }
+
+        return unknown ?? { class: "unknown", count: 0 };
+    }
+
+    dispose(): void {
+        for (const check of this.checks.values()) {
+            check.dispose();
+        }
+    }
+}
+
+/**
+ * The word check over a transcript's words, or why there is none. Each line is checked in its languages
+ * (`lineLanguages`): a Slovak line, or a line of a speaker who speaks Slovak, against the Slovak dictionary too. The
+ * caller disposes the check.
+ */
 export async function wordCheckFor(
-    choice: WordCheckChoice,
+    selection: WordCheckSelection,
     transcript: TranscriptEntry[]
 ): Promise<{ check?: WordCheck; reason?: string }> {
-    if (choice === "off") {
+    const choiceOf = (code: string) => (typeof selection === "string" ? selection : selection.perLanguage(code));
+
+    if (selection === "off") {
         return { reason: "turned off with --word-check off" };
     }
 
-    const opened = await openWordCheck({ provider: choice, words: transcriptWords(transcript) });
-    return opened.available ? { check: opened.check } : { reason: opened.reason };
+    const codes = lineLanguages(transcript);
+    const wordsOf = new Map<string, Set<string>>();
+    const languagesOf = new Map<string, Set<string>>();
+
+    for (const [index, entry] of transcript.entries()) {
+        for (const word of transcriptWords([entry])) {
+            const seen = languagesOf.get(word.toLowerCase()) ?? new Set<string>();
+
+            for (const code of codes[index]!) {
+                const words = wordsOf.get(code) ?? new Set<string>();
+                words.add(word);
+                wordsOf.set(code, words);
+                seen.add(code);
+            }
+
+            languagesOf.set(word.toLowerCase(), seen);
+        }
+    }
+
+    const checks = new Map<string, WordCheck>();
+    const reasons: string[] = [];
+
+    for (const [code, words] of wordsOf) {
+        const language = WORD_LANGUAGES[code];
+        const choice = choiceOf(code);
+        const opened = language && choice !== "off" ? await language.open(choice, words) : undefined;
+
+        if (opened?.available) {
+            checks.set(code, opened.check);
+        } else {
+            reasons.push(
+                opened?.reason ??
+                    (choice === "off"
+                        ? `turned off for ${code} (languages.${code}.wordCheck)`
+                        : `no word language "${code}"`)
+            );
+        }
+    }
+
+    if (checks.size === 0) {
+        return { reason: reasons.join("; ") || "no words to check" };
+    }
+
+    return { check: new LanguageWordCheck(checks, languagesOf) };
 }
