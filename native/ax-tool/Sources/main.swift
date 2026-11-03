@@ -88,6 +88,8 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       frames carry displayId and motionBoxes [[x,y,w,h]]; an early stop prints the frames with
                       endedEarly display-removed|stream-error|stopped; errors carry code display-missing|no-permission|
                       invalid-argument|failed
+                      [--control-stdin] JSON-line commands on stdin: {"cmd":"switch","displayId":N} | pause | resume |
+                      stop | status; JSON-line events on stderr (frame, state, display-switch, error); stdin EOF stops
       ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution
       ax-tool hotkey --keys <cmd,a> [--app <name>]            Key combo (--app activates target first)
       ax-tool snapshot                                        Capture mouse + focused app/window

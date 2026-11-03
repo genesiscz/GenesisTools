@@ -223,3 +223,33 @@ final class DisplayChangeTests: XCTestCase {
         XCTAssertNil(focusDisplay(window: nil, mouse: nil, displays: []))
     }
 }
+
+final class CaptureCommandTests: XCTestCase {
+    func testParsesEachCommand() throws {
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"switch","displayId":4}"#)?.get(), .switchDisplay(4))
+        XCTAssertEqual(try parseCaptureCommand(#" {"cmd":"pause"} "#)?.get(), .pause)
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"resume"}"#)?.get(), .resume)
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"stop"}"#)?.get(), .stop)
+        XCTAssertEqual(try parseCaptureCommand(#"{"cmd":"status"}"#)?.get(), .status)
+        XCTAssertNil(parseCaptureCommand("   "), "a blank line is no command")
+    }
+
+    func testRefusesMalformedCommands() {
+        for line in ["not json", #"{"displayId":4}"#, #"{"cmd":"switch"}"#, #"{"cmd":"switch","displayId":0}"#,
+                     #"{"cmd":"switch","displayId":1.5}"#, #"{"cmd":"switch","displayId":"4"}"#, #"{"cmd":"rewind"}"#] {
+            guard case .failure = parseCaptureCommand(line) else {
+                XCTFail("\(line) must be refused")
+                continue
+            }
+        }
+    }
+}
+
+final class DisplayScaleTests: XCTestCase {
+    func testScaleIsBackingPixelsPerPoint() {
+        XCTAssertEqual(displayScale(pixelWidth: 4112, pointWidth: 2056), 2)
+        XCTAssertEqual(displayScale(pixelWidth: 2560, pointWidth: 2560), 1)
+        XCTAssertEqual(displayScale(pixelWidth: 0, pointWidth: 2056), 1)
+        XCTAssertEqual(displayScale(pixelWidth: 3024, pointWidth: 0), 1)
+    }
+}

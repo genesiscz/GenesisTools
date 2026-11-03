@@ -8,29 +8,17 @@ import type { CaptureSpec } from "./capture-plan";
 export const CAPTURE_CANVAS_VALUES = ["crop", "display"] as const;
 export const CAPTURE_CODEC_VALUES = ["h264", "prores4444"] as const;
 
-/** Options only the native recorder (`ax-tool capture`) has. */
-export interface NativeCaptureOptions {
-    /** Screen mode: the CGDirectDisplayID to record (`ax-tool screens` → displayID). Wins over screenIndex. */
-    displayId?: number;
-    /** Screen mode: record the display holding the frontmost app's focused window, switching live. */
-    followFocus?: boolean;
-    /** The longer side of a kept frame in pixels, at most (16–16384). Not for isolated mode. */
-    maxLongSide?: number;
-    /** Calm time in ms before the idle frame rate (default: eight frames at the active rate). */
-    quietMs?: number;
-    /** Keep a frame at least every N seconds while nothing changes (0 = off). */
-    heartbeatSec?: number;
-    /** Stop keeping frames after N MB were written; sampling continues. */
-    maxMb?: number;
-}
-
-export type NativeCaptureSpec = CaptureSpec & NativeCaptureOptions;
+/** Options only the native recorder (`ax-tool capture`) has; they are fields of `CaptureSpec`. */
+export type NativeCaptureOptions = Pick<
+    CaptureSpec,
+    "displayId" | "followFocus" | "maxLongSide" | "quietMs" | "heartbeatSec" | "maxMb"
+>;
 
 /**
  * argv for `ax-tool capture`, the ScreenCaptureKit recorder. The runner prepends the binary
  * path. Duration is seconds, as the plan declares it; Peekaboo 4 wants a suffix for that.
  */
-export function nativeCaptureArgv(cap: NativeCaptureSpec, outDir: string): string[] {
+export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
     const argv = ["capture", "--mode", cap.mode, "--duration", String(cap.duration), "--out", outDir];
 
     validateCaptureOptions(cap);
@@ -144,7 +132,7 @@ export function nativeCaptureArgv(cap: NativeCaptureSpec, outDir: string): strin
 }
 
 /** Reject unsupported combinations before focus, actions, or recorder startup. */
-export function validateCaptureOptions(cap: NativeCaptureSpec): void {
+export function validateCaptureOptions(cap: CaptureSpec): void {
     if (!["screen", "window", "region", "isolated"].includes(cap.mode)) {
         throw new Error("capture.mode must be screen, window, region or isolated");
     }

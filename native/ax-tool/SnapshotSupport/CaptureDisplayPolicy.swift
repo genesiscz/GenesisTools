@@ -96,3 +96,53 @@ public func maxBytes(megabytes: Double?) -> Int? {
 
     return Int((megabytes * 1_048_576).rounded())
 }
+
+/// Backing pixels per point of a display, 1 when the width is unknown.
+public func displayScale(pixelWidth: CGFloat, pointWidth: CGFloat) -> CGFloat {
+    guard pixelWidth > 0, pointWidth > 0 else { return 1 }
+
+    return pixelWidth / pointWidth
+}
+
+/// One `--control-stdin` command line.
+public enum CaptureCommand: Equatable {
+    case switchDisplay(CGDirectDisplayID)
+    case pause
+    case resume
+    case stop
+    case status
+}
+
+public struct CaptureCommandError: Error, Equatable {
+    public let message: String
+}
+
+/// Parses `{"cmd": "switch", "displayId": N}`, `pause`, `resume`, `stop` or `status`. A blank line is nil.
+public func parseCaptureCommand(_ line: String) -> Result<CaptureCommand, CaptureCommandError>? {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    guard let data = trimmed.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let cmd = object["cmd"] as? String else {
+        return .failure(CaptureCommandError(message: "a command is one JSON object with a \"cmd\" string"))
+    }
+
+    switch cmd {
+    case "switch":
+        guard let raw = object["displayId"] as? NSNumber, raw.doubleValue == raw.doubleValue.rounded(),
+              raw.doubleValue > 0, raw.doubleValue <= Double(UInt32.max) else {
+            return .failure(CaptureCommandError(message: "switch needs a positive integer displayId"))
+        }
+        return .success(.switchDisplay(raw.uint32Value))
+    case "pause":
+        return .success(.pause)
+    case "resume":
+        return .success(.resume)
+    case "stop":
+        return .success(.stop)
+    case "status":
+        return .success(.status)
+    default:
+        return .failure(CaptureCommandError(message: "unknown cmd \"\(cmd)\"; use switch, pause, resume, stop or status"))
+    }
+}

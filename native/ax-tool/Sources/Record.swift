@@ -56,6 +56,8 @@ struct RecordOptions {
     let heartbeatSec: Double
     /// `--max-mb`: stop keeping frames after this many megabytes were written.
     let maxMb: Double?
+    /// `--control-stdin`: JSON-line commands on stdin, JSON-line events on stderr.
+    let controlStdin: Bool
     /// Warnings raised before the recorder existed; they open its warning list.
     let startWarnings: [String]
 }
@@ -105,6 +107,10 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
             errorExit("--follow-focus needs macOS 14 or newer (SCStream.updateContentFilter)", code: "invalid-argument")
         }
     }
+    let controlStdin = CommandLine.arguments.contains("--control-stdin")
+    if controlStdin && mode == "isolated" {
+        errorExit("--control-stdin applies to screen, window and region mode", code: "invalid-argument")
+    }
     let maxLongSide = optionalNumber("--max-long-side", min: 16, max: 16384).map { Int($0) }
     if maxLongSide != nil && mode == "isolated" {
         errorExit("--max-long-side applies to screen, window and region mode; isolated mode takes --output-size", code: "invalid-argument")
@@ -142,6 +148,7 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         quietMs: optionalNumber("--quiet-ms", min: 0, max: 3_600_000).map { Int($0) },
         heartbeatSec: number("--heartbeat-sec", default: 0, min: 0, max: 3600),
         maxMb: optionalNumber("--max-mb", min: 0.01, max: 1_000_000),
+        controlStdin: controlStdin,
         startWarnings: startWarnings
     )
 }
@@ -192,10 +199,12 @@ private struct DisplayGeometry {
     let scale: CGFloat
 }
 
+/// `scale` is backing pixels per point. `CGDisplayPixelsWide` answers in points for a scaled (HiDPI) mode, so a 2x
+/// display recorded at 1x; the display mode's `pixelWidth` is the backing size.
 private func displayGeometry(_ id: CGDirectDisplayID) -> DisplayGeometry {
     let bounds = CGDisplayBounds(id)
-    let scale = bounds.width > 0 ? CGFloat(CGDisplayPixelsWide(id)) / bounds.width : 1
-    return DisplayGeometry(id: id, bounds: bounds, scale: scale)
+    let pixels = CGDisplayCopyDisplayMode(id).map { CGFloat($0.pixelWidth) } ?? CGFloat(CGDisplayPixelsWide(id))
+    return DisplayGeometry(id: id, bounds: bounds, scale: displayScale(pixelWidth: pixels, pointWidth: bounds.width))
 }
 
 private func activeDisplays() -> [DisplayGeometry] {
@@ -297,6 +306,25 @@ private func resolveRecordWindow(_ options: RecordOptions) -> (id: CGWindowID, b
     return (id, frame)
 }
 
+/// `--control-stdin` events: one JSON object per line on stderr, so a supervisor can stream them while the final
+/// result stays on stdout. Silent without the flag.
+enum CaptureEvents {
+    static var enabled = false
+    private static let lock = NSLock()
+
+    static func emit(_ event: [String: Any]) {
+        guard enabled, var data = try? JSONSerialization.data(withJSONObject: event, options: [.sortedKeys]) else { return }
+        data.append(0x0a)
+        lock.lock()
+        FileHandle.standardError.write(data)
+        lock.unlock()
+    }
+
+    static func error(_ code: String, _ message: String) {
+        emit(["event": "error", "code": code, "message": message])
+    }
+}
+
 /// Metadata only. Holding a thumbnail per kept frame retained about 122 MiB at the default
 /// 800-frame cap and 763 MiB at the 5000 allowed, for pictures already on disk; the contact
 /// sheet reloads each PNG when it needs it and lets it go again.
@@ -355,6 +383,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var currentDisplayID: CGDirectDisplayID?
     private(set) var displaySwitches = 0
     private(set) var heartbeatFrames = 0
+    /// `pause`: frames are counted but neither sampled, kept nor written to the movie.
+    private var paused = false
     let stopped = DispatchSemaphore(value: 0)
 
     init(options: RecordOptions, configuration: SCStreamConfiguration, displayID: CGDirectDisplayID? = nil) {
@@ -370,20 +400,37 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var bytesWritten: Int { queue.sync { policy.bytesWritten } }
 
+    /// The display a running switch moves to and the frame size it delivers. The stream delivers new-size frames
+    /// before the switch call returns, so the first frame of that size is already the new display.
+    private var pendingDisplay: (id: CGDirectDisplayID, width: Int, height: Int)?
+
     /// The frames now come from another display: tag them with it, and keep the next one as its first frame.
     func displayChanged(to id: CGDirectDisplayID) {
         queue.async { [self] in
-            guard id != currentDisplayID else { return }
-            currentDisplayID = id
-            displaySwitches += 1
-            policy.restart(reason: "display-switch")
+            applyDisplayChange(id)
         }
+    }
+
+    private func applyDisplayChange(_ id: CGDirectDisplayID) {
+        pendingDisplay = nil
+        guard id != currentDisplayID else { return }
+        var event: [String: Any] = ["event": "display-switch", "to": id]
+        if let currentDisplayID {
+            event["from"] = currentDisplayID
+        }
+        currentDisplayID = id
+        displaySwitches += 1
+        policy.restart(reason: "display-switch")
+        CaptureEvents.emit(event)
     }
 
     /// A new output size, set on the frame queue that also changes the frame rate. The caller hands the returned
     /// configuration to the stream.
-    func setOutputSize(width: Int, height: Int) -> SCStreamConfiguration {
+    func setOutputSize(width: Int, height: Int, for display: CGDirectDisplayID) -> SCStreamConfiguration {
         queue.sync {
+            if width != configuration.width || height != configuration.height {
+                pendingDisplay = (display, width, height)
+            }
             configuration.width = width
             configuration.height = height
             return configuration
@@ -396,6 +443,27 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             if !warnings.contains(text) {
                 warnings.append(text)
             }
+        }
+    }
+
+    func setPaused(_ value: Bool) {
+        queue.async { [self] in
+            paused = value
+        }
+    }
+
+    /// The `status` answer, read on the frame queue.
+    func status() -> [String: Any] {
+        queue.sync {
+            var row: [String: Any] = ["state": paused ? "paused" : "recording", "frames": kept.count,
+                                      "capturedFrames": captured, "bytesWritten": policy.bytesWritten]
+            if let currentDisplayID {
+                row["displayId"] = currentDisplayID
+            }
+            if let lastTimestamp {
+                row["elapsedMs"] = elapsedMs(lastTimestamp)
+            }
+            return row
         }
     }
 
@@ -425,7 +493,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func heartbeatTick() {
-        guard let buffer = latestBuffer, firstTimestamp != nil else { return }
+        guard !paused, let buffer = latestBuffer, firstTimestamp != nil else { return }
         let nowMs = elapsedMs(CMClockGetTime(CMClockGetHostTimeClock()))
         guard heartbeat.due(nowMs: nowMs, lastKeptMs: lastKeptMs), let signature = signature(of: buffer) else { return }
         var candidate = policy
@@ -527,6 +595,11 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         lastTimestamp = timestamp
         captured += 1
+        guard !paused else { return }
+        if let pendingDisplay, CVPixelBufferGetWidth(pixelBuffer) == pendingDisplay.width,
+           CVPixelBufferGetHeight(pixelBuffer) == pendingDisplay.height {
+            applyDisplayChange(pendingDisplay.id)
+        }
         if let adaptor, let writerInput, writerInput.isReadyForMoreMediaData {
             // A refused append is how a dimension or format mismatch shows itself. Warn once:
             // the rest of the recording would repeat it on every frame.
@@ -597,6 +670,12 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
             kept.append(frame)
             policy.noteWritten(bytes: result.bytes)
+            var event: [String: Any] = ["event": "frame", "index": frame.index - 1, "file": frame.file, "path": url.path,
+                                        "timestampMs": frame.timestampMs, "reason": frame.reason]
+            if let id = frame.displayID {
+                event["displayId"] = id
+            }
+            CaptureEvents.emit(event)
             if let maxMb = options.maxMb, policy.capReached, policy.keptCount < policy.maxFrames, !byteCapWarned {
                 byteCapWarned = true
                 warnings.append("--max-mb \(maxMb) reached after \(kept.count) frames; later frames were measured, not kept")
@@ -865,6 +944,11 @@ func cmdCaptureScreen() {
     recorder.startHeartbeat()
     let host = ScreenStreamHost(options: options, recorder: recorder, configuration: configuration, indicator: indicator,
                                 stream: stream, display: display)
+    if options.controlStdin {
+        CaptureEvents.enabled = true
+        host.startControlChannel()
+        CaptureEvents.emit(["event": "state", "state": "recording", "displayId": display.id])
+    }
     if options.mode == "screen" {
         displayReconfigurationHandler = { changed, flags in
             DispatchQueue.main.async {
@@ -888,7 +972,7 @@ func cmdCaptureScreen() {
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
         }
-        guard options.mode == "screen" else { return recorder.failure == nil }
+        guard options.mode == "screen" else { return recorder.failure == nil && !host.stopRequested }
 
         return host.tick()
     }
@@ -916,7 +1000,7 @@ func cmdCaptureScreen() {
     // Drain the frame and encode queues so the last kept frame is on disk before the sheet is built.
     recorder.drainFrames()
     recorder.finishVideo(stoppedAt: stoppedAt)
-    let endedEarly = captureEarlyEnd(cancelled: cancelled, displayRemoved: host.displayRemoved,
+    let endedEarly = captureEarlyEnd(cancelled: cancelled || host.stopRequested, displayRemoved: host.displayRemoved,
                                      streamFailed: streamFailure != nil)
 
     let outURL = URL(fileURLWithPath: options.outDir)
@@ -953,7 +1037,7 @@ func cmdCaptureScreen() {
         recordedOptions["maxMb"] = maxMb
     }
     var data: [String: Any] = [
-        "source": "native", "captureEngine": "ScreenCaptureKit", "scope": options.mode, "cancelled": cancelled,
+        "source": "native", "captureEngine": "ScreenCaptureKit", "scope": options.mode, "cancelled": cancelled || host.stopRequested,
         "options": recordedOptions,
         "frames": frames,
         "stats": ["durationMs": durationMs, "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
@@ -1018,6 +1102,8 @@ private final class ScreenStreamHost {
     var displayRemoved = false
     /// The reconfiguration callback saw the recorded display leave while following focus.
     var displayLost = false
+    /// A `stop` command or the end of stdin: end like SIGINT.
+    var stopRequested = false
     private var switching = false
     private var failedSwitch: (id: CGDirectDisplayID, at: Date)?
     /// Ticks since the stream reported an error; a removed display can report it before the display list changes.
@@ -1038,7 +1124,7 @@ private final class ScreenStreamHost {
 
     /// One 250 ms check of a screen recording. False ends the recording.
     func tick() -> Bool {
-        if displayRemoved {
+        if displayRemoved || stopRequested {
             return false
         }
 
@@ -1058,6 +1144,60 @@ private final class ScreenStreamHost {
 
         // About a second for the display list to catch up with a stream that died with its display.
         return deadTicks < 4
+    }
+
+    /// One `--control-stdin` command, on the main thread.
+    func handle(_ command: CaptureCommand) {
+        switch command {
+        case .pause, .resume:
+            let paused = command == .pause
+            recorder.setPaused(paused)
+            CaptureEvents.emit(["event": "state", "state": paused ? "paused" : "recording"])
+        case .stop:
+            stopRequested = true
+        case .status:
+            CaptureEvents.emit(["event": "state"].merging(recorder.status()) { first, _ in first })
+        case .switchDisplay(let id):
+            guard options.mode == "screen", !options.followFocus else {
+                CaptureEvents.error("invalid-argument", "switch needs --mode screen without --follow-focus")
+                return
+            }
+            guard displayIsActive(id) else {
+                let known = activeDisplays().map { String($0.id) }.joined(separator: ", ")
+                CaptureEvents.error("display-missing", "display \(id) is not connected (connected: \(known))")
+                return
+            }
+            guard id != display.id else { return }
+            guard #available(macOS 14.0, *) else {
+                CaptureEvents.error("failed", "switching a live stream needs macOS 14 or newer")
+                return
+            }
+            guard !switching else {
+                CaptureEvents.error("failed", "a display switch is still in progress; send it again")
+                return
+            }
+            switchLive(to: id)
+        }
+    }
+
+    /// Reads one command per stdin line on a background thread; the end of stdin stops the recording.
+    func startControlChannel() {
+        Thread.detachNewThread { [self] in
+            while let line = readLine(strippingNewline: true) {
+                guard let parsed = parseCaptureCommand(line) else { continue }
+                DispatchQueue.main.async { [self] in
+                    switch parsed {
+                    case .success(let command):
+                        handle(command)
+                    case .failure(let error):
+                        CaptureEvents.error("invalid-argument", error.message)
+                    }
+                }
+            }
+            DispatchQueue.main.async { [self] in
+                stopRequested = true
+            }
+        }
     }
 
     @available(macOS 14.0, *)
@@ -1109,7 +1249,7 @@ private final class ScreenStreamHost {
                 }
                 let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
                 if let size {
-                    try await stream.updateConfiguration(recorder.setOutputSize(width: Int(size.width), height: Int(size.height)))
+                    try await stream.updateConfiguration(recorder.setOutputSize(width: Int(size.width), height: Int(size.height), for: target))
                 }
                 try await stream.updateContentFilter(filter)
                 recorder.displayChanged(to: target)
@@ -1119,6 +1259,7 @@ private final class ScreenStreamHost {
                 }
             } catch {
                 recorder.warn("could not switch the recording to display \(target): \(error.localizedDescription)")
+                CaptureEvents.error("failed", "could not switch the recording to display \(target): \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.failedSwitch = (target, Date())
                     self.switching = false
@@ -1139,7 +1280,7 @@ private final class ScreenStreamHost {
             let excluded = excludedWindowIDs
             let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
             if let size = outputSize(for: geometry) {
-                _ = recorder.setOutputSize(width: Int(size.width), height: Int(size.height))
+                _ = recorder.setOutputSize(width: Int(size.width), height: Int(size.height), for: target)
             }
             let next = SCStream(filter: filter, configuration: configuration, delegate: recorder)
             try next.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
@@ -1152,6 +1293,7 @@ private final class ScreenStreamHost {
             deadTicks = 0
         } catch {
             recorder.warn("could not restart the recording on display \(target): \(error.localizedDescription)")
+            CaptureEvents.error("failed", "could not restart the recording on display \(target): \(error.localizedDescription)")
             displayRemoved = true
         }
     }
