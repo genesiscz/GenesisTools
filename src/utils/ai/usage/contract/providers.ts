@@ -1,5 +1,6 @@
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { UnknownProviderError } from "@genesiscz/utils/ai/providers/registry";
+import { aiUsageCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { UsageQueryError } from "./errors";
 import { splitList } from "./selector";
 
@@ -51,6 +52,6 @@ export function refuseHarness(values: string | readonly string[] | boolean | und
 
     throw new UsageQueryError(
         "reserved",
-        "--harness selects transcript data and arrives with tools ai usage spend (build step U8). Limit windows belong to a provider: use --provider."
+        `--harness selects transcript data and arrives with ${aiUsageCommand("spend")} (build step U8). Limit windows belong to a provider: use --provider.`
     );
 }

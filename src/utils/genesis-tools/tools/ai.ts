@@ -117,6 +117,11 @@ export function aiStatuslineRunCommand(host: HarnessId): string {
     return `${toolCommand("ai statusline run")} --${host}`;
 }
 
+/** A verb of the usage tree, `tools ai usage <words>` (`limits series`, `spend`). */
+export function aiUsageCommand(...words: string[]): string {
+    return toolCommand(["ai usage", ...words].join(" "));
+}
+
 /** Logs a Claude subscription account in; without an account, the bare command. */
 export function claudeLoginCommand(account?: string): string {
     return account === undefined ? toolCommand("claude login") : `${toolCommand("claude login")} ${account}`;
