@@ -177,7 +177,7 @@ function speakerItems(options: {
 interface TermSources {
     meeting: SourceMeeting;
     record: MeetingRecord;
-    /** How a quote names its source (`global.render`): "(čte z WikiProposals, ř. 33)". */
+    /** How a quote names its source (`languages.<global.language>.render`): "(čte z WikiProposals, ř. 33)". */
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
@@ -1153,13 +1153,13 @@ export function suggestItems(options: {
     listenBelow?: number;
     /** The summary's action items and decisions: a range that cites one matters more. */
     points?: SummaryPoint[];
-    /** At most this many questions, speakers and terms together (`playback.listen.budget`). */
+    /** At most this many questions, speakers and terms together (`global.suggest.questionCap`). */
     questionBudget?: number;
     /** No question under this priority (`playback.listen.minPriority`). */
     minPriority?: number;
     /** Tells ordinary words from unknown ones for the term rules; without it they skip every Czech word. */
     wordCheck?: WordCheck;
-    /** How a quote names its source (`global.render`). */
+    /** How a quote names its source (`languages.<global.language>.render`). */
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     now: string;
 }): MeetingItem[] {

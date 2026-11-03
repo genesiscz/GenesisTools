@@ -67,15 +67,18 @@ async function evidence(
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
         if (opts.raw) {
-            const choice = await resolveEnum({
-                value: opts.wordCheck,
-                fallback: DEFAULT_WORD_CHECK,
-                values: WORD_CHECKS,
-                flag: "--word-check",
-                subcommand: ["evidence"],
-            });
+            // Without --word-check each language uses its own provider (`languages.<code>.wordCheck`).
+            const choice =
+                opts.wordCheck === undefined
+                    ? undefined
+                    : await resolveEnum({
+                          value: opts.wordCheck,
+                          values: WORD_CHECKS,
+                          flag: "--word-check",
+                          subcommand: ["evidence"],
+                      });
 
-            if (!choice) {
+            if (opts.wordCheck !== undefined && !choice) {
                 return;
             }
 
@@ -204,7 +207,7 @@ export function registerEvidenceCommand(program: Command): void {
         )
         .option(
             "--word-check <provider>",
-            `--raw: ${WORD_CHECKS.join(" | ")} for the term part (default ${DEFAULT_WORD_CHECK})`
+            `--raw: ${WORD_CHECKS.join(" | ")} for the term part (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
         .option("--format [format]", "table | json (json has one row per line)")
         .action(evidence);

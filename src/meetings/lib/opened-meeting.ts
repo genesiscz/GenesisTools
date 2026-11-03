@@ -12,7 +12,7 @@ import { CallTimeline } from "./call-timeline";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
-import { type WordCheckChoice, wordCheckFor } from "./word-check";
+import { configuredWordChecks, type WordCheckChoice, wordCheckFor } from "./word-check";
 
 const { log } = logger.scoped("meetings-opened");
 
@@ -163,9 +163,13 @@ export class OpenedMeeting {
         return meeting.summary ? summaryPoints(meeting.summary, (await this.config()).global.summary) : [];
     }
 
-    /** The word check over the transcript's words, or why there is none. The caller disposes the check. */
-    async wordCheck(choice: WordCheckChoice): ReturnType<typeof wordCheckFor> {
-        return wordCheckFor(choice, (await this.meeting()).transcript);
+    /**
+     * The word check over the transcript's words, or why there is none: `choice` for every language, else each
+     * language's configured provider (`languages.<code>.wordCheck`). The caller disposes the check.
+     */
+    async wordCheck(choice?: WordCheckChoice): ReturnType<typeof wordCheckFor> {
+        const selection = choice ?? configuredWordChecks(await this.config());
+        return wordCheckFor(selection, (await this.meeting()).transcript);
     }
 
     /** The recording the source keeps on this Mac. Throws a message ready to print. */

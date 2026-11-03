@@ -1,3 +1,4 @@
+import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { DEFAULT_SPELL_PROVIDER, SPELL_PROVIDER_IDS } from "@genesiscz/utils/transcribe/languages/spell";
 import type { WordCheck, WordVerdict } from "@genesiscz/utils/transcribe/languages/word-check";
 import { transcriptWords } from "@genesiscz/utils/transcribe/terms";
@@ -8,6 +9,24 @@ import { DEFAULT_WORD_LANGUAGE, lineLanguages, WORD_LANGUAGES } from "./word-lan
 export const WORD_CHECKS = [...SPELL_PROVIDER_IDS, "off"] as const;
 export type WordCheckChoice = (typeof WORD_CHECKS)[number];
 export const DEFAULT_WORD_CHECK: WordCheckChoice = DEFAULT_SPELL_PROVIDER;
+
+export function isWordCheckChoice(value: unknown): value is WordCheckChoice {
+    return typeof value === "string" && (WORD_CHECKS as readonly string[]).includes(value);
+}
+
+/** One provider for every language (`--word-check`), or each language's own (`languages.<code>.wordCheck`). */
+export type WordCheckSelection = WordCheckChoice | { perLanguage: (code: string) => WordCheckChoice };
+
+/** The provider a language's config block names, else the default; an unknown name is the default too. */
+export function configuredWordCheck(config: Pick<MeetingsConfig, "languages">, code: string): WordCheckChoice {
+    const named = config.languages[code]?.wordCheck;
+    return isWordCheckChoice(named) ? named : DEFAULT_WORD_CHECK;
+}
+
+/** Each language's configured provider: what the commands use when `--word-check` is not given. */
+export function configuredWordChecks(config: Pick<MeetingsConfig, "languages">): WordCheckSelection {
+    return { perLanguage: (code) => configuredWordCheck(config, code) };
+}
 
 /**
  * One check over a transcript in several languages: a word is checked in the languages of the lines it occurs in,
@@ -63,11 +82,17 @@ class LanguageWordCheck implements WordCheck {
  * caller disposes the check.
  */
 export async function wordCheckFor(
-    choice: WordCheckChoice,
+    selection: WordCheckSelection,
     transcript: TranscriptEntry[]
 ): Promise<{ check?: WordCheck; reason?: string }> {
-    if (choice === "off") {
+    const choiceOf = (code: string) => (typeof selection === "string" ? selection : selection.perLanguage(code));
+
+    if (selection === "off") {
         return { reason: "turned off with --word-check off" };
+    }
+
+    if (choiceOf(DEFAULT_WORD_LANGUAGE) === "off") {
+        return { reason: `turned off for ${DEFAULT_WORD_LANGUAGE} (languages.${DEFAULT_WORD_LANGUAGE}.wordCheck)` };
     }
 
     const codes = lineLanguages(transcript);
@@ -95,7 +120,8 @@ export async function wordCheckFor(
 
     for (const [code, words] of wordsOf) {
         const language = WORD_LANGUAGES[code];
-        const opened = language ? await language.open(choice, words) : undefined;
+        const choice = choiceOf(code);
+        const opened = language && choice !== "off" ? await language.open(choice, words) : undefined;
 
         if (opened?.available) {
             checks.set(code, opened.check);

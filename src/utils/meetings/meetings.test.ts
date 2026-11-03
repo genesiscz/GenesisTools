@@ -73,8 +73,12 @@ describe("meetings config", () => {
         expect(migrateMeetingsConfig(raw)).toBe(false);
 
         const config = meetingsConfigSchema.parse(v1);
-        expect(config.global.render).toEqual({ unclearLabel: "unclear", readAloudLabel: "čte z", lineLabel: "ř." });
-        expect(config.global.playback.listen.budget).toBe(7);
+        expect(languageSettings(config).render).toEqual({
+            unclearLabel: "unclear",
+            readAloudLabel: "čte z",
+            lineLabel: "ř.",
+        });
+        expect(config.global.suggest.questionCap).toBe(7);
         expect(sourceFolders(config, "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
     });
 
@@ -107,7 +111,7 @@ describe("meetings config", () => {
                 },
             },
         });
-        expect(config.global.render.lineLabel).toBe("Z.");
+        expect(languageSettings(config).render.lineLabel).toBe("Z.");
     });
 
     test("a change that would break the config is refused and nothing is written", async () => {

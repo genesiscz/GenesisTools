@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -182,5 +183,21 @@ describe("attendance from a file", () => {
     test("a file in no known format, or a platform without a file format, is refused with the formats it knows", async () => {
         await expect(loadPresence(target, other)).rejects.toThrow("no known attendance format (teams:");
         await expect(loadPresence(target, `facetime:${teams}`)).rejects.toThrow("FaceTime has no attendance file");
+    });
+});
+
+describe("the word check provider per language", () => {
+    test("each language uses its languages.<code>.wordCheck, and an unknown or missing one the default", async () => {
+        const { configuredWordCheck, DEFAULT_WORD_CHECK, wordCheckFor } = await import("./word-check");
+        const config = meetingsConfigSchema.parse({
+            languages: { cs: { wordCheck: "off" }, sk: { wordCheck: "nonsense" } },
+        });
+
+        expect(configuredWordCheck(config, "cs")).toBe("off");
+        expect(configuredWordCheck(config, "sk")).toBe(DEFAULT_WORD_CHECK);
+        expect(configuredWordCheck(config, "de")).toBe(DEFAULT_WORD_CHECK);
+        expect(
+            (await wordCheckFor({ perLanguage: () => "off" }, [{ speaker: "A", startSec: 0, text: "Ahoj." }])).reason
+        ).toBe("turned off for cs (languages.cs.wordCheck)");
     });
 });

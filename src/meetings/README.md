@@ -289,8 +289,11 @@ transcript and reads the screen.
 
 A version 1 file is rewritten once on the first read: `global.render` moves to `languages.cs.render`,
 `playback.listen.budget` to both `global.suggest.questionCap` and `playback.listen.roundCap`, and
-`projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. Code that reads `global.render` or
-`playback.listen.budget` still gets them, from the new places.
+`projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. The code reads only the new places.
+
+`languages.<code>.wordCheck` names the word check provider of a language (`hunspell`, `hunspell-cc0`, `macos` or
+`off`). Without `--word-check`, suggest and `evidence --raw` check each language's lines with its own provider, and a
+language with no provider or an unknown one uses `hunspell`; `--word-check` sets one provider for every language.
 
 A change that would make the file invalid is refused, and the file stays as it was.
 

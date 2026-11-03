@@ -1,4 +1,4 @@
-import { type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -221,7 +221,7 @@ export function correctionsOf(
             ? {}
             : { dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }) }),
         notes: opts.format === "md" ? "sup" : "inline",
-        ...(passages.length > 0 ? { unclear: { label: config.global.render.unclearLabel, passages } } : {}),
+        ...(passages.length > 0 ? { unclear: { label: languageSettings(config).render.unclearLabel, passages } } : {}),
     };
 }
 
@@ -252,7 +252,7 @@ export function correctTranscript(options: {
     const corrections = correctionsOf(record, config, options);
     const applied = applyCorrections(transcript, corrections);
     const outcomes = [...applied.outcomes, ...labelOutcomes(record, transcript, applied.outcomes, corrections)];
-    const unclear = `[${config.global.render.unclearLabel}:`;
+    const unclear = `[${languageSettings(config).render.unclearLabel}:`;
     const sourceLabels = new Set(transcript.map((entry) => entry.speaker));
     const people = new Set([
         ...record.participants.map((person) => person.name),

@@ -240,23 +240,6 @@ const storedConfigSchema = z
 
 type StoredConfig = z.infer<typeof storedConfigSchema>;
 
-/**
- * Read-only views for code that still reads the version 1 places: `global.render` is the labels of the meeting
- * language, `global.playback.listen.budget` is `global.suggest.questionCap`. Never written to the file.
- */
-interface LegacyViews {
-    global: StoredConfig["global"] & {
-        /** @deprecated Read `languageSettings(config).render`. */
-        render: LanguageSettings["render"];
-        playback: StoredConfig["global"]["playback"] & {
-            listen: StoredConfig["global"]["playback"]["listen"] & {
-                /** @deprecated Read `global.suggest.questionCap` (suggest) or `global.playback.listen.roundCap` (listen). */
-                budget: number;
-            };
-        };
-    };
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -312,31 +295,15 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
 }
 
 /** The config as the code reads it: a version 1 shape is migrated first, every default is filled in. */
-export const meetingsConfigSchema = z
-    .preprocess((value) => {
-        if (!isObject(value)) {
-            return value;
-        }
+export const meetingsConfigSchema = z.preprocess((value) => {
+    if (!isObject(value)) {
+        return value;
+    }
 
-        const copy = structuredClone(value);
-        migrateMeetingsConfig(copy);
-        return copy;
-    }, storedConfigSchema)
-    .transform((config): StoredConfig & LegacyViews => {
-        const language = languageSettings(config);
-
-        return {
-            ...config,
-            global: {
-                ...config.global,
-                render: language.render,
-                playback: {
-                    ...config.global.playback,
-                    listen: { ...config.global.playback.listen, budget: config.global.suggest.questionCap },
-                },
-            },
-        };
-    });
+    const copy = structuredClone(value);
+    migrateMeetingsConfig(copy);
+    return copy;
+}, storedConfigSchema);
 
 export type MeetingsConfig = z.infer<typeof meetingsConfigSchema>;
 export type ProjectConfig = z.infer<typeof projectSchema>;

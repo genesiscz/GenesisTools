@@ -1,12 +1,11 @@
 import { readFileSync } from "node:fs";
-import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { languageSettings, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import { isMeetingPlatformId } from "@genesiscz/utils/meetings/platform";
 import {
@@ -35,6 +34,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
+import { playLinksFor } from "../lib/link";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionIdOf, questionLabel, questionWarnings } from "../lib/questions";
@@ -116,7 +116,10 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
 }
 
 /** The word check for the term rules, or undefined when it is off or cannot run (said once, with the reason). */
-async function termWordCheck(choice: WordCheckChoice, meeting: OpenedMeeting): Promise<WordCheck | undefined> {
+async function termWordCheck(
+    choice: WordCheckChoice | undefined,
+    meeting: OpenedMeeting
+): Promise<WordCheck | undefined> {
     const opened = await meeting.wordCheck(choice);
 
     if (!opened.check && choice !== "off") {
@@ -146,15 +149,18 @@ async function suggest(
         return;
     }
 
-    const wordCheckChoice = await resolveEnum({
-        value: opts.wordCheck,
-        fallback: DEFAULT_WORD_CHECK,
-        values: WORD_CHECKS,
-        flag: "--word-check",
-        subcommand: ["suggest"],
-    });
+    // Without --word-check each language uses its own provider (`languages.<code>.wordCheck`).
+    const wordCheckChoice =
+        opts.wordCheck === undefined
+            ? undefined
+            : await resolveEnum({
+                  value: opts.wordCheck,
+                  values: WORD_CHECKS,
+                  flag: "--word-check",
+                  subcommand: ["suggest"],
+              });
 
-    if (!wordCheckChoice) {
+    if (opts.wordCheck !== undefined && !wordCheckChoice) {
         return;
     }
 
@@ -176,11 +182,11 @@ async function suggest(
             evidence,
             energyMicShare: (await opened.energy()).share,
             listenBelow: config.global.suggest.listenBelow,
-            questionBudget: config.global.playback.listen.budget,
+            questionBudget: config.global.suggest.questionCap,
             minPriority: config.global.playback.listen.minPriority,
             points: await opened.summaryPoints(),
             wordCheck,
-            sourceLabels: config.global.render,
+            sourceLabels: languageSettings(config).render,
             now: new Date().toISOString(),
         });
         wordCheck?.dispose();
@@ -694,20 +700,12 @@ async function transcript(
             );
         }
 
-        const playLink = opts.playLinks
-            ? (atSec: number) =>
-                  routerLink({
-                      preset: "meetings-play",
-                      action: "play",
-                      data: { meeting: record.id, at: formatClock(atSec) },
-                      fallback: () => "",
-                  }).link
-            : undefined;
+        // The links are written even while the router preset is off; the warning says how to make them open.
+        const links = opts.playLinks ? playLinksFor(record.id) : undefined;
+        const playLink = links?.link;
 
-        if (playLink && playLink(0) === null) {
-            ui.warn(
-                `No play links: switch the router preset on with "${toolCommand("browser-router", "presets", "enable", "meetings-play")}".`
-            );
+        if (links?.warning) {
+            ui.warn(links.warning);
         }
 
         parts.push(
@@ -732,7 +730,7 @@ export function registerItemCommands(program: Command): void {
         )
         .option(
             "--word-check <provider>",
-            `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default ${DEFAULT_WORD_CHECK})`
+            `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
         .option("--json", "print the new items")
         .action(suggest);
