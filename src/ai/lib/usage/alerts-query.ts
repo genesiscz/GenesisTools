@@ -307,7 +307,21 @@ export async function testAlertRule(
                 now,
                 previousRoundAt: new PollRunsStore(db).lastRoundAt(),
             });
-            judged = judgeRound({ round, config: dashboard.alerts, store: new UsageAlertsStore(db), only: [rule] });
+            // The event-backed rules (rate-limited, limit-state-change, health's refused probes) read every
+            // account's events, so the selector applies to what was found. A candidate of no account (the poller
+            // was down) concerns every account and stays.
+            judged = judgeRound({
+                round,
+                config: dashboard.alerts,
+                store: new UsageAlertsStore(db),
+                only: [rule],
+            }).filter(
+                ({ candidate }) =>
+                    accounts.size === 0 ||
+                    (candidate.accountId === null && candidate.accountName === null) ||
+                    accounts.has(candidate.accountId ?? "") ||
+                    accounts.has(candidate.accountName ?? "")
+            );
         } else {
             warnings.push(NO_STORE);
         }
