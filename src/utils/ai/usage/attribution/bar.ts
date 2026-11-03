@@ -76,17 +76,18 @@ export function attributeBar(input: {
     events: readonly AttributedEvent[];
     /** The asked start, used when no reset fell inside the range. */
     from: Date;
-    now: Date;
+    /** The range's end (`--until`, or now): a reset or a dollar after it is outside the bar it explains. */
+    to: Date;
     reportCommand: (sessionId: string) => string;
 }): BarAttribution {
-    const reset = lastReset(input.entry, input.now);
+    const reset = lastReset(input.entry, input.to);
     const since =
         reset !== undefined && Date.parse(reset) > input.from.getTime() ? Date.parse(reset) : input.from.getTime();
     const shares = sharesIn({
         events: input.events,
         account: input.account,
         from: since,
-        to: input.now.getTime(),
+        to: input.to.getTime(),
         reportCommand: input.reportCommand,
     });
     const risePercent = riseSince(input.entry, since);

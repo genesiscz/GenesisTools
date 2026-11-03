@@ -169,7 +169,7 @@ describe("who ate the bar", () => {
             account: WORK,
             events,
             from: new Date("2026-11-01T00:00:00Z"),
-            now: new Date("2026-11-01T13:00:00Z"),
+            to: new Date("2026-11-01T13:00:00Z"),
             reportCommand: report,
         });
 
@@ -178,5 +178,17 @@ describe("who ate the bar", () => {
         expect(bar.totalUsd).toBe(40);
         expect(bar.usdPerPercent).toBeCloseTo(40 / 22);
         expect(bar.projects).toEqual([{ project: "-repo", costUsd: 40, share: 1, barPercent: 22 }]);
+
+        // An earlier end (`--until`) leaves out the dollars after it.
+        const until = attributeBar({
+            entry,
+            account: WORK,
+            events,
+            from: new Date("2026-11-01T00:00:00Z"),
+            to: new Date("2026-11-01T11:00:00Z"),
+            reportCommand: report,
+        });
+
+        expect(until.totalUsd).toBe(30);
     });
 });
