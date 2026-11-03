@@ -314,7 +314,15 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
         // Missing or overlapping turn evidence cannot establish a historical login.
         const authAt = (timestamp: string): WorkerAuthMode => turnAt(timestamp)?.auth ?? "unknown";
         const outcomeAt = (timestamp: string): string => turnAt(timestamp)?.outcome ?? "unknown";
-        const values = (model: string | null, ts: string, outcome: string): Record<WorkerStatsDimension, string> => ({
+        const values = ({
+            model,
+            ts,
+            outcome,
+        }: {
+            model: string | null;
+            ts: string;
+            outcome: string;
+        }): Record<WorkerStatsDimension, string> => ({
             backend: session.backend,
             model: model || session.model || "?",
             label,
@@ -332,7 +340,7 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
             for (const row of windowRows) {
                 const group = bucket(
                     groups,
-                    keyOf(dimensions, values(row.model, row.ts, row.outcome ?? "unknown")),
+                    keyOf(dimensions, values({ model: row.model, ts: row.ts, outcome: row.outcome ?? "unknown" })),
                     dimensions
                 );
                 addLedgerCost(group, row);
@@ -353,7 +361,10 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
 
                 const group = bucket(
                     groups,
-                    keyOf(dimensions, values(event.model, event.timestamp, outcomeAt(event.timestamp))),
+                    keyOf(
+                        dimensions,
+                        values({ model: event.model, ts: event.timestamp, outcome: outcomeAt(event.timestamp) })
+                    ),
                     dimensions
                 );
                 addEvent(group, event, authAt(event.timestamp), pricing);
@@ -364,7 +375,7 @@ export function buildWorkerStats(options: WorkerStatsOptions): WorkerStatsReport
         for (const row of windowRows) {
             const group = bucket(
                 groups,
-                keyOf(dimensions, values(row.model, row.ts, row.outcome ?? "unknown")),
+                keyOf(dimensions, values({ model: row.model, ts: row.ts, outcome: row.outcome ?? "unknown" })),
                 dimensions
             );
             group.turns += row.turn === null ? 0 : 1;
