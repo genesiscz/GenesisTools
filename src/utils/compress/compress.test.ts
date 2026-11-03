@@ -1095,7 +1095,7 @@ describe("folder archives", () => {
             if (Bun.which("ditto")) {
                 writeFileSync(join(dir, "plain.txt"), "line of text that repeats\n".repeat(2000));
                 const ditto = Bun.spawnSync(
-                    ["ditto", "--hfsCompression", join(dir, "plain.txt"), join(tree, "compressed.txt")],
+                    ["ditto", "--noclone", "--hfsCompression", join(dir, "plain.txt"), join(tree, "compressed.txt")],
                     { env: process.env }
                 );
                 expect(ditto.exitCode).toBe(0);
