@@ -18,6 +18,7 @@ import {
     PIVOT_DIMENSIONS,
     type PivotDimension,
     pivotSpend,
+    type SpendHeatmap,
     type SpendPivot,
 } from "@genesiscz/utils/ai/usage/spend/pivot";
 import { type PlanValue, planValues } from "@genesiscz/utils/ai/usage/spend/plans";
@@ -124,6 +125,26 @@ function renderPivot(envelope: UsageEnvelope<SpendPivot>): void {
     out.println(
         `total ${usd(pivot.total.costUsd)}${pivot.total.unpriced > 0 ? pc.yellow(` · ${pivot.total.unpriced} unpriced`) : ""}`
     );
+
+    if (pivot.heatmap) {
+        renderHeatmap(pivot.heatmap);
+    }
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const SHADES = " ░▒▓█";
+
+/** `--heatmap`: one row per weekday, one shade per hour, the darkest at the busiest hour of the week. */
+function renderHeatmap(heatmap: SpendHeatmap): void {
+    const peak = Math.max(0, ...heatmap.cells.flat());
+    out.println("");
+    out.println(`average dollars by hour of the week, over ${heatmap.weeks} week(s); busiest hour ${usd(peak)}`);
+    out.println("     00    06    12    18");
+
+    for (const [index, row] of heatmap.cells.entries()) {
+        const shades = row.map((value) => SHADES[peak > 0 ? Math.ceil((value / peak) * (SHADES.length - 1)) : 0]);
+        out.println(`${WEEKDAYS[index] ?? "?"}  ${shades.join("")}`);
+    }
 }
 
 function registerPivot(program: Command): void {
