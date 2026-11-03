@@ -97,6 +97,33 @@ describe("the analysis members of the three readers", () => {
         );
     });
 
+    test("Codex: with both slots filled, a repeated reading is kept once per slot", async () => {
+        const count = (t: string, primary: number, secondary: number) => ({
+            timestamp: t,
+            type: "event_msg",
+            payload: {
+                type: "token_count",
+                rate_limits: {
+                    primary: { used_percent: primary, window_minutes: 300, resets_at: 1_793_802_282 },
+                    secondary: { used_percent: secondary, window_minutes: 10_080, resets_at: 1_794_000_000 },
+                },
+            },
+        });
+        const path = transcript("rollout-2026-11-01T11-00-00-both.jsonl", [
+            count("2026-11-01T11:00:10Z", 5, 40),
+            count("2026-11-01T11:00:20Z", 5, 40),
+            count("2026-11-01T11:00:30Z", 6, 40),
+        ]);
+
+        const quota = await codexHistoryReader.analysis.quotaReadings(path);
+
+        expect(quota.supported && quota.items.map((item) => [item.slot, item.usedPercent])).toEqual([
+            ["primary", 5],
+            ["secondary", 40],
+            ["primary", 6],
+        ]);
+    });
+
     test("Grok: turn usage from updates.jsonl beside the chat history; no compaction times and no quota", async () => {
         const chat = transcript("chat_history.jsonl", [{ role: "user", content: "hi" }]);
         writeFileSync(
