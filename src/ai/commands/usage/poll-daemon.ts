@@ -1,4 +1,5 @@
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
+import { recordRoundAndAlert } from "@app/ai/lib/usage/alerts-tick";
 import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
 import { TASK_SIGTERM_CLEANUP_MS } from "@app/daemon/lib/runner";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
@@ -6,7 +7,7 @@ import { releaseCodexUsageHomes } from "@genesiscz/utils/ai/providers/plugins/op
 import { touchUsageDaemonHeartbeat } from "@genesiscz/utils/ai/usage-poll/daemon-heartbeat";
 import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
-import { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
+
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
@@ -23,48 +24,6 @@ import { setVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 const ANTHROPIC_SUB = "anthropic-sub";
 /** The daemon runner kills this task at 60 s (`timeoutMs` in the task log); the tick keeps 10 s of headroom. */
 const TICK_BUDGET_MS = 50_000;
-
-/**
- * Every window worth a threshold notification, flattened out of a round.
- *
- * Stale snapshots replay an older fetch and error rows carry nothing, so both are skipped:
- * notifying on a replay re-fires a threshold that was already handled once.
- */
-export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]) {
-    const out: Array<{
-        accountId: string;
-        accountName: string;
-        key: string;
-        kind: AccountUsageSnapshot["limits"][number]["kind"];
-        label: string;
-        utilization: number;
-        resetsAt: string | null;
-    }> = [];
-
-    for (const snapshot of snapshots) {
-        if (snapshot.stale || snapshot.error) {
-            continue;
-        }
-
-        for (const window of snapshot.limits) {
-            if (typeof window.percentUsed !== "number" || !Number.isFinite(window.percentUsed)) {
-                continue;
-            }
-
-            out.push({
-                accountId: snapshot.accountId,
-                accountName: snapshot.accountName,
-                key: window.key,
-                kind: window.kind,
-                label: window.label,
-                utilization: window.percentUsed,
-                resetsAt: window.resetsAt ?? null,
-            });
-        }
-    }
-
-    return out;
-}
 
 /**
  * Anthropic rows in the shape the claude-only consumers still take: the extra-usage
@@ -216,11 +175,9 @@ async function main(): Promise<void> {
 
     const dashConfig = await loadDashboardConfig();
     const db = new UsageLimitsDb();
-    const notifManager = new NotificationManager(dashConfig.notifications);
     const storage = usagePollStorage();
 
     await storage.ensureDirs();
-    await notifManager.loadState(storage);
     endSetup();
 
     try {
@@ -242,22 +199,20 @@ async function main(): Promise<void> {
         // Tells every reader the daemon is refreshing the cache, so they stop refetching themselves.
         touchUsageDaemonHeartbeat();
 
-        const endNotify = prof.start("tick.notifications", cpuMeta());
-        for (const window of notifiableWindows(snapshots)) {
-            try {
-                await notifManager.processUsage(window);
-            } catch (err) {
-                logger.warn({ err, account: window.accountName, key: window.key }, "[ai-usage] notification failed");
-            }
-        }
-        endNotify();
-
-        notifManager.markFirstPollDone();
-
+        // Poll coverage and the alert engine (design 2026-11-01, steps U5 and U7). The engine replaces the threshold
+        // notifier here; its first tick seeds the record from the notifier's saved trackers, so nothing re-fires.
         try {
-            await notifManager.saveState(storage);
+            const tick = await prof.measureAsync(
+                "tick.alerts",
+                () => recordRoundAndAlert({ db, snapshots, config: dashConfig, storage }),
+                cpuMeta()
+            );
+            logger.debug(
+                { runs: tick.runs, seeded: tick.seeded, fired: tick.fired.length },
+                "[ai-usage] poll runs recorded and alerts judged"
+            );
         } catch (err) {
-            logger.warn({ err }, "[ai-usage] notification state save failed");
+            logger.warn({ err }, "[ai-usage] poll coverage or alert pass failed");
         }
 
         const anthropic = anthropicRows(snapshots);
