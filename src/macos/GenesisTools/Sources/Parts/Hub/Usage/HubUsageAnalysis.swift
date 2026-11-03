@@ -165,6 +165,7 @@ struct UsageDriftCard: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.03)))
+        .liveRow()
     }
 }
 

@@ -295,6 +295,7 @@ public struct UsageBurnLaneView: View {
 
     private func spikeButton(_ spike: UsageLaneSpike, _ geometry: UsageLaneGeometry) -> some View {
         let side = min(14, 6 + CGFloat(spike.delta) / 3)
+        // lint-rules-ignore: short list (a lane's spikes in the range, a few diamonds)
         return Button {
             onSpike?(spike)
         } label: {
@@ -380,6 +381,7 @@ public struct UsageCoverageStrip: View {
             .frame(height: 4)
             .instantTooltip(tooltip)
             .accessibilityLabel(Text(tooltip))
+            .liveRow()
         } else {
             Text("No poll round recorded for this account yet")
                 .font(.system(size: 9.5))
