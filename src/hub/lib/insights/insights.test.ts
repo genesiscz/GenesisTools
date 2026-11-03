@@ -45,12 +45,20 @@ function assistant(id: string, at: number, extra: Partial<TranscriptTurn> = {}):
 
 describe("catalogPricer", () => {
     test("the catalog pricer prices a listed model at list rates and refuses an unknown one", () => {
-        const price = catalogPricer();
+        const price = catalogPricer("claude");
         const call = { input: 100_000, output: 10_000, cacheRead: 0, cacheWrite: 0, reasoning: 0, at: iso(0) };
 
         expect(price({ ...call, model: "claude-sonnet-4-5-20250929" })).toBeCloseTo(0.45);
         expect(price({ ...call, model: "invented-model-9" })).toBeNull();
         expect(price({ ...call, model: null })).toBeNull();
+    });
+
+    test("a model is priced through its harness's candidate ladder, as the spend reports price it", () => {
+        const price = catalogPricer("grok");
+        const call = { input: 100_000, output: 10_000, cacheRead: 0, cacheWrite: 0, reasoning: 0, at: iso(0) };
+
+        expect(price({ ...call, model: "grok-4.6-build" })).not.toBeNull();
+        expect(price({ ...call, model: "grok-4.6-build" })).toBe(price({ ...call, model: "grok-4.6" }));
     });
 });
 
