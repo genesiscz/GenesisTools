@@ -13,6 +13,8 @@ export class SinkError extends Error {
 
 export interface Sink {
     name: string;
+    /** Whether it reaches for the user's attention (a banner, a sound). A record that must not interrupt skips it. */
+    interrupts: boolean;
     isEnabled(config: QuestionConfig): boolean;
     emit(entry: QaEntry, config: QuestionConfig): Promise<void> | void;
     /** Optional per-sink fan-out budget (ms). Network sinks (Telegram does a

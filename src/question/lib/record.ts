@@ -88,7 +88,7 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
     }
 
     log.info({ id: entry.id, project: entry.project, tag: entry.tag, source: entry.source }, "qa recorded");
-    const sinks = await runFanOut(entry, { ...loadConfig(), ...deps.config });
+    const sinks = await runFanOut(entry, { ...loadConfig(), ...deps.config }, { interrupt: input.interrupt ?? true });
     return {
         id: entry.id,
         sinks,

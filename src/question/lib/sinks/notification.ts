@@ -18,6 +18,7 @@ export async function formatNotification(e: QaEntry): Promise<{ title: string; m
 
 export const notificationSink: Sink = {
     name: "notification",
+    interrupts: true,
     // Telegram = cold `await import(@app/telegram-bot)` + HTTP; the 2s default
     // fan-out budget gets truncated by the CLI's process.exit(0) before the
     // send completes (system banner is fast, telegram isn't). Give it room.
