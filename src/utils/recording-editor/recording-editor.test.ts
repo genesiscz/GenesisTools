@@ -1,0 +1,244 @@
+import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { OverwriteInputError } from "@genesiscz/utils/jobs";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
+import { skip } from "@genesiscz/utils/test/skip";
+import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
+import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { createCanvas } from "@napi-rs/canvas";
+import { ZodError } from "zod";
+import { RecordingEditor } from "./editor";
+import { atempoChain, concatList } from "./ffmpeg";
+import { parseEditPlan, timeToUs } from "./plan";
+
+function workspace(): string {
+    return mkdtempSync(join(tmpdir(), "gt-editor-"));
+}
+
+/** A recording folder like startRecording writes: frames of two displays with a recording.json. */
+function recordingFolder(): string {
+    const dir = workspace();
+    const frames: Array<{ file: string; atMs: number; displayId: number }> = [];
+
+    for (const [index, shade] of [10, 10, 200, 200, 90].entries()) {
+        for (const displayId of [1, 2]) {
+            const canvas = createCanvas(64, 40);
+            const context = canvas.getContext("2d");
+            context.fillStyle = `rgb(${shade}, ${displayId * 60}, 40)`;
+            context.fillRect(0, 0, 64, 40);
+            const file = `d${displayId}-${index}.png`;
+            writeFileSync(join(dir, file), canvas.toBuffer("image/png"));
+            frames.push({ file, atMs: index * 1000, displayId });
+        }
+    }
+
+    writeFileSync(
+        join(dir, RECORDING_MANIFEST),
+        SafeJSON.stringify({
+            version: 1,
+            id: "rec-test",
+            title: "test",
+            startedAt: "2026-11-03T20:00:00.000Z",
+            displays: [
+                { id: 1, name: "one" },
+                { id: 2, name: "two" },
+            ],
+            frames,
+        })
+    );
+    return dir;
+}
+
+function sha(path: string): string {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+describe("edit plans", () => {
+    test("a plan is validated before any work and names the wrong field", () => {
+        expect(() => parseEditPlan({ source: { file: "/x.mp4" }, steps: [] })).toThrow(ZodError);
+        expect(() => parseEditPlan({ source: { file: "/x.mp4" }, steps: [{ kind: "grid", cols: 3 }] })).toThrow(
+            "a grid needs a frames step before it"
+        );
+        expect(() =>
+            parseEditPlan({
+                source: { file: "/x.mp4" },
+                steps: [{ kind: "frames" }, { kind: "grid", cols: 8, rows: 8 }],
+            })
+        ).toThrow("at most 32 frames");
+        expect(() => parseEditPlan({ source: { file: "/x.mp4" }, steps: [{ kind: "frames", threshold: 2 }] })).toThrow(
+            "threshold needs changeOnly"
+        );
+        expect(() => parseEditPlan({ source: { file: "/x.mp4" }, steps: [{ kind: "speed", factor: 40 }] })).toThrow(
+            ZodError
+        );
+        const plan = parseEditPlan({
+            source: { recording: "rec-1" },
+            steps: [
+                { kind: "frames", changeOnly: true, threshold: 2 },
+                { kind: "grid", cols: 3, rows: 3 },
+            ],
+        });
+        expect(plan.steps[1]).toEqual({ kind: "grid", cols: 3, rows: 3, labels: "time" });
+    });
+
+    test("times read as seconds, mm:ss and h:mm:ss; ffmpeg helpers stay in range", () => {
+        expect(timeToUs("00:05")).toBe(5_000_000);
+        expect(timeToUs("1:02:03.5")).toBe(3_723_500_000);
+        expect(timeToUs(0.25)).toBe(250_000);
+        expect(timeToUs("12s")).toBe(12_000_000);
+        expect(atempoChain(4)).toBe("atempo=2,atempo=2");
+        expect(atempoChain(0.3)).toBe("atempo=0.5,atempo=0.6");
+        expect(
+            concatList([
+                { path: "/a.png", atUs: 0 },
+                { path: "/b.png", atUs: 500_000 },
+            ])
+        ).toBe(
+            "ffconcat version 1.0\nfile '/a.png'\nduration 0.500000\nfile '/b.png'\nduration 1.000000\nfile '/b.png'\n"
+        );
+    });
+});
+
+describe("the editor on a recording folder", () => {
+    test("change-only frames per display, a grid, progress events, and a rerun that skips every finished step", async () => {
+        const source = recordingFolder();
+        const output = join(workspace(), "edit");
+        const editor = new RecordingEditor();
+        const plan = {
+            source: { file: source },
+            output,
+            steps: [
+                { kind: "range" as const, from: 0, to: "00:03" },
+                { kind: "frames" as const, changeOnly: true, threshold: 1 },
+                { kind: "grid" as const, cols: 2, rows: 2, labels: "time" as const },
+            ],
+        };
+        const job = editor.run(plan);
+        const units = new Set<string>();
+        job.on("progress", (event) => units.add(`${event.step}:${event.unit}`));
+        const result = await job.done;
+        // Display 1 and 2 each change once (frames 0 → 2); frame 1 and 3 repeat the frame before them.
+        expect(result.frames).toHaveLength(8);
+        expect(result.kept.map((frame) => [frame.displayId, frame.actualUs])).toEqual([
+            [1, 0],
+            [2, 0],
+            [1, 2_000_000],
+            [2, 2_000_000],
+        ]);
+        expect(result.sheets).toHaveLength(1);
+        expect(result.sheets[0]).toMatchObject({ columns: 2, rows: 2, frameIds: ["0", "1", "4", "5"] });
+        expect(units.has("changes-1:frames")).toBe(true);
+        expect(units.has("grid-2:frames")).toBe(true);
+
+        const again = await editor.run(plan).done;
+        expect(again.steps.every((step) => step.skipped)).toBe(true);
+        expect(again.sheets).toEqual(result.sheets);
+
+        unlinkSync(result.sheets[0].path);
+        const repaired = await editor.run(plan).done;
+        expect(repaired.steps.filter((step) => !step.skipped).map((step) => step.name)).toEqual(["grid-2"]);
+        expect(existsSync(result.sheets[0].path)).toBe(true);
+    });
+
+    test("an output that is an input is refused: the source folder, or a source frame as the export file", async () => {
+        const source = recordingFolder();
+        const editor = new RecordingEditor();
+        await expect(
+            editor.run({ source: { file: source }, output: source, steps: [{ kind: "frames" }] }).done
+        ).rejects.toThrow(OverwriteInputError);
+        const frame = join(source, "d1-0.png");
+        const before = sha(frame);
+        await expect(
+            editor.run({
+                source: { file: source },
+                output: join(workspace(), "edit"),
+                steps: [{ kind: "frames" }, { kind: "export", format: "mp4", output: frame }],
+            }).done
+        ).rejects.toThrow(OverwriteInputError);
+        expect(sha(frame)).toBe(before);
+    });
+
+    test("an unknown recording id is a clear error", () => {
+        expect(() =>
+            new RecordingEditor().run({ source: { recording: "no-such-recording-xyz" }, steps: [{ kind: "frames" }] })
+        ).toThrow('No recording "no-such-recording-xyz"');
+    });
+});
+
+describe.skipIf(skip.integration)("the editor on a video, and the frame review over it", () => {
+    test("prepareVideoEvidence gives the frames and grids the editor gives for the same settings", async () => {
+        const root = workspace();
+        const source = join(root, "source.mp4");
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=160x120:rate=10:duration=3",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                source,
+            ],
+        });
+        const evidence = await prepareVideoEvidence({
+            input: source,
+            outputRoot: join(root, "evidence"),
+            settings: { fps: 4, framesPerImage: 4, minimumDifferencePct: 0 },
+        });
+        // Measured on the implementation before the adapter: 12 samples, 3 sheets of 2 × 2.
+        expect(evidence.counts).toEqual({ candidates: 12, kept: 12, skipped: 0, images: 3, lastImageFrames: 4 });
+        expect(evidence.sheets.map((sheet) => [sheet.columns, sheet.rows])).toEqual([
+            [2, 2],
+            [2, 2],
+            [2, 2],
+        ]);
+
+        const direct = await new RecordingEditor().run({
+            source: { file: source },
+            output: join(root, "edit"),
+            steps: [
+                { kind: "frames", fps: 4, changeOnly: true, threshold: 0 },
+                { kind: "grid", perImage: 4, labels: "sample" },
+            ],
+        }).done;
+        expect(direct.frames.map((frame) => [frame.id, frame.actualUs, frame.kept])).toEqual(
+            evidence.frames.map((frame) => [frame.id, frame.actualUs, frame.kept])
+        );
+        expect(direct.sheets.map((sheet) => [sheet.columns, sheet.rows, sheet.frameIds])).toEqual(
+            evidence.sheets.map((sheet) => [sheet.columns, sheet.rows, sheet.frameIds])
+        );
+        expect(direct.frames.map((frame) => sha(frame.path))).toEqual(evidence.frames.map((frame) => sha(frame.path)));
+        expect(direct.sheets.map((sheet) => sha(sheet.path))).toEqual(evidence.sheets.map((sheet) => sha(sheet.path)));
+
+        const trimmed = await new RecordingEditor().run({
+            source: { file: source },
+            output: join(root, "edit"),
+            steps: [
+                { kind: "trim", from: 1, to: 2 },
+                { kind: "speed", factor: 2 },
+                { kind: "frames", fps: 4 },
+                { kind: "export", format: "gif" },
+            ],
+        }).done;
+        expect(trimmed.video?.info.durationUs).toBeLessThan(700_000);
+        expect(trimmed.frames.length).toBeGreaterThan(0);
+        expect(existsSync(trimmed.exports[0].path)).toBe(true);
+        await expect(
+            new RecordingEditor().run({
+                source: { file: source },
+                output: join(root, "edit"),
+                steps: [{ kind: "export", format: "mp4", output: source }],
+            }).done
+        ).rejects.toThrow(OverwriteInputError);
+    }, 60_000);
+});

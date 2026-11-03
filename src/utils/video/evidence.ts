@@ -1,15 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { composeImageGrid } from "@genesiscz/utils/image/grid";
-import { decodeImageRgba } from "@genesiscz/utils/image/raster";
+import { join, relative, resolve } from "node:path";
+import type { ProgressEvent } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { FrameDifferenceGuard, frameDifferenceSummary } from "./difference-guard";
-import { probeVideo, readVideoFrameTimes } from "./probe";
-import { runVideoCommand } from "./process";
-import { locateVideoSamples, planVideoSamples } from "./sampling";
+import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
+import { frameDifferenceSummary } from "./difference-guard";
 import {
     type VideoFrame,
     type VideoManifest,
@@ -27,23 +24,25 @@ export async function videoDigest(input: string): Promise<string> {
     return hash.digest("hex");
 }
 
-/**
- * ffmpeg `select` expression that keeps exactly these source frames. ffmpeg's parser refuses a flat sum of more than
- * 100 terms (exit 244, "Error while parsing expression"), so the sum is a balanced tree that nests log2(n) deep.
- */
-export function frameSelectExpression(indices: readonly number[]): string {
-    if (indices.length === 0) {
-        return "0";
+export { frameSelectExpression } from "@genesiscz/utils/recording-editor/editor";
+
+const PHASES = new Set<VideoProgress["phase"]>(["probing", "extracting", "comparing", "composing"]);
+
+/** The editor's progress in the frame review's phases; the editor's own step boundaries are dropped. */
+function toVideoProgress(event: ProgressEvent): VideoProgress | undefined {
+    const phase = event.message as VideoProgress["phase"] | undefined;
+
+    if (event.unit === "steps" || !phase || !PHASES.has(phase)) {
+        return undefined;
     }
 
-    if (indices.length === 1) {
-        return `eq(n,${indices[0]})`;
-    }
-
-    const middle = Math.floor(indices.length / 2);
-    return `(${frameSelectExpression(indices.slice(0, middle))}+${frameSelectExpression(indices.slice(middle))})`;
+    return { phase, completed: event.done, total: event.total };
 }
 
+/**
+ * The frame review's evidence (frames at a rate, change-only by a percentage, contact sheets of N frames) as one
+ * recording-editor plan in a staging folder, published by rename only when the source did not change meanwhile.
+ */
 export async function prepareVideoEvidence({
     input,
     outputRoot,
@@ -59,18 +58,12 @@ export async function prepareVideoEvidence({
 }): Promise<VideoManifest> {
     signal?.throwIfAborted();
     const settings = videoSettingsSchema.parse(rawSettings);
-    progress?.({ phase: "probing", completed: 0, total: 1 });
-    const source = await probeVideo({ input, signal });
-    const before = await stat(source.path);
-    const sha256 = await videoDigest(source.path);
-    const plan = planVideoSamples({ durationUs: source.durationUs, ...settings });
-    const sourceUs = await readVideoFrameTimes({ input: source.path, signal });
-    const samples = locateVideoSamples({ requestedUs: plan.timestampsUs, sourceUs });
-    const indices = [...new Set(samples.map((sample) => sample.sourceIndex))];
-    if (indices.length * source.displayWidth * source.displayHeight * 4 > 1024 * 1024 * 1024) {
-        throw new Error("Full-resolution frames exceed the 1 GiB preparation budget; select a lower FPS");
-    }
-
+    const path = resolve(input);
+    const before = await stat(path).catch((error: unknown) => {
+        logger.debug({ error, path }, "video evidence source is unreadable");
+        throw new Error("Choose a local video file up to 1 GiB");
+    });
+    const sha256 = await videoDigest(path);
     const id = randomUUID();
     const root = resolve(outputRoot);
     const staging = join(root, `.preparing-${id}`);
@@ -78,94 +71,60 @@ export async function prepareVideoEvidence({
     await mkdir(staging, { recursive: true });
     let published = false;
     try {
-        progress?.({ phase: "extracting", completed: 0, total: samples.length });
-        const expression = frameSelectExpression(indices);
-        await runVideoCommand({
-            command: [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "error",
-                "-i",
-                source.path,
-                "-map",
-                "0:v:0",
-                "-an",
-                "-vf",
-                `select='${expression}',format=rgba`,
-                "-fps_mode",
-                "vfr",
-                "-start_number",
-                "0",
-                "-threads",
-                "2",
-                join(staging, "source-%05d.png"),
-            ],
-            signal,
-        });
-        const paths = new Map(
-            indices.map((index, position) => [index, `source-${String(position).padStart(5, "0")}.png`])
-        );
-        const guard = new FrameDifferenceGuard({ minimumDifferencePct: settings.minimumDifferencePct });
-        const frames: VideoFrame[] = [];
-        for (const [index, sample] of samples.entries()) {
-            signal?.throwIfAborted();
-            const name = paths.get(sample.sourceIndex);
-            if (!name || !(await Bun.file(join(staging, name)).exists())) {
-                throw new Error("Decoder did not produce every selected source frame");
-            }
-
-            const image = await decodeImageRgba(join(staging, name));
-            if (image.width !== source.displayWidth || image.height !== source.displayHeight) {
-                throw new Error("Decoded dimensions do not match normalized video rotation");
-            }
-
-            const decision = guard.consider({ id: String(index), image });
-            frames.push({ ...sample, ...decision, path: join(destination, name) });
-            progress?.({ phase: "comparing", completed: index + 1, total: samples.length });
-        }
-
-        const kept = frames.filter((frame) => frame.kept);
-        const sheets: VideoManifest["sheets"] = [];
-        for (let offset = 0; offset < kept.length; offset += settings.framesPerImage) {
-            signal?.throwIfAborted();
-            const group = kept.slice(offset, offset + settings.framesPerImage);
-            const name = `sheet-${String(sheets.length + 1).padStart(3, "0")}.png`;
-            const grid = await composeImageGrid({
-                images: group.map((frame) => ({
-                    path: join(staging, paths.get(frame.sourceIndex)!),
-                    label: `${(frame.actualUs / 1_000_000).toFixed(3)} s · sample ${Number(frame.id) + 1}`,
-                })),
-                output: join(staging, name),
+        const window =
+            settings.startUs !== undefined || settings.endUs !== undefined
+                ? [{ kind: "range" as const, fromUs: settings.startUs, toUs: settings.endUs }]
+                : [];
+        const job = new RecordingEditor().run(
+            {
+                source: { file: path },
+                steps: [
+                    ...window,
+                    { kind: "frames", fps: settings.fps, changeOnly: true, threshold: settings.minimumDifferencePct },
+                    { kind: "grid", perImage: settings.framesPerImage, labels: "sample" },
+                ],
+            },
+            {
+                outputDir: staging,
+                layout: "flat",
+                receipts: false,
                 signal,
-            });
-            sheets.push({
-                path: join(destination, name),
-                frameIds: group.map((frame) => frame.id),
-                firstUs: group[0].actualUs,
-                lastUs: group[group.length - 1].actualUs,
-                ...grid,
-            });
-            progress?.({
-                phase: "composing",
-                completed: Math.min(offset + settings.framesPerImage, kept.length),
-                total: kept.length,
-            });
+                onProgress: (event) => {
+                    const mapped = toVideoProgress(event);
+
+                    if (mapped) {
+                        progress?.(mapped);
+                    }
+                },
+            }
+        );
+        const result = await job.done;
+
+        if (result.source.kind !== "video") {
+            throw new Error("Video evidence needs a video file");
         }
 
-        const after = await stat(source.path);
-        if (
-            after.size !== before.size ||
-            after.mtimeMs !== before.mtimeMs ||
-            (await videoDigest(source.path)) !== sha256
-        ) {
+        const moved = (file: string) => join(destination, relative(staging, file));
+        const frames: VideoFrame[] = result.frames.map((frame) => ({
+            requestedUs: frame.requestedUs ?? frame.actualUs,
+            actualUs: frame.actualUs,
+            sourceIndex: frame.sourceIndex ?? 0,
+            id: frame.id,
+            kept: frame.kept,
+            differencePct: frame.differencePct,
+            comparedToId: frame.comparedToId,
+            path: moved(frame.path),
+        }));
+        const sheets: VideoManifest["sheets"] = result.sheets.map((sheet) => ({ ...sheet, path: moved(sheet.path) }));
+        const after = await stat(path);
+        if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || (await videoDigest(path)) !== sha256) {
             throw new Error("Source video changed during preparation; import it again");
         }
 
         const manifest: VideoManifest = {
             version: 1,
             id,
-            source: { ...source, sha256 },
+            source: { ...result.source.info, sha256 },
             settings,
             frames,
             sheets,
