@@ -1,7 +1,7 @@
 # tools meetings
 
 > **Meetings as one record each: the projects they belong to, the dictionary that polishes their transcripts, and
-> (being built) the meeting record, recording and review.**
+> the meeting record, recording and review.**
 
 The source-neutral side of meeting transcripts. `tools wisprflow` reads Wispr Flow; this tool keeps what is the same
 for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingTranscriptPolish-Design.md`.
