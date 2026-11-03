@@ -151,3 +151,8 @@ export function grokLoginCommand(account: string): string {
 export function jevLoginCommand(provider?: string): string {
     return provider === undefined ? toolCommand("jev login") : `${toolCommand("jev login")} --provider ${provider}`;
 }
+
+/** A `tools ai-spend` report, `daily` for one; without a verb, the bare command. */
+export function aiSpendCommand(verb?: string): string {
+    return verb === undefined ? toolCommand("ai-spend") : toolCommand(`ai-spend ${verb}`);
+}

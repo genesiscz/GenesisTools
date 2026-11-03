@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentHomeEnvPatch } from "./drivers/test-env";
+import { agentHomeEnvPatch } from "@genesiscz/utils/ai/usage/spend/drivers/test-env";
 
 /**
  * `tools ai-spend series` enumerated flags, pinned through the real CLI.

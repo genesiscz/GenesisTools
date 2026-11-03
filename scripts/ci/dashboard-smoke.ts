@@ -54,7 +54,6 @@ export const SMOKE_DASHBOARDS: SmokeDashboard[] = [
         folder: "src/dev-dashboard/",
         uses: [
             "src/ai/commands/usage/",
-            "src/ai-spend/lib/",
             "src/claude/lib/",
             "src/daemon/lib/",
             "src/handoff/",

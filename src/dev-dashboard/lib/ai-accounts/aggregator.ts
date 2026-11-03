@@ -1,5 +1,4 @@
 import { registerUsagePollTask, USAGE_TASK_NAME } from "@app/ai/commands/usage/daemon";
-import type { SpendSeriesResult } from "@app/ai-spend/lib/series";
 import { getTask } from "@app/daemon/lib/config";
 import { computeNextRunAt, parseInterval } from "@app/daemon/lib/interval";
 import type {
@@ -44,6 +43,7 @@ import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
 import { CLAUDE_ALL_ACCOUNT_NAME, queryUsage, spendBucketKey } from "@genesiscz/utils/ai/usage";
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract/envelope";
+import type { SpendSeriesResult } from "@genesiscz/utils/ai/usage/spend/series";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";

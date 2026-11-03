@@ -12,6 +12,8 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { DEFAULT_PRICING } from "@genesiscz/utils/ai/usage/spend/pricing";
+import type { PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -29,8 +31,6 @@ import {
     type WorkerUsagePart,
 } from "@genesiscz/utils/worker/cost";
 import { z } from "zod";
-import { DEFAULT_PRICING } from "../pricing";
-import type { PricingTable } from "../types";
 import { formatCostLine, type WorkerCostCard, workerCostCard } from "./cost";
 
 const log = logger.child({ component: "ai-spend:worker-ledger" });
