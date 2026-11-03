@@ -10,6 +10,7 @@ import {
     usageSessionsDoor,
 } from "./frequent";
 import { navConfigureDoor, navListDoor, navRecordDoor } from "./nav";
+import { prShowDoor } from "./prs";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./transcript";
 import type { Door } from "./types";
 import { widgetCallDoor, widgetContextDoor, widgetTasksListDoor } from "./widget";
@@ -44,4 +45,5 @@ export const HUB_SERVER_DOORS: readonly Door[] = [
     widgetContextDoor,
     widgetTasksListDoor,
     proposalListDoor,
+    prShowDoor,
 ];
