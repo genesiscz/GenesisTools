@@ -79,8 +79,9 @@ export function digestDays(
 
     let day = given ?? today;
 
-    // Back to the Monday of that week; without a date, the week before the current one.
-    while (new Date(dayBounds(day, tz).start + 12 * 3_600_000).getUTCDay() !== 1) {
+    // Back to the Monday of that week; without a date, the week before the current one. The weekday is the civil
+    // date's own (its UTC noon), never an instant of the zone: in UTC+14 a local noon is still the day before in UTC.
+    while (new Date(`${day}T12:00:00.000Z`).getUTCDay() !== 1) {
         day = previousDay(day, tz);
     }
 
