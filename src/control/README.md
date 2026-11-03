@@ -577,6 +577,14 @@ Each frame carries `displayId` and `motionBoxes` (`[x, y, width, height]` in out
 
 For a supervisor, `ax-tool capture --control-stdin` (screen, window and region mode) reads one JSON command per stdin line: `{"cmd":"switch","displayId":N}` (screen mode without follow-focus; the next frame has reason `display-switch`), `{"cmd":"pause"}` (no frames are kept and the movie gets none), `{"cmd":"resume"}`, `{"cmd":"status"}` and `{"cmd":"stop"}` (the same as SIGINT). The end of stdin also stops. Events go to stderr as JSON lines: `{"event":"frame","index","displayId","timestampMs","file","path","reason"}`, `{"event":"state","state":"recording"|"paused"}` (status adds frames, capturedFrames, bytesWritten, displayId, elapsedMs), `{"event":"display-switch","from","to"}` and `{"event":"error","code","message"}`; an unknown display answers an error and the recording goes on. The result JSON stays on stdout.
 
+### Live recordings
+
+`tools control capture session` registers its recording as a live recording while it runs (kind `control-session`,
+`<genesis-tools root>/recordings/live/<id>.json` with a JSON-RPC socket beside it; `src/utils/screen-recorder/live.ts`).
+The socket's `pause`, `resume` and `stop` map onto the session's own commands, `status` returns the entry, and
+`subscribe` streams `state`, `warning` and `ended`. Both files go when the session ends. The menu bar and
+`tools meetings record` read the same folder.
+
 ### Native visual grounding
 
 `tools control see --app APP --window-id ID --perception ocr` adds local macOS Vision OCR. `--perception-crop x,y,w,h` and `--perception-width 400` crop/resize only the OCR input; rectangles map back onto the original screenshot. Known AX text inputs are excluded from OCR candidates. No Python, icon model, download or external vision API is involved.

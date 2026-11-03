@@ -3,6 +3,13 @@ import { chmod, mkdir } from "node:fs/promises";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import {
+    LiveRecordingServer,
+    type LiveState,
+    liveRecordingId,
+    RPC_ERRORS,
+    RpcError,
+} from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { ancestorPids } from "../lib/decision/frontmost";
@@ -129,6 +136,49 @@ function readCommands({ onLine, onEnd }: { onLine: (line: string) => void; onEnd
     };
 }
 
+const LIVE_STATE: Record<"starting" | "recording" | "paused" | "finishing", LiveState> = {
+    starting: "recording",
+    recording: "recording",
+    paused: "paused",
+    finishing: "stopping",
+};
+
+/** The session as a live recording: its socket maps pause, resume and stop onto the session's own commands. */
+function sessionLiveRecording(session: RecordingSession, title: string): LiveRecordingServer {
+    const server: LiveRecordingServer = new LiveRecordingServer({
+        id: liveRecordingId("control-session", `${process.pid}-${randomUUID().slice(0, 8)}`),
+        kind: "control-session",
+        title,
+        methods: {
+            pause: async () => {
+                if (server.current.state !== "recording") {
+                    throw new RpcError(RPC_ERRORS.alreadyPaused, `the recording is ${server.current.state}`);
+                }
+
+                await session.command({ cmd: "pause" });
+                return { state: server.current.state };
+            },
+            resume: async () => {
+                if (server.current.state !== "paused") {
+                    throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
+                }
+
+                await session.command({ cmd: "resume" });
+                return { state: server.current.state };
+            },
+            stop: async () => {
+                if (server.current.state === "stopping") {
+                    throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
+                }
+
+                void session.command({ cmd: "stop" });
+                return { state: "stopping" };
+            },
+        },
+    });
+    return server;
+}
+
 export function registerCaptureSessionCommands(capture: Command): void {
     capture
         .command("session")
@@ -151,6 +201,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
             // the segments on disk and no movie. Stop instead, and keep what was recorded.
             let hostGone = false;
             let session: RecordingSession | undefined;
+            let live: LiveRecordingServer | undefined;
             process.stdout.on("error", (error) => {
                 if (hostGone) {
                     return;
@@ -162,6 +213,13 @@ export function registerCaptureSessionCommands(capture: Command): void {
             });
             const emit = (event: RecordingSessionEvent) => {
                 log.info({ event }, "recording event");
+
+                if (event.event === "state") {
+                    live?.update({ state: LIVE_STATE[event.state] });
+                } else if (event.event === "error") {
+                    live?.update({ warning: event.message });
+                }
+
                 if (hostGone) {
                     return;
                 }
@@ -199,6 +257,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                     maxSeconds: boundedNumber(flags.maxSeconds, "--max-seconds", 1, RECORDING_SESSION_MAX_SECONDS),
                 });
                 log.info({ target, stopOnStdin: flags.stopOnStdin === true }, "recording session starting");
+                live = sessionLiveRecording(session, describeRecordingTarget(target));
             } catch (error) {
                 emit({ event: "error", message: error instanceof Error ? error.message : String(error), fatal: true });
                 process.exitCode = 1;
@@ -206,6 +265,8 @@ export function registerCaptureSessionCommands(capture: Command): void {
             }
 
             const active = session;
+            const activeLive = live;
+            using _live = { [Symbol.dispose]: () => activeLive?.close() };
             const outcome = await withInterrupt(
                 async (signal) => {
                     // Ctrl-C or SIGTERM keeps what was recorded: a host that quits never loses the movie.
@@ -231,6 +292,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 },
                 { handleTermination: true }
             );
+            live?.close(outcome);
             log.info({ outcome }, "recording session ended");
             if (outcome === "failed") {
                 process.exitCode = 1;
