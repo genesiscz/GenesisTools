@@ -6,7 +6,7 @@ import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/an
 import { windowRanker } from "@genesiscz/utils/ai/providers/usage-rank";
 import { pickRanked, rankAccounts, rankerFor } from "@genesiscz/utils/ai/usage/account-rank";
 import { adviseAccounts } from "@genesiscz/utils/ai/usage/advise";
-import type { AccountForecast, WindowForecast } from "@genesiscz/utils/ai/usage/forecast/forecast";
+import { type AccountForecast, type WindowForecast, windowStartMs } from "@genesiscz/utils/ai/usage/forecast/forecast";
 
 const NOW = new Date("2026-10-25T20:00:00.000Z");
 const inHours = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000).toISOString();
@@ -195,6 +195,18 @@ describe("the ranker each provider declares", () => {
         expect(rankerFor("openai-sub")).toBe(windowRanker);
         expect(rankerFor("grok-sub")).toBe(windowRanker);
         expect(rankerFor("someday-sub")).toBe(windowRanker);
+    });
+});
+
+describe("the forecast window start", () => {
+    it("a monthly window steps one calendar month back with the day clamped to the shorter month", () => {
+        const start = (iso: string) => new Date(windowStartMs({ kind: "monthly", bucket: "monthly" }, Date.parse(iso)));
+
+        expect(start("2026-03-31T10:00:00.000Z").toISOString()).toBe("2026-02-28T10:00:00.000Z");
+        expect(start("2026-03-29T10:00:00.000Z").toISOString()).toBe("2026-02-28T10:00:00.000Z");
+        expect(start("2028-03-30T10:00:00.000Z").toISOString()).toBe("2028-02-29T10:00:00.000Z");
+        expect(start("2026-05-15T10:00:00.000Z").toISOString()).toBe("2026-04-15T10:00:00.000Z");
+        expect(start("2026-01-31T10:00:00.000Z").toISOString()).toBe("2025-12-31T10:00:00.000Z");
     });
 });
 
