@@ -96,6 +96,29 @@ export async function flushThenSend(flushes: Iterable<() => Promise<void>>, send
     return true;
 }
 
+/**
+ * One run at a time: a second call while the first still runs does nothing and answers false. Send uses it, because
+ * its flush runs before the mutation starts, so the mutation's own pending flag cannot block a second tap.
+ */
+export function singleFlight(): (run: () => Promise<unknown>) => Promise<boolean> {
+    let busy = false;
+
+    return async (run) => {
+        if (busy) {
+            return false;
+        }
+
+        busy = true;
+
+        try {
+            await run();
+            return true;
+        } finally {
+            busy = false;
+        }
+    };
+}
+
 export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     delivered: "Delivered",
     queued: "Queued for the next turn",

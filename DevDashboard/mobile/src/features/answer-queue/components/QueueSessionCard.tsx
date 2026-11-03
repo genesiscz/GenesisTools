@@ -1,11 +1,17 @@
 import type { WaitingSessionDto } from "@dd/contract";
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { DecisionCard } from "@/features/answer-queue/components/DecisionCard";
 import { FormCard } from "@/features/answer-queue/components/FormCard";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useSendStaged } from "@/features/answer-queue/hooks";
-import { flushThenSend, idempotencyKey, type RecentReceipt, stagedOf } from "@/features/answer-queue/units";
+import {
+    flushThenSend,
+    idempotencyKey,
+    type RecentReceipt,
+    singleFlight,
+    stagedOf,
+} from "@/features/answer-queue/units";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
@@ -38,6 +44,25 @@ export function QueueSessionCard({
             flushes.current.delete(number);
         }
     }, []);
+    // The whole flush-and-send is one guarded operation: taps during the flush do nothing, and the key is made once.
+    const once = useRef(singleFlight()).current;
+    const [flushing, setFlushing] = useState(false);
+    const busy = flushing || send.isPending;
+    const sendAll = () =>
+        void once(async () => {
+            setFlushing(true);
+            const action = {
+                session: session.sessionId ?? "",
+                ...(session.provider ? { provider: session.provider } : {}),
+                key: idempotencyKey(),
+            };
+
+            try {
+                await flushThenSend(flushes.current.values(), () => send.mutate(action));
+            } finally {
+                setFlushing(false);
+            }
+        });
 
     return (
         <Card bezel className="gap-3" testID={testId}>
@@ -85,21 +110,13 @@ export function QueueSessionCard({
                     testID={`${testId}-send`}
                     accessibilityRole="button"
                     accessibilityLabel={`Send ${staged} staged ${staged === 1 ? "pick" : "picks"}`}
-                    disabled={send.isPending}
-                    onPress={() =>
-                        void flushThenSend(flushes.current.values(), () =>
-                            send.mutate({
-                                session: session.sessionId ?? "",
-                                ...(session.provider ? { provider: session.provider } : {}),
-                                key: idempotencyKey(),
-                            })
-                        )
-                    }
+                    disabled={busy}
+                    onPress={sendAll}
                     className="min-h-11 items-center justify-center rounded-lg px-4"
-                    style={{ backgroundColor: c.accent, opacity: send.isPending ? 0.6 : 1 }}
+                    style={{ backgroundColor: c.accent, opacity: busy ? 0.6 : 1 }}
                 >
                     <Text className="font-bold" style={{ color: c.bgBase, fontFamily: "monospace" }}>
-                        {send.isPending ? "Sending…" : `Send ${staged} staged`}
+                        {busy ? "Sending…" : `Send ${staged} staged`}
                     </Text>
                 </Pressable>
             ) : null}
