@@ -15,6 +15,8 @@ const DURATION = /^(\d+)(s|m|h|d|w)$/;
  * `30s`, `90m`, `6h`, `24h`, `7d`, `4w` as milliseconds; anything else is undefined. A duration
  * is a fixed length: `7d` is 168 hours even across a DST change. `m` is minutes, never months.
  */
+const MAX_DATE_MS = 8.64e15;
+
 export function parseDurationMs(text: string): number | undefined {
     const match = DURATION.exec(text.trim().toLowerCase());
 
@@ -29,7 +31,10 @@ export function parseDurationMs(text: string): number | undefined {
         return undefined;
     }
 
-    return count * unit;
+    const ms = count * unit;
+
+    // A Date holds at most 8.64e15 ms either side of 1970: a longer span names no instant.
+    return ms <= MAX_DATE_MS ? ms : undefined;
 }
 
 /**
