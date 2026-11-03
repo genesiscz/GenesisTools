@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { isInteractive, parseByteSize, parseNonNegativeInt } from "@genesiscz/utils/cli";
+import { isInteractive, parseByteSize, parseNonNegativeInt, suggestCommand } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -369,7 +369,7 @@ async function runShrink({ file, flags, signal }: { file: string; flags: ShrinkF
                 };
             },
         });
-        renderOutcome({ outcome, format, flags, tool, input, targetBytes });
+        renderOutcome({ outcome, format, flags, tool, targetBytes });
 
         if (signal.aborted) {
             // Ctrl-C while the finished result was scored: the row above is reported, the run still ends as stopped.
@@ -400,14 +400,12 @@ function renderOutcome({
     format,
     flags,
     tool,
-    input,
     targetBytes,
 }: {
     outcome: ShrinkOutcome;
     format: string;
     flags: ShrinkFlags;
     tool: string;
-    input: string;
     targetBytes: number | undefined;
 }): void {
     if (outcome.kind === "no-preset") {
@@ -427,7 +425,7 @@ function renderOutcome({
     if (outcome.kind === "not-chosen") {
         if (!isInteractive() && !flags.yes) {
             out.log.info(
-                `Not a terminal, so nothing was encoded. Encode the recommendation: ${tool} ${input} ${flags.to ? `--to ${flags.to} ` : ""}--yes`
+                `Not a terminal, so nothing was encoded. Encode the recommendation: ${suggestCommand(tool, { add: ["--yes"], subcommand: ["shrink"] })}`
             );
         }
 
