@@ -42,15 +42,14 @@ export async function recordRoundAndAlert(input: {
         now
     );
     const store = new UsageAlertsStore(connection);
-    const seeded = store.hasRule("threshold")
-        ? 0
-        : seedThresholdAlerts({
-              store,
-              trackers: await (input.trackers ?? (() => readNotifiedThresholds(input.storage)))(),
-              snapshots: input.snapshots,
-              settings: input.config.alerts.rules.threshold,
-              now,
-          });
+    // Every tick: the seed is per window, and a window that could not be read on the first tick still needs it.
+    const seeded = seedThresholdAlerts({
+        store,
+        trackers: await (input.trackers ?? (() => readNotifiedThresholds(input.storage)))(),
+        snapshots: input.snapshots,
+        settings: input.config.alerts.rules.threshold,
+        now,
+    });
     const round = buildAlertRound({ db: connection, snapshots: input.snapshots, now, previousRoundAt });
     const fired = await runAlertEngine({
         round,
