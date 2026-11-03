@@ -58,8 +58,9 @@ function text(input: Readonly<Record<string, unknown>>, key: string): string | u
 }
 
 /**
- * The largest transcript page the gateway serves. The loader reads `offset + limit` turns, so an unbounded limit would
- * hydrate a whole large session in the dashboard process; the hub's own door does not parse through here.
+ * The largest transcript page the gateway serves. An unbounded limit would hydrate a whole large session in the
+ * dashboard process; the hub's own door does not parse through here. The cap bounds the page; the gateway's newest
+ * turns (`tail`) also bound the read to the end of the file when the transcript has no turn index.
  */
 export const TRANSCRIPT_PAGE_MAX = 500;
 
@@ -119,6 +120,12 @@ export interface TranscriptInput {
     limit: number;
     offset?: number;
     provider?: TranscriptProvider;
+    /**
+     * The newest turns only, without session-wide positions: a large transcript without a turn index is read from its
+     * end (`transcriptTailEnvelope`), not parsed whole. The gateway asks for it when it gives no offset; the hub's door
+     * leaves it off, because its paging and live follow need `turnCount` and a session-wide `nextOffset`.
+     */
+    tail?: boolean;
 }
 
 /** Every hub capability the gateway serves. A new one is one entry; the gateway route and the door read this table. */
@@ -223,7 +230,8 @@ export const HUB_CAPABILITIES = {
                 throw new CapabilityRefusedError("bad-input", `limit must be between 1 and ${TRANSCRIPT_PAGE_MAX}`);
             }
 
-            return { query, limit, offset: wholeNumber(input, "offset"), provider };
+            const offset = wholeNumber(input, "offset");
+            return { query, limit, offset, provider, tail: offset === undefined };
         },
         async run(input: TranscriptInput, { signal }) {
             const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");
@@ -232,7 +240,11 @@ export const HUB_CAPABILITIES = {
             signal.throwIfAborted();
             const resolved = await resolveTranscript(input.query, {}, input.provider);
             signal.throwIfAborted();
-            return transcriptEnvelope(resolved, { offset: input.offset, limit: input.limit });
+            return transcriptEnvelope(
+                resolved,
+                { offset: input.offset, limit: input.limit },
+                { boundedTail: input.tail === true }
+            );
         },
     } satisfies HubCapability<TranscriptInput>,
 
