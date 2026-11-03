@@ -318,6 +318,14 @@ public struct WidgetDraft: Codable, Equatable, Sendable {
         self.assetIds = assetIds
     }
 }
+/// The widget Usage module's preferences (`usage` in the widget schema, src/hub/lib/widget/types.ts).
+public struct WidgetUsagePreferences: Codable, Equatable, Sendable {
+    /// The window an account's ring shows: the week (default) or the 5 hours.
+    public var ringWindow: WidgetUsageRingWindow?
+
+    public init(ringWindow: WidgetUsageRingWindow? = nil) { self.ringWindow = ringWindow }
+}
+
 public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var excludedKeys: [String]
     public var projects: [String]
@@ -429,6 +437,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     /// Where a decision card puts the agent's reason for its pick: "option" (default, under the recommended option)
     /// or "above" (above the options, as the hub's Inbox card).
     public var decisionProposal: String?
+    /// The Usage module's own preferences; nil (a state saved before the module) reads as the defaults.
+    public var usage: WidgetUsagePreferences?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
