@@ -3,7 +3,7 @@ import { openBrowserAsync } from "expo-web-browser";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { WebViewNoteRenderer } from "@/features/obsidian/components/NoteRenderer";
 import { useNote, usePublishNote, useUnpublishNote } from "@/features/obsidian/hooks";
-import { shareUrl } from "@/features/obsidian/note-html";
+import { noteShare } from "@/features/obsidian/note-html";
 import { usePlainBaseUrl } from "@/state/connection-store";
 import { useThemeColors } from "@/theme/colors";
 
@@ -14,9 +14,11 @@ interface Props {
 
 /**
  * Note reader: a header (note path, publish/unpublish, share-slug surface) + the WebView body. When
- * `publishedSlug` is set the header shows the public `<baseUrl>/share/<slug>` (tap to open in the
- * system browser; long-press the URL text to copy) + an unpublish control; otherwise it shows a
- * publish control. Mutations invalidate the note query so the controls flip after publish/unpublish.
+ * `publishedSlug` is set the header shows an unpublish control, and on a tier with a plain base URL the public
+ * `<baseUrl>/share/<slug>` (tap to open in the system browser; long-press the URL text to copy). The managed tier has
+ * no such URL, so it says the link opens over a direct connection instead of offering one that cannot open.
+ * Without a slug it shows a publish control. Mutations invalidate the note query so the controls flip after
+ * publish/unpublish.
  *
  * Clipboard note: one-tap copy would want `expo-clipboard` (a NEW lib — flagged in the impl notes,
  * not added unilaterally per D20). v1 ships the URL as selectable text (long-press → copy) which is
@@ -45,7 +47,7 @@ export function NoteReader({ path, onOpenNote }: Props) {
         );
     }
 
-    const url = shareUrl(baseUrl ?? "", data.publishedSlug);
+    const { published, url } = noteShare(baseUrl, data.publishedSlug);
 
     return (
         <View style={[styles.fill, { backgroundColor: c.bgBase }]} testID="obsidian-reader">
@@ -53,30 +55,40 @@ export function NoteReader({ path, onOpenNote }: Props) {
                 <Text style={[styles.path, { color: c.textSecondary }]} numberOfLines={1} testID="obsidian-reader-path">
                     {path}
                 </Text>
-                {url ? (
+                {published ? (
                     <View style={styles.headerActions}>
-                        <Pressable
-                            testID="obsidian-share-open"
-                            accessibilityLabel="open share link"
-                            style={[styles.iconBtn, { borderColor: c.border }]}
-                            onPress={() => {
-                                openBrowserAsync(url).catch((err) => {
-                                    // User dismissed the in-app browser, or the scheme is unsupported.
-                                    // Not an app error — the URL stays visible/selectable for manual copy.
-                                    console.warn("obsidian: open share link failed", err);
-                                });
-                            }}
-                        >
-                            <Feather name="globe" size={13} color={c.textSecondary} />
-                            <Text
-                                testID="obsidian-share-url"
-                                selectable
-                                style={[styles.btnLabel, { color: c.textSecondary }]}
-                                numberOfLines={1}
+                        {url ? (
+                            <Pressable
+                                testID="obsidian-share-open"
+                                accessibilityLabel="open share link"
+                                style={[styles.iconBtn, { borderColor: c.border }]}
+                                onPress={() => {
+                                    openBrowserAsync(url).catch((err) => {
+                                        // User dismissed the in-app browser, or the scheme is unsupported.
+                                        // Not an app error — the URL stays visible/selectable for manual copy.
+                                        console.warn("obsidian: open share link failed", err);
+                                    });
+                                }}
                             >
-                                {url}
+                                <Feather name="globe" size={13} color={c.textSecondary} />
+                                <Text
+                                    testID="obsidian-share-url"
+                                    selectable
+                                    style={[styles.btnLabel, { color: c.textSecondary }]}
+                                    numberOfLines={1}
+                                >
+                                    {url}
+                                </Text>
+                            </Pressable>
+                        ) : (
+                            <Text
+                                testID="obsidian-share-no-link"
+                                style={[styles.btnLabel, { color: c.textMuted }]}
+                                numberOfLines={2}
+                            >
+                                {"Published. Open its share link over a direct connection; the relay serves no share pages."}
                             </Text>
-                        </Pressable>
+                        )}
                         <Pressable
                             testID="obsidian-unpublish"
                             accessibilityLabel="unpublish note"

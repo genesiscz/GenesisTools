@@ -203,10 +203,23 @@ export function parseNoteMessage(raw: string): NoteMessage | null {
     return null;
 }
 
-export function shareUrl(baseUrl: string, slug: string | null): string | null {
-    if (!slug) {
+/**
+ * The absolute `<baseUrl>/share/<slug>` link, or null without a slug or without a usable base URL. The managed tier
+ * has none (`usePlainBaseUrl`): its base URL is the relay, which serves no share page, so a relative `/share/<slug>`
+ * would neither open nor copy as a working link.
+ */
+export function shareUrl(baseUrl: string | null, slug: string | null): string | null {
+    if (!slug || !baseUrl) {
         return null;
     }
 
     return `${baseUrl.replace(/\/$/, "")}/share/${slug}`;
+}
+
+/**
+ * What the note reader offers for sharing. `published` comes from the note alone, so a published note keeps its
+ * Unpublish on every tier; `url` is the link to open or copy, null where the tier has no plain base URL.
+ */
+export function noteShare(baseUrl: string | null, slug: string | null): { published: boolean; url: string | null } {
+    return { published: Boolean(slug), url: shareUrl(baseUrl, slug) };
 }
