@@ -33,6 +33,7 @@ interface DownloadFlags {
     chromeCdpWait: string;
     waitRecording?: boolean | string;
     fromStream?: boolean;
+    keepParts?: boolean;
 }
 
 /** How long `--wait-recording` without a value waits for a broadcast to end and its recording to appear. */
@@ -105,6 +106,10 @@ export function registerStreamCommands(program: Command): void {
             `While the broadcast is live or its recording is not made yet, wait for the platform's recording, asking every minute (default ${DEFAULT_RECORDING_WAIT_MINUTES} min)`
         )
         .option("--from-stream", "Never take the platform's recording; only the HLS streams are offered")
+        .option(
+            "--keep-parts",
+            "Keep <out>.parts after a complete download (default: it is deleted 10 minutes after the download completes)"
+        )
         .option("--json", "Print the result as JSON")
         .action(async (input: string | undefined, flags: DownloadFlags) => {
             await runDownload(input, flags);
@@ -375,6 +380,7 @@ async function runStream({
                     idleTimeoutMs: idleTimeoutSec * 1000,
                     backfill: flags.backfill,
                     stitchOnly: flags.stitchOnly === true,
+                    keepParts: flags.keepParts === true,
                     signal,
                     onProgress: (progress) => {
                         const now = Date.now();
@@ -437,7 +443,13 @@ async function runStream({
                     out.log.warn(`The stream may still be live. Download the rest: ${resumeCommand}`);
                 }
 
-                out.log.info(`The segments stay in ${result.partsDir} for a resume; remove the folder when done.`);
+                if (result.partsTrashBatch) {
+                    out.log.info(
+                        `The segments went to the trash (${toolCommand("rm", "restore", result.partsTrashBatch)} brings them back).`
+                    );
+                } else {
+                    out.log.info(`The segments stay in ${result.partsDir} for a resume; remove the folder when done.`);
+                }
             } catch (error) {
                 if (signal.aborted) {
                     spinner?.stop("Stopped.");
