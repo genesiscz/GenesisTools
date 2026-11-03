@@ -141,3 +141,34 @@ export function windowKbps({
     const share = (windowSourceKbps / overallSourceKbps) ** RATE_FOLLOWS_COMPLEXITY;
     return Math.round(kbps * Math.min(4, Math.max(0.25, share)));
 }
+
+/**
+ * A 10 s window lands less exactly than a full two-pass encode, so the preview corrects only a real miss, like the GPU
+ * encoder's QP floor (124% of the target on the full talk), not the few percent of rate noise.
+ */
+export const PREVIEW_BAND = { low: 0.75, high: 1.1 } as const;
+
+/**
+ * The rate for a preview window's next attempt, or null when `bytes` is inside `PREVIEW_BAND` of `plannedBytes`.
+ * `plannedBytes` is the window's share of the target, fixed before the first attempt, as the full encode keeps the
+ * target fixed: measured against the bytes of its own corrected rate, a window at half the budget passed after one
+ * correction.
+ */
+export function previewCorrection({
+    kbps,
+    bytes,
+    plannedBytes,
+}: {
+    /** The rate of the attempt that wrote `bytes`. */
+    kbps: number;
+    bytes: number;
+    plannedBytes: number;
+}): number | null {
+    const ratio = bytes / plannedBytes;
+
+    if (ratio >= PREVIEW_BAND.low && ratio <= PREVIEW_BAND.high) {
+        return null;
+    }
+
+    return Math.max(1, Math.round((kbps * plannedBytes) / Math.max(1, bytes)));
+}

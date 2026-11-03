@@ -63,7 +63,7 @@ import {
     sourceChange,
     undoCommand,
 } from "./encode";
-import { chooseHeight, recommendPreset, windowKbps } from "./shrink/recommend";
+import { chooseHeight, previewCorrection, recommendPreset, windowKbps } from "./shrink/recommend";
 
 const encoder = findEncoder("hevc") as VideoEncoder;
 const madeDirs: string[] = [];
@@ -458,6 +458,18 @@ describe("shrink sampling and choices", () => {
         expect(windowKbps({ kbps: 400, windowSourceKbps: 4926, overallSourceKbps: 1900 })).toBe(708);
         expect(windowKbps({ kbps: 400, windowSourceKbps: 1, overallSourceKbps: 1900 })).toBe(100);
         expect(windowKbps({ kbps: 400, windowSourceKbps: 0, overallSourceKbps: 1900 })).toBe(400);
+    });
+
+    test("every preview correction is measured against the window's first planned bytes", () => {
+        // 400 kbit/s over 10 s plans 500 kB. The first attempt doubled it, so the rate halves to 200.
+        const plannedBytes = 500_000;
+        const first = previewCorrection({ kbps: 400, bytes: 1_000_000, plannedBytes });
+        expect(first).toBe(200);
+
+        // At 200 kbit/s the window wrote 250 kB: that is its own rate's size, but half the plan, so it is corrected.
+        expect(previewCorrection({ kbps: 200, bytes: 250_000, plannedBytes })).toBe(400);
+        expect(previewCorrection({ kbps: 200, bytes: 500_000, plannedBytes })).toBeNull();
+        expect(previewCorrection({ kbps: 200, bytes: 540_000, plannedBytes })).toBeNull();
     });
 
     test("the fastest preset within a VMAF point wins, and AV1 needs a 1.5 lead", () => {
