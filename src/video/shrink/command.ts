@@ -370,6 +370,11 @@ async function runShrink({ file, flags, signal }: { file: string; flags: ShrinkF
             },
         });
         renderOutcome({ outcome, format, flags, tool, input, targetBytes });
+
+        if (signal.aborted) {
+            // Ctrl-C while the finished result was scored: the row above is reported, the run still ends as stopped.
+            process.exitCode = 130;
+        }
     } catch (error) {
         spinner?.stop("Stopped");
 

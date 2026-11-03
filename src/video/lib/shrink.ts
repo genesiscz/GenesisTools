@@ -1,6 +1,7 @@
 import { constants, copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
+import { logger } from "@genesiscz/utils/logger";
 import { primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { buildCompareGrid, measureQuality, type QualityScore } from "@genesiscz/utils/video/quality";
 import {
@@ -246,8 +247,20 @@ async function shrinkIn({ options, workDir }: { options: ShrinkOptions; workDir:
         onRow: sink.onRow,
     }).finally(() => sink.stop());
     const row = rows[0] ?? null;
-    const final =
-        row?.output && isWritten(row) ? await verifyFinal({ plan, references, output: row.output, signal }) : null;
+    let final: FinalCheck | null = null;
+
+    if (row?.output && isWritten(row)) {
+        try {
+            final = await verifyFinal({ plan, references, output: row.output, signal });
+        } catch (error) {
+            // The check is advisory: the result is written (and with --replace the original is in the trash), so a
+            // scoring failure or a Ctrl-C here still reports the row; the door ends a cancelled run after it.
+            if (!signal.aborted) {
+                logger.warn({ error, output: row.output }, "Could not score the finished encode");
+            }
+        }
+    }
+
     return { kind: "encoded", chosen, row, final, ...report };
 }
 
