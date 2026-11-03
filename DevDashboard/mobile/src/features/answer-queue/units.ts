@@ -108,7 +108,15 @@ export function formAnswers(form: WaitingFormDto, draft: FormDraft) {
 }
 
 /** A pick on a question: one choice replaces the last unless the question takes several. */
-export function togglePick(selected: string[], choice: string, multiple: boolean): string[] {
+export function togglePick({
+    selected,
+    choice,
+    multiple,
+}: {
+    selected: string[];
+    choice: string;
+    multiple: boolean;
+}): string[] {
     if (selected.includes(choice)) {
         return selected.filter((entry) => entry !== choice);
     }

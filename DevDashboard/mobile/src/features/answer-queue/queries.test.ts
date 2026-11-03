@@ -105,8 +105,8 @@ describe("answer queue rules", () => {
     });
 
     it("a single-choice question replaces its pick, a multiple one adds", () => {
-        expect(togglePick(["a"], "b", false)).toEqual(["b"]);
-        expect(togglePick(["a"], "b", true)).toEqual(["a", "b"]);
-        expect(togglePick(["a", "b"], "a", true)).toEqual(["b"]);
+        expect(togglePick({ selected: ["a"], choice: "b", multiple: false })).toEqual(["b"]);
+        expect(togglePick({ selected: ["a"], choice: "b", multiple: true })).toEqual(["a", "b"]);
+        expect(togglePick({ selected: ["a", "b"], choice: "a", multiple: true })).toEqual(["b"]);
     });
 });
