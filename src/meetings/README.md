@@ -25,7 +25,8 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
 | `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`languages.<global.language>.render.unclearLabel`); `--with-suggested` applies the top reading instead. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
 | `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display all\|follow-focus\|main\|<index>]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
-| `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop writes the summary into the meeting |
+| `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop answers after the last frames, the summary and the collect, and lists the frames per display in status |
+| `record start --audio mic,system`, `record mute\|unmute <source>`, `record set [--active-fps] [--idle-fps] [--threshold] [--max-long-side]` | Sound beside the frames (`.m4a` in `audio/`, listed in `audio.jsonl`), a muted source (silence in its file), live settings |
 | `record display list\|add <id>\|remove <id>\|switch <id>\|mode <policy>` | Which displays the running recording records; a change applies at once |
 | `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of each recorded screen around a transcript time |
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
@@ -87,9 +88,20 @@ never touches the meeting being recorded, and `retention-last.json` beside the m
 display, the frame still on that screen; a time outside the recorded spans says so and when the recording ran.
 
 While it runs, the recorder is a live recording (`<genesis-tools root>/recordings/live/<id>.json`, kind `meeting`)
-with a JSON-RPC socket beside it: `status`, `pause`, `resume`, `stop`, `displays.list|add|remove|switch|mode` and
-`subscribe` (events `state`, `frame`, `displays`, `warning`, `ended`). The `record` commands use that socket; a
-pause or stop ends the running piece at once and keeps its frames.
+with a JSON-RPC socket beside it. The socket serves the recorder's `RecorderControl`
+(`src/utils/screen-recorder/control.ts`), the one method set of every recorder kind: `status`, `pause`, `resume`,
+`stop {wait}`, `displays.list|add|remove|switch|mode`, `jobs.list`, `audio.list|mute|setInput`,
+`settings.get|set`, and `subscribe` (events `state`, `frame`, `displays`, `warning`, `progress`, `ended`).
+`RecorderClient` is the same interface over the socket, and the `record` commands use it. With ax-tool's
+`--control-stdin`, a pause, a display switch, a settings change, a mute and a microphone switch go to the running
+capture without a restart, and frames reach the socket as they land. A recorder without the command restarts that
+capture. The OCR backlog, the summary and the collect run on the shared job runner (`@genesiscz/utils/jobs`) as
+`progress` notifications. `stop` answers after them, or at once with `{wait: false}` and the job id.
+
+Sound is off by default (the transcript source records it). `capture.recorders.native.audio` (`sources`,
+`micDevice`) or `record start --audio` turn it on. One capture per piece records it as `--audio-sidecar` `.m4a`
+files, moved to `audio/`, with muted spans in `audio.jsonl`. Peekaboo records one display at a time (its
+ScreenCaptureKit lock), so `displays: "all"` falls back to the main display with a warning.
 
 The `recording` block of the record has a schema (`RecordingBlock` in `src/utils/meetings/record.ts`): `spans` (from,
 to and stop reason: `requested`, `paused`, `failed`, `error`), `frames` and `bytes` (every frame in `frames/`, also

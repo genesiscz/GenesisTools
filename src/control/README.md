@@ -586,9 +586,11 @@ The same channel changes a running recording: `{"cmd":"mute","source":"mic"|"sys
 
 `tools control capture session` registers its recording as a live recording while it runs (kind `control-session`,
 `<genesis-tools root>/recordings/live/<id>.json` with a JSON-RPC socket beside it; `src/utils/screen-recorder/live.ts`).
-The socket's `pause`, `resume` and `stop` map onto the session's own commands, `status` returns the entry, and
-`subscribe` streams `state`, `warning` and `ended`. Both files go when the session ends. The menu bar and
-`tools meetings record` read the same folder.
+The socket serves the session as a `RecorderControl` (`src/control/lib/recording-session-control.ts`): `status`,
+`pause`, `resume`, `stop {wait}` (the segment join runs as a job with `progress`), `discard`, `restart`,
+`target.switch {target}`, `displays.list`, `displays.switch {displayId}` and `jobs.list`. The stdin JSONL commands go
+through the same adapter, so stdin and the socket behave alike. Both files go when the session ends. The menu bar
+and `tools meetings record` read the same folder.
 
 ### Native visual grounding
 
