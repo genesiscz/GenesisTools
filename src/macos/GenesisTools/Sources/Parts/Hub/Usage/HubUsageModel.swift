@@ -74,6 +74,42 @@ struct HubUsageSessionRef: Equatable {
     let harness: String?
 }
 
+/// A Usage place's selection in the history and in `place.json`: the section, or `session:<id>` (then a space and the
+/// harness when known) for one session's analysis, so a restore reopens that session and not an empty Session section.
+struct HubUsagePlace: Equatable {
+    var section: HubUsageSection
+    var session: HubUsageSessionRef?
+
+    static let sessionPrefix = "session:"
+
+    init(section: HubUsageSection, session: HubUsageSessionRef?) {
+        self.section = section
+        self.session = section == .session ? session : nil
+    }
+
+    init?(selection: String) {
+        guard selection.hasPrefix(Self.sessionPrefix) else {
+            guard let section = HubUsageSection(rawValue: selection) else { return nil }
+            self.init(section: section, session: nil)
+            return
+        }
+        let parts = selection.dropFirst(Self.sessionPrefix.count).split(separator: " ", maxSplits: 1).map(String.init)
+        guard let id = parts.first, !id.isEmpty else { return nil }
+        self.init(section: .session, session: HubUsageSessionRef(id: id, harness: parts.count > 1 ? parts[1] : nil))
+    }
+
+    var selection: String {
+        guard let session else { return section.rawValue }
+        return Self.sessionPrefix + session.id + (session.harness.map { " " + $0 } ?? "")
+    }
+
+    /// The `--hub` flags that open this place.
+    var arguments: [String] {
+        guard let session else { return ["--usage-section", section.rawValue] }
+        return ["--usage-session", session.id] + (session.harness.map { ["--usage-harness", $0] } ?? [])
+    }
+}
+
 /// The Usage mode's state. Every number comes from `tools ai usage … --json` and `tools ai-spend … --json` (through the
 /// hub server where it has the door), never from SQLite or a transcript. A section loads when it opens and again at
 /// most every two minutes, or on Refresh; nothing polls while the mode is closed.
@@ -124,6 +160,8 @@ final class HubUsageModel: ObservableObject {
     /// dropped, so the old answer never lands under the new parameters or marks them fresh.
     private var generations: [HubUsageDoorKey: Int] = [:]
     private(set) var active = false
+    /// The preferences the doors were last read or rebuilt for; `activate` compares them with the current ones.
+    private var seenSettings: UsageSettings?
 
     let preferences: UsagePreferences
     private let client: UsageClient
@@ -142,8 +180,12 @@ final class HubUsageModel: ObservableObject {
 
     func activate() {
         active = true
+        preferencesChanged()
         loadIfStale()
     }
+
+    /// Where the mode is, for the history and `place.json`.
+    var place: HubUsagePlace { HubUsagePlace(section: section, session: analysisSession) }
 
     func deactivate() { active = false }
 
@@ -159,6 +201,20 @@ final class HubUsageModel: ObservableObject {
     func reload() {
         loaded = [:]
         load(section.doors(settings))
+    }
+
+    /// The preferences changed, on screen or while another mode showed (UsageMain is not in the tree then, so its
+    /// `onChange` never saw it): the range-bound doors read again when the range, the resolution or the stack moved,
+    /// else the lanes rebuild from what is loaded.
+    func preferencesChanged() {
+        let now = settings
+        defer { seenSettings = now }
+        guard let old = seenSettings, old != now else { return }
+        if old.range != now.range || old.resolution != now.resolution || old.spendStack != now.spendStack {
+            rangeChanged()
+        } else {
+            settingsChanged()
+        }
     }
 
     /// The range or the resolution changed: the range-bound doors read again, and a read still running for the old
@@ -372,7 +428,8 @@ final class HubUsageModel: ObservableObject {
 
     /// Selects the accounts a link named (`--usage-account`). Rows already on screen take the selection at once (a
     /// fresh table starts no load, so waiting for the next rebuild left the old selection); the names wait for the
-    /// next rebuild only while no row matches yet.
+    /// next rebuild only while no row matches yet. Each name resolves as `tools ai usage --account` does: an id,
+    /// `provider/name` or a name, case-insensitive, and a name two providers share selects nothing.
     func selectAccounts(named names: [String]) {
         pendingAccounts = names
         applyPendingAccounts()
@@ -380,12 +437,22 @@ final class HubUsageModel: ObservableObject {
 
     private func applyPendingAccounts() {
         guard !pendingAccounts.isEmpty else { return }
-        let wanted = Set(pendingAccounts)
-        let ids = table.rows.filter { wanted.contains($0.account.accountId) || wanted.contains($0.account.accountName) }.map(\.id)
+        let ids = pendingAccounts.compactMap { Self.uniqueRow(for: $0, in: table.rows)?.id }
         if !ids.isEmpty {
             selectedAccounts = ids
             pendingAccounts = []
         }
+    }
+
+    /// The one row a selector names, or nil when it names none or several.
+    static func uniqueRow(for selector: String, in rows: [UsageTableRow]) -> UsageTableRow? {
+        let wanted = selector.lowercased()
+        let matches = rows.filter { row in
+            let account = row.account
+            return [account.accountId, account.accountName, account.provider + "/" + account.accountName]
+                .contains { $0.lowercased() == wanted }
+        }
+        return matches.count == 1 ? matches[0] : nil
     }
 
     /// Acknowledges an alert (`tools ai usage alerts ack <id>`), then reads the alerts again.

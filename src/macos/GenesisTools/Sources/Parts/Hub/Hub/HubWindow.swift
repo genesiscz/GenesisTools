@@ -96,6 +96,8 @@ struct HubRequest {
     /// Usage/HubUsageModel.swift).
     var usageSection: String?
     var usageSession: String?
+    /// The harness of `--usage-session` when known (`--usage-harness codex`).
+    var usageHarness: String?
     /// Usage mode: shows these accounts' lanes (`--usage-account <id or name>`, repeatable).
     var usageAccounts: [String] = []
     /// `--set <key>=<true|false>`: a setting of the scratch copy a scripted run starts from (the PR
@@ -217,6 +219,7 @@ struct HubRequest {
                 }
                 index += 1
             case "--usage-session": usageSession = value; index += 1
+            case "--usage-harness": usageHarness = value; index += 1
             case "--usage-account":
                 if let value { usageAccounts.append(value) }
                 index += 1
@@ -1076,7 +1079,7 @@ final class HubModel {
         case .inbox: return HubNavEntry(mode: .inbox, selection: inbox.selectedID ?? Self.wholeList)
         case .timeline: return HubNavEntry(mode: .timeline, selection: Self.wholeList)
         case .agents: return HubNavEntry(mode: .agents, selection: agents.selectedID ?? Self.wholeList)
-        case .usage: return HubNavEntry(mode: .usage, selection: usage.section.rawValue)
+        case .usage: return HubNavEntry(mode: .usage, selection: usage.place.selection)
         }
     }
 
@@ -1172,7 +1175,13 @@ final class HubModel {
         case .timeline:
             break
         case .usage:
-            if let section = HubUsageSection(rawValue: id) { usage.section = section }
+            if let place = HubUsagePlace(selection: id) {
+                if let session = place.session {
+                    usage.openSession(session.id, harness: session.harness)
+                } else {
+                    usage.section = place.section
+                }
+            }
         case .agents:
             if id == Self.wholeList {
                 agents.selectedID = nil
@@ -1232,7 +1241,8 @@ final class HubModel {
         case .timeline:
             name = "Activity"
         case .usage:
-            name = "Usage: " + (HubUsageSection(rawValue: id)?.title ?? id)
+            let place = HubUsagePlace(selection: id)
+            name = "Usage: " + (place?.session.map { "session " + $0.id.prefix(8) } ?? place?.section.title ?? id)
         case .agents:
             name = id == Self.wholeList ? "Agents" : agents.selectedMain.map { "main of " + $0.displayTitle } ?? ("agent " + (agents.selected?.node.title ?? String((AgentTree.split(id)?.child ?? id).prefix(12))))
         }
@@ -1945,7 +1955,7 @@ final class HubModel {
                     usage.section = .limits
                 }
                 if let id = request.usageSession {
-                    usage.openSession(id)
+                    usage.openSession(id, harness: request.usageHarness)
                 } else if let section = request.usageSection.flatMap(HubUsageSection.init(rawValue:)) {
                     usage.section = section
                 }
