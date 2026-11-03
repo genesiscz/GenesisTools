@@ -96,6 +96,20 @@ export interface MonitorDriver {
     spendSessionId(sessionId: string, home: string | null | undefined): string | null;
     /** Where a transcript names its session and project (`reports/native.ts` picks its reader by the kind). */
     spendLayout: SpendLayout;
+    /**
+     * Whose transcript a spend file is, from its path alone: the session, the lead session a sub-agent's file belongs
+     * to (the id the pin journal keys), and a project label. Attribution reads it per file of the events cache.
+     */
+    transcriptOwner(file: string): TranscriptOwner;
+}
+
+export interface TranscriptOwner {
+    sessionId: string;
+    /** The session itself, or the lead whose sub-agent wrote the file. */
+    leadSessionId: string;
+    subagent: boolean;
+    /** A short project label; empty when the layout names no project. */
+    project: string;
 }
 
 /**

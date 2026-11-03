@@ -24,6 +24,7 @@ function fakeDriver(options: {
         sharedAccountRow: null,
         spendSessionId: (sessionId) => sessionId,
         spendLayout: { kind: "rows" },
+        transcriptOwner: (file) => ({ sessionId: file, leadSessionId: file, subagent: false, project: "" }),
     };
 }
 

@@ -122,6 +122,11 @@ export function aiUsageCommand(...words: string[]): string {
     return toolCommand(["ai usage", ...words].join(" "));
 }
 
+/** A per-session analysis verb, `tools ai sessions <words>` (`report <id>`). */
+export function aiSessionsCommand(...words: string[]): string {
+    return toolCommand(["ai sessions", ...words].join(" "));
+}
+
 /** Logs a Claude subscription account in; without an account, the bare command. */
 export function claudeLoginCommand(account?: string): string {
     return account === undefined ? toolCommand("claude login") : `${toolCommand("claude login")} ${account}`;

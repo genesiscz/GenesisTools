@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { findCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import { codexClassifyPath, findCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import { createCodexUsageParser } from "@genesiscz/utils/agent-sessions/readers/codex-usage";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -103,6 +103,13 @@ export const codexDriver: MonitorDriver = {
 
     // A rollout names its thread in its file name and records no project.
     spendLayout: { kind: "path", session: (file) => transcriptStem(basename(file)), project: () => "" },
+
+    // A rollout names its thread in its file name and no project.
+    transcriptOwner(file) {
+        const sessionId = codexClassifyPath(basename(file))?.sessionId ?? transcriptStem(basename(file));
+
+        return { sessionId, leadSessionId: sessionId, subagent: false, project: "" };
+    },
 
     /**
      * Codex keys usage by the rollout's file name (`rollout-<time>-<thread id>`), so the thread's rollout is looked up
