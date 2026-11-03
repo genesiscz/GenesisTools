@@ -1,14 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import { anthropicRanker } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/rank";
 import { scoreAccounts, sortGrouped } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/scorer";
-import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
-import {
-    ACCOUNT_RANKERS,
-    pickRanked,
-    rankAccounts,
-    rankerFor,
-    windowRanker,
-} from "@genesiscz/utils/ai/usage/account-rank";
+import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/snapshot-usage";
+import { windowRanker } from "@genesiscz/utils/ai/providers/usage-rank";
+import { pickRanked, rankAccounts, rankerFor } from "@genesiscz/utils/ai/usage/account-rank";
 import { adviseAccounts } from "@genesiscz/utils/ai/usage/advise";
 import type { AccountForecast, WindowForecast } from "@genesiscz/utils/ai/usage/forecast/forecast";
 
@@ -106,7 +102,7 @@ describe("rankAccounts (Grok)", () => {
     });
 });
 
-describe("ACCOUNT_RANKERS", () => {
+describe("the ranker each provider declares", () => {
     function claude(name: string, fiveHour: number, weekly: number): AccountUsageSnapshot {
         const native = {
             five_hour: { utilization: fiveHour, resets_at: inHours(3) },
@@ -156,8 +152,9 @@ describe("ACCOUNT_RANKERS", () => {
         );
     });
 
-    it("routes by plugin id, and an unknown provider gets the shared window ranker", () => {
-        expect(rankerFor("anthropic-sub")).toBe(ACCOUNT_RANKERS.claude);
+    it("routes by plugin id to the ranker the provider's usage feature declares", () => {
+        expect(rankerFor("anthropic-sub")).toBe(anthropicRanker);
+        expect(rankerFor("openai-sub")).toBe(windowRanker);
         expect(rankerFor("grok-sub")).toBe(windowRanker);
         expect(rankerFor("someday-sub")).toBe(windowRanker);
     });

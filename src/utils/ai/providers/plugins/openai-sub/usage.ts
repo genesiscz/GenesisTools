@@ -9,6 +9,7 @@ import { buildAccountLaunchOptions } from "../../../openai/account-launch-option
 import { AppServerClient, spawnAppServer } from "../../../openai/app-server-client";
 import { fileMtimeMs } from "../../../usage-poll/credential-stamp";
 import type { AccountUsageFeature, AccountUsageSnapshot, LimitWindow, UsagePollOptions } from "../../account-features";
+import { windowRanker } from "../../usage-rank";
 
 /**
  * `accounts.usage` for the Codex (ChatGPT plan) subscription (spec 2026-09-04 section 6.6).
@@ -545,6 +546,7 @@ export async function codexCredentialStamp(account: AccountEntry): Promise<numbe
 
 export const codexUsage: AccountUsageFeature = {
     poll: pollCodexAccount,
+    ranker: windowRanker,
     minIntervalMs: MIN_INTERVAL_MS,
     credentialStamp: codexCredentialStamp,
 };
