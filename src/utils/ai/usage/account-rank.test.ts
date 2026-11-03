@@ -233,6 +233,33 @@ describe("adviseAccounts", () => {
         ]);
     });
 
+    it("a model profile skips an account whose own window for that model is spent, and has no pick when all are", () => {
+        const withModel = (name: string, used: number, resetHours = 50): AccountUsageSnapshot => {
+            const base = codex(name, 0, 20);
+            const model: LimitWindow = {
+                key: "weekly_fable",
+                label: "Fable",
+                kind: "scoped",
+                scopeModel: "fable",
+                percentUsed: used,
+                resetsAt: inHours(resetHours),
+            };
+            return { ...base, limits: [...base.limits, model] };
+        };
+        const pickFor = (snapshots: AccountUsageSnapshot[]) =>
+            adviseAccounts({ snapshots, forecasts: [], models: ["fable"], now: NOW }).providers[0].profiles.find(
+                (profile) => profile.profile === "model:fable"
+            );
+
+        expect(pickFor([withModel("work", 100), withModel("personal", 60)])?.pick?.accountName).toBe("personal");
+        expect(pickFor([withModel("work", 100), withModel("personal", 99.5)])).toMatchObject({
+            pick: null,
+            runnerUp: null,
+        });
+        // A reset that already passed refilled the window.
+        expect(pickFor([withModel("work", 100, -1)])?.pick?.accountName).toBe("work");
+    });
+
     it("never picks a blocked account", () => {
         const data = adviseAccounts({ snapshots: [codex("work", 0, 100)], forecasts: [], now: NOW });
 
