@@ -64,6 +64,23 @@ describe("issueActTokens", () => {
     });
 });
 
+describe("issueActTokens on a row with no revision", () => {
+    it("stores revision 1, so an act on the button carries it and a re-posted text refuses it", async () => {
+        const { deps: d, calls, store } = deps([row({ revision: undefined })], async () => delivered);
+        const [a] = await issueActTokens({
+            row: row({ revision: undefined }),
+            surface: "telegram",
+            store: d.store,
+            now: NOW,
+        });
+
+        await act({ token: a.token, key: "telegram:q-rev", deps: d, now: NOW + 1 });
+
+        expect(store.tokens[a.token].revision).toBe(1);
+        expect(calls[0]?.expectedRevision).toBe(1);
+    });
+});
+
 describe("act", () => {
     it("answers through the door with the key as the delivery key, and a retry returns the first receipt", async () => {
         const { deps: d, calls } = deps([row()], async () => delivered);
