@@ -193,7 +193,45 @@ The daemon tick runs the engine after each poll round and records every alert it
 
 Settings live in `~/.genesis-tools/ai-usage-dashboard/config.json` under `alerts`, nested by axis: `alerts.global` (`enabled`, `quietHours: { start, end }`), `alerts.rules.<rule>` (`enabled`, `channels`, and the rule's own keys), and `alerts.providers.<plugin id>.rules.<rule>.enabled` to turn one rule off for one provider. The channels are `macos` (a banner; it honours `notifications.macos` and `notifications.sound`, and quiet hours hold it) and `inbox` (an unread card in the GenesisTools widget). Defaults: threshold to `macos`, predicted-exhaust to both, limit-state-change and rate-limited to `inbox`, health recorded only. The loader moves the old `notifications.thresholds` to `alerts.rules.threshold` once; a read-only load migrates in memory and writes nothing. On its first tick the engine seeds its record from the old notifier's trackers, so no threshold already announced fires again.
 
+- `budget`: a window with a budget burns more today than its allowance times 1.2 (`over pace`), or eats into its reserve; and "use it or lose it": a budgeted weekly or monthly window resets within 6 hours with 40% or more left (`useItBudgetedOnly: false` extends that to every window).
+
 `list`, `rules` and `test` never write; `test` judges the last poll's snapshots without polling or recording, and `--send` tries the rule's channels with its findings or one test card.
+
+### `ai usage limits spikes`, `attribution` and `drift`: who ate the bar
+
+```bash
+tools ai usage limits spikes [--since 24h] [--min-delta 5] [--window-min 10] [--kind session] [--account ...] [--json]
+tools ai usage limits attribution [--kind weekly] [--since <when>] [--account ...] [--json]
+tools ai usage limits drift [--since 28d] [--kind weekly] [--min-windows 5] [--pad 5] [--record] [--json]
+```
+
+- `spikes` (`usage.limits.spikes@1`) finds every rise of a window by `--min-delta` points within `--window-min` minutes and lists the sessions that spent on that account in the span (5 minutes before its first reading included), with their main-loop and sub-agent dollars and share. Spend of the provider that no account claims is `unattributed (another host or a missing pin)`.
+- `attribution` (`usage.limits.attribution@1`) splits each window's rise since its last reset (or since `--since`) by project and session, in dollars and in points of the bar at the account's dollars per point; unpinned spend is its own slice.
+- `drift` (`usage.limits.drift@1`) measures tokens and dollars per point per account, model and ISO week over exclusive windows (the account's bar rose and no other account of its provider rose within `--pad` minutes), with a 95% bootstrap interval. A week whose interval misses the earlier weeks' reads `limit cut?` or `limit raised?`. `--record` writes the weeks into `limit_drift`.
+
+Sessions reach accounts through each harness's spend driver (`MonitorDriver.sessionAccount`): Claude transcripts name no account, so the pin journal answers (the LAST pin of a session, flagged `approximate`); Codex and Grok answer by the account that owns the transcript's home, then by the pin. Every session row carries `next`, its `tools ai sessions report <id>`.
+
+### `ai usage budgets` and `ai usage digest`
+
+```bash
+tools ai usage budgets [list] [--provider ...] [--account ...] [--json]
+tools ai usage budgets set --account <name> --kind weekly|session|monthly [--reserve 15] [--daily 12]
+tools ai usage budgets set --spend-daily 30 [--provider codex]
+tools ai usage budgets rm --account <name> --kind weekly | --spend [--provider codex]
+tools ai usage digest [--day [YYYY-MM-DD] | --week [YYYY-MM-DD]] [--tz Europe/Prague] [--json | --write]
+```
+
+- Budgets live in the usage dashboard config under `budgets`, nested by axis: `budgets.global.spend.dailyUsd`, then `budgets.providers.<plugin id>.spend.dailyUsd` and `budgets.providers.<plugin id>.accounts.<account id>.<kind>.{ reservePct, dailyAllowancePct }`. A missing key is no budget. `list` (`usage.budgets@1`) shows each budgeted window's pace today (the allowance spreads what is left above the reserve over the days to the reset) and each spend target against today's spend. The `budget` alert rule reads the same keys.
+- The daemon tick rolls yesterday and today into `usage_daily` at most every 15 minutes: one row per account, window and local day with its first, last and highest reading, its resets, the cycles that reached 90% and the minutes measured. The rows outlive the 30-day prune of `usage_snapshots`.
+- `digest` (`usage.digest@1`) folds one day (default yesterday) or one Monday-to-Sunday week (default last week) into limits per account (an absent window reads "no limit since"), spend by provider and model with the five costliest sessions, worker cost by backend, the alerts that fired, and the windows forecast to run out before their reset. The text output is the markdown note; `--write` puts it into the hub digest folder (`tools hub digest config --folder`).
+
+### `ai sessions report`: one session's cost and cache
+
+```bash
+tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] [--json]
+```
+
+The report reads the session's `analysis` facts through its reader (`NativeSessionReader.analysis`: `callTrace`, `compactions`, `quotaReadings`), so Claude, Codex and Grok answer the same shape: cost by model and by main loop and sub-agents, the cost without any cache and the savings, the quota weight (cache reads count a tenth), the costliest calls with their tags (`cold-cache`, `partial-cold`, `large-cache-write`, `high-output`, `subagent`), the cache losses with their cause, and the longest gaps. A fact a harness does not record is listed under `unsupported` with its reason.
 
 ### `ai usage spend`: the `tools ai-spend` tree
 
@@ -202,8 +240,10 @@ Settings live in `~/.genesis-tools/ai-usage-dashboard/config.json` under `alerts
 ### `ai usage sessions`: one list across Claude, Codex and Grok
 
 ```bash
-tools ai usage sessions [--provider claude|codex|grok] [--hours 24] [--min 10] [--limit 50] [--json] [--fresh]
+tools ai usage sessions [--provider claude|codex|grok] [--hours 24] [--min 10] [--limit 50] [--json] [--fresh] [--cost]
 ```
+
+`--cost` adds `spentUsd` (the list-price dollars of the session's calls), `usdPerHour` (its calls of the last hour) and `coldRebuildUsd` (what the next prompt costs extra when the cache expired first: the context at the write rate of its tier minus the read rate) to each row. It reads each listed transcript, so it is opt-in; without it the rows keep their bytes.
 
 Computing the list walks every native session home and stats about 12,000 files, which costs ~1.8 s of CPU. Genesis.app asks for the same list every 35 seconds, so `--json` reads a resident answer at `~/.genesis-tools/ai/usage-sessions.json` when it is under 90 seconds old and answers the same query: **0.22 s of CPU instead of 1.8 s**, with byte-identical rows.
 

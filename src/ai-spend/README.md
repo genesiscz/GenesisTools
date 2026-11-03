@@ -111,13 +111,17 @@ The library lives in `@genesiscz/utils/ai/usage/spend` (the drivers, the events 
 | `summary` | Spend summary for the window (default) |
 | `sessions` | Most expensive sessions leaderboard |
 | `today` | Today's spend, by UTC day |
-| `monitor` | Today + current week (LOCAL timezone, Monday week start) across Claude Code, Codex and Grok in well under 1s — for status bars. `--json` emits `{today, week, todayDate, weekStart, timezone, agents}` |
+| `monitor` | Today + current week (LOCAL timezone, Monday week start) across Claude Code, Codex and Grok in well under 1s — for status bars. `--json` emits `{today, week, todayDate, weekStart, timezone, agents}`; `--month` adds `month` and `monthStart` (the calendar month so far, from the 90-day series cache) |
 | `series` | Transcript spend over time, bucketed and split by account. `--grain hour\|day\|week`, `--from`, `--to`, `--account`, `--sources`, `--by-model`, `--json` |
 | `daily` / `weekly` / `monthly` | All detected sources grouped by period (ccusage-compatible JSON) |
 | `session` | All detected sources grouped by session |
 | `blocks` | Claude Code 5-hour billing windows (`--active`, `--recent`) |
 | `statusline` | Compact Claude Code hook line (reads hook JSON from stdin) |
-| `workers` | Spend of headless workers (`tools codex` / `tools grok` / `tools claude worker`) by backend, model, label, day or name, with a Claude Opus/Sonnet estimate. `--backfill [--dry-run]` books past turns |
+| `workers` | Spend of headless workers (`tools codex` / `tools grok` / `tools claude worker`) by backend, model, label, day, name or outcome (`completed`, `failed`, `interrupted`, `unknown`), with a Claude Opus/Sonnet estimate. `--backfill [--dry-run]` books past turns |
+| `pivot` | Transcript spend split by `--by provider,account,model,project,harness,session`, bucketed by `--grain hour\|day\|week` in `--tz`, with `--heatmap` (average dollars per hour of the week). Window `--since`/`--until` (default 7d). `--json` prints `usage.spend.pivot@1` |
+| `plans` | Each subscription account's billing cycle: the list-price spend of its sessions, the share of its weekly capacity used, dollars per weekly point, and how often the plan price was paid back. `plans price <provider> <plan> <amount> [--currency USD]` sets the price (`providers.<plugin id>.plans.<plan>` in the usage config) |
+| `proxy` | The ai-proxy's booked cost per client and month (the ledger's `cost_usd`, never recomputed) and its requests, rate limits, errors and cache-read share per account and day (`--days 14`, `--month YYYY-MM`) |
+| `waste` | Avoidable spend: every cache rebuild after an idle gap, a compaction or a model change, priced as the context written again instead of read, rolled up `--by kind,provider,account,project,model,day,session`, with the top leaks and their sessions. Cached per transcript, so a weekly scan re-reads only changed files |
 | `<source> daily\|monthly\|session` | One source only (`claude` also has `weekly`, `blocks`, `statusline`; `opencode` also has `weekly`) |
 
 ## Quick start
