@@ -159,6 +159,23 @@ async function micShareOf(store: MeetingStore, meeting: MeetingRecord): Promise<
     return (await energyMicShareFor(store, meeting, evidence)).share;
 }
 
+/** How a person names a question: Q<n>, the number the polished file and the listen header use. */
+function questionLabel(record: MeetingRecord, id: string): string {
+    const n = questionNumber(record, id);
+    return n > 0 ? `Q${n}` : id;
+}
+
+/** `--item` takes Q12, 12 or the item id i42. */
+function questionIdOf(record: MeetingRecord, ref: string): string {
+    const n = /^q?(\d+)$/i.exec(ref.trim())?.[1];
+
+    if (!n) {
+        return ref;
+    }
+
+    return record.items.filter((item) => item.kind === "question")[Number(n) - 1]?.id ?? ref;
+}
+
 /** The words of the lines a speaker question asks about; a split part names its own words in the question. */
 function spokenIn(question: QuestionItem, transcript: TranscriptEntry[]): string | undefined {
     if (question.question.startsWith('Who says "')) {
@@ -346,7 +363,8 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
-    const questions = openQuestions(meeting).filter((item) => !opts.item || item.id === opts.item);
+    const itemId = opts.item ? questionIdOf(meeting, opts.item) : undefined;
+    const questions = openQuestions(meeting).filter((item) => !itemId || item.id === itemId);
 
     if (questions.length === 0) {
         ui.info(
@@ -363,7 +381,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         // An answer given on the command line (an agent relaying the user, or a script): no audio, no prompts.
         if (opts.answer !== undefined) {
             if (!opts.item) {
-                fail(`--answer needs --item <id>: it answers one question.`);
+                fail(`--answer needs --item <Q12>: it answers one question.`);
                 return;
             }
 
@@ -383,7 +401,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                 ui.dim(`the same answer settled ${settled.length} more: ${settled.join(" ")}`);
             }
 
-            ui.ok(`${opts.item} answered: ${opts.answer}`);
+            ui.ok(`${questionLabel(meeting, questions[0]!.id)} answered: ${opts.answer}`);
             return;
         }
 
@@ -391,7 +409,14 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             fail(`listen plays audio and asks in a terminal. Without one, answer a question directly:`);
             ui.raw(
                 suggestCommand(TOOL, {
-                    replaceCommand: ["listen", meeting.id, "--item", questions[0]!.id, "--answer", "<answer>"],
+                    replaceCommand: [
+                        "listen",
+                        meeting.id,
+                        "--item",
+                        questionLabel(meeting, questions[0]!.id),
+                        "--answer",
+                        "<answer>",
+                    ],
                 })
             );
             return;
@@ -425,7 +450,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             meeting,
             store,
             logPath,
-            only: opts.item,
+            ...(itemId ? { only: itemId } : {}),
             budget,
             minPriority,
             listenBelow: settings.global.suggest.listenBelow,
@@ -545,7 +570,7 @@ async function round(options: {
             }
 
             ui.header(
-                `${decided() + 1}/${total}  Q${questionNumber(current, question.id)} (${question.id})  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
+                `${decided() + 1}/${total}  ${questionLabel(current, question.id)}  ${formatClock(question.fromSec)}–${formatClock(question.toSec)}${question.priority === undefined ? "" : `  priority ${question.priority}`}`
             );
             const outcome = await options.ask(question, earlierFor(question));
 
@@ -584,7 +609,7 @@ async function round(options: {
                 );
                 passed.delete(last.question.id);
                 appendAnswerEvent(logPath, { event: "reopened", at: new Date().toISOString(), item: last.question.id });
-                ui.dim(`  back to ${last.question.id}: its answer is undone`);
+                ui.dim(`  back to ${questionLabel(current, last.question.id)}: its answer is undone`);
                 reask = last.question.id;
                 continue;
             }
@@ -610,7 +635,7 @@ async function round(options: {
 
                 if (parts === 0) {
                     ui.warn(
-                        `${question.id}: no second line and no change between your microphone and the call to cut at, so it stays open. Answer it with "Something else…", for example "Novák, then Dvořák".`
+                        `${questionLabel(current, question.id)}: no second line and no change between your microphone and the call to cut at, so it stays open. Answer it with "Something else…", for example "Novák, then Dvořák".`
                     );
                     reask = question.id;
                     continue;
@@ -623,7 +648,9 @@ async function round(options: {
                     item: question.id,
                     into: parts,
                 });
-                ui.info(`${question.id}: split into ${parts} parts, one per line and voice; they come next.`);
+                ui.info(
+                    `${questionLabel(current, question.id)}: split into ${parts} parts, one per line and voice; they come next.`
+                );
                 continue;
             }
 
@@ -643,10 +670,13 @@ async function round(options: {
                     : answeredEvent(question, outcome, settled)
             );
             log.info({ meeting: meeting.id, question: question.id, outcome, settled }, "question decided");
-            ui.ok(outcome === "skip" ? `${question.id} skipped` : `${question.id}: ${outcome.answer}`);
+            const label = questionLabel(current, question.id);
+            ui.ok(outcome === "skip" ? `${label} skipped` : `${label}: ${outcome.answer}`);
 
             if (settled.length > 0) {
-                ui.dim(`  the same answer settled ${settled.length} more: ${settled.join(" ")}`);
+                ui.dim(
+                    `  the same answer settled ${settled.length} more: ${settled.map((id) => questionLabel(current, id)).join(" ")}`
+                );
             }
         }
 
@@ -667,7 +697,7 @@ export function registerListenCommand(program: Command): void {
         .description(
             "Answer the open questions by ear, one at a time: each range is cut, played, and its answer decides its items"
         )
-        .option("--item <id>", "only this question")
+        .option("--item <Q12|id>", "only this question: its number as listen shows it (Q12), or its item id")
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
         .option(
