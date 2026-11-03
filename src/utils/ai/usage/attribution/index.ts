@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract";
 import { loadSpendAccountsContext } from "@genesiscz/utils/ai/usage/spend/accounts-context";
 import { loadPricing } from "@genesiscz/utils/ai/usage/spend/config";
-import { AGENT_IDS } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { AGENT_IDS, type AgentId } from "@genesiscz/utils/ai/usage/spend/drivers";
 import { collectSeriesEvents } from "@genesiscz/utils/ai/usage/spend/events-cache";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -23,6 +23,8 @@ export async function loadAttributedSpend(input: {
     from: Date;
     now: Date;
     directory: readonly AccountKey[];
+    /** Only the transcripts these agents wrote (`--harness`); omitted reads every agent. */
+    sources?: readonly AgentId[];
 }): Promise<AttributedEvent[]> {
     const storage = new Storage("ai-spend");
     const pricing = await loadPricing(storage);
@@ -31,7 +33,7 @@ export async function loadAttributedSpend(input: {
         storage,
         pricing,
         home: homedir(),
-        sources: AGENT_IDS,
+        sources: input.sources ?? AGENT_IDS,
         minMtimeMs: input.from.getTime(),
         accounts: context.accounts,
         now: input.now,

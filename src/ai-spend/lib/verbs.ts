@@ -12,6 +12,7 @@ import {
     usageEnvelope,
     type WindowFlags,
 } from "@genesiscz/utils/ai/usage/contract";
+import { AGENT_IDS } from "@genesiscz/utils/ai/usage/spend/drivers";
 import {
     isPivotDimension,
     PIVOT_DIMENSIONS,
@@ -41,6 +42,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { harnessSources } from "./harness-flag";
 import { buildProxyReport, type ProxyReport } from "./proxy";
 
 /**
@@ -138,6 +140,13 @@ function registerPivot(program: Command): void {
         { since: "7d" }
     ).action(async (_opts: PivotOpts, command: Command) => {
         const opts = command.optsWithGlobals<PivotOpts>();
+        // The root's --harness (or --sources) narrows the spend read, as it does for the reports.
+        const sources = harnessSources({ cmd: command, command: "pivot", ids: AGENT_IDS });
+
+        if (sources === null) {
+            return;
+        }
+
         const by = splitList(typeof opts.by === "string" ? opts.by : undefined);
         const bad = by.find((dim) => !isPivotDimension(dim));
 
@@ -171,7 +180,12 @@ function registerPivot(program: Command): void {
             const span = window.to.getTime() - window.from.getTime();
             const grain = GRAINS.find((value) => value === grainGiven) ?? (span <= 7 * 86_400_000 ? "hour" : "day");
             const directory = await accountDirectory();
-            const events = await loadAttributedSpend({ from: window.from, now, directory });
+            const events = await loadAttributedSpend({
+                from: window.from,
+                now,
+                directory,
+                ...(sources ? { sources } : {}),
+            });
             const dims: PivotDimension[] = by.length > 0 ? by.filter(isPivotDimension) : ["provider"];
             const pivot = pivotSpend({
                 events,
@@ -242,6 +256,11 @@ function registerPlans(program: Command): void {
         .option("--json", "Print usage.spend.plans@1")
         .action(async (_opts: PlansOpts, command: Command) => {
             const opts = command.optsWithGlobals<PlansOpts>();
+            const sources = harnessSources({ cmd: command, command: "plans", ids: AGENT_IDS });
+
+            if (sources === null) {
+                return;
+            }
 
             await guarded(async () => {
                 const now = new Date();
@@ -251,7 +270,8 @@ function registerPlans(program: Command): void {
                 );
                 const from = new Date(now.getTime() - 40 * 86_400_000);
                 const config = await loadDashboardConfig({ readOnly: true });
-                const db = new UsageLimitsDb();
+                // A diagnostic read: no schema, no migration, no file.
+                const db = UsageLimitsDb.readOnlyOrEmpty();
                 let weekly: SeriesEntry[] = [];
 
                 try {
@@ -266,7 +286,12 @@ function registerPlans(program: Command): void {
                     db.close();
                 }
 
-                const events = await loadAttributedSpend({ from, now, directory: await accountDirectory() });
+                const events = await loadAttributedSpend({
+                    from,
+                    now,
+                    directory: await accountDirectory(),
+                    ...(sources ? { sources } : {}),
+                });
                 const rows = planValues({
                     snapshots,
                     events,
@@ -435,6 +460,12 @@ function registerWaste(program: Command): void {
         { since: "7d" }
     ).action(async (_opts: WasteOpts, command: Command) => {
         const opts = command.optsWithGlobals<WasteOpts>();
+        const sources = harnessSources({ cmd: command, command: "waste", ids: AGENT_IDS });
+
+        if (sources === null) {
+            return;
+        }
+
         const by = splitList(typeof opts.by === "string" ? opts.by : undefined);
         const bad = by.find((dim) => !isWasteDimension(dim));
 
@@ -458,7 +489,12 @@ function registerWaste(program: Command): void {
                 throw new UsageQueryError("bad-value", `--top "${opts.top}" is not a positive whole number.`);
             }
 
-            const events = await loadAttributedSpend({ from: window.from, now, directory: await accountDirectory() });
+            const events = await loadAttributedSpend({
+                from: window.from,
+                now,
+                directory: await accountDirectory(),
+                ...(sources ? { sources } : {}),
+            });
             const dims: WasteDimension[] = by.length > 0 ? by.filter(isWasteDimension) : ["kind", "account"];
             const waste = await scanSpendWaste({
                 events,
