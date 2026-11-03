@@ -787,6 +787,32 @@ describe("--harness, the design name of --sources and --backend", () => {
         expect(stdout).toBe("");
     });
 
+    test("the same list spelled in another order or with spaces under both names is one list", async () => {
+        await spend("summary", "--harness", "codex, claude", "--sources", "claude,codex,codex", "--json");
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(loadCalls.map((call) => [...(call.sources ?? [])].sort())).toEqual([["claude", "codex"]]);
+    });
+
+    test("workers --reprice and --backfill refuse a backend filter, and an unknown one, before any ledger write", async () => {
+        // Read through a function: after `process.exitCode = undefined` the compiler narrows the property itself.
+        const exitCode = (): typeof process.exitCode => process.exitCode;
+
+        await spend("workers", "--reprice", "--harness", "codex");
+        expect(exitCode()).toBe(1);
+        expect(stderr).toContain("--reprice works on the whole ledger; --harness does not apply");
+
+        process.exitCode = undefined;
+        await spend("workers", "--backfill", "--harness", "codex", "--backend", "claude");
+        expect(exitCode()).toBe(1);
+        expect(stderr).toContain("name different lists");
+
+        process.exitCode = undefined;
+        await spend("workers", "--reprice", "--harness", "nonesuch");
+        expect(exitCode()).toBe(1);
+        expect(stderr).toContain('--harness does not accept "nonesuch"');
+    });
+
     test("workers takes --harness for --backend", async () => {
         await spend("workers", "--harness", "nonesuch");
 

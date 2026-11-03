@@ -270,6 +270,32 @@ export function registerWorkersCommand(program: Command): Command {
         .action(async (_opts: WorkersFlags, cmd: Command) => {
             // `--since` and `--json` are the tool's own options, which commander resolves on the parent.
             const flags = cmd.optsWithGlobals() as WorkersFlags;
+            // Resolved before any mode, so a conflicting or unknown list is refused before a ledger write.
+            const harness = resolveHarnessFlag({
+                harness: flags.harness,
+                legacy: flags.backend,
+                legacyFlag: "--backend",
+            });
+
+            if (!harness) {
+                return;
+            }
+
+            const backends = harness.raw ? parseList(harness.raw, BACKENDS) : undefined;
+
+            if (harness.raw && !backends) {
+                out.printlnErr(suggestEnumFlag(TOOL, harness.flag, BACKENDS, { given: harness.raw }));
+                process.exitCode = 1;
+                return;
+            }
+
+            if ((flags.reprice || flags.backfill) && backends) {
+                out.error(
+                    `--${flags.reprice ? "reprice" : "backfill"} works on the whole ledger; ${harness.flag} does not apply. Run it without ${harness.flag}.`
+                );
+                process.exitCode = 1;
+                return;
+            }
 
             if (flags.reprice) {
                 await runReprice(flags);
@@ -311,24 +337,6 @@ export function registerWorkersCommand(program: Command): Command {
 
             if (!dimensions) {
                 out.printlnErr(suggestEnumFlag(TOOL, "--by", WORKER_STATS_DIMENSIONS, { given: String(flags.by) }));
-                process.exitCode = 1;
-                return;
-            }
-
-            const harness = resolveHarnessFlag({
-                harness: flags.harness,
-                legacy: flags.backend,
-                legacyFlag: "--backend",
-            });
-
-            if (!harness) {
-                return;
-            }
-
-            const backends = harness.raw ? parseList(harness.raw, BACKENDS) : undefined;
-
-            if (harness.raw && !backends) {
-                out.printlnErr(suggestEnumFlag(TOOL, harness.flag, BACKENDS, { given: harness.raw }));
                 process.exitCode = 1;
                 return;
             }
