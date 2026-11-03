@@ -36,15 +36,23 @@ function mergeParticipants(current: MeetingParticipant[], incoming: MeetingParti
     return merged;
 }
 
-function applySource(
-    record: MeetingRecord,
-    sourceId: string,
-    block: Record<string, unknown>,
-    meeting: SourceMeeting
-): void {
-    record.sources[sourceId] = block;
-    record.title ||= meeting.title;
-    record.end ??= meeting.end;
+/**
+ * The source fills what the record does not have. With `refresh` (the source ended a meeting it was live for) its title
+ * and end win, unless a person gave the record its title.
+ */
+function applySource(options: {
+    record: MeetingRecord;
+    sourceId: string;
+    block: Record<string, unknown>;
+    meeting: SourceMeeting;
+    refresh?: boolean;
+}): void {
+    const { record, meeting } = options;
+    const titledByHand = record.history.some((entry) => entry.command === "set" && entry.change.includes(`title "`));
+    record.sources[options.sourceId] = options.block;
+    record.title =
+        options.refresh && meeting.title.trim() && !titledByHand ? meeting.title : record.title || meeting.title;
+    record.end = options.refresh ? (meeting.end ?? record.end) : (record.end ?? meeting.end);
     record.participants = mergeParticipants(record.participants, meeting.participants);
     record.calendar ??= meeting.calendar;
 }
@@ -67,6 +75,8 @@ export async function linkSource(options: {
     command: string;
     createdBy: MeetingCreator;
     quiet?: boolean;
+    /** The source ended the meeting: its title and end replace those it had while live. */
+    refresh?: boolean;
 }): Promise<LinkResult> {
     const ref = parseSourceRef(options.sourceRef);
 
@@ -101,7 +111,7 @@ export async function linkSource(options: {
 
     if (existing) {
         const record = await options.store.update(existing.id, { command: options.command, change }, (current) => {
-            applySource(current, ref.source, block, meeting);
+            applySource({ record: current, sourceId: ref.source, block, meeting, refresh: options.refresh });
             current.project ??= project;
         });
         return { record, created: false };
