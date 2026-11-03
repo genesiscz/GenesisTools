@@ -17,6 +17,8 @@ export interface Binding<E extends Endpoint> {
     run: (input: EndpointInput<E>, ctx: RouteContext) => Promise<EndpointOutput<E> | RouteResult>;
     /** Maps a thrown error to a response; a 500 with its message when omitted. */
     error?: (err: unknown) => RouteResult;
+    /** `raw`: the body is not JSON (an upload); the input holds only the path params and the query. */
+    body?: "json" | "raw";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -27,8 +29,8 @@ function isRouteResult(value: unknown): value is RouteResult {
     return isRecord(value) && typeof value.kind === "string" && typeof value.status === "number";
 }
 
-async function rawInput(method: string, ctx: RouteContext): Promise<unknown> {
-    if (method === "GET" || method === "DELETE") {
+async function rawInput(method: string, ctx: RouteContext, kind: "json" | "raw"): Promise<unknown> {
+    if (method === "GET" || method === "DELETE" || kind === "raw") {
         return { ...Object.fromEntries(ctx.query.entries()), ...ctx.params };
     }
 
@@ -72,8 +74,16 @@ export class ReceiptCache {
 
         const result = run();
         this.receipts.set(key, { at, result });
-        // A write that threw can be tried again: only an answer is kept.
-        result.catch(() => this.receipts.delete(key));
+        // A write that threw can be tried again, and so can a 4xx: a refused request (no token, a bad body) wrote
+        // nothing, and keeping it would answer the corrected retry with the refusal.
+        result.then(
+            (answer) => {
+                if ("status" in answer && answer.status >= 400 && answer.status < 500) {
+                    this.receipts.delete(key);
+                }
+            },
+            () => this.receipts.delete(key)
+        );
         return result;
     }
 }
@@ -87,7 +97,7 @@ export function bindEndpoint<E extends Endpoint>(
     receipts: ReceiptCache = sharedReceipts
 ): RouteDef {
     const answer = async (ctx: RouteContext): Promise<RouteResult> => {
-        const parsed = binding.input.safeParse(await rawInput(endpoint.method, ctx));
+        const parsed = binding.input.safeParse(await rawInput(endpoint.method, ctx, binding.body ?? "json"));
 
         if (!parsed.success) {
             return { kind: "json", status: 400, body: { error: binding.invalid } };

@@ -19,6 +19,7 @@ import { containersRoutes } from "@app/dev-dashboard/server/routes/containers";
 import { daemonRoutes } from "@app/dev-dashboard/server/routes/daemon";
 import { diskRoutes } from "@app/dev-dashboard/server/routes/disk";
 import { e2eRoutes } from "@app/dev-dashboard/server/routes/e2e";
+import { gatewayRoutes } from "@app/dev-dashboard/server/routes/gateway";
 import { handoffRoutes } from "@app/dev-dashboard/server/routes/handoff";
 import { liveRoutes } from "@app/dev-dashboard/server/routes/live";
 import { netRoutes } from "@app/dev-dashboard/server/routes/net";
@@ -67,6 +68,7 @@ export function createDashboardRouter(): Router {
         ...processesRoutes(),
         ...qaRoutes(),
         ...qaDecisionRoutes(),
+        ...gatewayRoutes(),
         ...handoffRoutes(),
         ...attentionRoutes(),
         ...todosRoutes(),
