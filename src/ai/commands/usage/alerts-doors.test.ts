@@ -389,6 +389,10 @@ describe("tools ai usage budgets and digest", () => {
 
         expect(after.data.spend).toEqual([]);
         await expect(setBudget({ kind: "daily" })).rejects.toThrow(UsageQueryError);
+        // The account filter goes through the shared selector: an account nobody configured is refused, not empty.
+        await expect(
+            queryBudgets({ account: ["nobody"] }, { now: NOW, open: () => undefined, todaySpend: async () => [] })
+        ).rejects.toThrow(UsageQueryError);
     });
 
     test("--day defaults to yesterday and --week to the Monday-to-Sunday week before this one", () => {

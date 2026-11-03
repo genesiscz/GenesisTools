@@ -115,11 +115,17 @@ export async function queryBudgets(
     const dayStart = localDayStart(now);
     const config = await (deps.config ?? (() => loadDashboardConfig({ readOnly: true })))();
     const providers = resolveProviderList(opts.provider);
-    const names = new Set(opts.account ?? []);
+    const providerIds = providers ?? usagePlugins().map((entry) => entry.plugin.id);
+    // The shared selector: ids, provider/name, a unique name fragment and comma lists; unknown or ambiguous refuses.
+    const directory = usageAccountKeys((await AiConfigStore.readOnly()).accounts(), providerIds, {
+        visibleOnly: false,
+    });
+    const selection = selectAccounts(opts.account, directory);
+    const wanted = selection && new Set(selection.map((key) => `${key.provider}\u0000${key.accountId}`));
     const snapshots = snapshotsFromCache(await readSnapshotsCache()).filter(
         (snapshot) =>
             (providers === undefined || providers.includes(snapshot.provider)) &&
-            (names.size === 0 || names.has(snapshot.accountName) || names.has(snapshot.accountId))
+            (!wanted || wanted.has(`${snapshot.provider}\u0000${snapshot.accountId}`))
     );
     const db = (deps.open ?? (() => openHistoryReadOnly()))();
     let samples: UsageSample[] = [];
