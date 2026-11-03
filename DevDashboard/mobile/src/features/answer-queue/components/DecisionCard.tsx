@@ -1,14 +1,22 @@
 import type { WaitingDecisionDto } from "@dd/contract";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useStagePick } from "@/features/answer-queue/hooks";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import {
+    idempotencyKey,
+    type NoteState,
+    noteIsDirty,
+    noteStateOf,
+    reconcileNote,
+} from "@/features/answer-queue/units";
 import { useThemeColors } from "@/theme/colors";
 
 interface DecisionCardProps {
     session: string;
     decision: WaitingDecisionDto;
+    /** Hands the session card this card's flush (save the note, wait for a stage), so Send runs it first. */
+    registerFlush: (number: number, flush: (() => Promise<void>) | null) => void;
 }
 
 /**
@@ -17,26 +25,52 @@ interface DecisionCardProps {
  * message, as the notch widget does. The stage carries the revision shown, so a decision the agent re-posted refuses
  * the stale pick with the Mac's words.
  */
-export function DecisionCard({ session, decision }: DecisionCardProps) {
+export function DecisionCard({ session, decision, registerFlush }: DecisionCardProps) {
     const c = useThemeColors();
     const stage = useStagePick();
-    const [note, setNote] = useState(decision.draft ?? "");
+    const [noteState, setNoteState] = useState<NoteState>(() => noteStateOf(decision));
+    const inFlight = useRef<Promise<unknown> | null>(null);
     const testId = `answer-queue-decision-${session}-${decision.number}`;
 
-    const stageWith = (patch: { option?: string; text?: string }) =>
-        stage.mutate({
+    // The card is keyed by the decision id, which stays when the agent re-posts it or another surface edits the draft.
+    useEffect(() => {
+        setNoteState((state) => reconcileNote(state, { revision: decision.revision, draft: decision.draft }));
+    }, [decision.revision, decision.draft]);
+
+    const stageAsync = (patch: { option?: string; text?: string }, revision: number) => {
+        const pending = stage.mutateAsync({
             session,
             number: decision.number,
-            expectedRevision: decision.revision,
+            expectedRevision: revision,
             key: idempotencyKey(),
             ...patch,
         });
-
-    const saveNote = () => {
-        if (note.trim() !== (decision.draft ?? "").trim()) {
-            stageWith({ text: note.trim() });
-        }
+        inFlight.current = pending;
+        return pending;
     };
+
+    /** Stages the note against the revision it was written on; rejects when the Mac refuses it. */
+    const saveNote = async () => {
+        if (!noteIsDirty(noteState)) {
+            return;
+        }
+
+        const text = noteState.note.trim();
+        await stageAsync({ text }, noteState.base.revision);
+        setNoteState((state) => ({ ...state, base: { ...state.base, draft: text } }));
+    };
+
+    // The session card calls the latest flush; the ref keeps one stable function registered.
+    const flushRef = useRef(async () => {});
+    flushRef.current = async () => {
+        await inFlight.current?.catch(() => undefined);
+        await saveNote();
+    };
+
+    useEffect(() => {
+        registerFlush(decision.number, () => flushRef.current());
+        return () => registerFlush(decision.number, null);
+    }, [decision.number, registerFlush]);
 
     return (
         <View testID={testId} className="gap-2 rounded-lg border border-dd-border p-3">
@@ -62,7 +96,9 @@ export function DecisionCard({ session, decision }: DecisionCardProps) {
                             accessibilityState={{ selected: staged, disabled: stage.isPending }}
                             accessibilityLabel={`Option ${choice.id}: ${choice.label}${choice.recommended ? ", recommended" : ""}`}
                             disabled={stage.isPending}
-                            onPress={() => stageWith({ option: choice.id })}
+                            onPress={() =>
+                                void stageAsync({ option: choice.id }, decision.revision).catch(() => undefined)
+                            }
                             className="min-h-11 flex-row items-center gap-3 rounded-lg border px-3 py-2"
                             style={{
                                 borderColor: staged ? c.accent : c.border,
@@ -89,9 +125,9 @@ export function DecisionCard({ session, decision }: DecisionCardProps) {
                 accessibilityLabel={`Note for decision ${decision.number}`}
                 placeholder="Add a note…"
                 placeholderTextColor={c.textMuted}
-                value={note}
-                onChangeText={setNote}
-                onEndEditing={saveNote}
+                value={noteState.note}
+                onChangeText={(note) => setNoteState((state) => ({ ...state, note }))}
+                onEndEditing={() => void saveNote().catch(() => undefined)}
                 multiline
                 className="min-h-11 rounded-lg border border-dd-border bg-dd-bg-base px-3 py-2"
                 style={{ color: c.textPrimary }}
