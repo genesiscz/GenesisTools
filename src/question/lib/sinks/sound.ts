@@ -3,6 +3,7 @@ import { registerSink, type Sink } from "./registry-exports";
 
 export const soundSink: Sink = {
     name: "sound",
+    interrupts: true,
     isEnabled: (c) => c.sinks.sound,
     emit: async (_entry, c) => {
         const choice: SoundChoice = c.sound ?? { kind: "synth", preset: "soft-chime" };

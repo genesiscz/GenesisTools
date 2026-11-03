@@ -51,6 +51,11 @@ export interface RecordInput {
     source: QaSource;
     sessionId?: string;
     project?: string;
+    /**
+     * False records the entry without the sinks that interrupt the user (the notification banner, the sound): a
+     * delivery that must stay quiet, such as a non-interrupting usage alert in quiet hours. Default true.
+     */
+    interrupt?: boolean;
 }
 
 export interface SinkResult {

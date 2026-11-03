@@ -58,6 +58,7 @@ export async function emitObsidian(
 }
 
 export const obsidianSink: Sink = {
+    interrupts: false,
     name: "obsidian",
     isEnabled: (c) => c.sinks.obsidian,
     emit: (entry, config) => emitObsidian(entry, config),
