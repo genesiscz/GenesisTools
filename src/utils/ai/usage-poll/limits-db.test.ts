@@ -121,6 +121,16 @@ describe("UsageLimitsDb", () => {
         expect(db.getSnapshots("work", "five_hour", 60)).toHaveLength(2);
     });
 
+    test("recordIfChangedV2 records the first limited reading after a row from before the availability column", () => {
+        const same = { resetsAt: null, severity: null, scopeModel: null };
+        db.recordSnapshotV2("work", "five_hour", 0, recentTimestamp(5), same);
+        // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
+        db["handle"].run("UPDATE usage_snapshots SET availability = NULL");
+
+        expect(db.recordIfChangedV2("work", "five_hour", 0, same)).toBe(true);
+        expect(db.recordIfChangedV2("work", "five_hour", 0, same)).toBe(false);
+    });
+
     test("recordIfChangedV2 skips when percent AND severity unchanged", () => {
         db.recordSnapshotV2("work", "five_hour", 80, recentTimestamp(5), {
             resetsAt: null,
@@ -350,18 +360,18 @@ describe("UsageLimitsDb", () => {
             const resetsAt = "2026-09-05T20:00:00.000Z";
 
             foreignSnapshotRow(84, resetsAt);
+            const record = () =>
+                db.recordIfChangedV2("work", "five_hour", 84, { resetsAt, severity: "warn", scopeModel: null });
 
-            for (let i = 0; i < 10; i++) {
-                expect(
-                    db.recordIfChangedV2("work", "five_hour", 84, {
-                        resetsAt,
-                        severity: "warn",
-                        scopeModel: null,
-                    })
-                ).toBe(false);
+            // The foreign row has no availability (an older copy writes none), so the first poll records the
+            // window as limited once; the spelling then never makes it write again.
+            expect(record()).toBe(true);
+
+            for (let i = 0; i < 9; i++) {
+                expect(record()).toBe(false);
             }
 
-            expect(db.getSnapshots("work", "five_hour", 60)).toHaveLength(1);
+            expect(db.getSnapshots("work", "five_hour", 60)).toHaveLength(2);
         });
 
         test("a real utilization change still lands exactly one row", () => {
@@ -1025,6 +1035,35 @@ describe("UsageLimitsDb", () => {
                     "personal",
                     "work",
                 ]);
+            } finally {
+                store.close();
+            }
+        });
+
+        test("a reset between the carried row and the first reading in the range is marked; one before it is not", () => {
+            const at = (hour: number, minute = 0) => new Date(Date.UTC(2026, 10, 1, hour, minute)).toISOString();
+            const reading = (resetsAt: string) => ({
+                resetsAt,
+                severity: null,
+                scopeModel: null,
+                provider: "anthropic-sub",
+                kind: "session",
+            });
+            const store = new UsageLimitsDb(":memory:");
+
+            try {
+                // "work" resets at 10:30, inside the range; "side" reset at 9:30, before it.
+                store.recordSnapshotV2("work", "five_hour", 60, at(9), reading(at(10, 30)));
+                store.recordSnapshotV2("work", "five_hour", 5, at(11), reading(at(15, 30)));
+                store.recordSnapshotV2("side", "five_hour", 60, at(8), reading(at(9, 30)));
+                store.recordSnapshotV2("side", "five_hour", 5, at(11), reading(at(14, 30)));
+
+                for (const agg of ["raw", "last", "minmax"] as const) {
+                    const series = store.getSeries({ from: at(10), to: at(12), agg });
+                    const resets = Object.fromEntries(series.map((entry) => [entry.account, entry.resets]));
+
+                    expect(resets).toEqual({ work: [at(10, 30)], side: [] });
+                }
             } finally {
                 store.close();
             }
