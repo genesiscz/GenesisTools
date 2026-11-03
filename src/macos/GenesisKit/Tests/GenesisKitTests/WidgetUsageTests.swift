@@ -76,6 +76,17 @@ final class WidgetUsageTests: XCTestCase {
         XCTAssertEqual(store.ackError, "tools ai usage alerts ack 7 failed: the ledger is locked")
     }
 
+    func testEveryAlertOpensTheHubAndOneWithNoAccountOpensTheLimits() throws {
+        var opened: [[String]] = []
+        let store = store(opened: { opened.append($0) })
+        let withAccount = try UsageClient.decodeEnvelope(Data(Self.alertsJSON.utf8), as: UsageAlertsData.self, door: .alerts).data.alerts[0]
+        let json = #"{"id":9,"rule":"spike","level":"warning","title":"a spike","message":"usage jumped","firedAt":"2026-03-02T14:00:00.000Z","ackAt":null}"#
+        let withoutAccount = try JSONDecoder().decode(UsageAlert.self, from: Data(json.utf8))
+        store.openAlert(withAccount)
+        store.openAlert(withoutAccount)
+        XCTAssertEqual(opened, [["--usage-account", "acc_work"], ["--mode", "usage", "--usage-section", "limits"]])
+    }
+
     func testPreferencesDecodeWithoutTheUsageKey() throws {
         struct Holder: Decodable { let usage: WidgetUsagePreferences? }
         XCTAssertNil(try JSONDecoder().decode(Holder.self, from: Data("{}".utf8)).usage)

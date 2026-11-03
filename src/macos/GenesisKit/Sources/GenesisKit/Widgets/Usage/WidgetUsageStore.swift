@@ -122,6 +122,16 @@ public final class WidgetUsageStore: ObservableObject {
         }
     }
 
+    /// Opens the hub at the alert's account, or at the Usage mode's Limits with no account picked when the alert
+    /// names none.
+    func openAlert(_ alert: UsageAlert) {
+        if let account = alert.accountId ?? alert.accountName {
+            openHub(["--usage-account", account])
+        } else {
+            openHub(["--mode", "usage", "--usage-section", "limits"])
+        }
+    }
+
     /// The window a ring shows for an account: the preference's (the week, or the 5h), else the other one.
     public static func ring(_ row: UsageTableRow, window: WidgetUsageRingWindow) -> (percent: Double?, severity: String?, label: String, absent: Bool) {
         let wanted = window == .session ? "session" : "weekly"
