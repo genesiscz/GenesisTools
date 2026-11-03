@@ -12,7 +12,10 @@ import type { CaptureAttempt } from "./peekaboo";
  * so these tests never spawn a recorder or signal a real process. Plans use the peekaboo
  * backend with a 2x2 region so a stub that stopped intercepting could not record a screen.
  */
-const realPeekaboo = await import("./peekaboo");
+// Copies, not the namespaces: mock.module patches the live namespace, and bun keeps a module mock for
+// every later test file in the process, so afterAll puts the real exports back.
+const realPeekaboo = { ...(await import("./peekaboo")) };
+const realVitrinkaPublish = { ...(await import("./vitrinka-publish")) };
 type StartCapture = (argv: string[], signal?: AbortSignal) => Promise<CaptureAttempt>;
 let startImpl: StartCapture = async () => {
     throw new Error("stub: no recorder is started from tests");
@@ -85,6 +88,8 @@ test("a fractional duration keeps its unit rather than truncating to millisecond
 const sessionsRoot = mkdtempSync(join(tmpdir(), "capture-runner-test-"));
 afterAll(() => {
     rmSync(sessionsRoot, { recursive: true, force: true });
+    mock.module("./peekaboo", () => realPeekaboo);
+    mock.module("./vitrinka-publish", () => realVitrinkaPublish);
 });
 
 interface FakeRecorder {
