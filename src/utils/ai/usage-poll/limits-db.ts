@@ -436,6 +436,11 @@ export class UsageLimitsDb {
             // even at the old value, and after a row from before the column (NULL, read as unknown) the first
             // limited reading is recorded, or an idle window would stay unknown for good.
             this.latestAvailability(accountName, bucket, provider) === "limited" &&
+            // The window's identity: a slot that turns from the 5h window into the weekly one (a Codex plan change),
+            // or gains a model scope, is a new series even when both read an idle 0 %. A caller that names no kind
+            // leaves it as stored.
+            (extras.kind === undefined || (latest.kind ?? null) === (extras.kind ?? null)) &&
+            (latest.scopeModel ?? null) === (extras.scopeModel ?? null) &&
             latest.utilization === utilization &&
             normalizeNullableSeverity(latest.severity) === normalizeNullableSeverity(extras.severity) &&
             (utilization === 0 || resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)) &&
