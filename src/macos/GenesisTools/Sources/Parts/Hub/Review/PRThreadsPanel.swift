@@ -351,6 +351,17 @@ struct PRThreadFileGroup: Identifiable, Equatable {
         }
     }
 
+    /// The first groups holding `threads` threads in all; the last one is cut to fit.
+    static func prefix(_ groups: [PRThreadFileGroup], threads limit: Int) -> [PRThreadFileGroup] {
+        var left = limit
+        var kept: [PRThreadFileGroup] = []
+        for group in groups where left > 0 {
+            kept.append(group.threads.count <= left ? group : PRThreadFileGroup(path: group.path, threads: Array(group.threads.prefix(left))))
+            left -= group.threads.count
+        }
+        return kept
+    }
+
     /// A folder that wraps at its slashes, never inside a folder name.
     static func wrappable(_ folder: String) -> String {
         folder.replacingOccurrences(of: "/", with: "/\u{200B}")
@@ -385,6 +396,11 @@ struct PRThreadsList: View {
     @State private var clicks = PRCardClicks()
     @State private var anchor = PRListAnchor()
     @State private var editors = PRThreadEditors()
+    /// Cards built so far. A PR's threads arrive in batches of `mountBatch`, one batch per frame: built at once, 116
+    /// cards held the main thread 4.8 s (`prs.threads.show`, 2026-11-02 20:30). Later batches only append below, so
+    /// the reader's place and `PRListAnchor` hold.
+    @State private var mounted = PRThreadsList.mountBatch
+    static let mountBatch = 12
     /// Whether each thread's file is still there at the PR's head (one `git ls-tree` per head).
     @ObservedObject private var headFiles = PRHeadFiles.shared
     /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): the toolbar
@@ -457,6 +473,9 @@ struct PRThreadsList: View {
         let placed = placements(all)
         let threads = visible(all, placed)
         let groups = PRThreadFileGroup.groups(threads, order: fileOrder)
+        let built = PRThreadFileGroup.prefix(groups, threads: mounted)
+        // A file's header counts all its threads, also while its cards are still being built.
+        let whole = Dictionary(groups.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let fresh = newNotes(all)
         let query = headQuery(all)
         let atHead = query.flatMap { headFiles.status(repo: $0.repo, head: $0.head, shown: $0.shown, paths: $0.paths) } ?? [:]
@@ -489,9 +508,9 @@ struct PRThreadsList: View {
                         // drag's release) can put the reader back exactly (PRListAnchor). A lazy stack estimated the rows
                         // above the viewport and moved the visible ones again as it measured them. A PR has tens of threads.
                         VStack(alignment: .leading, spacing: 12) {
-                            ForEach(groups) { group in
+                            ForEach(built) { group in
                                 VStack(alignment: .leading, spacing: 6) {
-                                    fileHeader(group, placed: placed, fresh: fresh)
+                                    fileHeader(whole[group.path] ?? group, placed: placed, fresh: fresh)
                                         .modifier(PRListAnchorRow(anchor: anchor, id: "file:\(group.path)"))
                                     if !folded.contains(group.path) {
                                         VStack(alignment: .leading, spacing: 6) {
@@ -534,6 +553,14 @@ struct PRThreadsList: View {
             }
         }
         .onChange(of: store.payload?.pr.url, initial: true) { _, _ in markSeen() }
+        .task(id: store.payload?.pr.url) {
+            mounted = Self.mountBatch
+            while !Task.isCancelled, mounted < (store.payload?.threads.count ?? 0) {
+                // One frame: the batch built so far lays out and draws, and clicks are answered, before the next one.
+                try? await Task.sleep(for: .milliseconds(16))
+                mounted += Self.mountBatch
+            }
+        }
         .onAppear {
             let model = model
             let store = store
@@ -693,7 +720,7 @@ struct PRThreadsList: View {
         let store = store
         let id = thread.id
         return PRThreadRow(model: model, thread: thread, selected: model.selectedThreads.contains(id),
-                           placement: placement, fresh: fresh, atHead: atHead, headSha: headSha, compact: compact,
+                           placement: placement, fresh: fresh.intersection(thread.comments.map(\.id)), atHead: atHead, headSha: headSha, compact: compact,
                            proposed: proposed, folded: foldedThreads.contains(id), changed: store.changed.contains(id),
                            stale: store.stale, busy: store.busy != nil, forge: store.pr?.forge, label: store.label,
                            isGitLab: store.pr?.identity.isGitLab == true, clicks: clicks, editors: editors,
@@ -1071,7 +1098,8 @@ private struct PRThreadRow: View, Equatable {
     /// In the Fix selection (the same set as the diff cards' Fix checkboxes).
     let selected: Bool
     let placement: PRThreadPlacement
-    /// Note ids written by others since the previous visit.
+    /// This thread's note ids written by others since the previous visit. Only this thread's: the whole PR's set made
+    /// every card's `==` compare it, and a new note on one thread re-rendered them all.
     let fresh: Set<String>
     /// The thread's file at the PR's head, when the diff shows an older commit; nil when unknown.
     let atHead: PathAtHead?

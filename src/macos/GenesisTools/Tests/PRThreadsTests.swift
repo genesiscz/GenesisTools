@@ -561,6 +561,11 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(PRThreadFileGroup.lineLabel(groups[0].threads[1]), "L30")
         XCTAssertEqual(PRThreadFileGroup.wrappable("packages/col/src").replacingOccurrences(of: "\u{200B}", with: ""), "packages/col/src",
                        "the wrap points add no visible text")
+
+        XCTAssertEqual(PRThreadFileGroup.prefix(groups, threads: 3).map(\.path), ["src/b.ts", "src/a.ts"],
+                       "the list is built in batches, files in order")
+        XCTAssertEqual(PRThreadFileGroup.prefix(groups, threads: 1).flatMap(\.threads).map(\.id), ["4"], "a batch is cut inside a file")
+        XCTAssertEqual(PRThreadFileGroup.prefix(groups, threads: 50), groups, "the last batch holds every thread")
     }
 
     // MARK: references, head files, card clicks
