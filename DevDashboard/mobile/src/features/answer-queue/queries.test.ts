@@ -1,7 +1,7 @@
 import type { WaitingFormDto } from "@dd/contract";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { fixtureDashboardClient } from "@/api/fixture-wire";
-import { fixtureQueue, resetFixtureQueue } from "@/api/fixtures/queue";
+import { fixtureQueue, fixtureRepost, resetFixtureQueue } from "@/api/fixtures/queue";
 import {
     answerForm,
     answerQueueKeys,
@@ -81,6 +81,20 @@ describe("answer queue over the fixture wire (the real client)", () => {
         await sendStaged(client, { session: "s-parser", drafts: shownDrafts(shown), key: "h3" });
         const after = stagedOf((await queue()).sessions[0]);
         expect(after.map((item) => [item.number, item.draftOption])).toEqual([[5, "b"]]);
+    });
+
+    it("a re-post that clears one shown draft refuses the whole send, and the other draft stays staged", async () => {
+        await stagePick(client, { session: "s-parser", number: 4, option: "a", expectedRevision: 1, key: "r1" });
+        await stagePick(client, { session: "s-parser", number: 5, option: "b", expectedRevision: 1, key: "r2" });
+        const shown = shownDrafts((await queue()).sessions[0]);
+        // The agent posts DECISION 5 again while the phone still shows revision 1: its staged pick is cleared.
+        fixtureRepost("s-parser", 5);
+
+        await expect(sendStaged(client, { session: "s-parser", drafts: shown, key: "r3" })).rejects.toThrow(
+            "DECISION 5 changed"
+        );
+        const after = stagedOf((await queue()).sessions[0]);
+        expect(after.map((item) => [item.number, item.draftOption])).toEqual([[4, "a"]]);
     });
 
     it("clears a staged note with an empty string, so a send never carries the old text", async () => {
