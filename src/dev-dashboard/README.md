@@ -82,6 +82,16 @@ puts on an upstream fetch is a user-visible setting. `upstreamTimeoutMs()` in
 | slow | 60s | `/api/ports`, `/api/system/pulse`, `/api/system/pulse/history`, `/api/tmux/sessions`, the slow gateway rows |
 | default | 15s | everything else |
 
+## The Mac gateway
+
+The phone reaches the hub through `/api/gateway/*` (`server/routes/gateway.ts`). Each route is one row of the
+endpoint table bound to one hub capability (`src/hub/lib/capabilities/index.ts`): agents, transcript, procs, stuck,
+forecast, prompts and the widget snapshot. The hub door and the gateway mount the same capability module, so the
+input check, the defaults and the refusals (`bad-input` is a 400, `not-found` a 404) are written once. Every
+capability declares the door rules as typed data (`DoorRules`: never TCC-gated, interactive, a credential spend or a
+long-lived child). `POST /api/gateway/upload` stores one photo or document (PNG, JPEG, WebP, HEIC, PDF, text; 20 MB
+at most) under `~/.genesis-tools/dev-dashboard/uploads/<day>/`, named by its SHA-256, and answers its path.
+
 ## The endpoint table
 
 `contract/endpoint-table.ts` holds one row per non-board endpoint the phone and the web reach:

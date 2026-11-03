@@ -10,6 +10,7 @@ import {
 } from "@app/dev-dashboard/lib/auth";
 import { isPublicShareRequest } from "@app/dev-dashboard/lib/share-auth";
 import { handleWithRouter } from "@app/dev-dashboard/server/adapters/node-connect";
+import { ACT_TOKEN_HEADER, isActScopedRequest } from "@app/dev-dashboard/server/auth-guard";
 import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { createDashboardRouter, startBackgroundServices } from "@app/dev-dashboard/server/registry";
 import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
@@ -28,6 +29,12 @@ let loggedGeneratedPassword = false;
 
 async function requireDashboardAuth(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
     if (isPublicShareRequest(req.method ?? "GET", url.pathname)) {
+        return true;
+    }
+
+    // The act scope (`isActScopedRequest`): an act token alone answers one decision letter, nothing else.
+    const actToken = req.headers[ACT_TOKEN_HEADER];
+    if (isActScopedRequest(req.method ?? "GET", url.pathname, typeof actToken === "string" ? actToken : undefined)) {
         return true;
     }
 

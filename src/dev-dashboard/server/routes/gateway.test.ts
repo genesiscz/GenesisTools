@@ -1,0 +1,205 @@
+import { describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
+import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
+import { decideApiAuth, isActScopedRequest } from "@app/dev-dashboard/server/auth-guard";
+import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { CapabilityRefusedError, HUB_CAPABILITIES } from "@app/hub/lib/capabilities/index";
+import { issueActTokens, memoryActTokenStore } from "@app/question/lib/act/tokens";
+import type { DecisionRecord } from "@app/question/lib/decisions/store";
+import { GATEWAY_ROWS, gatewayRoutes } from "./gateway";
+
+const TOKEN = "AbCdEfGhIjKlMnOpQrStUv";
+
+function ctx({
+    method,
+    pathname,
+    query = {},
+    headers = {},
+    body,
+    raw,
+}: {
+    method: "GET" | "POST";
+    pathname: string;
+    query?: Record<string, string>;
+    headers?: Record<string, string>;
+    body?: unknown;
+    raw?: Uint8Array;
+}): RouteContext {
+    return {
+        method,
+        pathname,
+        query: new URLSearchParams(query),
+        params: {},
+        headers,
+        readJson: async <T>() => (body ?? {}) as T,
+        readRawBody: async () => raw ?? new Uint8Array(),
+        services: {} as RouteContext["services"],
+    };
+}
+
+function route(defs: RouteDef[], method: string, pattern: string): RouteDef {
+    const found = defs.find((def) => def.method === method && def.pattern === pattern);
+
+    if (!found) {
+        throw new Error(`no route ${method} ${pattern}`);
+    }
+
+    return found;
+}
+
+async function json(result: RouteResult | Promise<RouteResult>): Promise<{ status: number; body: unknown }> {
+    const settled = await result;
+
+    if (settled.kind !== "json") {
+        throw new Error(`expected json, got ${settled.kind}`);
+    }
+
+    return { status: settled.status, body: settled.body };
+}
+
+describe("the Mac gateway", () => {
+    it("serves every hub capability on its own row, and nothing else", () => {
+        expect(Object.keys(GATEWAY_ROWS).sort()).toEqual(Object.keys(HUB_CAPABILITIES).sort());
+        expect(Object.values(GATEWAY_ROWS).every((row) => row.method === "GET" && row.policy === "read")).toBe(true);
+    });
+
+    it("passes the query to the capability and maps its refusals to 400 and 404", async () => {
+        const seen: { name: string; input: Readonly<Record<string, unknown>> }[] = [];
+        const routes = gatewayRoutes({
+            run: async (name, input) => {
+                seen.push({ name, input });
+
+                if (input.agent === "missing") {
+                    throw new CapabilityRefusedError("not-found", "No agent missing in the window");
+                }
+
+                if (input.since === "soon") {
+                    throw new CapabilityRefusedError("bad-input", "since: a duration");
+                }
+
+                return { ok: name };
+            },
+        });
+        const agents = route(routes, "GET", "/api/gateway/agents");
+
+        expect(
+            await json(agents.handler(ctx({ method: "GET", pathname: "/api/gateway/agents", query: { since: "24h" } })))
+        ).toEqual({ status: 200, body: { ok: "agents" } });
+        expect(seen[0]).toEqual({ name: "agents", input: { since: "24h" } });
+        expect(
+            (
+                await json(
+                    agents.handler(ctx({ method: "GET", pathname: "/api/gateway/agents", query: { agent: "missing" } }))
+                )
+            ).status
+        ).toBe(404);
+        expect(
+            (
+                await json(
+                    agents.handler(ctx({ method: "GET", pathname: "/api/gateway/agents", query: { since: "soon" } }))
+                )
+            ).status
+        ).toBe(400);
+    });
+
+    it("answers an act from its token header, once per Idempotency-Key", async () => {
+        const store = memoryActTokenStore();
+        const row: DecisionRecord = {
+            id: "d_2_s-gw",
+            sessionId: "s-gw",
+            number: 2,
+            prompt: "Which?",
+            options: ["one", "two"],
+            state: "open",
+            updatedTs: "2026-11-03T09:00:00Z",
+        };
+        const [, b] = await issueActTokens({ row, surface: "phone", store });
+        let answers = 0;
+        const routes = gatewayRoutes({
+            act: async () => ({
+                store,
+                rows: () => [row],
+                answer: async () => {
+                    answers++;
+                    return { session: "s-gw", text: "2b", channel: "queued", delivered: false };
+                },
+            }),
+        });
+        const actRoute = route(routes, "POST", "/api/act");
+        const call = (headers: Record<string, string>) =>
+            json(actRoute.handler(ctx({ method: "POST", pathname: "/api/act", headers })));
+
+        expect((await call({ "idempotency-key": "r1" })).status).toBe(401);
+        expect((await call({ "x-gt-act-token": b.token })).status).toBe(400);
+
+        const first = await call({ "x-gt-act-token": b.token, "idempotency-key": "r1" });
+        const retry = await call({ "x-gt-act-token": b.token, "idempotency-key": "r1" });
+
+        expect(first.status).toBe(200);
+        expect(first.body).toMatchObject({ key: "http:r1", outcome: { kind: "queued" }, decision: { option: "b" } });
+        expect(retry).toEqual(first);
+        expect(answers).toBe(1);
+    });
+
+    it("stores an upload by content under the upload folder, and refuses an unknown type", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-gateway-upload-"));
+        const upload = route(gatewayRoutes({ uploadDir: () => dir }), "POST", ENDPOINTS.gatewayUpload.path);
+        const bytes = new TextEncoder().encode("a note from the phone");
+
+        const refused = await json(
+            upload.handler(
+                ctx({
+                    method: "POST",
+                    pathname: "/api/gateway/upload",
+                    headers: { "content-type": "image/gif" },
+                    raw: bytes,
+                })
+            )
+        );
+        const stored = await json(
+            upload.handler(
+                ctx({
+                    method: "POST",
+                    pathname: "/api/gateway/upload",
+                    headers: { "content-type": "text/plain; charset=utf-8" },
+                    raw: bytes,
+                })
+            )
+        );
+        const receipt = stored.body as { path: string; bytes: number; sha256: string };
+
+        expect(refused.status).toBe(415);
+        expect(stored.status).toBe(200);
+        expect(receipt.path.startsWith(dir)).toBe(true);
+        expect(receipt.path.endsWith(".txt")).toBe(true);
+        expect(receipt.bytes).toBe(bytes.byteLength);
+        expect(existsSync(receipt.path) && readFileSync(receipt.path, "utf8")).toBe("a note from the phone");
+    });
+});
+
+describe("the act scope", () => {
+    const { auth } = createBasicAuthCredentials({ username: "u", password: "p" });
+    const provision = { auth, generatedPassword: null };
+
+    it("lets an act token reach the act row only, without the dashboard login", () => {
+        expect(isActScopedRequest("POST", "/api/act", TOKEN)).toBe(true);
+        expect(isActScopedRequest("POST", "/api/act", "short")).toBe(false);
+        expect(isActScopedRequest("GET", "/api/act", TOKEN)).toBe(false);
+        expect(isActScopedRequest("POST", "/api/qa/decisions/answer", TOKEN)).toBe(false);
+
+        expect(
+            decideApiAuth({ method: "POST", pathname: "/api/act", headers: { "x-gt-act-token": TOKEN }, provision })
+        ).toEqual({ decision: "allow", scope: "act" });
+        expect(
+            decideApiAuth({
+                method: "POST",
+                pathname: "/api/qa/decisions/answer",
+                headers: { "x-gt-act-token": TOKEN },
+                provision,
+            }).decision
+        ).toBe("deny");
+    });
+});
