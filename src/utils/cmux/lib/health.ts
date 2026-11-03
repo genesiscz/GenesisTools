@@ -66,17 +66,25 @@ export function classifyCmuxHealth(input: {
  * re-checks a pid against this before signalling it. */
 export const APP_BINARY_SUFFIX = "cmux.app/Contents/MacOS/cmux";
 
-async function findCmuxApp(): Promise<{ pid: number; cpu: number } | undefined> {
+/** The running cmux app's pid, from the kernel's process table (no `ps`, no socket): cheap enough to ask every call. */
+export function findCmuxAppPid(): number | undefined {
     // The kernel's short name first: an executable path per process, or usage of every process, costs far more.
     const entry = listProcesses({ commands: false }).find(
         (entry) =>
             entry.name === basename(APP_BINARY_SUFFIX) && readExecutablePath(entry.pid)?.endsWith(APP_BINARY_SUFFIX)
     );
-    if (!entry) {
+
+    return entry?.pid;
+}
+
+async function findCmuxApp(): Promise<{ pid: number; cpu: number } | undefined> {
+    const pid = findCmuxAppPid();
+    if (pid === undefined) {
         return undefined;
     }
+
     // `ps`'s %cpu: a cmux that spins now shows it, where the average since it started would hide it.
-    return { pid: entry.pid, cpu: readCpuPercents([entry.pid]).get(entry.pid) ?? 0 };
+    return { pid, cpu: readCpuPercents([pid]).get(pid) ?? 0 };
 }
 
 async function timedProbe(args: string[], timeoutMs: number, expect?: string): Promise<CmuxProbeResult> {

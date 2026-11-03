@@ -1,3 +1,4 @@
+import { findCmuxAppPid } from "@genesiscz/utils/cmux/lib/health";
 import {
     type CmuxLivePane,
     type CmuxLiveSnapshot,
@@ -5,6 +6,14 @@ import {
     fetchCmuxLiveSnapshot,
 } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { buildCmuxHierarchy } from "@genesiscz/utils/cmux/lib/tree";
+import {
+    activeTreeBackoff,
+    fileTreeBackoffStore,
+    nextTreeBackoff,
+    skippedTreeError,
+    type TreeBackoffStore,
+} from "@genesiscz/utils/cmux/lib/tree-backoff";
+import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
 /**
@@ -67,9 +76,18 @@ export interface CmuxTree<S extends CmuxTreeSurface = CmuxTreeSurface> {
 
 export interface CmuxTreeDeps {
     fetchSnapshot?: () => Promise<CmuxLiveSnapshot>;
+    /**
+     * The shared memory of a cmux that does not answer (`lib/tree-backoff.ts`); null turns it off. Default: the file
+     * under `~/.genesis-tools/cmux/`, unless a snapshot is injected (a test), which gets none.
+     */
+    backoff?: TreeBackoffStore | null;
+    /** The running cmux app's pid; default `findCmuxAppPid`. */
+    appPid?: () => number | undefined;
+    now?: () => number;
 }
 
 const prof = profiler.scope("cmux");
+const { log } = logger.scoped("cmux-tree");
 
 function toTreePane(pane: CmuxLivePane): CmuxTreePane {
     return {
@@ -96,8 +114,39 @@ function toTreePane(pane: CmuxLivePane): CmuxTreePane {
 /** Every window's hierarchy, from one live snapshot (no previews). */
 export async function fetchCmuxTree(deps: CmuxTreeDeps = {}): Promise<CmuxTree> {
     const started = performance.now();
+    const now = deps.now ?? Date.now;
+    const backoff = deps.backoff !== undefined ? deps.backoff : deps.fetchSnapshot ? null : fileTreeBackoffStore();
+    const previous = backoff?.read() ?? null;
+    const skip = activeTreeBackoff({ record: previous, now: now(), appPid: deps.appPid ?? findCmuxAppPid });
+
+    if (skip) {
+        log.debug({ backoff: skip }, "cmux tree not asked: cmux did not answer recently");
+        return {
+            fetchedAt: new Date(now()).toISOString(),
+            available: false,
+            error: skippedTreeError(skip),
+            windows: [],
+            totalMs: performance.now() - started,
+        };
+    }
+
     const fetchSnapshot = deps.fetchSnapshot ?? (() => fetchCmuxLiveSnapshot({ previews: "none", allWindows: true }));
     const snapshot = await prof.measureAsync("tree.snapshot", fetchSnapshot);
+
+    if (backoff) {
+        const next = nextTreeBackoff({
+            previous,
+            unresponsive: snapshot.available ? undefined : snapshot.unresponsive,
+            error: snapshot.error,
+            now: now(),
+        });
+
+        // A success after no failure writes nothing, so a healthy cmux costs one stat per call.
+        if (next || (previous && previous.failures > 0)) {
+            backoff.write(next);
+            log.debug({ backoff: next }, next ? "cmux tree backs off" : "cmux tree answered again; backoff cleared");
+        }
+    }
 
     if (!snapshot.available) {
         return {
