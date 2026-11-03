@@ -13,6 +13,12 @@ export type PollOutcome = "ok" | "stale" | "error" | "blocked" | "backoff" | "ne
 
 export const POLL_OUTCOMES: readonly PollOutcome[] = ["ok", "stale", "error", "blocked", "backoff", "needs-login"];
 
+/** The provider and account pair a run belongs to. */
+export interface RunAccount {
+    provider: string;
+    accountId: string;
+}
+
 function isPollOutcome(value: string): value is PollOutcome {
     return (POLL_OUTCOMES as readonly string[]).includes(value);
 }
@@ -204,14 +210,31 @@ export class PollRunsStore {
         }
     }
 
-    /** Runs that overlap `[from, to]`, oldest first. A store without the table answers no runs. */
-    runsBetween(query: { from: Date; to: Date; providers?: readonly string[] }): PollRun[] {
+    /**
+     * Runs that overlap `[from, to]`, oldest first. `accounts` bounds the read to those provider and account pairs
+     * in SQL (an empty list reads nothing). A store without the table answers no runs.
+     */
+    runsBetween(query: {
+        from: Date;
+        to: Date;
+        providers?: readonly string[];
+        accounts?: readonly RunAccount[];
+    }): PollRun[] {
         const params: string[] = [query.to.toISOString(), query.from.toISOString()];
         let providerFilter = "";
 
         if (query.providers && query.providers.length > 0) {
             providerFilter = ` AND provider IN (${query.providers.map(() => "?").join(", ")})`;
             params.push(...query.providers);
+        }
+
+        if (query.accounts) {
+            if (query.accounts.length === 0) {
+                return [];
+            }
+
+            providerFilter += ` AND (${query.accounts.map(() => "(provider = ? AND account_id = ?)").join(" OR ")})`;
+            params.push(...query.accounts.flatMap((account) => [account.provider, account.accountId]));
         }
 
         try {
@@ -225,6 +248,27 @@ export class PollRunsStore {
                 .all(...params) as RunSqlRow[];
 
             return rows.map(mapRun);
+        } catch (err) {
+            if (isMissingTable(err)) {
+                return [];
+            }
+
+            throw err;
+        }
+    }
+
+    /** Each account's newest run, whatever window a caller reads: what the account's polls say now. */
+    latestRuns(accounts: readonly RunAccount[]): PollRun[] {
+        try {
+            const latest = this.db.prepare(
+                `SELECT id, provider, account_id, account_name, from_ts, to_ts, outcome, source, gate_until, reason, polls
+                 FROM usage_poll_runs WHERE provider = ? AND account_id = ? ORDER BY to_ts DESC, id DESC LIMIT 1`
+            );
+
+            return accounts.flatMap((account) => {
+                const row = latest.get(account.provider, account.accountId) as RunSqlRow | null;
+                return row ? [mapRun(row)] : [];
+            });
         } catch (err) {
             if (isMissingTable(err)) {
                 return [];
