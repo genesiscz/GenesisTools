@@ -238,10 +238,12 @@ public enum UsageLaneBuilder {
 
     static func forecast(_ item: UsageSeriesItem, last: UsageLaneSample?) -> UsageLaneForecast? {
         guard let forecast = item.forecast, item.availableNow != "absent", forecast.stale != true else { return nil }
-        let start = UsageTime.date(item.current?.fetchedAt) ?? UsageTime.date(forecast.lastSampleAt) ?? last?.date
+        // The forecast's own origin (its last sample and value), as the CLI's exhaustAt uses: a newer cached poll would
+        // move the cone off the time the table shows.
+        let start = UsageTime.date(forecast.lastSampleAt) ?? last?.date ?? UsageTime.date(item.current?.fetchedAt)
         guard let start else { return nil }
         return UsageLaneForecast(
-            start: start, value: item.current?.utilization ?? forecast.utilization,
+            start: start, value: forecast.utilization,
             ratePerHour: forecast.ratePctPerHour, lowPerHour: forecast.paceBand?.lowPctPerHour,
             highPerHour: forecast.paceBand?.highPctPerHour, safePerHour: forecast.safePctPerHour,
             resetAt: UsageTime.date(forecast.resetsAt ?? item.current?.resetsAt), exhaustAt: UsageTime.date(forecast.exhaustAt),

@@ -70,10 +70,14 @@ final class UsageTests: XCTestCase {
         XCTAssertTrue(accounts[0].coverageRecorded)
         XCTAssertFalse(accounts[1].coverageRecorded)
         let forecast = try XCTUnwrap(lane.forecast)
+        // Anchored at the forecast's last sample (09:30, 80 %), not the newer cached poll (10:00).
+        XCTAssertEqual(forecast.start, UsageTime.date("2026-11-03T09:30:00.000Z"))
         // From 80 %: the fast pace (20 %/h) reaches 100 % in an hour, the slow one (5 %/h) in four, past the reset.
         let span = try XCTUnwrap(forecast.outSpan)
-        XCTAssertEqual(span.from, UsageTime.date("2026-11-03T11:00:00.000Z"))
+        XCTAssertEqual(span.from, UsageTime.date("2026-11-03T10:30:00.000Z"))
         XCTAssertNil(span.to)
+        // A series is one window of one kind: the same key under another kind is another series.
+        XCTAssertTrue(data.series[0].id.hasSuffix("\u{1}five_hour\u{1}session"))
     }
 
     func testStepLineHoldsEachValueUntilTheNextReading() {
