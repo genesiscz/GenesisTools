@@ -90,6 +90,11 @@ export function macosMailOpenCommand(): string {
     return toolCommand("macos mail open");
 }
 
+/** Plays a recorded meeting's audio from a moment. */
+export function meetingsPlayCommand(): string {
+    return toolCommand("meetings play");
+}
+
 /** Shows what macOS granted for Calendar access. */
 export function macosCalendarDoctorCommand(): string {
     return toolCommand("macos calendar doctor");

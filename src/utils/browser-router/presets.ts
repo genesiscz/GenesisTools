@@ -2,6 +2,7 @@ import {
     browserRouterLinkHostCommand,
     claudeCmuxFindLinkCommand,
     macosMailOpenCommand,
+    meetingsPlayCommand,
 } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_MARKDOWN_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
@@ -184,8 +185,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             id: "meetings-play",
             title: "Play a meeting moment",
             kind: "installable",
-            description:
-                "https://<link host>/meetings/play?meeting=<id>&at=<time> plays the meeting's audio from that time (tools meetings play).",
+            description: `https://<link host>/meetings/play?meeting=<id>&at=<time> plays the meeting's audio from that time (${meetingsPlayCommand()}).`,
             enabledIf: ["platform:darwin"],
             needsLinkHost: true,
             routes: withHost((host) => [
