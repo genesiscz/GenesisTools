@@ -19,7 +19,10 @@ export interface DailyRow {
     /** `YYYY-MM-DD` in `tz`. */
     day: string;
     tz: string;
-    /** First, last and highest reading of the day; 0 on a day the window was gone with no reading (`readings` 0). */
+    /**
+     * First, last and highest reading of the day. A day with no reading (`readings` 0) holds the reading standing at
+     * its start (readings are written on change only, so a quiet window has none), or 0 when the window was gone then.
+     */
     startPct: number;
     endPct: number;
     peakPct: number;
@@ -130,9 +133,27 @@ function daysOfSpan(span: { from: string; to: string }, tz: string): string[] {
 }
 
 /**
- * The rows of every day the readings or an absent span touch (or only `days`), one per series and day. The series
- * door keeps an absent row out of the points and in the spans, so a day the window was gone all day has no reading
- * and still gets its row; each row's availability is the span at the day's end, not at its last reading.
+ * The reading standing at `at`: the last one before it, or the one carried into the range. Undefined when the window
+ * was gone at `at`, or no reading came before it.
+ */
+function heldAt(entry: SeriesEntry, at: number): number | undefined {
+    const span = entry.availability.find((s) => Date.parse(s.from) <= at && at < Date.parse(s.to));
+
+    if (!span || span.state === "absent") {
+        return undefined;
+    }
+
+    const before = entry.points.filter((point) => Date.parse(point.t) < at).at(-1);
+    return (before ?? entry.carried)?.percent;
+}
+
+/**
+ * The rows of every day the readings or the availability spans touch (or only `days`), one per series and day. The
+ * series door keeps an absent row out of the points and in the spans, so a day the window was gone all day has no
+ * reading and still gets its row. A limited window with no changed reading that day gets its row too, holding the
+ * reading carried into it, but only on a day the poller measured the account: a day nobody polled is not a known
+ * state, and a window long gone with its account would otherwise be carried forever. Each row's availability is the
+ * span at the day's end, not at its last reading.
  */
 export function dailyRowsOf(input: {
     series: readonly SeriesEntry[];
@@ -154,9 +175,15 @@ export function dailyRowsOf(input: {
             }
         }
 
-        for (const span of entry.availability.filter((s) => s.state === "absent")) {
+        const runs = input.runs.filter((run) => run.provider === entry.provider && run.accountName === entry.account);
+
+        for (const span of entry.availability) {
             for (const day of daysOfSpan(span, input.tz)) {
-                if (!byDay.has(day) && (!input.days || input.days.has(day))) {
+                if (byDay.has(day) || (input.days && !input.days.has(day))) {
+                    continue;
+                }
+
+                if (span.state === "absent" || (minutesIn(runs, dayBounds(day, input.tz)) ?? 0) > 0) {
                     byDay.set(day, []);
                 }
             }
@@ -164,11 +191,10 @@ export function dailyRowsOf(input: {
 
         const rangeEnd = Math.max(0, ...entry.availability.map((s) => Date.parse(s.to)));
 
-        const runs = input.runs.filter((run) => run.provider === entry.provider && run.accountName === entry.account);
-
         for (const [day, points] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {
             const values = points.map((point) => point.percent);
             const bounds = dayBounds(day, input.tz);
+            const held = values.length === 0 ? heldAt(entry, bounds.start) : undefined;
             const end = Math.min(bounds.end - 1, rangeEnd);
             const span = entry.availability.find((s) => Date.parse(s.from) <= end && end <= Date.parse(s.to));
 
@@ -180,9 +206,9 @@ export function dailyRowsOf(input: {
                 kind: entry.kind,
                 day,
                 tz: input.tz,
-                startPct: values[0] ?? 0,
-                endPct: values[values.length - 1] ?? 0,
-                peakPct: values.length > 0 ? Math.max(...values) : 0,
+                startPct: values[0] ?? held ?? 0,
+                endPct: values[values.length - 1] ?? held ?? 0,
+                peakPct: values.length > 0 ? Math.max(...values) : (held ?? 0),
                 resets: entry.resets.filter((reset) => zonedDay(reset, input.tz) === day).length,
                 cyclesOver90: cyclesOver(values),
                 readings: values.length,
@@ -353,7 +379,14 @@ export function rollUpRecentDays(input: {
     const resume = store.lastDay(input.tz) ?? oldestReadingDay(connection, input.tz) ?? yesterday;
     const first = resume < yesterday ? resume : yesterday;
     const from = new Date(dayBounds(first, input.tz).start);
-    const series = input.db.getSeries({ from: from.toISOString(), to: input.now.toISOString(), agg: "raw", step: 0 });
+    // `keepQuiet`: a window with no changed reading since `from` is still carried through the days the poller measured.
+    const series = input.db.getSeries({
+        from: from.toISOString(),
+        to: input.now.toISOString(),
+        agg: "raw",
+        step: 0,
+        keepQuiet: true,
+    });
     const runs = new PollRunsStore(connection).runsBetween({ from, to: input.now });
     const rows = dailyRowsOf({
         series,
