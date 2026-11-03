@@ -47,7 +47,7 @@ Both modes share the meeting record, its items and `tools meetings listen`.
      `evidence --raw` prints it: a range takes every line of its label that starts inside it, so the end time of the
      last line can pull in the next line of the same label.
    - `term`: `at`, `heard`, then one of `proposed` (the right spelling), `meaning` (a spoken path: the identifier shown
-     after the heard words, D1) or `quote` (`{ "text": "<the part of the document line that was read>", "source":
+     after the heard words, D1; write it without backticks, the transcript adds them) or `quote` (`{ "text": "<the part of the document line that was read>", "source":
      "čte z <document>, ř. <line>" }`, D8). `proposed` fixes the words wherever they are heard; add `"scope": "line"`
      when the same words are right elsewhere. Put the words that agree with the fix into `heard` too ("nějakej
      implementátor" becomes "nějaká implementace"), or the fixed sentence breaks its grammar. A real word the word
@@ -57,6 +57,8 @@ Both modes share the meeting record, its items and `tools meetings listen`.
      for a sentence cut between two whole words, `joined` has a space ("jsem zvědavej") and the space stays. `label` is
      a source label: the joined line takes the voice that the ranges give to that label at that time. Leave it out to
      use the label of the line after the cut.
+   - Two lines can start in the same second. `items add` then warns and names both lines by index; reject
+     that item and add the finding again with `"line": <index>`, or it does not apply.
    - Store only re-attributions: a line that stays with its own label needs no range. Group consecutive lines of one
      label that go to the same person on the same evidence into one range, with the lowest confidence of its lines;
      start a new range where the evidence changes.
@@ -66,10 +68,12 @@ Both modes share the meeting record, its items and `tools meetings listen`.
      turns them into the new item ids, so the user's answer confirms or rejects those findings. Write the question in
      the user's language, and `choices` as a JSON array (the `--choices` flag splits at commas).
 
-   The transcript applies the findings in this order: joins, ranges, quotes and meanings, term fixes, then the project
-   dictionary. So a quote or a meaning protects its words from the later fixes, and a term fix wins over a dictionary
-   entry for the same words: when the dictionary gives the wrong grammatical case on one line ("UVČ" becomes "UIčko"
-   after a genitive), store a `"scope": "line"` term fix with the right form ("UIčka").
+   The transcript applies the findings in this order: joins, ranges, open speaker marks, renames, quotes and meanings,
+   term fixes, the project dictionary, then open words. So a quote or a meaning protects its words from the later
+   fixes, and a term fix wins over a dictionary entry for the same words: when the dictionary gives the wrong
+   grammatical case on one line ("UVČ" becomes "UIčko" after a genitive), store a `"scope": "line"` term fix with the
+   right form ("UIčka"). `items add` and `transcript` print each item that did not apply and why (`i42 did not apply:
+   no "X" at 37:43`); fix that finding instead of ignoring the warning.
 
    Check every `readAloud` and `identifiers` fact against the transcript before you store it: the line number can be
    off, and a match can be a false one. A context document can be newer than the meeting and already hold its

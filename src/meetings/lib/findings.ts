@@ -16,6 +16,8 @@ const clock = z.union([z.number().min(0), z.string()]).transform((value, ctx) =>
 });
 const confidence = z.number().min(0).max(1);
 const text = z.string().trim().min(1);
+/** A line's index in the source transcript: tells apart two lines that start in the same second. */
+const line = z.number().int().min(0).optional();
 /** A name for a finding that a question in the same batch can list in `decides`, before the finding has an id. */
 const ref = z
     .string()
@@ -43,6 +45,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         kind: z.literal("term"),
         ref,
         at: clock,
+        line,
         heard: text,
         proposed: text.optional(),
         /** `line`: `proposed` fixes only the line at `at`. The default fixes the words wherever they are heard. */
@@ -59,6 +62,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         ref,
         /** The start of the line after the cut, whose first word ends the word cut in the line before. */
         at: clock,
+        line,
         /** The source's label whose voice speaks the joined line. Absent, the label of the line after the cut. */
         label: text.optional(),
         /** The whole word, as the joined line shows it. */
@@ -146,10 +150,17 @@ export function findingItems(findings: Finding[], items: MeetingItem[], now: str
             rules: [by],
             suggestedAt: now,
             ...(finding.confidence === undefined ? {} : { confidence: finding.confidence }),
-            ...(finding.reason ? { evidence: { reason: finding.reason } } : {}),
+        };
+        const evidence = {
+            ...(finding.reason ? { reason: finding.reason } : {}),
+            ...("line" in finding && finding.line !== undefined ? { transcriptLine: finding.line } : {}),
         };
 
-        return meetingItemSchema.parse({ ...base, ...kindFields(finding, idOfRef) });
+        return meetingItemSchema.parse({
+            ...base,
+            ...(Object.keys(evidence).length > 0 ? { evidence } : {}),
+            ...kindFields(finding, idOfRef),
+        });
     });
 }
 

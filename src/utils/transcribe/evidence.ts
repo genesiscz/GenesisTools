@@ -1,4 +1,5 @@
 import { similarityScore } from "@genesiscz/utils/fuzzy-match";
+import { TranscriptLines } from "./lines";
 import type { Presence } from "./speakers";
 import type { TranscriptEntry } from "./types";
 
@@ -31,8 +32,6 @@ export const SELF = "self";
 
 /** Two identities whose overlap differs by less than this share are a tie: the line has no winner. */
 const TIE_SHARE = 0.001;
-/** A line with no next line counts this long. */
-const LAST_LINE_SEC = 5;
 /** Teams' indicator is read about every 5 s, so a line also counts what it showed this long before it. */
 const SPEAKING_LEAD_SEC = 1;
 
@@ -110,16 +109,21 @@ export function lineEvidence(
     /** The microphone channel's share of the audio energy over a time range, when the audio is at hand. */
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined
 ): LineEvidence[] {
-    const timed = entries.filter((entry) => entry.startSec !== undefined && entry.text.trim());
+    const lines = new TranscriptLines(entries);
+    const timed = entries.flatMap((entry, at) => {
+        const span = lines.span(at);
+        return span ? [{ entry, span }] : [];
+    });
 
-    return timed.map((entry, index) => {
+    return timed.map(({ entry, span }, index) => {
         const startSec = entry.startSec!;
-        const endSec = Math.max(timed[index + 1]?.startSec ?? startSec + LAST_LINE_SEC, startSec + 1);
+        const fromSec = span.fromSec;
+        const endSec = span.toSec;
         const overlap = new Map<string, { sec: number; liveName?: string; voiceId?: number; longest: number }>();
         const touching: EvidenceSegment[] = [];
 
         for (const segment of evidence.segments) {
-            const sec = Math.min(endSec, segment.endSec) - Math.max(startSec, segment.startSec);
+            const sec = Math.min(endSec, segment.endSec) - Math.max(fromSec, segment.startSec);
 
             if (sec <= 0) {
                 continue;
@@ -138,7 +142,7 @@ export function lineEvidence(
         }
 
         const echo = echoScore(touching);
-        const energyMic = energyMicShare?.(startSec, endSec);
+        const energyMic = energyMicShare?.(fromSec, endSec);
 
         const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
         const ranked = [...overlap.entries()].sort((a, b) => b[1].sec - a[1].sec);

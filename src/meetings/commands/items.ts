@@ -17,7 +17,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
+import type { CorrectionOutcome } from "@genesiscz/utils/transcribe/apply";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
     entriesToSrt,
@@ -44,7 +44,7 @@ import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { linkedSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
-import { correctionsOf } from "../lib/transcript-corrections";
+import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "../lib/transcript-corrections";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice, wordCheckFor } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -349,16 +349,55 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
         return;
     }
 
+    // The transcript anchors each join and line-bound term to one line; with no source at hand, items are added as given.
+    const meeting = await loadTranscript(record).catch((err: unknown) => {
+        log.debug({ err, meeting: record.id }, "no transcript to check the anchors against");
+        return undefined;
+    });
+
     try {
         let added: MeetingItem[] = [];
+        let anchorWarnings: string[] = [];
         const updated = await store.update(
             record.id,
             { command: "items add", change: `${parsed.data.length} findings` },
             (current) => {
                 added = findingItems(parsed.data, current.items, new Date().toISOString());
+
+                if (meeting) {
+                    const anchors = checkAnchors(added, meeting.transcript);
+                    anchorWarnings = anchors.warnings;
+
+                    for (const item of added) {
+                        const line = anchors.addresses.get(item.id);
+
+                        if (line !== undefined) {
+                            item.evidence = { ...item.evidence, transcriptLine: line };
+                        }
+                    }
+                }
+
                 current.items.push(...added);
             }
         );
+
+        for (const warning of anchorWarnings) {
+            ui.warn(warning);
+        }
+
+        if (meeting) {
+            const ids = added.map((item) => item.id);
+            const config = await new MeetingsConfigStore().read();
+            const result = correctTranscript({
+                record: updated,
+                transcript: meeting.transcript,
+                config,
+                format: "txt",
+                dictionary: false,
+                include: ids,
+            });
+            reportOutcomes(result.outcomes.filter((outcome) => ids.includes(outcome.item)));
+        }
 
         for (const warning of questionWarnings(updated, added)) {
             ui.warn(warning);
@@ -497,39 +536,14 @@ async function decide(
                         item.speaker = opts.speaker;
                     }
 
-                    if (item.kind === "term") {
-                        const fixed = opts.proposed ?? item.proposed;
-
-                        if (!fixed) {
-                            continue;
-                        }
-
-                        item.proposed = fixed;
-                        ledger.push({
-                            at: now,
-                            meeting: current.id,
-                            project: current.project,
-                            kind: "term",
-                            heard: item.heard,
-                            fixed,
-                            item: item.id,
-                        });
+                    if (item.kind === "term" && opts.proposed) {
+                        item.proposed = opts.proposed;
                     }
 
-                    if (item.kind === "join" && item.joined) {
-                        const evidence = item.evidence ?? {};
-                        const heard = [evidence.left, evidence.right]
-                            .filter((part) => typeof part === "string")
-                            .join(" ");
-                        ledger.push({
-                            at: now,
-                            meeting: current.id,
-                            project: current.project,
-                            kind: "join",
-                            heard,
-                            fixed: item.joined,
-                            item: item.id,
-                        });
+                    const entry = ledgerEntryFor(current, item, now);
+
+                    if (entry) {
+                        ledger.push(entry);
                     }
                 }
             }
@@ -592,6 +606,17 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     }
 }
 
+/** One warning per item that did not apply: `i42 did not apply: no "X" at 37:43`. */
+function reportOutcomes(outcomes: CorrectionOutcome[]): void {
+    for (const outcome of outcomes) {
+        const text = outcomeText(outcome);
+
+        if (text) {
+            ui.warn(text);
+        }
+    }
+}
+
 async function transcript(
     ref: string,
     opts: {
@@ -619,7 +644,8 @@ async function transcript(
     try {
         const meeting = await loadTranscript(record);
         const config = await new MeetingsConfigStore().read();
-        const applied = applyCorrections(meeting.transcript, correctionsOf(record, config, { ...opts, format }));
+        const applied = correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
+        reportOutcomes(applied.outcomes);
         ui.dim(
             `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
         );
@@ -653,14 +679,15 @@ async function transcript(
                     ...(record.project ? { project: record.project } : {}),
                     meeting_id: record.id,
                     sources: Object.keys(record.sources),
-                    // An open speaker mark is not a speaker.
-                    speakers: [
-                        ...new Set(
-                            applied.entries
-                                .map((entry) => entry.speaker)
-                                .filter((name) => !name.startsWith(`[${config.global.render.unclearLabel}:`))
-                        ),
-                    ],
+                    // The people after the corrections, with their line counts; an open speaker mark is not a speaker.
+                    speakers: Object.fromEntries(applied.speakers.map((speaker) => [speaker.name, speaker.lines])),
+                    ...(applied.unattributed.length > 0
+                        ? {
+                              unattributed: Object.fromEntries(
+                                  applied.unattributed.map((speaker) => [speaker.name, speaker.lines])
+                              ),
+                          }
+                        : {}),
                 })
             );
         }

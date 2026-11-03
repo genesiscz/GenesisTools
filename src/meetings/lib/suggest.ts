@@ -159,7 +159,12 @@ function speakerItems(options: {
                 joined: hint.join.joined,
                 confidence: CONFIDENCE.join,
                 rules: ["split-word", "lone-label"],
-                evidence: { label: hint.label, left: hint.join.left, right: hint.join.right },
+                evidence: {
+                    label: hint.label,
+                    left: hint.join.left,
+                    right: hint.join.right,
+                    ...(hint.join.line !== undefined ? { transcriptLine: hint.join.line } : {}),
+                },
             });
         }
     }
@@ -225,7 +230,12 @@ function documentItems(options: TermSources): NewItem[] {
                           },
                           confidence: Math.min(0.95, quote.score),
                           rules: [MeetingRule.ReadAloud],
-                          evidence: { doc: quote.doc, line: quote.line, shared: quote.shared },
+                          evidence: {
+                              doc: quote.doc,
+                              line: quote.line,
+                              shared: quote.shared,
+                              transcriptLine: quote.entry,
+                          },
                       },
                   ];
         }),
@@ -242,7 +252,7 @@ function documentItems(options: TermSources): NewItem[] {
                           meaning: match.identifier,
                           confidence: Math.min(0.9, 0.5 + 0.1 * match.matched),
                           rules: [MeetingRule.SpokenIdentifier],
-                          evidence: { matched: match.matched, of: match.score },
+                          evidence: { matched: match.matched, of: match.score, transcriptLine: match.entry },
                       },
                   ];
         }),
@@ -369,7 +379,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     const applyAt = (dictionary.fuzzy ?? DEFAULT_FUZZY).apply;
     const fuzzy = new Map<
         string,
-        { heard: string; value: string; score: number; atSec?: number; occurrences: number }
+        { heard: string; value: string; score: number; atSec?: number; line?: number; occurrences: number }
     >();
 
     for (const match of fuzzyMatches(meeting.transcript, dictionary).filter(
@@ -382,6 +392,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
             value: match.value,
             score: match.score,
             atSec: seen?.atSec ?? meeting.transcript[match.line]?.startSec,
+            line: seen ? seen.line : match.line,
             occurrences: (seen?.occurrences ?? 0) + 1,
         });
     }
@@ -394,7 +405,10 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
         ...(match.atSec !== undefined ? { atSec: match.atSec } : {}),
         confidence: Math.round(match.score * 100) / 100,
         rules: [MeetingRule.DictionaryFuzzy],
-        evidence: { occurrences: match.occurrences },
+        evidence: {
+            occurrences: match.occurrences,
+            ...(match.atSec !== undefined && match.line !== undefined ? { transcriptLine: match.line } : {}),
+        },
     }));
 
     return [

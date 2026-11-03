@@ -23,7 +23,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
-| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`global.render.unclearLabel`); `--with-suggested` applies the top reading instead |
+| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`global.render.unclearLabel`); `--with-suggested` applies the top reading instead. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
 | `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display all\|follow-focus\|main\|<index>]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
 | `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop writes the summary into the meeting |
 | `record display list\|add <id>\|remove <id>\|switch <id>\|mode <policy>` | Which displays the running recording records; a change applies at once |
@@ -36,7 +36,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `items add <meeting> --kind speaker-range --from 38:12 --to 38:20 --label "<raw label>" --speaker <name> --confidence 0.85 --reason "…"` | Store an agent's finding (rule `agent`, the reason in `evidence.reason`); it stays suggested until a person confirms it |
 | `items add <meeting> --kind term --at 1:02 --heard <words> [--proposed <spelling>] --confidence 0.4 --reason "…"` | The same for a term; without `--proposed` it is asked as free text when it matters |
 | `items add <meeting> --listen --from 37:43 --to 37:51 --question "…" [--choices "A,B"] [--decides i7]` | Add a question of your own for `listen` |
-| `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `confidence`, `reason`), plus `meaning` or `quote` on a term; times as seconds or "37:43". Kinds: `speaker-range`, `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing |
+| `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
 | `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the term part and the summary; no rule and no confidence |
 | `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
@@ -135,6 +135,23 @@ as an open question is.
 - `question`: something to decide by ear (`about`: speaker, term or text), with its time range, `choices` and the
   items it `decides`. Answering it confirms each decided item with the answer (a range's speaker, a term's
   spelling); "none of these" rejects them; a skip leaves them as they were; "Several voices" cuts it at each line inside it and, in a line of 3 s or more, at each change between the microphone and the call (half-second energy windows); each part shows its words and plays only its own audio. Two remote voices in a row stay one part. With nothing to cut, the question stays open. A speaker question shows the words of its span and plays only that span, from the tone on.
+
+### Transcript lines and the corrections pipeline
+
+`src/utils/transcribe/lines.ts` is the one place that knows a transcript's lines. A line's address is its index in the
+source transcript plus its start. A line ends at the next timed line's start, at least 1 s on, and the last one 5 s
+on. The line at a time is the one starting within 0.5 s of it; two such lines (Wispr times whole seconds) are reported
+as ambiguous and never guessed. Heard words match whole words only, in any case (Czech letters too), with diacritics as
+written and any run of spaces: "Ada" never matches inside "zadání". The spot where words are said is estimated from
+their place in the line, and a word's clip is cut around that spot.
+
+`correctTranscript` in `src/meetings/lib/transcript-corrections.ts` is the corrections pipeline. It takes the
+record's decided items (with `--with-suggested`, also those at `applyAbove`), the dictionary and the open questions,
+and applies them in one order: joins, ranges, open speaker marks (on the source label, never on a line a range or a
+join already voiced), renames, quote and meaning marks, term fixes, the dictionary, open words. It returns the lines
+and one outcome per item: applied (with its lines), not found, ambiguous, or shadowed by another item. A meaning is
+wrapped in backticks once, also when it was stored with its own. `ledgerEntryFor` is the corrections-ledger entry of a
+confirmed term or join, for every path that confirms one.
 
 The rules are one documented enum, `MeetingRule` in `src/utils/meetings/rules.ts`. Two rules that reach the same item
 merge into one, with the confidence 1 − (1 − a)(1 − b), at most 0.95.

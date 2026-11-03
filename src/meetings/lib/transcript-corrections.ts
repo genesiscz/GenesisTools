@@ -1,8 +1,19 @@
 import { type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import type { TranscriptCorrections, UnclearPassage } from "@genesiscz/utils/transcribe/apply";
-import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
+import {
+    applyCorrections,
+    type CorrectionOutcome,
+    type CorrectionsApplied,
+    heardLineAt,
+    joinLine,
+    type TranscriptCorrections,
+    type UnclearPassage,
+} from "@genesiscz/utils/transcribe/apply";
+import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { formatClock, type TranscriptFormat } from "@genesiscz/utils/transcribe/render";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { openQuestions } from "./questions";
 
 /**
@@ -108,8 +119,11 @@ function withConfidence(readings: string[], confidence: number | undefined): str
     );
 }
 
-/** A join's time and the start of the line after the cut differ by at most this much (as `applyCorrections` matches it). */
-const JOIN_SLACK_SEC = 0.5;
+/** The line address an item carries: its index in the source transcript, stored by suggest and `items add`. */
+export function lineOf(item: MeetingItem): number | undefined {
+    const line = item.evidence?.transcriptLine;
+    return typeof line === "number" && Number.isInteger(line) && line >= 0 ? line : undefined;
+}
 
 /**
  * What a transcript applies: renames, then the confirmed items, then the dictionary. With `withSuggested` a suggested
@@ -119,11 +133,12 @@ const JOIN_SLACK_SEC = 0.5;
 export function correctionsOf(
     record: MeetingRecord,
     config: MeetingsConfig,
-    opts: { withSuggested?: boolean; dictionary?: boolean; format: TranscriptFormat }
+    opts: { withSuggested?: boolean; dictionary?: boolean; format: TranscriptFormat; include?: string[] }
 ): TranscriptCorrections {
     const applyAbove = config.global.suggest.applyAbove;
     const applies = (item: MeetingItem) =>
         item.status === "confirmed" ||
+        (opts.include?.includes(item.id) === true && item.status !== "rejected") ||
         (opts.withSuggested === true &&
             item.status === "suggested" &&
             (item.confidence === undefined || item.confidence >= applyAbove));
@@ -132,9 +147,13 @@ export function correctionsOf(
         ? unclearPassages(record, { below: applyAbove, applied: applies })
         : unclearPassages(record, { below: config.global.suggest.listenBelow });
 
+    const address = (item: MeetingItem) => {
+        const line = lineOf(item);
+        return line === undefined ? {} : { line };
+    };
     const ranges = used.flatMap((item) =>
         item.kind === "speaker-range" && item.speaker
-            ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker }]
+            ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker, item: item.id }]
             : []
     );
     // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line
@@ -143,8 +162,8 @@ export function correctionsOf(
         ranges.find(
             (range) =>
                 range.label === label &&
-                range.fromSec - JOIN_SLACK_SEC <= atSec &&
-                atSec <= range.toSec + JOIN_SLACK_SEC
+                range.fromSec - LINE_AT_TOLERANCE_SEC <= atSec &&
+                atSec <= range.toSec + LINE_AT_TOLERANCE_SEC
         )?.speaker;
 
     return {
@@ -155,6 +174,8 @@ export function correctionsOf(
                 ? [
                       {
                           atSec: item.atSec,
+                          ...address(item),
+                          item: item.id,
                           ...(item.speaker ? { speaker: voiceAt(item.speaker, item.atSec) ?? item.speaker } : {}),
                           ...(item.joined ? { joined: item.joined } : {}),
                       },
@@ -167,7 +188,10 @@ export function correctionsOf(
                       {
                           heard: item.heard,
                           replacement: item.proposed,
-                          ...(item.scope === "line" && item.atSec !== undefined ? { atSec: item.atSec } : {}),
+                          item: item.id,
+                          ...(item.scope === "line" && item.atSec !== undefined
+                              ? { atSec: item.atSec, ...address(item) }
+                              : {}),
                       },
                   ]
                 : []
@@ -177,7 +201,9 @@ export function correctionsOf(
                 ? [
                       {
                           atSec: item.atSec,
+                          ...address(item),
                           heard: item.heard,
+                          item: item.id,
                           ...(item.meaning ? { meaning: item.meaning } : {}),
                           ...(item.quote ? { quote: item.quote } : {}),
                       },
@@ -190,4 +216,147 @@ export function correctionsOf(
         notes: opts.format === "md" ? "sup" : "inline",
         ...(passages.length > 0 ? { unclear: { label: config.global.render.unclearLabel, passages } } : {}),
     };
+}
+
+/** What the transcript of a meeting is after its corrections, and what became of each item it applied. */
+export interface CorrectedTranscript extends CorrectionsApplied {
+    /** The people the lines are attributed to after the corrections, with their line counts, most lines first. */
+    speakers: Array<{ name: string; lines: number }>;
+    /** Source labels no correction named a person for (`Speaker 5`), with their line counts. */
+    unattributed: Array<{ name: string; lines: number }>;
+}
+
+/**
+ * The corrections pipeline: the record's decided items (with `withSuggested`, the suggested ones at or above
+ * `global.suggest.applyAbove`; with `include`, these items whatever their confidence), the dictionary, and the open
+ * questions, applied to the source transcript in their fixed order. Returns the corrected lines and one outcome per
+ * item: applied to its lines, not found, ambiguous (two lines in one second), or shadowed by another item.
+ */
+export function correctTranscript(options: {
+    record: MeetingRecord;
+    transcript: TranscriptEntry[];
+    config: MeetingsConfig;
+    format: TranscriptFormat;
+    withSuggested?: boolean;
+    dictionary?: boolean;
+    include?: string[];
+}): CorrectedTranscript {
+    const { record, transcript, config } = options;
+    const applied = applyCorrections(transcript, correctionsOf(record, config, options));
+    const unclear = `[${config.global.render.unclearLabel}:`;
+    const sourceLabels = new Set(transcript.map((entry) => entry.speaker));
+    const people = new Set([
+        ...record.participants.map((person) => person.name),
+        ...(record.attendance?.people.map((person) => person.name) ?? []),
+        ...Object.values(record.speakers.labels),
+    ]);
+    const counts = new Map<string, number>();
+
+    for (const entry of applied.entries) {
+        if (!entry.speaker.startsWith(unclear)) {
+            counts.set(entry.speaker, (counts.get(entry.speaker) ?? 0) + 1);
+        }
+    }
+
+    const ranked = [...counts.entries()]
+        .map(([name, lines]) => ({ name, lines }))
+        .sort((a, b) => b.lines - a.lines || a.name.localeCompare(b.name));
+    const isPerson = (name: string) => !sourceLabels.has(name) || people.has(name);
+
+    return {
+        ...applied,
+        speakers: ranked.filter((speaker) => isPerson(speaker.name)),
+        unattributed: ranked.filter((speaker) => !isPerson(speaker.name)),
+    };
+}
+
+/** `i42 did not apply: no "X" at 37:43`. Undefined for an item that applied. */
+export function outcomeText(outcome: CorrectionOutcome): string | undefined {
+    if (outcome.status === "applied") {
+        return undefined;
+    }
+
+    const shown = outcome.status === "ambiguous" ? `${outcome.reason}; anchor it to one of them` : outcome.reason;
+    return `${outcome.item} did not apply: ${shown}`;
+}
+
+/**
+ * The corrections-ledger entry a confirmed item writes: a term's spelling (`heard` → `fixed`) or a join's glued
+ * word. Every path that confirms an item (`items confirm`, an answered question) writes it through here.
+ */
+export function ledgerEntryFor(record: MeetingRecord, item: MeetingItem, now: string): Correction | undefined {
+    if (item.status !== "confirmed") {
+        return undefined;
+    }
+
+    const base = { at: now, meeting: record.id, project: record.project, item: item.id };
+
+    if (item.kind === "term" && item.proposed) {
+        return { ...base, kind: "term", heard: item.heard, fixed: item.proposed };
+    }
+
+    if (item.kind === "join" && item.joined) {
+        const evidence = item.evidence ?? {};
+        const heard = [evidence.left, evidence.right].filter((part) => typeof part === "string").join(" ");
+        return { ...base, kind: "join", heard, fixed: item.joined };
+    }
+
+    return undefined;
+}
+
+/**
+ * Checks where an item is anchored: a join, or a term bound to one line, needs exactly one line at its time. Returns
+ * a warning per item that names no line or two lines in one second, and the address of each item anchored to one.
+ */
+export function checkAnchors(
+    items: MeetingItem[],
+    transcript: TranscriptEntry[]
+): { warnings: string[]; addresses: Map<string, number> } {
+    const lines = new TranscriptLines(transcript);
+    const warnings: string[] = [];
+    const addresses = new Map<string, number>();
+
+    for (const item of items) {
+        const bound =
+            item.kind === "join" || (item.kind === "term" && item.atSec !== undefined && item.scope === "line");
+        const marked = item.kind === "term" && item.atSec !== undefined && (item.meaning || item.quote);
+
+        if ((!bound && !marked) || (item.kind !== "join" && item.kind !== "term") || item.atSec === undefined) {
+            continue;
+        }
+
+        const atSec = item.atSec;
+        const heard = item.kind === "term" ? item.heard : undefined;
+        const anchor = { atSec, line: lineOf(item) };
+        const found =
+            item.kind === "join"
+                ? joinLine(lines, { ...anchor, ...(item.joined ? { joined: item.joined } : {}) })
+                : heardLineAt(lines, anchor, item.heard);
+        const at = formatClock(atSec);
+
+        if (found.kind === "found") {
+            if (anchor.line !== undefined && anchor.line !== found.index) {
+                warnings.push(
+                    `${item.id}: line ${anchor.line} does not start at ${at}; anchored to line ${found.index}`
+                );
+            }
+
+            addresses.set(item.id, found.index);
+            continue;
+        }
+
+        if (found.kind === "none") {
+            warnings.push(`${item.id}: no line ${heard ? `with "${heard}" ` : ""}starts at ${at}`);
+            continue;
+        }
+
+        const which = found.indexes
+            .map((index) => `line ${index} "${(transcript[index]?.text ?? "").slice(0, 40)}"`)
+            .join(", ");
+        warnings.push(
+            `${item.id}: ${found.indexes.length} lines start at ${at} (${which}); it will not apply until its finding names one with "line": <n>`
+        );
+    }
+
+    return { warnings, addresses };
 }
