@@ -6,9 +6,25 @@ OpenAI runtime.
 
 ```bash
 tools node-repl mcp                     # MCP stdio server
+tools node-repl mcp --toolset computer  # the same, with the computer global preloaded
 tools node-repl run 'const a = 1; a+1'  # one turn from the shell
 echo 'await import("node:os")' | tools node-repl run
 ```
+
+## Toolsets
+
+`--toolset a,b` (on `mcp` and `run`) preloads APIs from the `REPL_TOOLSETS` table in `lib/toolsets.ts`:
+`computer` today. A toolset is a `ReplToolset` subclass (`@genesiscz/utils/repl/toolset`) with an
+`ApiDescriptor` (`@genesiscz/utils/api-descriptor`: per method a name, zod params and result, one line and an
+effect of `read`, `reversible` or `destructive`). The kernel builds the toolsets once per worker with a `preload`
+request that has its own budget (120 s), not the turn's; after a timeout kill or `js_reset` the new worker
+preloads them again, and reset, exit and the end of a `run` dispose them. Each worker gets a private scratch
+folder for its toolsets, removed when the worker stops.
+
+The `js` description lists every loaded toolset with its one-line API, generated from the descriptor. Inside a
+turn, `help()` lists them and `help("computer")` prints the full API with every signature; `await show(x)` returns
+an image to the model (a path, a Buffer or Uint8Array, `{ path }` or `{ bytes, mimeType }`, or an array of them).
+For an experiment, an entry may also be `/abs/module.ts#ExportName`, a `ReplToolset` class outside the table.
 
 ## Tools
 
@@ -16,7 +32,7 @@ echo 'await import("node:os")' | tools node-repl run
 |---|---|
 | `js` | Run JS or TS with top-level `await`. Arguments `{ "code": "...", "timeout_ms": 30000, "title": "..." }`; only `code` is required. The last expression is the result; a string comes back raw, anything else through `Bun.inspect`. |
 | `js_add_node_module_dir` | Register an absolute directory whose `node_modules` resolves from `import()` inside the REPL. Argument `{ "path": "/abs/project" }`, the directory that CONTAINS `node_modules`. Survives `js_reset`. |
-| `js_reset` | Kill the worker and start a fresh one; every binding is gone. |
+| `js_reset` | Kill the worker and start a fresh one; every binding is gone, the toolsets are disposed and preloaded again. |
 | `turn_ended` | No-op, kept for hosts that send it. |
 
 Inside a turn the global `nodeRepl` offers `write(value)` (append to the turn's text output),

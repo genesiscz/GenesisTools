@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { ReplEngine } from "@app/node-repl/lib/engine";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
@@ -13,7 +14,6 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { nativeCapturePreflight } from "../lib/capture-native";
 import { runCapturePlan } from "../lib/capture-runner";
-import { ComputerReplEngine } from "../lib/computer-use/repl";
 import { type ComputerState, ComputerUse } from "../lib/computer-use/session";
 import { judgeOutcome } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
@@ -1242,7 +1242,7 @@ try {
             assert.equal(find(state, "input").AXValue, "MCP verified");
             checks.push("standalone stdio MCP process observes and edits the native fixture without Codex or Sky");
 
-            const engine = new ComputerReplEngine();
+            const engine = new ReplEngine({ toolsets: ["computer"] });
             try {
                 const first = await engine.run(
                     `const appState = await computer.get_app_state({app:${SafeJSON.stringify(app)},window_id:${observed.window.id},image:false}); appState.elements.length`

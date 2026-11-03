@@ -121,7 +121,7 @@ A full native Brave → new tab → Google → weather search → Jev-selected f
 }
 ```
 
-Use `["computer-use","mcp","--repl"]` for the four node-repl-compatible tools (`js`, `js_reset`, `js_add_node_module_dir`, `turn_ended`) with `computer` preloaded. The native tool server and REPL server use the same API implementation; each server owns its own state.
+Use `["computer-use","mcp","--repl"]` for the four node-repl-compatible tools (`js`, `js_reset`, `js_add_node_module_dir`, `turn_ended`) with `computer` preloaded. It is `tools node-repl mcp --toolset computer`: the `computer` toolset (`src/control/lib/computer-use/toolset.ts`) is built once per worker, and `help("computer")` prints every method from the same descriptor (`descriptor.ts`) the native tool server lists its tools from. The native tool server and REPL server use the same API implementation; each server owns its own state.
 
 The native performance harness is `bun src/control/scripts/live-smoke.ts --background-only --benchmark`. It creates its own disposable app and compares the duplicate-read baseline against reuse of the native action refresh. Both paths verify every write; the result contains interleaved samples, child CPU, native call counts and elapsed time.
 

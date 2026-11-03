@@ -29,7 +29,7 @@ Check the command named by help, not just exit zero. Do not guess command plural
 | --- | --- |
 | A multi-step see/act sequence from an agent | MCP `control_workflow_run` (CLI: `control workflow run --plan '<json>'`) |
 | Several adaptive actions with fresh state and one deadline | `tools computer-use run --file task.ts --json` |
-| Persistent agent session | `tools computer-use mcp` or `mcp --repl` (`computer` is preloaded) |
+| Persistent agent session | `tools computer-use mcp` or `mcp --repl` (`computer` is preloaded; `help("computer")` prints its API) |
 | One validated CLI action | `control see` → `control act --refresh` |
 | Cheap read-only discovery | `control apps`, `window`, `find`, `attrs`, `actions`, `dump`, `hittest` |
 | Bounded semantic task, fill, wait, recovery or replay | Shared APIs in [providers.md](references/providers.md) |
