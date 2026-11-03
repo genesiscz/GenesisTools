@@ -1,3 +1,9 @@
+import {
+    DEFAULT_ALERTS_CONFIG,
+    mergeAlertsConfig,
+    type StoredAlertsConfig,
+    type UsageAlertsConfig,
+} from "@genesiscz/utils/ai/usage/alerts/config";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -14,16 +20,18 @@ export interface UsageDashboardConfig {
     hiddenAccounts: string[];
     defaultTab: number;
     historyLayout: "stacked" | "side-by-side";
+    /**
+     * The banner and the in-TUI list. `macos` and `sound` also govern the alert engine's macOS channel. The threshold
+     * lists that used to live here (`notifications.thresholds`) moved to `alerts.rules.threshold`.
+     */
     notifications: {
         enabled: boolean;
         inTui: boolean;
         macos: boolean;
         sound: string;
-        thresholds: {
-            session: number[];
-            weekly: number[];
-        };
     };
+    /** The alert engine's settings (design 2026-11-01, step U7). */
+    alerts: UsageAlertsConfig;
     dataRetentionDays: number;
     /**
      * Whose history the "at pace" estimate is built from. `pooled` reads every
@@ -33,10 +41,24 @@ export interface UsageDashboardConfig {
     paceScope: UsagePaceScope;
 }
 
-/** Same shape as `UsageDashboardConfig` but accepting the pre-2026-09 flat arrays. */
-type StoredConfig = Omit<Partial<UsageDashboardConfig>, "prominentBuckets" | "hiddenBuckets"> & {
+/**
+ * The pre-2026-11 `notifications` block, which still carried the threshold lists. A config written by an older build
+ * keeps this shape until `migrateDashboardConfig` has run on it.
+ */
+interface StoredNotifications extends Partial<UsageDashboardConfig["notifications"]> {
+    /** @deprecated Moved to `alerts.rules.threshold`; read only by the migration. */
+    thresholds?: { session?: number[]; weekly?: number[] };
+}
+
+/** Same shape as `UsageDashboardConfig` but accepting the pre-2026-09 flat arrays and the pre-2026-11 thresholds. */
+export type StoredConfig = Omit<
+    Partial<UsageDashboardConfig>,
+    "prominentBuckets" | "hiddenBuckets" | "notifications" | "alerts"
+> & {
     prominentBuckets?: PerProviderKeys | string[];
     hiddenBuckets?: PerProviderKeys | string[];
+    notifications?: StoredNotifications;
+    alerts?: StoredAlertsConfig;
 };
 
 export const DEFAULT_PROMINENT_LIMITS: PerProviderKeys = {
@@ -57,11 +79,8 @@ const DEFAULTS: UsageDashboardConfig = {
         inTui: true,
         macos: true,
         sound: "Purr",
-        thresholds: {
-            session: [80],
-            weekly: [20, 40, 60, 80],
-        },
     },
+    alerts: DEFAULT_ALERTS_CONFIG,
     dataRetentionDays: 30,
     paceScope: "pooled",
 };
@@ -112,21 +131,49 @@ function toPerProvider(value: PerProviderKeys | string[] | undefined, fallback: 
  * without the clone a caller that pushed onto `hiddenAccounts` or edited a threshold list
  * would be editing the module constant, and every later load in the process would see it.
  */
-function merge(saved: StoredConfig): UsageDashboardConfig {
+function merge(stored: StoredConfig): UsageDashboardConfig {
+    // Readers accept the old shape: a config the loader has not rewritten yet is migrated in memory first.
+    const { config: saved } = migrateDashboardConfig(stored);
+    const { thresholds: _moved, ...notifications } = saved.notifications ?? {};
+
     return structuredClone({
         ...DEFAULTS,
         ...saved,
         prominentBuckets: toPerProvider(saved.prominentBuckets, DEFAULTS.prominentBuckets),
         hiddenBuckets: toPerProvider(saved.hiddenBuckets, DEFAULTS.hiddenBuckets),
-        notifications: {
-            ...DEFAULTS.notifications,
-            ...saved.notifications,
-            thresholds: {
-                ...DEFAULTS.notifications.thresholds,
-                ...saved.notifications?.thresholds,
-            },
-        },
+        notifications: { ...DEFAULTS.notifications, ...notifications },
+        alerts: mergeAlertsConfig(saved.alerts),
     });
+}
+
+/**
+ * Moves `notifications.thresholds` to `alerts.rules.threshold` (design 2026-11-01, step U7). Pure and idempotent:
+ * when both are present the new place wins and the old lists only fill a gap, and the old key is removed. `changed`
+ * says whether there was anything to move, so the loader writes the file back once.
+ */
+export function migrateDashboardConfig(stored: StoredConfig): { config: StoredConfig; changed: boolean } {
+    const old = stored.notifications?.thresholds;
+
+    if (old === undefined) {
+        return { config: stored, changed: false };
+    }
+
+    const { thresholds: _moved, ...notifications } = stored.notifications ?? {};
+    const current = stored.alerts?.rules?.threshold;
+    const threshold = {
+        ...(old.session === undefined ? {} : { session: old.session }),
+        ...(old.weekly === undefined ? {} : { weekly: old.weekly }),
+        ...current,
+    };
+
+    return {
+        config: {
+            ...stored,
+            notifications,
+            alerts: { ...stored.alerts, rules: { ...stored.alerts?.rules, threshold } },
+        },
+        changed: true,
+    };
 }
 
 /**
@@ -135,10 +182,11 @@ function merge(saved: StoredConfig): UsageDashboardConfig {
  * config of its own, the old file is never read again, so editing preferences in the new
  * TUI cannot be undone by a stale claude-era file.
  */
-export async function loadDashboardConfig(): Promise<UsageDashboardConfig> {
+export async function loadDashboardConfig(options: { readOnly?: boolean } = {}): Promise<UsageDashboardConfig> {
     const saved = await store().getConfig<StoredConfig>();
 
     if (saved) {
+        await writeBackMigration(saved, options.readOnly === true);
         return merge(saved);
     }
 
@@ -149,10 +197,34 @@ export async function loadDashboardConfig(): Promise<UsageDashboardConfig> {
     }
 
     const migrated = merge(legacy);
-    logger.debug({ from: LEGACY_TOOL_NAME, to: TOOL_NAME }, "[usage] copied dashboard preferences once");
-    await store().setConfig(migrated);
+
+    if (!options.readOnly) {
+        logger.debug({ from: LEGACY_TOOL_NAME, to: TOOL_NAME }, "[usage] copied dashboard preferences once");
+        await store().setConfig(migrated);
+    }
 
     return migrated;
+}
+
+/**
+ * Writes a migrated config back once, through the store's atomic update, so the old keys leave the file. A
+ * diagnostic (`readOnly`) reads the migrated shape in memory and never writes. A write that fails is logged; the
+ * next load migrates in memory again.
+ */
+async function writeBackMigration(saved: StoredConfig, readOnly: boolean): Promise<void> {
+    if (readOnly || !migrateDashboardConfig(saved).changed) {
+        return;
+    }
+
+    try {
+        await store().atomicConfigUpdate<StoredConfig>((current) => {
+            const { config } = migrateDashboardConfig(current);
+            Object.assign(current, config);
+        });
+        logger.debug("[usage] moved notifications.thresholds to alerts.rules.threshold");
+    } catch (err) {
+        logger.warn({ err }, "[usage] the dashboard config migration could not be written back");
+    }
 }
 
 export async function saveDashboardConfig(config: UsageDashboardConfig): Promise<void> {
