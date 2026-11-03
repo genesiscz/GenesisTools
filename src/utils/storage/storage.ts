@@ -506,9 +506,14 @@ export class Storage {
      *
      * @param relativePath - Relative path within cache directory
      * @param updater - Function that receives the current data (or null) and returns the new data
+     * @param options.mode - File mode for the written file and its temp file (0o600 for a file that holds secrets)
      * @returns The new data returned by updater
      */
-    async atomicUpdate<T>(relativePath: string, updater: (current: T | null) => T): Promise<T> {
+    async atomicUpdate<T>(
+        relativePath: string,
+        updater: (current: T | null) => T,
+        options?: { mode?: number }
+    ): Promise<T> {
         await this.ensureDirs();
         const filePath = this.getCacheFilePath(relativePath);
 
@@ -527,7 +532,7 @@ export class Storage {
                     mkdirSync(dir, { recursive: true });
                 }
 
-                this.atomicWrite(filePath, SafeJSON.stringify(updated, null, 2));
+                this.atomicWrite(filePath, SafeJSON.stringify(updated, null, 2), options);
                 logger.debug(`Atomic update complete: ${filePath}`);
 
                 return updated;

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { statSync } from "node:fs";
+import { join } from "node:path";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { AnswerRefusedError } from "../decisions/answers";
 import type { DecisionRecord } from "../decisions/store";
 import type { AnswerDecisionInput, InboxAnswerResult } from "../inbox/answer";
 import { type ActDeps, act } from "./act";
-import { ACT_TOKEN_TTL_MS, issueActTokens, memoryActTokenStore } from "./tokens";
+import { ACT_TOKEN_TTL_MS, fileActTokenStore, issueActTokens, memoryActTokenStore } from "./tokens";
 
 const NOW = Date.parse("2026-11-03T10:00:00Z");
 
@@ -61,6 +64,15 @@ describe("issueActTokens", () => {
             { letter: "b", token: "tok-1" },
         ]);
         expect(store.tokens["tok-1"]).toMatchObject({ option: "b", revision: 2, expiresAt: NOW + ACT_TOKEN_TTL_MS });
+    });
+});
+
+describe("fileActTokenStore", () => {
+    it("writes the token file owner-only, since a token answers without the dashboard login", async () => {
+        const storage = new Storage("act-tokens-mode-test");
+        await issueActTokens({ row: row(), surface: "telegram", store: fileActTokenStore(storage), now: NOW });
+
+        expect(statSync(join(storage.getCacheDir(), "act-tokens.json")).mode & 0o777).toBe(0o600);
     });
 });
 
