@@ -39,6 +39,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 { registerUsageDaemonCommands },
                 { registerAiUsageEventsCommand },
                 { registerAiUsageAlertsCommand },
+                { registerAiUsageAttributionCommands },
                 registerSpendAlias,
             ] = await Promise.all([
                 import("./commands/usage/index"),
@@ -47,13 +48,14 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 import("./commands/usage/daemon"),
                 import("./commands/usage/events"),
                 import("./commands/usage/alerts"),
+                import("./commands/usage/attribution"),
                 import("./commands/usage/spend").then(({ loadUsageSpendAlias }) => loadUsageSpendAlias(process.argv)),
             ]);
 
             return (program: Command) => {
                 const usageCmd = program.command("usage").description("Usage limits for every AI provider");
                 registerAiUsageCommand(usageCmd);
-                registerAiUsageLimitsCommand(usageCmd);
+                registerAiUsageAttributionCommands(registerAiUsageLimitsCommand(usageCmd));
                 registerAiUsageSessionsCommand(usageCmd);
                 registerUsageDaemonCommands(usageCmd);
                 registerAiUsageEventsCommand(usageCmd);
