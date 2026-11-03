@@ -1,4 +1,5 @@
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import { EMPTY_BUDGETS } from "@genesiscz/utils/ai/usage/budgets/budgets";
 import type { NotifiedThreshold } from "@genesiscz/utils/ai/usage-poll/notifications";
 import type { UsageAlertsStore } from "./log";
 import { RESET_JITTER_MS } from "./refire";
@@ -31,6 +32,7 @@ export function seedThresholdAlerts(input: {
         previousRoundAt: null,
         events: [],
         availabilityChanges: [],
+        budgets: EMPTY_BUDGETS,
     };
     let seeded = 0;
 

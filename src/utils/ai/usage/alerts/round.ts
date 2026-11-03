@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import { EMPTY_BUDGETS, type UsageBudgets } from "@genesiscz/utils/ai/usage/budgets/budgets";
 import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
 import { readUsageSamples } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
@@ -96,6 +97,7 @@ export function buildAlertRound(input: {
     previousRoundAt: string | null;
     /** The alerts config the round is judged by: its rules decide how far back the events are read. */
     config: UsageAlertsConfig;
+    budgets?: UsageBudgets;
 }): AlertRound {
     const { db, now } = input;
     const nowMs = now.getTime();
@@ -121,5 +123,6 @@ export function buildAlertRound(input: {
             .list({ from: new Date(nowMs - alertEventLookbackMs(input.config)), to: now })
             .reverse(),
         availabilityChanges: availabilityChangesSince(db, since),
+        budgets: input.budgets ?? EMPTY_BUDGETS,
     };
 }

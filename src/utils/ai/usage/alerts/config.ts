@@ -47,6 +47,14 @@ export const ALERT_RULE_DEFAULTS: AlertRuleSettings = {
     "limit-state-change": { enabled: true, channels: ["inbox"] },
     health: { enabled: true, channels: [], downMinutes: 10, refreshExpiryDays: 7 },
     "rate-limited": { enabled: true, channels: ["inbox"], count: 3, windowMinutes: 10 },
+    budget: {
+        enabled: true,
+        channels: ["inbox"],
+        overPaceFactor: 1.2,
+        useItHours: 6,
+        useItMinLeftPct: 40,
+        useItBudgetedOnly: true,
+    },
 };
 
 export const DEFAULT_ALERTS_CONFIG: UsageAlertsConfig = {
@@ -95,6 +103,7 @@ export function mergeAlertsConfig(saved: StoredAlertsConfig | undefined): UsageA
             "limit-state-change": mergeRule("limit-state-change", rules?.["limit-state-change"]),
             health: mergeRule("health", rules?.health),
             "rate-limited": mergeRule("rate-limited", rules?.["rate-limited"]),
+            budget: mergeRule("budget", rules?.budget),
         },
         providers: saved?.providers ?? {},
     });
