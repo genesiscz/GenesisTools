@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 
 /**
  * A fixed home for the byte goldens of `tools ai-spend daily`, `weekly` and `statusline`: two Claude sessions
@@ -182,7 +183,7 @@ export async function runGoldenCase(options: {
             env: {
                 PATH: env.getProcessEnv().PATH,
                 HOME: options.home,
-                GENESIS_TOOLS_HOME: join(options.home, ".genesis-tools"),
+                GENESIS_TOOLS_HOME: genesisToolsDirIn(options.home),
                 TZ: "UTC",
                 LANG: "en_US.UTF-8",
                 LC_ALL: "en_US.UTF-8",
