@@ -307,6 +307,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     annotate: (name) => name.startsWith("annotate_"),
     jev: (name) => name.startsWith("jev_"),
     control: (name) => name.startsWith("control_"),
+    usage: (name) => name.startsWith("usage_"),
 };
 
 /**
@@ -333,6 +334,7 @@ export function filterRegistryByCapabilities(
 const registries = new Map<string, Record<string, ToolEntry>>();
 let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
 let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
+let usageEntries: Promise<Record<string, ToolEntry>> | undefined;
 
 /**
  * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
@@ -352,6 +354,15 @@ function loadControlEntries(): Promise<Record<string, ToolEntry>> {
     return controlEntries;
 }
 
+/**
+ * The usage tools import the limits store, the forecast and the rankers, so they load only for a capability list
+ * that can expose them: unset (everything) or one naming `usage`.
+ */
+function loadUsageEntries(): Promise<Record<string, ToolEntry>> {
+    usageEntries ??= import("@app/ai/mcp/genesis-tools").then((module) => module.usageToolEntries());
+    return usageEntries;
+}
+
 /** One registry per instructions variant; a resident server builds it once, not per request. */
 async function toolRegistry(
     context: InstructionContext,
@@ -359,12 +370,14 @@ async function toolRegistry(
 ): Promise<Record<string, ToolEntry>> {
     const withJev = capabilities === undefined || capabilities.includes("jev");
     const withControl = capabilities === undefined || capabilities.includes("control");
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}`;
+    const withUsage = capabilities === undefined || capabilities.includes("usage");
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withUsage}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
             ...(withJev ? await loadJevEntries() : {}),
             ...(withControl ? await loadControlEntries() : {}),
+            ...(withUsage ? await loadUsageEntries() : {}),
             ...buildToolRegistry(context),
         };
         registries.set(key, registry);

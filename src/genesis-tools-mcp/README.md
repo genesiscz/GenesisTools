@@ -14,6 +14,7 @@ New `jev_*` tools will join this registry. The MCP server name is `genesis-tools
 | `annotate` | `annotate_image` | Annotate an image (arrows, boxes, labels). |
 
 | `jev` | `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates` | Read-only Jev tools (`src/jev/mcp/genesis-tools.ts` adapts the registry `tools jev mcp` serves alone). |
+| `usage` | `usage_limits`, `usage_series`, `usage_forecast`, `usage_advise` | Read-only AI usage answers (`src/ai/mcp/genesis-tools.ts`): the same core and envelopes as `tools ai usage limits`, `limits series`, `tools hub forecast` and `limits advise`. They read the last poll's snapshots and the history store and never poll a provider. |
 
 `question_ask` is an explicit set, not a `question_` prefix, so it never includes `question_answer`.
 
