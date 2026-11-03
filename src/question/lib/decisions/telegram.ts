@@ -96,8 +96,8 @@ export async function postDecisionsToTelegram(
     try {
         const bot = deps.bot === undefined ? await loadTelegramBotConfig() : deps.bot;
         const projects = bot?.decisions?.projects ?? {};
-        // Decisions only: the act door answers by session and number among decisions, and a TODO's number is its own
-        // count, so a TODO 1 button would answer DECISION 1 of the same session.
+        // Decisions only: the act door answers by session and number among decisions, and a to-do item keeps its own
+        // numbering, so a button on to-do item 1 would answer DECISION 1 of the same session.
         const waiting = rows.filter(
             (row) =>
                 kindOf(row) === "decision" &&
