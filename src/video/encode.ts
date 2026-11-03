@@ -27,6 +27,7 @@ import {
     type AudioPlan,
     type AudioRequest,
     audioBytes,
+    changesAudio,
     correctedKbps,
     decodeErrors,
     type EncodePass,
@@ -529,6 +530,9 @@ export function probeFailureRow({
     return { status: "failed", reason: `the probe failed: ${messageOf(error)}` };
 }
 
+/** How long one ffmpeg run of an encode may take. */
+const ENCODE_PASS_TIMEOUT_MS = 4 * 60 * 60_000;
+
 /** Runs one ffmpeg encode (or one run of a two-pass encode) and reports its progress; the failure text, or null. */
 async function runEncodePass({
     input,
@@ -565,7 +569,11 @@ async function runEncodePass({
             pass: twoPass,
             progress: onProgress !== undefined,
         }),
-        timeoutMs: 4 * 60 * 60_000,
+        timeoutMs: ENCODE_PASS_TIMEOUT_MS,
+        // boundedCommand keeps stdout even while onStdout reads it, and `-progress pipe:1` writes a block of about
+        // 300 bytes every half second: the 4 MiB default filled after about two and a half hours and killed the
+        // encode. 64 MiB (the most boundedCommand takes) covers the whole deadline several times over.
+        maxBufferBytes: 64 * 1024 * 1024,
         signal: options.signal,
         onStdout: onProgress
             ? ffmpegProgressReader((block) =>
@@ -637,14 +645,16 @@ async function encodeOne({ input, options }: { input: string; options: EncodeOpt
         options.height !== undefined && (inputHeight === undefined || inputHeight > options.height)
             ? options.height
             : undefined;
-    const skip = skipReason({ facts, encoder, reshaping: options.targetBytes !== undefined || height !== undefined });
+    const audio = planAudio({ facts, request: options.audio ?? "copy", targetBytes: options.targetBytes });
+    // An explicit audio conversion is a reason to encode a file already in the codec; a copy is a true no-op.
+    const reshaping = options.targetBytes !== undefined || height !== undefined || changesAudio(facts, audio);
+    const skip = skipReason({ facts, encoder, reshaping });
 
     if (skip) {
         return finish({ reason: skip });
     }
 
     let rate: VideoRate = { kind: "quality", quality: options.quality };
-    const audio = planAudio({ facts, request: options.audio ?? "copy", targetBytes: options.targetBytes });
 
     if (options.targetBytes !== undefined) {
         const kbps = videoKbpsForTarget({ facts, targetBytes: options.targetBytes, audio });
@@ -860,6 +870,24 @@ export function undoCommand({
     return `mv -n ${result} ${shellQuote(siblingOutput({ input, encoder }))} && test ! -e ${result} && ${restore}`;
 }
 
+/**
+ * The line that gets a `--replace` original back from the trash: `restore` after a failed install (the original is
+ * only in the trash), `undo` after a written result (the result moves aside first); null when nothing was trashed.
+ */
+export function trashLine({ row, encoder }: { row: EncodeRow; encoder: VideoEncoder }): string | null {
+    if (!row.trashBatch) {
+        return null;
+    }
+
+    const restore = toolCommand("rm", "restore", row.trashBatch);
+
+    if (row.status === "failed") {
+        return `restore ${basename(row.input)}: ${restore}`;
+    }
+
+    return `undo ${basename(row.input)}: ${undoCommand({ input: row.input, encoder, restore })}`;
+}
+
 export function renderRows({
     rows,
     summary,
@@ -886,15 +914,10 @@ export function renderRows({
     out.println(table.toString());
 
     for (const row of rows) {
-        if (!row.trashBatch) {
-            continue;
-        }
+        const line = trashLine({ row, encoder });
 
-        if (row.status === "failed") {
-            out.println(`restore ${basename(row.input)}: ${toolCommand("rm", "restore", row.trashBatch)}`);
-        } else {
-            const restore = toolCommand("rm", "restore", row.trashBatch);
-            out.println(`undo ${basename(row.input)}: ${undoCommand({ input: row.input, encoder, restore })}`);
+        if (line) {
+            out.println(line);
         }
     }
 

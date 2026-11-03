@@ -28,6 +28,7 @@ import { type MediaFacts, NotMediaError, readMediaFacts } from "@genesiscz/utils
 import { runVideoCommand, VideoCommandExitError } from "@genesiscz/utils/video/process";
 import { pickSampleWindows } from "@genesiscz/utils/video/quality";
 import {
+    changesAudio,
     correctedKbps,
     decodeErrors,
     encodeArgs,
@@ -61,9 +62,11 @@ import {
     siblingOutput,
     snapshotSource,
     sourceChange,
+    trashLine,
     undoCommand,
 } from "./encode";
-import { chooseHeight, recommendPreset, windowKbps } from "./shrink/recommend";
+import { presetsForContainer } from "./shrink/preview";
+import { chooseHeight, previewCorrection, recommendPreset, windowKbps } from "./shrink/recommend";
 
 const encoder = findEncoder("hevc") as VideoEncoder;
 const madeDirs: string[] = [];
@@ -112,6 +115,23 @@ function judge(patch: Partial<Parameters<typeof judgeOutput>[0]> = {}) {
     });
 }
 
+describe("changesAudio", () => {
+    test("an AAC conversion of a file with audio is a reason to encode; a copy or a silent file is not", () => {
+        const withAudio = facts({
+            streams: [
+                { type: "video", codec: "hevc", attachedPicture: false },
+                { type: "audio", codec: "pcm_s16le", attachedPicture: false },
+            ],
+        });
+        const silent = facts({ streams: [{ type: "video", codec: "hevc", attachedPicture: false }] });
+
+        expect(changesAudio(withAudio, planAudio({ facts: withAudio, request: 96 }))).toBe(true);
+        expect(changesAudio(withAudio, planAudio({ facts: withAudio, request: "copy" }))).toBe(false);
+        expect(changesAudio(withAudio, planAudio({ facts: withAudio, request: "auto" }))).toBe(false);
+        expect(changesAudio(silent, planAudio({ facts: silent, request: 96 }))).toBe(false);
+    });
+});
+
 describe("skipReason", () => {
     test("an H.264 file with audio is a candidate", () => {
         expect(skipReason({ facts: facts(), encoder })).toBeNull();
@@ -133,6 +153,7 @@ describe("skipReason", () => {
         });
 
         expect(skipReason({ facts: hevc, encoder })).toBe("already hevc");
+        expect(skipReason({ facts: hevc, encoder, reshaping: true })).toBeNull();
         expect(skipReason({ facts: mebx, encoder })).toContain("data track");
         expect(skipReason({ facts: music, encoder })).toContain("not a video");
     });
@@ -460,6 +481,29 @@ describe("shrink sampling and choices", () => {
         expect(windowKbps({ kbps: 400, windowSourceKbps: 0, overallSourceKbps: 1900 })).toBe(400);
     });
 
+    test("every preview correction is measured against the window's first planned bytes", () => {
+        // 400 kbit/s over 10 s plans 500 kB. The first attempt doubled it, so the rate halves to 200.
+        const plannedBytes = 500_000;
+        const first = previewCorrection({ kbps: 400, bytes: 1_000_000, plannedBytes });
+        expect(first).toBe(200);
+
+        // At 200 kbit/s the window wrote 250 kB: that is its own rate's size, but half the plan, so it is corrected.
+        expect(previewCorrection({ kbps: 200, bytes: 250_000, plannedBytes })).toBe(400);
+        expect(previewCorrection({ kbps: 200, bytes: 500_000, plannedBytes })).toBeNull();
+        expect(previewCorrection({ kbps: 200, bytes: 540_000, plannedBytes })).toBeNull();
+    });
+
+    test("a preset whose encoder cannot write the input's container is skipped before any preview", () => {
+        const mov = presetsForContainer({ presets: VIDEO_PRESET_NAMES, input: "/videos/talk.MOV" });
+        expect(mov.usable).toEqual(["fast", "compatible"]);
+        expect(mov.skipped).toEqual([{ preset: "small", reason: ".mov cannot hold av1" }]);
+
+        expect(presetsForContainer({ presets: VIDEO_PRESET_NAMES, input: "/videos/talk.mkv" }).skipped).toEqual([]);
+        expect(presetsForContainer({ presets: ["compatible"], input: "/videos/talk" }).skipped).toEqual([
+            { preset: "compatible", reason: "no extension cannot hold x264" },
+        ]);
+    });
+
     test("the fastest preset within a VMAF point wins, and AV1 needs a 1.5 lead", () => {
         expect(
             recommendPreset([
@@ -519,6 +563,17 @@ describe("exitCodeFor", () => {
     test("a failed file fails the run; skips and discards do not", () => {
         expect(exitCodeFor([row("skipped"), row("discarded"), row("kept"), row("kept-beside")])).toBe(0);
         expect(exitCodeFor([row("kept"), row("failed")])).toBe(1);
+    });
+
+    test("a trashed original gets an undo line after a written result and a restore line after a failed one", () => {
+        const batch = "20261103-000000-1-1";
+        expect(trashLine({ row: row("kept"), encoder })).toBeNull();
+        expect(trashLine({ row: { ...row("kept"), trashBatch: batch }, encoder })).toBe(
+            `undo a.mp4: ${undoCommand({ input: "/clips/a.mp4", encoder, restore: `tools rm restore ${batch}` })}`
+        );
+        expect(trashLine({ row: { ...row("failed"), trashBatch: batch }, encoder })).toBe(
+            `restore a.mp4: tools rm restore ${batch}`
+        );
     });
 });
 

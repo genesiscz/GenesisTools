@@ -1,5 +1,5 @@
 import { mkdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { type MediaFacts, primaryVideo } from "@genesiscz/utils/video/media-facts";
@@ -33,6 +33,7 @@ import {
     type HeightChoice,
     nextTallerHeight,
     type PresetScore,
+    previewCorrection,
     type Recommendation,
     recommendPreset,
     windowKbps,
@@ -174,6 +175,31 @@ export async function availablePresets(
     return { usable, skipped };
 }
 
+/**
+ * The presets whose encoder can write the input's container, and a skip for each of the others: the encode keeps the
+ * input's extension, so a preview of SVT-AV1 on a .mov could be recommended and then refused by the encode.
+ */
+export function presetsForContainer({ presets, input }: { presets: readonly VideoPreset[]; input: string }): {
+    usable: VideoPreset[];
+    skipped: PresetSkip[];
+} {
+    const ext = extname(input).toLowerCase();
+    const usable: VideoPreset[] = [];
+    const skipped: PresetSkip[] = [];
+
+    for (const preset of presets) {
+        const encoder = findEncoder(VIDEO_PRESETS[preset]);
+
+        if (encoder && !encoder.containers.includes(ext)) {
+            skipped.push({ preset, reason: `${ext || "no extension"} cannot hold ${encoder.codec}` });
+        } else {
+            usable.push(preset);
+        }
+    }
+
+    return { usable, skipped };
+}
+
 /** Encodes one reference window with one encoder, two passes when the encoder has them; returns the seconds it took. */
 async function encodeWindow({
     encoder,
@@ -232,12 +258,6 @@ function windowRate({ plan, window, quality }: { plan: ShrinkPlan; window: Sampl
         kbps: windowKbps({ kbps: plan.kbps, windowSourceKbps: window.sourceKbps, overallSourceKbps }),
     };
 }
-
-/**
- * A 10 s window lands less exactly than a full two-pass encode, so the preview corrects only a real miss, like the GPU
- * encoder's QP floor (124% of the target on the full talk), not the few percent of rate noise.
- */
-const PREVIEW_BAND = { low: 0.75, high: 1.1 } as const;
 
 /** Lossless cuts of each window, by window label. */
 export type References = Map<SampleWindow["label"], string>;
@@ -381,7 +401,11 @@ export async function previewPresets({
             }
 
             onStep?.({ type: "step", message: `${preset}: encoding the ${window.label} window` });
-            let rate = windowRate({ plan, window, quality: encoder.defaultQuality });
+            const planned = windowRate({ plan, window, quality: encoder.defaultQuality });
+            // The window's share of the target, fixed before the first attempt: every correction is measured against
+            // it, never against the bytes of its own corrected rate.
+            const plannedBytes = planned.kind === "bitrate" ? (planned.kbps * 1000 * window.durationSec) / 8 : null;
+            let rate = planned;
             let encodeSec: number | null = null;
             let output = "";
             let bytes = 0;
@@ -403,18 +427,17 @@ export async function previewPresets({
                 encodeSec ??= sec;
                 bytes = statSync(output).size;
 
-                if (rate.kind !== "bitrate" || attempt >= MAX_SIZE_CORRECTIONS) {
+                if (rate.kind !== "bitrate" || plannedBytes === null || attempt >= MAX_SIZE_CORRECTIONS) {
                     break;
                 }
 
-                const expected = (rate.kbps * 1000 * window.durationSec) / 8;
-                const ratio = bytes / expected;
+                const next = previewCorrection({ kbps: rate.kbps, bytes, plannedBytes });
 
-                if (ratio >= PREVIEW_BAND.low && ratio <= PREVIEW_BAND.high) {
+                if (next === null) {
                     break;
                 }
 
-                rate = { kind: "bitrate", kbps: Math.max(1, Math.round(rate.kbps / ratio)), attempt: attempt + 1 };
+                rate = { kind: "bitrate", kbps: next, attempt: attempt + 1 };
                 onStep?.({
                     type: "step",
                     message: `${preset}: the ${window.label} window missed its size, correcting`,
@@ -423,8 +446,6 @@ export async function previewPresets({
 
             onStep?.({ type: "step", message: `${preset}: scoring the ${window.label} window` });
             const score = await measureQuality({ distorted: output, reference, signal });
-            const planned = windowRate({ plan, window, quality: encoder.defaultQuality });
-            const plannedBytes = planned.kind === "bitrate" ? (planned.kbps * 1000 * window.durationSec) / 8 : null;
             windows.push({
                 label: window.label,
                 path: output,
