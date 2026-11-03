@@ -13,6 +13,8 @@ final class HubUsageDigestStore: ObservableObject {
     @Published private(set) var lanes: [String: [UsageLane]] = [:]
     @Published private(set) var builtAt = Date()
     @Published private(set) var error: String?
+    /// What the digest and series doors said they could not measure, once each.
+    @Published private(set) var warnings: [UsageWarning] = []
     private var loadedDay: String?
     private var loadedAt: Date?
     private var loading = false
@@ -64,6 +66,7 @@ final class HubUsageDigestStore: ObservableObject {
                 }.value
                 guard generation == request else { return }
                 self.digest = digestValue
+                warnings = UsageWarning.merged([digestValue.warnings, seriesValue.warnings])
                 lanes = Dictionary(built.map { (Self.key(provider: $0.account.provider, account: $0.account.accountName), $0.lanes) },
                                    uniquingKeysWith: { first, _ in first })
                 builtAt = Date()
@@ -112,6 +115,9 @@ struct HubUsageDigestSummary: View {
             Text(verbatim: error).font(.system(size: 11)).foregroundColor(ReviewPalette.removed)
         } else if let digest = store.digest?.data {
             VStack(alignment: .leading, spacing: 6) {
+                if !store.warnings.isEmpty {
+                    InfoStrip(store.warnings.map(\.message).joined(separator: "\n"))
+                }
                 if let spend = digest.spend {
                     HStack(spacing: 8) {
                         Text(verbatim: UsageFormat.usd(spend.totalUsd))

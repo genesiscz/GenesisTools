@@ -26,6 +26,13 @@ public struct UsageWarning: Codable, Equatable, Sendable, Identifiable {
     public let code: String
     public let message: String
     public var id: String { code }
+
+    /// The warnings of several doors in their order, each code and message once: two doors that both miss the
+    /// history say so once.
+    public static func merged(_ lists: [[UsageWarning]]) -> [UsageWarning] {
+        var seen = Set<String>()
+        return lists.flatMap { $0 }.filter { seen.insert($0.code + "\u{1}" + $0.message).inserted }
+    }
 }
 
 /// The span a verb read. Instants are ISO UTC; `tz` is the zone its day keys were cut in.
