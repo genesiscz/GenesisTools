@@ -5,8 +5,11 @@ import { fromBase64, loadOrCreateDeviceKeys, naclBoxCipher, toBase64 } from "@/t
 import { createE2eTransport } from "@/transport/e2e-transport";
 import type { Transport } from "@/transport/Transport";
 
-/** Builds the managed (vendor-relay) Transport. agentPublicKey came from the pairing QR (`pk`). */
-export async function createManagedTransport(pairing: PairingPayload): Promise<Transport> {
+/**
+ * Builds the managed (vendor-relay) Transport. agentPublicKey came from the pairing QR (`pk`). `probeTimeoutMs`
+ * bounds the liveness probe, so a relay that never answers fails the probe instead of hanging the connect.
+ */
+export async function createManagedTransport(pairing: PairingPayload, probeTimeoutMs?: number): Promise<Transport> {
     if (!pairing.agentPublicKey) {
         throw new Error("managed tier requires the Agent public key from the pairing QR");
     }
@@ -18,6 +21,7 @@ export async function createManagedTransport(pairing: PairingPayload): Promise<T
         cipher: naclBoxCipher,
         deviceKeys,
         agentPublicKey: fromBase64(pairing.agentPublicKey),
+        ...(probeTimeoutMs === undefined ? {} : { probeTimeoutMs }),
     });
 }
 

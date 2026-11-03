@@ -97,11 +97,14 @@ export const TIERS: Record<TransportTier, TierDefinition> = {
         pair: (target, deviceCode) => pairManagedDevice({ baseUrl: target.baseUrl, deviceCode }),
         capabilities: { plainUrls: false },
         build: (target) =>
-            createManagedTransport({
-                baseUrl: target.baseUrl,
-                tier: "managed",
-                username: target.username,
-                agentPublicKey: target.managed?.agentPublicKey,
-            }),
+            createManagedTransport(
+                {
+                    baseUrl: target.baseUrl,
+                    tier: "managed",
+                    username: target.username,
+                    agentPublicKey: target.managed?.agentPublicKey,
+                },
+                TIERS.managed.probeTimeoutMs
+            ),
     },
 };

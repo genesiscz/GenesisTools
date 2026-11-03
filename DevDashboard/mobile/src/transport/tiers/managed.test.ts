@@ -85,6 +85,26 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
         expect(await t.reachable()).toBe(false);
     });
 
+    it("reachable() gives up at the probe deadline when the relay never answers", async () => {
+        const agent = naclBoxCipher.keyPair();
+        const device = naclBoxCipher.keyPair();
+        // A relay that holds the request open until the caller aborts it.
+        const hangingFetch = ((_url: string, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            })) as unknown as typeof fetch;
+        const t = createE2eTransport({
+            relayBaseUrl: "https://relay.vendor.com/agent/abc",
+            cipher: naclBoxCipher,
+            deviceKeys: device,
+            agentPublicKey: agent.publicKey,
+            fetchImpl: hangingFetch,
+            probeTimeoutMs: 30,
+        });
+
+        expect(await t.reachable()).toBe(false);
+    });
+
     it("adapts encrypted relay SSE into the real client QA subscription", async () => {
         const agent = naclBoxCipher.keyPair();
         const device = naclBoxCipher.keyPair();
