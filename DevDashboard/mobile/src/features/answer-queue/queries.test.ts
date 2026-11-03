@@ -11,6 +11,7 @@ import {
     stagePick,
 } from "@/features/answer-queue/queries";
 import {
+    flushDecision,
     flushThenSend,
     latestStage,
     singleFlight,
@@ -110,6 +111,30 @@ describe("answer queue rules", () => {
 
         stage.track(Promise.resolve());
         expect(await flushThenSend([() => stage.settled()], () => sent++)).toBe(true);
+        expect(sent).toBe(1);
+    });
+
+    it("a failed note save does not keep Send blocked: the next Send retries the note", async () => {
+        const pick = latestStage();
+        const note = latestStage();
+        note.track(Promise.reject(new Error("network down")));
+        let saves = 0;
+        let sent = 0;
+        const flush = () =>
+            flushDecision({
+                pick,
+                note,
+                saveNote: async () => {
+                    saves++;
+                },
+            });
+
+        expect(await flushThenSend([flush], () => sent++)).toBe(true);
+        expect([saves, sent]).toEqual([1, 1]);
+
+        // A failed pick still blocks, whatever the note does.
+        pick.track(Promise.reject(new Error("DECISION 4 changed")));
+        expect(await flushThenSend([flush], () => sent++)).toBe(false);
         expect(sent).toBe(1);
     });
 
