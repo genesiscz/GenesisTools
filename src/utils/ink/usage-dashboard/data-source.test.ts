@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
+import { notifiableWindows } from "@genesiscz/utils/ai/usage/alerts/windows";
 import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
 import { shellHelpLines } from "./components/help-overlay";
 import { cycleProvider, toggleAccount } from "./filters";
 import { isModalOpen, setModalOpen } from "./hooks/input-scope";
-import { nextPollState, notifiableWindows } from "./hooks/use-poller";
+import { nextPollState } from "./hooks/use-poller";
 import { colorForPercent, colorForWindow, colorForWindowKey } from "./lib/colors";
 import { withoutHiddenAccounts } from "./source";
 import { formatTimeRange } from "./types";
