@@ -115,7 +115,8 @@ export function findLogPlaylists(log: HarLog): HarPlaylist[] {
             const name = header.name.toLowerCase();
 
             if (REPLAYED_HEADERS.has(name)) {
-                headers[name] = header.value;
+                // HTTP/2 may split the cookie field into several header lines; all of them are the cookie.
+                headers[name] = name === "cookie" && headers[name] ? `${headers[name]}; ${header.value}` : header.value;
             }
         }
 
