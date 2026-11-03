@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { callCostUsd, coldRebuildUsd } from "@genesiscz/utils/agent-sessions/analysis/cost";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import type { AttributedEvent } from "@genesiscz/utils/ai/usage/attribution/spend-share";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { NO_ACCOUNT, pivotSpend } from "./pivot";
 import { cycleOf, planValues } from "./plans";
 import type { PricingTable } from "./types";
+import { scanSpendWaste, WASTE_CACHE_VERSION } from "./waste";
 
 const WORK = { provider: "anthropic-sub", accountId: "acc-work", accountName: "work" };
 
@@ -169,5 +176,52 @@ describe("call cost", () => {
         expect(coldRebuildUsd({ model: "m-a", contextTokens: 100_000, oneHour: false, at, pricing })).toBeCloseTo(
             0.345
         );
+    });
+});
+
+describe("scanSpendWaste", () => {
+    test("a transcript an older cache version scanned is read again, so a sub-agent's own cache shows its waste", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-waste-")), "agent-a1.jsonl");
+        const usage = (read: number, write: number) => ({
+            input_tokens: 100,
+            output_tokens: 500,
+            cache_read_input_tokens: read,
+            cache_creation_input_tokens: write,
+        });
+        const rows = [
+            {
+                type: "assistant",
+                isSidechain: true,
+                timestamp: "2026-11-01T10:00:00Z",
+                message: { id: "m0", model: "claude-sonnet-4-5", usage: usage(100_000, 1_000) },
+            },
+            {
+                type: "assistant",
+                isSidechain: true,
+                timestamp: "2026-11-01T10:10:00Z",
+                message: { id: "m1", model: "claude-sonnet-4-5", usage: usage(0, 101_000) },
+            },
+        ];
+        writeFileSync(file, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+
+        // What version 1 left on disk for this transcript: a sub-agent file scanned as no waste.
+        const cachePath = toolDataDir("ai-spend", "cache", "session-waste.json");
+        mkdirSync(dirname(cachePath), { recursive: true });
+        writeFileSync(
+            cachePath,
+            SafeJSON.stringify({ version: 1, entries: { [file]: { identity: fileIdentity(file), value: [] } } })
+        );
+
+        const waste = await scanSpendWaste({
+            events: [event("2026-11-01T10:10:00Z", 1, { file })],
+            from: Date.parse("2026-11-01T00:00:00Z"),
+            to: Date.parse("2026-11-02T00:00:00Z"),
+            by: ["kind"],
+            tz: "UTC",
+            reportCommand: (sessionId) => sessionId,
+        });
+
+        expect(WASTE_CACHE_VERSION).toBeGreaterThan(1);
+        expect(waste.top.map((item) => item.kind)).toEqual(["cache-rebuild-idle"]);
     });
 });
