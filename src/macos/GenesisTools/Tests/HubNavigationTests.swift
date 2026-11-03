@@ -263,6 +263,23 @@ final class HubNavigationTests: XCTestCase {
                        ["--repo", "acme/app", "--commit", "abc1234"])
     }
 
+    /// A Usage link (`tools hub open --usage-… --print-url`) opens the place `tools hub open` would.
+    func testAUsageLinkOpensTheSameUsagePlace() throws {
+        let accounts = try XCTUnwrap(HubLink.arguments(fromLink:
+            "genesis-tools://hub?mode=usage&usage-section=spend&usage-account=work&usage-account=acc%20side"))
+        XCTAssertEqual(accounts, ["--mode", "usage", "--usage-section", "spend", "--usage-account", "work", "--usage-account", "acc side"])
+        XCTAssertEqual(HubRequest(accounts).usageAccounts, ["work", "acc side"])
+
+        let every = try XCTUnwrap(HubLink.arguments(fromLink: "genesis-tools://hub?usage-section=limits&usage-all-accounts=1"))
+        XCTAssertEqual(every, ["--usage-section", "limits", "--usage-all-accounts"])
+        XCTAssertTrue(HubRequest(every).usageAllAccounts)
+        XCTAssertEqual(HubRequest(every).launchMode, .usage)
+
+        let session = HubRequest(try XCTUnwrap(HubLink.arguments(fromLink: "genesis-tools://hub?usage-session=s-1&usage-harness=codex")))
+        XCTAssertEqual(session.usageSession, "s-1")
+        XCTAssertEqual(session.usageHarness, "codex")
+    }
+
     /// A first launch opens the mode of the place it names; `--worktree` alone opened Sessions (2026-10-27).
     func testALaunchOpensTheModeOfThePlaceItNames() {
         XCTAssertEqual(HubRequest(["--worktree", "/work/app"]).launchMode, .worktrees)

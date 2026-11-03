@@ -23,6 +23,13 @@ export const HUB_LINK_KEYS = [
     // The Inbox at one card: a decision or todo (`d_3_<session>`) or a pending form (`ask_…`).
     "decision",
     "question",
+    // The Usage mode's place (`tools hub open --usage-…`): a section, a session's analysis and its harness, the
+    // accounts to select (`usage-account` repeats), or every account (`usage-all-accounts=1`, a bare flag in the app).
+    "usage-section",
+    "usage-session",
+    "usage-harness",
+    "usage-account",
+    "usage-all-accounts",
     // Who asked for the place, for the hub's navigation history (`tools hub nav open`): `actor` is user, agent or
     // link (a link without it counts as link), `note` says why, `from` is the agent's session id, `nav` the id the
     // CLI already stored the entry under, so the hub updates that entry instead of adding a second one.
@@ -32,7 +39,23 @@ export const HUB_LINK_KEYS = [
     "nav",
 ] as const;
 
-export type HubLinkQuery = Partial<Record<(typeof HUB_LINK_KEYS)[number], string>>;
+export type HubLinkKey = (typeof HUB_LINK_KEYS)[number];
+/** One value per key, except `usage-account`, which a link repeats: each value is one `--usage-account`. */
+export type HubLinkQuery = Partial<Record<Exclude<HubLinkKey, "usage-account">, string>> & {
+    "usage-account"?: readonly string[];
+};
+
+/** The query pairs of a hub link in `HUB_LINK_KEYS` order, a repeated key once per value. */
+function hubLinkPairs(data: HubLinkQuery): Array<readonly [string, string | undefined]> {
+    return HUB_LINK_KEYS.flatMap((key) => {
+        const value = data[key];
+        if (value === undefined || typeof value === "string") {
+            return [[key, value] as const];
+        }
+
+        return value.map((item) => [key, item] as const);
+    });
+}
 
 /** Every preset a link can target, its actions, and the data each action takes. */
 export interface LinkTargets {
@@ -90,16 +113,8 @@ export const APP_LINKS: AppLinkTable = {
     "genesis-hub": {
         open: {
             // `encodeURIComponent` in full: a `+` from URLSearchParams reads back as a literal plus in the app.
-            path: (data) =>
-                `hub${linkQuery(
-                    HUB_LINK_KEYS.map((key) => [key, data[key]] as const),
-                    { keepSlash: false }
-                )}`,
-            scheme: (data) =>
-                `genesis-tools://hub${linkQuery(
-                    HUB_LINK_KEYS.map((key) => [key, data[key]] as const),
-                    { keepSlash: false }
-                )}`,
+            path: (data) => `hub${linkQuery(hubLinkPairs(data), { keepSlash: false })}`,
+            scheme: (data) => `genesis-tools://hub${linkQuery(hubLinkPairs(data), { keepSlash: false })}`,
         },
     },
     finder: {

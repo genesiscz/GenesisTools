@@ -144,7 +144,7 @@ describe("what tools hub nav open names", () => {
             "utf8"
         );
         const block = /linkKeys: Set<String> = \[([\s\S]*?)\]/.exec(swift)?.[1] ?? "";
-        const appKeys = [...block.matchAll(/"([a-z]+)"/g)].map((match) => match[1]).sort();
+        const appKeys = [...block.matchAll(/"([a-z-]+)"/g)].map((match) => match[1]).sort();
         expect(appKeys.length).toBeGreaterThan(10);
         const written: string[] = [...HUB_LINK_KEYS].sort();
         expect(written).toEqual(appKeys);
@@ -176,6 +176,20 @@ describe("what tools hub nav open names", () => {
             "limits",
             "--usage-all-accounts",
         ]);
+    });
+
+    // A printed link (`--print-url`) must open the same Usage screen `tools hub open` does.
+    it("carries the Usage place through a link: accounts repeated, every account as a flag, a harness only with its session", () => {
+        expect(hubUrl({ mode: "usage", usageSection: "spend", usageAccounts: ["work", "acc side"] })).toBe(
+            "genesis-tools://hub?mode=usage&usage-section=spend&usage-account=work&usage-account=acc%20side"
+        );
+        expect(hubUrl({ usageSection: "limits", usageAllAccounts: true })).toBe(
+            "genesis-tools://hub?usage-section=limits&usage-all-accounts=1"
+        );
+        expect(hubUrl({ usageSession: "s-1", usageHarness: "codex" })).toBe(
+            "genesis-tools://hub?usage-session=s-1&usage-harness=codex"
+        );
+        expect(hubUrl({ usageHarness: "codex" })).toBe("genesis-tools://hub");
     });
 
     // The app resolves a relative path against its own folder (`/`): `tools hub open --worktree .` opened nothing.
