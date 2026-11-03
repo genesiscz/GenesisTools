@@ -158,6 +158,43 @@ describe("F11: decisions answered in Telegram", () => {
         expect(api.messages[0].buttons).toEqual([]);
     });
 
+    it("gives a pressed message back when the outcome edit fails, so the retraction still drops its buttons", async () => {
+        class EditFailsOnce extends FakeTelegramMessagesApi {
+            private failed = false;
+
+            override async editMessageText(...args: Parameters<FakeTelegramMessagesApi["editMessageText"]>) {
+                if (!this.failed) {
+                    this.failed = true;
+                    throw new Error("Bad Gateway");
+                }
+
+                return super.editMessageText(...args);
+            }
+        }
+        const own = { ...bot, chats: { commands: 7010 } };
+        const api = new EditFailsOnce();
+        const store = memoryActTokenStore();
+        const row = decision({ id: "d_10_s-ten", number: 10, sessionId: "s-ten" });
+        await postDecisionsToTelegram([row], { bot: own, api, store, now: NOW });
+
+        const actDeps: ActDeps = {
+            store,
+            rows: () => [row],
+            answer: async () => ({ session: "s-ten", text: "10a", channel: "cmux", delivered: true, detail: "cmux" }),
+        };
+        const router = createCallbackRouter({ d: decisionPressHandler({ actDeps: async () => actDeps }) });
+        const [message] = api.messages;
+        await answerPress({
+            api,
+            router,
+            press: { id: "cbq-10", data: message.buttons[0][0].data, chatId: 7010, messageId: message.message },
+        });
+
+        expect(api.messages[0].buttons).not.toEqual([]);
+        expect(await retractDecisionTelegramMessages(["d_10_s-ten"], { bot: own, api })).toBe(1);
+        expect(api.messages[0].buttons).toEqual([]);
+    });
+
     it("edits the message of a decision closed elsewhere and drops its buttons", async () => {
         const api = new FakeTelegramMessagesApi();
         await postDecisionsToTelegram([decision({ id: "d_6_s-six", number: 6, sessionId: "s-six" })], {

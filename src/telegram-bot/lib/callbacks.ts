@@ -18,6 +18,11 @@ export interface CallbackPress {
 export interface CallbackReply {
     toast?: string;
     edit?: { text: string; parseMode?: ParseMode };
+    /**
+     * Runs when the edit fails: a handler that took its message out of the notice memory gives it back here, so a
+     * later retraction can still drop the buttons.
+     */
+    onEditFailed?: () => Promise<void>;
 }
 
 export type CallbackHandler = (press: CallbackPress, payload: string) => Promise<CallbackReply>;
@@ -74,7 +79,12 @@ export async function answerPress({
                 ...(reply.edit.parseMode ? { parse_mode: reply.edit.parseMode } : {}),
                 reply_markup: { inline_keyboard: [] },
             })
-            .catch((err: unknown) => log.debug({ err }, "could not edit a pressed message"));
+            .catch(async (err: unknown) => {
+                log.debug({ err }, "could not edit a pressed message");
+                await reply.onEditFailed?.().catch((restoreErr: unknown) => {
+                    log.warn({ err: restoreErr }, "could not give a pressed message back to the notice memory");
+                });
+            });
     }
 
     return reply;
