@@ -18,7 +18,47 @@ const { createE2eTransport } = await import("@/transport/e2e-transport");
 // The REAL Agent shim — this is the cross-stack proof: a request the phone encrypts is
 // decrypted + handled + re-encrypted by the actual Agent code, then decrypted by the phone.
 const { createE2eShim } = await import("@app/dev-dashboard/server/transport/e2e-shim");
-const { decodeE2eRequest, encodeE2eResponse, encodeEnvelope } = await import("@dd/contract");
+const { decodeE2eRequest, decodeEnvelope, encodeE2eResponse, encodeEnvelope } = await import("@dd/contract");
+const { sealPairAdmission } = await import("@/transport/tiers/managed");
+const { e2eRoutes, loadPeers } = await import("@app/dev-dashboard/server/routes/e2e");
+const { savePairingCode } = await import("@app/dev-dashboard/lib/e2e/pairing-code");
+const { SafeJSON } = await import("@genesiscz/utils/json");
+
+describe("managed pairing admission (real Agent pair route)", () => {
+    async function post(body: string, agent: { publicKey: Uint8Array; secretKey: Uint8Array }) {
+        const [route] = e2eRoutes({ cipher: naclBoxCipher, agentKeys: async () => agent });
+        const result = await route.handler({
+            method: "POST",
+            pathname: "/api/e2e/pair",
+            query: new URLSearchParams(),
+            params: {},
+            headers: {},
+            readJson: async <T>() => SafeJSON.parse(body, { strict: true }) as T,
+            readRawBody: async () => new Uint8Array(),
+            services: {} as never,
+        });
+        return result.kind === "json" ? result.status : 0;
+    }
+
+    it("admits the phone's key with the sealed code, and refuses a relay that swaps in its own key", async () => {
+        const agent = naclBoxCipher.keyPair();
+        const phone = naclBoxCipher.keyPair();
+        const relay = naclBoxCipher.keyPair();
+        await savePairingCode("K7P2M9QX");
+        const sealed = sealPairAdmission({ deviceCode: "K7P2M9QX", agentPublicKey: agent.publicKey, deviceKeys: phone });
+
+        // An active relay forwards the same sealed box but names its own key: the box no longer opens.
+        const { envelope } = SafeJSON.parse(sealed, { strict: true }) as { envelope: string };
+        const swapped = encodeEnvelope({ ...decodeEnvelope(envelope), epk: toBase64(relay.publicKey) });
+        expect(await post(SafeJSON.stringify({ envelope: swapped }, { strict: true }), agent)).toBe(403);
+        expect(sealed).not.toContain("K7P2M9QX");
+
+        expect(await post(sealed, agent)).toBe(200);
+        const peers = await loadPeers();
+        expect(Object.keys(peers)).toContain(toBase64(phone.publicKey));
+        expect(Object.keys(peers)).not.toContain(toBase64(relay.publicKey));
+    });
+});
 
 describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
     it("encrypts an outbound request and decrypts the agent's response", async () => {
