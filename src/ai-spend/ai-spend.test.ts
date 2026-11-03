@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { proxyAccountDays, proxyClientMonths } from "@app/ai-spend/lib/proxy";
 import { workerTurnLogPath } from "@app/claude/lib/worker/paths";
 import { ClaudeWorkerStore } from "@app/claude/lib/worker/store";
 import { turnLogPath } from "@app/grok/lib/paths";
@@ -1501,5 +1502,90 @@ describe("worker stats", () => {
         expect(byLabel[""].apiEquivalentUsd).toBeCloseTo(10, 10);
         expect(report.total.sessions).toBe(3);
         expect(report.notes).toEqual(["codex gone: no transcript found, priced from its ledger rows"]);
+    });
+});
+
+describe("ai-spend proxy", () => {
+    it("prints the ledger's booked cost per client and month as stored, and per-account days summed over models", () => {
+        const clients = proxyClientMonths({
+            version: 1,
+            months: {
+                "2026-10": {
+                    app: {
+                        requests: 3,
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                        cost_usd: 1.25,
+                        unpriced_requests: 0,
+                    },
+                },
+                "2026-11": {
+                    app: {
+                        requests: 1,
+                        prompt_tokens: 2,
+                        completion_tokens: 1,
+                        total_tokens: 3,
+                        cost_usd: 0.5,
+                        unpriced_requests: 1,
+                    },
+                },
+            },
+        });
+        const days = proxyAccountDays(
+            {
+                version: 1,
+                days: {
+                    "2026-11-01": {
+                        "work/m-a": {
+                            requests: 2,
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                            total_tokens: 100,
+                            errors: 1,
+                            rate_limits: 2,
+                            cache_read_tokens: 60,
+                            cache_write_tokens: 10,
+                            uncached_input_tokens: 30,
+                        },
+                        "work/m-b": {
+                            requests: 1,
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                            total_tokens: 50,
+                            errors: 0,
+                            rate_limits: 0,
+                        },
+                    },
+                    "2026-10-01": {
+                        "work/m-a": {
+                            requests: 9,
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                            total_tokens: 1,
+                            errors: 0,
+                            rate_limits: 0,
+                        },
+                    },
+                },
+            },
+            "2026-10-15"
+        );
+
+        expect(clients.map((row) => [row.month, row.costUsd])).toEqual([
+            ["2026-11", 0.5],
+            ["2026-10", 1.25],
+        ]);
+        expect(days).toEqual([
+            {
+                day: "2026-11-01",
+                account: "work",
+                requests: 3,
+                totalTokens: 150,
+                rateLimited: 2,
+                errors: 1,
+                cacheReadShare: 0.6,
+            },
+        ]);
     });
 });

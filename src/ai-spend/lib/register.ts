@@ -3,8 +3,9 @@ import * as p from "@clack/prompts";
 import { loadSpendAccountsContext } from "@genesiscz/utils/ai/usage/spend/accounts-context";
 import { aggregate } from "@genesiscz/utils/ai/usage/spend/aggregate";
 import { loadPricing } from "@genesiscz/utils/ai/usage/spend/config";
-import { AGENT_IDS } from "@genesiscz/utils/ai/usage/spend/drivers";
-import { buildMonitorReport, type MonitorReport } from "@genesiscz/utils/ai/usage/spend/monitor";
+import { AGENT_IDS, spendAccountRowId } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { collectSeriesEvents } from "@genesiscz/utils/ai/usage/spend/events-cache";
+import { buildMonitorReport, localDayString, type MonitorReport } from "@genesiscz/utils/ai/usage/spend/monitor";
 import { prof } from "@genesiscz/utils/ai/usage/spend/prof";
 import { eventCostEstimate } from "@genesiscz/utils/ai/usage/spend/reports/cost";
 import { candidatesFor } from "@genesiscz/utils/ai/usage/spend/reports/load";
@@ -20,6 +21,7 @@ import type { Command } from "commander";
 import { addHarnessOption, resolveHarnessFlag } from "./harness-flag";
 import { renderSessions, renderSummary, renderToday } from "./render";
 import { addAccountFlags, registerCcusageCommands } from "./reports/commands";
+import { registerSpendVerbs } from "./verbs";
 import { registerWorkersCommand } from "./workers/command";
 
 /** Grains `buildSpendSeries` accepts. `minute` is call-log only. */
@@ -162,6 +164,45 @@ export async function runSpend(cmd: Command, view: SpendView): Promise<void> {
  * exact paths; extra keys are ignored by its `JSONDecoder`, so `accounts` may
  * ride alongside, but nothing may move cost into a new top-level key.
  */
+/**
+ * The calendar month so far, local time (proposal 10: the popover's monthlyCost mode had no writer). The monitor's
+ * own walk covers seven days, so the month comes from the series events cache, which keeps 90 days.
+ */
+function monthSoFar(input: {
+    storage: Storage;
+    pricing: PricingTable;
+    accounts: Parameters<typeof collectSeriesEvents>[0]["accounts"];
+    accountIds?: readonly string[];
+}): { start: string; totals: { cost: number; tokens: number } } {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const wanted = input.accountIds && input.accountIds.length > 0 ? new Set(input.accountIds) : undefined;
+    const totals = { cost: 0, tokens: 0 };
+
+    for (const event of collectSeriesEvents({
+        storage: input.storage,
+        pricing: input.pricing,
+        home: homedir(),
+        sources: AGENT_IDS,
+        minMtimeMs: first.getTime(),
+        accounts: input.accounts,
+        now,
+    })) {
+        if (Date.parse(event.t) < first.getTime()) {
+            continue;
+        }
+
+        if (wanted && !wanted.has(spendAccountRowId(event.source, event.accountId))) {
+            continue;
+        }
+
+        totals.cost += event.costUsd;
+        totals.tokens += event.tokens;
+    }
+
+    return { start: localDayString(first), totals };
+}
+
 export function monitorEnvelope(report: MonitorReport): Record<string, unknown> {
     const envelope: Record<string, unknown> = {
         today: report.today,
@@ -197,6 +238,7 @@ interface SeriesOpts {
 
 interface MonitorOpts {
     json?: boolean;
+    month?: boolean;
     allHomes?: boolean;
     account?: string[];
 }
@@ -390,6 +432,7 @@ export function registerSpendCommand(program: Command): Command {
     registerCcusageCommands(program);
     registerSeriesCommand(program);
     registerWorkersCommand(program);
+    registerSpendVerbs(program);
 
     const monitor = program
         .command("monitor")
@@ -399,7 +442,8 @@ export function registerSpendCommand(program: Command): Command {
         .option(
             "--json",
             "Emit {today, yesterday, week, last7d, todayDate, yesterdayDate, weekStart, last7dStart, timezone, agents, accounts} as JSON"
-        );
+        )
+        .option("--month", "Also the calendar month so far (local): adds month and monthStart, from the 90-day cache");
 
     addAccountFlags(monitor).action(async (_opts: MonitorOpts, cmd: Command) => {
         // Root also defines --json (addSpendOptions), so commander binds it there;
@@ -420,11 +464,24 @@ export function registerSpendCommand(program: Command): Command {
             })
         );
         prof.summary("ai-spend monitor");
+        const month = opts.month
+            ? monthSoFar({ storage, pricing, accounts: context.accounts, accountIds: opts.account })
+            : undefined;
 
         if (opts.json) {
-            out.result(monitorEnvelope(report));
+            out.result(
+                month
+                    ? { ...monitorEnvelope(report), month: month.totals, monthStart: month.start }
+                    : monitorEnvelope(report)
+            );
 
             return;
+        }
+
+        if (month) {
+            out.println(
+                `month from ${month.start}: $${month.totals.cost.toFixed(2)} (${month.totals.tokens.toLocaleString()} tok)`
+            );
         }
 
         const perAgent = AGENT_IDS.filter((id) => report.agents[id].week.tokens > 0)
