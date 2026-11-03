@@ -119,9 +119,101 @@ export interface ActReceiptDto {
     at: number;
 }
 
+/** One option of a waiting item, as the hub inbox shows it. */
+export interface WaitingChoiceDto {
+    id: string;
+    label: string;
+    rationale: string | null;
+    recommended: boolean;
+}
+
+/** A decision of the answer queue (`InboxDecision` in `question/lib/inbox/build.ts`; the wire carries more). */
+export interface WaitingDecisionDto {
+    kind: "decision";
+    id: string;
+    number: number;
+    title: string | null;
+    prompt: string;
+    choices: WaitingChoiceDto[];
+    recommended: string | null;
+    blocking: boolean;
+    /** `waiting` or `drafted`; a staged pick or note is `drafted`. */
+    status: string;
+    context: string | null;
+    proposal: string | null;
+    reasoning: string | null;
+    /** The staged pick (option letters) and note, not sent yet. */
+    draftOption: string | null;
+    draft: string | null;
+    /** The revision the phone shows; a stage or a send passes it back as `expectedRevision`. */
+    revision: number;
+    at: string;
+}
+
+/** One question of a pending ask form (`InboxQuestion`). */
+export interface WaitingQuestionDto {
+    itemId: string;
+    prompt: string;
+    choices: WaitingChoiceDto[];
+    multiple: boolean;
+    freeText: boolean;
+    required: boolean;
+}
+
+/** A pending ask form of the answer queue (`InboxForm`). */
+export interface WaitingFormDto {
+    kind: "form";
+    id: string;
+    source: string | null;
+    cwd: string;
+    questions: WaitingQuestionDto[];
+    at: string;
+}
+
+/** An agent's own question dialog (a plan approval, a permission prompt); the phone shows it, the Mac answers it. */
+export interface WaitingDialogDto {
+    kind: "dialog";
+    id: string;
+    title: string;
+    prompt: string;
+    choices: WaitingChoiceDto[];
+    at: string;
+}
+
+export type WaitingItemDto = WaitingDecisionDto | WaitingFormDto | WaitingDialogDto;
+
+export interface WaitingSessionDto {
+    /** The agent session; null for a form no session posted. */
+    sessionId: string | null;
+    provider: string | null;
+    title: string | null;
+    project: string | null;
+    /** The items that count in the badges, as the notch counts them. */
+    counted: number;
+    /** Newest ask first. */
+    items: WaitingItemDto[];
+}
+
+/** The answer queue (`WaitingQueue` in `question/lib/inbox/load.ts`): the waiting set grouped by session. */
+export interface WaitingQueueDto {
+    /** The badge number, equal to the notch widget's. */
+    total: number;
+    sessions: WaitingSessionDto[];
+    at: string;
+}
+
+/** One answer of a pending ask form, as `POST /api/qa/pending/:id/answer` takes it. */
+export interface PendingAnswerDto {
+    itemId: string;
+    selectedChoices?: string[];
+    freeText?: string;
+}
+
 export const ENDPOINTS = {
     // Decisions (the hub inbox), the same doors as `tools question inbox`.
     qaDecisions: row<{ hours?: number }, unknown>("GET", "/api/qa/decisions", "read"),
+    /** The phone's answer queue: everything the waiting set says waits, grouped by session, with the notch counts. */
+    qaWaiting: row<{ hours?: number }, WaitingQueueDto>("GET", "/api/qa/waiting", "read"),
     qaDecisionsSession: row<{ id: string }, { sessionId: string; decisions: unknown[] }>(
         "GET",
         "/api/qa/decisions/session/:id",
@@ -164,7 +256,7 @@ export const ENDPOINTS = {
     // Pending ask forms.
     qaPending: row<Record<string, never>, unknown>("GET", "/api/qa/pending", "read"),
     qaPendingGet: row<{ id: string }, unknown>("GET", "/api/qa/pending/:id", "read"),
-    qaPendingAnswer: row<{ id: string; answers: unknown[] }, unknown>(
+    qaPendingAnswer: row<{ id: string; answers: PendingAnswerDto[] }, { ok: boolean; entryId?: string }>(
         "POST",
         "/api/qa/pending/:id/answer",
         "keyed-write"

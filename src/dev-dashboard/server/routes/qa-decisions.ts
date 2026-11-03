@@ -8,7 +8,13 @@ import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import type { HarvestedDecision } from "@app/question/lib/decisions/store";
 import { answerInboxDecisions } from "@app/question/lib/inbox/answer";
 import { dismissDecision, draftDecision, sendDrafts } from "@app/question/lib/inbox/drafts";
-import { type InboxDeps, loadInbox, loadSessionDecisions, waitingBlock } from "@app/question/lib/inbox/load";
+import {
+    type InboxDeps,
+    loadInbox,
+    loadSessionDecisions,
+    loadWaitingQueue,
+    waitingBlock,
+} from "@app/question/lib/inbox/load";
 import { z } from "zod";
 
 export interface QaDecisionDeps {
@@ -82,6 +88,15 @@ export function qaDecisionRoutes(deps: QaDecisionDeps = {}): RouteDef[] {
             }),
             invalid: "expected ?hours=N",
             run: ({ hours }) => loadInbox({ hours: hours ?? 72, ...(deps.inbox ? { deps: deps.inbox } : {}) }),
+        }),
+        // The phone's answer queue: the waiting set's items and counts, so the phone number equals the notch.
+        bindEndpoint(ENDPOINTS.qaWaiting, {
+            input: z.object({ hours: z.unknown().optional() }).transform(({ hours }) => {
+                const parsed = Number.parseInt(typeof hours === "string" ? hours : "72", 10);
+                return { hours: Number.isFinite(parsed) && parsed > 0 ? parsed : 72 };
+            }),
+            invalid: "expected ?hours=N",
+            run: ({ hours }) => loadWaitingQueue({ hours: hours ?? 72, ...(deps.inbox ? { deps: deps.inbox } : {}) }),
         }),
         // Every decision of one session, in every state (the hub's Decisions pane).
         bindEndpoint(ENDPOINTS.qaDecisionsSession, {
