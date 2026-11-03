@@ -126,7 +126,7 @@ public struct UsageTableHeader: View {
                 Text(verbatim: column.title).frame(width: UsageTableRowView.cellWidth, alignment: .leading)
             }
             Text("Rate · safe").frame(width: UsageTableRowView.rateWidth, alignment: .leading)
-            Text("Limit").frame(width: 64, alignment: .leading)
+            Text("Limit").frame(width: 80, alignment: .leading)
             Text("Trend").frame(minWidth: 60, alignment: .leading)
         }
         .font(.system(size: 10, weight: .semibold))
@@ -192,7 +192,9 @@ public struct UsageTableRowView: View, Equatable {
             Text(verbatim: row.limitText ?? "—")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(row.limitBeforeReset ? UsageTone.severity("warning") : Color.white.opacity(0.6))
-                .frame(width: 64, alignment: .leading)
+                .lineLimit(1)
+                .frame(width: 80, alignment: .leading)
+                .instantTooltip("When the deciding window runs out at this pace, or \"past reset\" when it lasts to its reset")
             Sparkline(values: row.sparkline, tint: Color.white.opacity(0.55), lineWidth: 1, range: 0...100,
                       label: "\(row.account.accountName) trend", valueText: { UsageFormat.percent($0) })
                 .frame(minWidth: 60, maxWidth: 120)
