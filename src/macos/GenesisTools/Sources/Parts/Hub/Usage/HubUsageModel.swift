@@ -255,7 +255,7 @@ final class HubUsageModel: ObservableObject {
     var domain: ClosedRange<Date> {
         let range = settings.range.seconds
         let start = builtAt.addingTimeInterval(-range)
-        return start...UsageAccountLanes.domainEnd(lanes, now: builtAt, range: range, projection: settings.projection)
+        return start...UsageAccountLanes.domainEnd(lanes, now: builtAt, range: range, projection: settings.drawsForecast)
     }
 
     /// Every warning the open section's doors printed, once each.
@@ -303,7 +303,8 @@ final class HubUsageModel: ObservableObject {
                     group.addTask { await self.fetch(key, generation: generation, settings: settings, session: session) }
                 }
             }
-            if keys.contains(where: [.limits, .series, .health, .spikes].contains) { await rebuild() }
+            // `.drift` too: the table's verdict column reads it, and Efficiency loads it without the Limits doors.
+            if keys.contains(where: [.limits, .series, .health, .spikes, .drift].contains) { await rebuild() }
             span.end()
             done()
         }

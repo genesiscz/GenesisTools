@@ -24,6 +24,12 @@ public enum UsageFormat {
         return "\(Self.rate(rate)) (safe \(String(format: "%.1f", locale: locale, safe)))"
     }
 
+    /// A total that leaves out requests with no price: "$0.42 +?", as the CLI prints it, so a sum of the known prices
+    /// never reads as the whole cost (and $0.00 never as free).
+    public static func usd(_ value: Double?, unknown: Int?) -> String {
+        usd(value) + ((unknown ?? 0) > 0 ? " +?" : "")
+    }
+
     /// "$0.42", "$12.30", "$1,501".
     public static func usd(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }

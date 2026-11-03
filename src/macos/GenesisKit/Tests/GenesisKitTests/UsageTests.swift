@@ -226,4 +226,24 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(UsageFormat.usd(1500.76), "$1,501")
         XCTAssertEqual(UsageFormat.project("-Users-someone-Projects-Repo"), "Repo")
     }
+
+    func testATotalThatLeavesOutUnpricedRequestsSaysSo() throws {
+        XCTAssertEqual(UsageFormat.usd(0, unknown: 3), "$0.00 +?")
+        XCTAssertEqual(UsageFormat.usd(1.5, unknown: 0), "$1.50")
+        XCTAssertEqual(UsageFormat.usd(1.5, unknown: nil), "$1.50")
+        let group = try JSONDecoder().decode(UsageWorkerGroup.self, from: Data("""
+        {"key":{"backend":"codex"},"sessions":1,"turns":2,"requests":3,"durationMs":0,"toolCalls":0,
+         "apiEquivalentUsd":0,"billedUsd":0,"unpricedRequests":1,"unbilledRequests":2}
+        """.utf8))
+        XCTAssertEqual(group.unbilledRequests, 2)
+    }
+
+    func testTheConeAndTheSafePaceDrawWithoutTheProjection() {
+        var settings = UsageSettings()
+        settings.projection = false
+        XCTAssertTrue(settings.drawsForecast)
+        settings.cone = false
+        settings.safePace = false
+        XCTAssertFalse(settings.drawsForecast)
+    }
 }
