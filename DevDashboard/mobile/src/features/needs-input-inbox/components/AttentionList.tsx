@@ -1,4 +1,5 @@
 import type { AttentionItem as AttentionItemModel } from "@dd/contract";
+import type { ReactNode } from "react";
 import { FlatList, View } from "react-native";
 import { AttentionItem } from "@/features/needs-input-inbox/components/AttentionItem";
 import { Empty } from "@/ui/Empty";
@@ -9,6 +10,8 @@ import { StatusPill } from "@/ui/StatusPill";
 interface AttentionListProps {
     items: AttentionItemModel[];
     onResolve: (qaId: string) => void;
+    /** Rendered above the attention section (the answer queue), inside the same scroll. */
+    header?: ReactNode;
 }
 
 /**
@@ -16,7 +19,7 @@ interface AttentionListProps {
  * mock badge, and a count pill) and an `Empty` "All clear" state. Mirrors the QA feed's FlatList
  * shape; the count pill exposes the queue size for the Appium assertion.
  */
-export function AttentionList({ items, onResolve }: AttentionListProps) {
+export function AttentionList({ items, onResolve, header }: AttentionListProps) {
     return (
         <FlatList
             testID="needs-input-inbox-list"
@@ -26,6 +29,7 @@ export function AttentionList({ items, onResolve }: AttentionListProps) {
             contentContainerStyle={{ gap: 12, paddingBottom: 32, paddingHorizontal: 16 }}
             ListHeaderComponent={
                 <View className="gap-2 pb-1">
+                    {header}
                     <View className="flex-row items-center justify-between">
                         <SectionHeader title="Needs input" />
                         <StatusPill
