@@ -1,6 +1,6 @@
 /**
  * A tool's own part for every harness, without a table of harness names in the tool. Each harness has one module in a
- * folder of the tool, named by its id (`src/ai-spend/lib/drivers/<id>.ts`), that exports the part under one name. The
+ * folder of the tool, named by its id (`src/utils/ai/usage/spend/drivers/<id>.ts`), that exports the part under one name. The
  * registry is the harness id list (`ACCOUNT_PROVIDER_ALIASES`, the list the drivers are keyed by), so a new harness
  * adds its module to each tool folder and edits no shared file. A module is required on its harness's first use and
  * kept, so a caller that needs one harness loads one module, and an import of the tool loads none.

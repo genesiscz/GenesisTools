@@ -2,15 +2,10 @@ import { homedir } from "node:os";
 import { basename } from "node:path";
 import { resolveCachedSessionId, type SessionIdResolution } from "@genesiscz/utils/agent-sessions/cached-title";
 import { findCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
-import { suggestEnumFlag } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
-import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
-import { Storage } from "@genesiscz/utils/storage/storage";
-import type { Command } from "commander";
-import { loadSpendAccountsContext } from "../accounts-context";
-import { loadPricing } from "../config";
-import { prof } from "../prof";
-import { buildBlocksReport } from "./blocks";
+import { loadSpendAccountsContext } from "@genesiscz/utils/ai/usage/spend/accounts-context";
+import { loadPricing } from "@genesiscz/utils/ai/usage/spend/config";
+import { prof } from "@genesiscz/utils/ai/usage/spend/prof";
+import { buildBlocksReport } from "@genesiscz/utils/ai/usage/spend/reports/blocks";
 import {
     isValidTimeZone,
     lastSinceDay,
@@ -20,18 +15,27 @@ import {
     resolveRelativeSince,
     systemTimeZone,
     zonedDay,
-} from "./dates";
-import { filterEvents } from "./load";
-import { loadEventsParallel } from "./load-parallel";
-import { buildPeriodReport } from "./period";
-import { addCodexPricingCoverage } from "./pricing-coverage";
-import { renderBlocksTable, renderPeriodTable, renderSessionTable } from "./render";
-import { buildCodexAnalysis } from "./reviews";
-import { renderCodexAnalysis } from "./reviews-render";
-import { buildSessionReport } from "./session";
-import { parseStatuslineHook, renderStatusline } from "./statusline";
-import type { PeriodGrain, ReportFlags, ReportKind, SourceId } from "./types";
-import { SOURCE_COST_MODE_FLAG, SOURCE_REPORTS } from "./types";
+} from "@genesiscz/utils/ai/usage/spend/reports/dates";
+import { filterEvents } from "@genesiscz/utils/ai/usage/spend/reports/load";
+import { loadEventsParallel } from "@genesiscz/utils/ai/usage/spend/reports/load-parallel";
+import { buildPeriodReport } from "@genesiscz/utils/ai/usage/spend/reports/period";
+import { addCodexPricingCoverage } from "@genesiscz/utils/ai/usage/spend/reports/pricing-coverage";
+import {
+    renderBlocksTable,
+    renderPeriodTable,
+    renderSessionTable,
+} from "@genesiscz/utils/ai/usage/spend/reports/render";
+import { buildCodexAnalysis } from "@genesiscz/utils/ai/usage/spend/reports/reviews";
+import { renderCodexAnalysis } from "@genesiscz/utils/ai/usage/spend/reports/reviews-render";
+import { buildSessionReport } from "@genesiscz/utils/ai/usage/spend/reports/session";
+import { parseStatuslineHook, renderStatusline } from "@genesiscz/utils/ai/usage/spend/reports/statusline";
+import type { PeriodGrain, ReportFlags, ReportKind, SourceId } from "@genesiscz/utils/ai/usage/spend/reports/types";
+import { SOURCE_COST_MODE_FLAG, SOURCE_REPORTS } from "@genesiscz/utils/ai/usage/spend/reports/types";
+import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
+import { Storage } from "@genesiscz/utils/storage/storage";
+import type { Command } from "commander";
 
 const VISUAL_BURN_RATES = ["off", "emoji", "text", "emoji-text"] as const;
 

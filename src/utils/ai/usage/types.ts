@@ -178,11 +178,9 @@ export interface SpendSeriesBucket {
 /**
  * One bucket of a spend series.
  *
- * Declared here, in L7, rather than in `src/ai-spend`, because BOTH series
- * producers return it: the call log (`queryUsage({ grain })`) and the
- * transcript store (`buildSpendSeries`). `src/ai-spend/lib/series.ts` imports
- * it; nothing under `src/utils/ai/usage` may import ai-spend, so the shape has
- * to live on the lower layer or be duplicated.
+ * Declared here, in L7, because BOTH series producers return it: the call log
+ * (`queryUsage({ grain })`) and the transcript store (`buildSpendSeries` in
+ * `spend/series.ts`, which moved here from `src/ai-spend` in step U8).
  */
 export interface SpendSeriesPoint {
     /** Bucket start: `YYYY-MM-DD`, `YYYY-MM-DDTHH`, or `YYYY-MM-DDTHH:mm`. */

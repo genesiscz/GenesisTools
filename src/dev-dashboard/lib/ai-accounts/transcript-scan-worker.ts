@@ -1,5 +1,5 @@
-import { buildSpendSeries, type SpendSeriesResult, type TranscriptGrain } from "@app/ai-spend/lib/series";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { buildSpendSeries, type SpendSeriesResult, type TranscriptGrain } from "@genesiscz/utils/ai/usage/spend/series";
 
 export interface TranscriptScanInput {
     from: string;

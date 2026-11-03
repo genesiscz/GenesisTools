@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { homedir } from "node:os";
 import * as realCachedTitle from "@genesiscz/utils/agent-sessions/cached-title";
 import * as realCodexRollouts from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import * as realAccountsContext from "@genesiscz/utils/ai/usage/spend/accounts-context";
+import * as realConfig from "@genesiscz/utils/ai/usage/spend/config";
+import { DEFAULT_PRICING } from "@genesiscz/utils/ai/usage/spend/pricing";
+import { pricedEventCost } from "@genesiscz/utils/ai/usage/spend/reports/load";
+import * as realLoadParallel from "@genesiscz/utils/ai/usage/spend/reports/load-parallel";
+import type { SpendEvent } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
-import * as realAccountsContext from "../accounts-context";
-import * as realConfig from "../config";
-import { DEFAULT_PRICING } from "../pricing";
-import { pricedEventCost } from "./load";
-import * as realLoadParallel from "./load-parallel";
-import type { SpendEvent } from "./types";
 
 type LoadOptions = Parameters<typeof realLoadParallel.loadEventsParallel>[0];
 type SessionResolution = ReturnType<typeof realCachedTitle.resolveCachedSessionId>;
@@ -22,7 +22,7 @@ let fixtureEvents: SpendEvent[] = [];
 let sessionResolution: SessionResolution = { kind: "none" };
 let codexRollouts = new Map<string, string>();
 
-mock.module("./load-parallel", () => ({
+mock.module("@genesiscz/utils/ai/usage/spend/reports/load-parallel", () => ({
     ...realLoadParallel,
     loadEventsParallel: async (options: LoadOptions) => {
         loadCalls.push(options);
@@ -30,7 +30,7 @@ mock.module("./load-parallel", () => ({
     },
 }));
 
-mock.module("../accounts-context", () => ({
+mock.module("@genesiscz/utils/ai/usage/spend/accounts-context", () => ({
     ...realAccountsContext,
     loadSpendAccountsContext: async (options: { allHomes?: boolean } = {}) => {
         accountCalls.push(options);
@@ -38,7 +38,7 @@ mock.module("../accounts-context", () => ({
     },
 }));
 
-mock.module("../config", () => ({
+mock.module("@genesiscz/utils/ai/usage/spend/config", () => ({
     ...realConfig,
     loadPricing: async () => DEFAULT_PRICING,
 }));

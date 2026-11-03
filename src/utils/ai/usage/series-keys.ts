@@ -4,7 +4,7 @@ import type { SpendGrain } from "./types";
  * The ONE bucket-key builder for spend series.
  *
  * Both producers use it — `queryUsage({ grain })` here and `buildSpendSeries`
- * in `src/ai-spend` — because the dashboard overlays their points on one axis.
+ * in `spend/series.ts` — because the dashboard overlays their points on one axis.
  * Two implementations that disagreed by an hour would draw two lines that look
  * plausible and are not comparable, and nothing would fail.
  *

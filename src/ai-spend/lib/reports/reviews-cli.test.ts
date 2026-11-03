@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { agentHomeEnvPatch } from "@genesiscz/utils/ai/usage/spend/drivers/test-env";
+import type { CodexAnalysis } from "@genesiscz/utils/ai/usage/spend/reports/reviews";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { agentHomeEnvPatch } from "../drivers/test-env";
-import type { CodexAnalysis } from "./reviews";
 
 test("ai-spend reports a review pass and daily pricing coverage from real fixture files", async () => {
     const home = mkdtempSync(join(tmpdir(), "ai-spend-cli-"));

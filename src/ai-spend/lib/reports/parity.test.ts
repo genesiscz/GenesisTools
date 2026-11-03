@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isolateAgentHomeEnv } from "@genesiscz/utils/ai/usage/spend/drivers/test-env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { ccusagePath, skip } from "@genesiscz/utils/test/skip";
-import { isolateAgentHomeEnv } from "../drivers/test-env";
 
 isolateAgentHomeEnv();
 

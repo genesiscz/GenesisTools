@@ -22,8 +22,8 @@ import {
 } from "@app/ai-proxy/lib/sessions/view";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
-import { loadEvents } from "@app/ai-spend/lib/reports/load";
 import { hitPercent, summarizeCache } from "@genesiscz/utils/ai/usage/cache-stats";
+import { loadEvents } from "@genesiscz/utils/ai/usage/spend/reports/load";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDateTimeStamp, parseSince } from "@genesiscz/utils/date";
 import { formatTokens, parseDuration } from "@genesiscz/utils/format";
