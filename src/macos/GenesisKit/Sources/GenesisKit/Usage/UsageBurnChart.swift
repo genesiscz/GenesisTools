@@ -123,6 +123,15 @@ public struct UsageBurnLaneView: View {
         .frame(height: height)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(accessibilityText))
+        // The summary hides the diamonds, so each spike is an action of the lane: every chart action stays reachable.
+        .accessibilityActions {
+            if settings.spikeMarkers, let onSpike {
+                ForEach(lane.spikes) { spike in
+                    // lint-rules-ignore: short list (a lane's spikes in the range, as accessibility actions, not rows)
+                    Button("Spike: \(spike.text)") { onSpike(spike) }
+                }
+            }
+        }
     }
 
     private var accessibilityText: String {
