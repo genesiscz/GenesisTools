@@ -1,5 +1,7 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { USAGE_LIMITS_MIGRATIONS } from "@genesiscz/utils/ai/usage-poll/migrations";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
 import type { AttributedEvent } from "../attribution/spend-share";
 import { type DailyRow, dailyRowsOf, rollUpRecentDays, UsageDailyStore } from "./daily";
@@ -131,6 +133,72 @@ describe("dailyRowsOf", () => {
         expect(store.lastUpdatedAt()).toBe("2026-11-01T11:00:00.000Z");
     });
 
+    test("a slot that changed kind within a day keeps one row per kind, and a kind-less row is still one row", () => {
+        const store = new UsageDailyStore(limits.connection());
+        const row: DailyRow = {
+            provider: "openai-sub",
+            accountId: "acc-work",
+            accountName: "work",
+            bucket: "primary",
+            kind: "session",
+            day: "2026-11-01",
+            tz: TZ,
+            startPct: 10,
+            endPct: 20,
+            peakPct: 20,
+            resets: 0,
+            cyclesOver90: 0,
+            readings: 4,
+            minutesMeasured: null,
+            availability: "limited",
+        };
+
+        store.upsert([row, { ...row, kind: "weekly", endPct: 5, peakPct: 5 }], new Date("2026-11-01T10:00:00Z"));
+        store.upsert([{ ...row, kind: null }], new Date("2026-11-01T10:00:00Z"));
+        store.upsert([{ ...row, kind: null, endPct: 7 }], new Date("2026-11-01T11:00:00Z"));
+
+        const day = store.between({ from: "2026-11-01", to: "2026-11-01" });
+        expect(day.map((r) => [r.kind, r.endPct]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([
+            [null, 7],
+            ["session", 20],
+            ["weekly", 5],
+        ]);
+    });
+
+    test("the kind migration rebuilds an old usage_daily with every row kept", () => {
+        const db = new Database(":memory:");
+        const byId = (id: string) => {
+            const migration = USAGE_LIMITS_MIGRATIONS.find((m) => m.id === id);
+
+            if (!migration) {
+                throw new Error(`no migration ${id}`);
+            }
+
+            return migration;
+        };
+        const ctx = { tableName: "usage_limits" };
+        byId("2026-11-usage-daily").apply(db, ctx);
+        const insert = db.prepare(
+            `INSERT INTO usage_daily (provider, account_id, account_name, bucket, kind, day, tz, start_pct, end_pct,
+                peak_pct, resets, cycles_over_90, readings, minutes_measured, availability, updated_at)
+             VALUES (?, 'acc-work', 'work', ?, ?, '2026-11-01', 'UTC', 1, 2, 3, 0, 0, 1, NULL, 'limited', 'x')`
+        );
+        insert.run("anthropic-sub", "five_hour", "session");
+        insert.run("anthropic-sub", "legacy", null);
+        const migration = byId("2026-11-usage-daily-kind");
+
+        expect(migration.isApplied?.(db, ctx)).toBe(false);
+        migration.apply(db, ctx);
+        expect(migration.isApplied?.(db, ctx)).toBe(true);
+
+        const rows = new UsageDailyStore(db).between({ from: "2026-11-01", to: "2026-11-01" });
+        expect(rows.map((r) => [r.bucket, r.kind])).toEqual([
+            ["five_hour", "session"],
+            ["legacy", null],
+        ]);
+        db.close();
+    });
+
     test("the first rollup backfills every retained day, and a later one resumes from the last day it wrote", () => {
         const reading = { resetsAt: null, severity: null, scopeModel: null, provider: "anthropic-sub", kind: "weekly" };
         limits.recordSnapshotV2("work", "seven_day", 10, "2026-10-28T08:00:00.000Z", reading);
@@ -220,6 +288,36 @@ describe("digest folds", () => {
             ["weekly", 70, 80],
         ]);
         expect([window?.startPct, window?.endPct]).toEqual([50, 70]);
+    });
+
+    test("one slot that held two kinds folds into one window per kind", () => {
+        const row = (kind: string, peakPct: number): DailyRow => ({
+            provider: "openai-sub",
+            accountId: "acc-work",
+            accountName: "work",
+            bucket: "primary",
+            kind,
+            tz: TZ,
+            day: "2026-11-01",
+            startPct: 0,
+            endPct: peakPct,
+            peakPct,
+            resets: 0,
+            cyclesOver90: 0,
+            readings: 2,
+            minutesMeasured: 60,
+            availability: "limited",
+        });
+        const windows = digestWindows([row("session", 80), row("weekly", 12)], () => ({
+            provider: "openai-sub",
+            accountId: "acc-work",
+            accountName: "work",
+        }));
+
+        expect(windows.map((w) => [w.kind, w.peakPct])).toEqual([
+            ["session", 80],
+            ["weekly", 12],
+        ]);
     });
 
     test("a window absent for the rest of the period reads 'no limit since' its first absent day", () => {

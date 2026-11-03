@@ -65,7 +65,7 @@ export interface UsageDigest {
     workers: DigestWorkers | null;
 }
 
-/** Folds the period's daily rows into one row per account and window. */
+/** Folds the period's daily rows into one row per account, window and kind (a slot can change kind on a plan change). */
 export function digestWindows(rows: readonly DailyRow[], keyOf: (row: DailyRow) => AccountKey): DigestWindow[] {
     const groups = new Map<string, DailyRow[]>();
 

@@ -6,6 +6,12 @@ function columnNames(db: Database, table: string): Set<string> {
     return new Set(cols.map((c) => c.name));
 }
 
+/** A `PRAGMA table_info` row: `pk` is the column's position in the primary key, 0 when it is not in it. */
+interface KeyColumn {
+    name: string;
+    pk: number;
+}
+
 function tableExists(db: Database, table: string): boolean {
     return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== null;
 }
@@ -275,6 +281,62 @@ export const USAGE_LIMITS_MIGRATIONS: Migration[] = [
                     computed_at TEXT NOT NULL,
                     PRIMARY KEY (provider, account_name, kind, model, week)
                 );
+            `);
+        },
+    },
+    {
+        /**
+         * The kind joins the daily rollup's identity: a Codex `primary` slot can pass from the session window to the
+         * weekly one within a day (a plan change), and under the old key the second series overwrote the first. A
+         * missing kind is stored as '' (SQLite treats NULLs in a key as distinct, so a NULL row would never conflict);
+         * the store reads '' back as null. SQLite cannot change a primary key in place, so the table is rebuilt with
+         * every row kept.
+         */
+        id: "2026-11-usage-daily-kind",
+        description: "usage_daily keyed by kind as well (one row per account, window, kind and day)",
+        isApplied(db) {
+            const cols = db.prepare<KeyColumn, []>("PRAGMA table_info(usage_daily)").all();
+            return cols.some((col) => col.name === "kind" && col.pk > 0);
+        },
+        apply(db) {
+            db.exec(`
+                CREATE TABLE usage_daily_by_kind (
+                    provider TEXT NOT NULL,
+                    account_id TEXT,
+                    account_name TEXT NOT NULL,
+                    bucket TEXT NOT NULL,
+                    kind TEXT NOT NULL DEFAULT '',
+                    day TEXT NOT NULL,
+                    tz TEXT NOT NULL,
+                    start_pct REAL NOT NULL,
+                    end_pct REAL NOT NULL,
+                    peak_pct REAL NOT NULL,
+                    resets INTEGER NOT NULL,
+                    cycles_over_90 INTEGER NOT NULL,
+                    readings INTEGER NOT NULL,
+                    minutes_measured INTEGER,
+                    availability TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, account_name, bucket, kind, day)
+                );
+            `);
+
+            if (tableExists(db, "usage_daily")) {
+                db.exec(`
+                    INSERT INTO usage_daily_by_kind
+                        (provider, account_id, account_name, bucket, kind, day, tz, start_pct, end_pct, peak_pct,
+                         resets, cycles_over_90, readings, minutes_measured, availability, updated_at)
+                    SELECT provider, account_id, account_name, bucket, COALESCE(kind, ''), day, tz, start_pct, end_pct,
+                           peak_pct, resets, cycles_over_90, readings, minutes_measured, availability, updated_at
+                    FROM usage_daily;
+                    DROP TABLE usage_daily;
+                `);
+            }
+
+            db.exec(`
+                ALTER TABLE usage_daily_by_kind RENAME TO usage_daily;
+                CREATE INDEX IF NOT EXISTS idx_usage_daily_day
+                    ON usage_daily(day);
             `);
         },
     },
