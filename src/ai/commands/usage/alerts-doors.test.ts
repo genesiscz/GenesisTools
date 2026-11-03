@@ -230,7 +230,7 @@ describe("tools ai usage events and limits health", () => {
             kind: "usage-429",
             at: NOW,
         });
-        store.bumpDaily({
+        store.bumpHourly({
             provider: "anthropic-sub",
             accountName: "work",
             model: "haiku",

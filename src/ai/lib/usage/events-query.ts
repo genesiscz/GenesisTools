@@ -15,6 +15,7 @@ import {
 import {
     countByKind,
     isUsageEventKind,
+    partialCountByKind,
     USAGE_EVENT_KINDS,
     type UsageEventKind,
     type UsageEventRow,
@@ -36,8 +37,10 @@ export interface EventsOptions extends WindowFlags {
 
 export interface EventsData {
     events: UsageEventRow[];
-    /** Per kind; a daily probe row counts its `count`. */
+    /** Per kind, the events inside the window; an hourly count row counts its `count` when the window holds it. */
     counts: Partial<Record<UsageEventKind, number>>;
+    /** Per kind, the events of hourly count rows that cross the window's edge: some may fall outside it. */
+    partial: Partial<Record<UsageEventKind, number>>;
 }
 
 function resolveKinds(raw: string[] | boolean | undefined): UsageEventKind[] | undefined {
@@ -144,7 +147,7 @@ export async function queryEvents(
         now,
         window,
         accounts: keysOf(events),
-        data: { events, counts: countByKind(events) },
+        data: { events, counts: countByKind(events, window), partial: partialCountByKind(events, window) },
         warnings,
     });
 }

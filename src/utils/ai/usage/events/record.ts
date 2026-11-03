@@ -36,30 +36,31 @@ export function recordUsageEvent(event: UsageEventInput): void {
 }
 
 /**
- * Counts quota probes per account, model and local day, so the probe history outlives the 7-day budget file. One
- * row per day, its `count` raised by each probe.
+ * Counts quota probes per account, model and hour, so the probe history outlives the 7-day budget file. One row per
+ * hour, its `count` raised by each probe.
  */
 export function recordProbeCount(event: Omit<UsageEventInput, "kind"> & { by?: number }): void {
     const at = event.at ?? new Date();
 
     try {
-        eventsStore().bumpDaily({ ...event, kind: "probe", at, day: spendBucketKey(at.toISOString(), "day") });
+        eventsStore().bumpHourly({ ...event, kind: "probe", at, day: spendBucketKey(at.toISOString(), "day") });
     } catch (err) {
         logger.debug({ err, provider: event.provider }, "[usage-events] probe count not recorded");
     }
 }
 
 /**
- * Counts refused quota probes per account, model and local day. A spent budget does not back the poller off, so it
- * refuses a probe on every poll; one row per refusal would be up to 43,200 rows per account and model in 30 days.
- * The day row keeps the latest refusal's detail (which budget is spent), which the health alert prints, and its `ts`
- * moves to the latest refusal, so the alert still sees a refusal after its previous pass.
+ * Counts refused quota probes per account, model and hour. A spent budget does not back the poller off, so it
+ * refuses a probe on every poll; one row per refusal would be up to 43,200 rows per account and model in 30 days,
+ * one row per hour is at most 720. The row keeps the latest refusal's detail (which budget is spent), which the
+ * health alert prints, and its `ts` moves to the latest refusal, so the alert still sees a refusal after its
+ * previous pass.
  */
 export function recordProbeRefusal(event: Omit<UsageEventInput, "kind">): void {
     const at = event.at ?? new Date();
 
     try {
-        eventsStore().bumpDaily({ ...event, kind: "probe-refused", at, day: spendBucketKey(at.toISOString(), "day") });
+        eventsStore().bumpHourly({ ...event, kind: "probe-refused", at, day: spendBucketKey(at.toISOString(), "day") });
     } catch (err) {
         logger.debug({ err, provider: event.provider }, "[usage-events] probe refusal not recorded");
     }

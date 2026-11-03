@@ -4,7 +4,7 @@ import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { readLimitSeries } from "@genesiscz/utils/ai/usage-poll/series";
 import { recordProbeRefusal, recordUsageEvent, useUsageEventsStoreForTests } from "./events/record";
-import { countByKind, UsageEventsStore } from "./events/store";
+import { countByKind, partialCountByKind, UsageEventsStore } from "./events/store";
 import { limitsHealth } from "./poll-runs/health";
 import { PollRunsStore, pollOutcomeOf } from "./poll-runs/store";
 
@@ -84,11 +84,11 @@ describe("usage events", () => {
         expect(store.list({ from: at(5), to: at(10) })).toHaveLength(0);
     });
 
-    test("a daily probe count is one row per account, model and day, raised by each probe", () => {
+    test("a probe count is one row per account, model and hour, raised by each probe", () => {
         const store = new UsageEventsStore(limits.connection());
 
         for (const minute of [1, 2, 3]) {
-            store.bumpDaily({
+            store.bumpHourly({
                 provider: "anthropic-sub",
                 accountName: "work",
                 model: "haiku",
@@ -99,7 +99,7 @@ describe("usage events", () => {
             });
         }
 
-        store.bumpDaily({
+        store.bumpHourly({
             provider: "anthropic-sub",
             accountName: "work",
             model: "fable",
@@ -118,7 +118,63 @@ describe("usage events", () => {
         expect(countByKind(rows)).toEqual({ probe: 4 });
     });
 
-    test("refused probes are one row per account, model and day, with a count and the latest refusal's detail", () => {
+    test("a count over part of a day counts only the probes inside it, before and after another bump", () => {
+        const store = new UsageEventsStore(limits.connection());
+        const probe = (minute: number, by = 1) =>
+            store.bumpHourly({
+                provider: "anthropic-sub",
+                accountName: "work",
+                model: "haiku",
+                source: "probe-budget",
+                kind: "probe",
+                day: "2026-11-03",
+                by,
+                at: at(minute),
+            });
+        const counted = (from: Date, to: Date) => {
+            const window = { from, to };
+            return countByKind(store.list({ ...window, kinds: ["probe"] }), window);
+        };
+
+        // T0 is 08:00: ten probes at 08:00.
+        probe(0, 10);
+
+        expect(counted(at(60), at(180))).toEqual({});
+        expect(counted(at(-60), at(60))).toEqual({ probe: 10 });
+
+        probe(120);
+
+        expect(counted(at(60), at(180))).toEqual({ probe: 1 });
+        expect(counted(at(-60), at(60))).toEqual({ probe: 10 });
+        expect(counted(at(-60), at(180))).toEqual({ probe: 11 });
+    });
+
+    test("a count row that crosses the window's edge is reported apart, never claimed whole", () => {
+        const store = new UsageEventsStore(limits.connection());
+
+        for (const minute of [10, 50]) {
+            store.bumpHourly({
+                provider: "anthropic-sub",
+                accountName: "work",
+                model: "haiku",
+                source: "probe-budget",
+                kind: "probe",
+                day: "2026-11-03",
+                at: at(minute),
+            });
+        }
+
+        const window = { from: at(30), to: at(120) };
+        const rows = store.list({ ...window, kinds: ["probe"] });
+
+        expect(countByKind(rows, window)).toEqual({});
+        expect(partialCountByKind(rows, window)).toEqual({ probe: 2 });
+        expect(rows.map((row) => [row.firstTs, row.ts, row.count])).toEqual([
+            [at(10).toISOString(), at(50).toISOString(), 2],
+        ]);
+    });
+
+    test("refused probes are one row per account, model and hour, with a count and the latest refusal's detail", () => {
         const store = new UsageEventsStore(limits.connection());
         useUsageEventsStoreForTests(store);
         const refusal = { provider: "anthropic-sub", accountName: "work", model: "haiku", source: "probe-budget" };
