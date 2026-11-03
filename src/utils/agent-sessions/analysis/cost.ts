@@ -2,7 +2,10 @@ import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@genesiscz/util
 import type { ModelPrice, PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
 import type { SessionCall } from "../analysis-types";
 
-/** The catalog price of one call's model at the call's own moment and size; null for a model with no known rate. */
+/**
+ * The catalog price of one call's model at the call's own moment and size; null for a model with no known rate. An
+ * aggregate row sums requests whose own sizes are unknown, so it takes no context band (as the spend reports do).
+ */
 export function priceOfCall(call: SessionCall, pricing: PricingTable = DEFAULT_PRICING): ModelPrice | null {
     const entry = priceFor(call.model, pricing);
 
@@ -10,7 +13,9 @@ export function priceOfCall(call: SessionCall, pricing: PricingTable = DEFAULT_P
         return null;
     }
 
-    return resolvePrice(entry, { at: new Date(call.t), contextTokens: call.input + call.cacheRead + call.cacheWrite });
+    const contextTokens = call.aggregate ? undefined : call.input + call.cacheRead + call.cacheWrite;
+
+    return resolvePrice(entry, { at: new Date(call.t), contextTokens });
 }
 
 /**

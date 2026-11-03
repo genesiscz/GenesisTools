@@ -136,6 +136,32 @@ describe("call cost", () => {
         expect(callCostUsd({ ...call, model: "m-unknown" }, pricing)).toBeNull();
     });
 
+    test("an aggregate row takes no long-context band; one request of the same size does", () => {
+        const banded: PricingTable = {
+            "m-long": {
+                input: 2,
+                output: 10,
+                cacheWrite: 2.5,
+                cacheRead: 0.2,
+                rules: [{ ctxFrom: 200_000, inputPer1M: 4, outputPer1M: 20 }],
+            },
+        };
+        const call = {
+            id: "c2",
+            t: "2026-11-01T10:00:00Z",
+            model: "m-long",
+            input: 300_000,
+            cacheRead: 0,
+            cacheWrite: 0,
+            output: 0,
+            sidechain: false,
+            aggregate: true,
+        };
+
+        expect(callCostUsd(call, banded)).toBeCloseTo(0.6);
+        expect(callCostUsd({ ...call, aggregate: false }, banded)).toBeCloseTo(1.2);
+    });
+
     test("going cold costs the context at the write rate of its tier minus the read rate", () => {
         const at = new Date("2026-11-01T10:00:00Z");
 
