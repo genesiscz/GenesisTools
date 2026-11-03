@@ -9,7 +9,7 @@ import {
     pooled,
 } from "@genesiscz/utils/ai/usage/drift/drift";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
-import type { SessionCall } from "../analysis-types";
+import type { SessionCall, SessionCompaction } from "../analysis-types";
 import { callCostUsd } from "./cost";
 import { buildSessionReport } from "./report";
 import { sessionWaste } from "./waste";
@@ -33,6 +33,10 @@ function call(minute: number, extra: Partial<SessionCall> = {}): SessionCall {
     };
 }
 
+function waste(calls: SessionCall[], compactions: SessionCompaction[]) {
+    return sessionWaste({ calls, compactions, agent: "claude" });
+}
+
 describe("session report", () => {
     test("totals, the main and sub-agent split, the tags of a cold call, and a cache loss after a long gap", () => {
         const calls = [
@@ -44,6 +48,7 @@ describe("session report", () => {
         const report = buildSessionReport({
             calls: { supported: true, items: calls },
             compactions: { supported: false, reason: "test harness keeps none" },
+            agent: "claude",
         });
 
         expect(report.overview).toMatchObject({ calls: 4, subagentCalls: 1, compactions: null, durationMinutes: 80 });
@@ -57,7 +62,7 @@ describe("session report", () => {
     });
 
     test("waste prices a rebuild at write minus read and names its cause; a compaction is its own kind", () => {
-        const items = sessionWaste(
+        const items = waste(
             [call(0), call(1, { cacheRead: 0, cacheWrite: 101_000 }), call(70, { cacheRead: 0, cacheWrite: 101_000 })],
             [{ t: new Date(Date.UTC(2026, 10, 1, 10, 0, 30)).toISOString(), trigger: "auto", preTokens: 100_000 }]
         );
@@ -70,7 +75,7 @@ describe("session report", () => {
         const compacted = [
             { t: new Date(Date.UTC(2026, 10, 1, 10, 0, 30)).toISOString(), trigger: "auto", preTokens: 100_000 },
         ];
-        const items = sessionWaste([call(0), call(1, { input: 0, cacheRead: 0, cacheWrite: 5_000 })], compacted);
+        const items = waste([call(0), call(1, { input: 0, cacheRead: 0, cacheWrite: 5_000 })], compacted);
 
         expect(items.map((item) => [item.kind, item.tokens])).toEqual([["cache-rebuild-compaction", 5_000]]);
     });
@@ -80,36 +85,53 @@ describe("session report", () => {
         const report = buildSessionReport({
             calls: { supported: true, items: aggregate },
             compactions: { supported: false, reason: "none" },
+            agent: "claude",
         });
 
-        expect(sessionWaste(aggregate, [])).toEqual([]);
+        expect(waste(aggregate, [])).toEqual([]);
         expect(report.losses).toEqual([]);
 
         const hour = [call(0, { cacheWrite1h: 1_000 }), call(10, { cacheRead: 0, cacheWrite: 101_000 })];
-        expect(sessionWaste(hour, []).map((item) => item.kind)).not.toContain("cache-rebuild-idle");
-        expect(sessionWaste([call(0), call(10, { cacheRead: 0, cacheWrite: 101_000 })], []).map((i) => i.kind)).toEqual(
-            ["cache-rebuild-idle"]
-        );
+        expect(waste(hour, []).map((item) => item.kind)).not.toContain("cache-rebuild-idle");
+        expect(waste([call(0), call(10, { cacheRead: 0, cacheWrite: 101_000 })], []).map((i) => i.kind)).toEqual([
+            "cache-rebuild-idle",
+        ]);
     });
 
     test("a sub-agent's own transcript is scanned as its own cache; sidechain calls inside a lead are not", () => {
         const own = [call(0, { sidechain: true }), call(10, { sidechain: true, cacheRead: 0, cacheWrite: 101_000 })];
-        expect(sessionWaste(own, []).map((item) => item.kind)).toEqual(["cache-rebuild-idle"]);
+        expect(waste(own, []).map((item) => item.kind)).toEqual(["cache-rebuild-idle"]);
 
         const lead = [
             call(0),
             call(1, { sidechain: true }),
             call(10, { sidechain: true, cacheRead: 0, cacheWrite: 101_000 }),
         ];
-        expect(sessionWaste(lead, [])).toEqual([]);
+        expect(waste(lead, [])).toEqual([]);
     });
 
     test("a priority call is priced at its service tier, as the spend reports price it", () => {
-        const standard = callCostUsd(call(0, { model: "grok-4.7", cacheRead: 0 }));
-        const priority = callCostUsd(call(0, { model: "grok-4.7", cacheRead: 0, serviceTier: "priority" }));
+        const standard = callCostUsd(call(0, { model: "grok-4.7", cacheRead: 0 }), { agent: "grok" });
+        const priority = callCostUsd(call(0, { model: "grok-4.7", cacheRead: 0, serviceTier: "priority" }), {
+            agent: "grok",
+        });
 
         expect(standard).not.toBeNull();
         expect(priority ?? 0).toBeGreaterThan(standard ?? 0);
+    });
+
+    test("a call is priced through its harness's candidate ladder, as the spend reports price it", () => {
+        const build = call(0, { model: "grok-4.6-build", cacheRead: 0 });
+        const base = call(0, { model: "grok-4.6", cacheRead: 0 });
+        const report = buildSessionReport({
+            calls: { supported: true, items: [build] },
+            compactions: { supported: false, reason: "none" },
+            agent: "grok",
+        });
+
+        expect(callCostUsd(build, { agent: "grok" })).not.toBeNull();
+        expect(callCostUsd(build, { agent: "grok" })).toBe(callCostUsd(base, { agent: "grok" }));
+        expect(report.cost.unpricedModels).toEqual([]);
     });
 });
 

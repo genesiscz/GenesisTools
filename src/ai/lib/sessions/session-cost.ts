@@ -25,7 +25,7 @@ async function costOf(row: AgentSessionRow, now: number): Promise<SessionCostFie
     let priced = 0;
 
     for (const call of calls) {
-        const usd = callCostUsd(call);
+        const usd = callCostUsd(call, { agent: row.provider });
 
         if (usd === null) {
             continue;
@@ -53,6 +53,7 @@ async function costOf(row: AgentSessionRow, now: number): Promise<SessionCostFie
                       oneHour: (row.cacheLifetimeSec ?? 0) >= 3600,
                       at: new Date(now),
                       serviceTier: last.serviceTier,
+                      pricing: { agent: row.provider },
                   })
                 : null,
     };

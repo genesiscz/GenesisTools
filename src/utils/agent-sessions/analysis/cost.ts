@@ -1,13 +1,29 @@
-import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
-import type { ModelPrice, PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
+import { type AgentId, spendDriver } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { costOf, DEFAULT_PRICING, priceForCandidates, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
+import type { ModelPrice, ModelPriceEntry, PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
 import type { SessionCall } from "../analysis-types";
+
+/**
+ * How a session's calls are priced: the harness that wrote them, whose spend driver names the candidate models a
+ * recorded model is priced as (`grok-4.6-build` as `grok-4.6`), and the table (the catalog unless a test gives one).
+ */
+export interface CallPricing {
+    agent: AgentId;
+    table?: PricingTable;
+}
+
+/** The catalog entry of a model through its harness's candidate ladder, the one the spend reports walk. */
+function entryOf(model: string, pricing: CallPricing): ModelPriceEntry | null {
+    const candidates = spendDriver(pricing.agent).priceCandidates(model);
+    return priceForCandidates(candidates, pricing.table ?? DEFAULT_PRICING)?.entry ?? null;
+}
 
 /**
  * The catalog price of one call's model at the call's own moment and size; null for a model with no known rate. An
  * aggregate row sums requests whose own sizes are unknown, so it takes no context band (as the spend reports do).
  */
-export function priceOfCall(call: SessionCall, pricing: PricingTable = DEFAULT_PRICING): ModelPrice | null {
-    const entry = priceFor(call.model, pricing);
+export function priceOfCall(call: SessionCall, pricing: CallPricing): ModelPrice | null {
+    const entry = entryOf(call.model, pricing);
 
     if (!entry) {
         return null;
@@ -23,7 +39,7 @@ export function priceOfCall(call: SessionCall, pricing: PricingTable = DEFAULT_P
  * One call's list-price cost: the harness's own recorded cost when it wrote one, else the catalog rate through the one
  * cost function (`costOf` over `calculateCallCostUsd`); null when the model has no known rate.
  */
-export function callCostUsd(call: SessionCall, pricing: PricingTable = DEFAULT_PRICING): number | null {
+export function callCostUsd(call: SessionCall, pricing: CallPricing): number | null {
     if (call.recordedCostUsd !== undefined) {
         return call.recordedCostUsd;
     }
@@ -57,9 +73,9 @@ export function coldRebuildUsd(input: {
     oneHour: boolean;
     at: Date;
     serviceTier?: string;
-    pricing?: PricingTable;
+    pricing: CallPricing;
 }): number | null {
-    const entry = priceFor(input.model, input.pricing ?? DEFAULT_PRICING);
+    const entry = entryOf(input.model, input.pricing);
 
     if (!entry) {
         return null;
