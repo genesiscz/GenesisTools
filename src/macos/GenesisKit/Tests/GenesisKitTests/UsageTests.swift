@@ -239,6 +239,15 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(UsageResolution.auto.door(.month).agg, "minmax")
     }
 
+    func testMergedWarningsKeepOneCodeWithTwoMessagesUnderTwoIdentities() {
+        let first = UsageWarning(code: "partial", message: "The limits read missed one account.")
+        let second = UsageWarning(code: "partial", message: "The series read missed one hour.")
+        let merged = UsageWarning.merged([[first], [first, second]])
+        XCTAssertEqual(merged, [first, second])
+        // `ForEach(store.warnings)` needs one identity per row.
+        XCTAssertEqual(Set(merged.map(\.id)).count, merged.count)
+    }
+
     func testSpendAndAnalysisEnvelopesDecode() throws {
         let pivot = try decode("""
         {"schema":"usage.spend.pivot@1","generatedAt":"x","selector":{"accounts":[]},"warnings":[],
