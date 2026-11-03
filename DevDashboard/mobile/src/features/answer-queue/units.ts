@@ -203,6 +203,42 @@ export interface FormDraft {
     [itemId: string]: { selected: string[]; text: string };
 }
 
+/** A session card's key in the list: the session, else its first item (a form no session posted). */
+export function queueSessionKey(session: WaitingSessionDto): string {
+    return session.sessionId ?? session.items[0]?.id ?? "form";
+}
+
+/**
+ * The edits the cards hold before they reach the Mac (a note being typed, a form being filled), by item id. The queue
+ * is a virtualized list, so a card that scrolls far away unmounts; its edit lives here and the remount reads it back.
+ */
+export interface KeptEdits {
+    notes: Map<string, NoteState>;
+    forms: Map<string, FormDraft>;
+}
+
+export function keptEdits(): KeptEdits {
+    return { notes: new Map(), forms: new Map() };
+}
+
+/** The kept edit for `key`, or `init()` when the card has none yet. */
+export function keptOr<T>(map: Map<string, T>, key: string, init: () => T): T {
+    return map.has(key) ? (map.get(key) ?? init()) : init();
+}
+
+/** Drops the edits of items no longer in the queue (sent, answered, dismissed), so the store holds only live cards. */
+export function pruneKept(kept: KeptEdits, sessions: readonly WaitingSessionDto[]): void {
+    const live = new Set(sessions.flatMap((session) => session.items.map((item) => item.id)));
+
+    for (const map of [kept.notes, kept.forms]) {
+        for (const key of [...map.keys()]) {
+            if (!live.has(key)) {
+                map.delete(key);
+            }
+        }
+    }
+}
+
 /** The questions a form still needs before it may be sent: required ones with no pick and no text. */
 export function missingAnswers(form: WaitingFormDto, draft: FormDraft): string[] {
     return form.questions

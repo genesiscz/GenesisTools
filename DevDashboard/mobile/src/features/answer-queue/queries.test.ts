@@ -1,7 +1,7 @@
 import type { WaitingFormDto } from "@dd/contract";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { fixtureDashboardClient } from "@/api/fixture-wire";
-import { resetFixtureQueue } from "@/api/fixtures/queue";
+import { fixtureQueue, resetFixtureQueue } from "@/api/fixtures/queue";
 import {
     answerForm,
     answerQueueKeys,
@@ -16,7 +16,10 @@ import {
     latestStage,
     singleFlight,
     formAnswers,
+    keptEdits,
+    keptOr,
     missingAnswers,
+    pruneKept,
     noteStateOf,
     reconcileNote,
     RECENT_RECEIPTS_MAX,
@@ -199,6 +202,28 @@ describe("answer queue rules", () => {
         };
         expect(await flushThenSend([refused], () => order.push("sent again"))).toBe(false);
         expect(order).toEqual(["saved", "sent"]);
+    });
+
+    it("an edit a card holds survives the card's unmount, and leaves with its item", () => {
+        resetFixtureQueue();
+        const sessions = fixtureQueue().sessions;
+        const kept = keptEdits();
+        const typed = { note: "half a thought", base: { revision: 1, draft: "" } };
+        kept.notes.set("d_4", typed);
+        kept.forms.set("ask_fixture", { q1: { selected: ["a"], text: "" } });
+
+        // The list recycled the card: a remount reads the kept edit, not a fresh one.
+        expect(keptOr(kept.notes, "d_4", () => ({ note: "", base: { revision: 1, draft: "" } }))).toBe(typed);
+        expect(keptOr(kept.notes, "d_5", () => ({ note: "", base: { revision: 1, draft: "" } })).note).toBe("");
+
+        pruneKept(kept, sessions);
+        expect(kept.notes.has("d_4")).toBe(true);
+        expect(kept.forms.has("ask_fixture")).toBe(true);
+
+        // DECISION 4 and the form left the queue: their edits go with them.
+        pruneKept(kept, sessions.slice(1));
+        expect(kept.notes.has("d_4")).toBe(false);
+        expect(kept.forms.has("ask_fixture")).toBe(false);
     });
 
     it("keeps recent receipts newest first, one per card, and drops the oldest past the cap", () => {

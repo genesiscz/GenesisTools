@@ -1,8 +1,8 @@
 import type { WaitingDecisionDto } from "@dd/contract";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
-import { useStagePick } from "@/features/answer-queue/hooks";
+import { useKeptState, useStagePick } from "@/features/answer-queue/hooks";
 import {
     flushDecision,
     idempotencyKey,
@@ -30,7 +30,12 @@ interface DecisionCardProps {
 export function DecisionCard({ session, decision, registerFlush }: DecisionCardProps) {
     const c = useThemeColors();
     const stage = useStagePick();
-    const [noteState, setNoteState] = useState<NoteState>(() => noteStateOf(decision));
+    // Kept by the screen, not the card: the list unmounts a card scrolled far away, and the note must survive that.
+    const [noteState, setNoteState] = useKeptState<NoteState>(
+        (kept) => kept.notes,
+        decision.id,
+        () => noteStateOf(decision)
+    );
     // Picks and note saves are tracked apart: a failed pick blocks Send, a failed note save is retried by it.
     const pickStage = useRef(latestStage()).current;
     const noteStage = useRef(latestStage()).current;
@@ -39,7 +44,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
     // The card is keyed by the decision id, which stays when the agent re-posts it or another surface edits the draft.
     useEffect(() => {
         setNoteState((state) => reconcileNote(state, { revision: decision.revision, draft: decision.draft }));
-    }, [decision.revision, decision.draft]);
+    }, [decision.revision, decision.draft, setNoteState]);
 
     const stageAsync = (patch: { option?: string; text?: string }, revision: number) => {
         const pending = stage.mutateAsync({

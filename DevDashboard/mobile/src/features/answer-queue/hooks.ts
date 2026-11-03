@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useIsFocused } from "expo-router";
+import { createContext, type Dispatch, type SetStateAction, useContext, useEffect, useState } from "react";
 import { useDashboardClient } from "@/api/client-provider";
 import {
     answerForm,
@@ -10,7 +11,7 @@ import {
     sendStaged,
     stagePick,
 } from "@/features/answer-queue/queries";
-import type { Receipt } from "@/features/answer-queue/units";
+import { type KeptEdits, keptEdits, keptOr, type Receipt } from "@/features/answer-queue/units";
 
 /**
  * Component-facing answer-queue hooks (D32). Every write invalidates the queue, so a staged pick shows as staged and
@@ -61,4 +62,26 @@ export function useSendStaged(onReceipt?: (receipt: Receipt) => void) {
 
 export function useAnswerForm(onReceipt?: (receipt: Receipt) => void) {
     return useQueueWrite((client, input: Parameters<typeof answerForm>[1]) => answerForm(client, input), onReceipt);
+}
+
+/** The screen's kept edits (`KeptEdits`); the Needs Input screen provides one for as long as it is mounted. */
+export const KeptEditsContext = createContext<KeptEdits>(keptEdits());
+
+/**
+ * `useState` whose value outlives the card: it starts from the kept edit for `key` and writes every change back, so a
+ * card the list unmounted while scrolling comes back with what the user typed.
+ */
+export function useKeptState<T>(
+    pick: (kept: KeptEdits) => Map<string, T>,
+    key: string,
+    init: () => T
+): [T, Dispatch<SetStateAction<T>>] {
+    const map = pick(useContext(KeptEditsContext));
+    const [value, setValue] = useState<T>(() => keptOr(map, key, init));
+
+    useEffect(() => {
+        map.set(key, value);
+    }, [map, key, value]);
+
+    return [value, setValue];
 }
