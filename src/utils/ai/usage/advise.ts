@@ -1,7 +1,7 @@
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
 import type { RankedAccount, RankOptions } from "../providers/usage-rank";
 import { rankAccounts } from "./account-rank";
-import type { AccountForecast } from "./forecast/forecast";
+import type { AccountForecast, WindowForecast } from "./forecast/forecast";
 
 /**
  * The account advisor (design 2026-11-01 step U4, proposal 6): which account to use next per workload, how long it
@@ -68,11 +68,19 @@ export interface AdviceRow {
     accountName: string;
     tier: RankedAccount["tier"];
     why: string;
-    /** Minutes until the first window runs out before its reset, at the recent burn; null when none does. */
+    /**
+     * What the recent readings say about the account: `exhausts` (a window runs out before its reset, see
+     * `lastsMinutes`), `lasts` (every window has fresh readings and none runs out), or `unknown` (no history, or a
+     * window without a fresh burn to project). `unknown` is never read as "lasts".
+     */
+    forecast: AdviceForecast;
+    /** Minutes until the first window runs out before its reset, at the recent burn; null when none does or unknown. */
     lastsMinutes: number | null;
     /** The label of that window. */
     bindingLabel: string | null;
 }
+
+export type AdviceForecast = "exhausts" | "lasts" | "unknown";
 
 export interface ProfileAdvice {
     /** `default`, `fan-out`, `long-run`, or `model:<name>` for a model's own weekly window. */
@@ -117,12 +125,26 @@ function forecastKey(provider: string, accountName: string): string {
     return `${provider}\u0000${accountName}`;
 }
 
-function lastsOf(forecast: AccountForecast | undefined): Pick<AdviceRow, "lastsMinutes" | "bindingLabel"> {
-    const binding = (forecast?.windows ?? [])
+/**
+ * A window whose forecast rests on evidence: fresh readings of the current window, with a burn rate or at least two
+ * readings that show none. A single reading, a stale one, or one from before a reset projects nothing.
+ */
+function forecastable(window: WindowForecast): boolean {
+    return !window.stale && !window.resetSinceSample && (window.ratePctPerHour !== null || window.samples >= 2);
+}
+
+function lastsOf(forecast: AccountForecast | undefined): Pick<AdviceRow, "forecast" | "lastsMinutes" | "bindingLabel"> {
+    const windows = forecast?.windows ?? [];
+    const binding = windows
         .filter((window) => window.beforeReset && window.minutesToExhaust !== null)
         .sort((a, b) => (a.minutesToExhaust ?? 0) - (b.minutesToExhaust ?? 0))[0];
 
-    return { lastsMinutes: binding?.minutesToExhaust ?? null, bindingLabel: binding?.label ?? null };
+    if (binding) {
+        return { forecast: "exhausts", lastsMinutes: binding.minutesToExhaust, bindingLabel: binding.label };
+    }
+
+    const known = windows.length > 0 && windows.every(forecastable);
+    return { forecast: known ? "lasts" : "unknown", lastsMinutes: null, bindingLabel: null };
 }
 
 /** Under this much left, a model's own window is spent: the account cannot run that model whatever its tier says. */

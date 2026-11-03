@@ -184,6 +184,11 @@ function renderSeries(envelope: UsageEnvelope<LimitSeriesData>): void {
 }
 
 function lastsText(row: AdviceRow): string {
+    // No history or no fresh burn: the readings cannot say how long it lasts, so nothing is promised.
+    if (row.forecast === "unknown") {
+        return pc.dim("unknown: no recent burn");
+    }
+
     if (row.lastsMinutes === null) {
         return "lasts to its resets";
     }
