@@ -69,6 +69,8 @@ struct PRReadinessOutcome: Decodable {
 enum PRReadinessQuery {
     /// URLs per `tools` call: each call works four PRs at a time, and a call reports as one batch.
     static let batch = 12
+    /// Calls at a time. One after the other, 31 calls took 191 s on 2026-11-02, each mostly waiting on the forge.
+    static let parallel = 3
 
     /// `<url>@<head>` for every open PR with a URL: the head lets the tools side answer from its cache.
     static func inputs(_ prs: [HubPR]) -> [String] {
@@ -127,38 +129,35 @@ final class PRReadinessStore: ObservableObject {
                 let snapshot = byURL
                 Task.detached(priority: .utility) { Self.cache.write(snapshot, key: "all") }
             }
-            var index = 0
-            while index < inputs.count {
-                let batch = Array(inputs[index..<min(index + PRReadinessQuery.batch, inputs.count)])
-                index += batch.count
-                let span = HubPerf.begin("prs.readiness", "\(batch.count) prs", awaits: true)
-                let result = await Task.detached(priority: .utility) { () -> Result<[PRReadinessOutcome], Error> in
-                    Result {
-                        // Exit 1 means "some failed"; each outcome carries its own error.
-                        let capture = try ToolsCLIRunner.capture(["hub", "pr", "readiness"] + batch + ["--json", "--max-cache-age", "600"], timeout: 120)
-                        return try JSONDecoder().decode([PRReadinessOutcome].self, from: capture.stdout)
+            let batches = stride(from: 0, to: inputs.count, by: PRReadinessQuery.batch).map {
+                Array(inputs[$0..<min($0 + PRReadinessQuery.batch, inputs.count)])
+            }
+            for round in stride(from: 0, to: batches.count, by: PRReadinessQuery.parallel) {
+                let group = Array(batches[round..<min(round + PRReadinessQuery.parallel, batches.count)])
+                let spans = group.map { HubPerf.begin("prs.readiness", "\($0.count) prs", awaits: true) }
+                let results = await Self.fetch(group)
+                for (span, result) in zip(spans, results) {
+                    switch result {
+                    case .success(let outcomes):
+                        let found = outcomes.compactMap(\.readiness)
+                        span.end("\(found.count) answered, \(found.filter(\.cached).count) cached, \(outcomes.count - found.count) failed")
+                        // Which PR failed and why: the count alone could not be traced to a PR (the call's argv is
+                        // cut at 300 characters), and the one failure on record was a forge token that could not
+                        // see a private repository (GraphQL NOT_FOUND, 2026-10-04).
+                        for outcome in outcomes where outcome.readiness == nil {
+                            HubPerf.log("prs.readiness \(outcome.input) failed: \(outcome.error ?? "no answer")")
+                        }
+                        var next = byURL
+                        for readiness in found {
+                            next[readiness.url] = readiness
+                        }
+                        if next != byURL {
+                            byURL = next
+                            HubMainBusy.measure("prs.readiness.render")
+                        }
+                    case .failure(let error):
+                        span.end("failed: \(error)")
                     }
-                }.value
-                switch result {
-                case .success(let outcomes):
-                    let found = outcomes.compactMap(\.readiness)
-                    span.end("\(found.count) answered, \(found.filter(\.cached).count) cached, \(outcomes.count - found.count) failed")
-                    // Which PR failed and why: the count alone could not be traced to a PR (the call's argv is
-                    // cut at 300 characters), and the one failure on record was a forge token that could not
-                    // see a private repository (GraphQL NOT_FOUND, 2026-10-04).
-                    for outcome in outcomes where outcome.readiness == nil {
-                        HubPerf.log("prs.readiness \(outcome.input) failed: \(outcome.error ?? "no answer")")
-                    }
-                    var next = byURL
-                    for readiness in found {
-                        next[readiness.url] = readiness
-                    }
-                    if next != byURL {
-                        byURL = next
-                        HubMainBusy.measure("prs.readiness.render")
-                    }
-                case .failure(let error):
-                    span.end("failed: \(error)")
                 }
             }
             loading = false
@@ -166,6 +165,26 @@ final class PRReadinessStore: ObservableObject {
                 pending = nil
                 refresh(next)
             }
+        }
+    }
+
+    /// The batches' answers in batch order, the calls run side by side off the main thread.
+    nonisolated private static func fetch(_ batches: [[String]]) async -> [Result<[PRReadinessOutcome], Error>] {
+        await withTaskGroup(of: (Int, Result<[PRReadinessOutcome], Error>).self) { group in
+            for (index, batch) in batches.enumerated() {
+                group.addTask(priority: .utility) {
+                    (index, Result {
+                        // Exit 1 means "some failed"; each outcome carries its own error.
+                        let capture = try ToolsCLIRunner.capture(["hub", "pr", "readiness"] + batch + ["--json", "--max-cache-age", "600"], timeout: 120)
+                        return try JSONDecoder().decode([PRReadinessOutcome].self, from: capture.stdout)
+                    })
+                }
+            }
+            var results = [Result<[PRReadinessOutcome], Error>](repeating: .failure(CancellationError()), count: batches.count)
+            for await (index, result) in group {
+                results[index] = result
+            }
+            return results
         }
     }
 }
