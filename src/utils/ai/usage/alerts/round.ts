@@ -3,6 +3,7 @@ import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account
 import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
 import { readUsageSamples } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
+import type { UsageAlertsConfig } from "./config";
 import type { AlertRound, AvailabilityChange } from "./types";
 
 const HOUR_MS = 3_600_000;
@@ -10,6 +11,11 @@ const HOUR_MS = 3_600_000;
 export const ALERT_SAMPLE_LOOKBACK_MS = 72 * HOUR_MS;
 const RUN_LOOKBACK_MS = 24 * HOUR_MS;
 const EVENT_LOOKBACK_MS = HOUR_MS;
+
+/** The events a round reads: the last hour, or the rate-limited rule's window when it is longer. */
+export function alertEventLookbackMs(config: UsageAlertsConfig): number {
+    return Math.max(EVENT_LOOKBACK_MS, config.rules["rate-limited"].windowMinutes * 60_000);
+}
 /** With no earlier round, availability changes of the last five minutes count as this round's. */
 const FIRST_ROUND_SINCE_MS = 5 * 60_000;
 
@@ -88,6 +94,8 @@ export function buildAlertRound(input: {
     snapshots: readonly AccountUsageSnapshot[];
     now: Date;
     previousRoundAt: string | null;
+    /** The alerts config the round is judged by: its rules decide how far back the events are read. */
+    config: UsageAlertsConfig;
 }): AlertRound {
     const { db, now } = input;
     const nowMs = now.getTime();
@@ -109,7 +117,9 @@ export function buildAlertRound(input: {
         samples,
         runs: new PollRunsStore(db).runsBetween({ from: new Date(nowMs - RUN_LOOKBACK_MS), to: now }),
         previousRoundAt: input.previousRoundAt,
-        events: new UsageEventsStore(db).list({ from: new Date(nowMs - EVENT_LOOKBACK_MS), to: now }).reverse(),
+        events: new UsageEventsStore(db)
+            .list({ from: new Date(nowMs - alertEventLookbackMs(input.config)), to: now })
+            .reverse(),
         availabilityChanges: availabilityChangesSince(db, since),
     };
 }

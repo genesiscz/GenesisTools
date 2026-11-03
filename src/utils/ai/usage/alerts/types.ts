@@ -110,7 +110,7 @@ export interface AlertRound {
     runs: readonly PollRun[];
     /** The end of the last round recorded before this one; null before the first. */
     previousRoundAt: string | null;
-    /** Usage events of the last hour. */
+    /** Usage events of the last hour, or of the rate-limited window when that is longer (`alertEventLookbackMs`). */
     events: readonly UsageEventRow[];
     availabilityChanges: readonly AvailabilityChange[];
 }
