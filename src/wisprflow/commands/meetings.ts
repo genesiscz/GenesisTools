@@ -1,14 +1,10 @@
 import { join } from "node:path";
-import { loadPresence } from "@app/meetings/lib/attendance";
-import { printSpeakerStats } from "@app/meetings/lib/speakers-view";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { parseVariadic } from "@genesiscz/utils/cli/variadic";
-import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import {
     formatNeedsTimes,
@@ -16,23 +12,9 @@ import {
     TRANSCRIPT_FORMATS,
     type TranscriptFormat,
 } from "@genesiscz/utils/transcribe/render";
-import { DEFAULT_SPAN_GAP_SEC, type Presence, speakerStats } from "@genesiscz/utils/transcribe/speakers";
-import {
-    applyFixes,
-    buildVocabulary,
-    DEFAULT_MIN_CONFIDENCE,
-    DEV_GLOSSARY,
-    findSuspectTerms,
-    fixArg,
-    selectFixes,
-    type TermFix,
-    type TermSuggestion,
-    termsFromFile,
-    termsFromText,
-} from "@genesiscz/utils/transcribe/terms";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import pc from "picocolors";
-import { dictionaryPhrases, listLocalMeetings, localAvailable } from "../lib/local";
+import { listLocalMeetings, localAvailable } from "../lib/local";
 import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
 import { calendarFor } from "../lib/meeting-source";
 import { writeGuarded } from "../lib/output";
@@ -47,8 +29,6 @@ import {
 import { loadMeeting, resolveMeetingRef } from "../lib/source";
 import type { Meeting, MeetingSummary, SourceChoice, SourceName } from "../lib/types";
 import { errorText, fail, parseSource, reportSource, resolveEnum, TOOL } from "./shared";
-
-const { log } = logger.scoped("wisprflow-meetings");
 
 const LIST_FORMATS = ["table", "json"] as const;
 const SHOW_FORMATS = ["md", "json", "txt"] as const;
@@ -66,7 +46,6 @@ interface TranscriptOpts {
     firstNames?: boolean;
     source?: string;
     crossCheck?: boolean;
-    terms?: boolean;
     vocab?: string[];
     minConfidence?: string;
     fixTerm?: string[];
@@ -138,52 +117,18 @@ async function listMeetings(query: string | undefined, opts: Record<string, unkn
     printMeetings(rows, used);
 }
 
-function vocabulary(
-    meeting: Meeting,
-    files: string[] = []
-): { vocab: ReturnType<typeof buildVocabulary>; context: ReturnType<typeof termsFromText> } {
-    const context = termsFromText(`${meeting.title}\n${meeting.summary}`, "summary");
-    let dictionary: string[] = [];
-
-    try {
-        dictionary = localAvailable() ? dictionaryPhrases() : [];
-    } catch (err) {
-        log.warn({ err }, "could not read the Wispr Flow dictionary");
-    }
-
-    const vocab = buildVocabulary([
-        ...files.map((file) => termsFromFile(file)),
-        DEV_GLOSSARY.map((term) => ({ term, source: "glossary" })),
-        context,
-        dictionary.map((term) => ({ term, source: "dictionary" })),
-    ]);
-    log.debug({ terms: vocab.length, files }, "built term vocabulary");
-
-    return { vocab, context };
-}
-
-function suspectsFor(meeting: Meeting, opts: TranscriptOpts, minConfidence: number): TermSuggestion[] {
-    const { vocab, context } = vocabulary(meeting, opts.vocab);
-    return findSuspectTerms({ entries: meeting.transcript, vocab, context, minConfidence });
-}
-
-function fixCommand(suspects: TermSuggestion[], opts: TranscriptOpts): string | undefined {
-    const exact = suspects.filter((s) => s.kind === "exact");
-
-    if (exact.length === 0) {
-        return undefined;
-    }
-
-    // One explicit pair per suspect, so whoever runs it can drop or edit single pairs. The
-    // `--fix-term` values this run already applied stay in argv, so the rerun keeps them.
-    const add = exact.flatMap((s) => ["--fix-term", fixArg(s.heard, s.candidates[0]!.term)]);
-
-    // Always last, so the command written into the file is the same on every run.
-    if (opts.output) {
-        add.push("--confirm");
-    }
-
-    return suggestCommand(TOOL, { remove: ["--confirm"], add });
+/**
+ * `tools wisprflow` is the Wispr Flow source and its raw export; term fixes, speaker statistics and attendance are
+ * `tools meetings`, which polishes every source in one pipeline. A flag of the old polishing names those commands.
+ */
+function polishingMoved(what: string, sourceMeetingId: string, next: string[]): void {
+    fail(
+        [
+            `${what} moved to ${toolCommand("meetings")}, which polishes every source's transcript in one pipeline:`,
+            `  ${toolCommand("meetings", "new", "--source", `wisprflow:${sourceMeetingId}`)}`,
+            ...next.map((command) => `  ${command}`),
+        ].join("\n")
+    );
 }
 
 function render(
@@ -247,11 +192,19 @@ async function transcript(ref: string, opts: TranscriptOpts): Promise<void> {
         return;
     }
 
-    const minConfidence = Number(opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE);
     let loaded: Awaited<ReturnType<typeof loadMeeting>>;
 
     try {
         const id = await resolveMeetingRef(ref, source);
+
+        if (opts.fixTerm?.length || opts.vocab?.length || opts.minConfidence !== undefined) {
+            polishingMoved("Term fixes", id, [
+                toolCommand("meetings", "suggest", `wisprflow:${id}`),
+                toolCommand("meetings", "transcript", `wisprflow:${id}`, "--with-suggested"),
+            ]);
+            return;
+        }
+
         loaded = await loadMeeting(id, { source, transcript: true, crossCheck: opts.crossCheck });
     } catch (err) {
         fail(errorText(err));
@@ -259,68 +212,25 @@ async function transcript(ref: string, opts: TranscriptOpts): Promise<void> {
     }
 
     reportSource(loaded.source, loaded.notes);
-    let meeting = loaded.data;
+    const meeting = loaded.data;
 
     if (formatNeedsTimes(format) && !meeting.transcript.some((e) => e.startSec !== undefined)) {
         fail(`--format ${format} needs a time per line; only the local source has them (try --source local).`);
         return;
     }
 
-    let fixed: TermFix[] = [];
-    let suspects: TermSuggestion[] = [];
-
-    if (opts.terms !== false) {
-        suspects = suspectsFor(meeting, opts, minConfidence);
-
-        const specs = parseVariadic(opts.fixTerm);
-
-        if (specs.length > 0) {
-            try {
-                fixed = selectFixes(specs, suspects, minConfidence);
-            } catch (err) {
-                fail(errorText(err));
-                return;
-            }
-
-            const applied = applyFixes(meeting.transcript, fixed);
-            meeting = { ...meeting, transcript: applied.entries };
-            ui.ok(`applied ${fixed.length} term fix(es), ${applied.replaced} replacement(s)`);
-            suspects = suspectsFor(meeting, opts, minConfidence);
-        }
-    }
-
-    const command = fixCommand(suspects, opts);
     const options: RenderOptions = {
         source: loaded.source,
         frontmatter: opts.frontmatter !== false,
         summary: opts.summary !== false,
         timestamps: opts.timestamps === true,
         firstNames: opts.firstNames === true,
-        suspects,
-        fixCommand: command,
-        fixed,
     };
-    const content = render(meeting, format, options, { notes: loaded.notes, suspects, fixed });
-    const written = deliver(content, {
+    deliver(render(meeting, format, options, { notes: loaded.notes }), {
         output: opts.output,
         confirm: opts.confirm,
         keepFrontmatter: format === "md" && opts.keepFrontmatter !== false,
     });
-
-    if (written && suspects.length > 0) {
-        const where: Record<TranscriptFormat, string> = {
-            md: "listed in the callout under the title",
-            json: 'listed under "suspects"',
-            txt: "see them with --format md",
-            srt: "see them with --format md",
-            vtt: "see them with --format md",
-        };
-        ui.info(`${suspects.length} possibly misheard term(s), ${where[format]}.`);
-
-        if (command) {
-            ui.info(`To apply them: ${command}`);
-        }
-    }
 }
 
 function showMarkdown(meeting: Meeting, source: SourceName): string {
@@ -371,63 +281,21 @@ function showMarkdown(meeting: Meeting, source: SourceName): string {
     return `${parts.join("\n\n")}\n`;
 }
 
-async function speakers(
-    ref: string,
-    opts: { source?: string; format?: string | boolean; gap?: string; attendance?: string }
-): Promise<void> {
-    const subcommand = ["meetings", "speakers"];
-    const format = await resolveEnum({
-        value: opts.format,
-        fallback: "table",
-        values: LIST_FORMATS,
-        flag: "--format",
-        subcommand,
-    });
-    const source = parseSource(opts.source, subcommand);
-    const gapSec = opts.gap === undefined ? DEFAULT_SPAN_GAP_SEC : parseDuration(opts.gap) / 1000;
+async function speakers(ref: string, opts: { source?: string }): Promise<void> {
+    const source = parseSource(opts.source, ["meetings", "speakers"]);
 
-    if (!format || !source) {
+    if (!source) {
         return;
     }
-
-    if (!(gapSec > 0)) {
-        fail(`--gap ${opts.gap} is not a duration (try 90s or 2m).`);
-        return;
-    }
-
-    let loaded: Awaited<ReturnType<typeof loadMeeting>>;
 
     try {
         const id = await resolveMeetingRef(ref, source);
-        loaded = await loadMeeting(id, { source, transcript: true });
+        polishingMoved("Speaker statistics and attendance", id, [
+            toolCommand("meetings", "speakers", "stats", `wisprflow:${id}`, "--attendance", "teams"),
+        ]);
     } catch (err) {
         fail(errorText(err));
-        return;
     }
-
-    reportSource(loaded.source, loaded.notes);
-    let presence: Presence[] | undefined;
-
-    if (opts.attendance) {
-        try {
-            const loadedPresence = await loadPresence(loaded.data, opts.attendance);
-            presence = loadedPresence.presence;
-            ui.dim(loadedPresence.note);
-        } catch (err) {
-            fail(errorText(err));
-            return;
-        }
-    }
-
-    const stats = speakerStats(loaded.data.transcript, { gapSec, participants: loaded.data.participants, presence });
-    log.debug({ meeting: loaded.data.id, speakers: stats.speakers.length, hints: stats.hints.length }, "speaker stats");
-
-    if (format === "json") {
-        out.result(SafeJSON.stringify({ meeting: loaded.data.id, source: loaded.source, gapSec, ...stats }, null, 2));
-        return;
-    }
-
-    printSpeakerStats(stats, { untimedHint: "try --source local" });
 }
 
 async function show(ref: string, opts: Record<string, unknown>): Promise<void> {
@@ -495,7 +363,6 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
             reportSource(loaded.source, loaded.notes);
             const meeting = loaded.data;
             const folder = join(dir, exportDirName(meeting));
-            const suspects = opts.terms === false ? [] : suspectsFor(meeting, {}, DEFAULT_MIN_CONFIDENCE);
             const base: RenderOptions = {
                 source: loaded.source,
                 frontmatter: true,
@@ -505,7 +372,7 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
             };
             const files: Array<[string, string, boolean]> = [
                 ["Summary.md", showMarkdown(meeting, loaded.source), true],
-                ["Transcript.md", renderMarkdown(meeting, { ...base, suspects }), true],
+                ["Transcript.md", renderMarkdown(meeting, base), true],
                 [
                     "meeting.json",
                     `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendarFor(meeting) ?? null }, null, 2)}\n`,
@@ -579,7 +446,9 @@ export function registerMeetingsCommand(program: Command): void {
     meetings
         .command("transcript")
         .argument("<meeting>", "meeting id, share link, or share slug")
-        .description("The transcript, grouped into speaker turns and paragraphs")
+        .description(
+            `Wispr Flow's raw transcript, grouped into speaker turns and paragraphs (polishing: ${toolCommand("meetings")})`
+        )
         .option("--format [format]", `${TRANSCRIPT_FORMATS.join(" | ")} (default md)`)
         .option("-o, --output <file>", "write to a file; a different existing file is only replaced with --confirm")
         .option("--confirm", "replace an existing output file that differs")
@@ -590,33 +459,24 @@ export function registerMeetingsCommand(program: Command): void {
         .option("--first-names", "label speakers by first name")
         .option("--source [source]", "auto | local | mcp")
         .option("--cross-check", "also ask the MCP and report where speaker names differ")
-        .option("--no-terms", "skip the misheard-term check")
-        .option("--vocab <file>", "extra vocabulary: a package.json or one term per line (repeatable)", collect)
-        .option(
-            "--min-confidence <pct>",
-            "lowest confidence a suspect term is shown with",
-            String(DEFAULT_MIN_CONFIDENCE)
-        )
-        .option(
-            "--fix-term <heard::replacement>",
-            'apply one term fix (repeatable): "heard::Replacement", a bare "heard" for its top candidate, or "all"',
-            collect
+        .addOption(new Option("--no-terms", "no effect: the raw export has no term check").hideHelp())
+        .addOption(new Option("--vocab <file>", `moved to ${toolCommand("meetings")}`).argParser(collect).hideHelp())
+        .addOption(new Option("--min-confidence <pct>", `moved to ${toolCommand("meetings")}`).hideHelp())
+        .addOption(
+            new Option("--fix-term <heard::replacement>", `moved to ${toolCommand("meetings")}`)
+                .argParser(collect)
+                .hideHelp()
         )
         .action(transcript);
 
     meetings
         .command("speakers")
         .argument("<meeting>", "meeting id, share link, or share slug")
-        .description(
-            "Per speaker label: origin, turns, lines, words, spoken time and spans, with hints at mixed or split voices"
-        )
-        .option("--gap <duration>", "a pause shorter than this keeps two turns in one span", "2m")
-        .option(
-            "--attendance <teams|file>",
-            `who was in the call and when: teams asks ${toolCommand("ms-teams")} by the meeting title, or a file of its --json output`
-        )
+        .description(`Moved: speaker statistics and attendance are ${toolCommand("meetings", "speakers", "stats")}`)
+        .addOption(new Option("--gap <duration>").hideHelp())
+        .addOption(new Option("--attendance <teams|file>").hideHelp())
+        .addOption(new Option("--format [format]").hideHelp())
         .option("--source [source]", "auto | local | mcp")
-        .option("--format [format]", "table | json")
         .action(speakers);
 
     meetings
@@ -627,7 +487,7 @@ export function registerMeetingsCommand(program: Command): void {
         .option("--confirm", "replace existing files that differ")
         .option("--timestamps", "show paragraph start times in Transcript.md")
         .option("--first-names", "label speakers by first name")
-        .option("--no-terms", "skip the misheard-term check")
+        .addOption(new Option("--no-terms", "no effect: the raw export has no term check").hideHelp())
         .option("--source [source]", "auto | local | mcp")
         .action(exportMeetings);
 

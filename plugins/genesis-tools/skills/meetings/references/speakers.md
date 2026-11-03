@@ -45,6 +45,24 @@ platform cannot supply is skipped, never guessed.
 | E3 speaking indicator | 5 | The platform provider (for Teams: Wispr's observations of the call window). | Narrows the remote candidates to the people shown as speaking during the line. Also a negative signal: a person shown as **muted** during the line did not speak it (RM). The user is usually never shown as speaking, so E3 never counts against the user. An indicator that shows one person on most lines of the meeting (a pinned or stuck tile) is no evidence for that person: use it only where it changes. A person missing from the indicator is never evidence against that person. |
 | E4 live names | 2 | The recorder's live segments. | A weak hint. The name belongs to a live voice, not a person; at the start of a meeting and after a person leaves it is often stale. Drop it when E2 or E3 contradicts it. |
 
+The tool applies three of these limits itself (`suggest`): a call channel silent for 5 min or more while two labels
+talk makes E1 say nothing there (R19 lets the microphone's own label stand for the user at 0.5); a platform-named label
+with a quarter of the sure microphone lines and call lines of its own is a second person in the room (R18: candidates
+at 0.4, the user capped at 0.7 and only on sure microphone lines); and E3 stuck on one remote person for 6 min with a third of the lines on the
+microphone is ignored there. Read the rules in an item before you trust an E1 range. `evidence --raw` lists the silent
+call stretches as `meeting.callSilent` (`{ fromSec, toSec }`): inside them E1 and the energy say nothing.
+
+### A label that tracks no one person
+
+Where a label carries several voices over a stretch (two people in the room under the room's tile, a diarization
+cluster that drifts), its name is no evidence there. Store one `label` finding for the stretch instead of a range per
+line: `{ "kind": "label", "label": "<raw label>", "from": "0:00", "to": "27:42", "meaningless": true, "reason": "…" }`
+(`tools meetings items add --kind label --label … --from … --to … --reason …`). The rules then see those lines
+unlabeled (no own-label, owner-label or platform-name hint), the corrections mark each line in the stretch that no
+range or join gives a voice as `[nejasné: "<label>"]`, and `items add` and `transcript` report the item as applied to
+those lines. Add a `speaker-range` only for the lines you can attribute on their own evidence (E1, content, an
+answered vocative); every other line stays visibly open instead of carrying a wrong name.
+
 ### E1 energy table
 
 `energyMicShare` in `evidence --raw` is the share of the line's energy on the microphone. The confidence that the user
@@ -131,9 +149,10 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
 4. **Highest value first**: priority = (1 - confidence) x impact x reach, where reach counts the other unsure ranges
    with the same evidence (the same live voice, the same people present, the same top candidates).
 5. **Propagate**: an answer raises every range with the same evidence; re-rank, and ask the next only if it is still
-   under 60 %.
-6. **Budget**: about 12 questions per meeting; the user can say "enough". A split does not count: its parts take its
-   place. The rest stay suggestions and render as
+   under 60 %. A word answer also answers every other open question on the same heard words, so one word is never
+   asked twice; the `answered` event lists those questions in `settled`.
+6. **Budget**: about 12 questions per meeting; the user can say "enough". A split does not count: its parts come next
+   and share its place. The rest stay suggestions and render as
    `[nejasné: "<label>"; 1) Petr 55 % 2) Pavel]` (only the known confidence is shown).
 7. **Split**: when the user hears several voices in one range, "Several voices" in `listen` cuts it at each line and at
    each change between the microphone and the call, then asks each part with its words. Two remote voices in a row
@@ -142,8 +161,13 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
    split it by ear.
 
 In the automatic mode the tool applies these rules (`tools meetings suggest`, then `tools meetings listen`). In the
-three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`. The
-budget is one for speakers and terms together (`playback.listen.budget`, 12 by default). In both, the
+three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`, which
+warns about a question whose text repeats another open question (name the time or quote the words instead), one that
+decides no item, and one with no priority. Give each question `priority` (`--priority` or the batch field) on the scale of rule 4 above,
+(1 - confidence) x impact x reach, the one suggest uses: one unsure question is about 1 to 3, a cluster 6 or more.
+Listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`. The
+cap is one for speakers and terms together (`global.suggest.questionCap` for suggest and
+`playback.listen.roundCap` for one listen round, 12 each by default). In both, the
 agent answers only what the listen round left open, in the chat round, with the evidence.
 
 ## Joins and splits

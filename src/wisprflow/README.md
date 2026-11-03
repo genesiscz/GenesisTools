@@ -19,9 +19,8 @@ Two sources, and every command prints which one answered (on stderr):
 |---------|-------------|
 | `meetings list [query]` | List or search meetings (`--since`, `--until`, `--folder`, `--attendee`, `--limit`) |
 | `meetings show <meeting>` | Participants, folders, share link, summary and notes (`--format md\|json\|txt`) |
-| `meetings transcript <meeting>` | The transcript in speaker turns and paragraphs (`--format md\|txt\|json\|srt\|vtt`) |
+| `meetings transcript <meeting>` | Wispr Flow's raw transcript in speaker turns and paragraphs (`--format md\|txt\|json\|srt\|vtt`) |
 | `dictionary list [--snippets]` | The app's own dictionary, most used first (read-only, local data only) |
-| `meetings speakers <meeting> [--attendance teams\|<file>]` | Teams attendance first (a label speaking while its person was out of the call, a voice when one person was left); then per label: who named it (platform or llm), turns, lines, words, spoken time and spans (`--gap 2m`), with hints: a label that says goodbye and keeps speaking (the times), a label that may be several people, and a lone one-turn label with the word it cut (`--format table\|json`) |
 | `meetings export <meeting...> --dir <dir>` | `Summary.md`, `Transcript.md` and `meeting.json` per meeting |
 | `meetings series <meeting>` | Every recorded occurrence of a recurring meeting (MCP) |
 | `notes list [query]`, `notes show <id>` | Scratchpad notes |
@@ -34,29 +33,25 @@ Two sources, and every command prints which one answered (on stderr):
 
 | Option | Effect |
 |--------|--------|
-| `--format md` | Frontmatter (unless `--no-frontmatter`), title, misheard-term callout, `## Summary` (unless `--no-summary`), `## Transcript` |
+| `--format md` | Frontmatter (unless `--no-frontmatter`), title, `## Summary` (unless `--no-summary`), `## Transcript` |
 | `--timestamps` | The start time of each paragraph |
 | `--first-names` | `Alice` instead of `Alice Example` |
 | `-o <file>` | Write to a file. A different existing file is not replaced: the diff is printed and the command exits 2. Add `--confirm` to replace it. An existing frontmatter is kept; only missing keys are added (`--no-keep-frontmatter` replaces it) |
 | `--source auto\|local\|mcp`, `--cross-check` | Pick the source; also ask the MCP and report where speaker names differ |
 
-## Misheard terms
+## Polishing lives in `tools meetings`
 
-Speech recognition turns jargon into near-misses ("Zushtent" for Zustand, "RaaQuery" for React Query). The transcript command compares every 1 to 3 word run with a vocabulary and lists the likely ones in a callout under the title, each with its candidates and a confidence:
-
-- Vocabulary: a built-in development glossary, proper nouns from the meeting's own summary, your Wispr Flow dictionary, and `--vocab <file>` (a `package.json` or one term per line, repeatable).
-- Score: edit distance on the text, on a phonetic key tuned for Czech speakers saying English terms, and on its consonants. Czech case endings on a correct term ("Reduxu") are not reported.
-- `--min-confidence <pct>` (default 70) sets the cut-off. `--no-terms` turns the check off.
-
-Nothing is changed until you ask. The command prints the exact rerun line:
+`tools wisprflow` is the Wispr Flow source and its raw export. Term fixes, speaker statistics, attendance and the
+rest of the polishing are `tools meetings`, one pipeline for every source; `tools meetings` reads Wispr Flow through
+this tool's source adapter (`lib/meeting-source.ts`), and this tool imports nothing from `tools meetings`. The old
+flags (`transcript --fix-term`, `--vocab`, `--min-confidence`, and `meetings speakers`) print the commands to use:
 
 ```bash
-tools wisprflow meetings transcript <id> --fix-term "Zushtent::Zustand" --fix-term "redakt::Redux"
-tools wisprflow meetings transcript <id> --fix-term Zushtent        # its top candidate
-tools wisprflow meetings transcript <id> --fix-term all             # every non-inflected suspect
+tools meetings new --source wisprflow:<id>
+tools meetings suggest wisprflow:<id>
+tools meetings transcript wisprflow:<id> --with-suggested
+tools meetings speakers stats wisprflow:<id> --attendance teams
 ```
-
-`--fix-term` is repeatable, and a comma also separates values. The suggested command lists one explicit `heard::Replacement` pair per suspect, so an agent (or you) can read each one in its sentence, then keep it, change the replacement, or drop it. Applied fixes are recorded in the frontmatter under `term_fixes`.
 
 ## Examples
 

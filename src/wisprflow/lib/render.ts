@@ -1,4 +1,3 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import {
     entriesToSrt,
@@ -6,12 +5,10 @@ import {
     formatClock,
     groupTurns,
     localTime,
-    suspectsCallout,
     transcriptMarkdown,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
 import { firstName } from "@genesiscz/utils/transcribe/speakers";
-import type { TermSuggestion } from "@genesiscz/utils/transcribe/terms";
 import type { Meeting, SourceName, TranscriptGap } from "./types";
 
 export interface RenderOptions {
@@ -20,11 +17,6 @@ export interface RenderOptions {
     summary: boolean;
     timestamps: boolean;
     firstNames: boolean;
-    suspects?: TermSuggestion[];
-    /** The command that applies the suspects, shown under them. */
-    fixCommand?: string;
-    /** Applied `--fix-term` replacements, recorded in the frontmatter. */
-    fixed?: Array<{ heard: string; replacement: string }>;
 }
 
 export function transcriptGapNote(gap: TranscriptGap): string {
@@ -60,9 +52,6 @@ export function meetingFrontmatter(meeting: Meeting, options: RenderOptions): Re
         ...(meeting.shareLink ? { source: meeting.shareLink } : {}),
         ...(meeting.folders.length > 0 ? { folders: meeting.folders.map((f) => f.name) } : {}),
         wisprflow_source: options.source,
-        ...(options.fixed && options.fixed.length > 0
-            ? { term_fixes: options.fixed.map((f) => `${f.heard} → ${f.replacement}`) }
-            : {}),
     };
 }
 
@@ -74,12 +63,6 @@ export function renderMarkdown(meeting: Meeting, options: RenderOptions): string
     }
 
     parts.push(`# ${meeting.title || "Untitled meeting"}`);
-
-    if (options.suspects && options.suspects.length > 0) {
-        parts.push(
-            suspectsCallout(options.suspects, { tool: toolCommand("wisprflow"), fixCommand: options.fixCommand })
-        );
-    }
 
     if (options.summary && meeting.summary.trim()) {
         parts.push("## Summary", meeting.summary.trim());
