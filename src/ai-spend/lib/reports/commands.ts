@@ -30,12 +30,13 @@ import { renderCodexAnalysis } from "@genesiscz/utils/ai/usage/spend/reports/rev
 import { buildSessionReport } from "@genesiscz/utils/ai/usage/spend/reports/session";
 import { parseStatuslineHook, renderStatusline } from "@genesiscz/utils/ai/usage/spend/reports/statusline";
 import type { PeriodGrain, ReportFlags, ReportKind, SourceId } from "@genesiscz/utils/ai/usage/spend/reports/types";
-import { SOURCE_COST_MODE_FLAG, SOURCE_REPORTS } from "@genesiscz/utils/ai/usage/spend/reports/types";
+import { SOURCE_COST_MODE_FLAG, SOURCE_IDS, SOURCE_REPORTS } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
+import { harnessSources } from "../harness-flag";
 
 const VISUAL_BURN_RATES = ["off", "emoji", "text", "emoji-text"] as const;
 
@@ -217,7 +218,13 @@ async function runReportPhases(cmd: Command, kind: ReportKind, source?: SourceId
     const storage = new Storage("ai-spend");
     const pricing = await prof.measureAsync("pricing", () => loadPricing(storage));
     const mode = parseCostMode(typeof flags.mode === "string" ? flags.mode : undefined);
-    const sources = source ? ([source] as const) : undefined;
+    // The inherited --harness narrows the report, or refuses a list that leaves its namespace out.
+    const sources = harnessSources({ cmd, command: kind, ids: SOURCE_IDS, namespace: source });
+
+    if (sources === null) {
+        return;
+    }
+
     const sincePassed = optionFromCli(cmd, "since");
     const untilPassed = optionFromCli(cmd, "until");
     const sinceRaw = sincePassed ? flags.since : undefined;

@@ -1,3 +1,4 @@
+import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -41,4 +42,84 @@ export function resolveHarnessFlag({
     }
 
     return { flag: legacyFlag, raw: legacy };
+}
+
+/**
+ * `null` means "rejected, diagnostic already printed" and the action returns.
+ *
+ * Throwing instead would reach `runTool`'s uncaught `program.parseAsync()`, so a
+ * mistyped `--sources` printed a Bun stack trace with a source excerpt where a
+ * one-line flag diagnostic belongs. `flag` is the spelling the user typed
+ * (`--harness` or `--sources`), so the diagnostic names it.
+ */
+export function parseSources<T extends string>(
+    raw: string | undefined,
+    { command, ids, flag }: { command: string; ids: readonly T[]; flag: string }
+): T[] | undefined | null {
+    if (!raw) {
+        return undefined;
+    }
+
+    const wanted = raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+    const known = (value: string): value is T => (ids as readonly string[]).includes(value);
+    const unknown = wanted.filter((value) => !known(value));
+
+    if (unknown.length > 0) {
+        out.error(
+            suggestEnumFlag(`tools ai-spend ${command}`, flag, ids, {
+                subcommand: [command],
+                given: unknown.join(", "),
+            })
+        );
+        process.exitCode = 1;
+
+        return null;
+    }
+
+    return wanted.filter(known);
+}
+
+/**
+ * The inherited `--harness` (or `--sources`) of a command that reads one source namespace or all of them: the
+ * namespace (`ai-spend codex daily`) when one is given, else the listed sources, else undefined (every source). A list
+ * that leaves the namespace out is refused, so a report is never printed unfiltered under a filter. `null`: refused,
+ * diagnostic printed, `process.exitCode` set.
+ */
+export function harnessSources<T extends string>({
+    cmd,
+    command,
+    ids,
+    namespace,
+}: {
+    cmd: Command;
+    command: string;
+    ids: readonly T[];
+    namespace?: T;
+}): T[] | undefined | null {
+    const flags = cmd.optsWithGlobals<{ harness?: string; sources?: string }>();
+    const harness = resolveHarnessFlag({ harness: flags.harness, legacy: flags.sources, legacyFlag: "--sources" });
+
+    if (!harness) {
+        return null;
+    }
+
+    const listed = parseSources(harness.raw, { command, ids, flag: harness.flag });
+
+    if (listed === null || namespace === undefined) {
+        return listed;
+    }
+
+    if (listed !== undefined && !listed.includes(namespace)) {
+        out.error(
+            `${harness.flag} ${harness.raw} leaves out ${namespace}, the one source \`${namespace} ${command}\` reads.`
+        );
+        process.exitCode = 1;
+
+        return null;
+    }
+
+    return [namespace];
 }
