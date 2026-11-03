@@ -45,6 +45,9 @@ public struct UsageTableColumn: Identifiable, Equatable, Sendable {
 }
 
 public enum UsageTableBuilder {
+    /// The drift verdicts worth a badge; `steady` and `insufficient` are the normal answers (src/utils/ai/usage/drift).
+    static let driftWarnings: Set<String> = ["limit cut?", "limit raised?"]
+
     public static func columnKey(kind: String?, scopeModel: String?, key: String) -> String {
         if let scopeModel, !scopeModel.isEmpty { return "scoped:" + scopeModel }
         return kind ?? key
@@ -75,7 +78,7 @@ public enum UsageTableBuilder {
             let sparkSource = mine.first { $0.kind == "session" && $0.availableNow != "absent" } ?? mine.first { $0.kind == "weekly" }
             let spark = sparkSource.map { item in (item.bins?.map(\.close) ?? item.points?.map(\.v) ?? []) } ?? []
             let accountHealth = health?.accounts.first { $0.account.id == account.key.id }
-            let verdict = drift?.rows.first { $0.account.id == account.key.id && $0.verdict != nil && $0.verdict != "ok" }?.verdict
+            let verdict = drift?.rows.first { $0.account.id == account.key.id && driftWarnings.contains($0.verdict ?? "") }?.verdict
             return UsageTableRow(
                 account: account.key, plan: account.label, health: accountHealth?.outcome, cells: cells,
                 ratePerHour: binding?.ratePctPerHour, safePerHour: binding?.safePctPerHour,
@@ -189,21 +192,26 @@ public struct UsageTableRowView: View, Equatable {
                 }
             }
             .frame(width: Self.accountWidth, alignment: .leading)
+            // The header row is hidden from VoiceOver, so each value names its own column.
             ForEach(columns) { column in
                 cell(row.cells[column.id])
                     .frame(width: Self.cellWidth, alignment: .leading)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Self.spokenCell(row.cells[column.id], title: column.title, now: now))
             }
             Text(verbatim: rateText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(rateTone)
                 .frame(width: Self.rateWidth, alignment: .leading)
                 .instantTooltip("Burn rate now, and the safe pace: the constant rate that lands at exactly 100% at the reset")
+                .accessibilityLabel("Burn rate and safe pace: \(rateText)")
             Text(verbatim: row.limitText ?? "—")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(row.limitBeforeReset ? UsageTone.severity("warning") : Color.white.opacity(0.6))
                 .lineLimit(1)
                 .frame(width: 80, alignment: .leading)
                 .instantTooltip("When the deciding window runs out at this pace, or \"past reset\" when it lasts to its reset")
+                .accessibilityLabel("Limit reached: \(row.limitText ?? "not known")")
             Sparkline(values: row.sparkline, tint: Color.white.opacity(0.55), lineWidth: 1, range: 0...100,
                       label: "\(row.account.accountName) trend", valueText: { UsageFormat.percent($0) })
                 .frame(minWidth: 60, maxWidth: 120)
@@ -217,6 +225,15 @@ public struct UsageTableRowView: View, Equatable {
         .liveRow(selected: selected)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+    }
+
+    /// What VoiceOver reads for one cell: the window's name first, then its use or absence, then its reset.
+    static func spokenCell(_ cell: UsageTableCell?, title: String, now: Date) -> String {
+        guard let cell else { return "\(title): no reading" }
+        if cell.absent { return "\(title): no limit" }
+        let used = "\(title): \(UsageFormat.percent(cell.percent)) used"
+        guard let reset = cell.resetsAt, reset > now else { return used }
+        return "\(used), resets in \(UsageFormat.countdown(to: reset, now: now))"
     }
 
     private var rateText: String {
