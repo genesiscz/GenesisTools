@@ -20,11 +20,32 @@ interface SampleRow {
     timestamp: string;
 }
 
+/** A provider and an account name, as `usage_snapshots` keys a window's rows. */
+export interface SampleAccount {
+    provider: string;
+    account: string;
+}
+
+export interface UsageSampleQuery {
+    since: Date;
+    provider?: string;
+    account?: string;
+    /** Only these provider/account pairs. Omitted: every account; empty: none. */
+    accounts?: readonly SampleAccount[];
+}
+
 /** The samples of the lookback, filters in the WHERE clause (never after a full read). */
-export function readUsageSamples(
-    db: Database,
-    options: { since: Date; provider?: string; account?: string }
-): UsageSample[] {
+export function readUsageSamples(db: Database, options: UsageSampleQuery): UsageSample[] {
+    if (options.accounts?.length === 0) {
+        return [];
+    }
+
+    // Numbered from ?4 on, after the three fixed parameters below.
+    const pairs = options.accounts ?? [];
+    const pairParams = pairs.flatMap((pair) => [pair.provider, pair.account]);
+    const pairFilter = pairs.length
+        ? `AND (provider, account_name) IN (VALUES ${pairs.map((_, i) => `(?${4 + i * 2}, ?${5 + i * 2})`).join(", ")})`
+        : "";
     // A store the availability migration has not reached yet has no such column (this read is
     // read-only and never migrates); its rows are all readings.
     const columns = db.prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>;
@@ -39,9 +60,15 @@ export function readUsageSamples(
                AND (?2 IS NULL OR provider = ?2)
                AND (?3 IS NULL OR account_name = ?3)
                ${readingsOnly}
+               ${pairFilter}
              ORDER BY timestamp ASC`
         )
-        .all(options.since.toISOString(), options.provider ?? null, options.account ?? null) as SampleRow[];
+        .all(
+            options.since.toISOString(),
+            options.provider ?? null,
+            options.account ?? null,
+            ...pairParams
+        ) as SampleRow[];
 
     return rows.map((row) => ({
         provider: row.provider,

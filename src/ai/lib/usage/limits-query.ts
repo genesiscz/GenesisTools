@@ -25,6 +25,7 @@ import {
     type WindowFlags,
 } from "@genesiscz/utils/ai/usage/contract";
 import { absentKey, FORECAST_LOOKBACK_MS, forecastFromSamples } from "@genesiscz/utils/ai/usage/forecast/forecast";
+import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import {
@@ -111,6 +112,11 @@ const NO_CACHE_WARNING: UsageWarning = {
     message: `No poll has written the snapshots file yet. Run ${TOOL} limits without --cached.`,
 };
 
+const NO_HISTORY_WARNING: UsageWarning = {
+    code: "no-history",
+    message: `No poll has recorded usage history yet, so nothing is forecast. Run ${TOOL} limits once.`,
+};
+
 /** `tools ai usage limits`: every account's windows now, as `usage.limits@1`. */
 export async function queryLimitsNow(opts: LimitsOptions): Promise<UsageEnvelope<LimitsNowData>> {
     const { snapshots, providers, providerIds, selection, noCache } = await gatherSnapshots(opts);
@@ -154,7 +160,7 @@ export async function queryLimitsNow(opts: LimitsOptions): Promise<UsageEnvelope
 /** `tools ai usage limits advise`: the next account per workload and the capacity left unused at each reset. */
 export async function queryAdvice(
     opts: AdviseOptions,
-    db: UsageLimitsDb = new UsageLimitsDb()
+    open: () => UsageLimitsDb | undefined = () => UsageLimitsDb.openReadOnly()
 ): Promise<UsageEnvelope<AdviseData>> {
     const { snapshots, providers, selection, noCache } = await gatherSnapshots(opts);
     const shown = snapshots.filter(
@@ -172,16 +178,29 @@ export async function queryAdvice(
             (snapshot.absentLimits ?? []).map((limit) => limit.key),
         ])
     );
-    const forecasts = forecastFromSamples(
-        db.getForecastSamples({ since: new Date(now.getTime() - FORECAST_LOOKBACK_MS) }),
-        {
-            now,
-            absent,
-        }
-    ).filter((account) => absent.has(absentKey(account.provider, account.account)));
+    // Read-only: advice never creates, migrates or writes the history store. Only the accounts shown are read and
+    // hydrated, never the whole store's lookback.
+    const db = open();
+    let samples: UsageSample[] = [];
+
+    try {
+        samples =
+            db?.getForecastSamples({
+                since: new Date(now.getTime() - FORECAST_LOOKBACK_MS),
+                accounts: shown.map((snapshot) => ({ provider: snapshot.provider, account: snapshot.accountName })),
+            }) ?? [];
+    } finally {
+        db?.close();
+    }
+
+    const forecasts = forecastFromSamples(samples, { now, absent });
     const models = splitList(opts.model);
     const data = adviseAccounts({ snapshots: shown, forecasts, models, now });
     const warnings: UsageWarning[] = noCache ? [NO_CACHE_WARNING] : [];
+
+    if (!db) {
+        warnings.push(NO_HISTORY_WARNING);
+    }
 
     logger.debug(
         { accounts: shown.length, forecasts: forecasts.length, profiles: ADVISE_PROFILE_IDS.length + models.length },
@@ -251,31 +270,43 @@ export async function querySeries(opts: SeriesOptions): Promise<UsageEnvelope<Li
     const providers = resolveProviderList(opts.provider);
     const providerIds = providers ?? usagePlugins().map((entry) => entry.plugin.id);
     const store = await AiConfigStore.readOnly();
-    const db = new UsageLimitsDb();
     const directory = usageAccountKeys(store.accounts(), providerIds, { visibleOnly: false });
     const known = new Set(directory.map((account) => `${account.provider}\u0000${account.accountName}`));
-    // History outlives config: an account removed from config still has rows under its name,
-    // and `--account <old name>` must find them.
-    const orphans: AccountKey[] = db
-        .getAllAccountBuckets()
-        .filter((row) => providerIds.includes(row.provider) && !known.has(`${row.provider}\u0000${row.accountName}`))
-        .map((row) => ({ provider: row.provider, accountId: row.accountName, accountName: row.accountName }));
-    const selection = selectAccounts(opts.account, [...directory, ...accountKeysOf(orphans)]);
     const cache = await readSnapshotsCache();
-    const data = readLimitSeries(
-        {
-            from: window.from.toISOString(),
-            to: window.to.toISOString(),
-            stepMs,
-            agg,
-            ...(selection === undefined ? {} : { accounts: selection }),
-            ...(providers === undefined ? {} : { providers }),
-            ...(kinds === undefined ? {} : { kinds }),
-            forecastAt: now,
-        },
-        { db, directory, current: snapshotsFromCache(cache) }
-    );
-    const warnings: UsageWarning[] = [];
+    // Read-only: the series door never creates, migrates or writes the history store.
+    const db = UsageLimitsDb.openReadOnly();
+    let selection: AccountKey[] | undefined;
+    let data: LimitSeriesData;
+
+    try {
+        // History outlives config: an account removed from config still has rows under its name,
+        // and `--account <old name>` must find them.
+        const orphans: AccountKey[] = (db?.getAllAccountBuckets() ?? [])
+            .filter(
+                (row) => providerIds.includes(row.provider) && !known.has(`${row.provider}\u0000${row.accountName}`)
+            )
+            .map((row) => ({ provider: row.provider, accountId: row.accountName, accountName: row.accountName }));
+        selection = selectAccounts(opts.account, [...directory, ...accountKeysOf(orphans)]);
+        data = db
+            ? readLimitSeries(
+                  {
+                      from: window.from.toISOString(),
+                      to: window.to.toISOString(),
+                      stepMs,
+                      agg,
+                      ...(selection === undefined ? {} : { accounts: selection }),
+                      ...(providers === undefined ? {} : { providers }),
+                      ...(kinds === undefined ? {} : { kinds }),
+                      forecastAt: now,
+                  },
+                  { db, directory, current: snapshotsFromCache(cache) }
+              )
+            : { stepMs, agg, series: [] };
+    } finally {
+        db?.close();
+    }
+
+    const warnings: UsageWarning[] = db ? [] : [NO_HISTORY_WARNING];
 
     if (cache === null) {
         warnings.push({

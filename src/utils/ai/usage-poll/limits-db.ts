@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { openHistoryReadOnly } from "@genesiscz/utils/agent-sessions/database";
 import { autoSeriesStepMs } from "@genesiscz/utils/ai/usage/contract/step";
-import { readUsageSamples, type UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
+import { readUsageSamples, type UsageSample, type UsageSampleQuery } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
+import { logger } from "@genesiscz/utils/logger";
 import { USAGE_LIMITS_MIGRATIONS } from "./migrations";
 import {
     groupSeriesRows,
@@ -215,18 +217,58 @@ function normalizeNullableSeverity(severity: string | null): string | null {
  *
  * Same SQLite file as before (decision D8): `~/.genesis-tools/claude-history/index.db`.
  */
+/** One row of `PRAGMA table_info`, the part the read-only check needs. */
+interface ColumnInfo {
+    name: string;
+}
+
 export class UsageLimitsDb {
-    private claudeDb: ClaudeDatabase;
+    /** Undefined on a read-only view, which has no writer to prune or migrate with. */
+    private readonly claudeDb: ClaudeDatabase | undefined;
+    private readonly handle: Database;
     private readonly ownsConnection: boolean;
 
-    constructor(dbPath?: string) {
-        this.ownsConnection = Boolean(dbPath);
-        this.claudeDb = dbPath ? new ClaudeDatabase(dbPath) : ClaudeDatabase.getInstance();
+    /** A path opens a connection of its own; `{ readOnly }` wraps a read-only handle and never touches the schema. */
+    constructor(source?: string | { readOnly: Database }) {
+        if (typeof source === "object") {
+            this.claudeDb = undefined;
+            this.handle = source.readOnly;
+            this.ownsConnection = true;
+            return;
+        }
+
+        this.ownsConnection = Boolean(source);
+        this.claudeDb = source ? new ClaudeDatabase(source) : ClaudeDatabase.getInstance();
+        this.handle = this.claudeDb.getDb();
         this.ensureSchema();
     }
 
+    /**
+     * The store for a query door that only reads (`limits series`, `limits advise`, the `usage_*` MCP tools): no
+     * directory, no file, no schema and no migration is created. Undefined when no history exists yet, or when the
+     * store predates the availability column (a poll migrates it); the caller answers "no history".
+     */
+    static openReadOnly(path?: string): UsageLimitsDb | undefined {
+        const db = openHistoryReadOnly(path === undefined ? {} : { path });
+
+        if (!db) {
+            logger.debug({ path }, "[usage-limits] no history store yet; read-only view is empty");
+            return undefined;
+        }
+
+        const columns = db.prepare("PRAGMA table_info(usage_snapshots)").all() as ColumnInfo[];
+
+        if (!columns.some((column) => column.name === "availability")) {
+            logger.debug({ path: db.filename }, "[usage-limits] usage_snapshots missing or not migrated; no view");
+            db.close();
+            return undefined;
+        }
+
+        return new UsageLimitsDb({ readOnly: db });
+    }
+
     private ensureSchema(): void {
-        const db = this.claudeDb.getDb();
+        const db = this.handle;
 
         if (schemaEnsured.has(db)) {
             return;
@@ -294,7 +336,7 @@ export class UsageLimitsDb {
         timestamp: string,
         extras: SnapshotV2Extras
     ): number {
-        const stmt = this.claudeDb.getDb().prepare(`
+        const stmt = this.handle.prepare(`
             INSERT INTO usage_snapshots
                 (timestamp, account_name, bucket, utilization, resets_at, severity, scope_model,
                  provider, account_id, kind, money_used_minor, money_limit_minor, money_currency, availability)
@@ -398,8 +440,7 @@ export class UsageLimitsDb {
 
     /** The availability of the newest row of a window, absent rows included; null when it has none or an old row. */
     private latestAvailability(accountName: string, bucket: string, provider: string): string | null {
-        const row = this.claudeDb
-            .getDb()
+        const row = this.handle
             .prepare(`
                 SELECT availability FROM usage_snapshots
                 WHERE account_name = ?1 AND bucket = ?2 AND provider = ?3
@@ -412,7 +453,7 @@ export class UsageLimitsDb {
     }
 
     getLatest(accountName: string, bucket: string, provider?: string): UsageSnapshot | null {
-        const stmt = this.claudeDb.getDb().prepare(`
+        const stmt = this.handle.prepare(`
             SELECT ${SNAPSHOT_COLUMNS}
             FROM usage_snapshots
             WHERE account_name = ?1 AND bucket = ?2
@@ -432,7 +473,7 @@ export class UsageLimitsDb {
 
     getSnapshots(accountName: string, bucket: string, lastMinutes: number, provider?: string): UsageSnapshot[] {
         const cutoff = new Date(Date.now() - lastMinutes * 60_000).toISOString();
-        const stmt = this.claudeDb.getDb().prepare(`
+        const stmt = this.handle.prepare(`
             SELECT ${SNAPSHOT_COLUMNS}
             FROM usage_snapshots
             WHERE account_name = ?1 AND bucket = ?2
@@ -447,12 +488,12 @@ export class UsageLimitsDb {
     }
 
     /** The forecast's samples since `since`, readings only, through the one query the hub forecast also runs. */
-    getForecastSamples(options: { since: Date; provider?: string; account?: string }): UsageSample[] {
-        return readUsageSamples(this.claudeDb.getDb(), options);
+    getForecastSamples(options: UsageSampleQuery): UsageSample[] {
+        return readUsageSamples(this.handle, options);
     }
 
     getAllAccountBuckets(provider?: string): Array<{ accountName: string; bucket: string; provider: string }> {
-        const stmt = this.claudeDb.getDb().prepare(`
+        const stmt = this.handle.prepare(`
             SELECT DISTINCT account_name, bucket, provider
             FROM usage_snapshots
             WHERE (?1 IS NULL OR provider = ?1)
@@ -511,7 +552,7 @@ export class UsageLimitsDb {
             params.push(...query.keys);
         }
 
-        const stmt = this.claudeDb.getDb().prepare(`
+        const stmt = this.handle.prepare(`
             SELECT provider, account_name, bucket, timestamp, utilization, resets_at, severity, scope_model, kind,
                    availability
             FROM usage_snapshots
@@ -559,7 +600,7 @@ export class UsageLimitsDb {
      * Returns the number of rows moved.
      */
     renameAccount(oldName: string, newName: string): number {
-        const db = this.claudeDb.getDb();
+        const db = this.handle;
 
         const rekey = db.transaction(() => {
             const usage = db.prepare("UPDATE usage_snapshots SET account_name = ?2 WHERE account_name = ?1");
@@ -578,6 +619,10 @@ export class UsageLimitsDb {
     }
 
     pruneOlderThan(days: number): number {
+        if (!this.claudeDb) {
+            throw new Error("UsageLimitsDb: a read-only view cannot prune");
+        }
+
         const usagePruned = this.claudeDb.pruneTable("usage_snapshots", "timestamp", days);
         const spendPruned = this.claudeDb.pruneTable("spend_snapshots", "timestamp", days);
 
@@ -604,7 +649,7 @@ export class UsageLimitsDb {
             return false;
         }
 
-        const stmt = this.claudeDb.getDb().prepare(`
+        const stmt = this.handle.prepare(`
             INSERT INTO spend_snapshots
                 (timestamp, account_name, used_minor, used_currency, used_exponent,
                  limit_minor, limit_exponent, percent, severity, enabled, cap_minor, cap_currency, provider)
@@ -630,7 +675,7 @@ export class UsageLimitsDb {
     }
 
     getLatestSpend(accountName: string, provider?: string): SpendSnapshot | null {
-        const stmt = this.claudeDb.getDb().prepare(`
+        const stmt = this.handle.prepare(`
             SELECT id, timestamp, account_name, used_minor, used_currency, used_exponent,
                    limit_minor, limit_exponent, percent, severity, enabled, cap_minor, cap_currency
             FROM spend_snapshots
@@ -663,9 +708,16 @@ export class UsageLimitsDb {
     }
 
     close(): void {
-        if (this.ownsConnection) {
-            this.claudeDb.close();
+        if (!this.ownsConnection) {
+            return;
         }
+
+        if (this.claudeDb) {
+            this.claudeDb.close();
+            return;
+        }
+
+        this.handle.close();
     }
 
     private mapRow(row: SnapshotRow): UsageSnapshot {
