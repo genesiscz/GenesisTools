@@ -55,6 +55,11 @@ interface SeriesEntryBase {
 
 export interface SeriesEntry extends SeriesEntryBase {
     points: SeriesPoint[];
+    /**
+     * The window's last reading before the range, when the range starts with that reading still standing (readings
+     * are written on change only, so a quiet window has none inside the range). Never one of `points`.
+     */
+    carried?: SeriesPoint;
 }
 
 export interface SeriesBinEntry extends SeriesEntryBase {
@@ -369,12 +374,14 @@ export function shapePoints(group: SeriesGroup, agg: "raw" | "last", opts: Shape
     const { rows, ends, ...base } = group;
     const read = readings(rows);
     const points = read.map(pointOf);
+    const seed = rows.find((row) => row.seed && row.availability !== "absent");
 
     return {
         ...base,
         resets: resetsIn(rows, read, opts).resets,
         availability: availabilitySpans(rows, opts.to, ends),
         points: agg === "raw" ? points : lastPerBucket(points, opts.step),
+        ...(seed ? { carried: pointOf(seed) } : {}),
     };
 }
 

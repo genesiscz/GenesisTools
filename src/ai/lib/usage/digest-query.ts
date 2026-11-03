@@ -190,6 +190,7 @@ export async function queryDigest(opts: DigestOptions, deps: DigestDeps = {}): P
             to: new Date(to).toISOString(),
             agg: "raw",
             step: 0,
+            keepQuiet: true,
         });
         const fresh = dailyRowsOf({
             series,

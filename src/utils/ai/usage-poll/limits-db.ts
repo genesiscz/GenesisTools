@@ -102,6 +102,11 @@ export interface SeriesQuery {
     step?: number;
     /** How a bin is drawn. Omitted is `last`, the behaviour every caller had before the modes. */
     agg?: SeriesAgg;
+    /**
+     * Keep a limited window whose only row is the state carried into the range (no changed reading in it). The
+     * charts leave such a window out; the daily rollup carries it through its quiet days.
+     */
+    keepQuiet?: boolean;
 }
 
 interface SnapshotRow {
@@ -610,8 +615,8 @@ export class UsageLimitsDb {
             (group) =>
                 (!kinds || (group.kind !== null && kinds.has(group.kind))) &&
                 // A window with no row in the range shows only while its carried state is "gone"; a quiet
-                // limited window stays out, as before.
-                group.rows.some((row) => !row.seed || row.availability === "absent")
+                // limited window stays out, as before, unless the caller keeps it.
+                (query.keepQuiet || group.rows.some((row) => !row.seed || row.availability === "absent"))
         );
         const opts = {
             step: query.step ?? autoSeriesStepMs(query.from, query.to),

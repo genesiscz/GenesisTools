@@ -57,6 +57,93 @@ describe("dailyRowsOf", () => {
         ]);
     });
 
+    test("a limited window with no new reading is carried through each day the poller measured it", () => {
+        const measured = (from: string, to: string) => ({
+            id: 1,
+            provider: "anthropic-sub",
+            accountId: "acc-work",
+            accountName: "work",
+            from,
+            to,
+            outcome: "ok" as const,
+            source: null,
+            gateUntil: null,
+            reason: null,
+            polls: 100,
+        });
+        const rows = dailyRowsOf({
+            series: [
+                entry([["2026-11-01T08:00:00Z", 40]], {
+                    availability: [{ from: "2026-11-01T08:00:00Z", to: "2026-11-04T12:00:00Z", state: "limited" }],
+                }),
+                // Only the state carried into the range: no reading in it at all.
+                entry([], {
+                    key: "seven_day",
+                    kind: "weekly",
+                    carried: { t: "2026-10-30T08:00:00Z", percent: 55, resetsAt: null, severity: null },
+                    availability: [{ from: "2026-11-01T00:00:00Z", to: "2026-11-04T12:00:00Z", state: "limited" }],
+                }),
+            ],
+            tz: TZ,
+            // The poller measured the account through 11-03 and was off on 11-04.
+            runs: [measured("2026-11-01T00:00:00Z", "2026-11-03T23:00:00Z")],
+            accountIdOf: () => "acc-work",
+        });
+
+        expect(
+            rows.map((row) => [
+                row.bucket,
+                row.day,
+                row.readings,
+                row.startPct,
+                row.endPct,
+                row.peakPct,
+                row.availability,
+            ])
+        ).toEqual([
+            ["five_hour", "2026-11-01", 1, 40, 40, 40, "limited"],
+            ["five_hour", "2026-11-02", 0, 40, 40, 40, "limited"],
+            ["five_hour", "2026-11-03", 0, 40, 40, 40, "limited"],
+            ["seven_day", "2026-11-01", 0, 55, 55, 55, "limited"],
+            ["seven_day", "2026-11-02", 0, 55, 55, 55, "limited"],
+            ["seven_day", "2026-11-03", 0, 55, 55, 55, "limited"],
+        ]);
+    });
+
+    test("the daemon's rollup carries a quiet limited window into the days after its last reading", () => {
+        limits.recordSnapshotV2("work", "seven_day", 40, "2026-10-30T08:00:00.000Z", {
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider: "anthropic-sub",
+            accountId: "acc-work",
+            kind: "weekly",
+        });
+        limits
+            .connection()
+            .prepare(
+                `INSERT INTO usage_poll_runs (provider, account_id, account_name, from_ts, to_ts, outcome, polls)
+                 VALUES ('anthropic-sub', 'acc-work', 'work', '2026-10-30T00:00:00.000Z', '2026-11-02T12:00:00.000Z', 'ok', 500)`
+            )
+            .run();
+        const store = new UsageDailyStore(limits.connection());
+        const run = (at: string) =>
+            rollUpRecentDays({ db: limits, now: new Date(at), tz: TZ, accountIdOf: () => "acc-work", force: true });
+
+        run("2026-10-31T12:00:00Z");
+        // The next pass starts at 10-31, after the only reading: the window is carried in, not dropped.
+        run("2026-11-02T12:00:00Z");
+
+        expect(
+            store.between({ from: "2026-10-01", to: "2026-11-30" }).map((r) => [r.day, r.readings, r.endPct])
+        ).toEqual([
+            ["2026-10-30", 1, 40],
+            ["2026-10-31", 0, 40],
+            ["2026-11-01", 0, 40],
+            ["2026-11-02", 0, 40],
+        ]);
+    });
+
     test("one row per day with its first, last and peak reading, its resets, and the cycles that reached 90%", () => {
         const rows = dailyRowsOf({
             series: [
