@@ -307,6 +307,7 @@ export async function testAlertRule(
                 now,
                 previousRoundAt: new PollRunsStore(db).lastRoundAt(),
                 config: dashboard.alerts,
+                budgets: dashboard.budgets,
             });
             // The event-backed rules (rate-limited, limit-state-change, health's refused probes) read every
             // account's events, so the selector applies to what was found. A candidate of no account (the poller

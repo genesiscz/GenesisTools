@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import { windowPace } from "@genesiscz/utils/ai/usage/budgets/budgets";
 import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
 import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
@@ -45,6 +46,7 @@ function round(overrides: Partial<AlertRound> = {}): AlertRound {
         previousRoundAt: null,
         events: [],
         availabilityChanges: [],
+        budgets: { global: {}, providers: {} },
         ...overrides,
     };
 }
@@ -619,5 +621,72 @@ describe("config", () => {
 
         expect(merged.rules.threshold.channels).toEqual(ALERT_RULE_DEFAULTS.threshold.channels);
         expect(merged.rules.health.channels).toEqual(ALERT_RULE_DEFAULTS.health.channels);
+    });
+});
+
+describe("budget rule", () => {
+    const WEEK_RESET = "2026-11-06T10:00:00.000Z";
+    const weekly = (percent: number): AccountUsageSnapshot =>
+        snapshot(0, {
+            limits: [{ key: "seven_day", label: "Week", kind: "weekly", percentUsed: percent, resetsAt: WEEK_RESET }],
+        });
+    const budgets = {
+        global: {},
+        providers: { "anthropic-sub": { accounts: { acc_work: { weekly: { reservePct: 15 } } } } },
+    };
+    const before: UsageSample = {
+        provider: "anthropic-sub",
+        account: "work",
+        bucket: "seven_day",
+        kind: "weekly",
+        utilization: 30,
+        resetsAt: WEEK_RESET,
+        timestamp: "2026-11-02T20:00:00.000Z",
+    };
+
+    test("windowPace spreads what is left above the reserve over the days to the reset", () => {
+        const pace = windowPace({
+            budget: { reservePct: 10 },
+            kind: "weekly",
+            utilization: 50,
+            resetsAt: "2026-11-05T00:00:00.000Z",
+            samples: [{ ...before, utilization: 30, resetsAt: "2026-11-05T00:00:00.000Z" }],
+            now: NOW,
+            dayStart: new Date("2026-11-03T00:00:00.000Z"),
+            overPaceFactor: 1.2,
+        });
+
+        expect(pace).toEqual({
+            reservePct: 10,
+            allowancePct: 30,
+            burnedTodayPct: 20,
+            paceRatio: 20 / 30,
+            headroomPct: 40,
+            status: "on-pace",
+        });
+    });
+
+    test("a budgeted week burning past its allowance fires over pace; an unbudgeted one stays quiet", () => {
+        const settings = ALERT_RULE_DEFAULTS.budget;
+        const fired = ALERT_RULES.budget.evaluate(
+            round({ snapshots: [weekly(60)], samples: [before], budgets }),
+            settings
+        );
+
+        expect(fired.map((alert) => [alert.title, alert.dedupeKey])).toEqual([
+            ["Over budget pace", "budget:over-pace:anthropic-sub:acc_work:seven_day"],
+        ]);
+        expect(ALERT_RULES.budget.evaluate(round({ snapshots: [weekly(60)], samples: [before] }), settings)).toEqual(
+            []
+        );
+    });
+
+    test("use it or lose it: a budgeted window resetting within 6 h with 40% left", () => {
+        const soon = snapshot(0, {
+            limits: [{ key: "seven_day", label: "Week", kind: "weekly", percentUsed: 30, resetsAt: RESET }],
+        });
+        const fired = ALERT_RULES.budget.evaluate(round({ snapshots: [soon], budgets }), ALERT_RULE_DEFAULTS.budget);
+
+        expect(fired.map((alert) => [alert.title, alert.severity])).toEqual([["Use it or lose it", 70]]);
     });
 });

@@ -4,6 +4,7 @@ import {
     type StoredAlertsConfig,
     type UsageAlertsConfig,
 } from "@genesiscz/utils/ai/usage/alerts/config";
+import { EMPTY_BUDGETS, mergeBudgets, type UsageBudgets } from "@genesiscz/utils/ai/usage/budgets/budgets";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -32,6 +33,10 @@ export interface UsageDashboardConfig {
     };
     /** The alert engine's settings (design 2026-11-01, step U7). */
     alerts: UsageAlertsConfig;
+    /** Window and spend targets (proposal 18), nested by provider and immutable account id. */
+    budgets: UsageBudgets;
+    /** What only one provider has, keyed by plugin id: today the price of each plan (proposal 17). */
+    providers: Record<string, UsageProviderSettings>;
     dataRetentionDays: number;
     /**
      * Whose history the "at pace" estimate is built from. `pooled` reads every
@@ -39,6 +44,18 @@ export interface UsageDashboardConfig {
      * `per-account` uses only the account in question.
      */
     paceScope: UsagePaceScope;
+}
+
+/** The price of one subscription plan, which no data source knows (proposal 17). */
+export interface PlanPrice {
+    /** In the currency's minor unit (cents). */
+    priceMinor: number;
+    currency: string;
+}
+
+export interface UsageProviderSettings {
+    /** Keyed by the plan name the provider reports (`max`, `pro`). */
+    plans?: Record<string, PlanPrice>;
 }
 
 /**
@@ -53,8 +70,9 @@ interface StoredNotifications extends Partial<UsageDashboardConfig["notification
 /** Same shape as `UsageDashboardConfig` but accepting the pre-2026-09 flat arrays and the pre-2026-11 thresholds. */
 export type StoredConfig = Omit<
     Partial<UsageDashboardConfig>,
-    "prominentBuckets" | "hiddenBuckets" | "notifications" | "alerts"
+    "prominentBuckets" | "hiddenBuckets" | "notifications" | "alerts" | "budgets"
 > & {
+    budgets?: Partial<UsageBudgets>;
     prominentBuckets?: PerProviderKeys | string[];
     hiddenBuckets?: PerProviderKeys | string[];
     notifications?: StoredNotifications;
@@ -81,6 +99,8 @@ const DEFAULTS: UsageDashboardConfig = {
         sound: "Purr",
     },
     alerts: DEFAULT_ALERTS_CONFIG,
+    budgets: EMPTY_BUDGETS,
+    providers: {},
     dataRetentionDays: 30,
     paceScope: "pooled",
 };
@@ -143,6 +163,8 @@ function merge(stored: StoredConfig): UsageDashboardConfig {
         hiddenBuckets: toPerProvider(saved.hiddenBuckets, DEFAULTS.hiddenBuckets),
         notifications: { ...DEFAULTS.notifications, ...notifications },
         alerts: mergeAlertsConfig(saved.alerts),
+        budgets: mergeBudgets(saved.budgets),
+        providers: saved.providers ?? {},
     });
 }
 
@@ -229,6 +251,13 @@ async function writeBackMigration(saved: StoredConfig, readOnly: boolean): Promi
 
 export async function saveDashboardConfig(config: UsageDashboardConfig): Promise<void> {
     await store().setConfig(config);
+}
+
+/** Edits the saved config under the store's lock (a budget set from the CLI); keys the edit does not touch stay. */
+export async function updateDashboardConfig(edit: (stored: StoredConfig) => void): Promise<void> {
+    await store().atomicConfigUpdate<StoredConfig>((current) => {
+        edit(current);
+    });
 }
 
 /** Windows shown by default for one provider, falling back to that provider's defaults. */

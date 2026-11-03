@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { ackAlerts, queryAlertRules, queryAlerts, testAlertRule } from "@app/ai/lib/usage/alerts-query";
 import { recordRoundAndAlert } from "@app/ai/lib/usage/alerts-tick";
+import { queryBudgets, removeBudget, setBudget } from "@app/ai/lib/usage/budgets-query";
+import { digestDays } from "@app/ai/lib/usage/digest-query";
 import { queryEvents } from "@app/ai/lib/usage/events-query";
 import { queryHealth, querySeries } from "@app/ai/lib/usage/limits-query";
 import { mergeAlertsConfig } from "@genesiscz/utils/ai/usage/alerts/config";
@@ -41,6 +43,8 @@ function dashboard(alerts: Parameters<typeof mergeAlertsConfig>[0] = {}): UsageD
         historyLayout: "stacked",
         notifications: { enabled: true, inTui: true, macos: true, sound: "Purr" },
         alerts: mergeAlertsConfig(alerts),
+        budgets: { global: {}, providers: {} },
+        providers: {},
         dataRetentionDays: 30,
         paceScope: "pooled",
     };
@@ -124,6 +128,7 @@ describe("tools ai usage alerts", () => {
             "limit-state-change",
             "health",
             "rate-limited",
+            "budget",
         ]);
         expect(rateLimited).toMatchObject({ enabled: true, channels: ["inbox"], offFor: ["openai-sub"] });
         expect(rateLimited?.settings).toEqual({ count: 3, windowMinutes: 10 });
@@ -365,5 +370,35 @@ describe("the daemon tick", () => {
 
         expect(second).toMatchObject({ runs: { extended: 1, started: 0 }, seeded: 0, fired: [] });
         expect(delivered.map((card) => card.windowKey)).toEqual(["seven_day"]);
+    });
+});
+
+describe("tools ai usage budgets and digest", () => {
+    test("a spend target is set and removed through the config store, and list shows it with today's spend", async () => {
+        await setBudget({ spendDaily: "30" });
+        const listed = await queryBudgets({}, { now: NOW, open: () => undefined, todaySpend: async () => [] });
+
+        expect(listed.schema).toBe("usage.budgets@1");
+        expect(listed.data.spend).toEqual([{ scope: "global", dailyUsd: 30, todayUsd: 0, ratio: 0 }]);
+
+        await removeBudget({ spend: true });
+        const after = await queryBudgets({}, { now: NOW, open: () => undefined, todaySpend: async () => [] });
+
+        expect(after.data.spend).toEqual([]);
+        await expect(setBudget({ kind: "daily" })).rejects.toThrow(UsageQueryError);
+    });
+
+    test("--day defaults to yesterday and --week to the Monday-to-Sunday week before this one", () => {
+        expect(digestDays({}, NOW, "UTC")).toEqual({ period: "day", days: ["2026-11-02"] });
+        expect(digestDays({ week: true }, NOW, "UTC").days).toEqual([
+            "2026-10-26",
+            "2026-10-27",
+            "2026-10-28",
+            "2026-10-29",
+            "2026-10-30",
+            "2026-10-31",
+            "2026-11-01",
+        ]);
+        expect(digestDays({ week: "2026-11-05" }, NOW, "UTC").days[0]).toBe("2026-11-02");
     });
 });
