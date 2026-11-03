@@ -171,6 +171,45 @@ describe("tools ai usage alerts", () => {
     });
 });
 
+describe("tools ai usage alerts test --account", () => {
+    test("an event-backed rule reports and sends only the selected account's findings", async () => {
+        const events = new UsageEventsStore(limits.connection());
+
+        for (const account of ["work", "shop"]) {
+            for (const minute of [8, 5, 2]) {
+                events.insert({
+                    provider: "openai-sub",
+                    accountName: account,
+                    source: "ai-proxy",
+                    kind: "rate-limited",
+                    at: new Date(NOW.getTime() - minute * 60_000),
+                });
+            }
+        }
+
+        const delivered: StoredAlert[] = [];
+        const inbox: AlertChannel = {
+            id: "inbox",
+            interrupts: false,
+            deliver: async (card) => void delivered.push(card),
+        };
+        const channels: AlertChannelTable = {
+            inbox,
+            macos: { id: "macos", interrupts: true, deliver: async () => {} },
+        };
+        const config = dashboard({ rules: { "rate-limited": { channels: ["inbox"] } } });
+
+        const envelope = await testAlertRule(
+            "rate-limited",
+            { account: ["work"], send: true },
+            { open: readOnly, now: NOW, config: async () => config, channels }
+        );
+
+        expect(envelope.data.candidates.map((candidate) => candidate.accountName)).toEqual(["work"]);
+        expect(delivered.map((card) => card.accountName)).toEqual(["work"]);
+    });
+});
+
 describe("tools ai usage events and limits health", () => {
     test("events answers usage.events@1 with counts per kind", async () => {
         const store = new UsageEventsStore(limits.connection());
