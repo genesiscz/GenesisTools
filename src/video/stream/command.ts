@@ -1,11 +1,12 @@
 import { basename, dirname, resolve } from "node:path";
-import { parseNonNegativeInt } from "@genesiscz/utils/cli";
+import { isInteractive, parseNonNegativeInt } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { findLogPlaylists, type HarLog, harStreamCandidates, readHar } from "@genesiscz/utils/hls/har";
 import { downloadFile, partFileFor } from "@genesiscz/utils/http/download-file";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { captureFromBrowser } from "./capture";
 import { downloadStream, partsDirFor, readState, type StreamProgress } from "./download";
@@ -30,6 +31,7 @@ interface DownloadFlags {
     chromeCdpPort?: string;
     chromeCdpWait: string;
     waitRecording?: boolean | string;
+    fromStream?: boolean;
 }
 
 /** How long `--wait-recording` without a value waits for a broadcast to end and its recording to appear. */
@@ -101,6 +103,10 @@ export function registerStreamCommands(program: Command): void {
             "--wait-recording [minutes]",
             `While the broadcast is live or its recording is not made yet, wait for the full recording, asking every minute (default ${DEFAULT_RECORDING_WAIT_MINUTES} min)`
         )
+        .option(
+            "--from-stream",
+            "Skip the platform's recording and download what the stream in the HAR still has (a CDN may have dropped the start)"
+        )
         .option("--json", "Print the result as JSON")
         .action(async (input: string | undefined, flags: DownloadFlags) => {
             await runDownload(input, flags);
@@ -136,7 +142,64 @@ function listHar(log: HarLog, json: boolean | undefined): void {
     out.println(lines.join("\n"));
 }
 
-type RecordingOutcome = { kind: "done" } | { kind: "live"; source: StreamSource } | { kind: "fallback" };
+type RecordingOutcome =
+    | { kind: "done" }
+    | { kind: "live"; source: StreamSource }
+    | { kind: "fallback" }
+    /** The user chose to wait for a recording that is not made yet. */
+    | { kind: "wait" };
+
+/**
+ * No recording yet: in a terminal, ask whether to wait for it or take the stream now (a platform does not always
+ * publish the whole broadcast); elsewhere, print both commands and exit 1.
+ */
+async function chooseWithoutRecording({
+    why,
+    waited,
+    rerun,
+    json,
+}: {
+    why: string;
+    waited?: number;
+    rerun: string;
+    json?: boolean;
+}): Promise<RecordingOutcome> {
+    if (isInteractive() && !json) {
+        const choice = await p.select({
+            message: `No recording yet: ${why}. What now?`,
+            options: [
+                {
+                    value: "wait",
+                    label: `Wait for the full recording (asks every minute, up to ${DEFAULT_RECORDING_WAIT_MINUTES} min)`,
+                },
+                {
+                    value: "stream",
+                    label: "Download the stream now (the CDN may have dropped the start, and an ended stream may be gone)",
+                },
+                { value: "stop", label: "Stop" },
+            ],
+        });
+
+        if (choice === "wait") {
+            return { kind: "wait" };
+        }
+
+        if (choice === "stream") {
+            return { kind: "fallback" };
+        }
+
+        return { kind: "done" };
+    }
+
+    out.log.info(
+        waited === undefined
+            ? `Wait for it: ${rerun} --wait-recording`
+            : `Waited ${waited} min. Wait longer: ${rerun} --wait-recording <minutes>`
+    );
+    out.log.info(`Or take what the stream still has: ${rerun} --from-stream`);
+    process.exitCode = 1;
+    return { kind: "done" };
+}
 
 /**
  * Asks the platform about a player event and downloads its finished recording. A live event hands its HLS stream back
@@ -182,13 +245,7 @@ async function runRecording({
             if (state.kind === "pending" || (state.kind === "live" && waitMinutes !== undefined)) {
                 const why = state.kind === "live" ? "it is still live" : state.reason;
                 spinner?.stop(`No recording of ${describeEvent(event)} yet: ${why}.`);
-                out.log.info(
-                    waitMinutes === undefined
-                        ? `Wait for it: ${rerun} --wait-recording`
-                        : `Waited ${waitMinutes} min. Wait longer: ${rerun} --wait-recording <minutes>`
-                );
-                process.exitCode = 1;
-                return { kind: "done" };
+                return await chooseWithoutRecording({ why, waited: waitMinutes, rerun, json: flags.json });
             }
 
             if (state.kind === "live") {
@@ -303,19 +360,20 @@ async function runDownload(argInput: string | undefined, flags: DownloadFlags): 
     let source: StreamSource | undefined;
     const events = log ? findProviderEvents(log) : [];
 
-    if (input && events.length > 0) {
+    if (input && events.length > 0 && !flags.fromStream) {
         if (events.length > 1) {
             out.log.warn(
                 `The HAR shows ${events.length} player events; using the newest, ${describeEvent(events.at(-1) ?? events[0])}.`
             );
         }
 
-        const outcome = await runRecording({
-            event: events.at(-1) ?? events[0],
-            flags,
-            waitMinutes,
-            rerun: toolCommand("video", "stream", "download", input),
-        });
+        const event = events.at(-1) ?? events[0];
+        const rerun = toolCommand("video", "stream", "download", input);
+        let outcome = await runRecording({ event, flags, waitMinutes, rerun });
+
+        if (outcome.kind === "wait") {
+            outcome = await runRecording({ event, flags, waitMinutes: DEFAULT_RECORDING_WAIT_MINUTES, rerun });
+        }
 
         if (outcome.kind === "done") {
             return;

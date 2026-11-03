@@ -204,9 +204,12 @@ tool asks the same API again with the player's own headers:
 - **Live**: it follows the stream as above, and prints the command that gets the full recording later.
 - **Ended, recording ready**: it downloads the platform's own file (a 108 min talk was one 3.75 GB 1080p MP4), into
   `<out>.part` first. A rerun resumes it with a `Range` request.
-- **Ended, recording not made yet**: it exits 1 with the `--wait-recording` command. `--wait-recording [minutes]` asks
-  every minute until the recording is there.
+- **Ended, recording not made yet**: in a terminal it asks whether to wait for the recording or to download the stream
+  now (a platform does not always publish the whole broadcast). Without a terminal it exits 1 and prints both commands.
+  `--wait-recording [minutes]` asks every minute until the recording is there.
 - **No recording** (turned off, deleted): it falls back to the HLS playlists in the HAR.
+- `--from-stream` skips the recording and takes the stream in the HAR. A CDN keeps only part of a live stream, and an
+  ended stream may be gone soon after.
 
 The player's session in a HAR lasts about a month. After that the API answers 401, and a fresh HAR is needed.
 
