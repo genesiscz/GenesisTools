@@ -84,6 +84,12 @@ class SegmentHttpError extends Error {
     }
 }
 
+/** Origin and path: a refreshed signed query is the same stream, another host is not. */
+function streamIdentity(url: string): string {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+}
+
 function isGoneStatus(status: number): boolean {
     return status === 404 || status === 410;
 }
@@ -145,6 +151,9 @@ async function segmentsOnDisk(partsDir: string): Promise<Map<number, string>> {
  */
 export class SegmentQueue {
     private readonly wanted = new Map<number, string>();
+    /** The wanted sequences in ascending order from `head`; workers take from either end, so no take scans the queue. */
+    private order: number[] = [];
+    private head = 0;
     private readonly inFlight = new Set<number>();
     private wakers: (() => void)[] = [];
     private closed = false;
@@ -156,6 +165,10 @@ export class SegmentQueue {
     add(sequence: number, uri: string): void {
         if (this.closed || this.inFlight.has(sequence)) {
             return;
+        }
+
+        if (!this.wanted.has(sequence)) {
+            this.insertOrdered(sequence);
         }
 
         this.wanted.set(sequence, uri);
@@ -174,15 +187,8 @@ export class SegmentQueue {
     async next(newestFirst: boolean): Promise<{ sequence: number; uri: string } | null> {
         while (true) {
             if (this.wanted.size > 0) {
-                let pick: number | null = null;
-
-                for (const sequence of this.wanted.keys()) {
-                    if (pick === null || (newestFirst ? sequence > pick : sequence < pick)) {
-                        pick = sequence;
-                    }
-                }
-
-                const sequence = pick ?? 0;
+                const sequence = (newestFirst ? this.order.pop() : this.order[this.head++]) ?? 0;
+                this.compact();
                 const uri = this.wanted.get(sequence) ?? "";
                 this.wanted.delete(sequence);
                 this.inFlight.add(sequence);
@@ -194,6 +200,32 @@ export class SegmentQueue {
             }
 
             await new Promise<void>((resolve) => this.wakers.push(resolve));
+        }
+    }
+
+    /** Binary search for the slot, then one splice: a backfill of 30,000 segments is 30,000 short searches. */
+    private insertOrdered(sequence: number): void {
+        let low = this.head;
+        let high = this.order.length;
+
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+
+            if (this.order[middle] < sequence) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+
+        this.order.splice(low, 0, sequence);
+    }
+
+    /** Drops the taken front once it is most of the array, so the array does not grow with every take. */
+    private compact(): void {
+        if (this.head > 1024 && this.head * 2 > this.order.length) {
+            this.order = this.order.slice(this.head);
+            this.head = 0;
         }
     }
 
@@ -425,6 +457,8 @@ export interface StreamDownloadOptions {
     idleTimeoutMs: number;
     /** The first wait before a failed segment is asked again; it doubles each time. */
     retryDelayMs?: number;
+    /** How often a live playlist is read again; default the target duration, at least 1 s. */
+    pollIntervalMs?: number;
     backfill: boolean;
     stitchOnly: boolean;
     signal: AbortSignal;
@@ -517,7 +551,7 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
         logger.warn({ status: error.status }, "Playlist is gone; filling gaps from the saved template, then stitching");
     }
 
-    if (saved && resolved && new URL(saved.mediaUrl).pathname !== new URL(resolved.mediaUrl).pathname) {
+    if (saved && resolved && streamIdentity(saved.mediaUrl) !== streamIdentity(resolved.mediaUrl)) {
         throw new Error(
             `${partsDir} holds another stream (${safeUrl(saved.mediaUrl)}, now ${safeUrl(resolved.mediaUrl)}). Pass another --out, or the same --quality as before.`
         );
@@ -666,7 +700,7 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
         ended = await followLivePlaylist({
             mediaUrl: state.mediaUrl,
             headers: headersOf(state.mediaUrl),
-            targetDurationSec: playlist.targetDurationSec,
+            intervalMs: options.pollIntervalMs ?? Math.max(1000, playlist.targetDurationSec * 1000),
             idleTimeoutMs: options.idleTimeoutMs,
             template,
             signal,
@@ -766,7 +800,7 @@ export async function downloadStream(options: StreamDownloadOptions): Promise<St
 async function followLivePlaylist({
     mediaUrl,
     headers,
-    targetDurationSec,
+    intervalMs,
     idleTimeoutMs,
     template,
     signal,
@@ -776,7 +810,7 @@ async function followLivePlaylist({
 }: {
     mediaUrl: string;
     headers: Record<string, string>;
-    targetDurationSec: number;
+    intervalMs: number;
     idleTimeoutMs: number;
     template: SegmentUriTemplate | null;
     signal: AbortSignal;
@@ -784,7 +818,6 @@ async function followLivePlaylist({
     newest: () => number;
     onPoll: (waiting: boolean) => void;
 }): Promise<boolean> {
-    const intervalMs = Math.max(1000, targetDurationSec * 1000);
     let lastNewAt = Date.now();
     let goneAnswers = 0;
 

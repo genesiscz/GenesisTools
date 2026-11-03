@@ -147,13 +147,14 @@ async function downloadRecording({
     url,
     headers,
     flags,
-    rerun,
+    input,
 }: {
     event: ProviderEvent;
     url: string;
     headers: Record<string, string>;
     flags: DownloadFlags;
-    rerun: string;
+    /** The HAR, for the printed resume command. */
+    input: string;
 }): Promise<void> {
     const output = resolve(flags.out ?? recordingOutputName(event));
     const spinner = flags.json ? null : out.spinner();
@@ -184,7 +185,7 @@ async function downloadRecording({
 
             if (!result.complete) {
                 spinner?.stop(`Stopped. ${formatBytes(result.bytes)} are kept in ${partFileFor(output)}`);
-                out.log.info(`Resume: ${rerun} --out ${output}`);
+                out.log.info(`Resume: ${toolCommand("video", "stream", "download", input, "--out", output)}`);
                 process.exitCode = 130;
                 return;
             }
@@ -214,13 +215,14 @@ async function waitForRecording({
     event,
     flags,
     waitMinutes,
-    rerun,
+    input,
 }: {
     event: ProviderEvent;
     flags: DownloadFlags;
     waitMinutes: number;
-    rerun: string;
+    input: string;
 }): Promise<void> {
+    const rerun = toolCommand("video", "stream", "download", input);
     const spinner = flags.json ? null : out.spinner();
     spinner?.start(`Waiting for the recording of ${describeEvent(event)}`);
     const state = await withInterrupt(
@@ -251,7 +253,7 @@ async function waitForRecording({
     }
 
     spinner?.stop(`The recording of ${describeEvent(event)} is ready.`);
-    await downloadRecording({ event, url: state.url, headers: state.headers, flags, rerun });
+    await downloadRecording({ event, url: state.url, headers: state.headers, flags, input });
 }
 
 /**
@@ -531,7 +533,7 @@ async function runDownload(argInput: string | undefined, flags: DownloadFlags): 
             return;
         }
 
-        await waitForRecording({ event, flags, waitMinutes, rerun });
+        await waitForRecording({ event, flags, waitMinutes, input: harInput });
         return;
     }
 
@@ -542,7 +544,13 @@ async function runDownload(argInput: string | undefined, flags: DownloadFlags): 
     }
 
     if (choice.kind === "recording") {
-        await downloadRecording({ event: choice.event, url: choice.url, headers: choice.headers, flags, rerun });
+        await downloadRecording({
+            event: choice.event,
+            url: choice.url,
+            headers: choice.headers,
+            flags,
+            input: harInput,
+        });
         return;
     }
 
@@ -551,7 +559,7 @@ async function runDownload(argInput: string | undefined, flags: DownloadFlags): 
             event: choice.event,
             flags,
             waitMinutes: waitMinutes ?? DEFAULT_RECORDING_WAIT_MINUTES,
-            rerun,
+            input: harInput,
         });
         return;
     }

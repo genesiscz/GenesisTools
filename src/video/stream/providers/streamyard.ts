@@ -7,8 +7,12 @@ import type { EventState, ProviderEvent, StreamProvider } from "./types";
 /** The webinar player's public API: `GET https://oa-api.streamyard.com/api/public/webinars/<id>`. */
 const WEBINAR_API = /^https:\/\/[a-z0-9-]+\.streamyard\.com\/api\/public\/webinars\/([A-Za-z0-9_-]+)$/;
 
-/** Request headers never replayed: HTTP/2 pseudo headers and ones fetch sets itself. */
-const DROPPED_HEADER = /^(:|accept-encoding$|content-length$|host$|connection$)/i;
+/**
+ * Request headers never replayed: HTTP/2 pseudo headers, ones fetch sets itself, and conditional or range headers, which
+ * would turn the answer into a 304 or a part of it.
+ */
+const DROPPED_HEADER =
+    /^(:|accept-encoding$|content-length$|host$|connection$|if-none-match$|if-modified-since$|if-match$|if-unmodified-since$|if-range$|range$)/i;
 
 const CHECK_TIMEOUT_MS = 20_000;
 

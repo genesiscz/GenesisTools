@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { capturePageTraffic, chooseCdpPort } from "@app/chrome-devtools/lib/page-capture";
 import { type HarLog, parseHar, readHar } from "@genesiscz/utils/hls/har";
@@ -6,6 +6,9 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { findProviderEvents, type ProviderEvent, providerWantsBody } from "./providers";
+
+/** `2026-11-03T21-03-22`, the stamp before every capture file name. */
+const CAPTURE_STAMP_LENGTH = 19;
 
 function isPlaylistResponse(url: string, mimeType: string): boolean {
     return /\.m3u8(\?|$)/i.test(url) || mimeType.toLowerCase().includes("mpegurl");
@@ -59,8 +62,9 @@ export async function captureFromBrowser({
         .slice(0, 60);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const harPath = join(dir, `${stamp}-${slug}.har`);
-    await Bun.write(harPath, SafeJSON.stringify(result.har, { strict: true }));
-    chmodSync(harPath, 0o600);
+    // Owner-only from the first byte: the HAR holds the browser's cookies and tokens.
+    writeFileSync(`${harPath}.tmp`, SafeJSON.stringify(result.har, { strict: true }), { mode: 0o600, flag: "wx" });
+    renameSync(`${harPath}.tmp`, harPath);
     logger.debug(
         { page: pageUrl, port: choice.port, harPath, entries: result.har.log.entries.length, matches: result.matches },
         "Browser capture saved"
@@ -89,7 +93,7 @@ async function earlierCaptureEvents({
 }): Promise<ProviderEvent[]> {
     const byKey = new Map<string, ProviderEvent>();
     const files = readdirSync(dir)
-        .filter((name) => name.endsWith(`-${slug}.har`) && join(dir, name) !== except)
+        .filter((name) => name.slice(CAPTURE_STAMP_LENGTH + 1) === `${slug}.har` && join(dir, name) !== except)
         .sort();
 
     for (const name of files) {

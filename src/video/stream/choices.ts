@@ -142,10 +142,21 @@ export async function gatherChoices({
     const events = [...earlierEvents.filter((event) => !ownKeys.has(`${event.provider}:${event.id}`)), ...own];
     const choices: SourceChoice[] = [];
     const seenPlaylists = new Set<string>();
+    const usedIds = new Set<string>();
+    const uniqueId = (base: string) => {
+        let id = base;
+
+        for (let n = 2; usedIds.has(id); n++) {
+            id = `${base}-${n}`;
+        }
+
+        usedIds.add(id);
+        return id;
+    };
     const streamChoice = async (source: StreamSource, origin: string) => {
         const facts = await inspectStream(source, signal);
         const choice = { kind: "stream" as const, source, ...facts };
-        choices.push({ ...choice, id: streamId(source.playlistUrl), label: streamLabel(choice, origin) });
+        choices.push({ ...choice, id: uniqueId(streamId(source.playlistUrl)), label: streamLabel(choice, origin) });
     };
 
     for (const event of events) {
@@ -163,7 +174,7 @@ export async function gatherChoices({
         if (state.kind === "recorded") {
             choices.push({
                 kind: "recording",
-                id: `recording-${event.id}`,
+                id: uniqueId(`recording-${event.id}`),
                 label: `${name}: the platform's original recording, one file`,
                 event,
                 url: state.url,
@@ -178,7 +189,7 @@ export async function gatherChoices({
         } else if (state.kind === "pending") {
             choices.push({
                 kind: "pending",
-                id: `recording-${event.id}`,
+                id: uniqueId(`recording-${event.id}`),
                 label: `${name}: no recording yet (${state.reason}); wait for it`,
                 event,
                 reason: state.reason,

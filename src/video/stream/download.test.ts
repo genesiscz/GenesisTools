@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { downloadStream } from "./download";
+import { downloadStream, SegmentQueue } from "./download";
 import { headersFor } from "./source";
 
 /** A stream of five 1-second segments; each segment's body is its own number repeated, so the output is checkable. */
@@ -102,6 +102,7 @@ function run({ output, signal, withSource = true }: { output: string; signal?: A
         concurrency: 3,
         idleTimeoutMs: 10_000,
         retryDelayMs: 1,
+        pollIntervalMs: 20,
         backfill: false,
         stitchOnly: false,
         signal: signal ?? new AbortController().signal,
@@ -131,7 +132,7 @@ describe("downloadStream", () => {
 
     it("never downloads a segment twice at once while a live poll lists it again", async () => {
         // The first poll lists 3 slow segments; the next poll, while they are still downloading, lists all 5 and ends.
-        reset({ liveFirst: 3, slowMs: 1500 });
+        reset({ liveFirst: 3, slowMs: 150 });
         const output = join(mkdtempSync(join(tmpdir(), "stream-dl-")), "live.ts");
 
         const result = await run({ output });
@@ -178,6 +179,29 @@ describe("downloadStream", () => {
 
         expect(resumed.aborted).toBe(false);
         expect(Buffer.compare(readFileSync(output), expected())).toBe(0);
+    });
+});
+
+describe("SegmentQueue", () => {
+    it("hands out the oldest or the newest, never a held one twice, and takes a re-listed one after finish", async () => {
+        const queue = new SegmentQueue();
+
+        for (const sequence of [5, 1, 9, 3, 7]) {
+            queue.add(sequence, `seg${sequence}`);
+        }
+
+        expect((await queue.next(false))?.sequence).toBe(1);
+        expect((await queue.next(true))?.sequence).toBe(9);
+        queue.add(1, "seg1");
+        expect(queue.size).toBe(3);
+        queue.finish(1);
+        queue.add(1, "seg1");
+        expect((await queue.next(false))?.sequence).toBe(1);
+        expect((await queue.next(false))?.sequence).toBe(3);
+        queue.close();
+        expect((await queue.next(true))?.sequence).toBe(7);
+        expect((await queue.next(true))?.sequence).toBe(5);
+        expect(await queue.next(true)).toBeNull();
     });
 });
 
