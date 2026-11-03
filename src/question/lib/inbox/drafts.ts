@@ -170,6 +170,19 @@ export interface SendDraftsInput {
     promptReceipt?: PromptReceipt;
     /** Release this batch after the session rejected submission; never promote newer drafts. */
     releasePrompt?: boolean;
+    /**
+     * The decisions the caller shows, each with the revision it shows (the phone queue). Only their drafts are promoted,
+     * and one the agent re-posted since refuses the send. A draft staged on another surface for a decision the caller
+     * does not show (one addressed to an agent) stays staged. Absent: every draft of the session, as the notch, the hub
+     * and the CLI send.
+     */
+    drafts?: readonly ShownDraft[];
+}
+
+/** A decision a caller shows next to its Send, by number, and the revision it showed. */
+export interface ShownDraft {
+    number: number;
+    expectedRevision?: number;
 }
 
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
@@ -203,7 +216,8 @@ export async function sendDrafts(
     }
 
     const sessionRows = readDecisions(deps.file).filter((row) => row.sessionId === input.session);
-    const drafted = sessionRows.filter(isDrafted);
+    const shown = input.drafts ? new Map(input.drafts.map((entry) => [entry.number, entry])) : undefined;
+    const drafted = sessionRows.filter((row) => isDrafted(row) && (!shown || shown.has(row.number)));
     // The rows name the provider when the caller did not: the wait and the send below must look up one harness.
     const provider = providerOf(input.provider, sessionRows) ?? undefined;
 
@@ -222,7 +236,17 @@ export async function sendDrafts(
         await updateDecisions(
             deps.file,
             deps.events,
-            { updates: drafted.map((row) => ({ id: row.id, state: "answered" as const, ...promotedDraft(row) })) },
+            {
+                updates: drafted.map((row) => {
+                    const expectedRevision = shown?.get(row.number)?.expectedRevision;
+                    return {
+                        id: row.id,
+                        state: "answered" as const,
+                        ...promotedDraft(row),
+                        ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+                    };
+                }),
+            },
             undefined,
             { actor: "user" }
         );

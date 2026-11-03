@@ -199,14 +199,25 @@ export function qaDecisionRoutes(deps: QaDecisionDeps = {}): RouteDef[] {
             error: refusal,
             run: (input) => dismissDecision(input, files()),
         }),
-        // Promotes every drafted answer of a session and delivers them as one message.
+        // Promotes the drafted answers of a session and delivers them as one message: every draft, or with `drafts`
+        // only those of the decisions the caller shows (the phone queue), each at the revision it showed.
         bindEndpoint(ENDPOINTS.qaDecisionsSendDrafts, {
             input: z
-                .object({ session, provider: optionalText, dryRun: z.unknown().optional() })
+                .object({
+                    session,
+                    provider: optionalText,
+                    dryRun: z.unknown().optional(),
+                    drafts: z.array(z.object({ number: z.number().int(), expectedRevision: revision })).optional(),
+                })
                 .transform((body) =>
-                    defined({ session: body.session, provider: body.provider, dryRun: body.dryRun === true })
+                    defined({
+                        session: body.session,
+                        provider: body.provider,
+                        dryRun: body.dryRun === true,
+                        drafts: body.drafts?.map((entry) => defined(entry)),
+                    })
                 ),
-            invalid: "session required",
+            invalid: "expected { session, provider?, dryRun?, drafts?: [{ number, expectedRevision? }] }",
             error: refusal,
             run: (input) =>
                 sendDrafts(input, {

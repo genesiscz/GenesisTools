@@ -9,6 +9,7 @@ import {
     flushThenSend,
     idempotencyKey,
     type RecentReceipt,
+    shownDrafts,
     singleFlight,
     stagedOf,
 } from "@/features/answer-queue/units";
@@ -17,8 +18,8 @@ import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
 
 /**
- * One agent session of the queue: its title and agent, the notch count, every waiting item, and one Send for every
- * staged pick of the session (one message, as the notch sends it). An agent's own dialog (a plan approval, a
+ * One agent session of the queue: its title and agent, the notch count, every waiting item, and one Send for the
+ * staged picks of the decisions it shows (one message, as the notch sends it). An agent's own dialog (a plan approval, a
  * permission prompt) is listed so the count adds up, and is answered on the Mac.
  */
 export function QueueSessionCard({
@@ -54,6 +55,7 @@ export function QueueSessionCard({
             const action = {
                 session: session.sessionId ?? "",
                 ...(session.provider ? { provider: session.provider } : {}),
+                drafts: shownDrafts(session),
                 key: idempotencyKey(),
             };
 

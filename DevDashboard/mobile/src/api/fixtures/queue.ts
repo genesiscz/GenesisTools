@@ -178,11 +178,25 @@ export function fixtureDraft(input: {
     };
 }
 
-export function fixtureSendDrafts(input: { session: string }): DecisionSendDto {
+export function fixtureSendDrafts(input: {
+    session: string;
+    drafts?: { number: number; expectedRevision?: number }[];
+}): DecisionSendDto {
     const session = queue.find((entry) => entry.sessionId === input.session);
+    // As on the Mac (`sendDrafts`): with `drafts`, only those decisions' drafts, each at the revision the caller showed.
+    const shown = input.drafts ? new Map(input.drafts.map((entry) => [entry.number, entry])) : undefined;
     const staged = (session?.items ?? []).filter(
-        (item): item is WaitingDecisionDto => item.kind === "decision" && item.status === "drafted"
+        (item): item is WaitingDecisionDto =>
+            item.kind === "decision" && item.status === "drafted" && (!shown || shown.has(item.number))
     );
+
+    for (const item of staged) {
+        const expected = shown?.get(item.number)?.expectedRevision;
+
+        if (expected !== undefined && expected !== item.revision) {
+            throw new Error(`DECISION ${item.number} changed: the agent posted a new text`);
+        }
+    }
 
     if (!session || staged.length === 0) {
         throw new Error("nothing to send");
