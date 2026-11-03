@@ -72,10 +72,13 @@ describe("hub capabilities", () => {
             limit: 80,
             offset: undefined,
             provider: undefined,
+            // The gateway's newest-turns page reads only the end of a large transcript without a turn index.
+            tail: true,
         });
+        // A page at an offset keeps session-wide positions, so it is not a tail read.
         expect(
             HUB_CAPABILITIES.transcript.parse({ query: "s-one", limit: "5", offset: "10", provider: "codex" })
-        ).toEqual({ query: "s-one", limit: 5, offset: 10, provider: "codex" });
+        ).toEqual({ query: "s-one", limit: 5, offset: 10, provider: "codex", tail: false });
         expect(refusal(() => HUB_CAPABILITIES.transcript.parse({}))?.code).toBe("bad-input");
         expect(refusal(() => HUB_CAPABILITIES.transcript.parse({ query: "s", provider: "nope" }))?.code).toBe(
             "bad-input"
