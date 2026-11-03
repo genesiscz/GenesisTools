@@ -119,6 +119,33 @@ export function singleFlight(): (run: () => Promise<unknown>) => Promise<boolean
     };
 }
 
+/**
+ * The card's latest stage write. `settled()` waits for it and rejects when it failed: a refused pick must stop the
+ * session's Send, or the pick staged before it would go out as if nothing happened. A later successful stage clears it.
+ */
+export function latestStage(): { track: (write: Promise<unknown>) => void; settled: () => Promise<void> } {
+    let latest: Promise<unknown> | null = null;
+
+    return {
+        track(write) {
+            latest = write;
+            write.then(
+                () => {
+                    if (latest === write) {
+                        latest = null;
+                    }
+                },
+                () => undefined
+            );
+        },
+        async settled() {
+            if (latest) {
+                await latest;
+            }
+        },
+    };
+}
+
 export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     delivered: "Delivered",
     queued: "Queued for the next turn",
