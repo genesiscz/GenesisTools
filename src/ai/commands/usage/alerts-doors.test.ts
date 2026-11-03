@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
+import { withSessionCost } from "@app/ai/lib/sessions/session-cost";
 import { ackAlerts, queryAlertRules, queryAlerts, testAlertRule } from "@app/ai/lib/usage/alerts-query";
 import { recordRoundAndAlert } from "@app/ai/lib/usage/alerts-tick";
 import { queryBudgets, removeBudget, setBudget } from "@app/ai/lib/usage/budgets-query";
@@ -16,6 +18,7 @@ import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import type { UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { removeDbFile } from "@genesiscz/utils/fs";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { tmpdir } from "@genesiscz/utils/paths";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -400,5 +403,47 @@ describe("tools ai usage budgets and digest", () => {
             "2026-11-01",
         ]);
         expect(digestDays({ week: "2026-11-05" }, NOW, "UTC").days[0]).toBe("2026-11-02");
+    });
+});
+
+describe("tools ai usage sessions --cost", () => {
+    test("adds only spentUsd, usdPerHour and coldRebuildUsd to a row, every other field kept as it was", async () => {
+        const file = join(tmpdir(), `gt-session-cost-${process.pid}.jsonl`);
+        const usage = {
+            input_tokens: 0,
+            output_tokens: 1_000_000,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        };
+        await Bun.write(
+            file,
+            `${SafeJSON.stringify({ type: "assistant", timestamp: "2026-11-03T09:30:00Z", message: { id: "m1", model: "claude-sonnet-4-5", usage } })}\n`
+        );
+        const row: AgentSessionRow = {
+            provider: "claude",
+            sessionId: "s1",
+            title: null,
+            cwd: "/repo",
+            cwdShort: "~/repo",
+            project: null,
+            mtime: NOW.getTime(),
+            model: "claude-sonnet-4-5",
+            account: null,
+            filePath: file,
+            contextTokens: 100_000,
+            cacheLifetimeSec: 3600,
+        };
+        const [costed] = await withSessionCost([row], NOW.getTime());
+
+        expect(Object.keys(costed ?? {}).filter((key) => !(key in row))).toEqual([
+            "spentUsd",
+            "usdPerHour",
+            "coldRebuildUsd",
+        ]);
+        expect(costed).toMatchObject(row);
+        expect(costed?.spentUsd).toBeGreaterThan(0);
+        expect(costed?.usdPerHour).toBe(costed?.spentUsd ?? null);
+        expect(costed?.coldRebuildUsd).toBeGreaterThan(0);
+        removeDbFile(file);
     });
 });
