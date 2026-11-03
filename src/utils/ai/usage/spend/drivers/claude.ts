@@ -1,3 +1,4 @@
+import { basename, dirname } from "node:path";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { CLAUDE_ALL_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
@@ -5,6 +6,7 @@ import {
     isNativeTranscript,
     nativeSessionRoots,
     nativeTranscriptMaxDepth,
+    transcriptStem,
 } from "@genesiscz/utils/providers/session-paths";
 import { parseTranscriptLine } from "../parse";
 import { spendScopeRoots } from "./account-scope";
@@ -105,6 +107,24 @@ export const claudeDriver: MonitorDriver = {
 
     // Claude's rows carry their session id and project, so the row parser reads them (`parseClaudeLine`).
     spendLayout: { kind: "rows" },
+
+    // `<project>/<session>.jsonl`, or a sub-agent's `<project>/<lead>/subagents/[workflows/<wf>/]agent-<id>.jsonl`.
+    transcriptOwner(file) {
+        const parts = file.split(/[/\\]/);
+        const sub = parts.lastIndexOf("subagents");
+        const stem = transcriptStem(basename(file));
+
+        if (sub >= 2) {
+            return {
+                sessionId: stem.replace(/^agent-/, ""),
+                leadSessionId: parts[sub - 1],
+                subagent: true,
+                project: parts[sub - 2],
+            };
+        }
+
+        return { sessionId: stem, leadSessionId: stem, subagent: false, project: basename(dirname(file)) };
+    },
 
     // ai-spend keys Claude usage by the session id itself.
     spendSessionId: (sessionId) => sessionId,

@@ -14,6 +14,7 @@ export type {
     DriverRoot,
     DriverUsageEvent,
     MonitorDriver,
+    TranscriptOwner,
 } from "./types";
 export { AGENT_IDS, agentPluginId } from "./types";
 

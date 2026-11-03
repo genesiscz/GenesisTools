@@ -317,7 +317,7 @@ export function addSelectorOptions(command: Command): Command {
  * and commander hands those to the PARENT even when typed after `limits`, so every action reads
  * `optsWithGlobals()`.
  */
-export function registerAiUsageLimitsCommand(usage: Command): void {
+export function registerAiUsageLimitsCommand(usage: Command): Command {
     const limits = addReservedHarnessOption(
         addSelectorOptions(
             usage.command("limits").description("Every account's limit windows now; --json prints usage.limits@1")
@@ -391,6 +391,8 @@ export function registerAiUsageLimitsCommand(usage: Command): void {
                 runForecastCommand(forecastOptions(command.optsWithGlobals<ForecastFlags>()))
             );
         });
+
+    return limits;
 }
 
 /** The parent's variadic `--provider`/`--account` take these flags first; the alias accepts one value each, as hub forecast does. */

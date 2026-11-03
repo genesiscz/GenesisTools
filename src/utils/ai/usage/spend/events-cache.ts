@@ -71,6 +71,11 @@ export interface CompactEvent {
     sidechain?: boolean;
     /** Stamped fresh on every read from the current root map, never from disk. */
     accountId?: string;
+    /**
+     * The transcript the event came from, set only when the caller asked `withFile`; never stored. A Claude or Grok
+     * file names its session, so attribution reads the session from here with no cache version bump.
+     */
+    file?: string;
     model?: string;
     source: AgentId;
     /**
@@ -110,6 +115,8 @@ export interface CollectSeriesEventsOptions {
     /** Driver subset; tests supply fixture drivers that bind roots to accounts. */
     drivers?: readonly MonitorDriver[];
     now?: Date;
+    /** Stamp each collected event with its transcript path (`file`). */
+    withFile?: boolean;
 }
 
 function cachePath(storage: Storage): string {
@@ -280,7 +287,7 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
                     continue;
                 }
 
-                const attributed = { ...event, accountId };
+                const attributed = options.withFile ? { ...event, accountId, file } : { ...event, accountId };
 
                 const key = `${event.source}:${event.id}`;
                 const existing = byId.get(key);

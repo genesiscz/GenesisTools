@@ -135,6 +135,21 @@ export const grokDriver: MonitorDriver = {
 
     // ai-spend keys Grok usage by the session id itself (the session folder's name).
     spendSessionId: (sessionId) => sessionId,
+
+    // `<encoded cwd>/<session id>/updates.jsonl`; the project label is the cwd's last folder.
+    transcriptOwner(file) {
+        const sessionId = basename(dirname(file));
+        const encoded = basename(dirname(dirname(file)));
+        let cwd = encoded;
+
+        try {
+            cwd = decodeURIComponent(encoded);
+        } catch (err) {
+            logger.debug({ err, encoded }, "ai-spend grok: session folder parent is not URI-encoded");
+        }
+
+        return { sessionId, leadSessionId: sessionId, subagent: false, project: basename(cwd) };
+    },
 };
 
 /** This harness's spend part, the export `drivers/index.ts` loads by the harness id. */
