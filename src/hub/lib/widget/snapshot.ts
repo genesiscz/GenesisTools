@@ -21,7 +21,7 @@ import {
     queryEntriesSnapshot,
     readQuestionSnapshot,
 } from "@app/question/lib/read-model";
-import { INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "@app/question/lib/waiting/set";
+import { askedAtOf, INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "@app/question/lib/waiting/set";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
@@ -78,14 +78,6 @@ function stagedOf(row: { state: string; draftOption?: string; draft?: string }):
         ...(row.draftOption ? { draftOption: row.draftOption } : {}),
         ...(row.draft?.trim() ? { draft: row.draft } : {}),
     };
-}
-
-/**
- * When a decision was asked: its last post (a supersede revises it), not its last update. A saved draft or a staged
- * pick updates the row, and the widget treats a newer item time as a new arrival that chimes and flashes.
- */
-function askedTimeOf(row: { revisedTs?: string; createdTs?: string; updatedTs: string }): number {
-    return timeOf(row.revisedTs ?? row.createdTs ?? row.updatedTs);
 }
 
 export interface WidgetSession {
@@ -1170,10 +1162,10 @@ export async function widgetSnapshot({
                 decision.project ?? decision.cwd ?? "",
                 // A session outside the roster has no known activity: its decision's ask stands for it, as in the
                 // hub. Its last update would let a stage on an old decision count the session as active again.
-                askedTimeOf(decision)
+                askedAtOf(decision)
             );
         if (kindOf(decision) === "decision" && waitsOnHuman(decision)) {
-            newestAsk.set(session.key, Math.max(newestAsk.get(session.key) ?? 0, askedTimeOf(decision)));
+            newestAsk.set(session.key, Math.max(newestAsk.get(session.key) ?? 0, askedAtOf(decision)));
             waitingIn.add(session);
         }
     }
@@ -1344,7 +1336,7 @@ export async function widgetSnapshot({
             sourceId: row.id,
             kind: "decision",
             key: session.key,
-            at: askedTimeOf(row),
+            at: askedAtOf(row),
             needsAnswer: true,
             number: row.number,
             ...decisionTitle(row),
@@ -1673,7 +1665,7 @@ export async function widgetSnapshot({
             },
             sessionKey: session.key,
             sourceId: row.id,
-            at: askedTimeOf(row),
+            at: askedAtOf(row),
             title: decisionTitle,
             body: decisionBody.trim() ? decisionBody : "",
             status: row.delivery?.uncertain ? "delivery unknown" : row.state,
