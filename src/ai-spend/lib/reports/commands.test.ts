@@ -10,6 +10,7 @@ import { DEFAULT_PRICING } from "@genesiscz/utils/ai/usage/spend/pricing";
 import { pricedEventCost } from "@genesiscz/utils/ai/usage/spend/reports/load";
 import * as realLoadParallel from "@genesiscz/utils/ai/usage/spend/reports/load-parallel";
 import type { SpendEvent } from "@genesiscz/utils/ai/usage/spend/reports/types";
+import * as realWaste from "@genesiscz/utils/ai/usage/spend/waste";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
@@ -66,6 +67,26 @@ mock.module("@genesiscz/utils/ai/usage/spend/accounts-context", () => ({
 mock.module("@genesiscz/utils/ai/usage/spend/config", () => ({
     ...realConfig,
     loadPricing: async () => DEFAULT_PRICING,
+}));
+
+type WasteInput = Parameters<typeof realWaste.scanSpendWaste>[0];
+// Taken before the mock: the namespace binding turns into the mock once it is installed.
+const realScanSpendWaste = realWaste.scanSpendWaste;
+/** When set, `waste` answers this ledger, cut to its `--top`, instead of scanning transcripts. */
+let wasteFixture: realWaste.SessionWasteItem[] | undefined;
+
+mock.module("@genesiscz/utils/ai/usage/spend/waste", () => ({
+    ...realWaste,
+    scanSpendWaste: async (input: WasteInput) =>
+        wasteFixture === undefined
+            ? realScanSpendWaste(input)
+            : {
+                  by: input.by,
+                  groups: [],
+                  total: { usd: 0, tokens: 0, items: wasteFixture.length },
+                  top: wasteFixture.slice(0, input.top),
+                  sessions: { scanned: 1, unsupported: 0 },
+              },
 }));
 
 mock.module("@genesiscz/utils/agent-sessions/cached-title", () => ({
@@ -873,6 +894,40 @@ describe("--harness, the design name of --sources and --backend", () => {
 
         expect(process.exitCode ?? 0).toBe(0);
         expect(attributedCalls.map((call) => call.sources)).toEqual([["claude"], ["codex"], undefined]);
+    });
+
+    test("waste lists as many leaks as --top asks for", async () => {
+        wasteFixture = Array.from({ length: 8 }, (_, index) => ({
+            kind: "cache-rebuild-idle" as const,
+            t: "2026-11-01T10:00:00.000Z",
+            model: "claude-sonnet-4-5",
+            tokens: 1000,
+            usd: 8 - index,
+            evidence: `leak-${index}`,
+            agent: "claude" as const,
+            sessionId: `session-${index}-0000`,
+            project: "-repo",
+            provider: "anthropic-sub",
+            account: "work",
+            next: "tools ai sessions report",
+        }));
+
+        try {
+            await spend("waste", "--top", "7");
+        } finally {
+            wasteFixture = undefined;
+        }
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(stdout.match(/leak-\d/g)).toEqual([
+            "leak-0",
+            "leak-1",
+            "leak-2",
+            "leak-3",
+            "leak-4",
+            "leak-5",
+            "leak-6",
+        ]);
     });
 
     test("pivot keeps its own 7-day window under the root's 30-day --since default, and takes --from", async () => {
