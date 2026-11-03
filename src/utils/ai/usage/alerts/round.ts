@@ -18,7 +18,7 @@ export function alertEventLookbackMs(config: UsageAlertsConfig): number {
     return Math.max(EVENT_LOOKBACK_MS, config.rules["rate-limited"].windowMinutes * 60_000);
 }
 /** With no earlier round, availability changes of the last five minutes count as this round's. */
-const FIRST_ROUND_SINCE_MS = 5 * 60_000;
+export const FIRST_ROUND_SINCE_MS = 5 * 60_000;
 
 interface AvailabilitySqlRow {
     provider: string;

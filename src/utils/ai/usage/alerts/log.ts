@@ -332,6 +332,19 @@ export class UsageAlertsStore {
         }
     }
 
+    /**
+     * The alert pass's starting point when no pass has finished yet: sets the cursor to `at` only when it has none, and
+     * returns the cursor as it now stands. The daemon calls it before it records the round's poll run, so a first pass
+     * that fails leaves its events to the next one instead of starting after its own poll.
+     */
+    seedEvaluated(at: Date): string {
+        this.db
+            .prepare("INSERT INTO usage_alert_cursor (name, evaluated_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING")
+            .run(ENGINE_CURSOR, at.toISOString());
+
+        return this.lastEvaluatedAt() ?? at.toISOString();
+    }
+
     /** Records an alert pass that finished at `at`. The cursor only moves forward. */
     markEvaluated(at: Date): void {
         this.db

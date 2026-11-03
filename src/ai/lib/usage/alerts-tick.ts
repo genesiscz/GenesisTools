@@ -3,7 +3,7 @@ import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account
 import { runAlertEngine } from "@genesiscz/utils/ai/usage/alerts/engine";
 import { seedThresholdAlerts } from "@genesiscz/utils/ai/usage/alerts/legacy-seed";
 import { UsageAlertsStore } from "@genesiscz/utils/ai/usage/alerts/log";
-import { buildAlertRound } from "@genesiscz/utils/ai/usage/alerts/round";
+import { buildAlertRound, FIRST_ROUND_SINCE_MS } from "@genesiscz/utils/ai/usage/alerts/round";
 import type { AlertChannelTable, StoredAlert } from "@genesiscz/utils/ai/usage/alerts/types";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import type { UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
@@ -22,8 +22,10 @@ export interface UsageTickResult {
  * The daemon tick's new stages (design 2026-11-01, section 7): record the round's poll runs, then run the alert
  * engine over the round. The previous round's end is read before this round is recorded, so the health rule can see
  * a span nobody polled. The events the round judges start at the alert cursor, which moves only after the engine
- * finished: a failed pass leaves its events to the next one (the dedupe keys make the replay safe). Each stage reads
- * only what the round needs, which keeps the tick inside its budget.
+ * finished: a failed pass leaves its events to the next one (the dedupe keys make the replay safe). Before any pass
+ * finished, the cursor is seeded from the previous poll round (or five minutes back on the first tick ever) before
+ * this round's poll is recorded, so even a failed first pass loses nothing. Each stage reads only what the round
+ * needs, which keeps the tick inside its budget.
  */
 export async function recordRoundAndAlert(input: {
     db: UsageLimitsDb;
@@ -38,13 +40,17 @@ export async function recordRoundAndAlert(input: {
     const connection = input.db.connection();
     const runsStore = new PollRunsStore(connection);
     const previousRoundAt = runsStore.lastRoundAt();
+    const store = new UsageAlertsStore(connection);
+    const lastEvaluatedAt =
+        store.lastEvaluatedAt() ??
+        store.seedEvaluated(
+            previousRoundAt ? new Date(previousRoundAt) : new Date(now.getTime() - FIRST_ROUND_SINCE_MS)
+        );
     const plugins = usagePlugins();
     const runs = runsStore.recordRound(
         input.snapshots.map((snapshot) => ({ snapshot, source: readingSourceOf(snapshot, plugins) })),
         now
     );
-    const store = new UsageAlertsStore(connection);
-    const lastEvaluatedAt = store.lastEvaluatedAt();
     // Every tick: the seed is per window, and a window that could not be read on the first tick still needs it.
     const seeded = seedThresholdAlerts({
         store,
