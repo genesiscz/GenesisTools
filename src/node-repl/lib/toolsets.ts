@@ -1,6 +1,10 @@
 import { isAbsolute } from "node:path";
 import { ComputerToolset } from "@app/control/lib/computer-use/toolset";
+import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { ReplToolset, type ReplToolsetFactory } from "@genesiscz/utils/repl/toolset";
+import { EditorToolset } from "@genesiscz/utils/repl/toolsets/editor";
+import { RecorderToolset } from "@genesiscz/utils/repl/toolsets/recorder";
+import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
 
 /**
  * Every toolset `--toolset` can preload by name. The table lives in the tool, not in `@genesiscz/utils/repl`,
@@ -8,6 +12,11 @@ import { ReplToolset, type ReplToolsetFactory } from "@genesiscz/utils/repl/tool
  */
 export const REPL_TOOLSETS = {
     computer: () => new ComputerToolset(),
+    recorder: () =>
+        new RecorderToolset(() =>
+            FRAME_RECORDERS.native({ axTool: async (options) => [await ensureBinaryAsync(options)] })
+        ),
+    editor: () => new EditorToolset(),
 } satisfies Record<string, ReplToolsetFactory>;
 
 export type ReplToolsetId = keyof typeof REPL_TOOLSETS;

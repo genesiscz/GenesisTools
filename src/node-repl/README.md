@@ -14,7 +14,10 @@ echo 'await import("node:os")' | tools node-repl run
 ## Toolsets
 
 `--toolset a,b` (on `mcp` and `run`) preloads APIs from the `REPL_TOOLSETS` table in `lib/toolsets.ts`:
-`computer` today. A toolset is a `ReplToolset` subclass (`@genesiscz/utils/repl/toolset`) with an
+`computer` (native Computer Use), `recorder` (start, attach to and control screen recordings over the live
+recording socket: pause, resume, stop after post-processing, set, displays.*, audio.*, on, waitFor) and `editor`
+(open a recording id or a video, then frames, change-only frames, grids with `.show()`, trim, speed, export, each a
+job with progress). A toolset is a `ReplToolset` subclass (`@genesiscz/utils/repl/toolset`) with an
 `ApiDescriptor` (`@genesiscz/utils/api-descriptor`: per method a name, zod params and result, one line and an
 effect of `read`, `reversible` or `destructive`). The kernel builds the toolsets once per worker with a `preload`
 request that has its own budget (120 s), not the turn's; after a timeout kill or `js_reset` the new worker
@@ -24,6 +27,8 @@ folder for its toolsets, removed when the worker stops.
 The `js` description lists every loaded toolset with its one-line API, generated from the descriptor. Inside a
 turn, `help()` lists them and `help("computer")` prints the full API with every signature; `await show(x)` returns
 an image to the model (a path, a Buffer or Uint8Array, `{ path }` or `{ bytes, mimeType }`, or an array of them).
+`await sleep(ms)` waits inside a turn. The whole recorder and editor flow, live:
+`bun src/node-repl/scripts/recorder-editor-demo.ts --out <folder> [--mic]`.
 For an experiment, an entry may also be `/abs/module.ts#ExportName`, a `ReplToolset` class outside the table.
 
 ## Tools

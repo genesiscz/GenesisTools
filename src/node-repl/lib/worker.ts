@@ -76,6 +76,7 @@ declare global {
     var nodeRepl: typeof replApi;
     var help: (name?: string) => string;
     var show: (input: ShowInput | ShowInput[]) => Promise<void>;
+    var sleep: (ms: number) => Promise<void>;
 }
 
 const replApi = {
@@ -107,7 +108,7 @@ async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
 
 const CORE_HELP = [
     "help(name?) prints the docs of a loaded toolset; show(image | path | Buffer) returns an image to the model.",
-    "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes, mimeType }) is show() without the type check.",
+    "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes, mimeType }) is show() without the type check; await sleep(ms) waits.",
 ];
 
 function helpText(name?: string): string {
@@ -129,6 +130,7 @@ function helpText(name?: string): string {
 
 globalThis.help = helpText;
 globalThis.show = showImages;
+globalThis.sleep = (ms: number) => Bun.sleep(ms);
 
 async function preload(request: PreloadRequest): Promise<string> {
     const { createToolsets } = await import("./toolsets");

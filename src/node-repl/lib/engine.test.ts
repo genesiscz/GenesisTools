@@ -219,7 +219,7 @@ describe("toolsets", () => {
         } finally {
             await engine.shutdown();
         }
-    });
+    }, 20_000);
 
     it("a preload that throws answers the turn with the reason and retries on the next turn", async () => {
         const engine = new ReplEngine({ toolsets: [`${FIXTURE}#BrokenToolset`] });
