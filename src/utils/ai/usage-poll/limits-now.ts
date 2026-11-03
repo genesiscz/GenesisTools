@@ -1,5 +1,6 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
+import type { RankedAccount } from "@genesiscz/utils/ai/usage/account-rank";
 import type { AccountKey, UsageWarning } from "@genesiscz/utils/ai/usage/contract/envelope";
 import type { SnapshotsCache } from "./legacy-cache";
 import type { AccountUsageSnapshot } from "./types";
@@ -12,6 +13,8 @@ export type WireAccountUsageSnapshot = Omit<AccountUsageSnapshot, "native">;
 
 export interface LimitsNowData {
     accounts: WireAccountUsageSnapshot[];
+    /** With `--scored`: every shown account ranked by its own provider's ranker, one provider after another. */
+    ranked?: RankedAccount[];
 }
 
 function keyOf(account: AccountEntry): AccountKey {

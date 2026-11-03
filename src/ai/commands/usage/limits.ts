@@ -1,68 +1,34 @@
 import { formatLimitLine } from "@app/ai/lib/accounts/last-usage";
+import {
+    type AdviseOptions,
+    AGG_VALUES,
+    type LimitsOptions,
+    queryAdvice,
+    queryLimitsNow,
+    querySeries,
+    type SeriesOptions,
+    TOOL,
+} from "@app/ai/lib/usage/limits-query";
 import { usageProviderValues } from "@app/ai/lib/usage/provider-values";
 import { FORECAST_DESCRIPTION, type ForecastCommandOptions, runForecastCommand } from "@app/hub/commands/forecast";
-import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import { isLimitKind, LIMIT_KIND_VALUES, type LimitKind } from "@genesiscz/utils/ai/providers/account-features";
+import { LIMIT_KIND_VALUES } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
+import type { AdviceRow, AdviseData } from "@genesiscz/utils/ai/usage/advise";
 import {
     type AccountKey,
-    accountKeysOf,
     addReservedHarnessOption,
     addWindowOptions,
-    parseStep,
-    refuseHarness,
-    resolveProviderList,
-    resolveStepMs,
-    resolveWindow,
-    selectAccounts,
-    splitList,
     type UsageEnvelope,
     UsageQueryError,
     type UsageWarning,
-    usageEnvelope,
-    type WindowFlags,
 } from "@genesiscz/utils/ai/usage/contract";
-import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
-import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
-import {
-    LIMITS_NOW_SCHEMA,
-    type LimitsNowData,
-    limitsNow,
-    snapshotsFromCache,
-    usageAccountKeys,
-    type WireAccountUsageSnapshot,
-} from "@genesiscz/utils/ai/usage-poll/limits-now";
-import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
-import {
-    LIMITS_SERIES_SCHEMA,
-    type LimitSeriesData,
-    type LimitSeriesItem,
-    readLimitSeries,
-} from "@genesiscz/utils/ai/usage-poll/series";
-import type { SeriesAgg } from "@genesiscz/utils/ai/usage-poll/series-rows";
+import type { LimitsNowData, WireAccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/limits-now";
+import type { LimitSeriesData, LimitSeriesItem } from "@genesiscz/utils/ai/usage-poll/series";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-
-const TOOL = "tools ai usage";
-const AGG_VALUES: readonly SeriesAgg[] = ["last", "minmax", "raw"];
-
-interface LimitsOptions {
-    provider?: string[] | boolean;
-    account?: string[];
-    json?: boolean;
-    fresh?: boolean;
-    cached?: boolean;
-    harness?: string[] | boolean;
-}
-
-interface SeriesOptions extends LimitsOptions, WindowFlags {
-    step?: string;
-    agg?: string | boolean;
-    kind?: string[] | boolean;
-}
 
 /**
  * A refusal the user can fix: an enumerated flag gets its value list, anything else its
@@ -200,6 +166,56 @@ function renderSeries(envelope: UsageEnvelope<LimitSeriesData>): void {
     printWarnings(envelope.warnings);
 }
 
+function lastsText(row: AdviceRow): string {
+    if (row.lastsMinutes === null) {
+        return "lasts to its resets";
+    }
+
+    const hours = Math.floor(row.lastsMinutes / 60);
+    const minutes = row.lastsMinutes % 60;
+    return `lasts ${hours > 0 ? `${hours}h${String(minutes).padStart(2, "0")}m` : `${minutes}m`} (${row.bindingLabel} binds)`;
+}
+
+function renderAdvice(envelope: UsageEnvelope<AdviseData>): void {
+    renderCliHeader("Account advice", "next account per workload · unused at reset");
+
+    for (const provider of envelope.data.providers) {
+        const table = createBoxTable(["WORKLOAD", "NEXT", "LASTS", "WHY", "RUNNER-UP"]);
+
+        for (const profile of provider.profiles) {
+            table.push([
+                profile.profile,
+                profile.pick ? accountLabel(profile.pick) : pc.dim("no usable account"),
+                profile.pick ? lastsText(profile.pick) : "",
+                truncateDisplay(profile.pick?.why ?? "", 60),
+                profile.runnerUp ? accountLabel(profile.runnerUp) : pc.dim("—"),
+            ]);
+        }
+
+        out.println(table.toString());
+
+        for (const unused of provider.unusedAtReset) {
+            out.println(
+                `  ${pc.yellow("unused at reset")}: ${accountLabel(unused)} ${unused.label} ${unused.unusedPct}% on ${new Date(unused.resetsAt).toLocaleString()}`
+            );
+        }
+    }
+
+    printWarnings(envelope.warnings);
+}
+
+async function runLimits(opts: LimitsOptions): Promise<void> {
+    await emit(await queryLimitsNow(opts), opts.json, renderLimits);
+}
+
+async function runSeries(opts: SeriesOptions): Promise<void> {
+    await emit(await querySeries(opts), opts.json, renderSeries);
+}
+
+async function runAdvice(opts: AdviseOptions): Promise<void> {
+    await emit(await queryAdvice(opts), opts.json, renderAdvice);
+}
+
 async function emit<T>(envelope: UsageEnvelope<T>, json: boolean | undefined, render: (e: UsageEnvelope<T>) => void) {
     if (json) {
         out.result(envelope);
@@ -208,161 +224,6 @@ async function emit<T>(envelope: UsageEnvelope<T>, json: boolean | undefined, re
     }
 
     render(envelope);
-}
-
-async function runLimits(opts: LimitsOptions): Promise<void> {
-    refuseHarness(opts.harness);
-
-    if (opts.cached && opts.fresh) {
-        throw new UsageQueryError("bad-value", "--cached never polls and --fresh always does; pass one of them.");
-    }
-
-    const providers = resolveProviderList(opts.provider);
-    const providerIds = providers ?? usagePlugins().map((entry) => entry.plugin.id);
-    const store = await AiConfigStore.readOnly();
-    const candidates = usageAccountKeys(store.accounts(), providerIds, { visibleOnly: true });
-    const selection = selectAccounts(opts.account, candidates);
-    const pollProviders = selection ? [...new Set(selection.map((account) => account.provider))] : providers;
-    const cache = opts.cached ? await readSnapshotsCache() : null;
-    const snapshots = opts.cached
-        ? snapshotsFromCache(cache)
-        : await pollAccounts({
-              ...(pollProviders === undefined ? {} : { providers: pollProviders }),
-              ...(selection === undefined ? {} : { accountFilter: selection.map((account) => account.accountName) }),
-              ...(opts.fresh ? { force: true } : {}),
-          });
-    const { data, warnings } = limitsNow(snapshots, {
-        ...(providers === undefined ? {} : { providers }),
-        ...(selection === undefined ? {} : { accounts: selection }),
-    });
-
-    if (opts.cached && cache === null) {
-        warnings.push({
-            code: "no-cache",
-            message: `No poll has written the snapshots file yet. Run ${TOOL} limits without --cached.`,
-        });
-    }
-
-    logger.debug(
-        {
-            providers: providerIds,
-            selected: selection?.length,
-            accounts: data.accounts.length,
-            cached: opts.cached === true,
-        },
-        "[ai-usage] limits now"
-    );
-
-    const envelope = usageEnvelope({
-        ...LIMITS_NOW_SCHEMA,
-        now: new Date(),
-        accounts: selection ?? accountKeysOf(data.accounts),
-        data,
-        warnings,
-    });
-    await emit(envelope, opts.json, renderLimits);
-}
-
-function resolveAgg(raw: string | boolean | undefined): SeriesAgg {
-    if (raw === undefined || raw === false) {
-        return "last";
-    }
-
-    const given = raw === true ? undefined : raw.trim().toLowerCase();
-    const agg = AGG_VALUES.find((value) => value === given);
-
-    if (agg === undefined) {
-        throw new UsageQueryError(
-            "bad-value",
-            suggestEnumFlag(TOOL, "--agg", AGG_VALUES, {
-                subcommand: ["limits", "series"],
-                ...(raw === true ? {} : { given: raw }),
-            })
-        );
-    }
-
-    return agg;
-}
-
-function resolveKinds(raw: string[] | boolean | undefined): LimitKind[] | undefined {
-    if (raw === undefined || raw === false) {
-        return undefined;
-    }
-
-    const list = splitList(raw);
-    const bad = raw === true || list.length === 0 ? "" : list.find((value) => !isLimitKind(value));
-
-    if (bad !== undefined) {
-        throw new UsageQueryError(
-            "bad-value",
-            suggestEnumFlag(TOOL, "--kind", LIMIT_KIND_VALUES, {
-                subcommand: ["limits", "series"],
-                ...(bad ? { given: bad } : {}),
-            })
-        );
-    }
-
-    return list.filter(isLimitKind);
-}
-
-async function runSeries(opts: SeriesOptions): Promise<void> {
-    refuseHarness(opts.harness);
-
-    const now = new Date();
-    const window = resolveWindow(opts, { now, defaultSince: "24h" });
-    const stepMs = resolveStepMs(parseStep(opts.step), window);
-    const agg = resolveAgg(opts.agg);
-    const kinds = resolveKinds(opts.kind);
-    const providers = resolveProviderList(opts.provider);
-    const providerIds = providers ?? usagePlugins().map((entry) => entry.plugin.id);
-    const store = await AiConfigStore.readOnly();
-    const db = new UsageLimitsDb();
-    const directory = usageAccountKeys(store.accounts(), providerIds, { visibleOnly: false });
-    const known = new Set(directory.map((account) => `${account.provider}\u0000${account.accountName}`));
-    // History outlives config: an account removed from config still has rows under its name,
-    // and `--account <old name>` must find them.
-    const orphans: AccountKey[] = db
-        .getAllAccountBuckets()
-        .filter((row) => providerIds.includes(row.provider) && !known.has(`${row.provider}\u0000${row.accountName}`))
-        .map((row) => ({ provider: row.provider, accountId: row.accountName, accountName: row.accountName }));
-    const selection = selectAccounts(opts.account, [...directory, ...accountKeysOf(orphans)]);
-    const cache = await readSnapshotsCache();
-    const data = readLimitSeries(
-        {
-            from: window.from.toISOString(),
-            to: window.to.toISOString(),
-            stepMs,
-            agg,
-            ...(selection === undefined ? {} : { accounts: selection }),
-            ...(providers === undefined ? {} : { providers }),
-            ...(kinds === undefined ? {} : { kinds }),
-            forecastAt: now,
-        },
-        { db, directory, current: snapshotsFromCache(cache) }
-    );
-    const warnings: UsageWarning[] = [];
-
-    if (cache === null) {
-        warnings.push({
-            code: "no-current",
-            message: `No poll has written the snapshots file yet, so every "current" is null. Run ${TOOL} limits once.`,
-        });
-    }
-
-    logger.debug(
-        { window: window.label, tz: window.tz, stepMs, agg, series: data.series.length, selected: selection?.length },
-        "[ai-usage] limits series"
-    );
-
-    const envelope = usageEnvelope({
-        ...LIMITS_SERIES_SCHEMA,
-        now,
-        window,
-        accounts: selection ?? accountKeysOf(data.series),
-        data,
-        warnings,
-    });
-    await emit(envelope, opts.json, renderSeries);
 }
 
 function addSelectorOptions(command: Command): Command {
@@ -391,8 +252,24 @@ export function registerAiUsageLimitsCommand(usage: Command): void {
         )
             .option("--fresh", "Force a live poll, bypassing the shared per-provider cache")
             .option("--cached", "Read the last poll's snapshots file and never poll")
+            .option("--scored", "Rank every account with its own provider's ranker (data.ranked)")
     ).action(async (_opts: LimitsOptions, command: Command) => {
         await guarded(["limits"], () => runLimits(command.optsWithGlobals<LimitsOptions>()));
+    });
+
+    addReservedHarnessOption(
+        addSelectorOptions(
+            limits
+                .command("advise")
+                .description(
+                    "The next account per workload (default, fan-out, long-run, --model), how long it lasts, and the capacity left unused at each reset; --json prints usage.limits.advise@1"
+                )
+        )
+            .option("--fresh", "Force a live poll, bypassing the shared per-provider cache")
+            .option("--cached", "Read the last poll's snapshots file and never poll")
+            .option("--model <names...>", "Add a profile per model that ranks by that model's own weekly window")
+    ).action(async (_opts: AdviseOptions, command: Command) => {
+        await guarded(["limits", "advise"], () => runAdvice(command.optsWithGlobals<AdviseOptions>()));
     });
 
     const series = addWindowOptions(
