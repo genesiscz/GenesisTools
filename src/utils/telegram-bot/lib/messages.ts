@@ -162,13 +162,16 @@ export async function retractTelegramNotice({
     noticeId,
     edit,
     parseMode,
+    now = Date.now(),
 }: {
     api: TelegramMessagesApi;
     noticeId: string;
     edit: (original: string | undefined) => string;
     parseMode?: ParseMode;
+    /** The clock of the memory's TTL; tests pass the fixture's. */
+    now?: number;
 }): Promise<boolean> {
-    const posted = await recallMessage(noticeId);
+    const posted = await recallMessage(noticeId, now);
 
     if (!posted) {
         return false;
@@ -178,6 +181,6 @@ export async function retractTelegramNotice({
         ...(parseMode ? { parse_mode: parseMode } : {}),
         reply_markup: { inline_keyboard: [] },
     });
-    await forgetMessage(noticeId);
+    await forgetMessage(noticeId, now);
     return true;
 }

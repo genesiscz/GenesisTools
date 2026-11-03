@@ -161,7 +161,7 @@ export const CLOSED_ELSEWHERE = "Closed in another place (the hub, the chat or t
 /** Edits the Telegram messages of decisions that stopped waiting: the buttons go, and one line says why. */
 export async function retractDecisionTelegramMessages(
     ids: readonly string[],
-    deps: { bot?: TelegramBotConfig | null; api?: TelegramMessagesApi } = {}
+    deps: { bot?: TelegramBotConfig | null; api?: TelegramMessagesApi; now?: number } = {}
 ): Promise<number> {
     const bot = deps.bot === undefined ? await loadTelegramBotConfig() : deps.bot;
 
@@ -177,6 +177,7 @@ export async function retractDecisionTelegramMessages(
             api,
             noticeId: decisionNotificationId({ id }),
             edit: (original) => `${original ?? id}\n\n${CLOSED_ELSEWHERE}`,
+            ...(deps.now === undefined ? {} : { now: deps.now }),
         });
         edited += done ? 1 : 0;
     }
