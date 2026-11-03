@@ -152,8 +152,33 @@ export class UsageAlertsStore {
         };
     }
 
+    /**
+     * Records the candidate unless its dedupe key says it must not fire: the dedupe read and the insert run in one
+     * IMMEDIATE transaction, so the daemon and the usage TUI, which run the engine on one database, cannot both see
+     * the key as new and both fire it. Null when `fires` refuses after reading the key's last alert.
+     */
+    claim(
+        candidate: AlertCandidate,
+        options: { firedAt: Date; channels: readonly AlertChannelId[] },
+        fires: (previous: StoredAlert | null) => boolean
+    ): StoredAlert | null {
+        const claim = this.db.transaction(() => {
+            if (!fires(this.latestRow(candidate.dedupeKey))) {
+                return null;
+            }
+
+            return this.insert(candidate, options);
+        });
+
+        return claim.immediate();
+    }
+
     /** The last alert with this dedupe key, or null. A store without the table has none. */
     latestByDedupe(dedupeKey: string): StoredAlert | null {
+        return this.latestRow(dedupeKey);
+    }
+
+    private latestRow(dedupeKey: string): StoredAlert | null {
         try {
             const row = this.db
                 .prepare(
