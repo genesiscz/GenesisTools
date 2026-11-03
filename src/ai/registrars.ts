@@ -39,7 +39,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
                 { registerUsageDaemonCommands },
                 { registerAiUsageEventsCommand },
                 { registerAiUsageAlertsCommand },
-                { registerAiUsageAttributionCommands },
+                { registerAiUsageAttributionCommands, registerAiUsageDriftCommand },
                 { registerAiUsageBudgetsCommands },
                 { registerAiUsageDigestCommand },
                 registerSpendAlias,
@@ -59,7 +59,9 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
             return (program: Command) => {
                 const usageCmd = program.command("usage").description("Usage limits for every AI provider");
                 registerAiUsageCommand(usageCmd);
-                registerAiUsageAttributionCommands(registerAiUsageLimitsCommand(usageCmd));
+                const limitsCmd = registerAiUsageLimitsCommand(usageCmd);
+                registerAiUsageAttributionCommands(limitsCmd);
+                registerAiUsageDriftCommand(limitsCmd);
                 registerAiUsageSessionsCommand(usageCmd);
                 registerUsageDaemonCommands(usageCmd);
                 registerAiUsageEventsCommand(usageCmd);
