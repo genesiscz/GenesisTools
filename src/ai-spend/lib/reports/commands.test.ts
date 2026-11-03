@@ -4,11 +4,13 @@ import * as realCachedTitle from "@genesiscz/utils/agent-sessions/cached-title";
 import * as realCodexRollouts from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import * as realAccountsContext from "@genesiscz/utils/ai/usage/spend/accounts-context";
 import * as realConfig from "@genesiscz/utils/ai/usage/spend/config";
+import * as realEventsCache from "@genesiscz/utils/ai/usage/spend/events-cache";
 import { DEFAULT_PRICING } from "@genesiscz/utils/ai/usage/spend/pricing";
 import { pricedEventCost } from "@genesiscz/utils/ai/usage/spend/reports/load";
 import * as realLoadParallel from "@genesiscz/utils/ai/usage/spend/reports/load-parallel";
 import type { SpendEvent } from "@genesiscz/utils/ai/usage/spend/reports/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
 
 type LoadOptions = Parameters<typeof realLoadParallel.loadEventsParallel>[0];
@@ -27,6 +29,17 @@ mock.module("@genesiscz/utils/ai/usage/spend/reports/load-parallel", () => ({
     loadEventsParallel: async (options: LoadOptions) => {
         loadCalls.push(options);
         return fixtureEvents.filter((fixture) => !options.sources || options.sources.includes(fixture.source));
+    },
+}));
+
+type SeriesEventsOptions = Parameters<typeof realEventsCache.collectSeriesEvents>[0];
+const seriesCalls: SeriesEventsOptions[] = [];
+
+mock.module("@genesiscz/utils/ai/usage/spend/events-cache", () => ({
+    ...realEventsCache,
+    collectSeriesEvents: (options: SeriesEventsOptions) => {
+        seriesCalls.push(options);
+        return [];
     },
 }));
 
@@ -54,7 +67,7 @@ mock.module("@genesiscz/utils/agent-sessions/readers/codex-locate", () => ({
 }));
 
 const { addAccountFlags, addReportFlags, registerCcusageCommands } = await import("./commands");
-const { registerSpendCommand } = await import("../register");
+const { monthSoFar, registerSpendCommand } = await import("../register");
 
 function event(overrides: Partial<SpendEvent> = {}): SpendEvent {
     return {
@@ -822,6 +835,20 @@ describe("--harness, the design name of --sources and --backend", () => {
         await spend("workers", "--reprice", "--harness", "nonesuch");
         expect(exitCode()).toBe(1);
         expect(stderr).toContain('--harness does not accept "nonesuch"');
+    });
+
+    test("monitor --month reads the same discovered homes as the week, so --all-homes reaches the month too", () => {
+        seriesCalls.length = 0;
+        const discoveredHomes = { claude: [{ home: "/fixture/extra-home" }] };
+
+        monthSoFar({
+            storage: new Storage("ai-spend-month-test"),
+            pricing: DEFAULT_PRICING,
+            accounts: [],
+            discoveredHomes,
+        });
+
+        expect(seriesCalls.map((call) => call.discoveredHomes)).toEqual([discoveredHomes]);
     });
 
     test("workers takes --harness for --backend", async () => {
