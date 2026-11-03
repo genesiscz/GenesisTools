@@ -10,13 +10,7 @@ import {
     kindOf,
     readDecisionsWithIntegrity,
 } from "@app/question/lib/decisions/store";
-import {
-    INBOX_STALE_MS,
-    type InboxDeliveryView,
-    type InboxRef,
-    fromRecord as inboxDecisionOf,
-    inboxSessionFresh,
-} from "@app/question/lib/inbox/build";
+import { type InboxDeliveryView, type InboxRef, fromRecord as inboxDecisionOf } from "@app/question/lib/inbox/build";
 import { cachingReadDeps, shownExcerpts } from "@app/question/lib/inbox/excerpts";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
@@ -27,6 +21,7 @@ import {
     queryEntriesSnapshot,
     readQuestionSnapshot,
 } from "@app/question/lib/read-model";
+import { INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "@app/question/lib/waiting/set";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
@@ -1171,7 +1166,7 @@ export async function widgetSnapshot({
                 // hub. Its last update would let a stage on an old decision count the session as active again.
                 askedTimeOf(decision)
             );
-        if (kindOf(decision) === "decision" && awaitsAnswer(decision)) {
+        if (kindOf(decision) === "decision" && waitsOnHuman(decision)) {
             newestAsk.set(session.key, Math.max(newestAsk.get(session.key) ?? 0, askedTimeOf(decision)));
             waitingIn.add(session);
         }
@@ -1331,7 +1326,7 @@ export async function widgetSnapshot({
     let pendingDecisions = 0;
     const staged: WidgetInboxItem[] = [];
     for (const row of decisions) {
-        if (kindOf(row) !== "decision" || !awaitsAnswer(row) || row.delivery?.uncertain) {
+        if (kindOf(row) !== "decision" || !waitsOnHuman(row)) {
             continue;
         }
         const session = findSession(row.sessionId, row.provider);
