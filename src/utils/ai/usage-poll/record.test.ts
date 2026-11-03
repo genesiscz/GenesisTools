@@ -115,6 +115,24 @@ afterEach(() => {
 });
 
 describe("recordSnapshots", () => {
+    test("an absent window is recorded once while it stays gone, and never as a reading", async () => {
+        const gone: AccountUsageSnapshot = {
+            ...codexSnapshot("work", 40),
+            provider: "anthropic-sub",
+            limits: [],
+            absentLimits: [{ key: "five_hour", kind: "session" }],
+        };
+
+        await recordSnapshots([gone], db);
+        await recordSnapshots([gone], db);
+
+        const rows = db.getSeries({ from: todayWindow().from, to: todayWindow().to, agg: "raw" });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].points).toEqual([]);
+        expect(rows[0].availability.map((span) => span.state)).toEqual(["absent"]);
+        expect(db.getLatest("work", "five_hour", "anthropic-sub")).toBeNull();
+    });
+
     test("writes one limits row per window, tagged with the provider", async () => {
         await recordSnapshots([codexSnapshot("work", 44)], db);
 

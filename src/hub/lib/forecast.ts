@@ -346,6 +346,12 @@ export function readUsageSamples(
     db: Database,
     options: { since: Date; provider?: string; account?: string }
 ): UsageSample[] {
+    // A store the availability migration has not reached yet has no such column (this read is
+    // read-only and never migrates); its rows are all readings.
+    const columns = db.prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>;
+    const readingsOnly = columns.some((column) => column.name === "availability")
+        ? "AND availability IS NOT 'absent'"
+        : "";
     const rows = db
         .prepare(
             `SELECT provider, account_name, bucket, kind, utilization, resets_at, timestamp
@@ -353,6 +359,7 @@ export function readUsageSamples(
              WHERE timestamp >= ?1
                AND (?2 IS NULL OR provider = ?2)
                AND (?3 IS NULL OR account_name = ?3)
+               ${readingsOnly}
              ORDER BY timestamp ASC`
         )
         .all(options.since.toISOString(), options.provider ?? null, options.account ?? null) as SampleRow[];

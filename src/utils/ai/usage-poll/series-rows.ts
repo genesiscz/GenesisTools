@@ -25,6 +25,14 @@ export interface SeriesBin {
     severity: string | null;
 }
 
+/** A stretch of time in which the window had one availability state. */
+export interface AvailabilitySpan {
+    from: string;
+    to: string;
+    /** `unknown` is a row written before the store recorded availability. */
+    state: "limited" | "absent" | "unknown";
+}
+
 interface SeriesEntryBase {
     /** Plugin id the rows came from. Set even when the query did not name one. */
     provider: string;
@@ -41,6 +49,8 @@ interface SeriesEntryBase {
     scopeModel: string | null;
     /** Instants a new window began, read from every row in the range, so no step can hide one. */
     resets: string[];
+    /** The window's availability from its first row in the range to the range's end, one span per state change. */
+    availability: AvailabilitySpan[];
 }
 
 export interface SeriesEntry extends SeriesEntryBase {
@@ -62,9 +72,11 @@ export interface SeriesRow {
     percent: number;
     resetsAt: string | null;
     severity: string | null;
+    /** The stored state; null is a row from before the column. An `absent` row carries no reading. */
+    availability: "limited" | "absent" | null;
 }
 
-export interface SeriesGroup extends Omit<SeriesEntryBase, "resets"> {
+export interface SeriesGroup extends Omit<SeriesEntryBase, "resets" | "availability"> {
     rows: SeriesRow[];
 }
 
@@ -242,6 +254,38 @@ export function minMaxBins(rows: readonly SeriesRow[], step: number, resetBefore
 export interface ShapeOptions {
     step: number;
     roughlyEqual: (x: string | null, y: string | null) => boolean;
+    /** The range's end (ISO), where the last availability span stops. */
+    to: string;
+}
+
+/**
+ * The availability spans of a group's rows, absent rows included. Each span runs from the row
+ * that began a state to the row that changed it, the last one to the range's end.
+ */
+export function availabilitySpans(rows: readonly SeriesRow[], to: string): AvailabilitySpan[] {
+    const spans: AvailabilitySpan[] = [];
+
+    for (const row of rows) {
+        const state = row.availability ?? "unknown";
+        const open = spans.at(-1);
+
+        if (open?.state === state) {
+            continue;
+        }
+
+        if (open) {
+            open.to = row.t;
+        }
+
+        spans.push({ from: row.t, to, state });
+    }
+
+    return spans;
+}
+
+/** The rows that carry a reading: every row but the ones that only mark the window gone. */
+function readings(rows: readonly SeriesRow[]): SeriesRow[] {
+    return rows.filter((row) => row.availability !== "absent");
 }
 
 function resetsOf(rows: readonly SeriesRow[], roughlyEqual: ShapeOptions["roughlyEqual"]) {
@@ -262,18 +306,26 @@ function resetsOf(rows: readonly SeriesRow[], roughlyEqual: ShapeOptions["roughl
 
 export function shapePoints(group: SeriesGroup, agg: "raw" | "last", opts: ShapeOptions): SeriesEntry {
     const { rows, ...base } = group;
-    const points = rows.map(pointOf);
+    const read = readings(rows);
+    const points = read.map(pointOf);
 
     return {
         ...base,
-        resets: resetsOf(rows, opts.roughlyEqual).resets,
+        resets: resetsOf(read, opts.roughlyEqual).resets,
+        availability: availabilitySpans(rows, opts.to),
         points: agg === "raw" ? points : lastPerBucket(points, opts.step),
     };
 }
 
 export function shapeBins(group: SeriesGroup, opts: ShapeOptions): SeriesBinEntry {
     const { rows, ...base } = group;
-    const { resets, resetBefore } = resetsOf(rows, opts.roughlyEqual);
+    const read = readings(rows);
+    const { resets, resetBefore } = resetsOf(read, opts.roughlyEqual);
 
-    return { ...base, resets, bins: minMaxBins(rows, opts.step, resetBefore) };
+    return {
+        ...base,
+        resets,
+        availability: availabilitySpans(rows, opts.to),
+        bins: minMaxBins(read, opts.step, resetBefore),
+    };
 }

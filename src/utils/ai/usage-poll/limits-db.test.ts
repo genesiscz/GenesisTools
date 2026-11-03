@@ -6,6 +6,7 @@ import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { removeDbFile } from "@genesiscz/utils/fs";
 import { tmpdir } from "@genesiscz/utils/paths";
 import { normalizeSeverity, UsageLimitsDb } from "./limits-db";
+import { availabilitySpans } from "./series-rows";
 
 let testCounter = 0;
 
@@ -706,7 +707,8 @@ describe("UsageLimitsDb", () => {
             });
 
             // kind, scopeModel, resets and the point's resetsAt and severity arrived with the
-            // series door (design 2026-11-01): additive, the identity fields are unchanged.
+            // series door (design 2026-11-01), availability with step U2: additive, the identity
+            // fields are unchanged.
             expect(series).toEqual([
                 {
                     provider: "openai-sub",
@@ -715,6 +717,7 @@ describe("UsageLimitsDb", () => {
                     kind: null,
                     scopeModel: null,
                     resets: [],
+                    availability: [{ from: expect.any(String), to: expect.any(String), state: "limited" }],
                     points: [{ t: expect.any(String), percent: 44, resetsAt: null, severity: null }],
                 },
             ]);
@@ -934,6 +937,76 @@ describe("UsageLimitsDb", () => {
                 "primary",
             ]);
             expect(mem.getSeries({ from: FROM, to: TO, kinds: [] })).toEqual([]);
+        });
+    });
+
+    describe("availability", () => {
+        const ABSENT = { provider: "anthropic-sub", kind: "session" };
+
+        test("an absent window is one row per change, and the utilization readers skip it", () => {
+            db.recordIfChangedV2("work", "five_hour", 40, { resetsAt: null, severity: null, scopeModel: null });
+
+            expect(db.recordAbsentIfChanged("work", "five_hour", ABSENT)).toBe(true);
+            expect(db.recordAbsentIfChanged("work", "five_hour", ABSENT)).toBe(false);
+            expect(db.getLatest("work", "five_hour")?.utilization).toBe(40);
+            expect(db.getSnapshots("work", "five_hour", 60).map((s) => s.utilization)).toEqual([40]);
+        });
+
+        test("a window that comes back at its old value is recorded again", () => {
+            const extras = { resetsAt: null, severity: null, scopeModel: null };
+            db.recordIfChangedV2("work", "five_hour", 40, extras);
+            db.recordAbsentIfChanged("work", "five_hour", ABSENT);
+
+            expect(db.recordIfChangedV2("work", "five_hour", 40, extras)).toBe(true);
+            expect(db.recordAbsentIfChanged("work", "five_hour", ABSENT)).toBe(true);
+        });
+
+        test("the series door turns the rows into spans and keeps absent rows out of the points", () => {
+            const at = (minute: number) => `2026-11-01T04:${String(minute).padStart(2, "0")}:00.000Z`;
+            const reading = {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "anthropic-sub",
+                kind: "session",
+            };
+            const store = new UsageLimitsDb(":memory:");
+
+            try {
+                store.recordSnapshotV2("work", "five_hour", 10, at(0), reading);
+                store.recordSnapshotV2("work", "five_hour", 20, at(10), reading);
+                store.recordSnapshotV2("work", "five_hour", 0, at(20), { ...reading, availability: "absent" });
+
+                const [entry] = store.getSeries({ from: at(0), to: at(30), agg: "raw" });
+
+                expect(entry.points.map((p) => p.percent)).toEqual([10, 20]);
+                expect(entry.availability).toEqual([
+                    { from: at(0), to: at(20), state: "limited" },
+                    { from: at(20), to: at(30), state: "absent" },
+                ]);
+            } finally {
+                store.close();
+            }
+        });
+
+        test("a row from before the column reads as unknown", () => {
+            const row = (t: string, availability: "limited" | "absent" | null) => ({
+                provider: "anthropic-sub",
+                account: "work",
+                key: "five_hour",
+                kind: "session",
+                scopeModel: null,
+                t,
+                percent: 1,
+                resetsAt: null,
+                severity: null,
+                availability,
+            });
+
+            expect(availabilitySpans([row("a", null), row("b", "limited")], "c")).toEqual([
+                { from: "a", to: "b", state: "unknown" },
+                { from: "b", to: "c", state: "limited" },
+            ]);
         });
     });
 

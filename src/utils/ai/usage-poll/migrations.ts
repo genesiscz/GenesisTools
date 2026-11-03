@@ -83,4 +83,22 @@ export const USAGE_LIMITS_MIGRATIONS: Migration[] = [
             }
         },
     },
+    {
+        /**
+         * Whether the account had the window at that moment (design 2026-11-01, step U2):
+         * `limited` for a reading, `absent` for a row that records the provider confirmed the
+         * window gone (an account without a 5-hour limit). NULL is a row written before this
+         * column, which every reader treats as `unknown`; nothing is backfilled.
+         */
+        id: "2026-11-usage-limits-availability",
+        description: "availability column on usage_snapshots",
+        isApplied(db) {
+            return columnNames(db, "usage_snapshots").has("availability");
+        },
+        apply(db) {
+            if (!columnNames(db, "usage_snapshots").has("availability")) {
+                db.exec("ALTER TABLE usage_snapshots ADD COLUMN availability TEXT");
+            }
+        },
+    },
 ];
