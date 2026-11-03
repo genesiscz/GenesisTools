@@ -876,6 +876,36 @@ describe("git-checkout-overwrites-saved-file", () => {
         });
     });
 
+    it("counts a cp to a variable the same command set to a literal path first (the logged git show of 2026-11-02)", () => {
+        const logged =
+            'S=/tmp/cc/GenesisTools/244eaf85-7f6e-4c7b-8991-3a68109d8c90; cp src/meetings/lib/raw.ts $S/raw.ts.fixed; git show HEAD:src/meetings/lib/raw.ts > src/meetings/lib/raw.ts; bun run test src/meetings/meetings.test.ts -t "same second" 2>&1 | rg "^ *\\d+ (pass|fail)|\\(fail\\)" | tail -2; cp $S/raw.ts.fixed src/meetings/lib/raw.ts';
+
+        expect(ids(logged)).toEqual([SAVED]);
+        expect(only(logged, SAVED)?.matched.startsWith("cp src/meetings/lib/raw.ts $S/raw.ts.fixed;")).toBe(true);
+        expect(ids('S=/tmp/cc/x && cp a.ts "${S}/a.fixed" && git checkout -- a.ts')).toEqual([SAVED]);
+        expect(ids("S='/tmp/cc/x' T=bak; cp a.ts $S/$T.ts; git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("F=a.ts; S=/tmp/cc/x; cp $F $S/; git checkout -- $F")).toEqual([SAVED]);
+    });
+
+    it("still blocks a cp to a variable whose value the command does not surely know", () => {
+        for (const command of [
+            "cp a.ts $S/a.fixed; git checkout -- a.ts",
+            "S=$(mktemp -d); cp a.ts $S/a.fixed; git checkout -- a.ts",
+            "S=/tmp/cc/x; read S; cp a.ts $S/a.fixed; git checkout -- a.ts",
+            "S=/tmp/cc/x; unset S; cp a.ts $S/a.fixed; git checkout -- a.ts",
+            "S=/tmp/cc/x; for S in . ..; do echo; done; cp a.ts $S/a.ts; git checkout -- a.ts",
+            "true && S=/tmp/cc/x; cp a.ts $S/a.fixed; git checkout -- a.ts",
+            "false || S=/tmp/cc/x; cp a.ts $S/a.fixed; git checkout -- a.ts",
+            "S=~/bak; cp a.ts $S/a.fixed; git checkout -- a.ts",
+            "S=.; cp a.ts $S; git checkout -- a.ts",
+            "S=/tmp/cc/x; cp a.ts '$S/a.fixed'; git checkout -- a.ts",
+            "S=/tmp/cc/x; cp a.ts \\$S/a.fixed; git checkout -- a.ts",
+            "S=/tmp/cc/x; cp a.ts $SS/a.fixed; git checkout -- a.ts",
+        ]) {
+            expect([command, ids(command)]).toEqual([command, [CHECKOUT]]);
+        }
+    });
+
     it("the logged checkout of committed files (case 140) still blocks: nothing saved them", () => {
         const command =
             "git status --short && git checkout origin/master -- src/macos/GenesisKit/Sources/GenesisKit/Widgets/WidgetHostView.swift src/macos/GenesisKit/Sources/GenesisKit/Widgets/WidgetMarkdown.swift src/macos/GenesisKit/Sources/GenesisKit/Widgets/LiveWidgetView.swift src/macos/GenesisKit/Sources/GenesisKit/Widgets/WidgetModel.swift src/macos/GenesisKit/Tests/GenesisKitTests/WidgetDecisionSurfacesTests.swift && git status --short";

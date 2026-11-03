@@ -939,9 +939,82 @@ function mayMeet(p: string, q: string): boolean {
     return high.rest.length === low.rest.length + extra && high.rest.slice(extra).join("/") === low.rest.join("/");
 }
 
+// `NAME=value` whose value the shell takes as written: no expansion, no substitution, no unquoted blank.
+const LITERAL_ASSIGNMENT = /\s*([A-Za-z_][A-Za-z0-9_]*)=("[^"$`\\]*"|'[^']*'|[^\s"'$`\\;&|<>(){}]*)(?=\s|$)/y;
+
+// The names and values of a statement made only of literal assignments (`S=/tmp/cc/x T=bak`), else null.
+function literalAssignments(text: string): Map<string, string> | null {
+    const out = new Map<string, string>();
+    const end = text.trimEnd().length;
+    LITERAL_ASSIGNMENT.lastIndex = 0;
+
+    while (LITERAL_ASSIGNMENT.lastIndex < end) {
+        const m = LITERAL_ASSIGNMENT.exec(text);
+        const value = m ? literalPath(m[2]) : null;
+
+        if (!m || value === null) {
+            return null;
+        }
+
+        out.set(m[1], value);
+    }
+
+    return out.size > 0 ? out : null;
+}
+
+// The variables statement `upTo` of a unit surely sees with a literal value: set by an earlier statement made only of
+// literal assignments that runs whatever came before it (the first statement, or one after `;` or a new line). Any
+// other statement that names the variable (`read S`, `for S in`, `S=$(…)`, `unset S`, `then S=…`, `a && S=…`) makes
+// its value unknown again.
+function literalVariables(scan: ShellScan, unit: Span[], upTo: number): Map<string, string> {
+    const known = new Map<string, string>();
+
+    for (let k = 0; k < upTo; k++) {
+        const text = originalSlice(scan, unit[k].start, elementEnd(unit[k]));
+        const runs = k === 0 || [";", ""].includes(joiner(scan, unit, k - 1));
+        const set = runs ? literalAssignments(text) : null;
+
+        if (set) {
+            for (const [name, value] of set) {
+                known.set(name, value);
+            }
+
+            continue;
+        }
+
+        for (const name of [...known.keys()]) {
+            if (new RegExp(`(?<![$\\w{])${name}(?!\\w)`).test(text)) {
+                known.delete(name);
+            }
+        }
+    }
+
+    return known;
+}
+
+// `$S/a.ts` and `"${S}/a.ts"` with each known variable written out. A single quote or an escape keeps the `$` as
+// typed, so such a word stays as it is, and literalPath refuses it.
+function withKnownValues(word: string, known: Map<string, string>): string {
+    if (known.size === 0 || /['\\]/.test(word)) {
+        return word;
+    }
+
+    return word.replace(
+        /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+        (whole, braced: string | undefined, bare: string | undefined) => known.get(braced ?? bare ?? "") ?? whole
+    );
+}
+
 // The paths a statement saves whole for this revert: `cp <path>… <copy>`, `git stash push … [--] <path>…` and
-// `git diff [HEAD] [--] <path>… > <file>`, run in the revert's place.
-function savedPaths(scan: ShellScan, statement: Span, revert: Revert, place: string): Saves {
+// `git diff [HEAD] [--] <path>… > <file>`, run in the revert's place. `known` gives the variables the statement
+// surely sees with a literal value, so `S=/tmp/cc/x; cp a.ts $S/a.fixed` saves a.ts.
+function savedPaths(
+    scan: ShellScan,
+    statement: Span,
+    revert: Revert,
+    place: string,
+    known: () => Map<string, string>
+): Saves {
     const kept: string[] = [];
     const stashed: string[] = [];
 
@@ -962,7 +1035,11 @@ function savedPaths(scan: ShellScan, statement: Span, revert: Revert, place: str
 
             if (place === "" && operands.length > 1 && samePath(dest) !== "/dev/null") {
                 const folder = knownFolder(scan, revert.inv);
-                kept.push(...operands.slice(0, -1).filter((source) => keepsCopy(folder, source, dest)));
+                const values = known();
+                const to = withKnownValues(dest, values);
+                kept.push(
+                    ...operands.slice(0, -1).filter((source) => keepsCopy(folder, withKnownValues(source, values), to))
+                );
             }
 
             continue;
@@ -1021,7 +1098,7 @@ function savedFrom(scan: ShellScan, inv: GitInvocation, revert: Revert): number 
             break;
         }
 
-        const saves = savedPaths(scan, inv.unit[s], revert, place);
+        const saves = savedPaths(scan, inv.unit[s], revert, place, () => literalVariables(scan, inv.unit, s));
 
         for (const path of stashTaken ? saves.kept : [...saves.kept, ...saves.stashed]) {
             if (unsaved.delete(path)) {
@@ -1218,7 +1295,9 @@ export const gitCheckoutOverwritesSavedFile: ShellRule = {
         "The matched text runs from the save to the revert, so it names the saved copy: the `cp` destination, the " +
         "stash entry or the patch file. The revert discards only what changed after that save. If `&&` joins every " +
         "step from the save to the revert, a failed save stops the revert. If a `;` or a new line sits between them, " +
-        "a failed save (a wrong folder, a full disk, nothing to stash) still lets the revert run, and the work is gone.",
+        "a failed save (a wrong folder, a full disk, nothing to stash) still lets the revert run, and the work is gone. " +
+        "A copy to `$S/…` counts when the same command set S to a literal path before it and nothing in between " +
+        "could change S.",
     wrong: "cp src/a.ts /tmp/cc/app/a.fixed.ts; git checkout HEAD -- src/a.ts",
     right: 'git stash push -m "a.ts before revert" -- src/a.ts',
     evidence:
