@@ -57,9 +57,33 @@ function isMissingProcessError(err: unknown): boolean {
     return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "ESRCH";
 }
 
-/** SIGTERM, then SIGKILL after grace if the child is still alive. Returns true once exit is confirmed. */
-export async function killWithEscalation(child: KillableProcess, opts: { graceMs?: number } = {}): Promise<boolean> {
+/** Whether the child exits within `ms`; the timer is cleared either way, so it never holds the event loop open. */
+async function exitsWithin(child: KillableProcess, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+        return await Promise.race([
+            waitForExit(child).then(() => true),
+            new Promise<boolean>((resolve) => {
+                timer = setTimeout(() => resolve(false), ms);
+            }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * SIGTERM, then SIGKILL after `graceMs` if the child is still alive. Returns true once exit is confirmed, and false
+ * when a signal failed or the child was not reaped within `reapMs` of the SIGKILL (a child in uninterruptible sleep),
+ * so a caller with a deadline is never held past it.
+ */
+export async function killWithEscalation(
+    child: KillableProcess,
+    opts: { graceMs?: number; reapMs?: number } = {}
+): Promise<boolean> {
     const graceMs = opts.graceMs ?? 5000;
+    const reapMs = opts.reapMs ?? 5000;
 
     try {
         child.kill("SIGTERM");
@@ -72,10 +96,7 @@ export async function killWithEscalation(child: KillableProcess, opts: { graceMs
         return false;
     }
 
-    const exited = await Promise.race([
-        waitForExit(child).then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), graceMs)),
-    ]);
+    const exited = await exitsWithin(child, graceMs);
 
     if (!exited) {
         try {
@@ -89,7 +110,10 @@ export async function killWithEscalation(child: KillableProcess, opts: { graceMs
             return false;
         }
 
-        await waitForExit(child);
+        if (!(await exitsWithin(child, reapMs))) {
+            logger.warn({ reapMs }, "[killWithEscalation] the child was not reaped after SIGKILL; giving up the wait");
+            return false;
+        }
     }
 
     return true;
