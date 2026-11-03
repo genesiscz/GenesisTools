@@ -46,6 +46,8 @@ export interface CallOptions {
     idempotencyKey?: string;
     /** The stored act token of an `act` row; the auth guard lets the call through on it alone. */
     actToken?: string;
+    /** Bytes sent as they are, with their own content type, in place of the JSON body (the upload row). */
+    rawBody?: { data: string | ArrayBuffer | Blob; contentType: string };
 }
 
 /** A query string from the input left over after the path params: arrays as comma lists, undefined dropped. */
@@ -136,6 +138,15 @@ export function createDashboardClient(opts: DashboardClientOptions) {
 
         if (endpoint.method === "GET" || endpoint.method === "DELETE") {
             return get<EndpointOutput<E>>(`${path}${queryOf(rest)}`, { method: endpoint.method, headers });
+        }
+
+        if (options.rawBody) {
+            // The headers spread after get's JSON default, so this content type wins.
+            return get<EndpointOutput<E>>(path, {
+                method: endpoint.method,
+                headers: { ...headers, "Content-Type": options.rawBody.contentType },
+                body: options.rawBody.data,
+            });
         }
 
         return get<EndpointOutput<E>>(path, { method: endpoint.method, headers, body: SafeJSON.stringify(rest) });

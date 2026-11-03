@@ -2,9 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createDashboardClient } from "@app/dev-dashboard/contract/client";
 import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
+import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import { decideApiAuth, isActScopedRequest } from "@app/dev-dashboard/server/auth-guard";
+import { Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { CapabilityRefusedError, HUB_CAPABILITIES } from "@app/hub/lib/capabilities/index";
 import { issueActTokens, memoryActTokenStore } from "@app/question/lib/act/tokens";
@@ -177,6 +180,28 @@ describe("the Mac gateway", () => {
         expect(receipt.path.endsWith(".txt")).toBe(true);
         expect(receipt.bytes).toBe(bytes.byteLength);
         expect(existsSync(receipt.path) && readFileSync(receipt.path, "utf8")).toBe("a note from the phone");
+    });
+});
+
+describe("the upload row through the generic client", () => {
+    it("sends raw bytes with their own content type and gets the stored receipt", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-gateway-client-"));
+        const router = new Router().add(
+            route(gatewayRoutes({ uploadDir: () => dir }), "POST", ENDPOINTS.gatewayUpload.path)
+        );
+        const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) =>
+            (await routerToResponse(router, new Request(String(url), init), { services: {} as never })) ??
+            new Response("no route", { status: 404 })) as unknown as typeof fetch;
+        const client = createDashboardClient({ baseUrl: "http://agent.test", fetch: fetchImpl });
+
+        const receipt = await client.call(
+            ENDPOINTS.gatewayUpload,
+            {},
+            { idempotencyKey: "u1", rawBody: { data: "a note from the phone", contentType: "text/plain" } }
+        );
+
+        expect(receipt.bytes).toBe("a note from the phone".length);
+        expect(readFileSync(receipt.path, "utf8")).toBe("a note from the phone");
     });
 });
 
