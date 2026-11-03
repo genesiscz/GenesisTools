@@ -23,7 +23,7 @@ final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
         let runtime = FlowFocusRuntime(dataRoot: URL(fileURLWithPath: stateRoot).appendingPathComponent("flow-focus"),
             hostID: Bundle.main.bundleIdentifier, liveServices: false, presentsWindows: true, sharedModels: false)
         widget = WidgetCoordinator(binaryPath: binary, stateRoot: stateRoot, flowRuntime: runtime,
-            micLauncher: nil) { session in
+            micLauncher: nil, openHub: { session in
             var components = URLComponents(string: "genesis-tools://hub")!
             components.queryItems = [URLQueryItem(name: "mode", value: "agents")]
             if let session {
@@ -34,7 +34,11 @@ final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             if let url = components.url { NSWorkspace.shared.open(url) }
-        }
+        }, openUsage: { _ in
+            // A hub link carries no usage keys (Host/HubLink.swift), so the preview opens the Usage mode itself; the
+            // preview executable is not the hub and must never start itself with `--hub`.
+            if let url = URL(string: "genesis-tools://hub?mode=usage") { NSWorkspace.shared.open(url) }
+        })
         let menu = NSMenu()
         let item = NSMenuItem()
         let app = NSMenu()
