@@ -179,11 +179,22 @@ export async function queryDigest(opts: DigestOptions, deps: DigestDeps = {}): P
         const freshKeys = new Set(
             fresh.map((row) => `${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.day}`)
         );
-        const stored = new UsageDailyStore(db.connection())
+        const kept = new UsageDailyStore(db.connection())
             .between({ from: days[0], to: days[days.length - 1] })
             .filter(
                 (row) => !freshKeys.has(`${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.day}`)
             );
+        // A stored day was cut at the daemon's midnight; its peak and resets cannot move to another zone's day.
+        const stored = kept.filter((row) => row.tz === tz);
+        const otherZones = [...new Set(kept.filter((row) => row.tz !== tz).map((row) => row.tz))];
+
+        if (otherZones.length > 0) {
+            warnings.push({
+                code: "rollup-other-tz",
+                message: `Days whose readings are pruned were kept in ${otherZones.join(", ")}, not ${tz}; they are left out. Ask with --tz ${otherZones[0]}.`,
+            });
+        }
+
         rows = [...fresh, ...stored];
 
         const current = snapshotsFromCache(await readSnapshotsCache());
