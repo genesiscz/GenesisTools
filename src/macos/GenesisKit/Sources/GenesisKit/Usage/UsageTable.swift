@@ -27,7 +27,7 @@ public struct UsageTableRow: Identifiable, Equatable, Sendable {
     public let cells: [String: UsageTableCell]
     public let ratePerHour: Double?
     public let safePerHour: Double?
-    /// "16:20", "Tue 16:20", "lasts", or nil without a forecast.
+    /// "16:20", "Tue 16:20", "past reset" (the account lasts to its reset), or nil without a forecast.
     public let limitText: String?
     public let limitBeforeReset: Bool
     public let sparkline: [Double]
@@ -102,7 +102,7 @@ public enum UsageTableBuilder {
         if forecast.beforeReset, let exhaust = UsageTime.date(forecast.exhaustAt) {
             return exhaust <= now ? "at limit" : UsageFormat.clock(exhaust, now: now)
         }
-        return forecast.ratePctPerHour == nil ? nil : "lasts"
+        return forecast.ratePctPerHour == nil ? nil : "past reset"
     }
 
     /// At most `count` values, keeping each slice's last value (the series holds the last value of a bin too).
