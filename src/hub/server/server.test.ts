@@ -600,6 +600,9 @@ describe("hub server argv", () => {
 
 describe("SessionRowsRunner", () => {
     const job: SessionRowsJob = { listing: { hours: 24 }, fresh: false, cacheWrite: true, liveLocations: true };
+    const noCache = async () => null;
+    /** The cache check before a rebuild is async: let it miss before reading what the worker got. */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
     function fakeWorkers() {
         const workers: Array<RowsWorker & { requests: SessionRowsRequest[]; terminated: boolean }> = [];
@@ -624,11 +627,12 @@ describe("SessionRowsRunner", () => {
 
     it("runs on the worker, and an identical ask while it runs shares the one rebuild", async () => {
         const { workers, createWorker } = fakeWorkers();
-        const runner = new SessionRowsRunner({ createWorker, inline: async () => "inline\n" });
+        const runner = new SessionRowsRunner({ createWorker, cached: noCache, inline: async () => "inline\n" });
         try {
             const first = runner.run(job, "t1");
             const second = runner.run(job, "t2");
             const other = runner.run({ ...job, listing: { hours: 72 } });
+            await settle();
             expect(workers).toHaveLength(1);
             expect(workers[0].requests.map((request) => request.listing.hours)).toEqual([24, 72]);
             expect(workers[0].requests[0].traceId).toBe("t1");
@@ -646,6 +650,7 @@ describe("SessionRowsRunner", () => {
             // Done: the next ask starts a rebuild of its own.
             // Left running: stop() below fails it.
             runner.run(job).catch(() => undefined);
+            await settle();
             expect(workers[0].requests).toHaveLength(3);
         } finally {
             runner.stop();
@@ -654,14 +659,16 @@ describe("SessionRowsRunner", () => {
 
     it("expires a silent worker and allows a fresh rebuild", async () => {
         const { workers, createWorker } = fakeWorkers();
-        const runner = new SessionRowsRunner({ createWorker, jobTimeoutMs: 20 });
+        const runner = new SessionRowsRunner({ createWorker, cached: noCache, jobTimeoutMs: 20 });
         try {
             const first = runner.run(job);
             const second = runner.run(job);
+            await settle();
             const failures = await Promise.allSettled([first, second]);
             expect(failures.map((result) => result.status)).toEqual(["rejected", "rejected"]);
             expect(workers[0].terminated).toBe(true);
             const next = runner.run(job);
+            await settle();
             expect(workers).toHaveLength(2);
             workers[1].onmessage?.(
                 new MessageEvent("message", {
@@ -676,14 +683,16 @@ describe("SessionRowsRunner", () => {
 
     it("a failed worker fails its asks and the next ask starts a new one; no worker at all runs the job inline", async () => {
         const { workers, createWorker } = fakeWorkers();
-        const runner = new SessionRowsRunner({ createWorker, inline: async () => "inline\n" });
+        const runner = new SessionRowsRunner({ createWorker, cached: noCache, inline: async () => "inline\n" });
         try {
             const failed = runner.run(job);
+            await settle();
             workers[0].onerror?.(new ErrorEvent("error", { message: "worker crashed" }));
             await expect(failed).rejects.toThrow("worker crashed");
             expect(workers[0].terminated).toBe(true);
             // Left running: stop() below fails it.
             runner.run(job).catch(() => undefined);
+            await settle();
             expect(workers).toHaveLength(2);
         } finally {
             runner.stop();
@@ -693,9 +702,59 @@ describe("SessionRowsRunner", () => {
             createWorker: () => {
                 throw new Error("no workers here");
             },
+            cached: noCache,
             inline: async () => "inline\n",
         });
         expect(await inline.run(job)).toBe("inline\n");
+    });
+
+    it("serves a cached answer without the worker; a stale one also starts one fresh rebuild behind it", async () => {
+        const { workers, createWorker } = fakeWorkers();
+        let stale = false;
+        const runner = new SessionRowsRunner({ createWorker, cached: async () => ({ text: "cached\n", stale }) });
+        try {
+            expect(await runner.run(job)).toBe("cached\n");
+            expect(workers).toHaveLength(0);
+
+            stale = true;
+            expect(await runner.run(job)).toBe("cached\n");
+            expect(await runner.run(job)).toBe("cached\n");
+            await settle();
+            // Two stale asks share the one refresh, and it rebuilds instead of reading the cache again.
+            expect(workers).toHaveLength(1);
+            expect(workers[0].requests.map((request) => request.fresh)).toEqual([true]);
+        } finally {
+            runner.stop();
+        }
+    });
+
+    it("NEGATIVE CONTROL: a fresh ask never takes the cache, and a miss rebuilds in the request", async () => {
+        const { workers, createWorker } = fakeWorkers();
+        const asked: SessionRowsJob[] = [];
+        const runner = new SessionRowsRunner({
+            createWorker,
+            cached: async (asking) => {
+                asked.push(asking);
+                return null;
+            },
+        });
+        try {
+            const fresh = runner.run({ ...job, fresh: true });
+            const missed = runner.run(job);
+            await settle();
+            expect(asked).toEqual([job]);
+            expect(workers[0].requests.map((request) => request.fresh)).toEqual([true, false]);
+            for (const request of workers[0].requests) {
+                workers[0].onmessage?.(
+                    new MessageEvent("message", { data: { id: request.id, ok: true, text: `${request.fresh}\n` } })
+                );
+            }
+
+            expect(await fresh).toBe("true\n");
+            expect(await missed).toBe("false\n");
+        } finally {
+            runner.stop();
+        }
     });
 });
 

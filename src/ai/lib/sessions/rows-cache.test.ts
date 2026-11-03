@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "./agent-session-rows";
 import {
+    cachedSessionRowsJson,
     cacheIsUsable,
     readSessionRowsCache,
     refreshSessionRowsCache,
@@ -101,6 +102,24 @@ describe("read and write", () => {
         await Bun.write(path, '{"query":null,"fetchedAt":1,"lastRequestedAt":1,"rows":[]}');
 
         expect(await readSessionRowsCache(path)).toBeNull();
+    });
+});
+
+describe("cachedSessionRowsJson", () => {
+    test("an answer past the 90 s age misses by default and is served with its age under a longer bound", async () => {
+        const path = await scratch();
+        const now = Date.now();
+        await writeSessionRowsCache(
+            { query: { hours: 72 }, fetchedAt: now - 300_000, lastRequestedAt: now, rows: [row(7)] },
+            path
+        );
+
+        expect(await cachedSessionRowsJson({ hours: 72 }, { path, now, liveLocations: false })).toBeNull();
+        const hit = await cachedSessionRowsJson({ hours: 72 }, { path, now, maxAgeMs: 600_000, liveLocations: false });
+        expect(hit?.ageMs).toBe(300_000);
+        expect(hit?.answer).toEqual({ fetchedAt: now - 300_000, cached: true, rows: [row(7)] });
+        // NEGATIVE CONTROL: another query is never served these rows, however long the bound.
+        expect(await cachedSessionRowsJson({ hours: 24 }, { path, now, maxAgeMs: 600_000 })).toBeNull();
     });
 });
 
