@@ -414,7 +414,7 @@ describe("webhook settings", () => {
     });
 
     it("lists only the update kinds the handlers read", () => {
-        expect([...WEBHOOK_ALLOWED_UPDATES]).toEqual(["message"]);
+        expect([...WEBHOOK_ALLOWED_UPDATES]).toEqual(["message", "callback_query"]);
     });
 });
 
@@ -903,7 +903,11 @@ describe("webhook receiver end to end", () => {
     it("registers the public URL with the secret and only the update kinds the handlers use", () => {
         const call = fake.calls.find((entry) => entry.method === "setWebhook");
 
-        expect(call?.body).toEqual({ url: publicUrl, secret_token: secret, allowed_updates: ["message"] });
+        expect(call?.body).toEqual({
+            url: publicUrl,
+            secret_token: secret,
+            allowed_updates: ["message", "callback_query"],
+        });
         expect(fake.calls.some((entry) => entry.method === "deleteWebhook")).toBe(false);
     });
 

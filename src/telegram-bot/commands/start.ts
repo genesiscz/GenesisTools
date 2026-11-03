@@ -8,7 +8,12 @@ import {
 import { COMMANDS } from "@app/telegram-bot/lib/handlers/help";
 import { createTelegramApi, describeApiError } from "@app/telegram-bot/lib/webhook/api";
 import { runWebhookService } from "@app/telegram-bot/lib/webhook/service";
-import { resolveApiRoot, resolveWebhookSettings, WebhookSettingsError } from "@app/telegram-bot/lib/webhook/settings";
+import {
+    resolveApiRoot,
+    resolveWebhookSettings,
+    WEBHOOK_ALLOWED_UPDATES,
+    WebhookSettingsError,
+} from "@app/telegram-bot/lib/webhook/settings";
 import * as p from "@clack/prompts";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -37,6 +42,7 @@ async function startPolling(config: TelegramBotConfig): Promise<void> {
     // bot.start() deletes any webhook before it polls: Telegram allows a webhook or getUpdates, never both.
     await bot.start({
         timeout,
+        allowed_updates: [...WEBHOOK_ALLOWED_UPDATES],
         onStart: () => {
             pollCount++;
             p.log.info(`Polling started (long-polling, ${timeout}s timeout, run #${pollCount})`);
