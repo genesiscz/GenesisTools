@@ -16,6 +16,9 @@ public struct WidgetModuleChoice: Identifiable {
     public static let agents = Self(
         id: "agents", title: "Agent Inbox", symbol: "tray.fill",
         detail: "Questions, answers, screenshots and live conversations.")
+    public static let usage = Self(
+        id: "usage", title: "Usage", symbol: "gauge.with.dots.needle.67percent",
+        detail: "Every AI account's limits, pace and time to the limit, and the usage alerts.")
     /// Exactly the modules `WidgetCoordinator` registers. Settings offer only these, because the layout drops any
     /// configured ID the host has not registered, so a toggle for anything else would silently do nothing.
     public static let builtins: [Self] = [
@@ -35,6 +38,7 @@ public struct WidgetModuleChoice: Identifiable {
         .init(
             id: "voice", title: "Voice Notes", symbol: "mic.fill",
             detail: "Turn a spoken thought into editable text."),
+        usage,
     ]
 }
 
@@ -372,6 +376,16 @@ private struct WidgetGeneralSettings: View {
                         Text("Above the options").tag("above")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                         .accessibilityIdentifier("widget.decisionProposal")
+                }
+            }
+            NativeSettingsCard("Usage module", subtitle: "The Usage module's rings, one per account, while the module is collapsed.") {
+                NativeSettingsRow("Ring shows", detail: "The window each account's ring fills by. An account without that window shows its other one.") {
+                    Picker("Ring shows", selection: Binding(
+                        get: { prefs?.usage?.ringWindow ?? .weekly },
+                        set: { patch(["usage": .object(["ringWindow": .string($0.rawValue)])]) })) {
+                        ForEach(WidgetUsageRingWindow.allCases) { Text($0.title).tag($0) }
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                        .accessibilityIdentifier("widget.usage.ringWindow")
                 }
             }
             NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {

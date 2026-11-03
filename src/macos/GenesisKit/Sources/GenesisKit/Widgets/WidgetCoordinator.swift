@@ -8,6 +8,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var shelf: WidgetShelfStore?
     private var tasks: WidgetTasksStore?
     private var voiceNotes: WidgetVoiceNotesStore?
+    private var usage: WidgetUsageStore?
     public let flowRuntime: FlowFocusRuntime
     public let transforms: FlowTransformTools
     private var runtimeStart: Task<Void, Never>?
@@ -167,6 +168,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             try modules.register(tasks.taskModule())
             try modules.register(FlowWidget.module(runtime: runtime))
             try modules.register(voiceNotes.voiceNotesModule())
+            let usage = WidgetUsageStore(client: .bridge(binaryPath: binaryPath))
+            self.usage = usage
+            try modules.register(usage.usageModule { [weak model] in
+                model?.snapshot?.state.preferences.usage?.ringWindow ?? .weekly
+            })
         } catch { model.error = error.localizedDescription }
         model.openHub = openHub
         model.openDestination =

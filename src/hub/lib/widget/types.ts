@@ -116,6 +116,16 @@ export const widgetPreferencesSchema = z.object({
     dialogAnswer: z.enum(["press", "refuse"]).default("press"),
     /** Width in points of the rail's hover list (the agents preview). */
     previewWidth: z.number().min(260).max(560).default(324),
+    /**
+     * The Usage module's own preferences. Optional with no default, so a state saved before the module keeps its
+     * bytes; the widget reads a missing key as its default.
+     */
+    usage: z
+        .object({
+            /** The window an account's ring fills by while the module is collapsed: the week, or the 5 hours. */
+            ringWindow: z.enum(["weekly", "session"]).optional(),
+        })
+        .optional(),
     /** When the widget starts with staged decisions, a popup lists them with Send now, until it is closed. */
     stagedReminder: z.boolean().default(true),
     /** Leaving the inbox with staged decisions: ask what to do ("ask"), keep them staged, or send them. */

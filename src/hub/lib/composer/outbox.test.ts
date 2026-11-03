@@ -1827,6 +1827,14 @@ test("legacy preferences gain independent module layouts without accepting off-s
     expect(widgetPreferencesSchema.safeParse({ topModules: ["../../invalid"] }).success).toBe(false);
 });
 
+test("the Usage module's preferences are optional, so a state saved before them keeps its keys", () => {
+    expect("usage" in widgetPreferencesSchema.parse({})).toBe(false);
+    expect(widgetPreferencesSchema.parse({ usage: { ringWindow: "session" } }).usage).toEqual({
+        ringWindow: "session",
+    });
+    expect(widgetPreferencesSchema.safeParse({ usage: { ringWindow: "monthly" } }).success).toBe(false);
+});
+
 test("send-and-close timing defaults to 2.5 seconds and can keep the panel open", () => {
     expect(widgetPreferencesSchema.parse({}).sendCloseSeconds).toBe(2.5);
     expect(widgetPreferencesSchema.parse({ sendCloseSeconds: 0 }).sendCloseSeconds).toBe(0);
