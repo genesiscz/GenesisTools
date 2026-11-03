@@ -55,6 +55,10 @@ interface LastRow {
     last: string | null;
 }
 
+interface FirstRow {
+    first: string | null;
+}
+
 const CYCLE_PEAK = 90;
 /** The daemon rolls up at most this often; today's row is rewritten each time. */
 export const ROLLUP_EVERY_MS = 15 * 60_000;
@@ -107,9 +111,7 @@ function cyclesOver(values: readonly number[]): number {
 
 /** The local day of the oldest reading the store keeps; null on an empty store. */
 function oldestReadingDay(db: Database, tz: string): string | null {
-    const row = db.prepare("SELECT MIN(timestamp) AS first FROM usage_snapshots").get() as {
-        first: string | null;
-    } | null;
+    const row = db.prepare<FirstRow, []>("SELECT MIN(timestamp) AS first FROM usage_snapshots").get();
     return row?.first ? zonedDay(row.first, tz) : null;
 }
 
