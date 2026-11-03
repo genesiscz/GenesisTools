@@ -137,7 +137,8 @@ export function mergeDigestRows(input: {
     tz: string;
     today: string;
 }): { rows: DailyRow[]; otherZones: string[] } {
-    const key = (row: DailyRow) => `${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.day}`;
+    const key = (row: DailyRow) =>
+        `${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.kind ?? ""}\u0000${row.day}`;
     const finished = input.stored.filter((row) => row.tz === input.tz && row.day < input.today);
     const finishedKeys = new Set(finished.map(key));
     const fresh = input.fresh.filter((row) => !finishedKeys.has(key(row)));

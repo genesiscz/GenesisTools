@@ -442,6 +442,19 @@ describe("tools ai usage budgets and digest", () => {
             ["2026-11-03", 30],
         ]);
         expect(merged.otherZones).toEqual(["Europe/Prague"]);
+
+        // A slot that changed kind that day: the kept session row does not hide the fresh weekly one.
+        const slot = mergeDigestRows({
+            fresh: [{ ...row("2026-11-01", 5), kind: "weekly" }],
+            stored: [row("2026-11-01", 90)],
+            tz: "UTC",
+            today: "2026-11-03",
+        });
+
+        expect(slot.rows.map((r) => [r.kind, r.peakPct]).sort()).toEqual([
+            ["session", 90],
+            ["weekly", 5],
+        ]);
     });
 
     test("a session window takes no daily allowance: budgets set refuses it before writing", async () => {
