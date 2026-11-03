@@ -1,7 +1,7 @@
 import { formatLimitLine } from "@app/ai/lib/accounts/last-usage";
 import { usageProviderValues } from "@app/ai/lib/usage/provider-values";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import type { LimitKind } from "@genesiscz/utils/ai/providers/account-features";
+import { isLimitKind, LIMIT_KIND_VALUES, type LimitKind } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import {
     type AccountKey,
@@ -33,8 +33,6 @@ import {
 } from "@genesiscz/utils/ai/usage-poll/limits-now";
 import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import {
-    isLimitKind,
-    LIMIT_KIND_VALUES,
     LIMITS_SERIES_SCHEMA,
     type LimitSeriesData,
     type LimitSeriesItem,

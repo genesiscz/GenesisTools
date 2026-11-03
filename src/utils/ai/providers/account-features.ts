@@ -107,6 +107,16 @@ export interface DiscoveredHome {
 
 export type LimitKind = "session" | "weekly" | "monthly" | "scoped" | "credit";
 
+const LIMIT_KINDS: Record<LimitKind, true> = { session: true, weekly: true, monthly: true, scoped: true, credit: true };
+
+/** A stored or wire string that names a `LimitKind` (the `kind` column, a `--kind` value). */
+export function isLimitKind(value: string | null | undefined): value is LimitKind {
+    return value !== null && value !== undefined && Object.hasOwn(LIMIT_KINDS, value);
+}
+
+/** Every `LimitKind`, from a table the compiler checks for completeness. */
+export const LIMIT_KIND_VALUES: readonly LimitKind[] = Object.keys(LIMIT_KINDS).filter(isLimitKind);
+
 export type LimitSeverity = "ok" | "warn" | "critical";
 
 /** Credit-style windows report money instead of percent. Minor units, like cents. */

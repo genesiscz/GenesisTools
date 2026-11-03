@@ -18,7 +18,7 @@ export const forecastDoor: CallDoor<true> = {
         try {
             // A cancel that arrived before the work started stops it here.
             signal.throwIfAborted();
-            const { buildForecast } = await import("../../lib/forecast");
+            const { buildForecast } = await import("@genesiscz/utils/ai/usage/forecast/forecast");
             return ok(asResult(await buildForecast({})));
         } catch (error) {
             return failed(error);

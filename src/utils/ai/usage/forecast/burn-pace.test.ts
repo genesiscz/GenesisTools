@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { removeDbFile } from "@genesiscz/utils/fs";
 import { tmpdir } from "@genesiscz/utils/paths";
 import { activeDeltas, atYourPace, chooseRate, paceFor, paceLabel } from "./burn-pace";
-import { UsageHistoryDb } from "./history-db";
 
 let testCounter = 0;
 
@@ -82,13 +82,13 @@ describe("paceLabel", () => {
 });
 
 describe("paceFor", () => {
-    let db: UsageHistoryDb;
+    let db: UsageLimitsDb;
     let dbPath: string;
 
     beforeEach(() => {
         ClaudeDatabase.closeInstance();
         dbPath = getTestDbPath();
-        db = new UsageHistoryDb(dbPath);
+        db = new UsageLimitsDb(dbPath);
     });
 
     afterEach(() => {
