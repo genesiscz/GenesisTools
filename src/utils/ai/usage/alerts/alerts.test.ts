@@ -6,6 +6,8 @@ import { readSampleSeeds, type UsageSample } from "@genesiscz/utils/ai/usage/for
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { NotificationEvent } from "@genesiscz/utils/notifications";
+import { macosAlertChannel } from "./channels/macos";
 import { ALERT_RULE_DEFAULTS, inQuietHours, mergeAlertsConfig, type UsageAlertsConfig } from "./config";
 import { judgeRound, runAlertEngine } from "./engine";
 import { seedThresholdAlerts } from "./legacy-seed";
@@ -791,5 +793,38 @@ describe("budget rule", () => {
         const fired = ALERT_RULES.budget.evaluate(round({ snapshots: [soon], budgets }), ALERT_RULE_DEFAULTS.budget);
 
         expect(fired.map((alert) => [alert.title, alert.severity])).toEqual([["Use it or lose it", 70]]);
+    });
+});
+
+describe("macOS channel", () => {
+    test("sends to the system banner only, never to the user's other notification channels", async () => {
+        const sent: NotificationEvent[] = [];
+        const channel = macosAlertChannel(
+            { enabled: true, macos: true, sound: "Purr" },
+            {
+                dispatch: async (event) => {
+                    sent.push(event);
+                    return true;
+                },
+            }
+        );
+        const [alert] = await runAlertEngine({
+            round: round({ snapshots: [snapshot(85)] }),
+            config: config(),
+            store,
+            channels: { macos: channel, inbox },
+        });
+
+        expect(alert?.channels).toEqual(["macos"]);
+        expect(sent).toEqual([
+            {
+                app: "claude",
+                title: "AI Usage Alert",
+                message: "work: 5h 85%",
+                group: "ai-usage",
+                sound: "Purr",
+                only: ["system"],
+            },
+        ]);
     });
 });
