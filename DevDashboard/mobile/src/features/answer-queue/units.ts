@@ -121,10 +121,17 @@ export function singleFlight(): (run: () => Promise<unknown>) => Promise<boolean
 
 /**
  * The card's latest stage write. `settled()` waits for it and rejects when it failed: a refused pick must stop the
- * session's Send, or the pick staged before it would go out as if nothing happened. A later successful stage clears it.
+ * session's Send, or the pick staged before it would go out as if nothing happened. `refusal()` is that failure's
+ * error, for the card to show: the tracker outlives a remounted card, whose fresh mutation has no error to show. A
+ * later successful stage clears both.
  */
-export function latestStage(): { track: (write: Promise<unknown>) => void; settled: () => Promise<void> } {
+export function latestStage(): {
+    track: (write: Promise<unknown>) => void;
+    settled: () => Promise<void>;
+    refusal: () => unknown;
+} {
     let latest: Promise<unknown> | null = null;
+    let refused: unknown = null;
 
     return {
         track(write) {
@@ -133,9 +140,14 @@ export function latestStage(): { track: (write: Promise<unknown>) => void; settl
                 () => {
                     if (latest === write) {
                         latest = null;
+                        refused = null;
                     }
                 },
-                () => undefined
+                (error: unknown) => {
+                    if (latest === write) {
+                        refused = error;
+                    }
+                }
             );
         },
         async settled() {
@@ -143,6 +155,7 @@ export function latestStage(): { track: (write: Promise<unknown>) => void; settl
                 await latest;
             }
         },
+        refusal: () => refused,
     };
 }
 
