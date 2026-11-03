@@ -71,6 +71,17 @@ let workersAt = 0;
 const WORKERS_EVERY_MS = 30_000;
 /** With no worker running, a new spawn is seen by `beforeTool` at once, so the timer only catches one started elsewhere. */
 const NO_WORKERS_EVERY_MS = 5 * 60_000;
+/** Failed or timed-out reads in a row; each doubles the wait before the next (`workersRetryMs`). */
+let workersFailures = 0;
+
+/**
+ * The wait after `failures` failed reads in a row: 30 s, 60 s, 120 s ... at most 5 minutes. On 2026-11-02 a stalled
+ * `ps` made every read run into its 15 s timeout, and the next tick started the same read about 15 s after the kill:
+ * 84 killed `tools hub agents` processes in two sessions in an hour, on a Mac that was already stalled.
+ */
+export function workersRetryMs(failures: number): number {
+    return Math.min(WORKERS_EVERY_MS * 2 ** Math.max(0, failures - 1), NO_WORKERS_EVERY_MS);
+}
 const SPAWNS_WORKERS = /\btools (codex|grok) spawn\b/;
 /** Whether this session started a worker; undefined until its transcript was read. */
 let startsWorkers: boolean | undefined;
@@ -258,9 +269,20 @@ async function loadWorkers(host: Host): Promise<void> {
         .catch(() => undefined);
 
     if (run?.exitCode !== 0) {
+        // A read that failed or was killed waits ten times its own length, and longer with each failure in a row.
+        workersFailures++;
+        workersAt = paceAfter(workersRetryMs(workersFailures), startedAt);
+        await logMod(host, "agents", {
+            event: "workers-read-failed",
+            exitCode: run?.exitCode ?? null,
+            failures: workersFailures,
+            ms: Date.now() - startedAt,
+            nextInMs: workersAt - Date.now(),
+        }).catch(() => undefined);
         return;
     }
 
+    workersFailures = 0;
     const next = workersOf(run.stdout, sessionId);
     // `tools hub agents` took 4.6 s a run on a loaded Mac (2026-10-27, 1216 runs in 6 sessions): a slow read waits ten
     // times its length, and a session with no worker running asks every 5 minutes.
@@ -789,6 +811,7 @@ export function forgetAgentDetails(): void {
     refreshing = undefined;
     workers = [];
     workersAt = 0;
+    workersFailures = 0;
     startsWorkers = undefined;
     sessionDir = undefined;
     expanded = null;
