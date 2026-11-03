@@ -234,7 +234,9 @@ const USAGE_TIMEOUT_MS = 20_000;
 export async function fetchUsage(
     accessToken: string,
     signal?: AbortSignal,
-    accountHint?: string
+    accountHint?: string,
+    /** `probe`: a diagnostic read, which records no usage event. */
+    options: { probe?: boolean } = {}
 ): Promise<UsageResponse> {
     const tag = accountHint ? `[usage:${accountHint}]` : "[usage]";
 
@@ -257,13 +259,16 @@ export async function fetchUsage(
         if (res.status === 429) {
             logger.debug(`${tag} 429 rate-limited: ${body.slice(0, 200)}`);
             const retryAfterSec = Number(res.headers.get("retry-after"));
-            recordUsageEvent({
-                provider: ANTHROPIC_SUB,
-                accountName: accountHint ?? null,
-                source: "usage-client",
-                kind: "usage-429",
-                retryAfterMs: Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec * 1000 : null,
-            });
+
+            if (!options.probe) {
+                recordUsageEvent({
+                    provider: ANTHROPIC_SUB,
+                    accountName: accountHint ?? null,
+                    source: "usage-client",
+                    kind: "usage-429",
+                    retryAfterMs: Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec * 1000 : null,
+                });
+            }
         } else {
             logger.warn(`${tag} 401 auth failed: ${body.slice(0, 200)}`);
         }
@@ -493,7 +498,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     }
 
     try {
-        const usage = await fetchUsage(token, signal, account.name);
+        const usage = await fetchUsage(token, signal, account.name, { probe });
         return { ...identityOf(account), usage } satisfies AccountUsage;
     } catch (err) {
         // A probe stops here: the unlock below SPENDS the single-use refresh grant, and
@@ -551,7 +556,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
         }
 
         logger.debug(`${tag} retrying with refreshed token`);
-        const usage = await fetchUsage(freshToken, signal, account.name);
+        const usage = await fetchUsage(freshToken, signal, account.name, { probe });
         return { ...identityOf(account), usage } satisfies AccountUsage;
     }
 }

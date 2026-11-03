@@ -7,11 +7,14 @@ import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/p
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
 import { windowRanker } from "@genesiscz/utils/ai/providers/usage-rank";
+import { useUsageEventsStoreForTests } from "@genesiscz/utils/ai/usage/events/record";
+import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { DAEMON_ALIVE_MS, readerMaxStaleMs, touchUsageDaemonHeartbeat, usageDaemonAgeMs } from "./daemon-heartbeat";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 import { mergeAccountSlice } from "./legacy-cache";
+import { UsageLimitsDb } from "./limits-db";
 import { __fetchProviderSnapshots, latestFetchedAt, readCachedSnapshots, type UsagePlugin, usagePlugins } from "./poll";
 import { blockedEntry, loadPollGate, type PollGate, PollSuppressed, recordFailure, savePollGate } from "./poll-gate";
 import { __resetUsagePollStorage, snapshotsCacheKey, USAGE_CACHE_TTL, usagePollStorage } from "./storage";
@@ -331,6 +334,23 @@ describe("__fetchProviderSnapshots", () => {
 
         expect(snapshots[0].limits).toHaveLength(1);
         expect((await loadPollGate(PROVIDER)).work.failures).toBe(1);
+    });
+
+    test("a diagnostic poll records no usage event; a normal poll of the same failure does", async () => {
+        useTempHome();
+        const events = new UsageEventsStore(new UsageLimitsDb(":memory:").connection());
+        useUsageEventsStoreForTests(events);
+        cleanups.push(() => useUsageEventsStoreForTests(null));
+        const work = account("work");
+        const entry = fakePlugin({ poll: () => Promise.reject(new Error("org blocked")) });
+        entry.usage.classifyFailure = () => ({ orgBlocked: true });
+        const window = { from: new Date(Date.now() - 60_000), to: new Date(Date.now() + 60_000) };
+
+        await __fetchProviderSnapshots(entry, [work], { probe: true }, new Set());
+        expect(events.list(window)).toEqual([]);
+
+        await __fetchProviderSnapshots(entry, [work], {}, new Set());
+        expect(events.list(window).map((event) => event.kind)).toContain("org-blocked");
     });
 
     test("a thrown failure is still recorded as one", async () => {
