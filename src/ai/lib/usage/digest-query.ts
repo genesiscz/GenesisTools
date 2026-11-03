@@ -36,7 +36,7 @@ import { snapshotsFromCache, usageAccountKeys } from "@genesiscz/utils/ai/usage-
 import { usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import { readLimitSeries } from "@genesiscz/utils/ai/usage-poll/series";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { aiSessionsCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
+import { aiSessionReportCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
@@ -61,11 +61,10 @@ function previousDay(day: string, tz: string): string {
 }
 
 /** The local days of the asked period: `--day [date]` (default yesterday) or `--week [date]` (default last week). */
-export function digestDays(
-    opts: Pick<DigestOptions, "day" | "week">,
-    now: Date,
-    tz: string
-): { period: DigestPeriod; days: string[] } {
+export function digestDays({ opts, now, tz }: { opts: Pick<DigestOptions, "day" | "week">; now: Date; tz: string }): {
+    period: DigestPeriod;
+    days: string[];
+} {
     const today = zonedDay(now.toISOString(), tz);
     const given = typeof opts.week === "string" ? opts.week : typeof opts.day === "string" ? opts.day : undefined;
 
@@ -126,6 +125,28 @@ function workersOf(rows: readonly WorkerCostRow[], from: number, to: number): Di
     };
 }
 
+/**
+ * The digest's day rows: a finished day the rollup kept in this zone wins over one rebuilt from the readings, since
+ * pruning cuts by timestamp and a day at the retention edge keeps only its later readings (its morning peak, first
+ * reading and resets are gone). The readings fill the days nothing kept and today, which the rollup has not finished.
+ * A stored day of another zone is left out (its midnight is not this zone's), and its zone named.
+ */
+export function mergeDigestRows(input: {
+    fresh: readonly DailyRow[];
+    stored: readonly DailyRow[];
+    tz: string;
+    today: string;
+}): { rows: DailyRow[]; otherZones: string[] } {
+    const key = (row: DailyRow) => `${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.day}`;
+    const finished = input.stored.filter((row) => row.tz === input.tz && row.day < input.today);
+    const finishedKeys = new Set(finished.map(key));
+    const fresh = input.fresh.filter((row) => !finishedKeys.has(key(row)));
+    const covered = new Set([...fresh, ...finished].map(key));
+    const otherZones = input.stored.filter((row) => row.tz !== input.tz && !covered.has(key(row)));
+
+    return { rows: [...fresh, ...finished], otherZones: [...new Set(otherZones.map((row) => row.tz))] };
+}
+
 export interface DigestDeps {
     now?: Date;
     loadEvents?: typeof loadAttributedSpend;
@@ -143,7 +164,7 @@ export async function queryDigest(opts: DigestOptions, deps: DigestDeps = {}): P
 
     const now = deps.now ?? new Date();
     const tz = resolveTimeZone(opts.tz);
-    const { period, days } = digestDays(opts, now, tz);
+    const { period, days } = digestDays({ opts, now, tz });
     const from = dayBounds(days[0], tz).start;
     const to = dayBounds(days[days.length - 1], tz).end;
     const store = await AiConfigStore.readOnly();
@@ -176,26 +197,21 @@ export async function queryDigest(opts: DigestOptions, deps: DigestDeps = {}): P
             accountIdOf: (entry) => keyOf(entry.provider, entry.account).accountId,
             days: new Set(days),
         });
-        const freshKeys = new Set(
-            fresh.map((row) => `${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.day}`)
-        );
-        const kept = new UsageDailyStore(db.connection())
-            .between({ from: days[0], to: days[days.length - 1] })
-            .filter(
-                (row) => !freshKeys.has(`${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.day}`)
-            );
-        // A stored day was cut at the daemon's midnight; its peak and resets cannot move to another zone's day.
-        const stored = kept.filter((row) => row.tz === tz);
-        const otherZones = [...new Set(kept.filter((row) => row.tz !== tz).map((row) => row.tz))];
+        const merged = mergeDigestRows({
+            fresh,
+            stored: new UsageDailyStore(db.connection()).between({ from: days[0], to: days[days.length - 1] }),
+            tz,
+            today: zonedDay(now.toISOString(), tz),
+        });
 
-        if (otherZones.length > 0) {
+        if (merged.otherZones.length > 0) {
             warnings.push({
                 code: "rollup-other-tz",
-                message: `Days whose readings are pruned were kept in ${otherZones.join(", ")}, not ${tz}; they are left out. Ask with --tz ${otherZones[0]}.`,
+                message: `Days whose readings are pruned were kept in ${merged.otherZones.join(", ")}, not ${tz}; they are left out. Ask with --tz ${merged.otherZones[0]}.`,
             });
         }
 
-        rows = [...fresh, ...stored];
+        rows = merged.rows;
 
         const current = snapshotsFromCache(await readSnapshotsCache());
         const outlookSeries = readLimitSeries(
@@ -244,7 +260,7 @@ export async function queryDigest(opts: DigestOptions, deps: DigestDeps = {}): P
         days,
         windows: digestWindows(rows, (row) => keyOf(row.provider, row.accountName)),
         alerts: digestAlerts(alerts),
-        spend: digestSpend(events, (sessionId) => aiSessionsCommand("report", sessionId)),
+        spend: digestSpend(events, aiSessionReportCommand),
         outlook,
         workers: workersOf((deps.workerRows ?? readWorkerCostRows)(), from, to),
     };

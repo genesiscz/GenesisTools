@@ -37,7 +37,7 @@ import { usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { aiSessionsCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
+import { aiSessionReportCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -139,7 +139,7 @@ function registerPivot(program: Command): void {
             .option("--json", "Print usage.spend.pivot@1"),
         { since: "7d" }
     ).action(async (_opts: PivotOpts, command: Command) => {
-        const opts = command.optsWithGlobals<PivotOpts>();
+        const opts = verbOpts<PivotOpts>(command);
         // The root's --harness (or --sources) narrows the spend read, as it does for the reports.
         const sources = harnessSources({ cmd: command, command: "pivot", ids: AGENT_IDS });
 
@@ -400,7 +400,8 @@ function registerProxy(program: Command): void {
                     throw new UsageQueryError("bad-value", `--days "${opts.days}" is not a positive whole number.`);
                 }
 
-                const since = new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10);
+                // `--days 14` is today and the 13 days before it.
+                const since = new Date(now.getTime() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
                 const months = opts.month && opts.month.length > 0 ? new Set(splitList(opts.month)) : undefined;
                 const report = buildProxyReport({ ...(months ? { months } : {}), sinceDay: since });
 
@@ -411,6 +412,20 @@ function registerProxy(program: Command): void {
                 );
             });
         });
+}
+
+/**
+ * The verb's options with the root's: the root's `--since` default (30d, for the reports) is dropped, so a verb with
+ * its own default window (7d) keeps it, and an alias (`--from`, `--hours`) is not refused as a second spelling.
+ */
+function verbOpts<T extends WindowFlags>(command: Command): T {
+    const opts = { ...command.optsWithGlobals<T>() };
+
+    if (command.getOptionValueSourceWithGlobals("since") === "default") {
+        delete opts.since;
+    }
+
+    return opts;
 }
 
 interface WasteOpts extends WindowFlags {
@@ -459,7 +474,7 @@ function registerWaste(program: Command): void {
             .option("--json", "Print usage.spend.waste@1"),
         { since: "7d" }
     ).action(async (_opts: WasteOpts, command: Command) => {
-        const opts = command.optsWithGlobals<WasteOpts>();
+        const opts = verbOpts<WasteOpts>(command);
         const sources = harnessSources({ cmd: command, command: "waste", ids: AGENT_IDS });
 
         if (sources === null) {
@@ -502,7 +517,7 @@ function registerWaste(program: Command): void {
                 to: window.to.getTime(),
                 by: dims,
                 tz: window.tz,
-                reportCommand: (sessionId) => aiSessionsCommand("report", sessionId),
+                reportCommand: aiSessionReportCommand,
                 top,
             });
             const warnings: UsageWarning[] =

@@ -122,9 +122,9 @@ export function aiUsageCommand(...words: string[]): string {
     return toolCommand(["ai usage", ...words].join(" "));
 }
 
-/** A per-session analysis verb, `tools ai sessions <words>` (`report <id>`). */
-export function aiSessionsCommand(...words: string[]): string {
-    return toolCommand(["ai sessions", ...words].join(" "));
+/** One session's analysis report, `tools ai sessions report <id>`; the id is a quoted argument, never shell syntax. */
+export function aiSessionReportCommand(sessionId: string): string {
+    return toolCommand("ai sessions report", sessionId);
 }
 
 /** Logs a Claude subscription account in; without an account, the bare command. */
