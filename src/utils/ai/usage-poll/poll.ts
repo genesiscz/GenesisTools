@@ -469,7 +469,8 @@ export async function __fetchProviderSnapshots(
 
         const failure = suppressed ? undefined : entry.usage.classifyFailure?.(result.reason);
 
-        if (failure?.orgBlocked) {
+        // A diagnostic poll (`probe`) writes no event: diagnosing an account never adds history.
+        if (failure?.orgBlocked && !opts.probe) {
             recordUsageEvent({
                 provider: providerId,
                 accountId: account.id,
@@ -499,6 +500,7 @@ export async function __fetchProviderSnapshots(
             failures,
             now,
             knownAccounts: opts.accountFilter ? undefined : accounts.map((a) => a.name),
+            ...(opts.probe ? { probe: true } : {}),
         });
     }
 
