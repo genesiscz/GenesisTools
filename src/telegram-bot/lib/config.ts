@@ -5,6 +5,7 @@ import {
     telegramBotStorage,
 } from "@genesiscz/utils/telegram-bot/lib/config";
 import type { TelegramBotConfig, TelegramBotConfigV1 } from "@genesiscz/utils/telegram-bot/lib/types";
+import type { BotChats } from "./bot";
 
 const storage = telegramBotStorage();
 
@@ -17,9 +18,15 @@ export async function saveTelegramConfig(config: TelegramBotConfig | TelegramBot
     await saveTelegramBotConfig(config);
 }
 
-/** Every chat the bot takes updates from: the commands chat, plus the decisions chat when it is another one. */
-export function authorizedChats(config: Pick<TelegramBotConfig, "chats">): number[] {
-    return [...new Set([config.chats.commands, config.chats.decisions ?? config.chats.commands])];
+/**
+ * The chats the bot takes updates from: commands from the commands chat only, button presses from it and from the
+ * decisions chat. A decisions group never gains `/run` or `/tools`.
+ */
+export function botChats(config: Pick<TelegramBotConfig, "chats">): BotChats {
+    return {
+        commands: config.chats.commands,
+        presses: [...new Set([config.chats.commands, config.chats.decisions ?? config.chats.commands])],
+    };
 }
 
 export function notConfiguredMessage(): string {
