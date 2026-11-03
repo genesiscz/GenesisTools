@@ -64,6 +64,7 @@ export function thresholdAlerts(
                 previousRoundAt: null,
                 events: [],
                 availabilityChanges: [],
+                budgets: config.budgets,
             },
             config: config.alerts,
             store,
