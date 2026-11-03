@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
-import { windowPace } from "@genesiscz/utils/ai/usage/budgets/budgets";
+import { EMPTY_BUDGETS, windowPace } from "@genesiscz/utils/ai/usage/budgets/budgets";
 import { UsageEventsStore } from "@genesiscz/utils/ai/usage/events/store";
-import type { UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
+import { readSampleSeeds, type UsageSample } from "@genesiscz/utils/ai/usage/forecast/samples";
 import { PollRunsStore } from "@genesiscz/utils/ai/usage/poll-runs/store";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -42,6 +42,7 @@ function round(overrides: Partial<AlertRound> = {}): AlertRound {
         now: NOW,
         snapshots: [],
         samples: [],
+        baselines: [],
         runs: [],
         previousRoundAt: null,
         events: [],
@@ -362,6 +363,7 @@ describe("rules over the stores", () => {
             now: NOW,
             previousRoundAt: minutes(-2).toISOString(),
             config: config(),
+            budgets: EMPTY_BUDGETS,
         });
         const candidates = ALERT_RULES["limit-state-change"].evaluate(built, ALERT_RULE_DEFAULTS["limit-state-change"]);
 
@@ -380,6 +382,7 @@ describe("rules over the stores", () => {
             now: NOW,
             previousRoundAt: minutes(-45).toISOString(),
             config: health,
+            budgets: EMPTY_BUDGETS,
         });
 
         const fired = await runAlertEngine({ round: built, config: health, store, channels, rules: ALERT_RULES });
@@ -397,6 +400,7 @@ describe("rules over the stores", () => {
             now: minutes(1),
             previousRoundAt: NOW.toISOString(),
             config: health,
+            budgets: EMPTY_BUDGETS,
         });
 
         expect(
@@ -431,6 +435,7 @@ describe("rules over the stores", () => {
             now: NOW,
             previousRoundAt: null,
             config: config(),
+            budgets: EMPTY_BUDGETS,
         });
         const candidates = ALERT_RULES["rate-limited"].evaluate(built, ALERT_RULE_DEFAULTS["rate-limited"]);
 
@@ -459,6 +464,7 @@ describe("rules over the stores", () => {
             now: NOW,
             previousRoundAt: null,
             config: config({ rules: { "rate-limited": { windowMinutes: 120 } } }),
+            budgets: EMPTY_BUDGETS,
         });
 
         expect(built.events).toHaveLength(3);
@@ -489,6 +495,7 @@ describe("rules over the stores", () => {
             now: NOW,
             previousRoundAt: null,
             config: config(),
+            budgets: EMPTY_BUDGETS,
         });
         const candidates = ALERT_RULES["rate-limited"].evaluate(built, ALERT_RULE_DEFAULTS["rate-limited"]);
 
@@ -679,6 +686,52 @@ describe("budget rule", () => {
         expect(ALERT_RULES.budget.evaluate(round({ snapshots: [weekly(60)], samples: [before] }), settings)).toEqual(
             []
         );
+    });
+
+    test("a week idle since before the lookback starts today from its last reading, not from 0", () => {
+        const settings = ALERT_RULE_DEFAULTS.budget;
+        const idle = { ...before, utilization: 59, timestamp: "2026-10-28T08:00:00.000Z" };
+
+        expect(
+            ALERT_RULES.budget.evaluate(round({ snapshots: [weekly(60)], baselines: [idle], budgets }), settings)
+        ).toEqual([]);
+        expect(
+            ALERT_RULES.budget.evaluate(round({ snapshots: [weekly(60)], budgets }), settings).map((a) => a.title)
+        ).toEqual(["Over budget pace"]);
+    });
+
+    test("readSampleSeeds gives each window's last reading before the lookback", () => {
+        const reading = { resetsAt: null, severity: null, scopeModel: null, provider: "anthropic-sub", kind: "weekly" };
+        limits.recordSnapshotV2("work", "seven_day", 20, "2026-10-28T08:00:00.000Z", reading);
+        limits.recordSnapshotV2("work", "seven_day", 25, "2026-10-29T08:00:00.000Z", reading);
+        limits.recordSnapshotV2("work", "seven_day", 40, "2026-11-02T08:00:00.000Z", reading);
+
+        const seeds = readSampleSeeds(limits.connection(), { before: new Date("2026-11-01T00:00:00.000Z") });
+
+        expect(seeds.map((seed) => [seed.bucket, seed.utilization])).toEqual([["seven_day", 25]]);
+    });
+
+    test("a pace alert steps its severity, and a zero allowance says so instead of a ratio", () => {
+        const settings = ALERT_RULE_DEFAULTS.budget;
+        const at = (percent: number) =>
+            ALERT_RULES.budget.evaluate(
+                round({ snapshots: [weekly(percent)], samples: [before], budgets }),
+                settings
+            )[0];
+
+        expect(at(60)?.severity).toBe(at(61)?.severity);
+
+        const zero = {
+            global: {},
+            providers: { "anthropic-sub": { accounts: { acc_work: { weekly: { dailyAllowancePct: 0 } } } } },
+        };
+        const fired = ALERT_RULES.budget.evaluate(
+            round({ snapshots: [weekly(35)], samples: [before], budgets: zero }),
+            settings
+        );
+
+        expect(fired[0]?.message).toContain("with no daily allowance");
+        expect(fired[0]?.message).not.toContain("undefined");
     });
 
     test("use it or lose it: a budgeted window resetting within 6 h with 40% left", () => {
