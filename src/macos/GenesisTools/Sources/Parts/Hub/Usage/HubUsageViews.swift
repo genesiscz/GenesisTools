@@ -4,6 +4,14 @@ import SwiftUI
 /// account opens Limits with that account's lanes; ⌘-click adds it to the lanes shown.
 struct UsageListView: View {
     @ObservedObject var usage: HubUsageModel
+    /// The sidebar's "Filter accounts…" text.
+    let filter: String
+
+    /// Whether an account row shows under the filter: its name, provider or plan holds every word (case-insensitive).
+    static func matches(_ account: UsageAccountKey, plan: String?, filter: String) -> Bool {
+        let text = [account.accountName, account.provider, plan ?? ""].joined(separator: " ").lowercased()
+        return filter.lowercased().split(whereSeparator: \.isWhitespace).allSatisfy { text.contains($0) }
+    }
 
     var body: some View {
         ScrollView {
@@ -20,7 +28,14 @@ struct UsageListView: View {
                         .padding(.top, 14)
                         .padding(.horizontal, 10)
                         .padding(.bottom, 2)
-                    ForEach(usage.table.rows) { row in
+                    let rows = usage.table.rows.filter { Self.matches($0.account, plan: $0.plan, filter: filter) }
+                    if rows.isEmpty {
+                        Text("No account matches “\(filter.trimmingCharacters(in: .whitespaces))”")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                    }
+                    ForEach(rows) { row in
                         UsageAccountListRow(row: row, selected: usage.selectedAccounts.contains(row.id)) { additive in
                             usage.select(account: row.id, additive: additive)
                             usage.section = .limits

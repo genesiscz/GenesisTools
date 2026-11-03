@@ -237,6 +237,13 @@ final class HubUsageTests: XCTestCase {
         XCTAssertNotNil(UsageSpendBar.bucketDate("2026-10-27T06", timeZone: "UTC"))
     }
 
+    func testTheAccountFilterKeepsRowsWithEveryWordInTheirNameProviderOrPlan() {
+        let work = UsageAccountKey(provider: "openai-sub", accountId: "acc_work", accountName: "work")
+        XCTAssertTrue(UsageListView.matches(work, plan: nil, filter: "  "))
+        XCTAssertTrue(UsageListView.matches(work, plan: "Pro", filter: "WORK openai pro"))
+        XCTAssertFalse(UsageListView.matches(work, plan: nil, filter: "work anthropic"))
+    }
+
     func testSpendBarsKeepTwoProjectsWithOneShortNameApartAndARealOtherOutOfTheOverflow() throws {
         let json = """
         {"by":["project"],"grain":"day","tz":"UTC","total":{"costUsd":10,"tokens":0,"unpriced":0},"heatmap":null,"groups":[
