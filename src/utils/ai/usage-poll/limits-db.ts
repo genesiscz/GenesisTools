@@ -577,11 +577,26 @@ export class UsageLimitsDb {
         return rekey();
     }
 
+    /**
+     * Every table of the `usage_limits` scope keeps the same `dataRetentionDays`: the snapshots, the spend rows,
+     * the poll runs (by their end), the usage events and the fired alerts.
+     */
     pruneOlderThan(days: number): number {
         const usagePruned = this.claudeDb.pruneTable("usage_snapshots", "timestamp", days);
         const spendPruned = this.claudeDb.pruneTable("spend_snapshots", "timestamp", days);
+        const runsPruned = this.claudeDb.pruneTable("usage_poll_runs", "to_ts", days);
+        const eventsPruned = this.claudeDb.pruneTable("usage_events", "ts", days);
+        const alertsPruned = this.claudeDb.pruneTable("usage_alerts", "fired_at", days);
 
-        return usagePruned + spendPruned;
+        return usagePruned + spendPruned + runsPruned + eventsPruned + alertsPruned;
+    }
+
+    /**
+     * The migrated connection, for the stores that share the `usage_limits` scope (poll runs, usage events, usage
+     * alerts). Their tables exist once this class has opened the file; they never create a table themselves.
+     */
+    connection(): Database {
+        return this.claudeDb.getDb();
     }
 
     recordSpendIfChanged(accountName: string, spend: SpendInput, provider?: string): boolean {
