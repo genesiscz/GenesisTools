@@ -16,7 +16,8 @@ export * from "./spikes";
 
 /**
  * Every spend event since `from`, each with its session and account (design 2026-11-01, step U9). It reads the
- * ai-spend events cache, which keeps 90 days and re-reads only transcripts that grew, and the pin journal read-only.
+ * ai-spend events cache, which keeps 90 days, and the pin journal, both read-only: the usage doors that call it are
+ * diagnostics, so a transcript that grew is parsed for this answer and the cache is left to `tools ai-spend`.
  */
 export async function loadAttributedSpend(input: {
     from: Date;
@@ -35,6 +36,7 @@ export async function loadAttributedSpend(input: {
         accounts: context.accounts,
         now: input.now,
         withFile: true,
+        readOnly: true,
     });
     const lookup = await loadSessionAccountLookup(input.directory);
     const attributed = attributeEvents(events, lookup);

@@ -117,6 +117,11 @@ export interface CollectSeriesEventsOptions {
     now?: Date;
     /** Stamp each collected event with its transcript path (`file`). */
     withFile?: boolean;
+    /**
+     * Read the cache, never write it: a grown transcript is parsed in memory for this answer only. For a diagnostic
+     * door (the usage digest, drift, attribution), which may read durable state and nothing else.
+     */
+    readOnly?: boolean;
 }
 
 function cachePath(storage: Storage): string {
@@ -310,7 +315,9 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
 
     const collected = [...byId.values()];
 
-    pruneAndSave(cache, options.storage, now, dirty);
+    if (!options.readOnly) {
+        pruneAndSave(cache, options.storage, now, dirty);
+    }
 
     logger.debug(
         {

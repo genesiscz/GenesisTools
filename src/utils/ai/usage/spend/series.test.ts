@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -12,6 +12,8 @@ import { claudeDriver } from "./drivers/claude";
 import { codexDriver } from "./drivers/codex";
 import { isolateAgentHomeEnv } from "./drivers/test-env";
 import type { DriverRoot, MonitorDriver } from "./drivers/types";
+import { collectSeriesEvents } from "./events-cache";
+import { DEFAULT_PRICING } from "./pricing";
 import { loadEvents } from "./reports/load";
 import { buildSpendSeries, type SpendSeriesOptions, UnsupportedGrainError } from "./series";
 
@@ -167,6 +169,23 @@ describe("buildSpendSeries", () => {
 
         const without = await buildSpendSeries({ ...window(), grain: "day" }, options);
         expect(without.points[0].byModel).toBeUndefined();
+    });
+
+    test("a read-only collect parses the transcripts and never writes the cache", () => {
+        const cacheFile = join(storage.getCacheDir(), "events-cache.json");
+        const events = collectSeriesEvents({
+            storage,
+            pricing: DEFAULT_PRICING,
+            home,
+            sources: ["codex"],
+            minMtimeMs: 0,
+            accounts: options.accounts,
+            drivers: options.drivers,
+            readOnly: true,
+        });
+
+        expect(events.reduce((sum, event) => sum + event.tokens, 0)).toBe(600_000);
+        expect(existsSync(cacheFile)).toBe(false);
     });
 
     test("an unchanged file is never re-read on the second call", async () => {
