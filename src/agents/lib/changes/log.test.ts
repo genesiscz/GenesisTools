@@ -84,7 +84,8 @@ describe("the changes command, as the hub calls it", () => {
         const raw = run("00000000-0000-4000-8000-00000000abcd", "--raw", "--tools", "toolu_b", "--json");
         expect(raw.status).toBe(1);
         expect(raw.stderr).toContain("--raw takes one call");
-    });
+        // Three cold `bun` starts: each took 0.7 to 2.7 s, past bun test's 5 s default together (2026-11-03).
+    }, 60_000);
 });
 
 describe("the session argument", () => {
