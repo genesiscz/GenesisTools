@@ -158,6 +158,16 @@ describe("extractLaunchDetails", () => {
         expect(extractLaunchDetails("/bin/claude --resume").resumeId).toBeNull();
     });
 
+    // A bare `--resume` opens Claude's own picker; the flag after it is not a session id. `who` showed two live
+    // panes as session "--settings" (2026-11-03), so neither one could be focused or guarded against a second copy.
+    test("a bare --resume followed by another flag names no session", () => {
+        const args = '/bin/claude --dangerously-skip-permissions --resume --settings {"crossSessionInbound":"accept"}';
+
+        expect(extractLaunchDetails(args).resumeId).toBeNull();
+        expect(extractLaunchDetails("/bin/claude -r --model fable")).toEqual({ resumeId: null, model: "fable" });
+        expect(extractLaunchDetails("/bin/claude --session-id --verbose").resumeId).toBeNull();
+    });
+
     test("--session-id names the session a new launch creates", () => {
         expect(extractLaunchDetails("/bin/claude --input-format stream-json --session-id=abc-123").resumeId).toBe(
             "abc-123"
