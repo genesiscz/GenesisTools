@@ -39,6 +39,7 @@ import { energyMicShareFor } from "../lib/energy";
 import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { speakingEvidence } from "../lib/platforms";
 import { presenceFor } from "../lib/presence";
+import { questionIdOf, questionLabel, questionWarnings } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { linkedSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
@@ -97,12 +98,13 @@ const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
     rejected: pc.dim,
 };
 
-function printItems(items: MeetingItem[]): void {
-    const table = createBoxTable(["ID", "KIND", "STATUS", "CONF", "WHAT", "RULES"]);
+function printItems(record: MeetingRecord, items: MeetingItem[]): void {
+    const table = createBoxTable(["ID", "Q", "KIND", "STATUS", "CONF", "WHAT", "RULES"]);
 
     for (const item of items) {
         table.push([
             pc.white(item.id),
+            item.kind === "question" ? pc.cyan(questionLabel(record, item.id)) : "",
             item.kind,
             STATUS_COLOR[item.status](item.status),
             item.confidence === undefined ? "—" : `${Math.round(item.confidence * 100)} %`,
@@ -209,7 +211,7 @@ async function suggest(
             return;
         }
 
-        printItems(fresh);
+        printItems(store.read(record.id) ?? record, fresh);
         ui.dim(`Confirm or reject: ${TOOL} confirm ${record.id} <ids> · ${TOOL} reject ${record.id} <ids>`);
     } catch (err) {
         fail(errorText(err));
@@ -246,7 +248,7 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
         return;
     }
 
-    printItems(listed);
+    printItems(record, listed);
 }
 
 interface AddOptions {
@@ -349,14 +351,23 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
 
     try {
         let added: MeetingItem[] = [];
-        await store.update(record.id, { command: "items add", change: `${parsed.data.length} findings` }, (current) => {
-            added = findingItems(parsed.data, current.items, new Date().toISOString());
-            current.items.push(...added);
-        });
+        const updated = await store.update(
+            record.id,
+            { command: "items add", change: `${parsed.data.length} findings` },
+            (current) => {
+                added = findingItems(parsed.data, current.items, new Date().toISOString());
+                current.items.push(...added);
+            }
+        );
+
+        for (const warning of questionWarnings(updated, added)) {
+            ui.warn(warning);
+        }
 
         if (added.length === 1 && added[0]!.kind === "question") {
+            const label = questionLabel(updated, added[0]!.id);
             ui.ok(
-                `${added[0]!.id} added to ${record.id}. Answer it: ${TOOL} listen ${record.id} --item ${added[0]!.id}`
+                `${label} (${added[0]!.id}) added to ${record.id}. Answer it: ${TOOL} listen ${record.id} --item ${label}`
             );
             return;
         }
@@ -411,7 +422,12 @@ async function decide(
         return;
     }
 
-    const picked = pickItems(record, ids, minConfidence);
+    // A question is named by its number as people see it (Q12) as well as by its id.
+    const picked = pickItems(
+        record,
+        ids.map((id) => (/^q\d+$/i.test(id) ? questionIdOf(record, id) : id)),
+        minConfidence
+    );
 
     if (typeof picked === "string") {
         fail(picked);
@@ -431,7 +447,8 @@ async function decide(
     const questions: MeetingItem[] = status === "confirmed" ? picked.filter((item) => item.kind === "question") : [];
 
     for (const item of questions) {
-        ui.warn(`${item.id} is a question; answer it: ${TOOL} listen ${record.id} --item ${item.id}`);
+        const label = questionLabel(record, item.id);
+        ui.warn(`${label} (${item.id}) is a question; answer it: ${TOOL} listen ${record.id} --item ${label}`);
     }
 
     const deciding = picked.filter((item) => !unnamed.includes(item) && !questions.includes(item));
@@ -731,7 +748,7 @@ export function registerItemCommands(program: Command): void {
         program
             .command(name)
             .argument("<meeting>", MEETING_REF)
-            .argument("[items...]", "item ids: i1 i2 …")
+            .argument("[items...]", "item ids: i1 i2 …, or a question's number: Q12")
             .description(
                 status === "confirmed"
                     ? "Confirm items: transcripts apply confirmed items"

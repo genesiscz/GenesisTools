@@ -358,10 +358,27 @@ export function splitQuestion(
     return created;
 }
 
+type JoinItem = Extract<MeetingItem, { kind: "join" }>;
+
+/** The ledger entry of a confirmed join: the two cut halves as heard, and the whole word. */
+function joinCorrection(record: MeetingRecord, item: JoinItem, now: string): Correction {
+    const evidence = item.evidence ?? {};
+    const heard = [evidence.left, evidence.right].filter((part) => typeof part === "string").join(" ");
+    return {
+        at: now,
+        meeting: record.id,
+        project: record.project,
+        kind: "join",
+        heard,
+        fixed: item.joined ?? "",
+        item: item.id,
+    };
+}
+
 /**
  * Writes an answer into the record: the question is confirmed, and each item it decides is confirmed with the answer
  * (a range's speaker, a term's spelling, a join's speaker) or rejected when the answer is "none of these". Returns
- * the confirmed term corrections for the ledger. Mutates `record`.
+ * the confirmed term and join corrections for the ledger. Mutates `record`.
  */
 export function answerQuestion(
     record: MeetingRecord,
@@ -402,6 +419,10 @@ export function answerQuestion(
 
         if (item.kind === "speaker-range" || item.kind === "join") {
             item.speaker = answer;
+        }
+
+        if (item.kind === "join" && item.joined) {
+            ledger.push(joinCorrection(record, item, options.now));
         }
 
         if (item.kind === "term") {
@@ -550,4 +571,155 @@ export function heardContext(
  */
 export function questionNumber(record: MeetingRecord, id: string): number {
     return record.items.filter((item) => item.kind === "question").findIndex((item) => item.id === id) + 1;
+}
+
+/** How a person names a question: `Q<n>`, the number the polished file and the listen header use, else its id. */
+export function questionLabel(record: MeetingRecord, id: string): string {
+    const n = questionNumber(record, id);
+    return n > 0 ? `Q${n}` : id;
+}
+
+/** The item id a person's reference names: `Q12`, `12` or the id itself (`i42`). Unknown numbers stay as given. */
+export function questionIdOf(record: MeetingRecord, ref: string): string {
+    const n = /^q?(\d+)$/i.exec(ref.trim())?.[1];
+
+    if (!n) {
+        return ref;
+    }
+
+    return record.items.filter((item) => item.kind === "question")[Number(n) - 1]?.id ?? ref;
+}
+
+/** The words of the lines a speaker question asks about; a split part names its own words in the question. */
+function spokenIn(question: QuestionItem, transcript: TranscriptEntry[], maxChars: number): string | undefined {
+    if (question.question.startsWith('Who says "')) {
+        return undefined;
+    }
+
+    const text = transcript
+        .filter(
+            (entry) =>
+                entry.startSec !== undefined &&
+                entry.startSec >= question.fromSec - 0.5 &&
+                (entry.startSec < question.toSec || entry.startSec === question.fromSec)
+        )
+        .map((entry) => entry.text)
+        .join(" ");
+    return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text || undefined;
+}
+
+/** What a person sees of a question, before any styling: its name, its time, and the words it asks about. */
+export interface QuestionView {
+    /** `Q12`. */
+    label: string;
+    question: string;
+    /** `59:48–1:00:13`. */
+    range: string;
+    priority?: number;
+    /** A word question: its line, with the heard words marked, and the lines around it. */
+    context?: HeardContext;
+    /** A speaker question: what is said in the asked span. */
+    said?: string;
+}
+
+/** The one place that composes what a person sees of a question; the terminal and `items` only paint it. */
+export function questionView(
+    record: MeetingRecord,
+    question: QuestionItem,
+    transcript: TranscriptEntry[],
+    maxChars: number
+): QuestionView {
+    const context = question.about === "speaker" ? undefined : heardContext(question, transcript, maxChars);
+    const said = question.about === "speaker" ? spokenIn(question, transcript, maxChars) : undefined;
+    return {
+        label: questionLabel(record, question.id),
+        question: question.question,
+        range: `${formatClock(question.fromSec)}–${formatClock(question.toSec)}`,
+        ...(question.priority === undefined ? {} : { priority: question.priority }),
+        ...(context ? { context } : {}),
+        ...(said ? { said } : {}),
+    };
+}
+
+function heardKey(question: QuestionItem): string | undefined {
+    const heard = question.heard?.trim().toLocaleLowerCase();
+    return heard || undefined;
+}
+
+/**
+ * One answer settles its look-alikes. A speaker answer raises the questions with its signature (`propagateAnswer`).
+ * A word answer answers every other open word question on the same heard words the same way, so the same word is not
+ * asked twice; each is marked "settled by the answer to iN". "None of these" settles nothing. Mutates `record`.
+ */
+export function settleLookAlikes(
+    record: MeetingRecord,
+    answered: QuestionItem,
+    options: { answer: string; listenBelow: number; now: string }
+): { settled: string[]; corrections: Correction[] } {
+    if (answered.about === "speaker") {
+        return { settled: propagateAnswer(record, answered, options), corrections: [] };
+    }
+
+    const heard = heardKey(answered);
+
+    if (!heard || options.answer.trim().toLowerCase() === NONE_OF_THESE) {
+        return { settled: [], corrections: [] };
+    }
+
+    const settled: string[] = [];
+    const corrections: Correction[] = [];
+
+    for (const question of openQuestions(record)) {
+        if (question.id === answered.id || question.about === "speaker" || heardKey(question) !== heard) {
+            continue;
+        }
+
+        corrections.push(
+            ...answerQuestion(record, question.id, {
+                answer: options.answer,
+                comment: `settled by the answer to ${answered.id}`,
+                now: options.now,
+            })
+        );
+        settled.push(question.id);
+    }
+
+    return { settled, corrections };
+}
+
+/**
+ * What `items add` warns about in new questions: text that repeats another open question (the listener cannot tell
+ * them apart), a question that decides no item, and one with no priority (it is asked last).
+ */
+export function questionWarnings(record: MeetingRecord, added: MeetingItem[]): string[] {
+    const open = openQuestions(record);
+    const warnings: string[] = [];
+
+    for (const question of added) {
+        if (question.kind !== "question") {
+            continue;
+        }
+
+        const label = questionLabel(record, question.id);
+        const text = question.question.trim().toLocaleLowerCase();
+        const twin = open.find(
+            (other) => other.id !== question.id && other.question.trim().toLocaleLowerCase() === text
+        );
+
+        if (twin) {
+            warnings.push(
+                `${label} asks the same as ${questionLabel(record, twin.id)} ("${question.question}"): name the time or the words, so the listener can tell them apart.`
+            );
+        }
+
+        if (question.decides.length === 0) {
+            warnings.push(`${label} decides no item: its answer changes nothing in the transcript (--decides <ids>).`);
+        }
+
+        if (question.priority === undefined) {
+            warnings.push(`${label} has no priority, so listen asks it after every question that has one.`);
+        }
+    }
+
+    return warnings;
 }

@@ -76,8 +76,10 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    outcomes: read the version from before the meeting (`git log --before=<meeting start> -1 -- <path>`, then `git show
    <sha>:<path>`), and use a later version for spelling only, never for who said what.
 4. **Pass 3, the user listens.** Give the user `tools meetings listen <meeting>`: it shows one question, plays its clip
-   with a tone before the asked words, and waits for the answer; Esc goes back one step and undoes the previous
-   answer. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
+   with a tone before the asked words, and waits for the answer; Esc goes back one step and undoes only what the
+   previous answer changed, so your own `items add` during the round stays. Name a question by its number, `Q12`, in
+   `listen --item`, `confirm` and `reject`; `tools meetings items` shows it in the `Q` column. To relay an answer the
+   user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
    background command): it prints each answer as one JSON line the moment it is given and exits when the round ends,
    so you act on each answer while the user is still listening. Do not poll the record.
 5. **The agent finishes.** Take the answers from the subscription (or `tools meetings items <meeting> --kind

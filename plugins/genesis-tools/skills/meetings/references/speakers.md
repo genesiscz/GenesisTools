@@ -131,9 +131,10 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
 4. **Highest value first**: priority = (1 - confidence) x impact x reach, where reach counts the other unsure ranges
    with the same evidence (the same live voice, the same people present, the same top candidates).
 5. **Propagate**: an answer raises every range with the same evidence; re-rank, and ask the next only if it is still
-   under 60 %.
-6. **Budget**: about 12 questions per meeting; the user can say "enough". A split does not count: its parts take its
-   place. The rest stay suggestions and render as
+   under 60 %. A word answer also answers every other open question on the same heard words, so one word is never
+   asked twice; the `answered` event lists those questions in `settled`.
+6. **Budget**: about 12 questions per meeting; the user can say "enough". A split does not count: its parts come next
+   and share its place. The rest stay suggestions and render as
    `[nejasné: "<label>"; 1) Petr 55 % 2) Pavel]` (only the known confidence is shown).
 7. **Split**: when the user hears several voices in one range, "Several voices" in `listen` cuts it at each line and at
    each change between the microphone and the call, then asks each part with its words. Two remote voices in a row
@@ -142,7 +143,9 @@ settle as many other lines as possible. On the example meeting this cut 250 cand
    split it by ear.
 
 In the automatic mode the tool applies these rules (`tools meetings suggest`, then `tools meetings listen`). In the
-three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`. The
+three-pass mode the agent applies them when it adds questions with `tools meetings items add --kind question`, which
+warns about a question whose text repeats another open question (name the time or quote the words instead), one that
+decides no item, and one with no priority. The
 budget is one for speakers and terms together (`playback.listen.budget`, 12 by default). In both, the
 agent answers only what the listen round left open, in the chat round, with the evidence.
 

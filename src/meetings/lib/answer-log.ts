@@ -28,8 +28,8 @@ export type AnswerEvent =
       }
     | { event: "skipped"; at: string; item: string }
     | { event: "split"; at: string; item: string; into: number }
-    /** The listener went back: the item's answer is undone and it is asked again. */
-    | { event: "reopened"; at: string; item: string }
+    /** The listener went back: the item's answer is undone and it is asked again; `also`: the look-alikes it had settled. */
+    | { event: "reopened"; at: string; item: string; also?: string[] }
     /** `open` is -1 when the subscriber reports a listener that ended without writing its round-end. */
     | { event: "round-end"; at: string; reason: RoundEndReason; asked: number; open: number };
 
@@ -74,6 +74,12 @@ export function runningRound(events: AnswerEvent[]): AnswerEvent[] {
 function listenerAlive(pid: number): boolean {
     const { status } = classifyPid(pid, (command) => /\bmeetings\b/.test(command) && /\blisten\b/.test(command));
     return status === "live" || status === "unverified";
+}
+
+/** A round is running in this log: its round-start has no round-end yet and its listener still runs. */
+export function roundRunning(path: string, alive: (pid: number) => boolean = listenerAlive): boolean {
+    const start = runningRound(readAnswerEvents(path))[0];
+    return start?.event === "round-start" && alive(start.pid);
 }
 
 /**

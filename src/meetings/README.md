@@ -30,7 +30,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
 | `attendance <meeting> [--from teams\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given |
-| `listen <meeting> [--item i42]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`beep`, `beepLeadSec`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. `--item i42 --answer "<text>"` answers without audio |
+| `listen <meeting> [--item Q12]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`beep`, `beepLeadSec`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to |
 | `listen <meeting> --subscribe-answers [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. Run it under a Monitor, so each answer wakes the agent |
 | `items add <meeting> --kind speaker-range --from 38:12 --to 38:20 --label "<raw label>" --speaker <name> --confidence 0.85 --reason "…"` | Store an agent's finding (rule `agent`, the reason in `evidence.reason`); it stays suggested until a person confirms it |
 | `items add <meeting> --kind term --at 1:02 --heard <words> [--proposed <spelling>] --confidence 0.4 --reason "…"` | The same for a term; without `--proposed` it is asked as free text when it matters |
@@ -135,9 +135,19 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
    owner. Reach counts the questions with the same signature (top two choices and the people present).
 
 `listen` asks by priority, at most `playback.listen.budget` (12) per round and none under `minPriority` (0.5). A split
-does not count against the budget: its parts take its place. Each
-answer settles its look-alikes: the questions with the same signature get the answer, +0.3 up to 0.9, and close when
-that reaches the threshold. "Enough for now" ends the round; the rest stay marked in the transcript.
+uses no budget: its parts come next and share their parent's unit, so the header shows `3/12 · part 2/4`. Each
+answer settles its look-alikes. A speaker answer gives the questions with the same signature the answer, +0.3 up to
+0.9, and closes those that reach the threshold. A word answer answers every other open word question on the same
+heard words the same way ("settled by the answer to i7"); the `answered` event lists them in `settled`, and an undo
+reopens them (`reopened` with `also`). "Enough for now" ends the round; the rest stay marked in the transcript.
+
+The round is one module, `ListenSession` in `lib/listen-session.ts`: which question comes next, the budget, each
+decision as per-item changes with their inverse, look-alikes, the answer log and the ledger. A `ListenAdapter` asks
+the person: the terminal (clack and audio, in `commands/listen.ts`) or `GivenAnswerAdapter` for `--answer`.
+
+A question is `Q<n>` to people: the n-th question of the record, as listen's header and the polished file number it.
+`items` shows the number in its `Q` column, and `confirm`, `reject` and `listen --item` take `Q12`. `items add` warns
+about a question whose text repeats another open question, one that decides no item, and one with no priority.
 
 A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
 
