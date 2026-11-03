@@ -75,11 +75,14 @@ export interface EventSourceLike {
     onerror: ((ev: unknown) => void) | null;
 }
 
+/** The part of `fetch` the client uses: a URL string and an init. A wire adapter implements only this. */
+export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
 export interface DashboardClientOptions {
     /** e.g. "" (same-origin web) or "http://mac.local:3042" (mobile). */
     baseUrl: string;
-    /** Injected fetch — `window.fetch` on web, `expo/fetch` on RN. */
-    fetch: typeof fetch;
+    /** Injected fetch — `window.fetch` on web, `expo/fetch` on RN, the fixture wire on a phone with no Mac. */
+    fetch: FetchLike;
     /** Returns the Authorization header value (e.g. "Basic …"), or undefined. */
     authHeader?: () => string | undefined;
     /** Injected EventSource factory for the QA SSE stream (transport pick lives in the consumer). */

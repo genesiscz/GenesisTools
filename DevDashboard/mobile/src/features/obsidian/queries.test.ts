@@ -1,6 +1,6 @@
 import type { ObsidianNoteRes, ObsidianTreeRes } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { noteQuery, obsidianKeys, treeQuery } from "@/features/obsidian/queries";
 
 /**
@@ -14,32 +14,32 @@ import { noteQuery, obsidianKeys, treeQuery } from "@/features/obsidian/queries"
 
 describe("mock obsidian client", () => {
     it("tree returns a vault with at least one directory", async () => {
-        const { entries } = await mockDashboardClient.obsidian.tree();
+        const { entries } = await fixtureDashboardClient.obsidian.tree();
         expect(entries.length).toBeGreaterThan(0);
         expect(entries.some((e) => e.isDirectory)).toBe(true);
     });
 
     it("note returns source + html + a publishedSlug field", async () => {
-        const note = await mockDashboardClient.obsidian.note("Daily.md");
+        const note = await fixtureDashboardClient.obsidian.note("Daily.md");
         expect(typeof note.source).toBe("string");
         expect(note.html).toContain("<");
         expect(note).toHaveProperty("publishedSlug");
     });
 
     it("publish returns a PublishedNote for the given vault path", async () => {
-        const { note } = await mockDashboardClient.obsidian.publish("Daily.md");
+        const { note } = await fixtureDashboardClient.obsidian.publish("Daily.md");
         expect(note.vaultPath).toBe("Daily.md");
         expect(typeof note.slug).toBe("string");
         expect(typeof note.publishedAt).toBe("string");
     });
 
     it("unpublish returns the remaining published notes", async () => {
-        const { remaining } = await mockDashboardClient.obsidian.unpublish("mock-note");
+        const { remaining } = await fixtureDashboardClient.obsidian.unpublish("mock-note");
         expect(Array.isArray(remaining)).toBe(true);
     });
 
     it("mkdir echoes the created relative dir", async () => {
-        const res = await mockDashboardClient.obsidian.mkdir("Projects/New");
+        const res = await fixtureDashboardClient.obsidian.mkdir("Projects/New");
         expect(res.ok).toBe(true);
         expect(res.relativeDir).toBe("Projects/New");
     });
@@ -51,7 +51,7 @@ describe("obsidian query factories", () => {
     // no awkward QueryFunctionContext construction (mirrors the pulse factory tests).
 
     it("treeQuery builds the tree key + a queryFn that calls the client", async () => {
-        const opts = treeQuery(mockDashboardClient);
+        const opts = treeQuery(fixtureDashboardClient);
         expect([...opts.queryKey]).toEqual([...obsidianKeys.tree]);
         expect(typeof opts.queryFn).toBe("function");
         const data = await (opts.queryFn as unknown as () => Promise<ObsidianTreeRes>)();
@@ -59,19 +59,19 @@ describe("obsidian query factories", () => {
     });
 
     it("noteQuery encodes the path into the key and stays enabled for a real path", () => {
-        const opts = noteQuery(mockDashboardClient, "Projects/DevDashboard.md");
+        const opts = noteQuery(fixtureDashboardClient, "Projects/DevDashboard.md");
         expect([...opts.queryKey]).toEqual(["obsidian", "note", "Projects/DevDashboard.md"]);
         expect(opts.enabled).toBe(true);
     });
 
     it("noteQuery is disabled (and keys on '') when no note is selected", () => {
-        const opts = noteQuery(mockDashboardClient, null);
+        const opts = noteQuery(fixtureDashboardClient, null);
         expect([...opts.queryKey]).toEqual(["obsidian", "note", ""]);
         expect(opts.enabled).toBe(false);
     });
 
     it("noteQuery's queryFn routes to the client for the given path", async () => {
-        const opts = noteQuery(mockDashboardClient, "Daily.md");
+        const opts = noteQuery(fixtureDashboardClient, "Daily.md");
         const data = await (opts.queryFn as unknown as () => Promise<ObsidianNoteRes>)();
         expect(data.html).toContain("Daily.md");
     });

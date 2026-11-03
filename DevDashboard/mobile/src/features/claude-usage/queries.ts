@@ -11,12 +11,9 @@ import { queryOptions } from "@tanstack/react-query";
  * own comment says so). We supply `T` explicitly here (`AccountUsage[]`, `MultiBucketHistoryResult`)
  * and build paths via the contract's `paths.*` builders — the single source of truth for routes.
  *
- * MOCK GAP (flagged, NOT fixed — mock-client.ts is shared/read-only): the mock's escape hatch
- * returns `[MOCK_USAGE]` (an AccountUsage[]) for BOTH `/api/claude/usage` AND its prefix
- * `/api/claude/usage/history` — so the history query gets the wrong shape under the mock. The
- * `usageHistoryQuery` queryFn here coerces a non-`series` payload to an empty `{ series: [] }` so
- * parallel-dev under the mock renders an empty chart instead of crashing. On a REAL device the
- * agent returns a true MultiBucketHistoryResult. See 20-impl-09-rest-notes.md.
+ * Shape guards: the fixture wire answers each path exactly (`src/api/fixture-wire.ts`), so the old
+ * mock's prefix gap is gone. The `usageHistoryQuery` queryFn still coerces a non-`series` payload
+ * to an empty `{ series: [] }`, so an older Mac agent renders an empty chart instead of crashing.
  *
  * Polling: 30 s for both the live usage snapshot and the history (utilization moves slowly).
  */
@@ -74,9 +71,8 @@ function emptyTotals(): UsageTotalsResult {
 }
 
 /**
- * Same escape-hatch caveat as the two queries above, and the same mock gap: the mock matches
- * `/api/claude/usage` by prefix, so this path can come back as an `AccountUsage[]`. Coerce anything
- * without a `total` to the empty shape so the card renders its empty state instead of crashing.
+ * Same shape guard as the two queries above: coerce anything without a `total` to the empty shape
+ * so the card renders its empty state instead of crashing.
  */
 export function usageTotalsQuery(client: DashboardClient, minutes: number) {
     return queryOptions<UsageTotalsResult>({

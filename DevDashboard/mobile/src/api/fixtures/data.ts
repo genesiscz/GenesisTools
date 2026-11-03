@@ -1,26 +1,23 @@
 import type {
     AccountUsage,
     AttentionRes,
-    BuildLogSubscription,
+
     ClassifiedLogEntry,
     ContainersResult,
     DaemonOverview,
-    DashboardClient,
+
     DiskUsageResult,
     EnrichedQaEntry,
-    Endpoint,
-    EndpointInput,
-    EndpointOutput,
-    KillPortResult,
+
     NetStatusRes,
     PortsResult,
     ProcessInfo,
     ProcessSort,
     ProcessesRes,
-    PublishedNote,
+
     PulseHistoryRes,
     PulseRes,
-    QaSubscription,
+
     RunSummary,
     SavedCommand,
     TimelineEvent,
@@ -31,46 +28,27 @@ import type {
     VaultEntry,
     WeatherRes,
 } from "@dd/contract";
-import { fillPath, paths } from "@dd/contract";
 
 /**
- * A `DashboardClient`-shaped stand-in that returns believable FIXTURES instead of hitting a
- * device. The `ClientProvider` injects this whenever no transport is connected (D32: mock↔real is
- * swapped at the CLIENT, never at the hooks).
- *
- * COMPREHENSIVE BY DESIGN: every method the contract exposes — system / weather / tmux / ttyd /
- * cmux / obsidian / qa (incl. the SSE `subscribe`) AND the generic `get`/`post` escape hatch used
- * for the deferred claude/daemon/containers/todos routes — returns realistic data. Parallel
- * feature agents CONSUME this mock without editing it, so their endpoints must already be covered
- * here. Do NOT trim it to "just what Pulse needs": that would force every other feature to touch
- * this shared file (merge-conflict magnet). Add fixtures for NEW endpoints here as the contract
- * grows; never special-case per screen.
- *
- * Everything here is FAKE. The provider exposes `isMock` so screens can show a "mock data" badge.
- * The const is typed as `DashboardClient`, so the compiler enforces parity with the real client.
+ * The fixture data the fixture wire (`src/api/fixture-wire.ts`) serves when no Mac is connected. Everything here is
+ * FAKE, with invented names. Stateful fixtures (todos, presets, commands, the answer queue) change through the
+ * helpers below, so a write and the next read agree, as on a real Mac.
  */
 
-/** Tiny async delay so the mock feels like a network call (and loading states are exercised). */
-function delay<T>(value: T, ms = 120): Promise<T> {
-    return new Promise((resolve) => {
-        setTimeout(() => resolve(value), ms);
-    });
-}
-
 /** A slowly-wandering value in [min, max], seeded off the clock so successive polls differ. */
-function wander(base: number, amplitude: number, periodMs: number, min = 0, max = 100): number {
+export function wander(base: number, amplitude: number, periodMs: number, min = 0, max = 100): number {
     const phase = (Date.now() % periodMs) / periodMs;
     const value = base + amplitude * Math.sin(phase * Math.PI * 2);
     return Math.min(max, Math.max(min, Math.round(value * 10) / 10));
 }
 
-const GB = 1024 ** 3;
-const MB = 1024 * 1024;
-const MEM_TOTAL = 32 * GB;
-const SWAP_TOTAL = 4 * GB;
-const DISK_TOTAL = 994 * GB;
+export const GB = 1024 ** 3;
+export const MB = 1024 * 1024;
+export const MEM_TOTAL = 32 * GB;
+export const SWAP_TOTAL = 4 * GB;
+export const DISK_TOTAL = 994 * GB;
 
-const MOCK_PROCESSES = [
+export const MOCK_PROCESSES = [
     { pid: 4821, name: "node (metro)", rssBytes: 1.8 * GB },
     { pid: 1390, name: "Code Helper (Plugin)", rssBytes: 1.2 * GB },
     { pid: 9920, name: "bun", rssBytes: 880 * MB },
@@ -79,7 +57,7 @@ const MOCK_PROCESSES = [
 ];
 
 /** Full ProcessInfo fixtures for the Process Monitor surface (5 fields incl. uptime + cpu). */
-const MOCK_PROCESSES_FULL: ProcessInfo[] = [
+export const MOCK_PROCESSES_FULL: ProcessInfo[] = [
     { pid: 4821, name: "node (metro)", rssBytes: 1.8 * GB, uptimeMs: 5_400_000, cpuPct: 18.2 },
     { pid: 1390, name: "Code Helper (Plugin)", rssBytes: 1.2 * GB, uptimeMs: 9_000_000, cpuPct: 4.1 },
     { pid: 9920, name: "bun", rssBytes: 880 * MB, uptimeMs: 600_000, cpuPct: 61.5 },
@@ -89,7 +67,7 @@ const MOCK_PROCESSES_FULL: ProcessInfo[] = [
 ];
 
 /** Mirrors the backend `sortProcesses`: rss desc (ties → pid asc) / name asc (ties → pid asc). */
-function sortMock(list: ProcessInfo[], sort: ProcessSort): ProcessInfo[] {
+export function sortMock(list: ProcessInfo[], sort: ProcessSort): ProcessInfo[] {
     const copy = [...list];
 
     if (sort === "name") {
@@ -101,11 +79,11 @@ function sortMock(list: ProcessInfo[], sort: ProcessSort): ProcessInfo[] {
     return copy;
 }
 
-function mockProcessesRes(sort: ProcessSort): ProcessesRes {
+export function mockProcessesRes(sort: ProcessSort): ProcessesRes {
     return { sort, processes: sortMock(MOCK_PROCESSES_FULL, sort) };
 }
 
-function mockPulse(): PulseRes {
+export function mockPulse(): PulseRes {
     const cpuPct = wander(34, 26, 9000);
     const memFreePct = wander(41, 12, 17000, 5, 95);
     const swapUsed = wander(0.9, 0.6, 23000, 0, 3.5) * GB;
@@ -127,7 +105,7 @@ function mockPulse(): PulseRes {
     };
 }
 
-function mockNetStatus(): NetStatusRes {
+export function mockNetStatus(): NetStatusRes {
     // A believable healthy LAN link: ~40-90ms wander, real-looking SSID + IP. Mirrors mockPulse's
     // network fields so the network-status screen reads consistently with Pulse under the mock.
     const latencyMs = Math.round(wander(60, 30, 11000, 8, 400));
@@ -142,7 +120,7 @@ function mockNetStatus(): NetStatusRes {
 }
 
 /** Synthesize a window of points ending now, one per ~30 s, wandering around a per-metric base. */
-function mockHistory(metric: string, minutes: number): PulseHistoryRes {
+export function mockHistory(metric: string, minutes: number): PulseHistoryRes {
     const stepMs = 30_000;
     const count = Math.min(240, Math.max(8, Math.floor((minutes * 60_000) / stepMs)));
     const now = Date.now();
@@ -157,7 +135,7 @@ function mockHistory(metric: string, minutes: number): PulseHistoryRes {
     return { metric, points };
 }
 
-function mockWeather(): WeatherRes {
+export function mockWeather(): WeatherRes {
     const sunrise = new Date();
     sunrise.setHours(5, 41, 0, 0);
     const sunset = new Date();
@@ -173,7 +151,7 @@ function mockWeather(): WeatherRes {
     };
 }
 
-const MOCK_TMUX: TmuxSessionsRes = {
+export const MOCK_TMUX: TmuxSessionsRes = {
     sessions: [
         {
             name: "dev",
@@ -211,7 +189,7 @@ const MOCK_TMUX: TmuxSessionsRes = {
     ],
 };
 
-const MOCK_TTYD = {
+export const MOCK_TTYD = {
     sessions: [
         {
             id: "ttyd-1",
@@ -248,9 +226,9 @@ const MOCK_TTYD = {
     ],
 };
 
-const EMPTY_ATTACH = { workspaceId: "ws-1", paneId: "pane-1", surfaceId: "surf-1", tmuxSessionName: "dev" };
+export const EMPTY_ATTACH = { workspaceId: "ws-1", paneId: "pane-1", surfaceId: "surf-1", tmuxSessionName: "dev" };
 
-const MOCK_CMUX_SNAPSHOT = {
+export const MOCK_CMUX_SNAPSHOT = {
     snapshot: {
         fetchedAt: new Date().toISOString(),
         available: true,
@@ -271,7 +249,7 @@ const MOCK_CMUX_SNAPSHOT = {
     },
 };
 
-const MOCK_CMUX_LAYOUT = {
+export const MOCK_CMUX_LAYOUT = {
     layout: {
         fetchedAt: new Date().toISOString(),
         available: true,
@@ -300,7 +278,7 @@ const MOCK_CMUX_LAYOUT = {
     },
 };
 
-const MOCK_VAULT: VaultEntry[] = [
+export const MOCK_VAULT: VaultEntry[] = [
     {
         name: "Projects",
         relativePath: "Projects",
@@ -313,7 +291,7 @@ const MOCK_VAULT: VaultEntry[] = [
     { name: "Daily.md", relativePath: "Daily.md", isDirectory: false },
 ];
 
-const MOCK_QA: EnrichedQaEntry[] = [
+export const MOCK_QA: EnrichedQaEntry[] = [
     {
         questionHtml: "<p>Why victory-native XL over react-native-graph? (mock)</p>",
         answerHtml: "<p>Skia GPU canvas, area + sparkline in one lib, behind a swappable <code>MetricChart</code>.</p>",
@@ -328,7 +306,7 @@ const MOCK_QA: EnrichedQaEntry[] = [
 
 /** Two attention items: an unread agent question (mark-read flow) + a live agent session that
  *  hands off to the real `ttyd-1` mock terminal (deep-link open flow). */
-const MOCK_ATTENTION: AttentionRes = {
+export const MOCK_ATTENTION: AttentionRes = {
     items: [
         {
             id: "qa:mock-1",
@@ -350,12 +328,12 @@ const MOCK_ATTENTION: AttentionRes = {
     count: 2,
 };
 
-const MOCK_USAGE: AccountUsage = {
+export const MOCK_USAGE: AccountUsage = {
     accountName: "mock-account",
     label: "Mock (no device connected)",
 };
 
-const MOCK_DAEMON: DaemonOverview = {
+export const MOCK_DAEMON: DaemonOverview = {
     status: { installed: true, running: true, pid: 4242 },
     tasks: [],
 };
@@ -363,7 +341,7 @@ const MOCK_DAEMON: DaemonOverview = {
 /** One recorded run so the build-log-tail run picker has a tappable row under the mock (the daemon
  *  screen's runs list also renders this instead of empty). The `logFile` is ignored by the mock
  *  `buildLog.subscribe`, which always replays MOCK_BUILD_LOG. */
-const MOCK_RUNS: RunSummary[] = [
+export const MOCK_RUNS: RunSummary[] = [
     {
         taskName: "sync",
         runId: "mock-run",
@@ -377,7 +355,7 @@ const MOCK_RUNS: RunSummary[] = [
 
 /** A short scripted tail so the live viewer shows life offline — including ONE error line so the
  *  highlight + jump-to-error FAB are demonstrable under the mock. */
-const MOCK_BUILD_LOG: ClassifiedLogEntry[] = [
+export const MOCK_BUILD_LOG: ClassifiedLogEntry[] = [
     {
         type: "meta",
         taskName: "sync",
@@ -393,12 +371,12 @@ const MOCK_BUILD_LOG: ClassifiedLogEntry[] = [
     { type: "exit", ts: new Date().toISOString(), code: 1, duration_ms: 4200, cls: "error" },
 ];
 
-const MOCK_CONTAINERS: ContainersResult = {
+export const MOCK_CONTAINERS: ContainersResult = {
     dockerAvailable: false,
     containers: [],
 };
 
-const MOCK_DISK_USAGE: DiskUsageResult = {
+export const MOCK_DISK_USAGE: DiskUsageResult = {
     available: true,
     scannedAt: new Date().toISOString(),
     // Pre-sorted bytes-desc (the contract). The mobile screen relies on this order for the rank.
@@ -411,7 +389,7 @@ const MOCK_DISK_USAGE: DiskUsageResult = {
     ],
 };
 
-const MOCK_PORTS: PortsResult = {
+export const MOCK_PORTS: PortsResult = {
     lsofAvailable: true,
     scannedAt: Date.now(),
     ports: [
@@ -421,13 +399,13 @@ const MOCK_PORTS: PortsResult = {
     ],
 };
 
-const MOCK_TODO_LISTS: TodosResult["lists"] = [
+export const MOCK_TODO_LISTS: TodosResult["lists"] = [
     { identifier: "list-gt", title: "GenesisTools", color: "#34d399", source: "iCloud" },
 ];
 
 /** Mutable so the mock's add/complete are STATEFUL — the "complete removes a row" / "add appears"
  *  Appium + unit assertions need the list ↔ mutation round-trip to be real, not a no-op. */
-let MOCK_TODO_REMINDERS: TodosResult["reminders"] = [
+export let MOCK_TODO_REMINDERS: TodosResult["reminders"] = [
     {
         identifier: "rem-1",
         title: "Ship reminders-todos feature",
@@ -453,16 +431,16 @@ let MOCK_TODO_REMINDERS: TodosResult["reminders"] = [
     },
 ];
 
-let mockTodoSeq = 0;
+export let mockTodoSeq = 0;
 
-function mockTodosResult(includeCompleted: boolean): TodosResult {
+export function mockTodosResult(includeCompleted: boolean): TodosResult {
     return {
         lists: MOCK_TODO_LISTS,
         reminders: includeCompleted ? MOCK_TODO_REMINDERS : MOCK_TODO_REMINDERS.filter((r) => !r.is_completed),
     };
 }
 
-function mockAddTodo(title: string): { reminderId: string } {
+export function mockAddTodo(title: string): { reminderId: string } {
     const reminderId = `rem-mock-${++mockTodoSeq}`;
     MOCK_TODO_REMINDERS = [
         ...MOCK_TODO_REMINDERS,
@@ -481,13 +459,13 @@ function mockAddTodo(title: string): { reminderId: string } {
     return { reminderId };
 }
 
-function mockCompleteTodo(reminderId: string): { ok: true } {
+export function mockCompleteTodo(reminderId: string): { ok: true } {
     MOCK_TODO_REMINDERS = MOCK_TODO_REMINDERS.filter((r) => r.identifier !== reminderId);
     return { ok: true };
 }
 
 /** Activity-timeline fixture — relative-to-now so successive renders stay "today" and span hours. */
-const MOCK_TIMELINE: TimelineEvent[] = [
+export const MOCK_TIMELINE: TimelineEvent[] = [
     {
         id: "terminal-ttyd-2",
         type: "terminal",
@@ -528,11 +506,11 @@ const MOCK_TIMELINE: TimelineEvent[] = [
     },
 ];
 
-const PRESET_DIR = "~/.genesis-tools/cmux/tmux-presets";
+export const PRESET_DIR = "~/.genesis-tools/cmux/tmux-presets";
 
 /** Mutable so the mock's save/remove are STATEFUL — the "capture adds a row" / "delete drops a row"
  *  Appium + unit assertions need the list ↔ mutation round-trip to be real, not a no-op. */
-let MOCK_PRESETS: TmuxPresetSummary[] = [
+export let MOCK_PRESETS: TmuxPresetSummary[] = [
     {
         name: "morning-dev",
         capturedAt: new Date(Date.now() - 3_600_000).toISOString(),
@@ -555,7 +533,7 @@ let MOCK_PRESETS: TmuxPresetSummary[] = [
     },
 ];
 
-function mockSavePreset(body: { name: string; note?: string }): TmuxPresetSummary {
+export function mockSavePreset(body: { name: string; note?: string }): TmuxPresetSummary {
     const preset: TmuxPresetSummary = {
         name: body.name,
         capturedAt: new Date().toISOString(),
@@ -571,7 +549,7 @@ function mockSavePreset(body: { name: string; note?: string }): TmuxPresetSummar
     return preset;
 }
 
-function mockRemovePreset(name: string): { removed: boolean } {
+export function mockRemovePreset(name: string): { removed: boolean } {
     const before = MOCK_PRESETS.length;
     MOCK_PRESETS = MOCK_PRESETS.filter((p) => p.name !== name);
     return { removed: MOCK_PRESETS.length < before };
@@ -579,13 +557,13 @@ function mockRemovePreset(name: string): { removed: boolean } {
 
 /** Quick-commands snippet library — mutable so create/delete round-trip in the mock (the Appium
  *  persist-across-refetch assertion needs `list()` to reflect a prior `create()`). */
-let MOCK_COMMANDS: SavedCommand[] = [
+export let MOCK_COMMANDS: SavedCommand[] = [
     { id: "cmd-tests", label: "Run tests", command: "bun test" },
     { id: "cmd-status", label: "Git status", command: "git status" },
     { id: "cmd-dev", label: "Restart dev server", command: "bun dev" },
 ];
 
-function mockCreateCommand(body: { label: string; command: string }): SavedCommand {
+export function mockCreateCommand(body: { label: string; command: string }): SavedCommand {
     const command: SavedCommand = {
         id: `cmd-mock-${Date.now().toString(36)}`,
         label: body.label,
@@ -595,13 +573,13 @@ function mockCreateCommand(body: { label: string; command: string }): SavedComma
     return command;
 }
 
-function mockDeleteCommand(id: string): { removed: number } {
+export function mockDeleteCommand(id: string): { removed: number } {
     const before = MOCK_COMMANDS.length;
     MOCK_COMMANDS = MOCK_COMMANDS.filter((c) => c.id !== id);
     return { removed: before - MOCK_COMMANDS.length };
 }
 
-const MOCK_USAGE_TOTALS: UsageTotalsResult = {
+export const MOCK_USAGE_TOTALS: UsageTotalsResult = {
     from: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
     to: new Date().toISOString(),
     total: { events: 1284, inputTokens: 8_420_000, outputTokens: 312_000, costUsd: 12.47, unpricedEvents: 3 },
@@ -626,173 +604,4 @@ const MOCK_USAGE_TOTALS: UsageTotalsResult = {
     },
 };
 
-/**
- * Generic escape-hatch responder. The real `get<T>`/`post<T>` are generic, so the mock cannot
- * statically know `T` — it path-switches on the known deferred routes and returns a plausible
- * top-level fixture, cast once to `T` (the only unavoidable cast, inherent to the generic
- * signature). Unknown paths return `{}` rather than throwing, so a not-yet-mocked route degrades
- * to an empty render instead of a crash. Real-typed methods (system/tmux/…) never go through here.
- */
-function escapeHatch<T>(path: string): Promise<T> {
-    // Must precede the `claudeUsage()` prefix test below, which would otherwise swallow it.
-    if (path.startsWith("/api/claude/usage/totals")) {
-        return delay(MOCK_USAGE_TOTALS as unknown as T);
-    }
 
-    if (path.startsWith(paths.claudeUsage())) {
-        // NB: `/api/claude/usage` is a prefix of `/api/claude/usage/history`, so the history route
-        // also lands here and gets the account-usage fixture (shape ≈ but not the history result).
-        // Both are deferred (no v1 screen); a claude-usage feature agent should add a `/history`
-        // branch returning a `MultiBucketHistoryResult` fixture before this line.
-        return delay([MOCK_USAGE] as unknown as T);
-    }
-
-    if (path.startsWith(paths.daemonStatus())) {
-        return delay(MOCK_DAEMON as unknown as T);
-    }
-
-    if (path.startsWith("/api/daemon/runs/log")) {
-        // The static run-log backlog seed. No mock log fixture — return [] so the live SSE tail
-        // (`buildLog.subscribe`, which replays MOCK_BUILD_LOG) is the sole source of mock lines.
-        return delay([] as unknown as T);
-    }
-
-    if (path.startsWith(paths.daemonRuns())) {
-        // Serves both the daemon screen's runs list AND the build-log-tail run picker. (Checked AFTER
-        // `/api/daemon/runs/log` so the backlog seed isn't shadowed.) The live tail is the SSE
-        // `buildLog.subscribe` seam, NOT this escape hatch.
-        return delay(MOCK_RUNS as unknown as T);
-    }
-
-    if (path.startsWith(paths.containers())) {
-        return delay(MOCK_CONTAINERS as unknown as T);
-    }
-
-    if (path.startsWith(paths.diskUsage())) {
-        return delay(MOCK_DISK_USAGE as unknown as T);
-    }
-
-    if (path.startsWith("/api/todos")) {
-        const includeCompleted = path.includes("includeCompleted=true");
-        return delay(mockTodosResult(includeCompleted) as unknown as T);
-    }
-
-    if (path.startsWith(paths.portsKill())) {
-        return delay({ ok: true, killed: true } as KillPortResult as unknown as T);
-    }
-
-    if (path.startsWith(paths.ports())) {
-        return delay(MOCK_PORTS as unknown as T);
-    }
-
-    if (path.startsWith(paths.processesKill())) {
-        return delay({ ok: true } as unknown as T);
-    }
-
-    if (path.startsWith("/api/processes")) {
-        const sort: ProcessSort = path.includes("sort=name") ? "name" : "rss";
-        return delay(mockProcessesRes(sort) as unknown as T);
-    }
-
-    if (path.startsWith(paths.netStatus())) {
-        return delay(mockNetStatus() as unknown as T);
-    }
-
-    if (path.startsWith("/api/timeline")) {
-        return delay(MOCK_TIMELINE as unknown as T);
-    }
-
-    return delay({} as T);
-}
-
-export const mockDashboardClient: DashboardClient = {
-    get: <T>(path: string) => escapeHatch<T>(path),
-    post: <T>(path: string, _body: unknown) => escapeHatch<T>(path),
-    // The generic endpoint-table call reaches the same fixtures by its filled path (M2b replaces this mock).
-    call: async <E extends Endpoint>(endpoint: E, input: EndpointInput<E>) =>
-        escapeHatch<EndpointOutput<E>>(fillPath(endpoint.path, (input ?? {}) as Record<string, unknown>).path),
-
-    system: {
-        pulse: () => delay(mockPulse()),
-        pulseHistory: (metric, minutes) => delay(mockHistory(metric, minutes)),
-    },
-    weather: () => delay(mockWeather()),
-    processes: {
-        list: (sort = "rss") => delay(mockProcessesRes(sort)),
-        kill: () => delay({ ok: true }),
-    },
-    ports: {
-        list: () => delay(MOCK_PORTS),
-        kill: () => delay({ ok: true, killed: true } as KillPortResult),
-    },
-    tmux: {
-        sessions: () => delay(MOCK_TMUX),
-        create: (body = {}) =>
-            delay({ sessionName: body.name ?? "mock", cwd: body.cwd ?? "/", command: body.command ?? "bash" }),
-        rename: (body) => delay({ sessionName: body.to }),
-    },
-    presets: {
-        list: () => delay({ presets: MOCK_PRESETS }),
-        save: (body) => delay({ preset: mockSavePreset(body) }),
-        restore: (name) => delay({ result: { name, created: 1, skipped: 0, failed: 0, outcomes: [] } }),
-        remove: (name) => delay(mockRemovePreset(name)),
-    },
-    ttyd: {
-        list: () => delay(MOCK_TTYD),
-        spawn: () => delay({ session: MOCK_TTYD.sessions[0] }),
-        kill: () => delay({ ok: true }),
-        rename: () => delay({ ok: true }),
-    },
-    cmux: {
-        snapshot: () => delay(MOCK_CMUX_SNAPSHOT),
-        layout: () => delay(MOCK_CMUX_LAYOUT),
-        createTerminal: () => delay({ result: EMPTY_ATTACH }),
-        sendSession: () => delay({ result: EMPTY_ATTACH }),
-        removeSession: () => delay({ removed: 1 }),
-        attach: () => delay({ ok: true }),
-        rename: () => delay({ ok: true }),
-    },
-    commands: {
-        list: () => delay({ commands: MOCK_COMMANDS }),
-        create: (body) => delay({ command: mockCreateCommand(body) }),
-        delete: (id) => delay(mockDeleteCommand(id)),
-    },
-    obsidian: {
-        tree: () => delay({ entries: MOCK_VAULT }),
-        note: (path) =>
-            delay({
-                source: `# ${path}\n\nMock note body — connect a device for the real vault.`,
-                html: `<h1>${path}</h1><p>Mock note body — connect a device for the real vault.</p>`,
-                publishedSlug: null,
-            }),
-        mkdir: (relativeDir) => delay({ ok: true, relativeDir }),
-        publish: (path) =>
-            delay({ note: { slug: "mock-note", vaultPath: path, publishedAt: new Date().toISOString() } }),
-        unpublish: () => delay({ remaining: [] as PublishedNote[] }),
-    },
-    qa: {
-        log: () => delay({ entries: MOCK_QA }),
-        read: () => delay({ ok: true, updated: 0 }),
-        subscribe: (onEntry: (entry: EnrichedQaEntry) => void): QaSubscription => {
-            // Emit one fixture shortly after subscribing so a QA stream UI shows life under the mock.
-            const timer = setTimeout(() => onEntry(MOCK_QA[0]), 800);
-            return { close: () => clearTimeout(timer) };
-        },
-    },
-    buildLog: {
-        subscribe: (_logFile: string, onEntry: (entry: ClassifiedLogEntry) => void): BuildLogSubscription => {
-            // Replay the fixture at ~400ms intervals so loading / auto-scroll / error highlight all show.
-            const timers = MOCK_BUILD_LOG.map((entry, i) => setTimeout(() => onEntry(entry), 400 * (i + 1)));
-            return { close: () => timers.forEach(clearTimeout) };
-        },
-    },
-    attention: {
-        list: () => delay(MOCK_ATTENTION),
-    },
-    todos: {
-        list: (_listIds = [], includeCompleted = false) => delay(mockTodosResult(includeCompleted)),
-        add: (body) => delay(mockAddTodo(body.title)),
-        complete: (reminderId) => delay(mockCompleteTodo(reminderId)),
-        requestAccess: () => delay({ granted: true }),
-    },
-};

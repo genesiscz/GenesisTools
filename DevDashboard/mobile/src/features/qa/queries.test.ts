@@ -1,6 +1,6 @@
 import type { DashboardClient, QaLogRes, QaRow } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { QA_LOG_DEFAULT_LIMIT, QA_LOG_INTERVAL_MS, qaKeys, qaLogQuery } from "@/features/qa/queries";
 
 /**
@@ -8,7 +8,7 @@ import { QA_LOG_DEFAULT_LIMIT, QA_LOG_INTERVAL_MS, qaKeys, qaLogQuery } from "@/
  * lib decision — see plan-05 notes). We test the `queryOptions` factory (key shape, interval, and
  * that the queryFn routes to the client + applies the boundary cast) against a tiny fake client with
  * a FULL `QaRow` fixture, plus the live mock client for the "is wired" smoke. Full-`QaRow` field
- * assertions use a test-local fixture because the shipped `mockDashboardClient` serves only thin
+ * assertions use a test-local fixture because the shipped `fixtureDashboardClient` serves only thin
  * `EnrichedQaEntry` fixtures (flagged in 18-impl-07 notes).
  */
 
@@ -103,15 +103,15 @@ describe("qaLogQuery factory", () => {
 
 describe("mock dashboard client qa surface (smoke — wired, even if fixtures are thin)", () => {
     it("qa.log returns entries and qa.read resolves ok", async () => {
-        const log = await mockDashboardClient.qa.log();
+        const log = await fixtureDashboardClient.qa.log();
         expect(Array.isArray(log.entries)).toBe(true);
-        const read = await mockDashboardClient.qa.read(["x"], false);
+        const read = await fixtureDashboardClient.qa.read(["x"], false);
         expect(read.ok).toBe(true);
     });
 
     it("qa.subscribe emits then closes cleanly", async () => {
         const received = await new Promise<boolean>((resolve) => {
-            const sub = mockDashboardClient.qa.subscribe(() => resolve(true));
+            const sub = fixtureDashboardClient.qa.subscribe(() => resolve(true));
             setTimeout(() => {
                 sub.close();
                 resolve(false);

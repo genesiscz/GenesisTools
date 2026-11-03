@@ -1,6 +1,6 @@
 import type { AttentionRes, DashboardClient } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { mockDashboardClient } from "@/api/mock-client";
+import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { ATTENTION_INTERVAL_MS, attentionKeys, attentionQuery } from "@/features/needs-input-inbox/queries";
 
 /**
@@ -50,7 +50,7 @@ describe("attentionQuery factory", () => {
 
 describe("mock dashboard client attention surface (smoke — wired)", () => {
     it("attention.list returns the fixture items + count", async () => {
-        const res = await mockDashboardClient.attention.list();
+        const res = await fixtureDashboardClient.attention.list();
         expect(Array.isArray(res.items)).toBe(true);
         expect(res.count).toBe(res.items.length);
         expect(res.items.some((i) => i.kind === "agent-question")).toBe(true);
