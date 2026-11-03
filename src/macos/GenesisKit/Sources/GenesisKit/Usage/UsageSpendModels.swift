@@ -394,6 +394,12 @@ public struct UsageSessionReport: Decodable, Equatable, Sendable {
     public let losses: [UsageReportLoss]
     public let topCalls: [UsageReportCall]
     public let gaps: [UsageReportGap]
+    /// The facts this transcript cannot give, by name (`callTrace`, `compactions`), with the reason. A missing fact
+    /// is shown as not measured, never as zero. Absent in a report from before the field.
+    public let unsupported: [String: String]?
+
+    /// Why `fact` is not in this transcript; nil when it is.
+    public func unsupportedReason(_ fact: String) -> String? { unsupported?[fact] }
 }
 
 public struct UsageReportOverview: Decodable, Equatable, Sendable {

@@ -17,6 +17,13 @@ public enum UsageFormat {
         return String(format: "%.1f%%/h", locale: locale, value)
     }
 
+    /// The burn against the safe pace, "2.1%/h (safe 0.8)"; empty when the account burns nothing.
+    public static func pace(_ rate: Double?, safe: Double?) -> String {
+        guard let rate, rate.isFinite else { return "" }
+        guard let safe, safe.isFinite else { return Self.rate(rate) }
+        return "\(Self.rate(rate)) (safe \(String(format: "%.1f", locale: locale, safe)))"
+    }
+
     /// "$0.42", "$12.30", "$1,501".
     public static func usd(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }

@@ -349,14 +349,25 @@ struct UsageSessionSection: View {
                         PathLabel(path: path)
                     }
                 }
+                let noCalls = body.unsupportedReason("callTrace") != nil
+                let noCompactions = body.unsupportedReason("compactions") != nil
                 HStack(spacing: 18) {
-                    metric(UsageFormat.usd(body.cost.totalUsd), "total")
-                    metric(UsageFormat.usd(body.cost.mainUsd), "main loop")
-                    metric(UsageFormat.usd(body.cost.subagentUsd), "sub-agents")
-                    metric(UsageFormat.usd(body.cost.savingsUsd), "saved by the cache")
-                    metric(String(body.overview.calls), "calls")
+                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.totalUsd), "total")
+                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.mainUsd), "main loop")
+                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.subagentUsd), "sub-agents")
+                    metric(noCalls ? "—" : UsageFormat.usd(body.cost.savingsUsd), "saved by the cache")
+                    metric(noCalls ? "—" : String(body.overview.calls), "calls")
                     metric(body.overview.durationMinutes.map { UsageFormat.duration($0 * 60) } ?? "—", "span")
-                    metric(String(body.overview.compactions ?? 0), "compactions")
+                    metric(noCompactions ? "—" : String(body.overview.compactions ?? 0), "compactions")
+                }
+                // A fact the transcript cannot give is named with its reason, so a dash never reads as zero.
+                ForEach((body.unsupported ?? [:]).sorted { $0.key < $1.key }, id: \.key) { fact, reason in
+                    Label {
+                        Text(verbatim: "\(Self.factName(fact)) not measured: \(reason)")
+                    } icon: {
+                        Image(systemName: "info.circle")
+                    }
+                    .font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
                 }
                 if let cache = body.cache {
                     Text(verbatim: "Cache hit \(UsageFormat.percent(cache.hitPercent)) (p10 \(UsageFormat.percent(cache.p10)), median \(UsageFormat.percent(cache.median)), p90 \(UsageFormat.percent(cache.p90))) over \(Plural.count(cache.requests, "request"))")
@@ -416,6 +427,14 @@ struct UsageSessionSection: View {
             UsageEmpty(loading: usage.loading.contains(.report), symbol: "waveform.path.ecg.rectangle",
                        text: usage.analysisSession == nil ? "Pick a session to analyze." : "No report for this session.",
                        detail: "Analyze opens from a spike, the attribution, the waste list or the Today digest.")
+        }
+    }
+
+    static func factName(_ fact: String) -> String {
+        switch fact {
+        case "callTrace": return "Model calls and cost"
+        case "compactions": return "Compactions"
+        default: return fact
         }
     }
 

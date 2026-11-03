@@ -118,6 +118,38 @@ final class UsageTests: XCTestCase {
         XCTAssertTrue(row.limitBeforeReset)
     }
 
+    func testBindingForecastSkipsStaleAndPassedResetForecasts() throws {
+        let series = try decode(Self.seriesJSON, as: UsageSeriesData.self, door: .series(.day, step: "raw", agg: "raw")).data
+        let session = try XCTUnwrap(series.series.first)
+        let before = try XCTUnwrap(UsageTime.date("2026-11-03T10:00:00.000Z"))
+        XCTAssertEqual(UsageTableBuilder.bindingForecast([session], now: before)?.bucket, "five_hour")
+        // Its reset (13:00) has passed: the old "at limit" is not the account's state now.
+        let after = try XCTUnwrap(UsageTime.date("2026-11-03T14:00:00.000Z"))
+        XCTAssertNil(UsageTableBuilder.bindingForecast([session], now: after))
+        let stale = try JSONDecoder().decode(UsageLimitForecast.self, from: Data("""
+        {"utilization":99,"ratePctPerHour":5,"beforeReset":true,"exhaustAt":"2026-11-03T10:05:00.000Z","stale":true}
+        """.utf8))
+        XCTAssertFalse(UsageTableBuilder.isCurrent(stale, now: before))
+    }
+
+    func testSessionReportKeepsTheFactsTheTranscriptCannotGive() throws {
+        let envelope = try JSONDecoder().decode(UsageSessionReportEnvelope.self, from: Data("""
+        {"schema":"ai.sessions.report@1","session":{"provider":"grok","sessionId":"s-grok","filePath":null},
+         "report":{"overview":{"first":null,"last":null,"durationMinutes":null,"calls":0,"models":[],"compactions":null},
+           "tokens":{"input":0,"cacheRead":0,"cacheWrite":0,"output":0},
+           "cost":{"totalUsd":0,"mainUsd":0,"subagentUsd":0},"quotaWeight":null,"models":[],"cache":null,"losses":[],
+           "topCalls":[],"gaps":[],"unsupported":{"compactions":"Grok keeps only a compaction count"}}}
+        """.utf8))
+        XCTAssertEqual(envelope.report.unsupportedReason("compactions"), "Grok keeps only a compaction count")
+        XCTAssertNil(envelope.report.unsupportedReason("callTrace"))
+    }
+
+    func testPaceNamesTheBurnAndTheSafePace() {
+        XCTAssertEqual(UsageFormat.pace(2.14, safe: 0.8), "2.1%/h (safe 0.8)")
+        XCTAssertEqual(UsageFormat.pace(2.14, safe: nil), "2.1%/h")
+        XCTAssertEqual(UsageFormat.pace(nil, safe: 0.8), "")
+    }
+
     func testLimitTextNamesAnAccountThatLastsPastItsReset() throws {
         let lasts = try JSONDecoder().decode(UsageLimitForecast.self, from: Data("""
         {"utilization":20,"ratePctPerHour":1.5,"beforeReset":false}
