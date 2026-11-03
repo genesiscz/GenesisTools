@@ -150,6 +150,27 @@ describe("connection session — probe before commit", () => {
         expect((await loadConnections()).map((c) => c.host)).toEqual(["machine-fast.test"]);
     });
 
+    it("an activate whose row is removed during its probe commits nothing", async () => {
+        const kept = await useConnectionStore.getState().connect(lanInput("machine-kept.test"));
+        const doomed = await useConnectionStore.getState().connect(lanInput("machine-doomed.test"));
+        if (!kept.ok || !doomed.ok) {
+            throw new Error("setup connects failed");
+        }
+
+        await useConnectionStore.getState().activate(kept.id);
+        let release = () => {};
+        held.set("machine-doomed.test", new Promise<void>((resolve) => (release = resolve)));
+        const pending = useConnectionStore.getState().activate(doomed.id);
+        await useConnectionStore.getState().remove(doomed.id);
+        release();
+        const result = await pending;
+        held.clear();
+
+        expect(result.ok).toBe(false);
+        expect(useConnectionStore.getState().transport?.baseUrl()).toBe("http://machine-kept.test");
+        expect(useConnectionStore.getState().activeId).toBe(kept.id);
+    });
+
     it("a failed first connect keeps the gate closed (no transport, no active id)", async () => {
         offline.add("machine-a.test");
         const result = await useConnectionStore.getState().connect(lanInput("machine-a.test"));
@@ -192,6 +213,17 @@ describe("connection session — probe before commit", () => {
 
         expect(result).toEqual({ ok: false, error: "The pairing link has an invalid address." });
         expect(await loadConnections()).toEqual([]);
+    });
+
+    it("a pairing link that fails its probe answers the scanned tier's own failure", async () => {
+        // The cloudflared stub's transport answers for its own host.
+        offline.add("cloudflared-self.example.test");
+        const result = await applyPairingUri(
+            "devdashboard://pair?tier=cloudflared-self&baseUrl=https%3A%2F%2Frelay.example.test&username=tester"
+        );
+        offline.delete("cloudflared-self.example.test");
+
+        expect(result).toMatchObject({ ok: false, failure: TIERS["cloudflared-self"].probeFailure });
     });
 
     it("each plain tier probes with its own deadline from the table", async () => {
