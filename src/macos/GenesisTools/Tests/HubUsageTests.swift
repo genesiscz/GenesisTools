@@ -242,6 +242,43 @@ final class HubUsageTests: XCTestCase {
         XCTAssertEqual(HubRequest(["--usage-all-accounts"]).launchMode, .usage)
     }
 
+    /// How many times a door ran, from the client's own thread.
+    private final class Reads: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int { lock.withLock { count } }
+        func add() { lock.withLock { count += 1 } }
+    }
+
+    @MainActor
+    func testComingBackToTheWindowReadsAgainOnlyWhatIsStaleAndOnlyWhileUsageIsOpen() async throws {
+        let reads = Reads()
+        let model = HubUsageModel(preferences: try Self.scratchPreferences(), client: UsageClient { argv in
+            guard argv.contains("--cached") else { return Data("{}".utf8) }
+            reads.add()
+            return Data(Self.limitsJSON.utf8)
+        })
+        model.activate()
+        try await wait { model.table.rows.count == 2 && !model.sectionLoading }
+        let first = reads.value
+
+        // Back within two minutes: the limits are fresh and are not read again.
+        model.windowReturned(at: Date())
+        try await wait { !model.sectionLoading }
+        XCTAssertEqual(reads.value, first)
+
+        // Back hours later: the open section reads again.
+        model.windowReturned(at: Date().addingTimeInterval(3 * 3600))
+        try await wait { reads.value > first && !model.sectionLoading }
+        let second = reads.value
+
+        // Another mode is open: nothing reads.
+        model.deactivate()
+        model.windowReturned(at: Date().addingTimeInterval(6 * 3600))
+        try await wait { !model.sectionLoading }
+        XCTAssertEqual(reads.value, second)
+    }
+
     @MainActor
     func testANameTwoProvidersShareSelectsNothingAndTheProviderOrIdPicksOne() async throws {
         let json = """
