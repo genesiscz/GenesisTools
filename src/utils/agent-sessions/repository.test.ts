@@ -164,3 +164,43 @@ test("the write boundary bounds provider text while preserving coverage flags", 
         db.close();
     }
 });
+
+test("a first-timestamp listing is newest first with undated rows last, with and without a limit", () => {
+    const db = new Database(":memory:");
+
+    try {
+        initializeCompactHistorySchema(db);
+        const repository = new HistoryRepository(db);
+        const base = metadata("anthropic-sub");
+        for (const [nativeId, firstTimestamp] of [
+            ["middle", "2026-08-15T12:00:00Z"],
+            ["undated", null],
+            ["newest", "2026-08-16T09:30:00Z"],
+            ["oldest", "2026-08-14T08:00:00Z"],
+        ] as const) {
+            repository.replaceMetadata({
+                metadata: {
+                    ...base,
+                    nativeId,
+                    sessionId: nativeId,
+                    sourceKey: historySourceKey({ providerId: base.providerId, sourceHome: base.sourceHome, nativeId }),
+                    filePath: join(base.root, `${nativeId}.jsonl`),
+                    firstTimestamp,
+                },
+                revision: "one",
+                parserVersion: "2",
+                generation: 1,
+                expected: null,
+            });
+        }
+
+        const ids = (limit?: number) =>
+            repository
+                .listMetadata({ providerId: "anthropic-sub", orderBy: "firstTimestamp", limit })
+                .map((row) => row.nativeId);
+        expect(ids()).toEqual(["newest", "middle", "oldest", "undated"]);
+        expect(ids(2)).toEqual(["newest", "middle"]);
+    } finally {
+        db.close();
+    }
+});
