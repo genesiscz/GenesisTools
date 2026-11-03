@@ -475,7 +475,8 @@ function renderWaste(envelope: UsageEnvelope<SpendWaste>): void {
     out.println(table.toString());
     out.println(pc.bold("Top leaks"));
 
-    for (const item of waste.top.slice(0, 5)) {
+    // `top` is already cut to `--top` by the scan.
+    for (const item of waste.top) {
         out.println(
             `  ${usd(item.usd)} ${item.kind} ${item.agent} ${item.sessionId.slice(0, 8)} ${pc.dim(item.evidence)}`
         );
