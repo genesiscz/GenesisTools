@@ -16,6 +16,8 @@ export interface UsageQueryErrorDetails {
     given?: string;
     /** Accounts an ambiguous or unknown `--account` value could have meant. */
     candidates?: readonly AccountKey[];
+    /** A closed-set flag that got no value or a wrong one: the door prints its value list. */
+    enumFlag?: { flag: string; values: readonly string[] };
 }
 
 /**
