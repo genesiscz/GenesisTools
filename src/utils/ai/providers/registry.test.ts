@@ -12,6 +12,7 @@ import {
     registerPlugin,
     UnknownProviderError,
 } from "./registry";
+import { windowRanker } from "./usage-rank";
 
 function isPlugin(value: unknown): value is ProviderPlugin {
     return (
@@ -121,6 +122,7 @@ describe("provider registry", () => {
                 logoutTargets: ["oauth"],
                 ...NO_LOGIN_SPECIFICS,
                 usage: {
+                    ranker: windowRanker,
                     poll: async () => {
                         throw new Error("not used");
                     },

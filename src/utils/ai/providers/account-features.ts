@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { AccountEntry } from "../config/schema";
 import type { AccountProviderAlias } from "./alias-list";
+import type { AccountRanker } from "./usage-rank";
 
 /**
  * Account lifecycle and quota features of a provider plugin: login flows, home discovery,
@@ -432,6 +433,11 @@ export interface MissingCredential {
 
 export interface AccountUsageFeature {
     poll(account: AccountEntry, opts: UsagePollOptions): Promise<AccountUsageSnapshot>;
+    /**
+     * How this provider ranks its accounts for `auto`, `limits --scored` and `limits advise`. Required: a provider
+     * with one long and one short window takes the shared `windowRanker` (`../usage-rank.ts`).
+     */
+    ranker: AccountRanker;
     presenters?: UsagePresenters;
     /** Floor between two live polls of one account; the daemon and the shared cache enforce it. Default 30s. */
     minIntervalMs?: number;

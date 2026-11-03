@@ -15,6 +15,7 @@ import type {
     MissingCredential,
     UsagePollOptions,
 } from "../../account-features";
+import { windowRanker } from "../../usage-rank";
 
 /**
  * `accounts.usage` for the SuperGrok subscription (spec 2026-09-04 section 6.7).
@@ -246,6 +247,7 @@ export function grokMissingCredential(account: AccountEntry): MissingCredential 
 
 export const grokUsage: AccountUsageFeature = {
     poll: pollGrokAccount,
+    ranker: windowRanker,
     minIntervalMs: MIN_INTERVAL_MS,
     credentialStamp: grokCredentialStamp,
     missingCredential: grokMissingCredential,

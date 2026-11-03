@@ -1,8 +1,8 @@
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
-import type { AccountRanker, RankedAccount, RankTier } from "@genesiscz/utils/ai/usage/account-rank";
+import type { AccountRanker, RankedAccount, RankTier } from "@genesiscz/utils/ai/providers/usage-rank";
 import type { AccountUsage, ApiLimit, UsageBucket, UsageResponse } from "./api";
 import { type AccountTier, type ScoredAccount, scoreAccounts, sortGrouped } from "./scorer";
-import { previousUsageOf, snapshotToAccountUsage } from "./usage";
+import { previousUsageOf, snapshotToAccountUsage } from "./snapshot-usage";
 
 /** The scorer's tiers are the shared tiers; the table makes the compiler say so when one side gains a tier. */
 const TIERS: Record<AccountTier, RankTier> = {

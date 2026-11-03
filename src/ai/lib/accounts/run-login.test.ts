@@ -11,6 +11,7 @@ import { anthropicSubPlugin } from "@genesiscz/utils/ai/providers/plugins/anthro
 import { openAiSubPlugin } from "@genesiscz/utils/ai/providers/plugins/openai-sub";
 import { restoreCodexAuthFile } from "@genesiscz/utils/ai/providers/plugins/openai-sub/login";
 import { _resetPluginsForTest, registerPlugin } from "@genesiscz/utils/ai/providers/registry";
+import { windowRanker } from "@genesiscz/utils/ai/providers/usage-rank";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -112,6 +113,7 @@ beforeEach(async () => {
                 return { accountUuid: account.accountUuid, email: account.label };
             },
             usage: {
+                ranker: windowRanker,
                 poll: async (account) => {
                     pollCalls.push(account.name);
                     throw new Error("a diagnostic must never reach usage.poll");
