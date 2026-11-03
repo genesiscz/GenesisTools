@@ -441,6 +441,20 @@ describe("the daemon tick", () => {
         expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
     });
 
+    test("events older than the event lookback but after the cursor still reach the pass that catches up", async () => {
+        const hours = (n: number) => at(n * 3600);
+
+        expect((await tick(at(0))).fired).toEqual([]);
+        refusedProbe(hours(3));
+        // Every pass fails for over an hour after the refusal, so it falls out of the one-hour event lookback.
+        await expect(tick(hours(3.1), true)).rejects.toThrow("tracker file unreadable");
+        await expect(tick(hours(4.15), true)).rejects.toThrow("tracker file unreadable");
+
+        const next = await tick(hours(4.2));
+
+        expect(next.fired.map((alert) => alert.dedupeKey)).toEqual(["health:probe-budget:anthropic-sub:work:haiku"]);
+    });
+
     test("the very first tick failing leaves the events before it to the next pass", async () => {
         refusedProbe(at(30));
         await expect(tick(at(60), true)).rejects.toThrow("tracker file unreadable");
