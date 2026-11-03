@@ -69,10 +69,16 @@ function mergeRule<Id extends AlertRuleId>(
 ): AlertRuleSettings[Id] {
     const merged = { ...ALERT_RULE_DEFAULTS[id], ...saved };
     // A hand-edited channel id the engine has no channel for would throw in delivery (in quiet hours, out of the
-    // round): it is dropped here, the one door every saved rule passes.
-    const channels = merged.channels.filter((channel) => (ALERT_CHANNEL_IDS as readonly string[]).includes(channel));
+    // round): it is dropped here, the one door every saved rule passes. A saved value that is no list at all (`null`,
+    // one string) takes the rule's default channels, so the daemon's config load never throws on it.
+    const given: readonly unknown[] = Array.isArray(merged.channels)
+        ? merged.channels
+        : ALERT_RULE_DEFAULTS[id].channels;
+    const channels = given.filter((channel): channel is AlertChannelId =>
+        (ALERT_CHANNEL_IDS as readonly unknown[]).includes(channel)
+    );
 
-    if (channels.length !== merged.channels.length) {
+    if (!Array.isArray(merged.channels) || channels.length !== given.length) {
         logger.warn({ rule: id, channels: merged.channels }, "[usage-alerts] unknown channel ids dropped");
     }
 

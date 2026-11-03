@@ -607,6 +607,15 @@ describe("config", () => {
 
         expect(merged.rules.threshold.channels).toEqual(["inbox"]);
     });
+
+    test("a saved channels value that is no list takes the rule's default channels instead of throwing", async () => {
+        const merged = mergeAlertsConfig(
+            SafeJSON.parse('{"rules":{"threshold":{"channels":null},"health":{"channels":"inbox"}}}')
+        );
+
+        expect(merged.rules.threshold.channels).toEqual(ALERT_RULE_DEFAULTS.threshold.channels);
+        expect(merged.rules.health.channels).toEqual(ALERT_RULE_DEFAULTS.health.channels);
+    });
 });
 
 describe("budget rule", () => {
