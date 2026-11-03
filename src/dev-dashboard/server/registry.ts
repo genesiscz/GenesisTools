@@ -3,6 +3,7 @@ import { startPolling } from "@app/dev-dashboard/lib/cmux/poller";
 import { startLiveProducers } from "@app/dev-dashboard/lib/live/producers";
 import { getLiveHub } from "@app/dev-dashboard/lib/live/singleton";
 import { configureRetention, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
+import { withTableIdempotency } from "@app/dev-dashboard/server/bind";
 import { Router } from "@app/dev-dashboard/server/router";
 import { aiRoutes } from "@app/dev-dashboard/server/routes/ai";
 import { attentionRoutes } from "@app/dev-dashboard/server/routes/attention";
@@ -57,7 +58,7 @@ export function createDashboardRouter(): Router {
         ...cmuxRoutes(),
         ...commandsRoutes(),
         ...weatherRoutes(),
-        ...aiRoutes(),
+        ...withTableIdempotency(aiRoutes()),
         ...claudeRoutes(),
         ...daemonRoutes(),
         ...timelineRoutes(),
@@ -66,10 +67,10 @@ export function createDashboardRouter(): Router {
         ...portsRoutes(),
         ...liveRoutes(getLiveHub()),
         ...processesRoutes(),
-        ...qaRoutes(),
+        ...withTableIdempotency(qaRoutes()),
         ...qaDecisionRoutes(),
         ...gatewayRoutes(),
-        ...handoffRoutes(),
+        ...withTableIdempotency(handoffRoutes()),
         ...attentionRoutes(),
         ...todosRoutes(),
         ...obsidianRoutes(),
