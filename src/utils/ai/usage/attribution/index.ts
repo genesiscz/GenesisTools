@@ -28,7 +28,8 @@ export async function loadAttributedSpend(input: {
 }): Promise<AttributedEvent[]> {
     const storage = new Storage("ai-spend");
     const pricing = await loadPricing(storage);
-    const context = await loadSpendAccountsContext();
+    // A diagnostic door: the config is read through its read-only view, never migrated.
+    const context = await loadSpendAccountsContext({ readOnly: true });
     const events = collectSeriesEvents({
         storage,
         pricing,

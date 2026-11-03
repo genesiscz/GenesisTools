@@ -124,6 +124,23 @@ describe("the analysis members of the three readers", () => {
         ]);
     });
 
+    test("Claude: a row with an unreadable timestamp is skipped, the rest of the trace stays", async () => {
+        const usage = {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        };
+        const path = transcript("bad-time.jsonl", [
+            { type: "assistant", timestamp: "not a time", message: { id: "m0", model: "m-a", usage } },
+            { type: "assistant", timestamp: "2026-11-01T10:00:05Z", message: { id: "m1", model: "m-a", usage } },
+        ]);
+
+        const calls = await claudeHistoryReader.analysis.callTrace(path);
+
+        expect(calls.supported && calls.items.map((call) => call.id)).toEqual(["m1"]);
+    });
+
     test("a transcript that cannot be read is unsupported with the reason, never an empty list", async () => {
         const missing = join(mkdtempSync(join(tmpdir(), "gt-analysis-")), "gone.jsonl");
 

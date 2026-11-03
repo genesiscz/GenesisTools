@@ -13,8 +13,17 @@ const WORK: AccountKey = { provider: "anthropic-sub", accountId: "acc-work", acc
 const SHOP: AccountKey = { provider: "anthropic-sub", accountId: "acc-shop", accountName: "shop" };
 const ROOT = "/fixture/projects/-repo";
 
-function pin(sessionId: string, account: string | null): SessionPin {
-    return { sessionId, account, model: null, cwd: "/repo", workspaceId: null, source: "hook", at: 1 };
+function pin(sessionId: string, account: string | null, provider?: SessionPin["provider"]): SessionPin {
+    return {
+        sessionId,
+        account,
+        model: null,
+        cwd: "/repo",
+        workspaceId: null,
+        source: "hook",
+        at: 1,
+        ...(provider ? { provider } : {}),
+    };
 }
 
 const lookup: SessionAccountLookup = {
@@ -72,7 +81,11 @@ describe("session to account", () => {
         const withCodex = {
             ...lookup,
             directory: [...lookup.directory, openai],
-            pins: new Map([["t1", pin("t1", "side")]]),
+            pins: new Map([
+                ["t1", pin("t1", "side", "codex")],
+                // An old row with no provider is Claude's, even when a Codex session wrote it.
+                ["t2", pin("t2", "side")],
+            ]),
         };
 
         expect(
@@ -89,6 +102,12 @@ describe("session to account", () => {
             basis: "pin",
             approximate: true,
         });
+        expect(
+            sessionAccountOf(
+                { agent: "codex", sessionId: "t2", transcriptPath: "", homeAccountId: "(unbound)" },
+                withCodex
+            ).basis
+        ).toBe("none");
         const thread = "01a10953-2956-7180-8465-61f7415518c0";
         expect(
             codexDriver.transcriptOwner(`/h/sessions/2026/11/01/rollout-2026-11-01T10-00-00-${thread}.jsonl`).sessionId
