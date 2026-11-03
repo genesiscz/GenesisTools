@@ -1,5 +1,6 @@
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
-import { type RankedAccount, type RankOptions, rankAccounts } from "./account-rank";
+import type { RankedAccount, RankOptions } from "../providers/usage-rank";
+import { rankAccounts } from "./account-rank";
 import type { AccountForecast } from "./forecast/forecast";
 
 /**

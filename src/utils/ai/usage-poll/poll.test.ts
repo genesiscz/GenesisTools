@@ -6,6 +6,7 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/providers/account-features";
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
+import { windowRanker } from "@genesiscz/utils/ai/providers/usage-rank";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { DAEMON_ALIVE_MS, readerMaxStaleMs, touchUsageDaemonHeartbeat, usageDaemonAgeMs } from "./daemon-heartbeat";
@@ -191,6 +192,7 @@ describe("__fetchProviderSnapshots", () => {
     }): UsagePlugin {
         const usage: AccountUsageFeature = {
             poll: args.poll,
+            ranker: windowRanker,
             ...(args.credentialStamp === undefined ? {} : { credentialStamp: args.credentialStamp }),
             ...(args.pollsWhileGated === undefined ? {} : { pollsWhileGated: args.pollsWhileGated }),
         };
@@ -388,6 +390,7 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
 
     function plugin(args: { polled: string[]; stamp: number | undefined; result?: () => Promise<never> }): UsagePlugin {
         const usage: AccountUsageFeature = {
+            ranker: windowRanker,
             poll: (target) => {
                 args.polled.push(target.name);
 

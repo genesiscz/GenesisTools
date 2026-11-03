@@ -1,6 +1,6 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
-import type { RankedAccount } from "@genesiscz/utils/ai/usage/account-rank";
+import type { RankedAccount } from "@genesiscz/utils/ai/providers/usage-rank";
 import type { AccountKey, UsageWarning } from "@genesiscz/utils/ai/usage/contract/envelope";
 import type { SnapshotsCache } from "./legacy-cache";
 import type { AccountUsageSnapshot } from "./types";
