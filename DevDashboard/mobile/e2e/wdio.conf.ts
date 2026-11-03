@@ -123,6 +123,10 @@ export const config: WebdriverIO.Config = {
             const uri = `devdashboard://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent(testAgent)}&username=martin`;
             try {
                 await browser.execute("mobile: deepLink", { url: uri, bundleId });
+                // A link never connects by itself: confirm the address on the pair screen.
+                const confirm = await $("~pair-confirm");
+                await confirm.waitForDisplayed({ timeout: 10_000 });
+                await confirm.click();
                 await browser.pause(3000);
             } catch {
                 // A spec's own before() re-pairs too; a failed deep-link here is not fatal.
