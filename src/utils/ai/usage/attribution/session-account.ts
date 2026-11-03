@@ -1,7 +1,7 @@
 import { loadPins, type SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
+import { harnessPluginId as agentPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import type { AccountKey } from "@genesiscz/utils/ai/usage/contract";
-import { agentPluginId } from "@genesiscz/utils/ai/usage/spend/drivers";
 import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage/types";
 
 /** One session as attribution sees it: which harness wrote it, its lead session id, and the account its home names. */
@@ -81,17 +81,6 @@ export const providerHomeSource: SessionAccountSource = {
         return pinJournalSource.accountOf(session, lookup);
     },
 };
-
-/** One entry per harness (design 2026-11-01 section 4): a new harness adds its source here. */
-export const SESSION_ACCOUNT_SOURCES = {
-    claude: pinJournalSource,
-    codex: providerHomeSource,
-    grok: providerHomeSource,
-} satisfies Record<AgentKind, SessionAccountSource>;
-
-export function sessionAccountOf(session: SessionRef, lookup: SessionAccountLookup): SessionAccount {
-    return SESSION_ACCOUNT_SOURCES[session.agent].accountOf(session, lookup);
-}
 
 /** The lookup for one answer: the pin journal read once, read-only (a usage answer never compacts the journal). */
 export async function loadSessionAccountLookup(directory: readonly AccountKey[]): Promise<SessionAccountLookup> {

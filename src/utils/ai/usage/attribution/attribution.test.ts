@@ -5,7 +5,7 @@ import { claudeDriver, codexDriver } from "@genesiscz/utils/ai/usage/spend/drive
 import type { CompactEvent } from "@genesiscz/utils/ai/usage/spend/events-cache";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/series-rows";
 import { attributeBar, riseSince } from "./bar";
-import { type SessionAccountLookup, sessionAccountOf } from "./session-account";
+import type { SessionAccountLookup, SessionRef } from "./session-account";
 import { attributeEvents } from "./spend-share";
 import { findRises, findSpikes, SPIKE_DEFAULTS } from "./spikes";
 
@@ -43,6 +43,11 @@ function series(points: Array<[string, number]>, resets: string[] = []): SeriesE
 }
 
 const report = (id: string) => `report ${id}`;
+
+function sessionAccountOf(session: SessionRef, with_: SessionAccountLookup) {
+    const driver = session.agent === "claude" ? claudeDriver : codexDriver;
+    return driver.sessionAccount.accountOf(session, with_);
+}
 
 describe("session to account", () => {
     test("Claude reads the pin by the lead's id; a sub-agent's file names its lead; no pin is no account", () => {
