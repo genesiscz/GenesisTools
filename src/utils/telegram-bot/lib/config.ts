@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TelegramBotConfig, TelegramBotConfigV1, TelegramChatPurpose } from "./types";
 
@@ -59,7 +60,12 @@ export async function loadTelegramBotConfig(): Promise<TelegramBotConfig | null>
 export function loadTelegramBotConfigSync(): TelegramBotConfig | null {
     try {
         return migrateTelegramBotConfig(SafeJSON.parse(readFileSync(storage.getConfigPath(), "utf8")));
-    } catch {
+    } catch (err) {
+        // A missing file is the normal "not configured"; anything else (corrupt JSON, no permission) is logged.
+        if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
+            logger.warn({ err, path: storage.getConfigPath() }, "telegram-bot: could not read the bot config");
+        }
+
         return null;
     }
 }
