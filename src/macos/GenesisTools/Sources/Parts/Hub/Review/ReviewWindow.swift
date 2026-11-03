@@ -630,6 +630,13 @@ final class ReviewModel: ObservableObject {
     private var refsStale = true
     private var refsReadFor: String?
     private var reloadAgain = false
+    /// Roots named by watch events since the last watch reload, and when that reload started. An agent that writes
+    /// all the time sent a reload per 0.35 s event batch: 394 reloads and 2,173 git runs in one hour (2026-11-02
+    /// 23:00). The first event after a quiet spell reloads at once; later ones wait for `watchGap` and go together.
+    private var watchFolders: Set<String> = []
+    private var watchReloadAt = Date.distantPast
+    private var watchReloadQueued = false
+    static let watchGap: TimeInterval = 1.5
     /// Root folders whose files changed since the last load started; the next load reads only these.
     private var pendingLoads: Set<String> = []
     /// Root folders showing their last snapshot from disk (`ReviewCache.diffs`) until their load answers.
@@ -767,9 +774,25 @@ final class ReviewModel: ObservableObject {
                     if movedRefs { self.refsStale = true }
                     // Names the trigger of the load that follows in the perf log.
                     HubPerf.log("review.watch \(movedRefs ? "ref" : "file") event in \(root.folder), reloading \(self.scope.title)")
-                    self.reload(folders: [root.folder])
+                    self.watchEvent(in: root.folder)
                 }
             }
+        }
+    }
+
+    private func watchEvent(in folder: String) {
+        watchFolders.insert(folder)
+        guard !watchReloadQueued else { return }
+        watchReloadQueued = true
+        let wait = max(0, watchReloadAt.addingTimeInterval(Self.watchGap).timeIntervalSinceNow)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self else { return }
+            watchReloadQueued = false
+            watchReloadAt = Date()
+            let folders = watchFolders
+            watchFolders = []
+            guard started, scope.followsWorkingTree else { return }
+            reload(folders: folders)
         }
     }
 
