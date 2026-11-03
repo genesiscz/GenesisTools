@@ -32,7 +32,7 @@ import { registerReadinessCommand } from "./commands/readiness";
 import { registerRulesCommand } from "./commands/rules";
 import { registerSearchCommand } from "./commands/search";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
-import { HUB_MODES, HUB_TABS, hubPrintUrl, openHub } from "./lib/open";
+import { HUB_MODES, HUB_TABS, HUB_USAGE_SECTIONS, hubPrintUrl, openHub } from "./lib/open";
 import {
     backendFor,
     type DraftAddInput,
@@ -152,6 +152,16 @@ program
     .option("--rules", "open the notification rules panel (idle, decision, CI failed, context)")
     .option("--prompts", "open the prompt library picker (⌘⇧P)")
     .option("--handoff", "open the handoff composer for --session (or the selected session)")
+    .option("--usage-section [section]", `open the Usage mode at this section: ${HUB_USAGE_SECTIONS.join("|")}`)
+    .option("--usage-session <id>", "open the Usage mode at this session's analysis")
+    .option("--usage-harness <harness>", "with --usage-session: its harness (claude, codex, grok)")
+    .option(
+        "--usage-account <account>",
+        "open the Usage mode with this account selected: an id, provider/name or a name (repeatable)",
+        (value: string, previous: string[]) => [...previous, value],
+        []
+    )
+    .option("--usage-all-accounts", "open the Usage mode with every account, dropping an earlier selection")
     .option("--no-activate", "open behind the window in front, without taking focus")
     .option("--no-build", "never build; fail when GenesisTools.app is missing or stale")
     .action(
@@ -174,12 +184,30 @@ program
             rules?: boolean;
             prompts?: boolean;
             handoff?: boolean;
+            usageSection?: string | true;
+            usageSession?: string;
+            usageHarness?: string;
+            usageAccount: string[];
+            usageAllAccounts?: boolean;
             activate: boolean;
             build: boolean;
         }) => {
             const mode = await enumFlag("--mode", HUB_MODES, opts.mode);
             const tab = await enumFlag("--tab", HUB_TABS, opts.tab);
-            if (mode === null || tab === null) {
+            const usageSection = await enumFlag("--usage-section", HUB_USAGE_SECTIONS, opts.usageSection);
+            if (mode === null || tab === null || usageSection === null) {
+                process.exitCode = 1;
+                return;
+            }
+
+            if (opts.usageHarness && !opts.usageSession) {
+                out.log.error("--usage-harness names the harness of one --usage-session: pass --usage-session too");
+                process.exitCode = 1;
+                return;
+            }
+
+            if (opts.usageAllAccounts && opts.usageAccount.length > 0) {
+                out.log.error("--usage-all-accounts and --usage-account contradict each other: pass one of them");
                 process.exitCode = 1;
                 return;
             }
@@ -248,6 +276,11 @@ program
                     rules: opts.rules,
                     prompts: opts.prompts,
                     handoff: opts.handoff,
+                    usageSection,
+                    usageSession: opts.usageSession,
+                    usageHarness: opts.usageHarness,
+                    usageAccounts: opts.usageAccount,
+                    usageAllAccounts: opts.usageAllAccounts,
                     activate: opts.activate,
                     build: opts.build,
                     onStep: progress.onStep,
