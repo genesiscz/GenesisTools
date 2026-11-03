@@ -152,6 +152,29 @@ describe("the ranker each provider declares", () => {
         );
     });
 
+    it("a Claude week the scorer calls dead, or a login it calls expired, is never picked although its tier reads ready", () => {
+        const spent = claude("spent", 10, 99);
+        const lapsed = {
+            ...claude("lapsed", 10, 20),
+            stale: { lastSuccessAt: NOW.toISOString(), reason: "invalid_grant: refresh token expired" },
+        };
+        const scored = scoreAccounts([spent, lapsed].map(snapshotToAccountUsage), { now: NOW });
+
+        expect(Object.fromEntries(scored.map((row) => [row.accountName, [row.group, row.tier]]))).toEqual({
+            spent: ["dead", "ready"],
+            lapsed: ["expired", "ready"],
+        });
+
+        const ranked = rankAccounts([spent, lapsed, claude("fresh", 10, 50)], { now: NOW });
+
+        expect(Object.fromEntries(ranked.map((row) => [row.accountName, row.tier]))).toEqual({
+            fresh: "ready",
+            spent: "weekly-blocked",
+            lapsed: "no-data",
+        });
+        expect(pickRanked(ranked)).toEqual({ pick: expect.objectContaining({ accountName: "fresh" }) });
+    });
+
     it("routes by plugin id to the ranker the provider's usage feature declares", () => {
         expect(rankerFor("anthropic-sub")).toBe(anthropicRanker);
         expect(rankerFor("openai-sub")).toBe(windowRanker);
