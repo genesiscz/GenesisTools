@@ -12,4 +12,23 @@ describe("killChild", () => {
         expect(exited).toBe(true);
         expect(proc.killed).toBe(true);
     });
+
+    test("a child that is not reaped after SIGKILL answers false at the reap deadline instead of waiting forever", async () => {
+        const { killWithEscalation: killChild } = await import("@genesiscz/utils/process/killWithEscalation");
+        const signals: string[] = [];
+        // A child stuck in uninterruptible sleep: it takes both signals and never exits.
+        const stuck = {
+            kill: (signal?: NodeJS.Signals | number) => {
+                signals.push(String(signal));
+            },
+            exited: new Promise<number>(() => {}),
+            exitCode: null,
+        };
+        const guard = new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2000));
+        const started = Date.now();
+
+        expect(await Promise.race([killChild(stuck, { graceMs: 20, reapMs: 50 }), guard])).toBe(false);
+        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(Date.now() - started).toBeLessThan(1000);
+    });
 });
