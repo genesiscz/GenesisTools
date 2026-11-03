@@ -96,6 +96,12 @@ export async function act({
         at: now,
     });
 
+    // A read first: the act route is public, so an unknown token must cost no lock and no write. A known token is
+    // checked again under the lock below.
+    if (!(await deps.store.has(token))) {
+        return refuse("unknown-token", "This button is not known; answer in the hub.");
+    }
+
     const claim = await deps.store.update((tokens): Claim => {
         const record = tokens[token];
 
