@@ -1,51 +1,25 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type NotificationAction, sendNotification } from "@genesiscz/utils/macos/notifications";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import type { LiveRecording } from "@genesiscz/utils/meetings/sources";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { localTime } from "@genesiscz/utils/transcribe/render";
-import { z } from "zod";
+import { linkSource } from "./link";
 import { readRecorderState } from "./recorder";
 import { meetingSource } from "./sources";
+import { type AutoRecording, clearAuto, RETRY_AFTER_MS, readAuto, writeAuto } from "./watch-auto";
 
 const { log } = logger.scoped("meetings-watch");
 
 /** How often the watcher looks at the source's live recording. One database query and one file stat. */
 export const WATCH_INTERVAL_MS = 15_000;
-/** How long after a recorder stopped on its own (its capture failed) the watcher starts it again, while the meeting runs. */
-export const RETRY_AFTER_MS = 120_000;
+/** How long after the source ended a meeting the watcher keeps refreshing the record from it (title, end, people). */
+export const REFRESH_FOR_MS = 10 * 60_000;
 const TOOL_TIMEOUT_MS = 120_000;
 
-/** The recording the watcher started, so it stops only its own. */
-const autoSchema = z.object({
-    sourceMeetingId: z.string(),
-    meetingId: z.string().optional(),
-    startedAt: z.string(),
-    /** When the watcher last started the recorder again after it stopped on its own. */
-    retriedAt: z.string().optional(),
-});
-type AutoRecording = z.infer<typeof autoSchema>;
-
-function autoPath(store: MeetingStore): string {
-    return join(store.root, "watch-auto.json");
-}
-
-function readAuto(store: MeetingStore): AutoRecording | undefined {
-    const path = autoPath(store);
-
-    if (!existsSync(path)) {
-        return undefined;
-    }
-
-    const parsed = autoSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8")));
-    return parsed.success ? parsed.data : undefined;
-}
+export { RETRY_AFTER_MS };
 
 type AutoRecordSettings = Awaited<ReturnType<MeetingsConfigStore["read"]>>["sources"]["wisprflow"]["autoRecord"];
 
@@ -64,7 +38,9 @@ export interface WatchDeps {
     liveRecording: () => Promise<LiveRecording | null>;
     recorder: () => ReturnType<typeof readRecorderState>;
     /** The `recording` block of a meeting record. */
-    recording: (meetingId: string) => Record<string, unknown> | undefined;
+    recording: (meetingId: string) => RecordingBlock | undefined;
+    /** Links the source's meeting again, so its final title, end and people reach the record. */
+    refresh: (meetingId: string, sourceRef: string) => Promise<MeetingRecord>;
     run: (args: string[]) => Promise<{ success: boolean; exitCode: number | null; stderr: string }>;
     notify: (note: WatchNote) => Promise<void>;
 }
@@ -75,6 +51,19 @@ function defaultDeps(store: MeetingStore): WatchDeps {
         liveRecording: async () => (await meetingSource("wisprflow")).liveRecording(),
         recorder: () => readRecorderState(store),
         recording: (meetingId) => store.read(meetingId)?.recording,
+        refresh: async (meetingId, sourceRef) =>
+            (
+                await linkSource({
+                    store,
+                    config: new MeetingsConfigStore(),
+                    sourceRef,
+                    meetingRef: meetingId,
+                    command: "watch refresh",
+                    createdBy: "autostart",
+                    quiet: true,
+                    refresh: true,
+                })
+            ).record,
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
         notify: async (note) => {
             // The group names the source in the notification ledger (`tools notify history --source meetings`).
@@ -92,47 +81,67 @@ function isFresh(live: LiveRecording, withinSec: number, now: number): boolean {
 }
 
 /**
- * One look: Wispr Flow records and nothing else is recording, so start (and post a notification); the recording the
- * watcher started has ended or gone silent, so stop it. A recording a person started is never stopped here.
- */
-/**
  * The meeting still runs, but its recorder ended: a stop the user asked for stays stopped, a failed capture starts
- * again every RETRY_AFTER_MS, with one notification for the first failure.
+ * again every RETRY_AFTER_MS. The recorder itself posts the notice, once per failure episode.
  */
 async function retryFailed(options: {
     store: MeetingStore;
     deps: WatchDeps;
-    settings: AutoRecordSettings;
     auto: AutoRecording & { meetingId: string };
     now: number;
 }): Promise<WatchResult> {
     const { store, deps, auto, now } = options;
     const recording = deps.recording(auto.meetingId);
 
-    if (recording?.stopReason !== "failed") {
+    if (recording?.stopReason !== "failed" && recording?.stopReason !== "error") {
         return "idle";
     }
 
-    const stoppedAt = typeof recording.stoppedAt === "string" ? Date.parse(recording.stoppedAt) : 0;
+    const stoppedAt = recording.stoppedAt ? Date.parse(recording.stoppedAt) : 0;
     const lastTry = Math.max(stoppedAt, auto.retriedAt ? Date.parse(auto.retriedAt) : 0);
 
     if (now - lastTry < RETRY_AFTER_MS) {
         return "idle";
     }
 
-    if (options.settings.notify && !auto.retriedAt) {
-        await deps.notify({
-            title: "Screen recording stopped",
-            message: `${typeof recording.warning === "string" ? recording.warning : "The capture failed."} It starts again every ${RETRY_AFTER_MS / 60_000} min while the meeting runs.`,
-            open: store.folder(auto.meetingId),
-        });
-    }
-
     const result = await deps.run(["meetings", "record", "start", "--meeting", auto.meetingId, "--yes"]);
     log.info({ meeting: auto.meetingId, exitCode: result.exitCode }, "failed recording started again");
-    atomicWriteFileSync(autoPath(store), SafeJSON.stringify({ ...auto, retriedAt: new Date(now).toISOString() }));
+    writeAuto(store, { ...auto, retriedAt: new Date(now).toISOString() });
     return result.success ? "started" : "failed";
 }
+
+/**
+ * The source ended the meeting the watcher recorded: link it again so its final title, end and people reach the
+ * record. The source may name the meeting a little later, so this repeats on each look until the record has an end,
+ * or for REFRESH_FOR_MS.
+ */
+async function refreshEnded(options: {
+    store: MeetingStore;
+    deps: WatchDeps;
+    auto: AutoRecording;
+    now: number;
+}): Promise<void> {
+    const { store, deps, auto, now } = options;
+
+    if (!auto.refreshUntil || !auto.meetingId) {
+        return;
+    }
+
+    const record = await deps.refresh(auto.meetingId, `wisprflow:${auto.sourceMeetingId}`).catch((err: unknown) => {
+        log.warn({ err, meeting: auto.meetingId }, "refresh from the source failed");
+        return undefined;
+    });
+    log.info({ meeting: auto.meetingId, title: record?.title, end: record?.end }, "meeting refreshed from its source");
+
+    if (record?.end || now >= Date.parse(auto.refreshUntil)) {
+        clearAuto(store);
+    }
+}
+
+/**
+ * One look: Wispr Flow records and nothing else is recording, so start (and post a notification); the recording the
+ * watcher started has ended or gone silent, so stop it. A recording a person started is never stopped here.
+ */
 
 export async function watchOnce(
     store: MeetingStore,
@@ -148,17 +157,21 @@ export async function watchOnce(
 
     const live = await deps.liveRecording();
     const recorder = deps.recorder();
-    const auto = readAuto(store);
+    let auto = readAuto(store);
     log.debug({ live, running: recorder.running, auto }, "watch tick");
 
-    if (recorder.running) {
-        const own = auto && recorder.state?.meetingId === auto.meetingId;
-        const ended = !live || live.sourceMeetingId !== auto?.sourceMeetingId;
-        const silent = live ? now - Date.parse(live.liveChangedAt) > settings.stopAfterSilenceSec * 1000 : true;
+    if (!recorder.running && auto?.refreshUntil) {
+        await refreshEnded({ store, deps, auto, now });
+        auto = readAuto(store);
+    }
 
-        if (!own) {
+    if (recorder.running) {
+        if (!auto || recorder.state?.meetingId !== auto.meetingId) {
             return "busy";
         }
+
+        const ended = !live || live.sourceMeetingId !== auto.sourceMeetingId;
+        const silent = live ? now - Date.parse(live.liveChangedAt) > settings.stopAfterSilenceSec * 1000 : true;
 
         if (!ended && !silent) {
             return "recording";
@@ -166,8 +179,21 @@ export async function watchOnce(
 
         const result = await deps.run(["meetings", "record", "stop"]);
         log.info({ meeting: auto.meetingId, exitCode: result.exitCode, ended, silent }, "auto recording stopped");
-        unlinkSync(autoPath(store));
-        return result.success ? "stopped" : "failed";
+
+        // Not stopped yet: the next look tries again, and still knows the recording is its own.
+        if (!result.success) {
+            return "failed";
+        }
+
+        if (ended && auto.meetingId) {
+            const pending = { ...auto, refreshUntil: new Date(now + REFRESH_FOR_MS).toISOString() };
+            writeAuto(store, pending);
+            await refreshEnded({ store, deps, auto: pending, now });
+        } else {
+            clearAuto(store);
+        }
+
+        return "stopped";
     }
 
     if (!live || !isFresh(live, settings.liveWithinSec, now)) {
@@ -176,7 +202,7 @@ export async function watchOnce(
 
     if (auto?.sourceMeetingId === live.sourceMeetingId) {
         return auto.meetingId
-            ? await retryFailed({ store, deps, settings, auto: { ...auto, meetingId: auto.meetingId }, now })
+            ? await retryFailed({ store, deps, auto: { ...auto, meetingId: auto.meetingId }, now })
             : "idle";
     }
 
@@ -199,22 +225,16 @@ export async function watchOnce(
         }
 
         // Remember the meeting, so a missing grant does not retry and notify every 15 s.
-        atomicWriteFileSync(
-            autoPath(store),
-            SafeJSON.stringify({ sourceMeetingId: live.sourceMeetingId, startedAt: new Date(now).toISOString() })
-        );
+        writeAuto(store, { sourceMeetingId: live.sourceMeetingId, startedAt: new Date(now).toISOString() });
         return "failed";
     }
 
     const meetingId = deps.recorder().state?.meetingId;
-    atomicWriteFileSync(
-        autoPath(store),
-        SafeJSON.stringify({
-            sourceMeetingId: live.sourceMeetingId,
-            ...(meetingId ? { meetingId } : {}),
-            startedAt: new Date(now).toISOString(),
-        })
-    );
+    writeAuto(store, {
+        sourceMeetingId: live.sourceMeetingId,
+        ...(meetingId ? { meetingId } : {}),
+        startedAt: new Date(now).toISOString(),
+    });
 
     if (settings.notify) {
         // Wispr names a meeting only after it ends, so a live one may have no title yet.

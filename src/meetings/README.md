@@ -24,9 +24,10 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
 | `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`global.render.unclearLabel`); `--with-suggested` applies the top reading instead |
-| `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display 1]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
-| `record stop`, `record status` | Stop (it finishes its current 30 s piece) and write the summary into the meeting; what is recording |
-| `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of the screen around a transcript time |
+| `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display all\|follow-focus\|main\|<index>]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
+| `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop writes the summary into the meeting |
+| `record display list\|add <id>\|remove <id>\|switch <id>\|mode <policy>` | Which displays the running recording records; a change applies at once |
+| `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of each recorded screen around a transcript time |
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
 | `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
 | `attendance <meeting> [--from teams\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given |
@@ -63,18 +64,34 @@ identity that captures (GenesisTools.app when it is installed, else the terminal
 permission window, and without the app it says what to install and grant. Without a terminal (`--yes`, the daemon) it
 never prompts and only says what to run.
 
-The recorder runs peekaboo's change-aware live capture in 30 s pieces (`capture.activeFps`, `idleFps`, `threshold`
-in the config), converts each frame to JPEG under the meeting's `frames/`, and appends Vision OCR to `ocr.jsonl`.
-Frames stay on this Mac and never go into an export. When a source is linked, `record stop` stores its clock, so
-`screen --at` takes transcript times. A frame is taken only when the screen changes, so `screen --at` also shows the
-last frame before the window, which was still on the screen; a time outside the recorded spans (from the meeting's
-history) says so and when the recording ran.
+The recorder is a frame recorder from `src/utils/screen-recorder/` (`capture.backend`: `native`, GenesisTools'
+own `ax-tool capture`, by default; or `peekaboo`). It records in 30 s pieces (`capture.activeFps`, `idleFps`,
+`threshold`, `resolutionCap`), converts each frame to JPEG under the meeting's `frames/` as
+`<HH-MM-SS-mmm>-d<displayId>.jpg`, and appends Vision OCR to `ocr.jsonl` (each line names its `displayId`). Each
+capture ends at its duration plus 30 s; a hung one is stopped and counts as a failed capture.
 
-When the asked display is not connected (unplugged during the meeting, or a laptop without it), a piece records the
-main display (0) and the next piece asks for the asked one again; the warning says when it went missing. A failed
-capture names peekaboo's own error, which it prints as JSON on stdout. Three failed pieces in a row stop the
-recorder with `recording.stopReason: "failed"`; `record stop` and a signal give `"requested"`. The `frames` and
-`bytes` of the `recording` block count every frame in `frames/`, also those of an earlier start.
+`capture.displays` picks what is recorded: `all` (default) records every connected display at once, one capture per
+display per piece; `main`; `follow-focus` (the display of the focused window, when the recorder supports it, else the
+main one); or a screen index. Each piece reads the display list again by id, so a display that is connected joins at
+the next piece and one that is removed leaves without an error. When an asked index is not connected, the main
+display stands in and the warning says since when.
+
+Frames stay on this Mac and never go into an export. When a source is linked, `record stop` stores its clock, so
+`screen --at` takes transcript times. A frame is taken only when the screen changes, so `screen --at` shows, per
+display, the frame still on that screen; a time outside the recorded spans says so and when the recording ran.
+
+While it runs, the recorder is a live recording (`<genesis-tools root>/recordings/live/<id>.json`, kind `meeting`)
+with a JSON-RPC socket beside it: `status`, `pause`, `resume`, `stop`, `displays.list|add|remove|switch|mode` and
+`subscribe` (events `state`, `frame`, `displays`, `warning`, `ended`). The `record` commands use that socket; a
+pause or stop ends the running piece at once and keeps its frames.
+
+The `recording` block of the record has a schema (`RecordingBlock` in `src/utils/meetings/record.ts`): `spans` (from,
+to and stop reason: `requested`, `paused`, `failed`, `error`), `frames` and `bytes` (every frame in `frames/`, also
+those of an earlier start), `displays` (id, name, frames), `backend`, `displayPolicy` and `warning`. Records from
+before the schema still read. Three failed pieces in a row stop the recorder with `stopReason: "failed"`; any other
+error stops it with `"error"`; both always write the stop and post "Screen recording stopped" once per failure
+episode, for recordings a person started too. A recording without a frame says so in its warning. `show` prints
+the recording's state, frames per display, spans and warning.
 
 ### Autostart
 
@@ -83,9 +100,11 @@ it at every login while it is on. Every 15 s the watcher asks Wispr Flow for a m
 transcript changed in the last `liveWithinSec` (30). It then runs `record start --source wisprflow:<id> --yes` and
 posts a notification (`notify`, default on). It stops only the recordings it started, when Wispr Flow ends the
 meeting or stays silent for `stopAfterSilenceSec` (120). A start that failed (no grant) notifies once and is not
-retried for the same meeting. A recorder that stopped on its own while the meeting runs (`stopReason: "failed"`) is
-started again 2 min after it stopped, with `record start --meeting <id> --yes`, and every 2 min after that; the first
-time posts "Screen recording stopped" with the warning. A stop the user asked for stays stopped.
+retried for the same meeting. A recorder that stopped on its own while the meeting runs (`stopReason: "failed"` or
+`"error"`) is started again 2 min after it stopped, with `record start --meeting <id> --yes`, and every 2 min after
+that; the recorder posts the notice. A stop the user asked for stays stopped. A stop that failed keeps the watcher's
+claim, so the next look stops it again. When Wispr Flow ends the meeting, the watcher links it again (title, end,
+people) on each look until the record has an end, for up to 10 min.
 
 ## Items
 

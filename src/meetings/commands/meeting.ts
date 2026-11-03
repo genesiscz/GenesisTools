@@ -14,6 +14,7 @@ import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
+import { recordingSummary } from "../lib/screen";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 /** The record a command names, or a message saying how to find one. */
@@ -148,6 +149,8 @@ function showText(record: MeetingRecord): string {
             `- people: ${record.participants.map((person) => person.name + (person.self ? " (you)" : "")).join(", ")}`
         );
     }
+
+    lines.push(...recordingSummary(record));
 
     if (record.context.length > 0) {
         lines.push("", "## Context");

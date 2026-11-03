@@ -136,6 +136,47 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
 ]);
 export type MeetingItem = z.infer<typeof meetingItemSchema>;
 
+/** Why a recorded span ended: asked for (`record stop`, a stop command, a signal), a pause, failed captures, an error. */
+export const RECORDING_STOP_REASONS = ["requested", "paused", "failed", "error"] as const;
+export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
+
+const recordingSpanSchema = z.object({
+    from: isoTime,
+    to: isoTime.optional(),
+    stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
+});
+export type RecordingSpan = z.infer<typeof recordingSpanSchema>;
+
+/**
+ * The screen recording of a meeting, owned by the recorder. Every key is optional and unknown keys stay, because records
+ * written before this schema hold a subset of it (`display`, one index, instead of `displays`).
+ */
+export const recordingBlockSchema = z
+    .object({
+        startedAt: isoTime.optional(),
+        stoppedAt: isoTime.optional(),
+        status: z.enum(["recording", "paused", "stopped"]).optional(),
+        stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
+        backend: z.string().optional(),
+        /** The display policy of the last start: `all`, `follow-focus`, `main` or an index. */
+        displayPolicy: z.union([z.string(), z.number()]).optional(),
+        /** The screen index of a recording made before `displays`. */
+        display: z.number().optional(),
+        displays: z.array(z.object({ id: z.number(), name: z.string(), frames: z.number().default(0) })).optional(),
+        framesDir: z.string().optional(),
+        ocr: z.string().optional(),
+        frames: z.number().optional(),
+        bytes: z.number().optional(),
+        /** Each stretch the recorder ran, over all its starts. */
+        spans: z.array(recordingSpanSchema).optional(),
+        warning: z.string().optional(),
+        clock: z.object({ source: z.string(), startedAt: isoTime }).optional(),
+        /** When the failure notice of the current failure episode was posted; cleared by a piece that recorded. */
+        failureNotifiedAt: isoTime.optional(),
+    })
+    .loose();
+export type RecordingBlock = z.infer<typeof recordingBlockSchema>;
+
 const historySchema = z.object({ at: isoTime, command: z.string(), change: z.string() });
 
 export const meetingRecordSchema = z.object({
@@ -185,8 +226,7 @@ export const meetingRecordSchema = z.object({
                 .optional(),
         })
         .optional(),
-    /** Written by `record stop`; its shape is owned by the recorder. */
-    recording: z.record(z.string(), z.unknown()).optional(),
+    recording: recordingBlockSchema.optional(),
     /** One line per command that changed the record. Never rewritten. */
     history: z.array(historySchema).default([]),
 });

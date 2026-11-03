@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { FRAME_RECORDER_IDS } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     type AbbrExpansion,
@@ -36,7 +37,15 @@ const projectSchema = z.object({
     match: projectMatchSchema.optional(),
 });
 
+export const DISPLAY_POLICIES = ["all", "follow-focus", "main"] as const;
+/** Which displays the recorder records: every connected one, the one with the focused window, the main one, or an index. */
+export const displayPolicySchema = z.union([z.enum(DISPLAY_POLICIES), z.number().int().nonnegative()]);
+export type DisplayPolicy = z.infer<typeof displayPolicySchema>;
+
 const captureSchema = z.object({
+    /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
+    backend: z.enum(FRAME_RECORDER_IDS).default("native"),
+    displays: displayPolicySchema.default("all"),
     /** Frames per second while the screen changes. */
     activeFps: z.number().positive().default(1),
     /** Frames per second while it does not. */

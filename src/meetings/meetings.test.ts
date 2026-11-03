@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
@@ -6,6 +9,14 @@ import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { callRecorder, listLiveRecordings, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
+import {
+    CaptureError,
+    type CaptureRequest,
+    type CaptureResult,
+    type DisplayInfo,
+    FrameRecorder,
+} from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -25,8 +36,8 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
-import { CaptureError } from "./lib/recorder";
-import { framesAt, recordedSpans } from "./lib/screen";
+import { meetingLiveId, type RecorderNote, runRecorder } from "./lib/recorder";
+import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -657,8 +668,13 @@ describe("watchOnce", () => {
         const runs: string[][] = [];
         const notes: string[] = [];
         const posted: WatchNote[] = [];
+        const refreshed: string[] = [];
         let running = false;
         const deps: Partial<WatchDeps> = {
+            refresh: async (meetingId, sourceRef) => {
+                refreshed.push(`${meetingId} ${sourceRef}`);
+                return record;
+            },
             settings: async () => settings,
             liveRecording: async () => live,
             recorder: () =>
@@ -679,10 +695,17 @@ describe("watchOnce", () => {
             },
             ...over,
         };
-        return { store: new MeetingStore(new Storage(`meetings-watch-${stores}`)), deps, runs, notes, posted };
+        return {
+            store: new MeetingStore(new Storage(`meetings-watch-${stores}`)),
+            deps,
+            runs,
+            notes,
+            posted,
+            refreshed,
+        };
     }
 
-    test("a recorder whose capture failed starts again after a pause, with one notification; a stop asked for stays", async () => {
+    test("a recorder whose capture failed starts again after a pause, the notice left to the recorder; a stop asked for stays", async () => {
         const failed = {
             status: "stopped",
             stopReason: "failed",
@@ -706,14 +729,14 @@ describe("watchOnce", () => {
         expect(await watchOnce(h.store, later(60))).toBe("idle");
         expect(await watchOnce(h.store, later(160))).toBe("started");
         expect(h.runs.at(-1)).toEqual(["meetings", "record", "start", "--meeting", "m1", "--yes"]);
-        expect(h.notes).toEqual(["Recording the screen", "Screen recording stopped"]);
+        expect(h.notes).toEqual(["Recording the screen"]);
 
         await h.deps.run?.(["meetings", "record", "stop"]);
         recording = { ...failed, stoppedAt: new Date(now + 170_000).toISOString() };
 
         expect(await watchOnce(h.store, later(200))).toBe("idle");
         expect(await watchOnce(h.store, later(300))).toBe("started");
-        expect(h.notes).toHaveLength(2);
+        expect(h.notes).toHaveLength(1);
 
         await h.deps.run?.(["meetings", "record", "stop"]);
         recording = { status: "stopped", stopReason: "requested", stoppedAt: new Date(now + 310_000).toISOString() };
@@ -760,6 +783,44 @@ describe("watchOnce", () => {
         });
         expect(await watchOnce(other.store, { deps: other.deps, now })).toBe("busy");
         expect(other.runs).toEqual([]);
+    });
+
+    test("a stop that failed keeps the recording the watcher's own, and the next look stops it again", async () => {
+        let stopWorks = false;
+        const h = harness();
+        const run = h.deps.run!;
+        h.deps.run = async (args) =>
+            args[2] === "stop" && !stopWorks ? { success: false, exitCode: 1, stderr: "still running" } : run(args);
+        await watchOnce(h.store, { deps: h.deps, now });
+
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("failed");
+        expect(existsSync(join(h.store.root, "watch-auto.json"))).toBe(true);
+
+        stopWorks = true;
+
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 215_000 })).toBe("stopped");
+        expect(existsSync(join(h.store.root, "watch-auto.json"))).toBe(false);
+    });
+
+    test("when Wispr ends the meeting, the record is linked again until the source gives it an end", async () => {
+        let source: typeof live | null = live;
+        let ended = false;
+        const h = harness({ liveRecording: async () => source });
+        h.deps.refresh = async (meetingId, sourceRef) => {
+            h.refreshed.push(`${meetingId} ${sourceRef}`);
+            return ended ? { ...record, end: "2026-11-02T15:40:00.000Z" } : record;
+        };
+        await watchOnce(h.store, { deps: h.deps, now });
+        source = null;
+
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 15_000 })).toBe("stopped");
+        expect(h.refreshed).toEqual(["m1 wisprflow:w1"]);
+
+        ended = true;
+
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 30_000 })).toBe("idle");
+        expect(h.refreshed).toHaveLength(2);
+        expect(existsSync(join(h.store.root, "watch-auto.json"))).toBe(false);
     });
 
     test("a start that failed (no grant) is not retried for the same meeting", async () => {
@@ -1198,29 +1259,6 @@ describe("a word question shows where its words are said", () => {
         expect(context?.heard).toBe("Ada");
         expect(context?.lead.startsWith("…slovo")).toBe(true);
         expect(context?.rest.endsWith("konec…")).toBe(true);
-    });
-});
-
-describe("a failed screen capture", () => {
-    const stderr = "[Visualizer][INFO] Visualizer client forcing mac-app context via PEEKABOO_VISUALIZER_FORCE_APP";
-
-    test("names the capture tool's own error from its JSON, not its log line", () => {
-        const stdout = SafeJSON.stringify({
-            success: false,
-            error: { code: "INVALID_INPUT", message: "Invalid input: Screen index 1 not found" },
-            data: null,
-        });
-        const err = new CaptureError(1, stdout, stderr);
-
-        expect(err.message).toBe("peekaboo exited 1: Invalid input: Screen index 1 not found");
-        expect(err.missingScreen).toBe(true);
-    });
-
-    test("another error is no missing screen, and output without JSON keeps the log", () => {
-        const denied = SafeJSON.stringify({ success: false, error: { message: "Screen Recording permission denied" } });
-
-        expect(new CaptureError(1, denied, stderr).missingScreen).toBe(false);
-        expect(new CaptureError(1, "", stderr).message).toBe(`peekaboo exited 1: ${stderr}`);
     });
 });
 
@@ -1663,5 +1701,330 @@ describe("evidence --raw", () => {
             ["Carol Example", "Já ti ho pošlu novej."],
             ["Bob Example", "Dobře."],
         ]);
+    });
+});
+
+describe("the meetings recorder loop", () => {
+    const capture = meetingsConfigSchema.parse({}).global.capture;
+    const builtIn: DisplayInfo = {
+        id: 1,
+        index: 0,
+        name: "Built-in",
+        main: true,
+        widthPt: 1512,
+        heightPt: 982,
+        scale: 2,
+    };
+    const external: DisplayInfo = {
+        id: 4,
+        index: 1,
+        name: "External",
+        main: false,
+        widthPt: 2560,
+        heightPt: 1440,
+        scale: 1,
+    };
+    let stores = 0;
+
+    type Step = "frames" | "empty" | "fail" | "hang" | "timeout";
+
+    /** A recorder that follows a script per capture; after the script it waits for the stop the test sends. */
+    class ScriptedRecorder extends FrameRecorder {
+        readonly id = "native" as const;
+        readonly supports = { followFocus: false, displayId: true, motionBoxes: false, heartbeat: false };
+        readonly requests: CaptureRequest[] = [];
+        private piece = 0;
+        private notified = -1;
+
+        constructor(
+            private readonly script: { displays: DisplayInfo[][]; steps: Step[] },
+            private readonly whenDone: () => void
+        ) {
+            super();
+        }
+
+        async available() {
+            return { ok: true as const };
+        }
+
+        async displays(): Promise<DisplayInfo[]> {
+            const index = Math.min(this.piece, this.script.displays.length - 1);
+            this.piece += 1;
+            return this.script.displays[index] ?? [];
+        }
+
+        async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+            this.requests.push(request);
+            const step = this.script.steps[this.requests.length - 1] ?? "hang";
+            const displayId = request.target.kind === "display" ? request.target.displayId : 0;
+
+            if (step === "hang") {
+                if (this.notified !== this.piece) {
+                    this.notified = this.piece;
+                    this.whenDone();
+                }
+
+                await new Promise<void>((resolve) =>
+                    signal?.addEventListener("abort", () => resolve(), { once: true })
+                );
+                return { startedAtMs: Date.now(), frames: [], endedEarly: "stopped" };
+            }
+
+            if (step === "fail") {
+                throw new CaptureError("failed", "ax-tool capture exited 1: recording never started");
+            }
+
+            if (step === "timeout") {
+                throw new CaptureError("timeout", "ax-tool capture did not end within 1 s + 30 s");
+            }
+
+            if (step === "empty") {
+                return { startedAtMs: Date.now(), frames: [] };
+            }
+
+            const path = join(request.outDir, "keep-0001.png");
+            await Bun.write(path, "png");
+            return {
+                startedAtMs: Date.now() + this.piece * 1000,
+                frames: [{ path, atMs: 0, displayId, changePercent: 10, reason: "first" }],
+            };
+        }
+    }
+
+    async function recordWith(options: {
+        displays: DisplayInfo[][];
+        steps: Step[];
+        failOnJpeg?: boolean;
+        /** What the test does over the socket at each hanging piece; after the last, it stops the recording. */
+        actions?: Array<(call: (method: string, params?: unknown) => Promise<unknown>) => Promise<unknown>>;
+    }) {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-recorder-${stores}`));
+        const created = await store.create(
+            { title: "Recorder check", start: "2026-11-03T12:00:00.000Z", createdBy: "record" },
+            { command: "record start", change: "created" }
+        );
+        const liveDir = mkdtempSync(join(tmpdir(), "live-meeting-"));
+        const notes: RecorderNote[] = [];
+        const seenLive: string[] = [];
+        const answers: unknown[] = [];
+        const call = (method: string, params?: unknown) =>
+            callRecorder({ id: meetingLiveId(created.id), method, params, dir: liveDir }).catch(
+                (error: unknown) => error
+            );
+        const recorder = new ScriptedRecorder({ displays: options.displays, steps: options.steps }, () => {
+            seenLive.push(...listLiveRecordings(liveDir).map((entry) => `${entry.kind} ${entry.state}`));
+            const index = answers.length;
+            answers.push(undefined);
+            const next = options.actions?.shift() ?? ((send) => send("stop"));
+            void next(call).then((answer) => {
+                answers[index] = answer;
+            });
+        });
+        const state = await runRecorder({
+            store,
+            meetingId: created.id,
+            capture,
+            deps: {
+                recorder,
+                toJpeg: async (_png, jpg) => {
+                    if (options.failOnJpeg) {
+                        throw new Error("sips failed for keep-0001.png: disk full");
+                    }
+
+                    await Bun.write(jpg, "jpeg");
+                },
+                ocr: async () => ({ text: "Quarterly planning board with several readable lines", blocks: [] }),
+                notify: async (note) => {
+                    notes.push(note);
+                },
+                liveDir,
+                pieceSec: 1,
+                failurePauseMs: 0,
+            },
+        });
+        const folder = store.folder(created.id);
+        return { store, state, notes, recorder, liveDir, seenLive, answers, folder, saved: store.read(created.id) };
+    }
+
+    test("every display at once, named by id; a display that leaves between pieces leaves without an error", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external], [builtIn]],
+            steps: ["frames", "frames", "frames"],
+        });
+        const frames = readdirSync(join(run.folder, "frames")).sort();
+        const ocr = readFileSync(join(run.folder, "ocr.jsonl"), "utf8")
+            .trim()
+            .split("\n")
+            .map((row) => SafeJSON.parse(row, { strict: true }));
+
+        expect(frames.filter((name) => name.endsWith("-d1.jpg"))).toHaveLength(2);
+        expect(frames.filter((name) => name.endsWith("-d4.jpg"))).toHaveLength(1);
+        expect(ocr.map((line: { displayId: number }) => line.displayId).sort()).toEqual([1, 1, 4]);
+        expect(run.recorder.requests.slice(0, 3).map((request) => request.target)).toEqual([
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 4 },
+            { kind: "display", displayId: 1 },
+        ]);
+        expect(run.state.stopReason).toBe("requested");
+        expect(run.saved?.recording).toMatchObject({
+            status: "stopped",
+            stopReason: "requested",
+            frames: 3,
+            backend: "native",
+            displayPolicy: "all",
+            displays: [
+                { id: 1, name: "Built-in", frames: 2 },
+                { id: 4, name: "External", frames: 1 },
+            ],
+        });
+        expect(run.saved?.recording?.spans).toEqual([
+            { from: expect.any(String), to: expect.any(String), stopReason: "requested" },
+        ]);
+        expect(run.notes).toEqual([]);
+        expect(run.seenLive).toEqual(["meeting recording"]);
+        expect(listLiveRecordings(run.liveDir)).toEqual([]);
+        expect(recordingSummary(run.saved!).join("\n")).toContain("Built-in (1) 2, External (4) 1");
+    });
+
+    test("captures that fail three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
+        const run = await recordWith({ displays: [[builtIn]], steps: ["timeout", "fail", "timeout"] });
+        const last = SafeJSON.parse(readFileSync(join(run.folder, "recorder-last.json"), "utf8"), { strict: true });
+
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed" });
+        expect(run.saved?.recording?.warning).toContain("capture failed 3 times in a row");
+        expect(run.saved?.recording?.warning).toContain("No frame was recorded");
+        expect(run.saved?.recording?.failureNotifiedAt).toEqual(expect.any(String));
+        expect(last).toMatchObject({ stopReason: "failed", warning: expect.stringContaining("did not end within") });
+        expect(run.notes.map((note) => note.title)).toEqual(["Screen recording stopped"]);
+        expect(run.notes[0]?.message).toContain("record start --meeting");
+    });
+
+    test("an error outside the capture still ends the recording, with the reason", async () => {
+        const run = await recordWith({ displays: [[builtIn]], steps: ["frames"], failOnJpeg: true });
+
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "error" });
+        expect(run.saved?.recording?.warning).toContain("disk full");
+        expect(run.notes).toHaveLength(1);
+        expect(listLiveRecordings(run.liveDir)).toEqual([]);
+    });
+
+    test("a recording without a single frame says so", async () => {
+        const run = await recordWith({ displays: [[builtIn]], steps: ["empty"] });
+
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 0 });
+        expect(run.saved?.recording?.warning).toContain("No frame was recorded before the stop");
+        expect(recordingSummary(run.saved!)[0]).toContain("no frames");
+    });
+
+    test("pause ends a span and resume starts the next; a second pause or a resume while recording is refused", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["frames", "hang", "frames", "hang"],
+            actions: [
+                async (call) => [
+                    await call("pause"),
+                    await call("pause"),
+                    await Bun.sleep(50),
+                    await call("resume"),
+                    await call("resume"),
+                ],
+            ],
+        });
+        const [paused, again, , resumed, notPaused] = run.answers[0] as unknown[];
+
+        expect(paused).toEqual({ state: "paused" });
+        expect(again).toMatchObject({ code: RPC_ERRORS.alreadyPaused });
+        expect(resumed).toEqual({ state: "recording" });
+        expect(notPaused).toMatchObject({ code: RPC_ERRORS.notPaused });
+        expect(run.saved?.recording?.spans?.map((span) => span.stopReason)).toEqual(["paused", "requested"]);
+        expect(readdirSync(join(run.folder, "frames"))).toHaveLength(2);
+    });
+
+    test("a display switch applies at once, and an unknown display is refused", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang", "frames", "hang"],
+            actions: [
+                async (call) => [
+                    await call("displays.list"),
+                    await call("displays.switch", { displayId: 9 }),
+                    await call("displays.switch", { displayId: 4 }),
+                ],
+            ],
+        });
+        const [listed, unknown, switched] = run.answers[0] as unknown[];
+
+        expect(listed).toEqual([
+            expect.objectContaining({ id: 1, recorded: true }),
+            expect.objectContaining({ id: 4, recorded: true }),
+        ]);
+        expect(unknown).toMatchObject({ code: RPC_ERRORS.unknownDisplay });
+        expect(switched).toEqual({ mode: "all", chosen: [4] });
+        expect(readdirSync(join(run.folder, "frames"))).toEqual([expect.stringMatching(/-d4\.jpg$/)]);
+        expect(run.recorder.requests.at(-1)?.target).toEqual({ kind: "display", displayId: 4 });
+    });
+});
+
+describe("the screen at a moment, per display", () => {
+    const at = (clock: string) => `2026-11-03T12:${clock}.000Z`;
+    const lines = [
+        { file: "frames/a-d1.jpg", at: at("30:01"), displayId: 1, text: "Figma" },
+        { file: "frames/b-d4.jpg", at: at("31:00"), displayId: 4, text: "Teams" },
+        { file: "frames/c-d1.jpg", at: at("35:00"), displayId: 1, text: "Cursor" },
+    ];
+    const spans = [{ fromMs: Date.parse(at("30:00")), toMs: Date.parse(at("40:00")) }];
+
+    test("each display shows the frame still on its own screen", () => {
+        const { displays, recorded } = framesAtPerDisplay({
+            lines,
+            spans,
+            targetMs: Date.parse(at("36:00")),
+            windowMs: 10_000,
+        });
+
+        expect(recorded).toBe(true);
+        expect(displays).toEqual([
+            { displayId: 1, frames: [{ ...lines[2]!, unchanged: true }] },
+            { displayId: 4, frames: [{ ...lines[1]!, unchanged: true }] },
+        ]);
+    });
+
+    test("the spans the recorder keeps win; pauses are gaps", () => {
+        const paused = meetingRecordSchema.parse({
+            ...record,
+            recording: {
+                status: "stopped",
+                spans: [
+                    { from: at("30:00"), to: at("33:00"), stopReason: "paused" },
+                    { from: at("34:00"), to: at("40:00"), stopReason: "requested" },
+                ],
+            },
+        });
+
+        expect(recordedSpans(paused)).toEqual([
+            { fromMs: Date.parse(at("30:00")), toMs: Date.parse(at("33:00")) },
+            { fromMs: Date.parse(at("34:00")), toMs: Date.parse(at("40:00")) },
+        ]);
+    });
+
+    test("a recording block from before the schema still reads", () => {
+        const old = meetingRecordSchema.parse({
+            ...record,
+            recording: {
+                startedAt: at("30:00"),
+                display: 1,
+                framesDir: "frames",
+                ocr: "ocr.jsonl",
+                status: "stopped",
+                stopReason: "failed",
+                frames: 12,
+                bytes: 2_000_000,
+                somethingElse: true,
+            },
+        });
+
+        expect(old.recording).toMatchObject({ display: 1, frames: 12, somethingElse: true });
+        expect(recordingSummary(old)[0]).toContain("stopped (failed), 12 frames");
     });
 });
