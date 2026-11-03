@@ -69,7 +69,7 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration`, `MainBusy` (main-thread busy time after an event, `measureUntilSettled`, and a `Meter` for benches), `SessionOpenBench` (times one open of a session screen for the bench tests of both apps) |
 | `Tools/` | `ToolsBridge` (runs `tools`), `ToolsLineStream` (one long-running `tools` child, stdout as whole lines on the main queue, stdin held open so the child ends with the app), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread), `DirectoryWatcher` (one FSEvents stream over several folders, a path filter, main-queue callback) |
 | `Providers/` | `AIProviderMeta`, `AIProviders`, `AIProviderGlyph` |
-| `Recording/` | screen recording for any host: `ScreenRecorder` (picker, grant, session, floating controls) with `ScreenRecordingHost`, `RecordingTargetPicker`, `RecordingControlsView`, `RecordingSessionController` (one `tools control capture session`), `RecordingTarget(s)`, `RecordingSettings` + `RecordingSettingsView` |
+| `Recording/` | screen recording for any host: `ScreenRecorder` (picker, grant, session, floating controls) with `ScreenRecordingHost`, `RecordingTargetPicker`, `RecordingControlsView`, `RecordingSessionController` (one `tools control capture session`), `RecordingTarget(s)`, `RecordingSettings` + `RecordingSettingsView`; `Live/`: `LiveRecordingStore` (the `recordings/live/` entries other processes write), `LiveRecordingRPCClient` (their JSON-RPC control socket) and `LiveRecordingsStatusItem` (their menu bar item and floating controls) |
 | `Sessions/` | `SessionPalette`, `SessionFormat` |
 | `Sessions/Transcript/` | `SessionTranscriptList`, `TranscriptDocument`, prompt parts, `TranscriptScrollAnchor`, `TranscriptBus` / `TranscriptFilters`, `TranscriptMarkdownStyle`, `TranscriptLiveTail` (one `tools ai sessions tail --live` child, or a server subscription, per open screen; its `TranscriptLiveActivity` says what the agent does now, the list's last row through a `TranscriptActivityFeed` only that row observes) |
 | `Sessions/ToolCalls/` | `SessionToolCallView` + `TranscriptServices`, `SessionNativeLog` + `SessionNativeLogStore`, `SessionToolChanges`, `BatchedToolChangeSource` + `ToolChangeBatcher` (rows that ask within 100 ms share one `tools agents changes` run) |
@@ -105,7 +105,7 @@ count of the section.
 - [Pose](#pose) (8)
 - [Posture](#posture) (9)
 - [Providers](#providers) (3)
-- [Recording](#recording) (7)
+- [Recording](#recording) (10)
 - [Sessions](#sessions) (65)
 - [Settings](#settings) (49)
 - [Style](#style) (32)
@@ -6826,6 +6826,54 @@ The recorder's preferences in the app's defaults (`recording.*`), with their pag
 NativeSettingsPage(id: "app.recording", title: "Screen recording", symbol: "record.circle", tint: .red) {
     RecordingSettingsView()
 }
+```
+
+#### `LiveRecordingStore`, `LiveRecording`
+
+The live recordings every `tools` recorder writes (a meeting recorder, a control capture session): one
+`<genesis-tools root>/recordings/live/<id>.json` per running recording, where the root is
+`${GENESIS_TOOLS_HOME:-$HOME}/.genesis-tools`. No state of its own, so a test points it at a scratch folder.
+
+- `init(folder: URL, isAlive: (Int32) -> Bool = processIsAlive)`; `LiveRecordingStore.live` is the real folder.
+- `load() -> [LiveRecording]`: every readable entry whose `pid` is alive, oldest first. A missing folder is none.
+- `decode(_ data: Data, fallbackID: String?) -> LiveRecording?`: `pid` and `startedAt` (ISO 8601 or epoch ms) are
+  required; `kind`, `title`, `state`, `displays`, `frames`, `lastFrameAt`, `warning`, `folder`, `controls` and
+  `socket` have defaults.
+
+`LiveRecording` gives `isRecording`, `isPaused`, `isStopping`, `toggleCommand` (pause while recording, resume while
+paused, nil while stopping or when the recorder does not list it in `controls`), `elapsedMs(now:)` and
+`displayNames`. `LiveRecordingsWatcher` reads the folder again on each change (a DispatchSource on the folder) and
+once a second, off the main thread, and publishes `recordings`.
+
+#### `LiveRecordingRPCClient`, `LiveRecordingOverlay`
+
+The control channel of a live recording: the Unix domain socket its entry names (`socket`), JSON-RPC 2.0 with one
+JSON message per line. Methods: `status`, `pause`, `resume`, `stop`, `displays.list`, `displays.add {displayId}`,
+`displays.remove {displayId}`, `displays.switch {displayId}`, `displays.mode {mode}` and `subscribe`, after which the
+connection gets the notifications `state`, `frame` (`{displayId, at, file}`), `displays`, `warning` and `ended`.
+
+- `init(path: String, callbackQueue: DispatchQueue = .main)`; `connect() throws` (a refused socket throws `.connect`).
+- `call(_ method: String, params: [String: Any]?, timeout: TimeInterval = 3)`, async or with a completion: a
+  JSON-RPC error is `.remote(code:message:)`, no answer in time is `.timeout(method:)`, a dropped connection `.closed`.
+- `onNotification: (String, Any?) -> Void`, `onClose: () -> Void`, `close()`.
+
+`LiveRecordingOverlay` is what the socket said (`applyStatus`, `applyFrame`, `applyDisplays`, `applyWarning`), laid
+over the entry by `merged(into:)`: state, frames, the connected displays with `recorded`, the mode and the last error.
+
+#### `LiveRecordingsStatusItem`
+
+The menu bar item of the live recordings, present only while one runs: `record.circle.fill` in red while any entry
+records, `pause.circle.fill` while all are paused. The menu has one section per recording (title; kind, time since it
+started and frames, updated each second while the menu is open; displays; the warning; the last failed call) with
+Pause or Resume, Stop, Open folder, a Displays submenu (each connected display, checked while recorded, a click adds
+or removes it; "Record only …" per display; the modes "All displays" and "Follow focus") and "Show floating controls".
+The controls are a `RecordingControlsPanel` (always on top, never key, left out of screen captures) with the time,
+frames, Pause or Resume, Stop, a hide button and the last error. Each recording keeps one subscribed connection; an
+entry whose pid is gone, whose socket refuses or that sent `ended` is not shown, and a dropped connection is tried
+again every 2 s while the file stays. Every action is an RPC call. GenesisTools.app starts it in the hub face.
+
+```swift
+LiveRecordingsStatusItem.shared.start()
 ```
 
 ### Sessions

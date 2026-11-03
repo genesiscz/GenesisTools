@@ -459,6 +459,9 @@ package func runHub(_ args: [String]) -> Never {
         delegate.keymapRegistrations = HubKeymap.registerWindowCommands(model: model, window: window)
         if !request.isScripted {
             HubNavInput.install(window: window, model: model)
+            // The menu bar item of the live recordings (`tools meetings record`, control sessions): the hub is the
+            // face that runs all day, so it hosts it.
+            LiveRecordingsStatusItem.shared.start()
         }
     }
     // `--menu` runs once the hub has settled on its mode and selection, as it does for a request
