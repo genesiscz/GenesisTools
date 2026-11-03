@@ -248,11 +248,14 @@ export function buildSessionReport(input: {
 
     cost.unpricedModels = [...models.values()].filter((model) => model.costUsd === null).map((model) => model.model);
     cost.savingsUsd = cost.noCacheUsd - cost.totalUsd;
-    const cacheCalls = cacheCallsOf(
-        main.filter((call) => !call.aggregate),
-        compactions
+    // A loss compares one request with the next, so it reads only the single requests. An aggregate row sums several,
+    // but its tokens are still the session's: the totals and the hit rate read every main-loop call.
+    const losses = findCacheLosses(
+        cacheCallsOf(
+            main.filter((call) => !call.aggregate),
+            compactions
+        )
     );
-    const losses = findCacheLosses(cacheCalls);
     const first = calls[0]?.t ?? null;
     const last = calls.at(-1)?.t ?? null;
 
@@ -270,7 +273,7 @@ export function buildSessionReport(input: {
         cost,
         quotaWeight: tokens.input + tokens.cacheWrite + tokens.output + tokens.cacheRead * 0.1,
         models: [...models.values()].sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0)),
-        cache: summarizeCache(cacheCalls, losses.length),
+        cache: summarizeCache(cacheCallsOf(main, compactions), losses.length),
         losses,
         topCalls: rows
             .filter((row) => row.costUsd !== null)
