@@ -582,16 +582,22 @@ export interface WaitingQueue {
 /**
  * The phone's answer queue (`GET /api/qa/waiting`): every item the waiting set says waits for the human, grouped by
  * session, with the waiting set's counts. The items are the hub inbox's own (`buildInbox`), so the phone stages and
- * answers with the same ids and revisions; the counts are the waiting set's, so the phone number equals the notch.
+ * answers with the same ids and revisions. The counts follow the notch's rules: freshness by session activity, and
+ * nothing asked at or before `clearedAt` (the notch's "Mark all read") counts. One difference stays: the notch also
+ * counts an old item of a session whose agent is running right now (its agent roster); the queue has no roster, so
+ * such an item counts here only while its session is fresh by activity.
  */
 export async function loadWaitingQueue({
     hours = 72,
     deps = realInboxDeps,
     now = Date.now(),
+    clearedAt = 0,
 }: {
     hours?: number;
     deps?: InboxDeps;
     now?: number;
+    /** The notch's "Mark all read" watermark (`inboxClearedAt` of the widget state); 0 when never cleared. */
+    clearedAt?: number;
 } = {}): Promise<WaitingQueue> {
     const parts = await gatherInbox(hours, deps);
     const inbox = buildInbox({ ...parts, now });
@@ -602,6 +608,7 @@ export async function loadWaitingQueue({
         dialogs: parts.dialogs,
         activityAt: (session) => activity.get(session),
         now,
+        clearedAt,
     });
     const found = new Map<string, { item: InboxItem; session: InboxSession }>();
 

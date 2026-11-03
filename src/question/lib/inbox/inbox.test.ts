@@ -891,6 +891,14 @@ describe("loadInbox", () => {
         // Five days later the quiet session's items stay listed and stop counting, as on the notch.
         const quiet = await loadWaitingQueue({ deps, now: Date.parse("2026-03-06T12:00:00.000Z") });
         expect([quiet.total, quiet.sessions[0]?.items.length]).toEqual([0, 3]);
+
+        // After the notch's "Mark all read", nothing asked before it counts, as on the notch; the items stay listed.
+        const cleared = await loadWaitingQueue({
+            deps,
+            now: Date.parse("2026-03-01T12:00:00.000Z"),
+            clearedAt: Date.parse("2026-03-01T11:00:00.000Z"),
+        });
+        expect([cleared.total, cleared.sessions[0]?.items.length]).toEqual([0, 3]);
     });
 
     test("the blocks it lists that the log lacks are stored (harvestListed), so every surface reads the same rows", async () => {
