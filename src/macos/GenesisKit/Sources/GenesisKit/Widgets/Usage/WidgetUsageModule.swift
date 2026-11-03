@@ -110,15 +110,18 @@ struct WidgetUsageModuleView: View {
                         GhostButton("Acknowledge", symbol: "checkmark", tooltip: "Mark this alert as seen", height: 20) {
                             store.acknowledge(alert)
                         }
-                        if let account = alert.accountId ?? alert.accountName {
-                            GhostButton("Open", symbol: "chart.xyaxis.line", tooltip: "Show \(alert.accountName ?? account)'s burn lanes in the hub", height: 20) {
-                                store.openHub(["--usage-account", account])
-                            }
+                        GhostButton("Open", symbol: "chart.xyaxis.line", tooltip: openTooltip(alert), height: 20) {
+                            store.openAlert(alert)
                         }
                     }
                 }
             }
         }
+    }
+
+    private func openTooltip(_ alert: UsageAlert) -> String {
+        guard let account = alert.accountName ?? alert.accountId else { return "Show every account's limits in the hub" }
+        return "Show \(account)'s burn lanes in the hub"
     }
 
     @ViewBuilder
