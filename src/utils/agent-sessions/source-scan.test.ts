@@ -5,6 +5,7 @@ import {
     mkdtempSync,
     readdirSync,
     readlinkSync,
+    statSync,
     symlinkSync,
     writeFileSync,
 } from "node:fs";
@@ -182,6 +183,23 @@ test("a resumed fold sees what a full scan sees after every append: rows, malfor
     writeFileSync(path, '{"n":9}\n{"n":10}\n{"n":11}\n{"n":12}\n{"n":13}\n{"n":14}\n{"n":15}\n');
     expect(resumedFold(path, storePath)).toEqual(await fullScan(path));
     expect(resumedFold(join(root, "missing.jsonl"), storePath)).toEqual({ rows: [], issues: ["Source missing"] });
+});
+
+test("a fold that read nothing new leaves its store file alone, and a grown file still rewrites it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-jsonl-fold-unchanged-"));
+    const path = join(root, "rollout.jsonl");
+    const storePath = join(root, "store.json");
+    writeFileSync(path, '{"n":1}\n{"n":2}\n');
+    resumedFold(path, storePath);
+    const written = statSync(storePath);
+
+    expect(resumedFold(path, storePath)).toEqual(await fullScan(path));
+    expect(statSync(storePath).ino).toBe(written.ino);
+    expect(statSync(storePath).mtimeMs).toBe(written.mtimeMs);
+
+    appendFileSync(path, '{"n":3}\n');
+    expect(resumedFold(path, storePath)).toEqual(await fullScan(path));
+    expect(statSync(storePath).ino).not.toBe(written.ino);
 });
 
 test("a small file resumes in this process without writing the store, and starts over when rewritten", async () => {
