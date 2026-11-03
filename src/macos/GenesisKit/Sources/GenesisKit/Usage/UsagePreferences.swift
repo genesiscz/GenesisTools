@@ -67,6 +67,9 @@ public struct UsageSettings: Codable, Equatable, Sendable {
     public var cone = true
     /// The thin line that lands at exactly 100 % at the reset.
     public var safePace = true
+    /// Any of the three forecast overlays is on: each is its own switch, so the chart draws and makes room for the
+    /// ones that are on, not only while the projection is.
+    public var drawsForecast: Bool { projection || cone || safePace }
     /// A diamond on each spike, sized by the jump.
     public var spikeMarkers = true
     /// A tick for each rate limit, cooldown, poll pause, block and probe.

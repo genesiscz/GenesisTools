@@ -159,7 +159,7 @@ public struct UsageBurnLaneView: View {
         drawAbsent(context, geometry)
         drawWhiskers(context, geometry)
         drawLine(context, geometry)
-        if settings.projection, let forecast = lane.forecast { drawForecast(context, geometry, forecast) }
+        if settings.drawsForecast, let forecast = lane.forecast { drawForecast(context, geometry, forecast) }
         if settings.eventMarkers { drawEvents(context, geometry) }
         // Now: where the measured part ends and the projection begins.
         if now < domain.upperBound {
@@ -272,7 +272,7 @@ public struct UsageBurnLaneView: View {
             path.closeSubpath()
             context.fill(path, with: .color(tint.opacity(0.14)))
         }
-        if let line = geometry.projection(forecast, perHour: forecast.ratePerHour, until: end) {
+        if settings.projection, let line = geometry.projection(forecast, perHour: forecast.ratePerHour, until: end) {
             var path = Path()
             path.addLines(line)
             context.stroke(path, with: .color(tint.opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -283,7 +283,8 @@ public struct UsageBurnLaneView: View {
             context.stroke(path, with: .color(Color(red: 0.45, green: 0.66, blue: 0.98).opacity(0.55)), lineWidth: 0.8)
         }
         // A mini chart says it in its tooltip; the words would cover its few points of height.
-        if labelled, let label = forecast.label(now: now), geometry.x(end) - geometry.x(forecast.start) > 40 {
+        if labelled, settings.projection, let label = forecast.label(now: now),
+           geometry.x(end) - geometry.x(forecast.start) > 40 {
             context.draw(
                 Text(verbatim: label).font(.system(size: 9.5)).foregroundColor(tint.opacity(0.8)),
                 at: CGPoint(x: geometry.x(end) - 3, y: 2), anchor: .topTrailing)
