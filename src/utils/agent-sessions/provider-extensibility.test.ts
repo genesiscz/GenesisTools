@@ -15,6 +15,7 @@ import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
 import {
     classifiesNoPath,
+    noAnalysis,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -66,6 +67,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             scanInsights: () => ({ native: null, defaultModel: null }),
             classifyPath: classifiesNoPath,
             rowAnchors: noRowAnchors,
+            analysis: noAnalysis,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [root],

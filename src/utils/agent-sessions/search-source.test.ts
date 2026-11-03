@@ -3,6 +3,7 @@ import type { CachedHistoryMetadata } from "./repository";
 import { searchHistorySource } from "./search-source";
 import {
     classifiesNoPath,
+    noAnalysis,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -108,6 +109,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         rowAnchors: noRowAnchors,
+        analysis: noAnalysis,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [SOURCE.root],
