@@ -88,6 +88,8 @@ class ConnectPage extends BasePage {
             url: uri,
             bundleId: getDevDashboardBundleId(),
         });
+        // A link never connects by itself: the pair screen shows its address and waits for this tap.
+        await this.tap("pair-confirm");
     }
 
     async tapContinue(): Promise<void> {
