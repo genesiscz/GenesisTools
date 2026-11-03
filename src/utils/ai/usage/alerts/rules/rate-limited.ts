@@ -40,7 +40,13 @@ export const rateLimitedRule: UsageAlertRule<"rate-limited"> = {
             }
 
             const key = `${event.provider}\u0000${accountOf(event)}`;
-            groups.set(key, [...(groups.get(key) ?? []), event]);
+            const group = groups.get(key);
+
+            if (group) {
+                group.push(event);
+            } else {
+                groups.set(key, [event]);
+            }
         }
 
         const candidates: AlertCandidate[] = [];
