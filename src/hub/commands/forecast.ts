@@ -1,10 +1,16 @@
 import { absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
+import {
+    buildForecast,
+    forecastClock,
+    type WindowForecast,
+    windowKind,
+    windowLabel,
+} from "@genesiscz/utils/ai/usage/forecast/forecast";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { buildForecast, forecastClock, type WindowForecast, windowKind, windowLabel } from "../lib/forecast";
 
 function clock(iso: string | null): string {
     return iso ? forecastClock(new Date(iso)) : "";
