@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { AnswerRefusedError } from "../decisions/answers";
@@ -73,6 +73,24 @@ describe("fileActTokenStore", () => {
         await issueActTokens({ row: row(), surface: "telegram", store: fileActTokenStore(storage), now: NOW });
 
         expect(statSync(join(storage.getCacheDir(), "act-tokens.json")).mode & 0o777).toBe(0o600);
+    });
+});
+
+describe("act with an unknown token", () => {
+    it("refuses it without a write: the token file is never created", async () => {
+        const storage = new Storage("act-unknown-token-test");
+        const { deps: d, calls } = deps([row()], async () => delivered);
+
+        const receipt = await act({
+            token: "AAAAAAAAAAAAAAAAAAAAAA",
+            key: "http:probe",
+            deps: { ...d, store: fileActTokenStore(storage) },
+            now: NOW,
+        });
+
+        expect(receipt.outcome).toMatchObject({ kind: "refused", code: "unknown-token" });
+        expect(calls).toEqual([]);
+        expect(existsSync(join(storage.getCacheDir(), "act-tokens.json"))).toBe(false);
     });
 });
 

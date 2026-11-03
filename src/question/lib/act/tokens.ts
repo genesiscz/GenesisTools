@@ -32,6 +32,11 @@ export const ACT_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export interface ActTokenStore {
     /** Runs `fn` on the map under the store's lock and saves what it left; returns what `fn` returned. */
     update<T>(fn: (tokens: ActTokenMap) => T): Promise<T>;
+    /**
+     * Whether the token is stored, read without the lock and without a write. `act` asks it first, so an unknown
+     * credential (anyone may post one to the public act route) never rewrites the token file.
+     */
+    has(token: string): Promise<boolean>;
 }
 
 const TOKENS_FILE = "act-tokens.json";
@@ -55,6 +60,10 @@ export function fileActTokenStore(storage = new Storage("question")): ActTokenSt
             );
             return result as ReturnType<typeof fn>;
         },
+        async has(token) {
+            const tokens = await storage.getCacheFile<ActTokenMap>(TOKENS_FILE, "1000 days");
+            return Boolean(tokens && Object.hasOwn(tokens, token));
+        },
     };
 }
 
@@ -64,6 +73,9 @@ export function memoryActTokenStore(initial: ActTokenMap = {}): ActTokenStore & 
         tokens,
         async update(fn) {
             return fn(tokens);
+        },
+        async has(token) {
+            return Object.hasOwn(tokens, token);
         },
     };
 }
