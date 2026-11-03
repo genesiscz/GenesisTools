@@ -155,7 +155,8 @@ export async function queryDigest(opts: DigestOptions, deps: DigestDeps = {}): P
             accountId: name,
             accountName: name,
         };
-    const db = new UsageLimitsDb();
+    // A diagnostic read: no schema, no migration, no file; only `--write` writes, and only its note.
+    const db = UsageLimitsDb.readOnlyOrEmpty();
     let rows: DailyRow[] = [];
     let alerts: StoredAlert[] = [];
     let outlook: DigestOutlookRow[] = [];
