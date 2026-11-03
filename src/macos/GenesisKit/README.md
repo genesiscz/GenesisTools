@@ -412,6 +412,7 @@ A grid of rounded cells whose brightness follows each value relative to the larg
 - `rows: [String]`: the row labels, top to bottom.
 - `columns: [String]`: the column labels, left to right.
 - `cells: [NativeHeatmapCell]`: the values. A `NativeHeatmapCell` has `row: Int`, `column: Int` (zero-based indexes into `rows` and `columns`) and `value: Double`, created with `NativeHeatmapCell(row:column:value:)`.
+- `valueText: (Double) -> String`: a cell's value in its hover label. The default reads Clicky's key presses ("120 presses"); the hub's Spend tab passes dollars.
 
 ```swift
 NativeMatrixHeatmap(
@@ -10158,6 +10159,35 @@ let title = TitleFormatter.title(
     weekCost: nil, monthCost: nil, timeRemaining: nil)   // "$3.50"
 ```
 
+### Usage
+
+The AI usage views GenesisTools.app and Genesis share (`Sources/GenesisKit/Usage/`). Every number comes from a `tools`
+door (`tools ai usage … --json`, `tools ai-spend … --json`, `tools ai sessions report <id> --json`); nothing here reads
+the usage store or a transcript.
+
+- `UsageEnvelope<T>`, `UsageAccountKey`, `UsageWarning`, `UsageTime`: the output contract every new usage verb prints
+  (`{ schema, generatedAt, window?, data, warnings }`), keyed by provider and account id.
+- The data shapes, one per door: `UsageLimitsData`, `UsageSeriesData`, `UsageHealthData`, `UsageEventsData`,
+  `UsageAlertsData`, `UsageSpikesData`, `UsageAdviseData` (UsageLimitModels.swift); `UsagePivotData`, `UsagePlansData`,
+  `UsageProxyData`, `UsageWasteData`, `UsageWorkersReport`, `UsageAttributionData`, `UsageDriftData`, `UsageDigestData`,
+  `UsageBudgetsData`, `UsageSessionReportEnvelope` (UsageSpendModels.swift).
+- `UsageDoor` (the argv of each read-only door), `UsageBudgetCommand` (the budget writes) and `UsageClient` (runs a door
+  over any transport: `UsageClient.bridge(binaryPath:)`, the hub's server-first runner, or a test's canned bytes; it
+  refuses an envelope whose `schema` names another verb).
+- `UsageLaneBuilder` and `UsageLaneGeometry`: the burn lanes as values (readings, resets, spans with no limit, the
+  forecast with its pace band and safe pace, events, spikes, poll coverage) and their mapping to points.
+  `UsageBurnChart`, `UsageBurnLaneView` (also the mini cone: `labelled: false`), `UsageCoverageStrip` and
+  `UsageTimeAxis` draw them.
+- `UsageTableBuilder`, `UsageTableHeader`, `UsageTableRowView`: the usage table (a window per column, "no limit" for an
+  absent window, rate against the safe pace, the time to the limit, a sparkline).
+- `UsageSettings`, `UsagePreferences`, `UsageSettingsPages`: every chart choice as a setting (range, resolution, line
+  shape, the band for a window with no limit, reset bands, severity colour, projection, cone, safe pace, markers,
+  coverage, scoped windows, the spend stack, the digest cone), saved as one JSON text under `hub.usage.settings`.
+- `UsageFormat`, `UsageTone`: numbers in one English locale, and the colours of severity, poll outcome, event and alert.
+
+The widget's Usage module (`Widgets/Usage/`: `WidgetUsageStore`, `UsageRing`) reads the same doors.
+
+### Widgets
 ### Widgets
 
 Widgets is the notch and side-edge widget: panels pinned to the top and side of a screen that show local agent sessions, an inbox of questions, answers and results, and small modules (capture, file shelf, tasks, voice notes, Flow). `WidgetCoordinator` is the entry point a host creates: it builds a `WidgetModel` and the shelf, tasks and voice-notes stores, registers their modules in a `WidgetModuleRegistry`, and owns the edge panels and the settings and media windows. `WidgetModel` holds the observable state and the actions, following a `tools hub widget watch` stream into a `WidgetSnapshot` that every view reads. `LiveWidgetView` is the agents pane drawn inside a panel, `AgentWidgetView` is the strip-and-rail frame around it, and a `WidgetModuleDescriptor` adds a module with a compact, a preview and an expanded view. `WidgetLayoutConfiguration` decides which module ids appear at the top and in the three side groups, and the wire types (`WidgetSnapshot`, `WidgetSession`, `WidgetCard`, `WidgetPreferences`, `WidgetOutgoing`) mirror the hub's JSON, while the stores in `Widgets/Shelf/`, `Widgets/Tasks/` and `Widgets/VoiceNotes/` each talk to one `tools hub widget` subcommand.
