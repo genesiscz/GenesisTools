@@ -367,6 +367,8 @@ export async function applyPollGateOutcomes(args: {
     /** Configured account names, for pruning. Omit on a FILTERED poll — it knows nothing
      * about the accounts it excluded and pruning would wipe their backoff. */
     knownAccounts?: readonly string[];
+    /** A diagnostic poll: no `poll-backoff` event is recorded. */
+    probe?: boolean;
 }): Promise<void> {
     let written: PollGate | null = null;
 
@@ -385,7 +387,9 @@ export async function applyPollGateOutcomes(args: {
         return next;
     });
 
-    recordBackoffEvents(args.provider, args.failures, written, args.now);
+    if (!args.probe) {
+        recordBackoffEvents(args.provider, args.failures, written, args.now);
+    }
 }
 
 /**
