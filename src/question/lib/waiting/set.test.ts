@@ -45,7 +45,7 @@ const FORM: AskForm = {
     cwd: "/tmp/gt-waiting/shop",
     items: [{ id: "q1", promptMarkdown: "Which port?" }],
     status: "pending",
-} as AskForm;
+};
 
 describe("waiting set", () => {
     it("honours for, the states and an uncertain delivery in one rule", () => {

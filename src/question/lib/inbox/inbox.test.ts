@@ -829,21 +829,20 @@ describe("loadInbox", () => {
             { ...base, id: "d_2", number: 2, prompt: "Ask fable?", state: "open" as const, for: "fable" },
             { ...base, id: "d_3", number: 3, prompt: "Ship it?", state: "drafted" as const, draftOption: "a" },
         ];
-        const form = {
+        const pending = form({
             id: "ask_w",
             createdAt: Date.parse(at),
             sessionHint: SESSION.sessionId,
             projectPath: "/tmp/gt-inbox/app",
             cwd: "/tmp/gt-inbox/app",
             items: [{ id: "q1", promptMarkdown: "Which port?" }],
-            status: "pending",
-        } as AskForm;
+        });
         const deps: InboxDeps = {
             sessions: async () => [row as AgentSessionRow],
             tail: async () => [],
             stat: () => ({ size: 1, mtimeMs: 1 }),
             rows: () => stored,
-            forms: () => [form],
+            forms: () => [pending],
             readCache: async () => null,
             writeCache: async () => undefined,
         };
