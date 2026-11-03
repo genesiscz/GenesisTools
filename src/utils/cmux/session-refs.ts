@@ -119,24 +119,25 @@ function readJournalSince(
     return lines.reverse();
 }
 
+interface JournalReadOptions {
+    beforeMs?: number;
+    onReadError?: (error: unknown) => void;
+}
+
 /**
- * Newest recorded cmux location per session, one pass over the journal.
- * Entries older than MAX_AGE_MS are dropped; surface-less entries (plain
- * Terminal/tmux launches) are kept — callers that need a cmux target filter.
- * `onReadError` distinguishes an unreadable journal from one that is empty or does not exist.
+ * Every journal record inside the read window (`CMUX_REFS_MAX_AGE_MS` before `beforeMs`, or now), oldest first.
+ * Malformed lines are skipped. `onReadError` distinguishes an unreadable journal from one that is empty or missing.
  */
-export function loadAllSessionCmuxRefs(
+export function readSessionCmuxRecords(
     refsPath: string = CMUX_REFS_PATH,
-    options: { beforeMs?: number; onReadError?: (error: unknown) => void } = {}
-): Map<string, SessionCmuxRefs> {
-    const refs = new Map<string, SessionCmuxRefs>();
-    /** `<session>\n<surface>` → the first time that session was seen on that surface. */
-    const firstSeen = new Map<string, number>();
+    options: JournalReadOptions = {}
+): SessionCmuxRefs[] {
+    const records: SessionCmuxRefs[] = [];
     const cutoff = (options.beforeMs ?? Date.now()) - CMUX_REFS_MAX_AGE_MS;
     const lines = readJournalSince(refsPath, { sinceMs: cutoff, onReadError: options.onReadError });
 
     if (lines === null) {
-        return refs;
+        return records;
     }
 
     for (const line of lines) {
@@ -165,6 +166,27 @@ export function loadAllSessionCmuxRefs(
             continue;
         }
 
+        records.push(entry);
+    }
+
+    return records;
+}
+
+/**
+ * Newest recorded cmux location per session, one pass over the journal.
+ * Entries older than MAX_AGE_MS are dropped; surface-less entries (plain
+ * Terminal/tmux launches) are kept — callers that need a cmux target filter.
+ * `onReadError` distinguishes an unreadable journal from one that is empty or does not exist.
+ */
+export function loadAllSessionCmuxRefs(
+    refsPath: string = CMUX_REFS_PATH,
+    options: JournalReadOptions = {}
+): Map<string, SessionCmuxRefs> {
+    const refs = new Map<string, SessionCmuxRefs>();
+    /** `<session>\n<surface>` → the first time that session was seen on that surface. */
+    const firstSeen = new Map<string, number>();
+
+    for (const entry of readSessionCmuxRecords(refsPath, options)) {
         const id = entry.sessionId.toLowerCase();
         const existing = refs.get(id);
         const spanKey = `${id}\n${entry.surfaceId?.toLowerCase() ?? ""}`;
