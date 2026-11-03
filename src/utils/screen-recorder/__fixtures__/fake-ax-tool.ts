@@ -130,7 +130,13 @@ process.stdin.on("data", (chunk) => {
             keep("display-switch");
         } else if (command.cmd === "pause" || command.cmd === "resume") {
             print({ event: "state", state: command.cmd === "pause" ? "paused" : "recording" }, "stderr");
-        } else if (["set-fps", "set-threshold", "set-max-long-side", "mute", "unmute"].includes(command.cmd)) {
+        } else if (command.cmd === "mute" || command.cmd === "unmute") {
+            // As ax-tool does: a mute answers with the state and what is muted, not with the settings.
+            print(
+                { event: "state", state: "recording", muted: { [command.source ?? "mic"]: command.cmd === "mute" } },
+                "stderr"
+            );
+        } else if (["set-fps", "set-threshold", "set-max-long-side"].includes(command.cmd)) {
             print({ event: "settings", cmd: command.cmd, activeFps: command.active, idleFps: command.idle }, "stderr");
         } else if (command.cmd === "set-mic") {
             print(

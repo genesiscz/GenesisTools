@@ -293,8 +293,12 @@ export class NativeLiveCapture implements LiveCapture {
     readonly setMaxLongSide?: (px: number) => Promise<void>;
     readonly mute?: (source: AudioSource, muted: boolean) => Promise<void>;
     readonly setMic?: (deviceId: string) => Promise<void>;
-    /** Settings commands waiting for the recorder's `settings` event, oldest first. */
+    /**
+     * Commands waiting for their answer, oldest first: `settings` for a rate, threshold, size or microphone change, a
+     * `state` event with `muted` for a mute.
+     */
     private readonly pendingSettings: Array<{
+        answer: "settings" | "muted";
         resolve: () => void;
         reject: (error: Error) => void;
         timer: ReturnType<typeof setTimeout>;
@@ -325,7 +329,7 @@ export class NativeLiveCapture implements LiveCapture {
         }
 
         if (commands.has("mute")) {
-            this.mute = (source, muted) => this.settingsCommand({ cmd: muted ? "mute" : "unmute", source });
+            this.mute = (source, muted) => this.settingsCommand({ cmd: muted ? "mute" : "unmute", source }, "muted");
         }
 
         if (commands.has("set-mic")) {
@@ -334,9 +338,13 @@ export class NativeLiveCapture implements LiveCapture {
     }
 
     /** One command whose answer is the recorder's next `settings` event, or its next `error` event. */
-    private settingsCommand(command: Record<string, unknown>): Promise<void> {
+    private settingsCommand(
+        command: Record<string, unknown>,
+        answer: "settings" | "muted" = "settings"
+    ): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             const entry = {
+                answer,
                 resolve,
                 reject,
                 timer: setTimeout(() => {
@@ -411,8 +419,10 @@ export class NativeLiveCapture implements LiveCapture {
             return;
         }
 
-        if (event.event === "settings") {
-            const pending = this.pendingSettings.shift();
+        if (event.event === "settings" || (event.event === "state" && "muted" in event)) {
+            const kind = event.event === "settings" ? "settings" : "muted";
+            const index = this.pendingSettings.findIndex((entry) => entry.answer === kind);
+            const [pending] = index >= 0 ? this.pendingSettings.splice(index, 1) : [];
             clearTimeout(pending?.timer);
             pending?.resolve();
             return;
