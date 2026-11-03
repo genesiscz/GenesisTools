@@ -42,7 +42,19 @@ export function decisionPressHandler(
             press.messageId === undefined
                 ? null
                 : await takeMessageAt({ chat: press.chatId, message: press.messageId });
-        const receipt = await act({ token, key: `telegram:${press.id}`, deps: await deps.actDeps() });
+        let receipt: ActReceipt;
+
+        try {
+            receipt = await act({ token, key: `telegram:${press.id}`, deps: await deps.actDeps() });
+        } catch (err) {
+            // Give the message back, so the retraction can still drop its buttons when the decision closes elsewhere.
+            if (claimed) {
+                await rememberMessage(claimed.noticeId, claimed.posted);
+            }
+
+            throw err;
+        }
+
         const reply = decisionPressReply(receipt, claimed?.posted.text);
 
         if (
