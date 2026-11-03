@@ -158,8 +158,34 @@ describe("readLimitSeries through limitSeriesWire", () => {
         const [claude, codex] = limitSeriesWire(data.series);
 
         expect(data.series.map((s) => s.availableNow)).toEqual(["absent", "limited"]);
-        expect(claude).toMatchObject({ provider: "anthropic-sub", endedAt: "2026-11-01T01:00:00.000Z", label: "Session (5h)" });
+        expect(claude).toMatchObject({
+            provider: "anthropic-sub",
+            endedAt: "2026-11-01T01:00:00.000Z",
+            label: "Session (5h)",
+        });
         expect(codex.endedAt).toBeUndefined();
+    });
+
+    test("forecastAt adds each window's forecast with the safe pace; without it the field stays null", () => {
+        const at = new Date("2026-11-01T11:00:00.000Z");
+        const reading = (percent: number, t: string) =>
+            db.recordSnapshotV2("work", "five_hour", percent, t, {
+                resetsAt: "2026-11-01T13:00:00.000Z",
+                severity: null,
+                scopeModel: null,
+                provider: "openai-sub",
+                kind: "session",
+            });
+        reading(50, "2026-11-01T10:40:00.000Z");
+        reading(60, "2026-11-01T10:59:00.000Z");
+        const sources = { db, directory: [CLAUDE_WORK, CODEX_WORK], current: CURRENT };
+        const request = { from: FROM, to: TO, agg: "raw" as const, accounts: [CODEX_WORK] };
+
+        const [withForecast] = readLimitSeries({ ...request, forecastAt: at }, sources).series;
+        const [plain] = readLimitSeries(request, sources).series;
+
+        expect(withForecast.forecast).toMatchObject({ utilization: 60, safePctPerHour: 20 });
+        expect(plain.forecast).toBeNull();
     });
 
     test("negative control: no selection returns every provider's history", () => {
