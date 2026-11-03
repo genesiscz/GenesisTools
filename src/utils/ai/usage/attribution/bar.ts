@@ -49,22 +49,25 @@ export function lastReset(entry: SeriesEntry, now: Date): string | undefined {
         .at(-1);
 }
 
-/** The sum of every rise between readings at or after `since`; a drop (a reset or a correction) adds nothing. */
+/**
+ * The sum of every rise between readings at or after `since`. Across a reset the base is 0, not the old cycle's last
+ * reading, so the use before the first reading after it counts; any other drop (a correction) adds nothing.
+ */
 export function riseSince(entry: SeriesEntry, since: number): number {
+    const resets = entry.resets.map((reset) => Date.parse(reset));
     let rise = 0;
-    let previous: number | undefined;
+    let previous: { t: number; percent: number } | undefined;
 
     for (const point of entry.points) {
-        if (Date.parse(point.t) < since) {
-            previous = point.percent;
-            continue;
+        const t = Date.parse(point.t);
+
+        if (t >= since && previous !== undefined) {
+            const prior = previous.t;
+            const base = resets.some((reset) => prior < reset && reset <= t) ? 0 : previous.percent;
+            rise += Math.max(0, point.percent - base);
         }
 
-        if (previous !== undefined && point.percent > previous) {
-            rise += point.percent - previous;
-        }
-
-        previous = point.percent;
+        previous = { t, percent: point.percent };
     }
 
     return rise;
