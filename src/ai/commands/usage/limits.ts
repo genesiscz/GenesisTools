@@ -1,5 +1,6 @@
 import { formatLimitLine } from "@app/ai/lib/accounts/last-usage";
 import { usageProviderValues } from "@app/ai/lib/usage/provider-values";
+import { FORECAST_DESCRIPTION, type ForecastCommandOptions, runForecastCommand } from "@app/hub/commands/forecast";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { isLimitKind, LIMIT_KIND_VALUES, type LimitKind } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
@@ -152,6 +153,21 @@ function percentCell(value: number | undefined): string {
     return value === undefined ? pc.dim("—") : `${value.toFixed(1)}%`;
 }
 
+/** "3.1%/h now · 1.8%/h safe": the burn beside the budget that lasts to the reset. */
+function paceCell(item: LimitSeriesItem): string {
+    const forecast = item.forecast;
+
+    if (!forecast) {
+        return pc.dim("—");
+    }
+
+    const now = forecast.ratePctPerHour === null ? pc.dim("no burn") : `${forecast.ratePctPerHour}%/h now`;
+    const safe = forecast.safePctPerHour === null ? "" : ` · ${forecast.safePctPerHour}%/h safe`;
+    const tone = forecast.beforeReset ? pc.red : (text: string) => text;
+
+    return tone(`${now}${safe}`);
+}
+
 function renderSeries(envelope: UsageEnvelope<LimitSeriesData>): void {
     const window = envelope.window;
     renderCliHeader("Limit series", window ? `${window.label} · ${window.tz} · step ${envelope.data.stepMs} ms` : "");
@@ -163,6 +179,7 @@ function renderSeries(envelope: UsageEnvelope<LimitSeriesData>): void {
         "LAST",
         "PEAK",
         "RESETS",
+        "PACE",
     ]);
 
     for (const item of envelope.data.series) {
@@ -175,6 +192,7 @@ function renderSeries(envelope: UsageEnvelope<LimitSeriesData>): void {
             percentCell(lastOf(item)),
             percentCell(peakOf(item)),
             String(item.resets.length),
+            paceCell(item),
         ]);
     }
 
@@ -318,6 +336,7 @@ async function runSeries(opts: SeriesOptions): Promise<void> {
             ...(selection === undefined ? {} : { accounts: selection }),
             ...(providers === undefined ? {} : { providers }),
             ...(kinds === undefined ? {} : { kinds }),
+            forecastAt: now,
         },
         { db, directory, current: snapshotsFromCache(cache) }
     );
@@ -394,4 +413,50 @@ export function registerAiUsageLimitsCommand(usage: Command): void {
     addReservedHarnessOption(series).action(async (_opts: SeriesOptions, command: Command) => {
         await guarded(["limits", "series"], () => runSeries(command.optsWithGlobals<SeriesOptions>()));
     });
+
+    // An alias of `tools hub forecast` (owner decision 2026-11-01 22:30): the same flags and the
+    // same runner, so the bytes match. `tools hub forecast` stays the real command.
+    limits
+        .command("forecast")
+        .description(`${FORECAST_DESCRIPTION}. Alias of tools hub forecast`)
+        .option("--provider <id>", "only this usage provider (anthropic-sub, openai-sub, grok-sub)")
+        .option("--account <name>", "only this account")
+        .option("--json", "machine-readable output (the hub reads this)")
+        .action(async (_opts: ForecastCommandOptions, command: Command) => {
+            await guarded(["limits", "forecast"], () =>
+                runForecastCommand(forecastOptions(command.optsWithGlobals<ForecastFlags>()))
+            );
+        });
+}
+
+/** The parent's variadic `--provider`/`--account` take these flags first; the alias accepts one value each, as hub forecast does. */
+interface ForecastFlags {
+    provider?: string | string[] | boolean;
+    account?: string | string[];
+    json?: boolean;
+}
+
+function single(flag: string, value: string | string[] | boolean | undefined): string | undefined {
+    if (value === undefined || value === false) {
+        return undefined;
+    }
+
+    const list = typeof value === "string" ? [value] : value === true ? [] : value;
+
+    if (list.length !== 1) {
+        throw new UsageQueryError("bad-value", `${flag} takes one value here, as in tools hub forecast.`);
+    }
+
+    return list[0];
+}
+
+export function forecastOptions(flags: ForecastFlags): ForecastCommandOptions {
+    const provider = single("--provider", flags.provider);
+    const account = single("--account", flags.account);
+
+    return {
+        ...(provider === undefined ? {} : { provider }),
+        ...(account === undefined ? {} : { account }),
+        ...(flags.json ? { json: true } : {}),
+    };
 }

@@ -1,6 +1,7 @@
 import { absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import {
     buildForecast,
+    type ForecastResult,
     forecastClock,
     type WindowForecast,
     windowKind,
@@ -29,65 +30,82 @@ function outlook(window: WindowForecast): string {
     return formatDotStatus(window.beforeReset ? "err" : "ok", text);
 }
 
+export interface ForecastCommandOptions {
+    provider?: string;
+    account?: string;
+    json?: boolean;
+}
+
+export const FORECAST_DESCRIPTION =
+    "When each AI account's 5-hour (where the account has one) and weekly windows run out at the recent burn rate (reads recorded usage snapshots only, never fetches)";
+
+/**
+ * The one body of `tools hub forecast` and its alias `tools ai usage limits forecast` (design
+ * 2026-11-01, step U3): both doors call this, so they print the same bytes.
+ */
+export async function runForecastCommand(opts: ForecastCommandOptions): Promise<void> {
+    const result = await buildForecast({ provider: opts.provider, account: opts.account });
+
+    if (opts.json) {
+        out.result(result);
+        return;
+    }
+
+    renderForecast(result);
+}
+
 export function registerForecastCommand(program: Command): void {
     program
         .command("forecast")
-        .description(
-            "When each AI account's 5-hour (where the account has one) and weekly windows run out at the recent burn rate (reads recorded usage snapshots only, never fetches)"
-        )
+        .description(FORECAST_DESCRIPTION)
         .option("--provider <id>", "only this usage provider (anthropic-sub, openai-sub, grok-sub)")
         .option("--account <name>", "only this account")
         .option("--json", "machine-readable output (the hub reads this)")
-        .action(async (opts: { provider?: string; account?: string; json?: boolean }) => {
-            const result = await buildForecast({ provider: opts.provider, account: opts.account });
-
-            if (opts.json) {
-                out.result(result);
-                return;
-            }
-
-            renderCliHeader("Usage forecast", "at the recent burn rate");
-
-            if (result.accounts.length === 0) {
-                out.println(
-                    result.source
-                        ? `No usage snapshots in the last 8 days (the usage poller records them: ${toolCommand("ai usage")}).`
-                        : "No history database yet."
-                );
-                return;
-            }
-
-            const table = createBoxTable(["ACCOUNT", "WINDOW", "USED", "RATE", "RESETS", "OUTLOOK"]);
-
-            for (const account of result.accounts) {
-                // A window the account does not have: a dash, never a 0 % row forecast from its old samples.
-                for (const bucket of account.absentWindows ?? []) {
-                    table.push([
-                        `${account.account}
-${pc.dim(account.provider)}`,
-                        windowLabel(bucket, windowKind({ bucket, kind: null })),
-                        pc.dim("—"),
-                        "",
-                        "",
-                        formatDotStatus("dim", absentLimitText({ kind: windowKind({ bucket, kind: null }) })),
-                    ]);
-                }
-
-                for (const window of account.windows) {
-                    table.push([
-                        `${account.account}\n${pc.dim(account.provider)}`,
-                        window.label,
-                        `${window.utilization.toFixed(0)}%${window.stale ? pc.yellow(" (old)") : ""}`,
-                        window.ratePctPerHour === null
-                            ? ""
-                            : `${window.ratePctPerHour}%/h ${pc.dim(window.basis ?? "")}`,
-                        clock(window.resetsAt),
-                        outlook(window),
-                    ]);
-                }
-            }
-
-            out.println(table.toString());
-            out.println(pc.dim(`${result.accounts.length} accounts · ${result.elapsedMs} ms · ${result.source}`));
+        .action(async (opts: ForecastCommandOptions) => {
+            await runForecastCommand(opts);
         });
+}
+
+function renderForecast(result: ForecastResult): void {
+    renderCliHeader("Usage forecast", "at the recent burn rate");
+
+    if (result.accounts.length === 0) {
+        out.println(
+            result.source
+                ? `No usage snapshots in the last 8 days (the usage poller records them: ${toolCommand("ai usage")}).`
+                : "No history database yet."
+        );
+        return;
+    }
+
+    const table = createBoxTable(["ACCOUNT", "WINDOW", "USED", "RATE", "RESETS", "OUTLOOK"]);
+
+    for (const account of result.accounts) {
+        // A window the account does not have: a dash, never a 0 % row forecast from its old samples.
+        for (const bucket of account.absentWindows ?? []) {
+            table.push([
+                `${account.account}
+${pc.dim(account.provider)}`,
+                windowLabel(bucket, windowKind({ bucket, kind: null })),
+                pc.dim("—"),
+                "",
+                "",
+                formatDotStatus("dim", absentLimitText({ kind: windowKind({ bucket, kind: null }) })),
+            ]);
+        }
+
+        for (const window of account.windows) {
+            table.push([
+                `${account.account}\n${pc.dim(account.provider)}`,
+                window.label,
+                `${window.utilization.toFixed(0)}%${window.stale ? pc.yellow(" (old)") : ""}`,
+                window.ratePctPerHour === null ? "" : `${window.ratePctPerHour}%/h ${pc.dim(window.basis ?? "")}`,
+                clock(window.resetsAt),
+                outlook(window),
+            ]);
+        }
+    }
+
+    out.println(table.toString());
+    out.println(pc.dim(`${result.accounts.length} accounts · ${result.elapsedMs} ms · ${result.source}`));
 }
