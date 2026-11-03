@@ -7,6 +7,7 @@ import { notifyPostedDecisions } from "./notify";
 import { decisionsMarkdown } from "./read";
 import { parseDecisionInput, postDecisionsInputSchema } from "./schema";
 import { type DecisionRecord, type DecisionRef, type PostDecisionDeps, postDecisions } from "./store";
+import { postDecisionsToTelegram } from "./telegram";
 
 /** What an item is. `question` (the default) is a pending form the user answers on /qa. */
 export type QuestionItemType = "question" | "decision" | "todo";
@@ -243,7 +244,8 @@ export function checkDecisionItems(items: QuestionItemInput[], hint: DecisionSes
  * Stores the decision and todo items of a post. Numbers come from the store, never from the caller.
  *
  * The rows that wait for the human raise one banner that opens the hub at the first of them
- * ({@link notifyPostedDecisions}). Like a pending form's banner it is opt-OUT: `notify` defaults to
+ * ({@link notifyPostedDecisions}), and one Telegram message with letter buttons each when the project opted in
+ * ({@link postDecisionsToTelegram}). Like a pending form's banner it is opt-OUT: `notify` defaults to
  * the question config's `notifyPending`, and a caller that must stay silent passes `notify: false`.
  */
 export async function postDecisionItems({
@@ -269,6 +271,7 @@ export async function postDecisionItems({
 
     if (notify ?? loadConfig().sinks.notifyPending !== false) {
         await notifyPostedDecisions(decisions);
+        await postDecisionsToTelegram(decisions);
     }
 
     return { decisions, markdown: decisionsMarkdown(decisions) };

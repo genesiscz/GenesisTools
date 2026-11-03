@@ -25,17 +25,21 @@ describe("postTelegramMessage", () => {
         expect(await recallMessage("notice-post-1")).toMatchObject({ chat: CHAT, message: 1 });
         expect(api.messages[0].buttons).toEqual([[{ text: "a", data: "d:tok-a" }]]);
 
-        expect(await retractTelegramNotice({ api, noticeId: "notice-post-1", text: "DECISION 3 · answered" })).toBe(
-            true
-        );
+        expect(
+            await retractTelegramNotice({
+                api,
+                noticeId: "notice-post-1",
+                edit: (original) => `${original} · answered`,
+            })
+        ).toBe(true);
         expect(api.messages[0]).toMatchObject({ text: "DECISION 3 · answered", buttons: [] });
         expect(await recallMessage("notice-post-1")).toBeNull();
     });
 
     it("cannot retract a notice it never posted", async () => {
-        expect(await retractTelegramNotice({ api: new FakeTelegramMessagesApi(), noticeId: "never", text: "x" })).toBe(
-            false
-        );
+        expect(
+            await retractTelegramNotice({ api: new FakeTelegramMessagesApi(), noticeId: "never", edit: () => "x" })
+        ).toBe(false);
     });
 
     it("forgets a notice past the memory's TTL", async () => {
