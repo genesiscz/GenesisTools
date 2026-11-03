@@ -67,7 +67,8 @@ export function decisionPressHandler(
             return { toast: reply.toast };
         }
 
-        return reply;
+        // The outcome edit is what drops the buttons; if it fails, the retraction must still find the message.
+        return claimed ? { ...reply, onEditFailed: () => rememberMessage(claimed.noticeId, claimed.posted) } : reply;
     };
 }
 
