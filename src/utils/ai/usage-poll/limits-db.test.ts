@@ -122,6 +122,20 @@ describe("UsageLimitsDb", () => {
         expect(db.getSnapshots("work", "five_hour", 60)).toHaveLength(2);
     });
 
+    test("recordIfChangedV2 records an idle slot that changes kind or model scope, and skips it once settled", () => {
+        // A Codex primary slot holds the 5h window on one plan and the weekly one on another; idle, both read 0%.
+        const idle = { resetsAt: null, severity: null, scopeModel: null, provider: "openai-sub", kind: "session" };
+        expect(db.recordIfChangedV2("work", "primary", 0, idle)).toBe(true);
+        expect(db.recordIfChangedV2("work", "primary", 0, idle)).toBe(false);
+
+        expect(db.recordIfChangedV2("work", "primary", 0, { ...idle, kind: "weekly" })).toBe(true);
+        expect(db.getLatest("work", "primary", "openai-sub")?.kind).toBe("weekly");
+        expect(db.recordIfChangedV2("work", "primary", 0, { ...idle, kind: "weekly" })).toBe(false);
+
+        expect(db.recordIfChangedV2("work", "primary", 0, { ...idle, kind: "weekly", scopeModel: "gpt-5" })).toBe(true);
+        expect(db.getLatest("work", "primary", "openai-sub")?.scopeModel).toBe("gpt-5");
+    });
+
     test("recordIfChangedV2 records the first limited reading after a row from before the availability column", () => {
         const same = { resetsAt: null, severity: null, scopeModel: null };
         db.recordSnapshotV2("work", "five_hour", 0, recentTimestamp(5), same);
