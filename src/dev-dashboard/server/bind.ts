@@ -1,4 +1,9 @@
-import type { Endpoint, EndpointInput, EndpointOutput } from "@app/dev-dashboard/contract/endpoint-table";
+import {
+    ENDPOINTS,
+    type Endpoint,
+    type EndpointInput,
+    type EndpointOutput,
+} from "@app/dev-dashboard/contract/endpoint-table";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import type { z } from "zod";
@@ -125,4 +130,33 @@ export function bindEndpoint<E extends Endpoint>(
             return receipts.once(`${endpoint.method} ${ctx.pathname} ${key}`, () => answer(ctx));
         },
     };
+}
+
+/**
+ * The idempotency of the table for routes that are still written by hand (the pending forms, the handoffs, the AI
+ * accounts): a route whose method and pattern are a `keyed-write` row answers a retry that carries the same
+ * `Idempotency-Key` with its first answer, like a bound row. Every other route passes through unchanged.
+ */
+export function withTableIdempotency(defs: RouteDef[], receipts: ReceiptCache = sharedReceipts): RouteDef[] {
+    const keyed = new Set(
+        Object.values(ENDPOINTS)
+            .filter((entry) => entry.policy === "keyed-write")
+            .map((entry) => `${entry.method} ${entry.path}`)
+    );
+
+    return defs.map((def) => {
+        if (!keyed.has(`${def.method} ${def.pattern}`)) {
+            return def;
+        }
+
+        return {
+            ...def,
+            handler: async (ctx) => {
+                const key = ctx.headers[IDEMPOTENCY_HEADER];
+                return key
+                    ? receipts.once(`${def.method} ${ctx.pathname} ${key}`, async () => def.handler(ctx))
+                    : def.handler(ctx);
+            },
+        };
+    });
 }

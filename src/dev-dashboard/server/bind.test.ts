@@ -14,7 +14,7 @@ import { qaDecisionRoutes } from "@app/dev-dashboard/server/routes/qa-decisions"
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { postDecisions } from "@app/question/lib/decisions/store";
 import { z } from "zod";
-import { bindEndpoint, ReceiptCache } from "./bind";
+import { bindEndpoint, ReceiptCache, withTableIdempotency } from "./bind";
 
 function ctx({
     method = "POST",
@@ -122,6 +122,37 @@ describe("bindEndpoint", () => {
         expect(retry).toEqual(first);
         expect(other.body).toEqual({ run: 2 });
         expect(unkeyed.body).toEqual({ run: 3 });
+    });
+});
+
+describe("withTableIdempotency", () => {
+    it("keys a hand-written route that is a keyed-write row, and leaves a read alone", async () => {
+        let writes = 0;
+        let reads = 0;
+        const [answer, list] = withTableIdempotency(
+            [
+                {
+                    method: "POST",
+                    pattern: "/api/qa/pending/:id/answer",
+                    handler: async () => ({ kind: "json", status: 200, body: { write: ++writes } }),
+                },
+                {
+                    method: "GET",
+                    pattern: "/api/qa/pending",
+                    handler: async () => ({ kind: "json", status: 200, body: { read: ++reads } }),
+                },
+            ],
+            new ReceiptCache()
+        );
+        const keyed = { "idempotency-key": "k1" };
+
+        await answer.handler(ctx({ pathname: "/api/qa/pending/ask_1/answer", headers: keyed }));
+        await answer.handler(ctx({ pathname: "/api/qa/pending/ask_1/answer", headers: keyed }));
+        await list.handler(ctx({ method: "GET", pathname: "/api/qa/pending", headers: keyed }));
+        await list.handler(ctx({ method: "GET", pathname: "/api/qa/pending", headers: keyed }));
+
+        expect(writes).toBe(1);
+        expect(reads).toBe(2);
     });
 });
 
