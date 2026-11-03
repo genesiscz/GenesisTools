@@ -765,6 +765,28 @@ describe("--harness, the design name of --sources and --backend", () => {
         expect(stderr).not.toContain("--sources");
     });
 
+    test("the reports apply the inherited --harness, and a list that leaves out the namespace is refused", async () => {
+        fixtureEvents = [event(), event({ source: "codex", id: "evt-2" })];
+
+        await spend("daily", "--harness", "codex", "--json");
+        await spend("codex", "daily", "--harness", "codex,claude", "--json");
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(loadCalls.map((call) => call.sources)).toEqual([["codex"], ["codex"]]);
+
+        await spend("codex", "daily", "--harness", "claude", "--json");
+        expect(process.exitCode).toBe(1);
+        expect(loadCalls).toHaveLength(2);
+        expect(stderr).toContain("--harness claude leaves out codex");
+    });
+
+    test("monitor refuses --harness instead of reporting every agent under a filter", async () => {
+        await spend("monitor", "--harness", "codex", "--json");
+
+        expect(process.exitCode).toBe(1);
+        expect(stderr).toContain("monitor reports every agent");
+        expect(stdout).toBe("");
+    });
+
     test("workers takes --harness for --backend", async () => {
         await spend("workers", "--harness", "nonesuch");
 
