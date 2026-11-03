@@ -9,6 +9,8 @@ import {
     rankerFor,
     windowRanker,
 } from "@genesiscz/utils/ai/usage/account-rank";
+import { adviseAccounts } from "@genesiscz/utils/ai/usage/advise";
+import type { AccountForecast, WindowForecast } from "@genesiscz/utils/ai/usage/forecast/forecast";
 
 const NOW = new Date("2026-10-25T20:00:00.000Z");
 const inHours = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000).toISOString();
@@ -145,9 +147,75 @@ describe("ACCOUNT_RANKERS", () => {
         ]);
     });
 
+    it("a cached Claude snapshot without its native payload ranks as the live one does", () => {
+        const live = [claude("work", 10, 90), claude("personal", 20, 30)];
+        const cached = live.map(({ native: _native, ...rest }) => rest);
+
+        expect(rankAccounts(cached, { now: NOW }).map((row) => [row.accountName, row.tier, row.why])).toEqual(
+            rankAccounts(live, { now: NOW }).map((row) => [row.accountName, row.tier, row.why])
+        );
+    });
+
     it("routes by plugin id, and an unknown provider gets the shared window ranker", () => {
         expect(rankerFor("anthropic-sub")).toBe(ACCOUNT_RANKERS.claude);
         expect(rankerFor("grok-sub")).toBe(windowRanker);
         expect(rankerFor("someday-sub")).toBe(windowRanker);
+    });
+});
+
+describe("adviseAccounts", () => {
+    const forecast = (account: string, overrides: Partial<WindowForecast>): AccountForecast => ({
+        provider: "openai-sub",
+        account,
+        windows: [
+            {
+                bucket: "secondary",
+                kind: "weekly",
+                label: "Weekly",
+                utilization: 40,
+                resetsAt: inHours(30),
+                lastSampleAt: NOW.toISOString(),
+                samples: 4,
+                ratePctPerHour: 1,
+                basis: "window",
+                exhaustAt: null,
+                minutesToExhaust: null,
+                beforeReset: false,
+                projectedAtReset: 70,
+                resetSinceSample: false,
+                stale: false,
+                ...overrides,
+            },
+        ],
+        warning: null,
+    });
+
+    it("picks per workload, says how long the pick lasts, and lists the unused capacity soonest reset first", () => {
+        const data = adviseAccounts({
+            snapshots: [codex("work", 0, 50), codex("personal", 80, 40, 10)],
+            forecasts: [
+                forecast("work", { beforeReset: true, minutesToExhaust: 95, exhaustAt: inHours(1.6), label: "5h" }),
+                forecast("personal", { resetsAt: inHours(10), projectedAtReset: 59.5 }),
+            ],
+            now: NOW,
+        });
+        const [codexAdvice] = data.providers;
+        const byProfile = Object.fromEntries(codexAdvice.profiles.map((p) => [p.profile, p.pick?.accountName]));
+
+        expect(byProfile).toEqual({ default: "personal", "fan-out": "work", "long-run": "personal" });
+        expect(codexAdvice.profiles.find((p) => p.profile === "fan-out")?.pick).toMatchObject({
+            lastsMinutes: 95,
+            bindingLabel: "5h",
+        });
+        expect(codexAdvice.unusedAtReset.map((row) => [row.accountName, row.unusedPct])).toEqual([
+            ["personal", 40.5],
+            ["work", 30],
+        ]);
+    });
+
+    it("never picks a blocked account", () => {
+        const data = adviseAccounts({ snapshots: [codex("work", 0, 100)], forecasts: [], now: NOW });
+
+        expect(data.providers[0].profiles.every((profile) => profile.pick === null)).toBe(true);
     });
 });
