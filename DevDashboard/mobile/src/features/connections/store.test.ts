@@ -52,8 +52,9 @@ mock.module("expo-secure-store", () => ({
 }));
 
 mock.module("@/transport/tiers/managed", () => ({
-    createManagedTransport: async (pairing: unknown) => {
+    createManagedTransport: async (pairing: unknown, timeoutMs: number) => {
         managedPairing = pairing;
+        timeouts.managed = timeoutMs;
         return transport("managed");
     },
     pairManagedDevice: async ({ deviceCode }: { deviceCode: string }) => {
@@ -179,6 +180,22 @@ describe("connection session — probe before commit", () => {
             });
             expect(timeouts[tier]).toBe(TIERS[tier].probeTimeoutMs);
         }
+    });
+
+    it("the managed tier probes with its own deadline from the table", async () => {
+        await buildTransportFor({
+            id: "conn_managed",
+            label: "managed",
+            tier: "managed",
+            baseUrl: "https://relay.example.com",
+            host: "relay.example.com",
+            port: 443,
+            username: "",
+            addedAt: 0,
+            lastUsedAt: 0,
+            tierOptions: { managed: { agentPublicKey: "QUJD" } },
+        });
+        expect(timeouts.managed).toBe(TIERS.managed.probeTimeoutMs);
     });
 
     it("the managed tier refuses plain URLs; the others allow them", () => {
