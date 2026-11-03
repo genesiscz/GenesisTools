@@ -306,6 +306,10 @@ export function splitQuestion(
     const created: QuestionItem[] = [];
 
     for (const range of ranges) {
+        if (parts.some((part) => part.line.range === range && !part.whole)) {
+            continue;
+        }
+
         range.status = "rejected";
         range.decidedAt = options.now;
     }

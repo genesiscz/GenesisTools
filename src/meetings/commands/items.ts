@@ -170,7 +170,7 @@ async function suggest(
             ? speakingEvidence(collected, await source.evidence(sourceMeetingId))
             : null;
         const wordCheck = rules.includes("terms") ? await termWordCheck(wordCheckChoice, meeting) : undefined;
-        const fresh = suggestItems({
+        const inputs: Parameters<typeof suggestItems>[0] = {
             record: collected,
             meeting,
             rules,
@@ -186,17 +186,20 @@ async function suggest(
             wordCheck,
             sourceLabels: config.global.render,
             now: new Date().toISOString(),
-        });
-        wordCheck?.dispose();
+        };
+        let fresh: MeetingItem[] = [];
 
-        if (fresh.length > 0) {
+        try {
             await store.update(
                 record.id,
-                { command: "suggest", change: `${fresh.length} items (${fresh[0]!.id} to ${fresh.at(-1)!.id})` },
+                { command: "suggest", change: "suggest findings and questions" },
                 (current) => {
+                    fresh = suggestItems({ ...inputs, record: current });
                     current.items.push(...fresh);
                 }
             );
+        } finally {
+            wordCheck?.dispose();
         }
 
         if (opts.json) {

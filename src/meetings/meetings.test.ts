@@ -1078,6 +1078,60 @@ describe("questions (R2.3)", () => {
 });
 
 describe("several voices", () => {
+    test("answering sub-line voices preserves the unresolved range in the rendered transcript", () => {
+        const draft = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Speaker 1",
+                    fromSec: 0,
+                    toSec: 0,
+                    confidence: 0.2,
+                    candidates: ["Voice A", "Voice B"],
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i2",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 0,
+                    toSec: 16,
+                    question: "Who speaks?",
+                    choices: ["Voice A", "Voice B"],
+                    decides: ["i1"],
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+            ],
+        });
+        const transcript = [line("Speaker 1", 0, "one two three four five six seven eight nine ten")];
+        const parts = splitQuestion(draft, "i2", {
+            transcript,
+            now: meeting.start,
+            micShare: (from) => (from < 8 ? 0 : 1),
+        });
+        expect(parts).toHaveLength(2);
+        for (const part of parts) {
+            answerQuestion(draft, part.id, { answer: "Voice A", now: meeting.start });
+        }
+        expect(draft.items[0]?.status).toBe("suggested");
+        const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), {
+            withSuggested: true,
+            format: "txt",
+        });
+        expect(corrections.unclear?.passages).toContainEqual(
+            expect.objectContaining({ speaker: "Speaker 1", fromSec: 0 })
+        );
+        const rendered = applyCorrections(transcript, corrections);
+        expect(rendered.unclear).toBe(1);
+        expect(rendered.entries[0]?.speaker).toContain("Speaker 1");
+    });
+
     const now = "2026-11-02T15:00:00.000Z";
     const question = (fromSec: number, toSec: number) =>
         meetingRecordSchema.parse({
