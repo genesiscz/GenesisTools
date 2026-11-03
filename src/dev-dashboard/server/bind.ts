@@ -123,7 +123,9 @@ export function bindEndpoint<E extends Endpoint>(
         handler: (ctx) => {
             const key = ctx.headers[IDEMPOTENCY_HEADER];
 
-            if (endpoint.policy === "read" || !key) {
+            // Only a keyed-write row is cached here. `act` dedupes per token and key inside `act()`; a cache keyed
+            // without the act token would hand one token's receipt to another token that reused the key.
+            if (endpoint.policy !== "keyed-write" || !key) {
                 return answer(ctx);
             }
 

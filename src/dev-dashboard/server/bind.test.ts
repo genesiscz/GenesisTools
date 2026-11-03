@@ -125,6 +125,30 @@ describe("bindEndpoint", () => {
     });
 });
 
+describe("bindEndpoint on the act row", () => {
+    it("never answers one act token with the receipt of another token that reused the key", async () => {
+        let runs = 0;
+        const def = bindEndpoint(
+            ENDPOINTS.act,
+            {
+                input: z.object({}),
+                invalid: "bad",
+                run: async (_input, context) => ({ token: context.headers["x-gt-act-token"], run: ++runs }) as never,
+            },
+            new ReceiptCache()
+        );
+        const press = (token: string) =>
+            ctx({
+                pathname: ENDPOINTS.act.path,
+                body: {},
+                headers: { "idempotency-key": "same", "x-gt-act-token": token },
+            });
+
+        expect(json(await def.handler(press("token-a"))).body).toEqual({ token: "token-a", run: 1 });
+        expect(json(await def.handler(press("token-b"))).body).toEqual({ token: "token-b", run: 2 });
+    });
+});
+
 describe("withTableIdempotency", () => {
     it("keys a hand-written route that is a keyed-write row, and leaves a read alone", async () => {
         let writes = 0;
