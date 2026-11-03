@@ -343,9 +343,9 @@ export default function ConnectScreen() {
                                     accessibilityLabel="pair-device-code"
                                     value={deviceCode}
                                     onChangeText={setDeviceCode}
-                                    autoCapitalize="none"
+                                    autoCapitalize="characters"
                                     autoCorrect={false}
-                                    keyboardType="number-pad"
+                                    keyboardType="ascii-capable"
                                     textContentType="oneTimeCode"
                                     placeholder="pairing code shown on your Mac"
                                     placeholderTextColor={placeholderColor}
