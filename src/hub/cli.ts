@@ -57,6 +57,7 @@ import {
 import { commitFlagsProblem, isHubPrRef } from "./lib/pr-ref";
 import { prSessions } from "./lib/pr-sessions";
 import {
+    type DraftDecision,
     hubStatus,
     isProposalProvider,
     listProposals,
@@ -69,6 +70,7 @@ import {
     reconcileProposal,
     saveProposal,
 } from "./lib/proposal";
+import { decideProposalDraft, discardProposal, publishProposal } from "./lib/proposal-publish";
 import { hubPr, hubPrProjects, hubPrs, PrRefError } from "./lib/prs";
 import {
     buildTimeline,
@@ -418,6 +420,113 @@ proposal
         }
 
         out.print(proposalMarkdown(found));
+    });
+
+const DRAFT_DECISIONS = ["accepted", "edited", "rejected", "proposed"] as const satisfies readonly DraftDecision[];
+
+function isDraftDecision(value: string): value is DraftDecision {
+    return DRAFT_DECISIONS.some((decision) => decision === value);
+}
+
+proposal
+    .command("decide")
+    .description("Accept, edit, reject or take back one draft of a PR's proposal (as the review window's buttons do)")
+    .argument("<pr>", "PR/MR URL")
+    .argument("<draft>", "draft id from `proposal show`")
+    .argument("[decision]", DRAFT_DECISIONS.join("|"))
+    .option("--body-file <file>", "the edited text for `edited` (markdown); - reads stdin")
+    .option("--json", "machine-readable output")
+    .action(
+        async (
+            prRef: string,
+            draftId: string,
+            decision: string | undefined,
+            opts: { bodyFile?: string; json?: boolean }
+        ) => {
+            if (!decision || !isDraftDecision(decision)) {
+                out.log.error(
+                    `The decision is one of ${DRAFT_DECISIONS.join(", ")}${decision ? `, not "${decision}"` : ""}: ${toolCommand("hub proposal decide")} <pr> <draft> accepted`
+                );
+                process.exitCode = 1;
+                return;
+            }
+
+            await prVerb({
+                json: opts.json,
+                run: async () =>
+                    decideProposalDraft({
+                        pr: prRef,
+                        draftId,
+                        decision,
+                        editedBody: decision === "edited" ? await readBody(opts.bodyFile) : undefined,
+                    }),
+                human: (draft) => `Draft ${draft.id} is ${draft.status}`,
+            });
+        }
+    );
+
+proposal
+    .command("publish")
+    .description(
+        "🛑 Post the PR proposal's accepted and edited drafts as pending review drafts, then publish them as one review with the agent's verdict; reconciles the stored proposal"
+    )
+    .argument("<pr>", "PR/MR URL")
+    .option("--approve", "submit as an approval instead of the agent's verdict")
+    .option("--comment", "submit as a plain comment review instead of the agent's verdict")
+    .option("--drafts-only", "post the drafts and stop; publish later with `hub pr publish`")
+    .option("--json", "machine-readable output")
+    .action(
+        async (prRef: string, opts: { approve?: boolean; comment?: boolean; draftsOnly?: boolean; json?: boolean }) => {
+            await prVerb({
+                json: opts.json,
+                run: async () => {
+                    if (opts.approve && opts.comment) {
+                        throw new HubPrError("bad-input", "--approve and --comment exclude each other");
+                    }
+
+                    const result = await publishProposal({
+                        pr: prRef,
+                        event: opts.approve ? "APPROVE" : opts.comment ? "COMMENT" : undefined,
+                        publish: !opts.draftsOnly,
+                    });
+
+                    if (result.drafts.some((draft) => !draft.sent)) {
+                        process.exitCode = 1;
+                    }
+
+                    return result;
+                },
+                human: (result) =>
+                    [
+                        `${result.drafts.filter((draft) => draft.sent).length}/${result.drafts.length} drafts posted to ${result.pr}`,
+                        ...result.drafts
+                            .filter((draft) => !draft.sent)
+                            .map((draft) => `  ${draft.draftId}: ${draft.error}`),
+                        result.published
+                            ? `Published as ${result.published.event}${result.published.url ? `: ${result.published.url}` : ""}`
+                            : "Not published",
+                        result.reconciled?.staleClaims.length
+                            ? `${result.reconciled.staleClaims.length} interrupted send(s) cleared; check the PR for duplicates`
+                            : null,
+                    ]
+                        .filter(Boolean)
+                        .join("\n"),
+            });
+        }
+    );
+
+proposal
+    .command("discard")
+    .description("Reject every draft of a PR's proposal that was not sent yet; sent drafts stay as they are")
+    .argument("<pr>", "PR/MR URL")
+    .option("--json", "machine-readable output")
+    .action(async (prRef: string, opts: { json?: boolean }) => {
+        await prVerb({
+            json: opts.json,
+            run: () => discardProposal({ pr: prRef }),
+            human: (result) =>
+                `${result.rejected.length} drafts rejected${result.busy.length ? `; ${result.busy.length} being sent now, left alone` : ""}`,
+        });
     });
 
 program
