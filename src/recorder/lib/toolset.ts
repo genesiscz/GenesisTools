@@ -15,8 +15,8 @@ import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library"
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
-import { editProject, openProject } from "./edit";
-import { ensureRecorderPart, exportEdit, listLibrary, openEditor } from "./library";
+import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./edit";
+import { ensureRecorderPart, listLibrary, openEditor } from "./library";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -138,10 +138,10 @@ const movieMethods = [
     ),
     defineMethod({
         name: "export",
-        params: z.object({ out: z.string().optional() }).strict(),
+        params: z.object({ out: z.string().optional(), format: z.enum(EXPORT_FORMATS).optional() }).strict(),
         result: z.unknown(),
         resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds }",
-        doc: "Renders the edit to an MP4 with the editor's renderer; throws when the file exists (it never overwrites).",
+        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; throws when the file exists (it never overwrites).',
         effect: "reversible",
     }),
     defineMethod({
@@ -314,7 +314,7 @@ export class Movie {
         return describeProject(saved, opened.path);
     }
 
-    async export(options: { out?: string } = {}) {
+    async export(options: { out?: string; format?: ExportFormat } = {}) {
         const opened = await openProject(this.recording);
 
         if (opened.fresh) {
@@ -322,7 +322,7 @@ export class Movie {
         }
 
         await ensureRecorderPart();
-        const answer = await exportEdit(opened.path, options.out);
+        const answer = await exportAs(opened.path, options);
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the export failed without a reason");

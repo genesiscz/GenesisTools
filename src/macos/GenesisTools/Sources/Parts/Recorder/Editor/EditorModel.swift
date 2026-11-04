@@ -396,6 +396,10 @@ final class EditorModel {
         guard exportProgress == nil else { return }
         saveNow()
         let project = project
+        if let format = project.export.format, format != .mp4 {
+            exportThroughTools(format)
+            return
+        }
         let url = EditExporter.outputURL(for: project)
         exportProgress = 0
         Task { [weak self] in
@@ -406,12 +410,40 @@ final class EditorModel {
                 self?.exportProgress = nil
                 HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
                 self?.show("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).", error: false)
-                NSWorkspace.shared.activateFileViewerSelecting([result.url])
+                self?.reveal(result.url)
             } catch {
                 self?.exportProgress = nil
                 HubPerf.log("recorder.export failed: \(error.localizedDescription)")
                 self?.show(error.localizedDescription, error: true)
             }
+        }
+    }
+
+    static let revealAfterExportKey = "recorder.export.revealInFinder"
+
+    private func reveal(_ url: URL) {
+        let reveal = UserDefaults.standard.object(forKey: Self.revealAfterExportKey) as? Bool ?? true
+        if reveal { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    }
+
+    /// A GIF or WebM: the CLI renders with this same renderer and converts with ffmpeg, then prints `{ ok, path }`.
+    private func exportThroughTools(_ format: EditProject.ExportFormat) {
+        exportProgress = 0
+        show("Exporting a \(format.rawValue.uppercased())…", error: false)
+        ToolsRunner.run(["recorder", "export", store.url.path, "--format", format.rawValue, "--json"]) { [weak self] status, stdout, stderr in
+            guard let self else { return }
+            self.exportProgress = nil
+            let answer = (stdout.split(separator: "\n").last.flatMap { $0.data(using: .utf8) })
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            guard status == 0, let path = answer?["path"] as? String else {
+                let reason = (answer?["error"] as? String) ?? stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                self.show("The \(format.rawValue.uppercased()) export failed: \(reason)", error: true)
+                return
+            }
+            let bytes = (answer?["bytes"] as? NSNumber)?.int64Value ?? 0
+            HubPerf.log("recorder.export: \(path) \(ByteFormat.file(bytes)) as \(format.rawValue)")
+            self.show("Exported \(URL(fileURLWithPath: path).lastPathComponent) (\(ByteFormat.file(bytes))).", error: false)
+            self.reveal(URL(fileURLWithPath: path))
         }
     }
 

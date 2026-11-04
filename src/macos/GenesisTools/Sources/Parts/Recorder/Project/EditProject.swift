@@ -112,6 +112,12 @@ struct EditProject: Codable, Equatable {
         var maxHeight = 0
         /// The file to write; empty is `<source name>-edited.mp4` beside the source.
         var output = ""
+        /// nil is mp4 (files from before the field); gif and webm are made by `tools recorder export`.
+        var format: ExportFormat?
+    }
+
+    enum ExportFormat: String, Codable, CaseIterable {
+        case mp4, gif, webm
     }
 }
 

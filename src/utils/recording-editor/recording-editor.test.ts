@@ -438,6 +438,14 @@ describe("edit project (edit.json)", () => {
             shadow: true,
         });
         expect(applyOp(framed, { op: "frame", enabled: false }).frame).toBeUndefined();
+
+        // The export format is absent (mp4) until set, and kept by later export changes.
+        expect(project.export.format).toBeUndefined();
+        const gif = applyOp(project, { op: "exportSettings", format: "gif" });
+        expect(applyOp(gif, { op: "exportSettings", maxHeight: 720 }).export).toMatchObject({
+            format: "gif",
+            maxHeight: 720,
+        });
         expect(() => parseEditOps({ op: "clicks", color: "yellow" })).toThrow("a color is #RRGGBB");
     });
 

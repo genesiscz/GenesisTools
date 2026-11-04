@@ -403,37 +403,59 @@ private struct AudioInspector: View {
 
 private struct ExportInspector: View {
     @Bindable var model: EditorModel
+    /// Opinionated, so a setting: an export reveals its file in Finder by default (Finder then comes to the front).
+    @AppStorage(EditorModel.revealAfterExportKey) private var revealAfterExport = true
     private let heights: [Int] = [0, 2160, 1440, 1080, 720]
 
     var body: some View {
         let settings = model.project.export
         VStack(alignment: .leading, spacing: 12) {
             Text("Export").font(.system(size: 15, weight: .semibold))
-            SectionLabel(text: "Codec")
-            GenSegmentedTabs("Codec", items: [.init(EditProject.Codec.h264, "H.264"), .init(.hevc, "HEVC")],
-                             selection: Binding(get: { settings.codec }, set: { codec in model.setExport { $0.codec = codec } }),
-                             minSegmentWidth: 110, identifier: "recorder.export.codec")
-            SectionLabel(text: "Size")
-            GenSegmentedTabs("Size", items: heights.map { .init($0, $0 == 0 ? "Source" : "\($0)p") },
-                             selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
-                             minSegmentWidth: 44, identifier: "recorder.export.size")
+            SectionLabel(text: "Format")
+            GenSegmentedTabs("Format", items: EditProject.ExportFormat.allCases.map { .init($0, $0.rawValue.uppercased()) },
+                             selection: Binding(get: { settings.format ?? .mp4 }, set: { format in model.setExport { $0.format = format == .mp4 ? nil : format } }),
+                             minSegmentWidth: 70, identifier: "recorder.export.format")
+            if let format = settings.format, format != .mp4 {
+                Text(format == .gif ? "A GIF is 10 fps and at most 960 pixels wide, without sound." : "WebM is VP9 with Opus sound.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // A GIF has its own size and both converted formats their own codec, so those choices show for MP4 only.
+            if (settings.format ?? .mp4) == .mp4 {
+                SectionLabel(text: "Codec")
+                GenSegmentedTabs("Codec", items: [.init(EditProject.Codec.h264, "H.264"), .init(.hevc, "HEVC")],
+                                 selection: Binding(get: { settings.codec }, set: { codec in model.setExport { $0.codec = codec } }),
+                                 minSegmentWidth: 110, identifier: "recorder.export.codec")
+            }
+            if settings.format != .gif {
+                SectionLabel(text: "Size")
+                GenSegmentedTabs("Size", items: heights.map { .init($0, $0 == 0 ? "Source" : "\($0)p") },
+                                 selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
+                                 minSegmentWidth: 44, identifier: "recorder.export.size")
+            }
             let source = CGSize(width: model.project.source.width, height: model.project.source.height)
             // A screen recording exports at 60 fps; the label uses the same size rule as the export.
             let size = EditRenderer.renderSize(source: source, maxHeight: settings.maxHeight, h264Fps: settings.codec == .h264 ? 60 : nil)
             let capped = size.height < EditRenderer.renderSize(source: source, maxHeight: settings.maxHeight).height
-            SectionLabel(text: "Output", value: "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(model.durationUs, tenths: true))")
-            if capped {
+            let movie = (settings.format ?? .mp4) == .mp4
+            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(model.durationUs, tenths: true))"
+                                                      : formatClock(model.durationUs, tenths: true))
+            if capped && movie {
                 Text("H.264 keeps 60 fps up to 2560 × 1600. Pick HEVC for the full size.")
                     .font(.system(size: 11))
                     .foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            PathLabel(path: EditExporter.outputURL(for: model.project).path)
+            if movie {
+                PathLabel(path: EditExporter.outputURL(for: model.project).path)
+            }
             if let progress = model.exportProgress {
                 ProgressView(value: progress).progressViewStyle(.linear)
                 Text(verbatim: "Exporting… \(Int(progress * 100))%").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
             } else {
-                Button("Export Movie") { model.export() }
+                SwitchRow("Show in Finder when done", isOn: $revealAfterExport)
+                    .accessibilityIdentifier("recorder.export.reveal")
+                Button((settings.format ?? .mp4) == .mp4 ? "Export Movie" : "Export \(settings.format?.rawValue.uppercased() ?? "")") { model.export() }
                     .buttonStyle(.genPrimary())
                     .keyboardShortcut("e", modifiers: .command)
                     .accessibilityIdentifier("recorder.export.start")

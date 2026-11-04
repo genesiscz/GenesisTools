@@ -40,6 +40,10 @@ const zoomSchema = z.object({
 
 export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
 
+/** What an export writes: the editor's movie, or a GIF or WebM ffmpeg makes from it. */
+export const EXPORT_FORMATS = ["mp4", "gif", "webm"] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+
 /** Clicks drawn from the cursor track: a soft disc that grows and fades after each click. Absent is off. */
 export const clicksSchema = z.object({
     highlight: z.boolean().default(true),
@@ -88,6 +92,8 @@ export const editProjectSchema = z.object({
             codec: z.enum(["h264", "hevc"]).default("h264"),
             maxHeight: z.number().int().nonnegative().default(0),
             output: z.string().default(""),
+            /** Absent is mp4, as before the field existed. */
+            format: z.enum(EXPORT_FORMATS).optional(),
         })
         .default({ codec: "h264", maxHeight: 0, output: "" }),
     clicks: clicksSchema.optional(),
@@ -404,6 +410,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
             codec: z.enum(["h264", "hevc"]).optional(),
             maxHeight: z.number().int().nonnegative().optional(),
             output: z.string().optional(),
+            format: z.enum(EXPORT_FORMATS).optional(),
         })
         .strict(),
     z.object({ op: z.literal("reset") }).strict(),
@@ -546,6 +553,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                     codec: op.codec ?? project.export.codec,
                     maxHeight: op.maxHeight ?? project.export.maxHeight,
                     output: op.output ?? project.export.output,
+                    ...((op.format ?? project.export.format) ? { format: op.format ?? project.export.format } : {}),
                 },
             };
         case "reset":

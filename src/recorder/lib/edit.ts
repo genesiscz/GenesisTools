@@ -9,6 +9,8 @@ import {
     applyOp,
     type EditOp,
     type EditProject,
+    EXPORT_FORMATS,
+    type ExportFormat,
     projectPathFor,
     readProject,
     wholeProject,
@@ -115,8 +117,7 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
     return { path: opened.path, project: saved, fresh: false, ...(removedIdleUs.length ? { removedIdleUs } : {}) };
 }
 
-export const EXPORT_FORMATS = ["mp4", "gif", "webm"] as const;
-export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+export { EXPORT_FORMATS, type ExportFormat };
 
 function isExportFormat(value: string): value is ExportFormat {
     return EXPORT_FORMATS.some((format) => format === value);
@@ -143,7 +144,10 @@ export async function exportAs(
     value: string,
     options: { out?: string; format?: ExportFormat } = {}
 ): Promise<ExportAnswer> {
-    const asked = options.format ?? (options.out ? extname(options.out).slice(1).toLowerCase() : "mp4");
+    const opened = await openProject(value);
+    const asked =
+        options.format ??
+        (options.out ? extname(options.out).slice(1).toLowerCase() : (opened.project.export.format ?? "mp4"));
 
     if (!isExportFormat(asked)) {
         return { ok: false, error: `the format is one of ${EXPORT_FORMATS.join(", ")} (got "${asked}")` };
@@ -154,7 +158,6 @@ export async function exportAs(
     }
 
     const format = asked;
-    const opened = await openProject(value);
 
     if (opened.fresh) {
         writeProject(opened.path, opened.project);
