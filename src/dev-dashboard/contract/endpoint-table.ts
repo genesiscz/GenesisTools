@@ -18,6 +18,7 @@ import type { MorningBriefDto } from "@app/dev-dashboard/contract/brief";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
+import type { HealthDto, WakeRelayDto } from "@app/dev-dashboard/contract/wake";
 import type { WatchingDto, WatchMuteInput, WatchMuteReceiptDto } from "@app/dev-dashboard/contract/watching";
 
 /**
@@ -377,6 +378,10 @@ export const ENDPOINTS = {
     watchingMute: row<WatchMuteInput, WatchMuteReceiptDto>("POST", "/api/watching/mute", "keyed-write"),
     /** The stored morning brief (F29); null before the daemon task first built it. Asks Waze nothing. */
     gatewayBrief: row<GatewayInput, MorningBriefDto | null>("GET", "/api/gateway/brief", "read"),
+    /** The wakeup relay this Mac is registered with (F26): the phone keeps it to wake the Mac while it sleeps. */
+    gatewayWake: row<GatewayInput, WakeRelayDto>("GET", "/api/gateway/wake", "read"),
+    /** Answers while the server runs: the phone's probe after a wake (F26). */
+    health: row<Record<string, never>, HealthDto>("GET", "/api/health", "read"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;

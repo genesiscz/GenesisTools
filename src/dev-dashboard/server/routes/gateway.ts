@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import type { AgentVoiceReceiptDto } from "@app/dev-dashboard/contract/agents";
 import {
@@ -36,6 +37,7 @@ export const GATEWAY_ROWS = {
     launch: ENDPOINTS.gatewayLaunch,
     watching: ENDPOINTS.gatewayWatching,
     brief: ENDPOINTS.gatewayBrief,
+    wake: ENDPOINTS.gatewayWake,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
     stuck: ENDPOINTS.gatewayStuck,
@@ -62,6 +64,9 @@ function capabilityError(err: unknown): RouteResult {
 
     return errorResult(err);
 }
+
+/** When this server process started, for the health route. */
+const SERVER_STARTED_AT = new Date().toISOString();
 
 export interface GatewayDeps {
     /** The act door's dependencies. Tests pass a memory token store and a fake answer. */
@@ -122,6 +127,12 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
 
                 return act({ token, key: `http:${key}`, deps: await (deps.act ?? realActDeps)() });
             },
+        }),
+        // The phone's "is the Mac awake" probe after a wake (F26); any answer proves the server runs.
+        bindEndpoint(ENDPOINTS.health, {
+            input: z.object({}),
+            invalid: "expected no query",
+            run: async () => ({ ok: true as const, host: hostname(), pid: process.pid, startedAt: SERVER_STARTED_AT }),
         }),
         // Behind the full login and an idempotency key (a keyed-write row), so a replayed stop answers once.
         bindEndpoint(ENDPOINTS.agentsStop, {

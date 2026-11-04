@@ -48,6 +48,7 @@ const MORE_GROUPS: MoreGroup[] = [
             { title: "Connections", route: "/connections", testID: "more-link-connections", icon: "link" },
             { title: "Notifications", route: "/notifications", testID: "more-link-notifications", icon: "bell" },
             { title: "Network", route: "/network-status", testID: "more-link-network-status", icon: "activity" },
+            { title: "Wake my Mac", route: "/wake", testID: "more-link-wake", icon: "power" },
         ],
     },
     {

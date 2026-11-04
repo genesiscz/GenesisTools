@@ -278,6 +278,18 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /** `hub wake --json`: the wakeup relay this Mac is registered with (F26), login included. Read only. */
+    wake: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { wakeRelay } = await import("../wake/index");
+            return wakeRelay();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `hub watching --json`: every watch on the Mac in one list (the phone's Watching screen, F30). Read only. */
     watching: {
         policy: "read",
