@@ -41,7 +41,9 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 
 - `clips`: the kept parts in play order, each with a `speed` (0.25 to 16). A cut is the gap between two clips.
 - `redactions` (optional): rectangles of the source picture (`x`, `y`, `width`, `height` 0 to 1 from the top left)
-  hidden from `startUs` to `endUs` by `blur`, `pixelate` or `black`; drawn before the zoom, so they move with it.
+  hidden from `startUs` to `endUs` by `blur`, `pixelate` or `black`; drawn before the zoom, so they move with it. An
+  optional `label` names what it hides ("API token"). In the editor a hidden part is drawn, moved and sized on the
+  preview itself (Hide tab), and moved or trimmed on its own timeline lane.
 - `zooms`: `startUs`, `endUs`, `scale` 1 to 4, `mode` `manual` (a `focusX`/`focusY` point) or `follow` (the cursor),
   `easeInMs`/`easeOutMs` on a (0.16, 1, 0.3, 1) curve.
 - `audio`: `include`, `volume` 0 to 2, `mutedTracks`.
