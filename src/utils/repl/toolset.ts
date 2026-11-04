@@ -1,5 +1,6 @@
 import type { ApiDescriptor, MethodDescriptor } from "@genesiscz/utils/api-descriptor";
 import { methodSignature, renderDocs } from "@genesiscz/utils/api-descriptor";
+import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import type { ShowInput } from "./show";
 
 /** What a toolset gets from the kernel when it is preloaded into a fresh worker. */
@@ -109,6 +110,30 @@ export abstract class ReplToolset {
                 ) {
                     return this.bindMethods({ target: value, methods, owner, prefix: `${name}.` });
                 }
+
+                // A misspelled or guessed method would be `undefined`, and the call "x is not a function"; name the
+                // real ones instead. Only a plain name the object lacks throws, so inspection and `await` still work.
+                if (
+                    value === undefined &&
+                    typeof property === "string" &&
+                    !(property in object) &&
+                    !PROBED.has(property)
+                ) {
+                    const known = methods
+                        .filter(
+                            (method) =>
+                                method.name.startsWith(prefix) && !method.name.slice(prefix.length).includes(".")
+                        )
+                        .map((method) => method.name.slice(prefix.length));
+                    const close = known.filter(
+                        (candidate) =>
+                            levenshteinDistance(candidate.toLowerCase(), property.toLowerCase()) <= 2 ||
+                            candidate.toLowerCase().startsWith(property.toLowerCase())
+                    );
+                    throw new TypeError(
+                        `${owner}${prefix ? `.${prefix.slice(0, -1)}` : ""} has no "${property}"${close.length ? ` (did you mean ${close.join(", ")}?)` : ""}; it has: ${known.join(", ")}`
+                    );
+                }
                 return typeof value === "function" ? value.bind(object) : value;
             },
         });
@@ -160,3 +185,26 @@ export abstract class ReplToolset {
 }
 
 export type ReplToolsetFactory = () => ReplToolset;
+
+/** Names that inspection, `await`, JSON and test matchers read off any object; a missing one is not a mistake. */
+const PROBED = new Set([
+    "then",
+    "catch",
+    "finally",
+    "toJSON",
+    "toString",
+    "valueOf",
+    "constructor",
+    "inspect",
+    "length",
+    "name",
+    "prototype",
+    "asymmetricMatch",
+    "$$typeof",
+    "nodeType",
+    "tagName",
+    "size",
+    "stack",
+    "message",
+    "cause",
+]);

@@ -278,7 +278,13 @@ async function runTurn(code: string): Promise<Response["text"]> {
     const result = await script.runInThisContext();
 
     if (result !== undefined) {
-        output.push(typeof result === "string" ? result : Bun.inspect(result));
+        const text = typeof result === "string" ? result : Bun.inspect(result);
+        output.push(text);
+
+        // A call that returns a Promise inside an object or array prints as `Promise { … }`, which reads as a value.
+        if (typeof result !== "string" && /\bPromise \{/.test(text)) {
+            output.push("note: the result holds a Promise; `await` the call that made it to see its value");
+        }
     }
 
     return output.join("\n");

@@ -144,9 +144,15 @@ export function outputTimeOf(project: EditProject, sourceUs: number): number | u
 }
 
 function checkRange(project: EditProject, fromUs: number, toUs: number): void {
-    if (!(fromUs >= 0 && toUs > fromUs && fromUs < project.source.durationUs)) {
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+
+    if (toUs <= fromUs) {
+        throw new RangeError(`from (${seconds(fromUs)} s) must be before to (${seconds(toUs)} s)`);
+    }
+
+    if (fromUs >= project.source.durationUs) {
         throw new RangeError(
-            `the range ${fromUs / 1e6}–${toUs / 1e6} s is not inside the ${project.source.durationUs / 1e6} s movie`
+            `from (${seconds(fromUs)} s) is past the end of the ${seconds(project.source.durationUs)} s movie`
         );
     }
 }
@@ -298,7 +304,9 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
 
 /**
  * Zooms on the recorded clicks, as the window's Auto zoom does: clicks under 3 s apart are one zoom from 0.6 s before
- * the first to 1.6 s after the last, following the cursor. Replaces the existing zooms.
+ * the first to 1.6 s after the last, following the cursor. It replaces the zooms an earlier auto zoom made (mode
+ * `follow`) and keeps the manual ones; a group that would overlap a manual zoom is left out. No clicks is an error,
+ * and nothing changes.
  */
 export function autoZoom(project: EditProject, samples: readonly CursorSample[], scale = 1.6): EditProject {
     const groups: CursorSample[][] = [];
@@ -313,7 +321,16 @@ export function autoZoom(project: EditProject, samples: readonly CursorSample[],
         }
     }
 
-    const zooms = groups.map((group) =>
+    if (groups.length === 0) {
+        throw new RangeError(
+            samples.length === 0
+                ? "this movie has no cursor track, so there are no clicks to zoom on; the zooms are unchanged"
+                : "the cursor track has no clicks to zoom on; the zooms are unchanged"
+        );
+    }
+
+    const manual = project.zooms.filter((zoom) => zoom.mode === "manual");
+    const added = groups.map((group) =>
         zoomSchema.parse({
             id: newId("z"),
             startUs: Math.max(0, group[0].ms - 600) * 1000,
@@ -324,7 +341,10 @@ export function autoZoom(project: EditProject, samples: readonly CursorSample[],
             focusY: group.reduce((sum, sample) => sum + sample.y, 0) / group.length,
         })
     );
-    return { ...project, zooms };
+    const free = added.filter(
+        (zoom) => !manual.some((other) => zoom.startUs < other.endUs && zoom.endUs > other.startUs)
+    );
+    return { ...project, zooms: [...manual, ...free].sort((a, b) => a.startUs - b.startUs) };
 }
 
 const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });

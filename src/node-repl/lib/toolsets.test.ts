@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
+import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
@@ -135,6 +136,21 @@ const ctx: ToolsetContext = {
     },
     write: () => undefined,
 };
+
+describe("toolset method names", () => {
+    test("a missing method names the real ones, while inspection and await still read missing names", async () => {
+        const ctx: ToolsetContext = { scratchDir: tmpdir(), show: async () => {}, write: () => {} };
+        const { movies } = (await new MoviesToolset().load(ctx)) as {
+            movies: { open(recording: string): object; opn?: unknown };
+        };
+
+        expect(() => movies.opn).toThrow('movies has no "opn" (did you mean open?); it has: list, open, record');
+        const movie = movies.open("anything");
+        expect(() => Reflect.get(movie, "trim")).toThrow('movies.Movie has no "trim"');
+        expect(Reflect.get(movie, "then")).toBeUndefined();
+        expect(Bun.inspect(movie)).toContain("Movie");
+    });
+});
 
 describe("recorder and editor toolsets", () => {
     test("native preparation is excluded from the recording deadline and frame offsets", async () => {

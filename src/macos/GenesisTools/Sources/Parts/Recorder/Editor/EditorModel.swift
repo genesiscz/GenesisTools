@@ -256,8 +256,11 @@ final class EditorModel {
                 groups.append([click])
             }
         }
+        // Auto zoom replaces the zooms an earlier auto zoom made and keeps the manual ones; a group that would overlap a
+        // manual zoom is left out (the same rule as src/utils/recording-editor/project.ts).
+        let manual = project.zooms.filter { $0.mode == .manual }
         var next = project
-        next.zooms = groups.map { group in
+        let added = groups.map { group in
             let first = group.first!.ms, last = group.last!.ms
             return EditProject.Zoom(
                 id: EditProject.newID("z"),
@@ -268,8 +271,12 @@ final class EditorModel {
                 focusY: group.map(\.y).reduce(0, +) / Double(group.count)
             )
         }
+        let free = added.filter { zoom in !manual.contains { zoom.startUs < $0.endUs && zoom.endUs > $0.startUs } }
+        next.zooms = (manual + free).sorted { $0.startUs < $1.startUs }
         apply(next, rebuildMovie: false)
-        show("Added \(Plural.count(next.zooms.count, "zoom")) from \(Plural.count(cursor.clicks.count, "click")).", error: false)
+        let skipped = added.count - free.count
+        show("Added \(Plural.count(free.count, "zoom")) from \(Plural.count(cursor.clicks.count, "click"))"
+            + (skipped > 0 ? "; \(skipped) overlapped a manual zoom and were left out." : "."), error: false)
     }
 
     // MARK: - Movie

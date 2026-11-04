@@ -196,6 +196,8 @@ final class EditExporter {
         guard let session = AVAssetExportSession(asset: rendered.composition, presetName: preset) else {
             throw ExportError.noSession(preset)
         }
+        // Refused before any work, so a refused export leaves no partial file behind.
+        if FileManager.default.fileExists(atPath: url.path) { throw ExportError.exists(url.path) }
         let partial = url.deletingPathExtension().appendingPathExtension("partial.mp4")
         try? FileManager.default.removeItem(at: partial)
         session.outputURL = partial
@@ -216,7 +218,10 @@ final class EditExporter {
             throw ExportError.failed(session.error?.localizedDescription ?? "status \(session.status.rawValue)")
         }
         // The finished file appears under its name in one step, so a reader never sees half a movie.
-        if FileManager.default.fileExists(atPath: url.path) { throw ExportError.exists(url.path) }
+        if FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.removeItem(at: partial)
+            throw ExportError.exists(url.path)
+        }
         try FileManager.default.moveItem(at: partial, to: url)
         onProgress(1)
         let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0

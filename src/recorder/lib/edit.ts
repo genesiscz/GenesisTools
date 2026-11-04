@@ -85,7 +85,8 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log.debug({ error, op, index }, "edit op refused");
-            throw new Error(`op ${index + 1} (${op.op}) failed, nothing was saved: ${message}`);
+            const which = ops.length > 1 ? `op ${index + 1} (${op.op})` : op.op;
+            throw new Error(`${which} refused, nothing was saved: ${message}`);
         }
     }
 

@@ -12,6 +12,7 @@ import {
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { editProject, openProject } from "./edit";
 import { ensureRecorderPart, exportEdit, listLibrary, openEditor } from "./library";
@@ -82,7 +83,7 @@ const movieMethods = [
     edit(
         "autoZoom",
         z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
-        "Replaces the zooms with one per group of recorded clicks, following the cursor."
+        "One zoom per group of recorded clicks, following the cursor; replaces earlier auto zooms, keeps manual ones, and throws when there are no clicks."
     ),
     edit("volume", z.object({ volume: z.number().min(0).max(2) }), "Sets the volume, 0 to 2.", ["volume"]),
     edit("mute", z.object({ track: z.number().int().nonnegative() }), "Mutes an audio track (0 is the first).", [
@@ -91,12 +92,13 @@ const movieMethods = [
     edit("unmute", z.object({ track: z.number().int().nonnegative() }), "Unmutes an audio track.", ["track"]),
     edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }), "Several ops at once, saved once.", ["ops"]),
     edit("undo", z.object({}), "Puts back the edit as it was before this handle's last change."),
+    edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     defineMethod({
         name: "export",
         params: z.object({ out: z.string().optional() }).strict(),
         result: z.unknown(),
-        resultName: "{ ok, path?, bytes?, seconds?, error? }",
-        doc: "Renders the edit to an MP4 with the editor's renderer; never overwrites a file.",
+        resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds }",
+        doc: "Renders the edit to an MP4 with the editor's renderer; throws when the file exists (it never overwrites).",
         effect: "reversible",
     }),
     defineMethod({
@@ -169,6 +171,8 @@ export const moviesApi = defineApi({
     notes: [
         'Times are SOURCE seconds (the movie as recorded) or "mm:ss": a cut never moves later times.',
         "Every edit reads the file fresh and saves once, so the open window and you never overwrite each other.",
+        'The edit is a file: it stays after the worker ends, and the next run starts from it. apply([{ op: "reset" }]) starts over; undo() reaches only the changes of this handle.',
+        "Limits: speed 0.25–16, zoom scale 1–4, focus x and y 0–1, volume 0–2.",
     ],
 });
 
@@ -233,6 +237,10 @@ export class Movie {
         return this.change(ops);
     }
 
+    reset() {
+        return this.change([{ op: "reset" }]);
+    }
+
     async undo() {
         const previous = this.history.pop();
 
@@ -253,7 +261,21 @@ export class Movie {
         }
 
         await ensureRecorderPart();
-        return exportEdit(opened.path, options.out);
+        const answer = await exportEdit(opened.path, options.out);
+
+        if (!answer.ok || !answer.path) {
+            throw new Error(answer.error ?? "the export failed without a reason");
+        }
+
+        const info = await probeVideo({ input: answer.path });
+        return {
+            path: answer.path,
+            bytes: answer.bytes,
+            outputSeconds: Math.round(info.durationUs / 1000) / 1000,
+            width: info.width,
+            height: info.height,
+            renderSeconds: answer.seconds,
+        };
     }
 
     async show(options: { focus?: boolean } = {}) {

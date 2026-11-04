@@ -377,6 +377,13 @@ describe("edit project (edit.json)", () => {
             [6_400_000, 8_600_000, "follow"],
         ]);
         expect(zooms[0].focusX).toBeCloseTo(0.3);
+
+        // A manual zoom stays, a click group over it is left out, and no clicks changes nothing.
+        const manual = applyOp(wholeProject(source), { op: "zoom", from: 7, to: 8, scale: 2 });
+        const kept = autoZoom(manual, samples).zooms;
+        expect(kept.map((zoom) => zoom.mode)).toEqual(["follow", "manual"]);
+        expect(() => autoZoom(manual, [])).toThrow("no cursor track");
+        expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
     });
 
     test("writes every field the Swift decoder needs and refuses a newer version", () => {
