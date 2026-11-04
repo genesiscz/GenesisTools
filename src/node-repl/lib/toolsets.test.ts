@@ -170,6 +170,15 @@ describe("toolset method names", () => {
         const cut = Reflect.get(opened, "cut") as (...args: unknown[]) => Promise<{ clips: unknown[] }>;
         expect((await cut({ from: 1, to: 2 })).clips).toHaveLength(2);
         await expect(cut({ start: 1, to: 2 })).rejects.toThrow("Invalid arguments for movies.Movie.cut");
+
+        // itemsAt names what plays at an output time: after the 1 s cut, output 2 s is source 3 s.
+        const text = Reflect.get(opened, "text") as (options: unknown) => Promise<unknown>;
+        await text({ from: 2.5, to: 4, text: "Hello" });
+        const itemsAt = Reflect.get(opened, "itemsAt") as (at: unknown) => Promise<Record<string, unknown>>;
+        const now = await itemsAt(2);
+        expect(now).toMatchObject({ output: 2, source: 3, zoom: null, caption: null });
+        expect(now.texts).toMatchObject([{ text: "Hello" }]);
+        expect((await itemsAt(60)).warnings).toEqual(["60 s is past the end; this is the last moment, 9 s"]);
     });
 });
 

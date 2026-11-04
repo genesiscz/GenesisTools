@@ -396,6 +396,28 @@ program
     });
 
 program
+    .command("items-at")
+    .description(
+        "What plays at an OUTPUT time of the edit, in words: the source time, the zoom, hidden parts, texts, shapes and the caption line"
+    )
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .argument("<at>", 'output seconds or "m:ss"')
+    .action(async (value: string, at: string) => {
+        try {
+            const answer = await new Movie(value).itemsAt(/^\d+(\.\d+)?$/.test(at) ? Number(at) : at);
+
+            for (const warning of answer.warnings ?? []) {
+                out.printlnErr(warning);
+            }
+
+            out.result(answer);
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
     .command("fix")
     .description(
         "Runs every fix `check` offers (removes what never shows, lengthens what is too short to read, moves a text off another) in one save and one undo step"

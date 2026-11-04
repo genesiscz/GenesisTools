@@ -23,6 +23,7 @@ import {
     SHAPE_KINDS,
     SPOTLIGHT_CUTOUTS,
     shortcutsOf,
+    sourceTimeOf,
     TEXT_STYLES,
     type TranscriptLine,
     transcriptCachePath,
@@ -514,6 +515,15 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ path, width, height, times }",
         doc: "One picture of several frames of the edit as it exports, in rows of three, each labelled with its OUTPUT time: count (6) frames spread over from…to (the whole edit), or the times in at. One call to check a whole edit after a change, instead of a still() per moment. out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "itemsAt",
+        params: z.object({ at: timeSchema }),
+        positional: ["at"],
+        result: z.unknown(),
+        resultName: "{ output, source, zoom, redactions, texts, shapes, caption }",
+        doc: "What plays at OUTPUT seconds `at` (as still() and show() take it), in words: the source time there, the zoom (or null), the hidden parts and spotlights, texts and shapes on screen (as info() lists them, with their ids for retime() or untext()), and the caption line (or null). A cheap way to check an edit without a picture.",
         effect: "read",
     }),
     defineMethod({
@@ -1216,6 +1226,44 @@ export class Movie {
 
         await this.ctx?.show({ path: answer.path });
         return { path: answer.path, width: answer.width, height: answer.height, times: answer.times };
+    }
+
+    async itemsAt(at: z.infer<typeof timeSchema>) {
+        const opened = await openProject(this.recording);
+        const project = opened.project;
+        const askedUs = timeToUs(at);
+        const outUs = Math.min(Math.max(0, askedUs), outputDurationUs(project));
+        const sourceUs = sourceTimeOf(project, outUs);
+        const live = (item: { id: string; startUs: number; endUs: number }) =>
+            item.startUs <= sourceUs && sourceUs < item.endUs;
+        const ids = new Set(
+            [...project.zooms, ...(project.redactions ?? []), ...(project.texts ?? []), ...(project.shapes ?? [])]
+                .filter(live)
+                .map((item) => item.id)
+        );
+        const described = describeProject(project, opened.path);
+        const onScreen = <T extends { id: string }>(list: T[] | undefined) =>
+            (list ?? []).filter((item) => ids.has(item.id));
+        const cache = transcriptCachePath(project.source.video);
+        const lines = existsSync(cache)
+            ? transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), project)
+            : [];
+        const line = lines.find((one) => one.from * 1e6 <= sourceUs && sourceUs < one.to * 1e6);
+        const seconds = (us: number) => Math.round(us / 1000) / 1000;
+        return {
+            output: seconds(outUs),
+            source: seconds(sourceUs),
+            zoom: onScreen(described.zooms)[0] ?? null,
+            redactions: onScreen(described.redactions),
+            texts: onScreen(described.texts),
+            shapes: onScreen(described.shapes),
+            caption: line?.text ?? null,
+            ...(outUs === askedUs
+                ? {}
+                : {
+                      warnings: [`${seconds(askedUs)} s is past the end; this is the last moment, ${seconds(outUs)} s`],
+                  }),
+        };
     }
 
     async still(at: z.infer<typeof timeSchema> = 0, keep?: string) {
