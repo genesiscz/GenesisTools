@@ -48,6 +48,7 @@ az devops configure --list
 
 | Doc | Description |
 |-----|-------------|
+| [api-discovery](./api-discovery.md) | How to find any API's exact route, versions and contract: `OPTIONS {org}/_apis/`, the official SDK source, Learn |
 | [work-item-history-api-reference](./work-item-history-api-reference.md) | Revisions, updates, comments, reporting APIs |
 | [wiql-syntax-reference](./wiql-syntax-reference.md) | WIQL query language (operators, macros, ASOF, links) |
 | [wiql-syntax](./wiql-syntax.md) | WIQL syntax: clauses, field types, operators, macros, date formats |
