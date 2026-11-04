@@ -1,12 +1,14 @@
-import { callerSessionReadable, codexThreadIdFromOpenFiles, readPeerCaller } from "@genesiscz/utils/agent/identity";
-import type { AgentCaller } from "@genesiscz/utils/agent/runtime";
+import {
+    callerSessionReadable,
+    codexThreadIdFromOpenFiles,
+    type PeerCaller,
+    readPeerCaller,
+} from "@genesiscz/utils/agent/identity";
 
 export { callerSessionReadable, codexThreadIdFromOpenFiles };
 
-export interface ResolvedCaller extends AgentCaller {
-    pid: number | null;
-    processName: string | null;
-}
+/** What the gateway learns about a remote caller: the identity module's peer answer, which fits `AgentCaller`. */
+export type ResolvedCaller = PeerCaller;
 
 /**
  * The harness process that holds the client end of this connection, and what it is running. A thin adapter over the

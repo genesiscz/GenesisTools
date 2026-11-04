@@ -2,6 +2,8 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ResolvedCaller } from "./http-caller";
 
@@ -308,6 +310,77 @@ describe("characterization: rollout path edge cases at the gateway", () => {
             agent: "codex",
             sessionId: id,
             pid: 4950,
+        });
+    });
+});
+
+describe("a remote caller never takes the gateway's own env, terminal or account", () => {
+    const PEER = { clientPort: 50_001, serverPort: 50_002 };
+    const gatewayEnv: Record<string, string> = {
+        CLAUDE_CODE_SESSION_ID: "gateway-own-session",
+        CMUX_SURFACE_ID: "gateway-surface",
+        TMUX_PANE: "%9",
+        T3CODE_THREAD_ID: "gateway-thread",
+        [accountEnvVar("claude")]: "gateway-account",
+    };
+
+    function withGatewayEnv<T>(fn: () => T): T {
+        const saved = { ...process.env };
+        Object.assign(process.env, gatewayEnv);
+
+        try {
+            return fn();
+        } finally {
+            for (const key of Object.keys(gatewayEnv)) {
+                if (key in saved) {
+                    process.env[key] = saved[key];
+                } else {
+                    delete process.env[key];
+                }
+            }
+        }
+    }
+
+    it("positive control: the same env names the gateway itself as a Claude caller when the request is local", () => {
+        withGatewayEnv(() => {
+            const local = whoIsCalling({ origin: "local", env: process.env });
+            expect(local).toMatchObject({ agent: "claude-code", sessionId: "gateway-own-session" });
+            expect(local.terminal).toBeDefined();
+            expect(local.account).toBeDefined();
+        });
+    });
+
+    it("a Grok peer on a gateway that runs inside Claude is a Grok caller with no session, terminal or account", () => {
+        fakeProcesses = [{ pid: 5001, name: "grok", startSec: 1_800_000_000, openFiles: [], cwd: "/fixture/project" }];
+        loopbackOwners = [5001];
+
+        withGatewayEnv(() => {
+            const identity = whoIsCalling(
+                { origin: "remote", peer: PEER },
+                { facets: ["cwd", "git", "title", "transcript", "model", "host", "process"] }
+            );
+
+            expect(identity).toMatchObject({ agent: "grok", sessionId: null, cwd: "/fixture/project" });
+            expect(identity.aiAgent).toBeNull();
+            expect(identity.terminal).toBeUndefined();
+            expect(identity.account).toBeUndefined();
+            expect(identity.host).toBeUndefined();
+            expect(identity.process?.pid).toBe(5001);
+        });
+    });
+
+    it("a connection nobody owns is an unknown caller, and the gateway's env fills in nothing", () => {
+        fakeProcesses = [];
+        loopbackOwners = [];
+
+        withGatewayEnv(() => {
+            const identity = whoIsCalling({ origin: "remote", peer: PEER }, { facets: ["host", "transcript"] });
+
+            expect(identity).toMatchObject({ agent: "unknown", sessionId: null, isInAgent: false });
+            expect(identity.terminal).toBeUndefined();
+            expect(identity.account).toBeUndefined();
+            expect(identity.host).toBeUndefined();
+            expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "unknown", sessionId: null });
         });
     });
 });
