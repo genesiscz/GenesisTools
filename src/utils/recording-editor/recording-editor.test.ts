@@ -700,6 +700,18 @@ describe("edit project (edit.json)", () => {
         expect(() => applyOp(project, { op: "text", from: 1, to: 2, text: " " })).toThrow();
         expect(applyOp(titled, { op: "untext", id: note?.id ?? "" }).texts).toBeUndefined();
         expect(() => applyOp(titled, { op: "untext", id: "nope" })).toThrow(`texts: ${note?.id}`);
+        // retime moves a text with its length kept, held inside the movie, or sets a new end.
+        const later = applyOp(titled, { op: "retime", id: note?.id ?? "", by: 2 });
+        expect(later.texts?.[0]).toMatchObject({ startUs: 3_000_000, endUs: 4_500_000 });
+        const pastEnd = applyOp(titled, { op: "retime", id: note?.id ?? "", by: 1000 });
+        expect(pastEnd.texts?.[0]?.endUs).toBe(project.source.durationUs);
+        expect(applyOp(titled, { op: "retime", id: note?.id ?? "", to: 4 }).texts?.[0]).toMatchObject({
+            startUs: 1_000_000,
+            endUs: 4_000_000,
+        });
+        expect(() => applyOp(titled, { op: "retime", id: note?.id ?? "", from: 2, to: 2 })).toThrow("at least 0.1 s");
+        expect(() => applyOp(titled, { op: "retime", id: note?.id ?? "", by: 1, to: 3 })).toThrow("not both");
+        expect(() => applyOp(titled, { op: "retime", id: "nope", by: 1 })).toThrow(`ids: ${note?.id}`);
         // A name is trimmed and kept; a blank one is left out.
         const named = applyOp(project, {
             op: "redact",

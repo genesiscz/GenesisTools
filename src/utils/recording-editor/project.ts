@@ -886,6 +886,15 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
     z
         .object({
+            op: z.literal("retime"),
+            id: z.string(),
+            from: timeSchema.optional(),
+            to: timeSchema.optional(),
+            by: z.number().optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("shape"),
             from: timeSchema,
             to: timeSchema,
@@ -1132,6 +1141,92 @@ export function opTimeWarnings(op: EditOp, sourceDurationUs: number): string[] {
 }
 
 /** Applies one op; throws a RangeError a caller can show as it is. */
+/**
+ * Moves or trims the zoom, hidden part, text or shape with this id: `by` seconds moves it (its length kept), `from`
+ * and `to` set its start and end (source time). Held inside the recording; a zoom may not meet another zoom.
+ */
+function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>): EditProject {
+    if (op.by !== undefined && (op.from !== undefined || op.to !== undefined)) {
+        throw new Error("retime takes `by` (move, length kept) or `from`/`to` (new start or end), not both");
+    }
+
+    if (op.by === undefined && op.from === undefined && op.to === undefined) {
+        throw new Error("retime needs `by` (seconds to move, negative is earlier) or `from` and/or `to`");
+    }
+
+    const durationUs = project.source.durationUs;
+    const place = (startUs: number, endUs: number): { startUs: number; endUs: number } => {
+        if (op.by !== undefined) {
+            const length = endUs - startUs;
+            const moved = Math.min(Math.max(0, startUs + Math.round(op.by * 1e6)), Math.max(0, durationUs - length));
+            return { startUs: moved, endUs: moved + length };
+        }
+
+        const nextStart = op.from === undefined ? startUs : Math.max(0, timeToUs(op.from));
+        const nextEnd = op.to === undefined ? endUs : Math.min(durationUs, timeToUs(op.to));
+
+        if (nextEnd - nextStart < 100_000) {
+            throw new Error(
+                `retime would leave ${op.id} ${(nextStart / 1e6).toFixed(2)}–${(nextEnd / 1e6).toFixed(2)} s; it must last at least 0.1 s`
+            );
+        }
+
+        return { startUs: nextStart, endUs: nextEnd };
+    };
+
+    const zoom = project.zooms.find((item) => item.id === op.id);
+
+    if (zoom) {
+        const span = place(zoom.startUs, zoom.endUs);
+        const meets = project.zooms.find(
+            (other) => other.id !== op.id && span.startUs < other.endUs && span.endUs > other.startUs
+        );
+
+        if (meets) {
+            throw new Error(
+                `zoom ${op.id} would overlap zoom ${meets.id} (${meets.startUs / 1e6}–${meets.endUs / 1e6} s); zooms cannot overlap`
+            );
+        }
+
+        return { ...project, zooms: project.zooms.map((item) => (item.id === op.id ? { ...item, ...span } : item)) };
+    }
+
+    if (project.redactions?.some((item) => item.id === op.id)) {
+        return {
+            ...project,
+            redactions: project.redactions.map((item) =>
+                item.id === op.id ? { ...item, ...place(item.startUs, item.endUs) } : item
+            ),
+        };
+    }
+
+    if (project.texts?.some((item) => item.id === op.id)) {
+        return {
+            ...project,
+            texts: project.texts.map((item) =>
+                item.id === op.id ? { ...item, ...place(item.startUs, item.endUs) } : item
+            ),
+        };
+    }
+
+    if (project.shapes?.some((item) => item.id === op.id)) {
+        return {
+            ...project,
+            shapes: project.shapes.map((item) =>
+                item.id === op.id ? { ...item, ...place(item.startUs, item.endUs) } : item
+            ),
+        };
+    }
+
+    const ids = [
+        ...project.zooms.map((item) => item.id),
+        ...(project.redactions ?? []).map((item) => item.id),
+        ...(project.texts ?? []).map((item) => item.id),
+        ...(project.shapes ?? []).map((item) => item.id),
+    ];
+    throw new Error(`no zoom, hidden part, text or shape ${op.id}; ids: ${ids.join(", ") || "none"}`);
+}
+
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
     switch (op.op) {
         case "removeIdle": {
@@ -1279,6 +1374,8 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
 
             return { ...project, transcript: Object.keys(rest).length ? { fixes: rest } : undefined };
         }
+        case "retime":
+            return retimeItem(project, op);
         case "untext": {
             const list = project.texts ?? [];
 

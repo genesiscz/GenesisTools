@@ -173,6 +173,18 @@ const movieMethods = [
     ),
     edit("untext", z.object({ id: z.string() }), "Removes a text by its id.", ["id"]),
     edit(
+        "retime",
+        z
+            .object({
+                id: z.string(),
+                from: timeSchema.optional(),
+                to: timeSchema.optional(),
+                by: z.number().optional(),
+            })
+            .strict(),
+        'Moves or trims a zoom, hidden part, text or shape by its id (info() lists them): `by` seconds moves it with its length kept (negative is earlier), `from` and/or `to` set a new start or end (source seconds or "m:ss"). retime({ id: "t1", by: 2 }), retime({ id: "s1", to: 9 }).'
+    ),
+    edit(
         "fixLine",
         z.object({ from: timeSchema, text: z.string().max(300) }).strict(),
         'Corrects the transcript line spoken at `from` (any source time inside it, e.g. a line\'s from from transcript() or find()): text is the right words ("" hides the line). Kept in the edit, so captions, transcript(), find() and movies.search() read the fixed words, and a new transcription keeps them.',
@@ -753,6 +765,15 @@ export class Movie {
 
     async text(options: Omit<Extract<EditOp, { op: "text" }>, "op">) {
         return this.change([{ op: "text", ...options }]);
+    }
+
+    async retime(options: {
+        id: string;
+        from?: z.infer<typeof timeSchema>;
+        to?: z.infer<typeof timeSchema>;
+        by?: number;
+    }) {
+        return this.change([{ op: "retime", ...options }]);
     }
 
     async untext(id: string) {
