@@ -93,6 +93,11 @@ export const env = {
         getHomeOverride: () => getTrimmed("GROK_HOME"),
     },
 
+    appium: {
+        /** The Appium home that holds the installed drivers (`appium driver install` writes there). */
+        getHome: () => getWithDefault("APPIUM_HOME", `${homedir()}/.appium`),
+    },
+
     codex: {
         /** Codex CLI data root override. Codex accepts a comma-separated list of homes. */
         getHomeOverride: () => getTrimmed("CODEX_HOME"),
