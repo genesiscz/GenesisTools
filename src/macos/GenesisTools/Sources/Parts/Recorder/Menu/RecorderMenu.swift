@@ -147,6 +147,25 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         return list.sorted { $0.started > $1.started }
     }
 
+    /// Frames of a movie at the given seconds, each drawn like `thumbnail` (one generator for all of them).
+    nonisolated static func frames(_ url: URL, size: NSSize, radius: CGFloat, at seconds: [Double]) -> [NSImage] {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        let pixels = max(size.width, size.height) * 2
+        generator.maximumSize = CGSize(width: pixels, height: pixels)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
+        return seconds.compactMap { second in
+            guard let cg = try? generator.copyCGImage(at: CMTime(seconds: second, preferredTimescale: 600), actualTime: nil) else { return nil }
+            let image = NSImage(size: size)
+            image.lockFocus()
+            NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: radius, yRadius: radius).addClip()
+            NSImage(cgImage: cg, size: size).draw(in: NSRect(origin: .zero, size: size))
+            image.unlockFocus()
+            return image
+        }
+    }
+
     /// A frame of a movie (`atSeconds`, the first by default), or a frame image, drawn into `size` points with rounded
     /// corners (3× pixels).
     nonisolated static func thumbnail(_ url: URL, size: NSSize = NSSize(width: 44, height: 28), radius: CGFloat = 4,

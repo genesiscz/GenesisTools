@@ -9,6 +9,12 @@ import SwiftUI
 final class LibraryModel {
     private(set) var items: [RecorderMenu.Recent] = []
     private(set) var thumbnails: [URL: NSImage] = [:]
+    /// Frames across each movie for the hover scrub, read the first time the pointer rests on its card.
+    private(set) var scrubFrames: [URL: [NSImage]] = [:]
+    @ObservationIgnored private var scrubbing: Set<URL> = []
+    /// Opinionated, so a setting: moving the pointer over a card plays through its movie (on by default).
+    static let hoverScrubKey = "recorder.library.hoverScrub"
+    static let scrubFrameCount = 12
     private(set) var loaded = false
     var filter = ""
     @ObservationIgnored private var watch: DispatchSourceFileSystemObject?
@@ -66,6 +72,25 @@ final class LibraryModel {
         watch = nil
     }
 
+    /// Reads `scrubFrameCount` frames spread over the movie, once, on a background queue.
+    func loadScrub(_ item: RecorderMenu.Recent) {
+        guard item.hasMovie, let movie = item.thumbnail, scrubFrames[movie] == nil, !scrubbing.contains(movie) else { return }
+        scrubbing.insert(movie)
+        let seconds = max(0.1, (item.durationMs ?? 0) / 1000)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let span = HubPerf.begin("recorder.library.scrub", movie.lastPathComponent)
+            let frames = RecorderMenu.frames(movie, size: Self.thumbnailSize, radius: 8,
+                                             at: (0..<Self.scrubFrameCount).map { seconds * (Double($0) + 0.5) / Double(Self.scrubFrameCount) })
+            span.end()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.scrubbing.remove(movie)
+                    self.scrubFrames[movie] = frames
+                }
+            }
+        }
+    }
+
     /// Asks for a new title and writes it through `tools recorder rename`, the same command the CLI and REPL use.
     func rename(_ item: RecorderMenu.Recent) {
         let alert = NSAlert()
@@ -121,6 +146,7 @@ final class LibraryModel {
 
 struct LibraryView: View {
     @Bindable var model: LibraryModel
+    @AppStorage(LibraryModel.hoverScrubKey) private var hoverScrub = true
     private let columns = [GridItem(.adaptive(minimum: 248, maximum: 320), spacing: 18)]
 
     var body: some View {
@@ -133,6 +159,11 @@ struct LibraryView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 220)
                     .accessibilityIdentifier("recorder.library.filter")
+                Toggle("Scrub on hover", isOn: $hoverScrub)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 12))
+                    .instantTooltip("Moving the pointer over a card plays through its movie")
+                    .accessibilityIdentifier("recorder.library.hoverScrub")
                 IconButton(systemName: "folder", tooltip: "Open the recordings folder in Finder", size: 13) {
                     PathOpener.finder(RecorderMenu.libraryFolder.path)
                 }
@@ -151,7 +182,9 @@ struct LibraryView: View {
                         ForEach(model.sections, id: \.title) { section in
                             Section {
                                 ForEach(section.items, id: \.folder) { item in
-                                    LibraryCard(item: item, thumbnail: item.thumbnail.flatMap { model.thumbnails[$0] }) {
+                                    LibraryCard(item: item, thumbnail: item.thumbnail.flatMap { model.thumbnails[$0] },
+                                                frames: hoverScrub ? item.thumbnail.flatMap { model.scrubFrames[$0] } : nil,
+                                                wantFrames: hoverScrub ? { model.loadScrub(item) } : nil) {
                                         EditorWindows.shared.open(path: item.folder.path)
                                     } rename: {
                                         model.rename(item)
@@ -181,9 +214,14 @@ struct LibraryView: View {
 private struct LibraryCard: View {
     let item: RecorderMenu.Recent
     let thumbnail: NSImage?
+    /// The hover scrub's frames (nil until read, or with the setting off) and the call that reads them.
+    let frames: [NSImage]?
+    let wantFrames: (() -> Void)?
     let open: () -> Void
     let rename: () -> Void
     let trash: () -> Void
+    @State private var scrubAt: Double?
+    @State private var cardWidth: CGFloat = 248
 
     var body: some View {
         // Live only under the pointer: a library of 100 cards keeps no 100 responders at rest.
@@ -191,7 +229,10 @@ private struct LibraryCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .bottomTrailing) {
                     Group {
-                        if let thumbnail {
+                        if let frames, !frames.isEmpty, let at = scrubAt {
+                            Image(nsImage: frames[min(frames.count - 1, Int(at * Double(frames.count)))])
+                                .resizable().aspectRatio(contentMode: .fill)
+                        } else if let thumbnail {
                             Image(nsImage: thumbnail).resizable().aspectRatio(contentMode: .fill)
                         } else {
                             RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06))
@@ -201,6 +242,31 @@ private struct LibraryCard: View {
                     .frame(height: 155)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(alignment: .bottom) {
+                        if frames != nil, let at = scrubAt {
+                            GeometryReader { geometry in
+                                Capsule().fill(Color.white.opacity(0.85))
+                                    .frame(width: max(4, geometry.size.width * at), height: 3)
+                            }
+                            .frame(height: 3)
+                            .padding(.horizontal, 6).padding(.bottom, 4)
+                            .allowsHitTesting(false)
+                        }
+                    }
+                    .onContinuousHover { phase in
+                        guard let wantFrames else { return }
+                        switch phase {
+                        case .active(let point):
+                            wantFrames()
+                            scrubAt = min(max(0, point.x / max(1, cardWidth)), 0.999)
+                        case .ended:
+                            scrubAt = nil
+                        }
+                    }
+                    .background(GeometryReader { geometry in
+                        Color.clear.onAppear { cardWidth = geometry.size.width }
+                            .onChange(of: geometry.size.width) { _, width in cardWidth = width }
+                    })
                     if let ms = item.durationMs {
                         Text(verbatim: formatClock(Int64(ms * 1000), tenths: false))
                             .font(.system(size: 11, weight: .semibold).monospacedDigit())
