@@ -807,35 +807,52 @@ private struct TextInspector: View {
                     .instantTooltip("A 1.2 s circle at each of the \(Plural.count(clicks, "recorded click")) (a double click gets one); a click that has one already is left alone, and ⌘Z takes them all back")
                     .accessibilityIdentifier("recorder.shape.markClicks")
             }
-            ForEach(model.project.shapes ?? []) { shape in
-                ShapeRow(model: model, shape: shape)
-            }
-            ForEach(list) { note in
-                let selected = model.selectedText == note.id
-                HStack(spacing: 4) {
-                    Button {
-                        model.selectedText = selected ? nil : note.id
-                        if !selected, let at = TimelineMap.outputTime(ofSource: note.startUs, in: model.project) { model.seek(at) }
-                    } label: {
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(verbatim: note.text).font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
-                                Text(verbatim: editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)
-                                    .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
-                            }
-                            Spacer(minLength: 4)
-                            Image(systemName: selected ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(RecorderPalette.dim)
-                        }
-                        .padding(.horizontal, 8).padding(.vertical, 6)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.genHoverRow())
-                    .accessibilityLabel("Text \(note.text), \(editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)")
-                    IconButton(systemName: "trash", tooltip: "Delete this text", size: 12) { model.deleteText(note.id) }
+            // Texts and shapes in one list in time order; a kind with more than one gets numbers ("Box 2").
+            let shapes = model.project.shapes ?? []
+            let numbers = Dictionary(uniqueKeysWithValues: EditProject.ShapeKind.allCases.flatMap { kind in
+                let same = shapes.filter { $0.kind == kind }.sorted { ($0.startUs, $0.id) < ($1.startUs, $1.id) }
+                return same.count > 1 ? same.enumerated().map { ($1.id, $0 + 1) } : []
+            })
+            let rows = (shapes.map { (start: $0.startUs, id: $0.id, shape: Optional($0), note: EditProject.TextNote?.none) }
+                + list.map { (start: $0.startUs, id: $0.id, shape: EditProject.Shape?.none, note: Optional($0)) })
+                .sorted { ($0.start, $0.id) < ($1.start, $1.id) }
+            ForEach(rows, id: \.id) { row in
+                if let shape = row.shape {
+                    ShapeRow(model: model, shape: shape, number: numbers[shape.id])
+                } else if let note = row.note {
+                    textRow(note)
                 }
-                if selected { editor(note) }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func textRow(_ note: EditProject.TextNote) -> some View {
+        Group {
+            let selected = model.selectedText == note.id
+            HStack(spacing: 4) {
+                Button {
+                    model.selectedText = selected ? nil : note.id
+                    if !selected, let at = TimelineMap.outputTime(ofSource: note.startUs, in: model.project) { model.seek(at) }
+                } label: {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: note.text).font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                            Text(verbatim: editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)
+                                .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: selected ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(RecorderPalette.dim)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverRow())
+                .accessibilityLabel("Text \(note.text), \(editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)")
+                IconButton(systemName: "trash", tooltip: "Delete this text", size: 12) { model.deleteText(note.id) }
+            }
+            if selected { editor(note) }
         }
     }
 
@@ -1676,11 +1693,13 @@ private struct TextHandles: View {
 private struct ShapeRow: View {
     @Bindable var model: EditorModel
     let shape: EditProject.Shape
+    /// Its number among the shapes of its kind, when there is more than one ("Box 2").
+    var number: Int?
     private static let colors = [("#FF3B30", "Red"), ("#FFCC00", "Yellow"), ("#34C759", "Green"), ("#0A84FF", "Blue"), ("#FFFFFF", "White")]
 
     var body: some View {
         let selected = model.selectedShape == shape.id
-        let name = shape.kind.rawValue.capitalized
+        let name = shape.kind.rawValue.capitalized + (number.map { " \($0)" } ?? "")
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Button {
@@ -1690,6 +1709,7 @@ private struct ShapeRow: View {
                     HStack(spacing: 8) {
                         Image(systemName: shape.kind == .arrow ? "arrow.up.right" : (shape.kind == .box ? "rectangle" : "circle"))
                             .foregroundStyle(swiftColor(shape.color))
+                            .frame(width: 20)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(verbatim: name).font(.system(size: 12.5, weight: .medium))
                             Text(verbatim: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
