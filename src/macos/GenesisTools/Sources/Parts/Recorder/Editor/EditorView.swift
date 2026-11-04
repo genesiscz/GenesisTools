@@ -206,6 +206,7 @@ private struct ZoomInspector: View {
                     .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
                 WideButton(title: "Add Zoom at Playhead", systemImage: "plus.magnifyingglass") { model.addZoom() }
+                    .instantTooltip("A 2 s zoom from the playhead (Z)")
                 WideButton(title: "Auto Zoom from Clicks", systemImage: "cursorarrow.click.2") { model.autoZoom() }
                     .disabled(model.cursor == nil)
                     .instantTooltip(model.cursor == nil ? "This recording has no cursor track" : "One zoom per group of clicks, following the cursor")
@@ -283,6 +284,7 @@ private struct ClipInspector: View {
                                  minSegmentWidth: 44, identifier: "recorder.clip.speed")
             }
             WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
+                .instantTooltip("Splits the clip under the playhead in two (S)")
             WideButton(title: "Delete Clip", systemImage: "trash", role: .destructive) { model.deleteSelection() }
                 .disabled(placed.count < 2)
         } else {
@@ -293,6 +295,7 @@ private struct ClipInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
                 SectionLabel(text: Plural.count(placed.count, "clip"), value: formatClock(model.durationUs, tenths: true))
                 WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
+                    .instantTooltip("Splits the clip under the playhead in two (S)")
                 WideButton(title: model.isRemovingIdle ? "Looking for Still Parts…" : "Remove Still Parts", systemImage: "wand.and.stars") {
                     model.removeIdle()
                 }
@@ -550,6 +553,7 @@ private struct HideInspector: View {
                 .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                 .fixedSize(horizontal: false, vertical: true)
             WideButton(title: "Hide a Part at the Playhead", systemImage: "eye.slash") { model.addRedaction() }
+                .instantTooltip("A 3 s hidden part in the middle of the picture; or drag on the preview to draw one")
                 .accessibilityIdentifier("recorder.hide.add")
             ForEach(list) { redaction in
                 let selected = model.selectedRedaction == redaction.id
@@ -562,8 +566,10 @@ private struct HideInspector: View {
                             RedactionThumb(model: model, redaction: redaction)
                             let range = editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(verbatim: range.edit).font(.system(size: 12.5).monospacedDigit()).lineLimit(1)
-                                Text(verbatim: [redaction.style.rawValue.capitalized, range.recording].compactMap { $0 }.joined(separator: " · "))
+                                Text(verbatim: redaction.label ?? redaction.style.rawValue.capitalized)
+                                    .font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                                Text(verbatim: [range.edit, redaction.label == nil ? nil : redaction.style.rawValue.capitalized, range.recording]
+                                    .compactMap { $0 }.joined(separator: " · "))
                                     .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
                                     .lineLimit(1).truncationMode(.tail)
                             }
@@ -591,6 +597,12 @@ private struct RedactionEditor: View {
     var body: some View {
         let id = redaction.id
         VStack(alignment: .leading, spacing: 8) {
+            TextField("Name (what it hides)", text: Binding(get: { redaction.label ?? "" }, set: { value in
+                let name = String(value.prefix(60))
+                model.updateRedaction(id) { $0.label = name.trimmingCharacters(in: .whitespaces).isEmpty ? nil : name }
+            }))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("recorder.hide.name")
             RedactionPicker(model: model, redaction: redaction)
             GenSegmentedTabs("Style", items: EditProject.RedactionStyle.allCases.map { .init($0, $0.rawValue.capitalized) },
                              selection: Binding(get: { redaction.style }, set: { value in model.updateRedaction(id) { $0.style = value } }),

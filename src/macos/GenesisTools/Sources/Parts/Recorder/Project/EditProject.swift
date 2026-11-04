@@ -127,6 +127,8 @@ struct EditProject: Codable, Equatable {
         var width: Double
         var height: Double
         var style: RedactionStyle = .blur
+        /// What it hides ("API token"), for the lists; absent shows the style.
+        var label: String?
     }
 
     struct Keys: Codable, Equatable {

@@ -517,6 +517,23 @@ describe("edit project (edit.json)", () => {
         expect(() => applyOp(hidden, { op: "unredact", id: "nope" })).toThrow(`redactions: ${redaction?.id}`);
         // A cut keeps it in source time.
         expect(applyOp(hidden, { op: "cut", from: 0, to: 0.5 }).redactions?.[0]?.startUs).toBe(1_000_000);
+        // A name is trimmed and kept; a blank one is left out.
+        const named = applyOp(project, {
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.1 },
+            label: " API token ",
+        });
+        expect(named.redactions?.[0]?.label).toBe("API token");
+        const blank = applyOp(project, {
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.1 },
+            label: " ",
+        });
+        expect(blank.redactions?.[0] && "label" in blank.redactions[0]).toBe(false);
     });
 
     test("the keys overlay needs a track that kept shortcuts", () => {

@@ -538,7 +538,7 @@ private struct HiddenSegment: View {
                 }
                 .overlay {
                     if width > 46 && height >= 14 {
-                        Text(redaction.style.rawValue.capitalized)
+                        Text(verbatim: redaction.label ?? redaction.style.rawValue.capitalized)
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(Color.black.opacity(0.75))
                             .lineLimit(1)

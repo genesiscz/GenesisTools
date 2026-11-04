@@ -118,6 +118,8 @@ export const redactionSchema = z.object({
     width: z.number().min(0.005).max(1),
     height: z.number().min(0.005).max(1),
     style: z.enum(REDACTION_STYLES).default("blur"),
+    /** What it hides ("API token"), for the editor's lists; absent shows the style. */
+    label: z.string().max(60).optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
@@ -419,7 +421,13 @@ export function addZoom(
 /** Hides a rectangle of the source picture from `fromUs` to `toUs`; the rectangle must lie inside the picture. */
 export function addRedaction(
     project: EditProject,
-    options: { fromUs: number; toUs: number; rect: z.infer<typeof rectSchema>; style: EditRedaction["style"] }
+    options: {
+        fromUs: number;
+        toUs: number;
+        rect: z.infer<typeof rectSchema>;
+        style: EditRedaction["style"];
+        label?: string;
+    }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
     const { x, y, width, height } = options.rect;
@@ -439,6 +447,7 @@ export function addRedaction(
         width,
         height,
         style: options.style,
+        ...(options.label?.trim() ? { label: options.label.trim() } : {}),
     };
     return { ...project, redactions: [...(project.redactions ?? []), redaction] };
 }
@@ -599,6 +608,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             /** 0...1 of the source picture from its top left; x + width and y + height stay inside it. */
             rect: rectSchema,
             style: z.enum(REDACTION_STYLES).optional(),
+            /** What it hides ("API token"), shown in the editor's lists. */
+            label: z.string().max(60).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
@@ -800,6 +811,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                 toUs: timeToUs(op.to),
                 rect: op.rect,
                 style: op.style ?? "blur",
+                label: op.label,
             });
         case "unredact": {
             const list = project.redactions ?? [];
@@ -941,6 +953,7 @@ export function describeProject(project: EditProject, path: string) {
             to: seconds(redaction.endUs),
             rect: { x: redaction.x, y: redaction.y, width: redaction.width, height: redaction.height },
             style: redaction.style,
+            ...(redaction.label ? { label: redaction.label } : {}),
         })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
