@@ -895,8 +895,8 @@ export class MoviesToolset extends ReplToolset {
             movies: {
                 list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
                 open: (recording: string) => new Movie(recording, ctx),
-                search: (text: string) => searchLibrary(text),
                 record: (options: z.infer<typeof recordSchema> = {}) => record(options, ctx),
+                search: (text: string) => searchLibrary(text),
             },
         };
     }

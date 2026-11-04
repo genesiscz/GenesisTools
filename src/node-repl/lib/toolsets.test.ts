@@ -144,7 +144,9 @@ describe("toolset method names", () => {
             movies: { open(recording: string): object; opn?: unknown };
         };
 
-        expect(() => movies.opn).toThrow('movies has no "opn" (did you mean open?); it has: list, open, record');
+        expect(() => movies.opn).toThrow(
+            'movies has no "opn" (did you mean open?); it has: list, search, open, record'
+        );
         const movie = movies.open("anything");
         expect(() => Reflect.get(movie, "trim")).toThrow('movies.Movie has no "trim"');
         expect(Reflect.get(movie, "then")).toBeUndefined();
