@@ -257,6 +257,13 @@ test("a bus identity owned by a Codex thread is refused from any other thread", 
     );
     expect(() => assertOwnerThread(record, { CODEX_THREAD_ID: "thread-root" })).not.toThrow();
     expect(() => assertOwnerThread(record, {})).not.toThrow();
+    // A Codex thread inside another host (a worker under Claude Code) is still checked: its id is read from the Codex
+    // host part, not from whichever host is the outer one.
+    expect(() => assertOwnerThread(record, { CLAUDE_CODE_SESSION_ID: "outer", CODEX_THREAD_ID: "thread-sub" })).toThrow(
+        "this shell runs in thread thread-sub"
+    );
+    // A blank thread id (an unset variable a shell expanded) names no thread.
+    expect(() => assertOwnerThread(record, { CODEX_THREAD_ID: "  " })).not.toThrow();
     expect(() => assertOwnerThread({ ...record, meta: {} }, { CODEX_THREAD_ID: "thread-sub" })).not.toThrow();
 });
 

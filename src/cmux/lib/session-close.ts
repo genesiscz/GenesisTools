@@ -101,7 +101,7 @@ const JOURNAL_START_SLACK_MS = 60_000;
  * The newest agent session the cmux-refs journal places in a recorded session since it started, or null.
  *
  * A --via-tmux agent starts in a detached tmux shell before its workspace exists, with the cmux identity
- * unset (session-new.ts `CMUX_IDENTITY_ENV`), so the hook records its tmux pane, never the new surface: such a
+ * unset (`CMUX_IDENTITY_ENV` in src/utils/cmux/caller-enricher.ts), so the hook records its tmux pane, never the new surface: such a
  * record matches by the panes of its tmux session. Any other record matches by surface UUID only: a record
  * written before UUIDs were stored names its tab by a ref from that cmux run, which a relaunch renumbers, so
  * it could name another agent's tab now.

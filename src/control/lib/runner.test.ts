@@ -19,6 +19,7 @@ import {
     nativeEnvironment,
     REAL_AX_TOOL_IN_TESTS,
     RealMachineInTestError,
+    recordSource,
     runAx,
     runAxAsync,
     runAxAsyncWithRecovery,
@@ -765,4 +766,35 @@ test("foregroundGuardEnvironment turns the guard on under an agent only, and an 
     });
     expect(foregroundGuardEnvironment({})).toEqual({});
     expect(foregroundGuardEnvironment({ CLAUDECODE: "1", GENESIS_CONTROL_FOREGROUND_GUARD: "0" })).toEqual({});
+});
+
+test("recordSource names the agent session, the terminal sessions and the tmux pane, and skips a blank value", () => {
+    const keys = ["CLAUDE_CODE_SESSION_ID", "ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX_PANE"] as const;
+    const saved = keys.map((key) => [key, process.env[key]] as const);
+
+    try {
+        process.env.CLAUDE_CODE_SESSION_ID = "claude-session";
+        process.env.ITERM_SESSION_ID = "w0t0p0:ITERM";
+        process.env.TERM_SESSION_ID = "w0t0p0:TERM";
+        process.env.TMUX_PANE = " %4 ";
+        expect(recordSource()).toBe("claude-session:w0t0p0:ITERM:w0t0p0:TERM:%4");
+
+        process.env.TMUX_PANE = "  ";
+        process.env.ITERM_SESSION_ID = "";
+        expect(recordSource()).toBe("claude-session:w0t0p0:TERM");
+
+        for (const key of keys) {
+            delete process.env[key];
+        }
+
+        expect(recordSource()).toBe("unknown");
+    } finally {
+        for (const [key, value] of saved) {
+            if (value === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
+        }
+    }
 });

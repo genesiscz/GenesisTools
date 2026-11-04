@@ -16,6 +16,7 @@ import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { readTmuxTerminal } from "@genesiscz/utils/tmux/caller-enricher";
 import {
     ancestorNamesOfThisProcess,
     CURSOR_NOTE_ENV,
@@ -115,7 +116,12 @@ const RECORDED_COMMANDS = new Set([
 export function recordSource(): string {
     const e = env.getProcessEnv();
     const agentIds = agentSessionIds(e).map((s) => s.id);
-    const parts = [...agentIds, e.ITERM_SESSION_ID, e.TERM_SESSION_ID, e.TMUX_PANE].filter(Boolean);
+    const parts = [
+        ...agentIds,
+        env.device.getItermSessionId(),
+        env.device.getTermSessionId(),
+        readTmuxTerminal(e)?.pane,
+    ].filter(Boolean);
     return parts.length ? parts.join(":") : "unknown";
 }
 

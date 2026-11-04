@@ -1,3 +1,4 @@
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import type { spawnAppServer } from "./app-server-client";
 
 export const ACCOUNT_ENV_UNSET = [
@@ -17,7 +18,7 @@ export function buildAccountLaunchOptions(options: {
     return {
         cwd: options.cwd,
         home: options.sharedHome,
-        envOverrides: { TOOLS_CODEX_ACCOUNT: options.accountName },
+        envOverrides: { [accountEnvVar("codex")]: options.accountName },
         unsetEnv: ACCOUNT_ENV_UNSET,
         config: ['cli_auth_credentials_store="ephemeral"', 'forced_login_method="chatgpt"', 'model_provider="openai"'],
     };

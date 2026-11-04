@@ -1,3 +1,4 @@
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { byId } from "@genesiscz/utils/ai/catalog";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
@@ -88,7 +89,7 @@ export function pinnedLaunchEnv(
     longLivedToken: string
 ): Record<string, string> {
     return {
-        TOOLS_CLAUDE_ACCOUNT: account.name,
+        [accountEnvVar("claude")]: account.name,
         // Survives Claude Code's hook env allowlist (the OAuth token does not).
         // SessionStart records this so cmux resume does not invent --keychain.
         TOOLS_CLAUDE_AUTH: "token",

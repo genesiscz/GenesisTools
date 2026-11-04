@@ -18,6 +18,7 @@ import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/ty
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -84,7 +85,7 @@ export interface OfflineCaptureDeps {
      * save` invocation and the clack prompts, and restore would `cat` them back verbatim.
      *
      * The offline path cannot ask cmux who called it — that socket is the thing that is down —
-     * so it reads `CMUX_SURFACE_ID`, which is the same id `capture-shell.zsh` keys its spool on.
+     * so it reads the cmux surface of its own environment (`readCmuxTerminal`), which is the same id `capture-shell.zsh` keys its spool on.
      */
     callerSurfaceId?: string;
 }
@@ -105,7 +106,7 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
             ])
         ),
     ];
-    const callerSurfaceId = env.getProcessEnv().CMUX_SURFACE_ID?.toLowerCase() || undefined;
+    const callerSurfaceId = readCmuxTerminal(env.getProcessEnv())?.surfaceId.toLowerCase();
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
     // This is the livelock rescue: the shared history database may be held by a starving process,
     // and a full discovery walks tens of thousands of files. Read the index or read nothing, for every harness.

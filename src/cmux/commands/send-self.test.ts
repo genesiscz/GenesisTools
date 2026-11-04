@@ -87,12 +87,16 @@ describe("characterization: blank terminal ids", () => {
         });
     });
 
-    it("an empty surface is absent, but a whitespace surface and blank workspace are kept verbatim", () => {
+    // Changed on purpose 2026-11-04 (agent-context unification): the surface is read through readCmuxTerminal, which
+    // trims and drops a blank value. A whitespace-only surface used to be sent to cmux verbatim as { surfaceId: " \t ",
+    // workspaceId: "" }; now it names no surface, and a blank workspace is no workspace.
+    it("an empty or whitespace-only surface is absent, and a padded one is trimmed", () => {
         expect(resolveSelfTarget({ CMUX_SURFACE_ID: "", CMUX_WORKSPACE_ID: "workspace" })).toBeNull();
-        expect(resolveSelfTarget({ CMUX_SURFACE_ID: " \t ", CMUX_WORKSPACE_ID: "" })).toEqual({
+        expect(resolveSelfTarget({ CMUX_SURFACE_ID: " \t ", CMUX_WORKSPACE_ID: "" })).toBeNull();
+        expect(resolveSelfTarget({ CMUX_SURFACE_ID: " F89A4C33 ", CMUX_WORKSPACE_ID: " " })).toEqual({
             kind: "cmux",
-            surfaceId: " \t ",
-            workspaceId: "",
+            surfaceId: "F89A4C33",
+            workspaceId: undefined,
         });
     });
 
