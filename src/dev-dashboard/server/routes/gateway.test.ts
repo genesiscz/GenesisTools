@@ -10,6 +10,8 @@ import { decideApiAuth, isActScopedRequest } from "@app/dev-dashboard/server/aut
 import { Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteDef, RouteResult, RouteServices } from "@app/dev-dashboard/server/types";
 import { CapabilityRefusedError, HUB_CAPABILITIES } from "@app/hub/lib/capabilities/index";
+import { realProcsSources } from "@app/hub/lib/procs/sources";
+import { realSignalOps } from "@app/hub/lib/procs/stop";
 import { issueActTokens, memoryActTokenStore } from "@app/question/lib/act/tokens";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import { GATEWAY_ROWS, gatewayRoutes } from "./gateway";
@@ -213,6 +215,51 @@ describe("the upload row through the generic client", () => {
 describe("the act scope", () => {
     const { auth } = createBasicAuthCredentials({ username: "u", password: "p" });
     const provision = { auth, generatedPassword: null };
+
+    it("stops a session behind the full login only, once per Idempotency-Key", async () => {
+        let reads = 0;
+        const routes = gatewayRoutes({
+            stop: {
+                fleet: async () => {
+                    reads++;
+                    return [];
+                },
+                // Never reached: a session that is not live is refused before any process is read or signalled.
+                sources: realProcsSources,
+                ops: realSignalOps,
+                graceMs: 0,
+            },
+        });
+        const stop = route(routes, "POST", "/api/agents/stop");
+        const call = (body: unknown, headers: Record<string, string> = { "idempotency-key": "s1" }) =>
+            json(stop.handler(ctx({ method: "POST", pathname: "/api/agents/stop", headers, body })));
+
+        expect((await call({ key: "claude:s" })).status).toBe(400);
+        const first = await call({ key: "claude:s", pid: 4100 });
+        const retry = await call({ key: "claude:s", pid: 4100 });
+
+        expect(first).toEqual({
+            status: 200,
+            body: {
+                key: "claude:s",
+                pid: 4100,
+                stopped: false,
+                signal: null,
+                survivors: [],
+                reason: "the session is no longer live",
+            },
+        });
+        expect(retry).toEqual(first);
+        expect(reads).toBe(1);
+        expect(
+            decideApiAuth({
+                method: "POST",
+                pathname: "/api/agents/stop",
+                headers: { "x-gt-act-token": TOKEN },
+                provision,
+            }).decision
+        ).toBe("deny");
+    });
 
     it("lets an act token reach the act row only, without the dashboard login", () => {
         expect(isActScopedRequest("POST", "/api/act", TOKEN)).toBe(true);

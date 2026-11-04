@@ -20,6 +20,7 @@ const FILES = [
     "box-types.ts",
     "session-resume.ts",
     "live.ts",
+    "agents.ts",
 ];
 
 describe("contract purity", () => {

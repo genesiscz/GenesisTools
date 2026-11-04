@@ -1,5 +1,6 @@
-import type { LiveChannel, LiveFrameOf, PortInfo, PortsRes } from "@dd/contract";
+import type { AgentsBoardDto, LiveChannel, LiveFrameOf, PortInfo, PortsRes } from "@dd/contract";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
+import { agentsKeys, BOARD_INTERVAL_MS, withPhase, withPhases } from "@/features/agents/queries";
 import { answerQueueKeys, QUEUE_INTERVAL_MS } from "@/features/answer-queue/queries";
 import { claudeUsageKeys, USAGE_INTERVAL_MS } from "@/features/claude-usage/queries";
 import { attentionKeys } from "@/features/needs-input-inbox/queries";
@@ -51,7 +52,7 @@ const WAITING_KEYS: readonly QueryKey[] = [answerQueueKeys.queue];
 
 /**
  * One row per channel; the mapped type makes a channel added to the contract's `LiveChannelFrames` fail to compile
- * until it has a row here. The agent phase channel (M8) lands as one more row.
+ * until it has a row here.
  */
 export const LIVE_CACHE_TABLE: LiveCacheTable = {
     ports: {
@@ -103,11 +104,29 @@ export const LIVE_CACHE_TABLE: LiveCacheTable = {
         resync: [],
         fallbackMs: QUEUE_INTERVAL_MS,
     },
-    // No phone screen reads handoffs yet; the channel exists for F9.
+    // No phone screen reads handoffs yet.
     handoffs: {
         apply() {},
         resync: [],
         fallbackMs: null,
+    },
+    // The agents board (F9): a phase frame patches its session; a snapshot patches every session, or refetches the
+    // board when a session started or ended (the frame carries phases, not the project, prompt and sub-agents).
+    agents: {
+        apply(frame, queryClient) {
+            const board = queryClient.getQueryData<AgentsBoardDto>(agentsKeys.board);
+            const next =
+                frame.type === "phase" ? withPhase(board, frame.payload) : withPhases(board, frame.payload.sessions);
+
+            if (next) {
+                queryClient.setQueryData(agentsKeys.board, next);
+                return;
+            }
+
+            invalidate(queryClient, [agentsKeys.board]);
+        },
+        resync: [agentsKeys.board],
+        fallbackMs: BOARD_INTERVAL_MS,
     },
 };
 

@@ -11,6 +11,7 @@ import { ACT_TOKEN_HEADER } from "@app/dev-dashboard/server/auth-guard";
 import { bindEndpoint, IDEMPOTENCY_HEADER } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { type BoardStopDeps, stopAgentSession } from "@app/hub/lib/board/stop";
 import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
 import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -22,6 +23,7 @@ import { z } from "zod";
  */
 export const GATEWAY_ROWS = {
     agents: ENDPOINTS.gatewayAgents,
+    board: ENDPOINTS.gatewayBoard,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
     stuck: ENDPOINTS.gatewayStuck,
@@ -55,6 +57,8 @@ export interface GatewayDeps {
     uploadDir?: () => string;
     /** Runs a capability; tests pass a fake so no hub reader runs. */
     run?: typeof runCapability;
+    /** The stop route's fleet and signals; tests pass a fake process tree, so no real process is signalled. */
+    stop?: BoardStopDeps;
 }
 
 /**
@@ -93,6 +97,12 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
 
                 return act({ token, key: `http:${key}`, deps: await (deps.act ?? realActDeps)() });
             },
+        }),
+        // Behind the full login and an idempotency key (a keyed-write row), so a replayed stop answers once.
+        bindEndpoint(ENDPOINTS.agentsStop, {
+            input: z.object({ key: z.string().min(1), pid: z.number().int().positive() }),
+            invalid: "expected { key, pid }",
+            run: (input) => stopAgentSession(input, deps.stop),
         }),
         bindEndpoint(ENDPOINTS.gatewayUpload, {
             input: z.object({}),
