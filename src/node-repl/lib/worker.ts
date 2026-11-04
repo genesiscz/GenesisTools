@@ -118,7 +118,8 @@ const CORE_HELP = [
 
 function helpText(name?: string): string {
     if (name === undefined) {
-        const loaded = toolsets.map((toolset) => toolset.oneLine());
+        // Each loaded toolset with the call that prints its methods, so a bare help() is never a dead end.
+        const loaded = toolsets.map((toolset) => `${toolset.oneLine()} help("${toolset.id}") lists its methods.`);
         return [...CORE_HELP, ...(loaded.length > 0 ? loaded : ["No toolsets are loaded (--toolset a,b)."])].join("\n");
     }
 
