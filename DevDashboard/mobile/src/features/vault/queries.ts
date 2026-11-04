@@ -23,9 +23,16 @@ export function appendText(
 }
 
 /** A Q→A entry as a vault note section: the question as the heading, the answer, the project and the time. */
+/** The local day of an epoch time, as a note writes it (`2026-10-01`). */
+function noteDay(ms: number): string {
+    const day = new Date(ms);
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
+}
+
 export function qaNoteText(entry: Pick<QaRow, "question" | "answerMd" | "project" | "ts">): string {
     const heading = (entry.question ?? "Answer").split("\n")[0].slice(0, 120);
-    const meta = [entry.project, entry.ts].filter(Boolean).join(" · ");
+    const meta = [entry.project, entry.ts ? noteDay(entry.ts) : undefined].filter(Boolean).join(" · ");
     return `## ${heading}\n\n${meta ? `${meta}\n\n` : ""}${entry.answerMd ?? ""}\n`;
 }
 

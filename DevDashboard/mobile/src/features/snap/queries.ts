@@ -23,7 +23,8 @@ export async function snapToSession(
     input: { jpegBase64: string; provider: string; sessionId: string; name?: string; idempotencyKey: string }
 ): Promise<SnapReceiptDto> {
     const bytes = naclUtil.decodeBase64(input.jpegBase64);
-    const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    // A copy owns a plain ArrayBuffer, which the upload body takes (a view's buffer may be shared).
+    const data = Uint8Array.from(bytes).buffer;
     const upload: UploadReceipt = await client.call(
         ENDPOINTS.gatewayUpload,
         {},
