@@ -161,3 +161,28 @@ export interface AgentInterruptReceiptDto {
     route: string;
     detail: string;
 }
+
+/** Where a saved prompt's variable value came from (prompt prepare, F23). */
+export type PromptVariableSource = "given" | "session" | "missing";
+
+export interface PromptVariableDto {
+    name: string;
+    value: string | null;
+    source: PromptVariableSource;
+}
+
+/**
+ * `GET /api/gateway/prompt-prepare?name=&session=&vars=<json>`: one saved prompt rendered for one session. Every
+ * variable comes with its value and source; a missing one stays `{{name}}` in `text`. The Swift picker and the phone
+ * show this answer, and the phone sends `text` through the session-send route.
+ */
+export interface PreparedPromptDto {
+    name: string;
+    description: string | null;
+    session: string | null;
+    variables: PromptVariableDto[];
+    text: string;
+    missing: string[];
+    /** How `tools hub prompts send` types it into a pane: inline, or a file and a one-line pointer to it. */
+    mode: "inline" | "file";
+}

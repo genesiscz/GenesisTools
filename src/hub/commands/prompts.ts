@@ -2,7 +2,15 @@ import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { addPrompt, HubPromptError, listPrompts, parseVars, removePrompt, sendPrompt } from "../lib/prompts";
+import {
+    addPrompt,
+    HubPromptError,
+    listPrompts,
+    parseVars,
+    preparePrompt,
+    removePrompt,
+    sendPrompt,
+} from "../lib/prompts";
 
 /** One verb's result as JSON or text; a failure prints `{error, code, missing}` with --json and exits 1. */
 async function promptVerb<T>({
@@ -126,6 +134,29 @@ export function registerPromptsCommand(program: Command): void {
                 json: opts.json,
                 run: () => removePrompt({ name }),
                 human: (prompt) => out.log.success(`removed "${prompt.name}"`),
+            });
+        });
+
+    prompts
+        .command("prepare")
+        .description("Render a prompt for a session without sending it: each variable's value and source, and the text")
+        .argument("<name>", "the prompt's name (a unique prefix works)")
+        .option("--session <id>", "the session whose folder fills branch, pr, cwd, project and session")
+        .option("--var <name=value>", "a variable's value; repeat for each", collect, [])
+        .option("--json", "machine-readable output")
+        .action(async (name: string, opts: { session?: string; var: string[]; json?: boolean }) => {
+            await promptVerb({
+                json: opts.json,
+                run: () => preparePrompt({ name, session: opts.session, vars: parseVars(opts.var) }),
+                human: (result) => {
+                    for (const variable of result.variables) {
+                        out.println(
+                            `${variable.name} = ${variable.value ?? pc.red("(missing)")}  ${pc.dim(variable.source)}`
+                        );
+                    }
+
+                    out.println(result.text);
+                },
             });
         });
 

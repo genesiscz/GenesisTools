@@ -34,6 +34,7 @@ export const GATEWAY_ROWS = {
     stuck: ENDPOINTS.gatewayStuck,
     forecast: ENDPOINTS.gatewayForecast,
     prompts: ENDPOINTS.gatewayPrompts,
+    promptPrepare: ENDPOINTS.gatewayPromptPrepare,
     widgetSnapshot: ENDPOINTS.gatewayWidgetSnapshot,
 } as const satisfies Record<HubCapabilityName, Endpoint>;
 
