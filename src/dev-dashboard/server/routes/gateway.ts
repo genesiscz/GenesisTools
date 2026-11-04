@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AgentVoiceReceiptDto } from "@app/dev-dashboard/contract/agents";
 import {
     ENDPOINTS,
     type Endpoint,
@@ -16,6 +17,8 @@ import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
 import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
+import { transcribeVoiceClip, VoiceClipError, type VoiceDeps } from "@app/hub/lib/voice/index";
+import { muteWatch, WATCH_SOURCE_IDS, WATCH_SOURCES } from "@app/hub/lib/watching/index";
 import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -29,6 +32,7 @@ export const GATEWAY_ROWS = {
     board: ENDPOINTS.gatewayBoard,
     gates: ENDPOINTS.gatewayGates,
     launch: ENDPOINTS.gatewayLaunch,
+    watching: ENDPOINTS.gatewayWatching,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
     stuck: ENDPOINTS.gatewayStuck,
@@ -67,10 +71,14 @@ export interface GatewayDeps {
     stop?: BoardStopDeps;
     /** The send and interrupt routes' fleet and transports; tests pass fakes, so no session is reached. */
     send?: BoardSendDeps;
+    /** The voice route's clip folder and transcriber; tests pass fakes, so no model is called. */
+    voice?: VoiceDeps;
     /** The raise route's ledger and window openers; tests pass fakes, so no window opens. */
     gates?: GateRaiseDeps;
     /** The new-agent route's runner; tests pass a fake, so no workspace opens. */
     launch?: StartAgentDeps;
+    /** The mute route's sources; tests pass fakes, so no Monitor database is written. */
+    watchSources?: typeof WATCH_SOURCES;
 }
 
 /**
@@ -130,6 +138,26 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             run: (input, ctx: RouteContext) =>
                 sendToBoardSession({ ...input, idempotencyKey: ctx.headers[IDEMPOTENCY_HEADER] }, deps.send),
         }),
+        // A keyed write: the clip is named by its content, so a replay keeps one file and answers the first text.
+        bindEndpoint(ENDPOINTS.agentsVoice, {
+            input: z.object({}),
+            invalid: "expected a raw body",
+            body: "raw",
+            run: async (_input, ctx): Promise<AgentVoiceReceiptDto | RouteResult> => {
+                try {
+                    return await transcribeVoiceClip(
+                        { bytes: await ctx.readRawBody(), contentType: ctx.headers["content-type"] ?? "" },
+                        deps.voice
+                    );
+                } catch (err) {
+                    if (err instanceof VoiceClipError) {
+                        return { kind: "json", status: err.status, body: { error: err.message } };
+                    }
+
+                    throw err;
+                }
+            },
+        }),
         bindEndpoint(ENDPOINTS.agentsInterrupt, {
             input: z.object({ key: z.string().min(1) }),
             invalid: "expected { key }",
@@ -156,6 +184,19 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             }),
             invalid: "expected { agent, repo, account, prompt?, name?, model? }",
             run: (input) => startAgent(input, deps.launch),
+        }),
+        bindEndpoint(ENDPOINTS.watchingMute, {
+            input: z.object({
+                source: z.enum(WATCH_SOURCE_IDS),
+                id: z.string().min(1),
+                minutes: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(7 * 24 * 60),
+            }),
+            invalid: "expected { source, id, minutes }",
+            run: (input) => muteWatch(input, deps.watchSources ?? WATCH_SOURCES),
         }),
         bindEndpoint(ENDPOINTS.gatewayUpload, {
             input: z.object({}),

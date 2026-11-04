@@ -326,6 +326,41 @@ describe("the act scope", () => {
         }
     });
 
+    it("keeps a walkie-talkie clip by content, transcribes it once per key, and refuses a non-audio body", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-voice-"));
+        const heard: string[] = [];
+        const routes = gatewayRoutes({
+            voice: {
+                dir: () => dir,
+                transcribe: async (path) => {
+                    heard.push(path);
+                    return { text: "run the tests", provider: "fake", model: "fake-1" };
+                },
+            },
+        });
+        const voice = route(routes, "POST", "/api/agents/voice");
+        const clip = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]);
+        const call = (contentType: string, key: string) =>
+            json(
+                voice.handler(
+                    ctx({
+                        method: "POST",
+                        pathname: "/api/agents/voice",
+                        headers: { "content-type": contentType, "idempotency-key": key },
+                        raw: clip,
+                    })
+                )
+            );
+
+        const first = await call("audio/m4a", "v1");
+        expect(first.status).toBe(200);
+        expect(first.body).toMatchObject({ text: "run the tests", bytes: clip.byteLength, provider: "fake" });
+        expect(await call("audio/m4a", "v1")).toEqual(first);
+        expect(heard).toHaveLength(1);
+        expect(existsSync(heard[0] ?? "")).toBe(true);
+        expect((await call("image/png", "v2")).status).toBe(415);
+    });
+
     it("raises a waiting gate behind the full login, once per Idempotency-Key, and never answers it", async () => {
         const opened: string[] = [];
         const activated: number[] = [];

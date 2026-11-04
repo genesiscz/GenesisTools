@@ -6,11 +6,13 @@ import type {
     AgentStopInput,
     AgentStopReceiptDto,
     AgentsBoardDto,
+    AgentVoiceReceiptDto,
     PreparedPromptDto,
 } from "@app/dev-dashboard/contract/agents";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
+import type { WatchingDto, WatchMuteInput, WatchMuteReceiptDto } from "@app/dev-dashboard/contract/watching";
 
 /**
  * The endpoint table: one row per non-board endpoint the phone and the web reach. The server binds a row
@@ -339,6 +341,8 @@ export const ENDPOINTS = {
      * durable queue's idempotency key, so a replayed send (an offline draft sent twice) is one delivery.
      */
     agentsSend: row<AgentSendInput, AgentSendReceiptDto>("POST", "/api/agents/send", "keyed-write", "slow"),
+    /** A walkie-talkie clip as the raw body, kept and transcribed on the Mac (F12); nothing is sent to a session. */
+    agentsVoice: row<Record<string, never>, AgentVoiceReceiptDto>("POST", "/api/agents/voice", "keyed-write", "slow"),
     /** Ends a live session's running turn with its TUI's Esc key (F19); refused while a dialog is open. */
     agentsInterrupt: row<AgentInterruptInput, AgentInterruptReceiptDto>("POST", "/api/agents/interrupt", "keyed-write"),
     /** What waits on the Mac's Touch ID (F22): vault and AI account windows, rm requests, and the latest decisions. */
@@ -349,6 +353,10 @@ export const ENDPOINTS = {
     gatewayLaunch: row<GatewayInput, LaunchOptionsDto>("GET", "/api/gateway/launch", "read"),
     /** Starts an agent in a background cmux workspace (`tools cmux agents new`, F21). */
     agentsNew: row<AgentNewInput, AgentNewReceiptDto>("POST", "/api/agents/new", "keyed-write", "slow"),
+    /** Every watch on the Mac in one list (F30): Monitor, domains, shops, TradingView. */
+    gatewayWatching: row<GatewayInput, WatchingDto>("GET", "/api/gateway/watching", "read", "slow"),
+    /** Silences one watch for a while (Monitor watchers; the other sources answer that they have no mute). */
+    watchingMute: row<WatchMuteInput, WatchMuteReceiptDto>("POST", "/api/watching/mute", "keyed-write"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;
