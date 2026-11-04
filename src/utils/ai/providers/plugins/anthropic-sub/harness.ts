@@ -57,6 +57,8 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             toolUseEnvKey: null,
             labelEnvKey: "AI_AGENT",
             effortEnvKey: "CLAUDE_EFFORT",
+            // A Claude subagent runs under its parent's CLAUDE_CODE_SESSION_ID.
+            sessionIsExecutingThread: false,
             detects: isClaude,
             resolve: resolveClaudeContext,
         },

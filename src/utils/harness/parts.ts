@@ -190,6 +190,12 @@ export interface HostResolver {
     readonly labelEnvKey: string | null;
     /** The variable that names the reasoning effort the session runs at (Claude's `CLAUDE_EFFORT`), or null. */
     readonly effortEnvKey: string | null;
+    /**
+     * Whether the session variable names the thread that runs THIS shell, a native subagent's own thread included
+     * (Codex sets `CODEX_THREAD_ID` per executing thread), rather than the root session every child inherits. A bus
+     * identity owned by one such thread refuses a shell of another (`src/agents/lib/thread-owner.ts`).
+     */
+    readonly sessionIsExecutingThread: boolean;
     detects(env: NodeJS.ProcessEnv): boolean;
     resolve(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext>;
 }

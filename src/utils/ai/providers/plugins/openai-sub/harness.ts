@@ -52,6 +52,8 @@ export const codexHarness: HarnessDriver<"codex"> = {
             // Codex sets no label of its own; an AI_AGENT in its env is inherited from an outer host.
             labelEnvKey: null,
             effortEnvKey: null,
+            // Every shell gets the id of the thread that runs it, a native subagent's own thread included.
+            sessionIsExecutingThread: true,
             detects: isCodex,
             resolve: resolveCodexContext,
         },
