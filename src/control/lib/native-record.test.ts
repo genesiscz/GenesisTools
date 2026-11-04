@@ -123,6 +123,135 @@ describe("nativeCaptureArgv", () => {
         );
         expect(() => validateCaptureOptions({ mode: "screen", duration: 1, maxFrames: 0 })).toThrow(/maxFrames/);
     });
+
+    it("records a display by id or follows focus, and passes the frame tuning flags", () => {
+        expect(
+            nativeCaptureArgv(
+                {
+                    mode: "screen",
+                    displayId: 4,
+                    screenIndex: 1,
+                    duration: 30,
+                    maxLongSide: 1280,
+                    quietMs: 3000,
+                    heartbeatSec: 10,
+                    maxMb: 200,
+                },
+                "/o"
+            )
+        ).toEqual([
+            "capture",
+            "--mode",
+            "screen",
+            "--duration",
+            "30",
+            "--out",
+            "/o",
+            "--display-id",
+            "4",
+            "--max-long-side",
+            "1280",
+            "--quiet-ms",
+            "3000",
+            "--heartbeat-sec",
+            "10",
+            "--max-mb",
+            "200",
+        ]);
+        expect(nativeCaptureArgv({ mode: "screen", followFocus: true, duration: 5 }, "/o")).toEqual([
+            "capture",
+            "--mode",
+            "screen",
+            "--duration",
+            "5",
+            "--out",
+            "/o",
+            "--follow-focus",
+        ]);
+        expect(nativeCaptureArgv({ mode: "screen", followFocus: false, screenIndex: 0, duration: 5 }, "/o")).toContain(
+            "--screen-index"
+        );
+    });
+
+    it("passes audio sources, the microphone and the sidecar flag", () => {
+        expect(
+            nativeCaptureArgv(
+                {
+                    mode: "screen",
+                    duration: 5,
+                    videoOut: "/v.mp4",
+                    audio: ["system", "mic"],
+                    micDevice: "BuiltInMicrophoneDevice",
+                    audioSidecar: true,
+                },
+                "/o"
+            ).slice(-7)
+        ).toEqual([
+            "--video-out",
+            "/v.mp4",
+            "--audio",
+            "system,mic",
+            "--mic-device",
+            "BuiltInMicrophoneDevice",
+            "--audio-sidecar",
+        ]);
+        const screen = { mode: "screen", duration: 1 } as const;
+        expect(() => validateCaptureOptions({ ...screen, audio: ["system"] })).toThrow(/videoOut/);
+        expect(() => validateCaptureOptions({ ...screen, audio: [], audioSidecar: true })).toThrow(/audio/);
+        expect(() => validateCaptureOptions({ ...screen, audio: ["mic", "mic"], audioSidecar: true })).toThrow(/once/);
+        expect(() =>
+            validateCaptureOptions({
+                ...screen,
+                audio: ["system"],
+                audioSidecar: true,
+                micDevice: "BuiltInMicrophoneDevice",
+            })
+        ).toThrow(/micDevice/);
+        expect(() =>
+            validateCaptureOptions({
+                mode: "isolated",
+                windowIds: [12],
+                duration: 1,
+                audio: ["system"],
+                audioSidecar: true,
+            })
+        ).toThrow(/region mode/);
+        expect(() => validateCaptureOptions({ ...screen, micDevice: "x" })).toThrow(/need audio/);
+        expect(() =>
+            validateCaptureOptions({ ...screen, backend: "peekaboo", audio: ["system"], videoOut: "/v.mp4" })
+        ).toThrow(/backend native/);
+        expect(() => validateCaptureOptions({ ...screen, audio: ["mic"], audioSidecar: true })).not.toThrow();
+        const invalid = { ...screen, audio: ["mic" as const], audioSidecar: true };
+        Object.assign(invalid, { audioSidecar: "false" });
+        expect(() => validateCaptureOptions(invalid)).toThrow(/audioSidecar must be a boolean/);
+    });
+
+    it("rejects the native screen options where they do not apply", () => {
+        const screen = { mode: "screen", duration: 1 } as const;
+        expect(() => validateCaptureOptions({ ...screen, displayId: 0 })).toThrow(/displayId/);
+        expect(() => validateCaptureOptions({ ...screen, displayId: 1.5 })).toThrow(/displayId/);
+        expect(() => validateCaptureOptions({ ...screen, displayId: 1, followFocus: true })).toThrow(/one/);
+        expect(() => validateCaptureOptions({ mode: "window", app: "Genesis", duration: 1, displayId: 1 })).toThrow(
+            /mode screen/
+        );
+        expect(() =>
+            validateCaptureOptions({ mode: "region", region: "0,0,10,10", duration: 1, followFocus: true })
+        ).toThrow(/mode screen/);
+        expect(() => validateCaptureOptions({ ...screen, maxLongSide: 8 })).toThrow(/maxLongSide/);
+        expect(() => validateCaptureOptions({ ...screen, maxLongSide: 100.5 })).toThrow(/integer/);
+        expect(() =>
+            validateCaptureOptions({ mode: "isolated", windowIds: [12], duration: 1, maxLongSide: 640 })
+        ).toThrow(/isolated/);
+        expect(() => validateCaptureOptions({ ...screen, quietMs: -1 })).toThrow(/quietMs/);
+        expect(() => validateCaptureOptions({ ...screen, heartbeatSec: 3601 })).toThrow(/heartbeatSec/);
+        expect(() => validateCaptureOptions({ ...screen, maxMb: 0 })).toThrow(/maxMb/);
+        expect(() => validateCaptureOptions({ ...screen, backend: "peekaboo", followFocus: true })).toThrow(
+            /backend native/
+        );
+        expect(() =>
+            validateCaptureOptions({ ...screen, displayId: 4, maxLongSide: 1280, heartbeatSec: 0, maxMb: 0.5 })
+        ).not.toThrow();
+    });
 });
 
 describe("parseScreenList", () => {

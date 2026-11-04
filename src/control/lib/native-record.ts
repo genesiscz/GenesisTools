@@ -8,6 +8,22 @@ import type { CaptureSpec } from "./capture-plan";
 export const CAPTURE_CANVAS_VALUES = ["crop", "display"] as const;
 export const CAPTURE_CODEC_VALUES = ["h264", "prores4444"] as const;
 
+/** Options only the native recorder (`ax-tool capture`) has; they are fields of `CaptureSpec`. */
+export type NativeCaptureOptions = Pick<
+    CaptureSpec,
+    | "displayId"
+    | "followFocus"
+    | "maxLongSide"
+    | "quietMs"
+    | "heartbeatSec"
+    | "maxMb"
+    | "audio"
+    | "micDevice"
+    | "audioSidecar"
+>;
+
+export const CAPTURE_AUDIO_SOURCES = ["system", "mic"] as const;
+
 /**
  * argv for `ax-tool capture`, the ScreenCaptureKit recorder. The runner prepends the binary
  * path. Duration is seconds, as the plan declares it; Peekaboo 4 wants a suffix for that.
@@ -17,7 +33,11 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
 
     validateCaptureOptions(cap);
 
-    if ((cap.mode === "screen" || cap.mode === "isolated") && cap.screenIndex !== undefined) {
+    if (cap.mode === "screen" && cap.displayId !== undefined) {
+        argv.push("--display-id", String(cap.displayId));
+    } else if (cap.mode === "screen" && cap.followFocus) {
+        argv.push("--follow-focus");
+    } else if ((cap.mode === "screen" || cap.mode === "isolated") && cap.screenIndex !== undefined) {
         argv.push("--screen-index", String(cap.screenIndex));
     }
 
@@ -106,6 +126,30 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         argv.push("--exclude-window-ids", cap.excludeWindowIds.join(","));
     }
 
+    const tuning: [string, number | undefined][] = [
+        ["--max-long-side", cap.maxLongSide],
+        ["--quiet-ms", cap.quietMs],
+        ["--heartbeat-sec", cap.heartbeatSec],
+        ["--max-mb", cap.maxMb],
+    ];
+    for (const [flag, value] of tuning) {
+        if (value !== undefined) {
+            argv.push(flag, String(value));
+        }
+    }
+
+    if (cap.audio?.length) {
+        argv.push("--audio", cap.audio.join(","));
+
+        if (cap.micDevice) {
+            argv.push("--mic-device", cap.micDevice);
+        }
+
+        if (cap.audioSidecar) {
+            argv.push("--audio-sidecar");
+        }
+    }
+
     return argv;
 }
 
@@ -121,6 +165,10 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         ["idleFps", cap.idleFps, 0.1, 5],
         ["threshold", cap.threshold, 0, 100],
         ["maxFrames", cap.maxFrames, 1, 5000],
+        ["maxLongSide", cap.maxLongSide, 16, 16384],
+        ["quietMs", cap.quietMs, 0, 3_600_000],
+        ["heartbeatSec", cap.heartbeatSec, 0, 3600],
+        ["maxMb", cap.maxMb, 0.01, 1_000_000],
     ];
     for (const [name, value, min, max] of numbers) {
         if (value !== undefined && (!Number.isFinite(value) || value < min || value > max)) {
@@ -130,6 +178,71 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
 
     if (cap.screenIndex !== undefined && (!Number.isInteger(cap.screenIndex) || cap.screenIndex < 0)) {
         throw new Error("screenIndex must be a non-negative integer from preflight");
+    }
+
+    if (
+        cap.displayId !== undefined &&
+        (!Number.isInteger(cap.displayId) || cap.displayId <= 0 || cap.displayId > 0xffffffff)
+    ) {
+        throw new Error("displayId must be a positive CGDirectDisplayID from `ax-tool screens`");
+    }
+
+    if (cap.followFocus !== undefined && typeof cap.followFocus !== "boolean") {
+        throw new Error("followFocus must be a boolean");
+    }
+
+    if ((cap.displayId !== undefined || cap.followFocus) && cap.mode !== "screen") {
+        throw new Error("displayId and followFocus require mode screen");
+    }
+
+    if (cap.displayId !== undefined && cap.followFocus) {
+        throw new Error("displayId and followFocus name different targets; pass one");
+    }
+
+    for (const [name, value] of [
+        ["maxLongSide", cap.maxLongSide],
+        ["quietMs", cap.quietMs],
+    ] as const) {
+        if (value !== undefined && !Number.isInteger(value)) {
+            throw new Error(`${name} must be an integer`);
+        }
+    }
+
+    if (
+        cap.audio !== undefined &&
+        (!Array.isArray(cap.audio) ||
+            !cap.audio.length ||
+            cap.audio.some((source) => !CAPTURE_AUDIO_SOURCES.includes(source)) ||
+            new Set(cap.audio).size !== cap.audio.length)
+    ) {
+        throw new Error('audio must list "system" and/or "mic" once each');
+    }
+
+    if (cap.audio?.length && cap.mode === "isolated") {
+        throw new Error("audio applies to screen, window and region mode");
+    }
+
+    if (cap.audioSidecar !== undefined && typeof cap.audioSidecar !== "boolean") {
+        throw new Error("audioSidecar must be a boolean");
+    }
+
+    if (cap.audio?.length && !cap.videoOut && !cap.audioSidecar) {
+        throw new Error("audio needs videoOut (tracks in the movie) or audioSidecar (.m4a files)");
+    }
+
+    if ((cap.micDevice !== undefined || cap.audioSidecar !== undefined) && !cap.audio?.length) {
+        throw new Error("micDevice and audioSidecar need audio");
+    }
+
+    if (
+        cap.micDevice !== undefined &&
+        (typeof cap.micDevice !== "string" || !cap.micDevice || !cap.audio?.includes("mic"))
+    ) {
+        throw new Error('micDevice needs a device UID string and audio "mic"');
+    }
+
+    if (cap.maxLongSide !== undefined && cap.mode === "isolated") {
+        throw new Error("maxLongSide applies to screen, window and region mode; isolated mode takes outputSize");
     }
 
     const extended = [
@@ -143,10 +256,19 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.indicator,
         cap.maxFrames,
         cap.excludeWindowIds,
+        cap.displayId,
+        cap.followFocus,
+        cap.maxLongSide,
+        cap.quietMs,
+        cap.heartbeatSec,
+        cap.maxMb,
+        cap.audio,
+        cap.micDevice,
+        cap.audioSidecar,
     ];
     if (cap.backend === "peekaboo" && (cap.mode === "isolated" || extended.some((value) => value !== undefined))) {
         throw new Error(
-            "Isolated selection, output geometry, codec, transparency and indicator options require backend native"
+            "Isolated selection, output geometry, codec, transparency, indicator, displayId, followFocus, frame tuning and audio options require backend native"
         );
     }
 
