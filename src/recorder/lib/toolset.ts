@@ -117,8 +117,8 @@ const movieMethods = [
         params: z.object({}),
         result: z.unknown(),
         resultName:
-            '{ ok, issues: { severity: "fix" | "check", item, message, fix?, at?, target?, action?: { label, ops } }[] }',
-        doc: 'What to look at before export(): items whose whole time is cut (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); ok is true when there is no "fix" issue. It changes nothing.',
+            '{ ok, clean, issues: { severity: "fix" | "check", item, message, fix?, at?, target?, action?: { label, ops } }[] }',
+        doc: 'What to look at before export(): items whose whole time is cut (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); ok is true when there is no "fix" issue (the export works), clean when there is no issue at all. It changes nothing.',
         effect: "read",
     }),
     defineMethod({
@@ -739,7 +739,8 @@ export class Movie {
         const { project } = await openProject(this.recording);
         const issues = checkProject(project, facts(project));
         log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
-        return { ok: !issues.some((issue) => issue.severity === "fix"), issues };
+        // ok: nothing that breaks the export; clean: nothing to look at either.
+        return { ok: !issues.some((issue) => issue.severity === "fix"), clean: issues.length === 0, issues };
     }
 
     async fix() {
