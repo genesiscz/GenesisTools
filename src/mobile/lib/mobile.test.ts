@@ -5,6 +5,7 @@ import { compareFingerprints } from "./fingerprint";
 import { stamp } from "./paths";
 import { chooseDevice, choosePlatform, PLATFORMS } from "./platforms";
 import { mergeAndroidDevices } from "./platforms/android";
+import { clockBuildNumber, releasePlan } from "./release";
 import { resolveRoute, selectRoutes } from "./routes";
 import { chooseDeviceType, chooseRuntime, fitsWidth, simulatorNameFor } from "./simulator-fit";
 
@@ -178,5 +179,72 @@ describe("platforms", () => {
         expect(() => chooseDevice([device("a", "booted"), device("b", "booted")])).toThrow("2 devices are booted");
         expect(() => chooseDevice([device("b", "shutdown")], "b")).toThrow("boot it first");
         expect(() => chooseDevice([])).toThrow("no device is booted");
+    });
+});
+
+describe("release plan", () => {
+    const project: MobileProject = {
+        configPath: "/p/mobile.config.ts",
+        appDir: "/p",
+        config: {
+            id: "shop",
+            platforms: {
+                ios: {
+                    bundleId: "com.example.shop",
+                    build: {
+                        workspace: "ios/Shop.xcworkspace",
+                        scheme: "Shop",
+                        configuration: "Release",
+                        productName: "Shop",
+                    },
+                    release: {
+                        pods: false,
+                        prepare: ({ buildNumber }) => [
+                            {
+                                title: "native project",
+                                command: ["bunx", "expo", "prebuild"],
+                                env: { BUILD_NUMBER: buildNumber },
+                            },
+                        ],
+                    },
+                },
+            },
+        },
+    };
+
+    it("runs the project's preparation with the build number, then archives and uploads", () => {
+        const plan = releasePlan({ project, buildNumber: "202611042105", outDir: "/out", exportOnly: false });
+
+        expect(plan.steps.map((step) => step.title)).toEqual([
+            "native project",
+            "signed device archive",
+            "export and upload to App Store Connect (TestFlight)",
+        ]);
+        expect(plan.steps[0]).toEqual({
+            title: "native project",
+            command: ["bunx", "expo", "prebuild"],
+            cwd: "/p",
+            env: { BUILD_NUMBER: "202611042105" },
+        });
+        expect(plan.steps[1].command).toContain("DEVELOPMENT_TEAM=<TEAM_ID>");
+        expect(plan.archivePath).toBe("/out/Shop.xcarchive");
+        expect(plan.missing).toHaveLength(4);
+        expect(plan.exportOptions).toContain("<string>upload</string>");
+    });
+
+    it("needs nothing more once the team and the API key are given, and an export-only plan does not upload", () => {
+        const plan = releasePlan({
+            project,
+            team: "TEAM1",
+            apiKey: { path: "/k/AuthKey_A.p8", id: "A", issuer: "issuer" },
+            buildNumber: "1",
+            outDir: "/out",
+            exportOnly: true,
+        });
+
+        expect(plan.missing).toEqual([]);
+        expect(plan.steps.at(-1)?.command).toContain("-authenticationKeyIssuerID");
+        expect(plan.exportOptions).toContain("<string>export</string>");
+        expect(clockBuildNumber(new Date("2026-11-04T21:05:33Z"))).toBe("202611042105");
     });
 });

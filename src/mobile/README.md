@@ -169,3 +169,26 @@ so a command never drives another session's. Android:
 
 `build`, `up`, `open`, `capture`, `tour`, `alerts`, `logbox` and `first-run` are iOS only for now: they rest on
 xcodebuild, the XCUITest tree and WebDriverAgent.
+
+## release
+
+```bash
+tools mobile release --dry-run
+tools mobile release --team <id> --api-key AuthKey_X.p8 --api-key-id <id> --api-issuer <id> [--export-only]
+```
+
+From source to TestFlight: the project's own preparation, then `pod install` (when `ios/Podfile` exists, or as
+`release.pods` says), a signed device archive (`xcodebuild archive`, automatic signing, the project's
+`buildSettings`), and an export that uploads to App Store Connect (`--export-only` keeps the `.ipa`). The build number
+is the UTC clock to the minute unless `--build-number` names one; it reaches the build through the preparation:
+
+```ts
+release: {
+    prepare: ({ buildNumber }) => [
+        { title: "native project", command: ["bunx", "expo", "prebuild", "--platform", "ios", "--no-install"], env: { BUILD_NUMBER: buildNumber } },
+    ],
+},
+```
+
+`--dry-run` prints every step and what is still missing, and builds nothing. Each step logs to
+`~/.genesis-tools/mobile/releases/<id>/<time>/<NN>-<program>.log`.

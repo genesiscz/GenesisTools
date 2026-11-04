@@ -8,6 +8,7 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 import { registerAppCommands } from "./commands/app";
 import { registerDevices } from "./commands/devices";
+import { registerRelease } from "./commands/release";
 import { registerScreens } from "./commands/screens";
 import { registerServices } from "./commands/services";
 import { registerUp } from "./commands/up";
@@ -153,5 +154,6 @@ registerScreens(program);
 registerAppCommands(program);
 registerServices(program);
 registerDevices(program);
+registerRelease(program);
 
 await runTool(program, { tool: "mobile" });

@@ -84,6 +84,27 @@ export interface IosAppConfig {
     defaultWidth?: number;
     /** What a fresh install needs before it runs unattended (`first-run`, `up`). */
     firstRun?: FirstRunSetup;
+    /** How `release` turns the source into a signed device archive for App Store Connect. */
+    release?: IosReleaseSetup;
+}
+
+export interface IosReleaseSetup {
+    /**
+     * The steps before the archive, given the build number: a fresh native project (`expo prebuild`) with the
+     * production push environment and the build number, for example. A project whose native project is checked in
+     * names none.
+     */
+    prepare?: (context: { buildNumber: string }) => ReleaseCommand[];
+    /** Run `pod install` in `ios/` before the archive; default: when `ios/Podfile` exists. */
+    pods?: boolean;
+}
+
+export interface ReleaseCommand {
+    title: string;
+    command: string[];
+    /** Relative to the app folder; default the app folder. */
+    cwd?: string;
+    env?: Record<string, string>;
 }
 
 export interface FirstRunSetup {
@@ -139,6 +160,12 @@ const iosSchema = z.object({
             idbApprove: z.array(z.string()).optional(),
             scheme: z.string().optional(),
             defaults: z.array(z.object({ key: z.string(), value: z.array(z.string()) })).optional(),
+        })
+        .optional(),
+    release: z
+        .object({
+            prepare: fn<(context: { buildNumber: string }) => ReleaseCommand[]>("release.prepare").optional(),
+            pods: z.boolean().optional(),
         })
         .optional(),
 });
