@@ -27,6 +27,7 @@ const FILES = [
     "timesheet.ts",
     "vault.ts",
     "memos.ts",
+    "snap.ts",
     "approvals.ts",
     "glance.ts",
     "ping.ts",

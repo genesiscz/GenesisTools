@@ -21,6 +21,7 @@ import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
 import { actOnMemo } from "@app/hub/lib/memos/index";
 import { addPing, removePing } from "@app/hub/lib/ping/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
+import { snapToSession } from "@app/hub/lib/snap/index";
 import { fillTimesheetWeek, type TimesheetDeps } from "@app/hub/lib/timesheet/index";
 import { fixPr, type MergeRunner, mergePr } from "@app/hub/lib/triage/index";
 import { appendToVault, clipToVault } from "@app/hub/lib/vault/index";
@@ -278,6 +279,18 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             }),
             invalid: "expected { id, action, sessionKey? }",
             run: (input) => actOnMemo(input),
+        }),
+        // A keyed write: a replayed snap stages the photo once (F24).
+        bindEndpoint(ENDPOINTS.snap, {
+            input: z.object({
+                path: z.string().min(1),
+                provider: z.string().min(1),
+                sessionId: z.string().min(1),
+                sourceHome: z.string().optional(),
+                name: z.string().max(200).optional(),
+            }),
+            invalid: "expected { path, provider, sessionId, sourceHome?, name? }",
+            run: (input) => snapToSession(input),
         }),
         // Vault writes (F25): keyed, so a replayed clip or append writes once.
         bindEndpoint(ENDPOINTS.vaultClip, {
