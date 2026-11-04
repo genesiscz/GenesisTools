@@ -6,12 +6,13 @@ import SwiftUI
 /// The CLI (`tools recorder copy|reveal|rename|trash`) and the REPL (`movie.copy()`, `reveal()`, `rename()`,
 /// `trash()`) do the same through src/recorder/lib/quick-actions.ts; a GIF is made there.
 enum RecordingAction: String, CaseIterable, Identifiable {
-    case open, copyMovie, copyGIF, reveal, rename, openMeeting, trash
+    case open, firstComment, copyMovie, copyGIF, reveal, rename, openMeeting, trash
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .open: "Open in Editor"
+        case .firstComment: "Open at First Comment"
         case .copyMovie: "Copy Movie"
         case .copyGIF: "Copy as GIF"
         case .reveal: "Show in Finder"
@@ -24,6 +25,7 @@ enum RecordingAction: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .open: "film"
+        case .firstComment: "text.bubble"
         case .copyMovie: "doc.on.doc"
         case .copyGIF: "photo.on.rectangle"
         case .reveal: "folder"
@@ -40,6 +42,7 @@ enum RecordingAction: String, CaseIterable, Identifiable {
             switch action {
             case .copyMovie, .copyGIF: item.hasMovie
             case .openMeeting: item.isMeeting
+            case .firstComment: item.openComments > 0
             case .trash: !item.isMeeting
             case .open, .reveal, .rename: true
             }
@@ -65,6 +68,8 @@ enum RecordingActions {
         switch action {
         case .open:
             RecorderMenu.open(item)
+        case .firstComment:
+            RecorderMenu.open(item, atSourceSeconds: item.firstOpenCommentUs.map { Double($0) / 1_000_000 })
         case .copyMovie:
             guard let movie = LibraryCard.shareableMovie(in: item.folder) else {
                 report(.failed("“\(item.title)” has no movie to copy."))

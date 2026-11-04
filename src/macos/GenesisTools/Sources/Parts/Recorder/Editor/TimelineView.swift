@@ -112,7 +112,7 @@ struct TimelineLayout: Equatable {
         let project = model.project
         lanes = model.effectLanes
         effectsHeight = EffectLaneMetrics.areaHeight(lanes, maxLanes: lanesShown)
-        marks = !model.markers.isEmpty
+        marks = !model.markers.isEmpty || !model.reviewComments.isEmpty
             || (project.captions?.show == true && !model.zoom.captionLines.isEmpty)
             || (project.keys?.show == true && !(model.cursor?.keys ?? []).isEmpty)
         // Until the waveform is read, keep the lane, so a movie with sound does not jump once it loads.
@@ -473,9 +473,16 @@ private struct MarksLaneView: View {
         .frame(height: TimelineView.marksLaneHeight)
         .contentShape(Rectangle())
         .onTapGesture { location in select(atX: location.x) }
-        .instantTooltip("Markers (purple flags), caption lines (blue) and shortcuts (white lines). Click a marker to go to it.")
-        .accessibilityElement()
-        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
+        .instantTooltip("Markers (purple flags), review comments (yellow), caption lines (blue) and shortcuts (white lines). Click a marker or a comment to go to it.")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(model.reviewComments.count, "comment")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
+        .overlay(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+                ForEach(model.reviewComments) { comment in
+                    CommentMarker(model: model, comment: comment, scale: scale)
+                }
+            }
+        }
     }
 
     /// A click on the lane: a marker within 6 pt puts the playhead on it; otherwise the playhead goes to the click.
@@ -568,6 +575,82 @@ private struct MusicLaneView: View {
                         : "Music: \(URL(fileURLWithPath: music.file).lastPathComponent)\(speech.isEmpty ? "" : ", quieter under \(Plural.count(speech.count, "spoken part"))")")
         .accessibilityElement()
         .accessibilityLabel(missing ? "Music file missing" : "Music, \(speech.count) dips under speech")
+    }
+}
+
+/// A review comment on the marks lane: a yellow bubble at its time (a bar along its range), dimmed once resolved. A
+/// click goes there and opens its popover: the words, who wrote them, the page they came from, Resolve and Delete.
+private struct CommentMarker: View {
+    @Bindable var model: EditorModel
+    let comment: ReviewComment
+    let scale: TimelineScale
+
+    static let color = Color(red: 1, green: 0.8, blue: 0.2)
+
+    var body: some View {
+        let out = TimelineMap.outputTime(ofSource: comment.atUs, in: model.project)
+        let end = comment.toUs.flatMap { TimelineMap.outputSpans(fromUs: comment.atUs, toUs: $0, in: model.project).last?.toUs }
+        let tint = Self.color.opacity(comment.isResolved ? 0.4 : 1)
+        if let out {
+            let presented = Binding(get: { model.openComment == comment.id }, set: { if !$0 { model.openComment = nil } })
+            HStack(spacing: 0) {
+                Image(systemName: comment.isResolved ? "checkmark.bubble.fill" : "text.bubble.fill")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(tint)
+                    .frame(width: 14, height: TimelineView.marksLaneHeight)
+                if let end, end > out {
+                    Capsule().fill(tint.opacity(0.55))
+                        .frame(width: max(2, scale.width(end - out) - 14), height: 4)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { model.goToComment(comment) }
+            .instantTooltip(comment.text.isEmpty ? "A comment" : comment.text)
+            .popover(isPresented: presented, arrowEdge: .bottom) {
+                CommentPopover(model: model, comment: comment)
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Comment at \(formatClock(out, tenths: true)): \(comment.text)\(comment.isResolved ? ", resolved" : "")")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.goToComment(comment) }
+            .offset(x: scale.x(out) - 7)
+        }
+    }
+}
+
+private struct CommentPopover: View {
+    let model: EditorModel
+    let comment: ReviewComment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: comment.text.isEmpty ? "(no words)" : comment.text)
+                .font(.system(size: 13))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                if let author = comment.author { Text(verbatim: author) }
+                Text(verbatim: editRange(model.project, fromUs: comment.atUs, toUs: comment.toUs ?? comment.atUs + 1).edit)
+                    .monospacedDigit()
+            }
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                if let link = comment.link, let url = URL(string: link) {
+                    Button("Open Its Page") { NSWorkspace.shared.open(url) }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip(link)
+                }
+                Spacer(minLength: 12)
+                Button(comment.isResolved ? "Reopen" : "Resolve") { model.resolveComment(comment.id, !comment.isResolved) }
+                    .buttonStyle(.genHoverPlain())
+                Button("Delete", role: .destructive) { model.deleteComment(comment.id) }
+                    .buttonStyle(.genHoverPlain())
+                    .foregroundStyle(.red)
+            }
+            .font(.system(size: 12, weight: .medium))
+        }
+        .padding(12)
+        .frame(width: 280, alignment: .leading)
     }
 }
 

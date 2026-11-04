@@ -219,8 +219,9 @@ final class RecorderTimelineTests: XCTestCase {
         request.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: image).perform([request])
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
-        for word in ["00:01.5", "00:04.0", "2.5 s", "Cut", "Speed", "Zoom", "Hide a Part", "Spotlight", "Text", "Export This Part"] {
-            XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
+        // OCR reads a small "s" as "S" at this size, so the words compare without case.
+        for word in ["00:01.5", "00:04.0", "2.5 s", "Cut", "Speed", "Zoom", "Hide a Part", "Spotlight", "Text", "Comment", "Export This Part"] {
+            XCTAssertTrue(text.lowercased().contains(word.lowercased()), "\(word) missing from: \(text)")
         }
     }
 }

@@ -487,6 +487,10 @@ struct LibraryCard: View {
                     LiveAgo(date: item.started, style: .brief)
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     if item.edited { Badge("Edited", tooltip: "This recording has an edit (edit.json)") }
+                    if item.openComments > 0 {
+                        Badge(Plural.count(item.openComments, "comment"),
+                              tooltip: "Review comments not resolved yet; right-click → Open at First Comment")
+                    }
                     if !item.hasMovie { Badge("Frames", tooltip: "Frames only: the editor makes a movie of them first") }
                 }
             }

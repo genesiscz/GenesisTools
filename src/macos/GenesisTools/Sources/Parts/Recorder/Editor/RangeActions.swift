@@ -9,10 +9,10 @@ struct TimelineRange: Equatable {
     var lengthUs: Int64 { toUs - fromUs }
 }
 
-/// What the popover over a dragged range can do with it. Each is the `range` op of `tools recorder apply` (or the
-/// export with `--from`/`--to`), so an agent does the same with one call.
+/// What the popover over a dragged range can do with it. Each is the `range` op of `tools recorder apply`, the export
+/// with `--from`/`--to`, or `tools recorder comment --to`, so an agent does the same with one call.
 enum RangeAction: String, CaseIterable, Identifiable {
-    case cut, speed, zoom, hide, spotlight, text, exportPart
+    case cut, speed, zoom, hide, spotlight, text, comment, exportPart
     var id: String { rawValue }
 
     var title: String {
@@ -23,6 +23,7 @@ enum RangeAction: String, CaseIterable, Identifiable {
         case .hide: "Hide a Part"
         case .spotlight: "Spotlight"
         case .text: "Text"
+        case .comment: "Comment"
         case .exportPart: "Export This Part"
         }
     }
@@ -35,6 +36,7 @@ enum RangeAction: String, CaseIterable, Identifiable {
         case .hide: "eye.slash"
         case .spotlight: "light.max"
         case .text: "textformat"
+        case .comment: "text.bubble"
         case .exportPart: "square.and.arrow.up"
         }
     }
@@ -47,6 +49,7 @@ enum RangeAction: String, CaseIterable, Identifiable {
         case .hide: "Blur a part of the picture"
         case .spotlight: "Dim everything around a part"
         case .text: "A title over it"
+        case .comment: "A review note, a marker on the timeline"
         case .exportPart: "Write only this part"
         }
     }
@@ -93,6 +96,8 @@ extension EditorModel {
             addEffect(.spotlight, fromOut: range.fromUs, toOut: range.toUs, lane: nil)
         case .text:
             addEffect(.text, fromOut: range.fromUs, toOut: range.toUs, lane: nil)
+        case .comment:
+            commentPrompt(range: range)
         case .exportPart:
             partInUs = range.fromUs
             partOutUs = range.toUs

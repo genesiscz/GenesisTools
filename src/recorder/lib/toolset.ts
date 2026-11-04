@@ -71,6 +71,7 @@ import {
 } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
+import { commentOn, commentsOf, resolveComment, uncomment } from "./review";
 import { findOnScreen, type ScreenHit } from "./screen-search";
 
 const { log } = logger.scoped("recorder-toolset");
@@ -684,6 +685,49 @@ const movieMethods = [
             toolCommand("recorder mark") +
             "), at source seconds, plays: where each is in the edit (null when cut).",
         effect: "read",
+    }),
+    defineMethod({
+        name: "comments",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ path, comments: { id, text, from, to?, plays, author?, link?, resolved, at }[] }",
+        doc: "The recording's review comments (comments.jsonl beside it) in time order: from/to in source seconds, plays where that moment plays in the edit now (null when cut). The editor shows each as a marker on the timeline; a click there jumps to it.",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "comment",
+        params: z
+            .object({
+                at: timeSchema,
+                to: timeSchema.optional(),
+                text: z.string().min(1).max(2000),
+                author: z.string().max(80).optional(),
+                link: z.string().url().optional(),
+                source: z.boolean().optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ path, comment }",
+        doc: 'A review comment at `at` (to: the end of a range) in OUTPUT seconds or "m:ss", what plays, as a reviewer of the export sees it; source: true takes times of the recording itself. link: the page it came from (a vitrinka board, a PR). The editor window shows it at once.',
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "resolveComment",
+        params: z.object({ id: z.string(), resolved: z.boolean().optional() }).strict(),
+        positional: ["id", "resolved"],
+        result: z.unknown(),
+        resultName: "{ path, comment }",
+        doc: "Marks a review comment done (resolved: false opens it again); the timeline shows a resolved one dimmed.",
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "uncomment",
+        params: z.object({ id: z.string() }).strict(),
+        positional: ["id"],
+        result: z.unknown(),
+        resultName: "{ path, removed }",
+        doc: "Removes a review comment (the file keeps the line that says so).",
+        effect: "reversible",
     }),
     defineMethod({
         name: "copy",
@@ -1598,6 +1642,29 @@ export class Movie {
         }
 
         return folder;
+    }
+
+    async comments() {
+        return commentsOf(this.recording);
+    }
+
+    async comment(options: {
+        at: z.infer<typeof timeSchema>;
+        to?: z.infer<typeof timeSchema>;
+        text: string;
+        author?: string;
+        link?: string;
+        source?: boolean;
+    }) {
+        return commentOn(this.recording, options);
+    }
+
+    async resolveComment(id: string, resolved = true) {
+        return resolveComment(this.recording, id, resolved);
+    }
+
+    async uncomment(id: string) {
+        return uncomment(this.recording, id);
     }
 
     async copy(options: { gif?: boolean } = {}) {

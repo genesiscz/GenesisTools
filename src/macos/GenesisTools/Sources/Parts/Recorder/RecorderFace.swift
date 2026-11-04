@@ -8,7 +8,7 @@ import SwiftUI
 //   running one and exits.
 // GenesisTools --recorder --export <edit.json | movie> [--out <file>] [--json]
 //   Renders an edit headlessly with the editor's own renderer, prints the result, exits.
-// GenesisTools --recorder --edit <path> --snapshot <png> [--width <pt>] [--height <pt>] [--at <seconds>] [--tab zoom|clip|hide|style|audio|export] [--select-zoom <n>|--select-clip <n>] [--part <from>-<to>] [--range <from>-<to>]
+// GenesisTools --recorder --edit <path> --snapshot <png> [--width <pt>] [--height <pt>] [--at <seconds>] [--tab zoom|clip|hide|style|audio|export] [--select-zoom <n>|--select-clip <n>] [--part <from>-<to>] [--range <from>-<to>] [--comment <n>]
 //   Draws the editor off screen into a PNG and exits (verification without a screen).
 
 private let recorderInstance = SingleInstance(
@@ -37,6 +37,8 @@ struct RecorderRequest {
     var part: (from: Double, to: Double)?
     /// `--range 1.5-4`: a range on the frames lane in output seconds, as a drag there selects it.
     var range: (from: Double, to: Double)?
+    /// `--comment 0`: the first review comment's popover open over the timeline.
+    var comment: Int?
     /// `--library`: the recordings library window (with `--snapshot`, a picture of it).
     var library = false
     /// `--filter <text>` with `--library --snapshot`: the search field's text, so a snapshot shows its hits.
@@ -77,6 +79,7 @@ struct RecorderRequest {
             case "--range":
                 let ends = (value() ?? "").split(separator: "-").compactMap { Double($0) }
                 if ends.count == 2 { request.range = (ends[0], ends[1]) }
+            case "--comment": request.comment = value().flatMap(Int.init)
             case "--library": request.library = true
             case "--filter": request.filter = value()
             case "--still": request.still = value().map(absolute)
@@ -399,6 +402,7 @@ enum EditorKeys {
             case ("z", false): model.addZoom()
             case ("t", false): model.addText()
             case ("a", false): model.addShape(.arrow)
+            case ("m", false): model.commentPrompt()
             case ("z", true): shift ? model.redo() : model.undo()
             case ("s", true): model.saveNow()
             case ("e", true): model.tab = .export; model.export()
@@ -638,6 +642,7 @@ private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
                 if let range = request.range {
                     model.timelineRange = TimelineRange(fromUs: Int64(range.from * 1_000_000), toUs: Int64(range.to * 1_000_000))
                 }
+                if let n = request.comment, model.reviewComments.indices.contains(n) { model.openComment = model.reviewComments[n].id }
                 let at = Int64(((request.atSeconds ?? 0) * 1_000_000).rounded())
                 // The filmstrip and the waveform load in the background; give them up to 8 s.
                 for _ in 0..<80 where model.filmstrip.tiles.isEmpty {

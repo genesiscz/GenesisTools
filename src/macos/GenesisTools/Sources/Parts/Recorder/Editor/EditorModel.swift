@@ -80,6 +80,11 @@ final class EditorModel {
     @ObservationIgnored private var undoStack: [EditProject] = []
     @ObservationIgnored private var redoStack: [EditProject] = []
     @ObservationIgnored let cursor: CursorTrack?
+    /// The review comments beside the recording (comments.jsonl), watched so an agent's comment shows at once.
+    @ObservationIgnored let commentsStore: ReviewCommentsStore
+    private(set) var reviewComments: [ReviewComment] = []
+    /// The comment whose popover is open over the marks lane.
+    var openComment: String?
 
     var selection: EditorSelection = .none
     /// The banners of the last edits written from outside the window (EditorChangeFeed.swift).
@@ -115,6 +120,8 @@ final class EditorModel {
         zoom = ZoomState(project: project, cursor: cursor)
         hasTranscript = zoom.hasCaptions
         markers = Self.readMarkers(video: project.source.video)
+        commentsStore = ReviewCommentsStore(video: project.source.video)
+        reviewComments = commentsStore.comments
         asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         player.actionAtItemEnd = .pause
         let interval = CMTime(value: 1, timescale: 30)
@@ -127,6 +134,8 @@ final class EditorModel {
         }
         store.onExternalChange = { [weak self] next in self?.adoptExternal(next) }
         store.watch()
+        commentsStore.onChange = { [weak self] comments in self?.reviewComments = comments }
+        commentsStore.watch()
         let video = URL(fileURLWithPath: project.source.video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
@@ -1663,6 +1672,7 @@ final class EditorModel {
         saveTask?.cancel()
         if edited { saveNow() }
         store.stopWatching()
+        commentsStore.stopWatching()
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil

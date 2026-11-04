@@ -21,6 +21,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         /// The screen recording of a meeting (`~/.genesis-tools/meetings/<id>/`): the folder is the meeting's, so the
         /// library never moves it to the Trash.
         var isMeeting = false
+        /// Review comments not yet resolved (comments.jsonl beside it), and where the first one is, in source µs.
+        var openComments = 0
+        var firstOpenCommentUs: Int64?
     }
 
     private var item: NSStatusItem?
@@ -190,10 +193,12 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             let hasMovie = manager.fileExists(atPath: movie.path)
             let firstFrame = ((root["frames"] as? [[String: Any]])?.first?["file"] as? String).map { dir.appendingPathComponent($0) }
             let video = (root["settings"] as? [String: Any])?["video"] as? [String: Any]
+            let open = ReviewComments.read(dir.appendingPathComponent("comments.jsonl")).filter { !$0.isResolved }
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
                                started: started, thumbnail: hasMovie ? movie : firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
-                               durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting))
+                               durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting,
+                               openComments: open.count, firstOpenCommentUs: open.first?.atUs))
         }
         return list.sorted { $0.started > $1.started }
     }

@@ -211,6 +211,36 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(RecordingAction.offered(for: meeting), [.open, .copyMovie, .copyGIF, .reveal, .rename, .openMeeting])
         let framesOnly = RecorderMenu.Recent(folder: folder, title: "Frames", started: .distantPast, thumbnail: nil, hasMovie: false)
         XCTAssertFalse(RecordingAction.offered(for: framesOnly).contains(.copyMovie), "nothing to copy before a proxy exists")
+        var commented = library
+        commented.openComments = 2
+        XCTAssertEqual(RecordingAction.offered(for: commented).prefix(2), [.open, .firstComment])
+    }
+
+    func testReviewCommentsReadTheCLIsLinesLastOneWinsAndARemovalHidesIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("comments-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Data("{}".utf8).write(to: folder.appendingPathComponent("recording.json"))
+        let url = ReviewComments.url(forVideo: folder.appendingPathComponent("screen.mp4").path)
+        XCTAssertEqual(url.lastPathComponent, "comments.jsonl")
+        XCTAssertEqual(ReviewComments.url(forVideo: "/movies/talk.mov").path, "/movies/talk.comments.jsonl")
+        // Lines as src/utils/recording-editor/comments.ts writes them, one that does not parse, then the window's own.
+        let cli = """
+        {"id":"m1","atUs":5000000,"text":"Too fast","author":"alice","at":"2026-11-04T10:00:00.000Z"}
+        {"id":"m2","atUs":1000000,"toUs":2000000,"text":"Cut this","at":"2026-11-04T10:00:01.000Z"}
+        not json
+        {"id":"m1","atUs":5000000,"text":"Too fast","author":"alice","resolved":true,"at":"2026-11-04T10:00:02.000Z"}
+
+        """
+        try Data(cli.utf8).write(to: url)
+        XCTAssertEqual(ReviewComments.read(url).map(\.id), ["m2", "m1"])
+        XCTAssertEqual(ReviewComments.read(url).last?.isResolved, true)
+        var removed = try XCTUnwrap(ReviewComments.read(url).first)
+        removed.deleted = true
+        try ReviewComments.append(removed, to: url)
+        XCTAssertEqual(ReviewComments.read(url).map(\.id), ["m1"])
+        let last = try XCTUnwrap(String(contentsOf: url, encoding: .utf8).split(separator: "\n").last)
+        XCTAssertTrue(last.contains("\"deleted\":true") && last.contains("\"toUs\":2000000"), String(last))
     }
 
     func testZoomsNeverOverlap() throws {

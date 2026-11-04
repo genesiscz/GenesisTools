@@ -42,6 +42,7 @@ import {
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
 import { type DisplayRange, makeProxy, PROXY_DISPLAY_POLICIES, type ProxyDisplay, type ProxyResult } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
+import { commentOn, commentsOf, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
 import { Movie } from "./lib/toolset";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
@@ -463,6 +464,86 @@ program
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
+        }
+    });
+
+const reviewFail = (error: unknown) => {
+    out.printlnErr(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+};
+
+program
+    .command("comment")
+    .description(
+        "Add a review comment at a time of the edit (OUTPUT seconds or m:ss, what plays); the editor shows it as a marker on the timeline"
+    )
+    .argument("<recording>", "a library id, `last`, `open` or a recording folder")
+    .argument("<at>", "where it is: seconds, m:ss or h:mm:ss of what plays")
+    .argument("<text>", "the comment")
+    .option("--to <time>", "the end of the commented range")
+    .option("--author <name>", "who wrote it")
+    .option("--link <url>", "the page it came from (a review board, a PR)")
+    .option("--source", "at and --to are times of the recording itself, not of the edit")
+    .action(
+        async (
+            value: string,
+            at: string,
+            text: string,
+            flags: { to?: string; author?: string; link?: string; source?: boolean }
+        ) => {
+            try {
+                out.result(
+                    await commentOn(value, {
+                        at: parseTime(at, "<at>"),
+                        to: flags.to === undefined ? undefined : parseTime(flags.to, "--to"),
+                        text,
+                        author: flags.author,
+                        link: flags.link,
+                        source: flags.source,
+                    })
+                );
+            } catch (error) {
+                reviewFail(error);
+            }
+        }
+    );
+
+program
+    .command("comments")
+    .description("A recording's review comments in time order, with where each plays in the edit")
+    .argument("<recording>", "a library id, `last`, `open` or a recording folder")
+    .action(async (value: string) => {
+        try {
+            out.result(await commentsOf(value));
+        } catch (error) {
+            reviewFail(error);
+        }
+    });
+
+program
+    .command("resolve")
+    .description("Mark a review comment done (--reopen opens it again)")
+    .argument("<recording>", "a library id, `last`, `open` or a recording folder")
+    .argument("<id>", "the comment's id (tools recorder comments lists them)")
+    .option("--reopen", "open it again")
+    .action(async (value: string, id: string, flags: { reopen?: boolean }) => {
+        try {
+            out.result(await resolveComment(value, id, !flags.reopen));
+        } catch (error) {
+            reviewFail(error);
+        }
+    });
+
+program
+    .command("uncomment")
+    .description("Remove a review comment")
+    .argument("<recording>", "a library id, `last`, `open` or a recording folder")
+    .argument("<id>", "the comment's id")
+    .action(async (value: string, id: string) => {
+        try {
+            out.result(await uncomment(value, id));
+        } catch (error) {
+            reviewFail(error);
         }
     });
 

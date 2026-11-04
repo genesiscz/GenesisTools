@@ -44,6 +44,7 @@ enum EditorMenu {
         EditorCommand(title: "Add Arrow at Playhead", key: "a", label: "A") { $0.addShape(.arrow) },
         EditorCommand(title: "Add Box at Playhead", key: "b", label: "B") { $0.addShape(.box) },
         EditorCommand(title: "Add Circle at Playhead", key: "c", label: "C") { $0.addShape(.circle) },
+        EditorCommand(title: "Add Comment at Playhead…", key: "m", label: "M") { $0.commentPrompt() },
         EditorCommand(title: "Set Part In", key: "i", label: "I") { $0.markIn() },
         EditorCommand(title: "Set Part Out", key: "o", label: "O") { $0.markOut() },
         EditorCommand(title: "Clear Part", key: "", label: "") { $0.clearPart() },

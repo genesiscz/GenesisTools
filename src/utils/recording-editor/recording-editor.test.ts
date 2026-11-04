@@ -6,6 +6,13 @@ import { join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { checkProject, fixOps } from "@genesiscz/utils/recording-editor/check";
+import {
+    addComment,
+    commentsPathFor,
+    readComments,
+    removeComment,
+    updateComment,
+} from "@genesiscz/utils/recording-editor/comments";
 import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
 import {
     annotateClicks,
@@ -439,6 +446,32 @@ describe("edit project (edit.json)", () => {
             "not spotlight"
         );
         expect(() => applyOp(project, { op: "range", from: 3, to: 2, action: "cut" })).toThrow("before it starts");
+    });
+
+    test("review comments: added, changed and removed as appended lines, read back in time order", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-comments-"));
+        writeFileSync(join(dir, "recording.json"), "{}");
+        const path = commentsPathFor(join(dir, "screen.mp4"));
+        expect(path).toBe(join(dir, "comments.jsonl"));
+        expect(commentsPathFor("/movies/talk.mov")).toBe("/movies/talk.comments.jsonl");
+
+        const late = addComment(path, { atUs: 5_000_000, text: "Too fast here", author: "alice" });
+        const early = addComment(path, {
+            atUs: 1_000_000,
+            toUs: 2_000_000,
+            text: "Cut this",
+            link: "https://example.com/b/1",
+        });
+        updateComment(path, late.id, { resolved: true });
+        removeComment(path, early.id);
+        writeFileSync(path, `${readFileSync(path, "utf8")}not json\n`);
+
+        expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(5);
+        expect(readComments(path).map((comment) => [comment.id, comment.atUs, comment.resolved])).toEqual([
+            [late.id, 5_000_000, true],
+        ]);
+        expect(() => updateComment(path, early.id, { text: "x" })).toThrow(`no comment ${early.id}`);
+        expect(() => addComment(path, { atUs: 3_000_000, toUs: 2_000_000, text: "x" })).toThrow("before it starts");
     });
 
     test("refuses a cut of everything and an overlapping zoom, naming why", () => {
