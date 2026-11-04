@@ -21,6 +21,7 @@ import {
     updateComment,
 } from "@genesiscz/utils/recording-editor/comments";
 import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
+import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
 import {
     annotateClicks,
     applyOp,
@@ -1136,13 +1137,15 @@ describe("camera bubble", () => {
     test("hidden ranges join, split on a show, and decide where the bubble draws", () => {
         let project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
         project = applyOp(project, { op: "cameraHide", from: 1, to: 3 });
+        const first = project.camera?.hidden[0]?.id;
         project = applyOp(project, { op: "cameraHide", from: 2, to: 5 });
-        expect(project.camera?.hidden).toEqual([{ startUs: 1_000_000, endUs: 5_000_000 }]);
+        expect(project.camera?.hidden).toEqual([{ id: first ?? "", startUs: 1_000_000, endUs: 5_000_000 }]);
         project = applyOp(project, { op: "cameraShow", from: 2, to: 3 });
-        expect(project.camera?.hidden).toEqual([
-            { startUs: 1_000_000, endUs: 2_000_000 },
+        expect(project.camera?.hidden).toMatchObject([
+            { id: first, startUs: 1_000_000, endUs: 2_000_000 },
             { startUs: 3_000_000, endUs: 5_000_000 },
         ]);
+        expect(project.camera?.hidden[1]?.id).not.toBe(first);
         const camera = project.camera;
 
         if (!camera) {
@@ -1153,6 +1156,38 @@ describe("camera bubble", () => {
         expect(bubbleShowsAt(camera, 2_500_000)).toBe(true);
         expect(bubbleShowsAt({ ...camera, show: false }, 2_500_000)).toBe(false);
         expect(() => applyOp(wholeProject(source), { op: "cameraHide", from: 1, to: 2 })).toThrow("needs a camera");
+    });
+
+    test("hidden parts are cameraHide items on an effect lane: their own lane, a lane op, retime", () => {
+        let project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
+        project = applyOp(project, { op: "cameraHide", from: 1, to: 2 });
+        const id = project.camera?.hidden[0]?.id ?? "";
+        expect(laneItems(project).find((item) => item.id === id)).toMatchObject({
+            kind: "cameraHide",
+            startUs: 1_000_000,
+        });
+        // No saved lane holds camera parts, so they get an automatic lane of their own after the zoom lane.
+        expect(resolveLanes(project).map((entry) => entry.lane.id)).toEqual(["zooms", "auto-cameraHide"]);
+        project = applyOp(project, { op: "addLane", kinds: ["cameraHide"], name: "Camera" });
+        const laneId = resolveLanes(project).find((entry) => entry.lane.name === "Camera")?.lane.id ?? "";
+        project = applyOp(project, { op: "cameraHide", from: 6, to: 7, lane: laneId });
+        expect(project.camera?.hidden.at(-1)).toMatchObject({ startUs: 6_000_000, lane: laneId });
+        expect(() => applyOp(project, { op: "cameraHide", from: 8, to: 9, lane: "zooms" })).toThrow("not cameraHide");
+        project = applyOp(project, { op: "retime", id, at: 3 });
+        expect(project.camera?.hidden.find((item) => item.id === id)).toMatchObject({
+            startUs: 3_000_000,
+            endUs: 4_000_000,
+        });
+    });
+
+    test("an edit saved before the lanes reads its hidden parts with an id from their start", () => {
+        const old = editProjectSchema.parse({
+            ...wholeProject(source),
+            camera: { file: "camera.mov", hidden: [{ startUs: 1_000_000, endUs: 2_000_000 }] },
+        });
+        expect(old.camera?.hidden).toEqual([
+            { id: `k${(1_000_000).toString(36)}`, startUs: 1_000_000, endUs: 2_000_000 },
+        ]);
     });
 
     test("a corner keeps the margin from two edges; a custom centre stays inside the canvas", () => {

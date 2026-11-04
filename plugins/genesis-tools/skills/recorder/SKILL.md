@@ -36,8 +36,9 @@ and after the last. A step's first moments and its hold are never cut.
 
 The picker's "Camera bubble" option records the camera beside the screen (`camera.mov`); the preview can be dragged
 before and while recording and stays out of the movie. The edit's `camera` places it (corner or x/y, size, shape,
-mirror, hidden ranges); change it with `m.camera({ corner: "topLeft", size: 0.2 })`, `m.cameraHide(from, to)` or the
-ops `camera`, `cameraHide`, `cameraShow`. From a script, `record: { camera: true }` asks for the camera without a
+mirror); each part where it is hidden is a `cameraHide` item on the effect lanes. Change it with
+`m.camera({ corner: "topLeft", size: 0.2 })`, `m.cameraHide(from, to)` or the ops `camera`, `cameraHide` (with
+`lane`), `cameraShow`, `retime` and `moveToLane`. From a script, `record: { camera: true }` asks for the camera without a
 preview on screen.
 
 ## Rules

@@ -1108,7 +1108,14 @@ export const editOpSchema = z.discriminatedUnion("op", [
         })
         .strict(),
     cameraOpSchema,
-    z.object({ op: z.literal("cameraHide"), ...rangeFields }).strict(),
+    z
+        .object({
+            op: z.literal("cameraHide"),
+            ...rangeFields,
+            /** The effect lane to put it on (an id from info().lanes); absent is the first that holds camera parts. */
+            lane: z.string().optional(),
+        })
+        .strict(),
     z.object({ op: z.literal("cameraShow"), ...rangeFields }).strict(),
     z
         .object({
@@ -1369,13 +1376,21 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
         };
     }
 
+    if (project.camera?.hidden.some((item) => item.id === op.id)) {
+        const hidden = project.camera.hidden.map((item) =>
+            item.id === op.id ? { ...item, ...place(item.startUs, item.endUs) } : item
+        );
+        return { ...project, camera: { ...project.camera, hidden: hidden.sort((a, b) => a.startUs - b.startUs) } };
+    }
+
     const ids = [
         ...project.zooms.map((item) => item.id),
         ...(project.redactions ?? []).map((item) => item.id),
         ...(project.texts ?? []).map((item) => item.id),
         ...(project.shapes ?? []).map((item) => item.id),
+        ...(project.camera?.hidden ?? []).map((item) => item.id),
     ];
-    throw new Error(`no zoom, hidden part, text or shape ${op.id}; ids: ${ids.join(", ") || "none"}`);
+    throw new Error(`no zoom, hidden part, text, shape or camera part ${op.id}; ids: ${ids.join(", ") || "none"}`);
 }
 
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {

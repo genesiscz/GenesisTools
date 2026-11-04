@@ -12,12 +12,35 @@ extension EditProject {
     }
 
     /// The camera recorded beside the screen (`camera.mov`), drawn over the picture as a bubble. The TypeScript side
-    /// writes the same shape (src/utils/recording-editor/camera.ts). Hidden ranges are SOURCE times, so they move with
-    /// a cut; they stay a plain list until the editor's lanes take them as lane items.
+    /// writes the same shape (src/utils/recording-editor/camera.ts). Each hidden part is a `cameraHide` item on an
+    /// effect lane, in SOURCE times, so it moves with a cut.
     struct Camera: Codable, Equatable {
-        struct Hidden: Codable, Equatable {
+        struct Hidden: Codable, Equatable, Identifiable {
+            var id: String
             var startUs: Int64
             var endUs: Int64
+            /// The effect lane it sits on; nil is the first lane that holds camera parts.
+            var lane: String?
+
+            init(id: String = Hidden.newID(), startUs: Int64, endUs: Int64, lane: String? = nil) {
+                self.id = id
+                self.startUs = startUs
+                self.endUs = endUs
+                self.lane = lane
+            }
+
+            private enum Keys: String, CodingKey { case id, startUs, endUs, lane }
+
+            /// A part saved before the lanes has no id: it gets one from its start, as camera.ts gives it.
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: Keys.self)
+                startUs = try c.decode(Int64.self, forKey: .startUs)
+                endUs = try c.decode(Int64.self, forKey: .endUs)
+                id = try c.decodeIfPresent(String.self, forKey: .id) ?? "k" + String(startUs, radix: 36)
+                lane = try c.decodeIfPresent(String.self, forKey: .lane)
+            }
+
+            static func newID() -> String { "k" + UUID().uuidString.prefix(8).lowercased() }
         }
 
         /// The camera's movie; a bare name is beside the source movie.

@@ -32,8 +32,8 @@ each save as it lands. The CLI door to the same edits is `tools recorder project
 The registry also includes `meetings` (open, evidence, transcript, items.add; how a meeting finds its project:
 `projects.labels`, `projects.pair`, `projects.unpair`, `projects.people`, `assign.sweep`, and on a meeting
 `assign.proposals`, `assign.ask`, `assign.apply` and `set({ labels })`), `control` (the native control API),
-`browser` (CDP tabs, open, navigate, evaluate), `hub` (prs, pr), `github` (review threads) and `presets` (save, list, show, run and remove named scripts
-with parameters; see "Presets").
+`browser` (CDP tabs, open, navigate, evaluate), `hub` (prs, pr), `github` (review threads) and `presets` (save,
+list, show, run and remove named scripts with parameters; see "Presets").
 Each lives in one toolset file and has one registry entry. Browser calls take the browser's CDP `port` explicitly.
 
 The `js` description gives one summary line per loaded toolset. Inside a turn, `search("display")` finds methods

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,11 +17,41 @@ export type CameraShape = (typeof CAMERA_SHAPES)[number];
 export const CAMERA_CORNERS = ["bottomRight", "bottomLeft", "topRight", "topLeft", "custom"] as const;
 export type CameraCorner = (typeof CAMERA_CORNERS)[number];
 
-/** A stretch of SOURCE time (it moves with a cut, like a zoom) in which the bubble is not drawn. */
+/**
+ * A stretch of SOURCE time (it moves with a cut, like a zoom) in which the bubble is not drawn: an item of kind
+ * `cameraHide` on the editor's effect lanes (lanes.ts), with its own id and the lane it sits on.
+ */
 export const cameraHiddenSchema = z.object({
+    id: z.string().min(1),
     startUs: z.number().int().nonnegative(),
     endUs: z.number().int().positive(),
+    /** The effect lane it sits on (lanes.ts); absent is the first lane that holds camera parts. */
+    lane: z.string().optional(),
 });
+
+/** A new hidden part's id ("k" for camera, like "z" for a zoom). */
+export function cameraHiddenId(): string {
+    return `k${randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * Hidden parts saved before they were lane items had no id: each gets one from its start, the same on every read, so
+ * a reader and a writer of an old file agree until the next save writes it.
+ */
+function withHiddenIds(raw: unknown): unknown {
+    if (!Array.isArray(raw)) {
+        return raw;
+    }
+
+    return raw.map((item) => {
+        if (item === null || typeof item !== "object" || Reflect.has(item, "id")) {
+            return item;
+        }
+
+        const start = Reflect.get(item, "startUs");
+        return { ...item, id: `k${typeof start === "number" ? start.toString(36) : "0"}` };
+    });
+}
 
 /**
  * The camera recorded beside the screen, drawn over the picture as a bubble. Hidden ranges are a plain list until the
@@ -43,7 +74,7 @@ export const cameraBubbleSchema = z.object({
     mirror: z.boolean().default(true),
     /** The gap to the canvas edges for a corner, as a fraction of the short side. */
     margin: z.number().min(0).max(0.2).default(0.035),
-    hidden: z.array(cameraHiddenSchema).default([]),
+    hidden: z.preprocess(withHiddenIds, z.array(cameraHiddenSchema)).default([]),
 });
 export type CameraBubble = z.infer<typeof cameraBubbleSchema>;
 
@@ -143,13 +174,16 @@ export function bubbleShowsAt(bubble: CameraBubble, sourceUs: number): boolean {
     return bubble.show && !bubble.hidden.some((range) => sourceUs >= range.startUs && sourceUs < range.endUs);
 }
 
-/** Hides the bubble from `fromUs` to `toUs`, joined with any hidden range it touches. */
-export function hideCamera(bubble: CameraBubble, fromUs: number, toUs: number): CameraBubble {
+/**
+ * Hides the bubble from `fromUs` to `toUs`, joined with any hidden part it touches; a joined part keeps the id and the
+ * lane of the earliest one.
+ */
+export function hideCamera(bubble: CameraBubble, fromUs: number, toUs: number, id = cameraHiddenId()): CameraBubble {
     if (toUs <= fromUs) {
         throw new Error(`a camera hide needs its end after its start (got ${fromUs / 1e6}–${toUs / 1e6} s)`);
     }
 
-    const ranges = [...bubble.hidden, { startUs: fromUs, endUs: toUs }].sort((a, b) => a.startUs - b.startUs);
+    const ranges = [...bubble.hidden, { id, startUs: fromUs, endUs: toUs }].sort((a, b) => a.startUs - b.startUs);
     const merged: CameraBubble["hidden"] = [];
 
     for (const range of ranges) {
@@ -172,10 +206,11 @@ export function showCamera(bubble: CameraBubble, fromUs: number, toUs: number): 
             return [range];
         }
 
-        return [
-            ...(range.startUs < fromUs ? [{ startUs: range.startUs, endUs: fromUs }] : []),
-            ...(range.endUs > toUs ? [{ startUs: toUs, endUs: range.endUs }] : []),
-        ];
+        // The part before keeps the id; a part after a split in the middle is a new item on the same lane.
+        const before = range.startUs < fromUs ? [{ ...range, endUs: fromUs }] : [];
+        const after =
+            range.endUs > toUs ? [{ ...range, id: before.length ? cameraHiddenId() : range.id, startUs: toUs }] : [];
+        return [...before, ...after];
     });
     return { ...bubble, hidden };
 }

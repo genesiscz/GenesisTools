@@ -72,6 +72,29 @@ final class CameraBubbleTests: XCTestCase {
         XCTAssertEqual(placement["shape"] as? String, "rounded")
     }
 
+    func testAHiddenPartSavedBeforeTheLanesGetsAnIDFromItsStart() throws {
+        let json = #"{"file":"camera.mov","hidden":[{"startUs":1000000,"endUs":2000000}]}"#
+        let camera = try JSONDecoder().decode(EditProject.Camera.self, from: Data(json.utf8))
+        XCTAssertEqual(camera.hidden, [.init(id: "k" + String(1_000_000, radix: 36), startUs: 1_000_000, endUs: 2_000_000)])
+    }
+
+    func testHiddenPartsAreCameraItemsOnTheirOwnLane() {
+        var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+        var camera = EditProject.Camera(file: "camera.mov")
+        camera.hidden = [.init(id: "k1", startUs: 1_000_000, endUs: 2_000_000)]
+        project.camera = camera
+        let item = EffectLanes.items(project).first { $0.id == "k1" }
+        XCTAssertEqual(item?.kind, .cameraHide)
+        // No saved lane holds camera parts: an automatic lane of their own follows the zoom lane.
+        XCTAssertEqual(EffectLanes.resolve(project).map(\.lane.id), ["zooms", "auto-cameraHide"])
+        let (withLane, laneID) = EffectLanes.addLane(project, kinds: [.cameraHide], name: "Camera")
+        let moved = EffectLanes.moveToLane(withLane, item: "k1", lane: laneID)
+        XCTAssertEqual(moved?.camera?.hidden.first?.lane, laneID)
+        XCTAssertNil(EffectLanes.moveToLane(withLane, item: "k1", lane: "zooms"), "the zoom lane does not hold camera parts")
+        let removed = EffectLanes.removeLane(moved ?? withLane, id: laneID)
+        XCTAssertNotEqual(removed.camera?.hidden.first?.lane, laneID, "a part whose lane is gone goes back to a lane that holds it")
+    }
+
     func testCameraTimeLeavesThePausedTimeOut() {
         XCTAssertEqual(CameraMovieWriter.presentationSeconds(uptime: 110, first: 100, pausedTotal: 4), 6)
         XCTAssertEqual(CameraMovieWriter.presentationSeconds(uptime: 99, first: 100, pausedTotal: 0), 0)

@@ -46,7 +46,8 @@ final class CameraFeed: @unchecked Sendable {
 
     /// The bubble over `base` at a source moment, or `base` itself when the bubble is hidden there or the camera has
     /// no frame for it (before its start, after its end).
-    func draw(atSourceUs sourceUs: Int64, on base: CIImage, canvas: CGSize) -> CIImage {
+    /// `camera` is the bubble as the window has it now (`ZoomState.camera`); the movie is the one the feed opened.
+    func draw(_ camera: EditProject.Camera, atSourceUs sourceUs: Int64, on base: CIImage, canvas: CGSize) -> CIImage {
         guard camera.shows(atSourceUs: sourceUs), let frame = frame(atCameraUs: camera.cameraUs(atSourceUs: sourceUs))
         else { return base }
         return Self.bubble(camera, frame: frame, canvas: canvas).composited(over: base)

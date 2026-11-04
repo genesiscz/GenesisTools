@@ -24,6 +24,7 @@ extension EditorModel {
         case .text: .text(item.id)
         case .shape: .shape(item.id)
         case .speed: .clip(item.id)
+        case .cameraHide: .cameraHide(item.id)
         }
     }
 
@@ -36,6 +37,7 @@ extension EditorModel {
         case .hide, .spotlight: tab = .hide
         case .text, .shape: tab = .text
         case .speed: tab = .clip
+        case .cameraHide: tab = .style
         }
         guard moveHead, item.kind == .zoom, let zoom = project.zooms.first(where: { $0.id == item.id }) else { return }
         let now = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
@@ -54,6 +56,7 @@ extension EditorModel {
         case .text: updateText(item.id) { $0.startUs = startUs; $0.endUs = endUs }
         case .shape: updateShape(item.id) { $0.startUs = startUs; $0.endUs = endUs }
         case .speed: break
+        case .cameraHide: updateCameraHidden(item.id) { $0.startUs = startUs; $0.endUs = endUs }
         }
     }
 
@@ -67,6 +70,7 @@ extension EditorModel {
         case .text: deleteText(item.id)
         case .shape: deleteShape(item.id)
         case .speed: setSpeed(item.id, 1)
+        case .cameraHide: deleteCameraHidden(item.id)
         }
     }
 
@@ -82,6 +86,7 @@ extension EditorModel {
         case .text: addText(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
         case .shape: addShape(.box, atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
         case .speed: speedRange(fromOut: fromOut, toOut: toOut ?? fromOut + 2_000_000, speed: 2)
+        case .cameraHide: addCameraHidden(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
         }
     }
 
@@ -138,6 +143,7 @@ extension EditorModel {
         ("Hidden Parts and Spotlights", [.hide, .spotlight]),
         ("Texts and Shapes", [.text, .shape]),
         ("Speed", [.speed]),
+        ("Camera Bubble", [.cameraHide]),
         ("Any Effect", nil),
     ]
 }

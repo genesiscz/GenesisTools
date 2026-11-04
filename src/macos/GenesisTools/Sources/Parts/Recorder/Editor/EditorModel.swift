@@ -19,6 +19,8 @@ enum EditorSelection: Equatable {
     case redaction(String)
     case text(String)
     case shape(String)
+    /// A part where the camera bubble is hidden (Editor/EditorCamera.swift).
+    case cameraHide(String)
 }
 
 extension InspectorTab {
@@ -271,6 +273,10 @@ final class EditorModel {
             guard let shape = project.shapes?.first(where: { $0.id == id }) else { return }
             let moved = Self.shifted(start: shape.startUs, end: shape.endUs, by: delta, durationUs: duration)
             updateShape(id) { $0.startUs = moved.start; $0.endUs = moved.end }
+        case let .cameraHide(id):
+            guard let part = project.camera?.hidden.first(where: { $0.id == id }) else { return }
+            let moved = Self.shifted(start: part.startUs, end: part.endUs, by: delta, durationUs: duration)
+            updateCameraHidden(id) { $0.startUs = moved.start; $0.endUs = moved.end }
         case .clip, .none:
             show("Select a zoom, hidden part, text or shape to move it in time.", error: false)
         }
@@ -321,6 +327,7 @@ final class EditorModel {
         case .zoom: tab = .zoom
         case .redaction: tab = .hide
         case .text, .shape: tab = .text
+        case .cameraHide: tab = .style
         case .clip, .none: break
         }
         player.pause()
@@ -510,6 +517,7 @@ final class EditorModel {
             case let .redaction(id): updateRedaction(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
             case let .text(id): updateText(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
             case let .shape(id): updateShape(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
+            case let .cameraHide(id): updateCameraHidden(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
             case .clip, .none: break
             }
             return
@@ -529,6 +537,7 @@ final class EditorModel {
         case let .redaction(id): return project.redactions?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
         case let .text(id): return project.texts?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
         case let .shape(id): return project.shapes?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .cameraHide(id): return project.camera?.hidden.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
         case .clip, .none: return nil
         }
     }
@@ -561,6 +570,8 @@ final class EditorModel {
             deleteText(id)
         case let .shape(id):
             deleteShape(id)
+        case let .cameraHide(id):
+            deleteCameraHidden(id)
         case .none:
             break
         }
@@ -637,6 +648,9 @@ final class EditorModel {
             copy.endUs = min(project.source.durationUs, copy.startUs + length)
             next.shapes = (next.shapes ?? []) + [copy]
             selection = .shape(copy.id)
+        case let .cameraHide(id):
+            duplicateCameraHidden(id)
+            return
         case .clip, .none:
             show("Select a zoom, a hidden part or a text to duplicate it.", error: false)
             return

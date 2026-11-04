@@ -24,6 +24,13 @@ final class ZoomState: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// The camera bubble as the window has it now, so a moved or hidden bubble shows at the next frame.
+    var camera: EditProject.Camera? {
+        lock.lock()
+        defer { lock.unlock() }
+        return project.camera
+    }
+
     /// Reads the transcript cache again (after a transcription); true when the movie now has captions.
     @discardableResult
     func reloadCaptions() -> Bool {
@@ -583,8 +590,8 @@ struct EditRenderer {
                 result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
-            if let cameraFeed {
-                result = cameraFeed.draw(atSourceUs: TimelineMap.sourceTime(atOutput: outUs, in: project), on: result, canvas: size)
+            if let cameraFeed, let camera = zoom.camera {
+                result = cameraFeed.draw(camera, atSourceUs: TimelineMap.sourceTime(atOutput: outUs, in: project), on: result, canvas: size)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             if let cursor {

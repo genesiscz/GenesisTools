@@ -5,7 +5,7 @@ import type { EditProject } from "./project";
  * The effect lanes of the editor's timeline (EffectLanes.swift is the window's copy of this file). Every item over the
  * picture for a time is one kind; a clip played at another speed shows as a `speed` item on a lane that holds speed.
  */
-export const EFFECT_KINDS = ["zoom", "hide", "spotlight", "text", "shape", "speed"] as const;
+export const EFFECT_KINDS = ["zoom", "hide", "spotlight", "text", "shape", "speed", "cameraHide"] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
 /** The kinds a lane made for one kind holds as well: a hidden part and a spotlight share a lane by default. */
@@ -16,6 +16,8 @@ const FAMILY: Record<EffectKind, EffectKind[]> = {
     text: ["text", "shape"],
     shape: ["text", "shape"],
     speed: ["speed"],
+    /** A part where the camera bubble is not drawn (camera.ts). */
+    cameraHide: ["cameraHide"],
 };
 
 /** One lane: what it holds (absent holds every kind) and its name (absent names what it holds). */
@@ -59,6 +61,7 @@ export function laneItems(project: EditProject): LaneItem[] {
         })),
         ...(project.texts ?? []).map((note) => ({ ...span(note), kind: "text" as const })),
         ...(project.shapes ?? []).map((shape) => ({ ...span(shape), kind: "shape" as const })),
+        ...(project.camera?.hidden ?? []).map((range) => ({ ...span(range), kind: "cameraHide" as const })),
         ...project.clips
             .filter((clip) => clip.speed !== 1)
             .map((clip) => ({ id: clip.id, kind: "speed" as const, startUs: clip.fromUs, endUs: clip.toUs })),
@@ -140,6 +143,7 @@ export function setLanes(project: EditProject, lanes: EffectLane[]): EditProject
         ...(project.redactions ? { redactions: project.redactions.map(unlane) } : {}),
         ...(project.texts ? { texts: project.texts.map(unlane) } : {}),
         ...(project.shapes ? { shapes: project.shapes.map(unlane) } : {}),
+        ...(project.camera ? { camera: { ...project.camera, hidden: project.camera.hidden.map(unlane) } } : {}),
     };
 }
 
@@ -201,7 +205,7 @@ export function moveToLane(project: EditProject, itemId: string, laneId: string)
     const item = laneItems(project).find((entry) => entry.id === itemId);
 
     if (!item) {
-        throw new Error(`no zoom, hidden part, spotlight, text or shape ${itemId}`);
+        throw new Error(`no zoom, hidden part, spotlight, text, shape or camera part ${itemId}`);
     }
 
     if (item.kind === "speed") {
@@ -224,10 +228,11 @@ export function withLane(project: EditProject, ids: ReadonlySet<string>, lane: s
         ...(project.redactions ? { redactions: project.redactions.map(put) } : {}),
         ...(project.texts ? { texts: project.texts.map(put) } : {}),
         ...(project.shapes ? { shapes: project.shapes.map(put) } : {}),
+        ...(project.camera ? { camera: { ...project.camera, hidden: project.camera.hidden.map(put) } } : {}),
     };
 }
 
-/** The ids of the zooms, hidden parts, texts and shapes in `after` that `before` did not have. */
+/** The ids of the zooms, hidden parts, texts, shapes and camera parts in `after` that `before` did not have. */
 export function addedItemIds(before: EditProject, after: EditProject): Set<string> {
     const had = new Set(laneItems(before).map((item) => item.id));
     return new Set(

@@ -4,7 +4,7 @@ import Foundation
 /// speed shows as a `speed` item on a lane that holds speed. A new kind is a case here and a row in each `switch` of
 /// this file (the compiler names every one).
 enum EffectKind: String, Codable, CaseIterable, Identifiable {
-    case zoom, hide, spotlight, text, shape, speed
+    case zoom, hide, spotlight, text, shape, speed, cameraHide
     var id: String { rawValue }
 
     var title: String {
@@ -15,6 +15,7 @@ enum EffectKind: String, Codable, CaseIterable, Identifiable {
         case .text: "Text"
         case .shape: "Arrow or Box"
         case .speed: "Speed"
+        case .cameraHide: "Camera Hidden"
         }
     }
 
@@ -26,6 +27,7 @@ enum EffectKind: String, Codable, CaseIterable, Identifiable {
         case .text: "textformat"
         case .shape: "arrow.up.right"
         case .speed: "gauge.with.dots.needle.67percent"
+        case .cameraHide: "video.slash"
         }
     }
 
@@ -36,6 +38,7 @@ enum EffectKind: String, Codable, CaseIterable, Identifiable {
         case .hide, .spotlight: [.hide, .spotlight]
         case .text, .shape: [.text, .shape]
         case .speed: [.speed]
+        case .cameraHide: [.cameraHide]
         }
     }
 }
@@ -98,6 +101,7 @@ enum EffectLanes {
         case [.shape]: "Arrows and Boxes"
         case [.text, .shape]: "Texts and Shapes"
         case [.speed]: "Speed"
+        case [.cameraHide]: "Camera Bubble"
         default: kinds.map(\.title).joined(separator: ", ")
         }
     }
@@ -118,6 +122,9 @@ enum EffectLanes {
         }
         items += (project.shapes ?? []).map {
             EffectItem(id: $0.id, kind: .shape, startUs: $0.startUs, endUs: $0.endUs, label: $0.kind.rawValue.capitalized, lane: $0.lane)
+        }
+        items += (project.camera?.hidden ?? []).map {
+            EffectItem(id: $0.id, kind: .cameraHide, startUs: $0.startUs, endUs: $0.endUs, label: "Camera hidden", lane: $0.lane)
         }
         items += project.clips.filter { $0.speed != 1 }.map {
             EffectItem(id: $0.id, kind: .speed, startUs: $0.fromUs, endUs: $0.toUs, label: speedLabel($0.speed), lane: nil)
@@ -164,6 +171,9 @@ enum EffectLanes {
         next.redactions = next.redactions?.map { var item = $0; if let lane = item.lane, !known.contains(lane) { item.lane = nil }; return item }
         next.texts = next.texts?.map { var item = $0; if let lane = item.lane, !known.contains(lane) { item.lane = nil }; return item }
         next.shapes = next.shapes?.map { var item = $0; if let lane = item.lane, !known.contains(lane) { item.lane = nil }; return item }
+        if let hidden = next.camera?.hidden {
+            next.camera?.hidden = hidden.map { var item = $0; if let lane = item.lane, !known.contains(lane) { item.lane = nil }; return item }
+        }
         return next
     }
 
@@ -175,6 +185,9 @@ enum EffectLanes {
         next.redactions = next.redactions?.map { var item = $0; if ids.contains(item.id) { item.lane = lane }; return item }
         next.texts = next.texts?.map { var item = $0; if ids.contains(item.id) { item.lane = lane }; return item }
         next.shapes = next.shapes?.map { var item = $0; if ids.contains(item.id) { item.lane = lane }; return item }
+        if let hidden = next.camera?.hidden {
+            next.camera?.hidden = hidden.map { var item = $0; if ids.contains(item.id) { item.lane = lane }; return item }
+        }
         return next
     }
 

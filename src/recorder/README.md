@@ -183,13 +183,15 @@ the recorder face records the camera through GenesisKit's camera (`CameraFrameSo
 ```json
 "camera": { "file": "camera.mov", "offsetMs": 0, "show": true, "corner": "custom", "x": 0.88, "y": 0.82,
             "size": 0.24, "shape": "circle", "mirror": true, "margin": 0.035,
-            "hidden": [{ "startUs": 3000000, "endUs": 4000000 }] }
+            "hidden": [{ "id": "k1satc", "startUs": 3000000, "endUs": 4000000, "lane": "lane3" }] }
 ```
 
 `corner` is `bottomRight`, `bottomLeft`, `topRight`, `topLeft` or `custom` (then `x`, `y` are the centre); `size` is
-the side over the canvas's short side; `hidden` ranges are source times (a plain list until the editor's lanes hold
-them). Ops: `{"op":"camera", corner?, x?, y?, size?, shape?, mirror?, show?, offsetMs?, file?, enabled?}`,
-`{"op":"cameraHide","from":3,"to":4}`, `{"op":"cameraShow","from":3,"to":3.5}`; the REPL has `m.camera({…})`,
+the side over the canvas's short side. Each `hidden` part is a `cameraHide` item on the timeline's effect lanes (a lane
+of its own, "Camera Bubble", unless one is added for it), in source times, with its `id` and optional `lane`; an edit
+saved before the lanes gets an id from each part's start. Ops: `{"op":"camera", corner?, x?, y?, size?, shape?, mirror?, show?, offsetMs?, file?, enabled?}`,
+`{"op":"cameraHide","from":3,"to":4,"lane":"lane3"}`, `{"op":"cameraShow","from":3,"to":3.5}`, and `retime` and
+`moveToLane` by the part's id; the REPL has `m.camera({…})`,
 `m.cameraHide(from, to)` and `m.cameraShow(from, to)`. The renderer (preview and export) draws it. `tools recorder
 start --camera` asks for the camera without the picker: then the face records it with no preview on screen, because
 nothing would keep the preview out of the movie.

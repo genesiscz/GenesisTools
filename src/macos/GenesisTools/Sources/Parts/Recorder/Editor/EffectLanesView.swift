@@ -43,6 +43,7 @@ extension EffectKind {
         case .text: Color(red: 0.3, green: 0.85, blue: 0.5)
         case .shape: Color(red: 1, green: 0.45, blue: 0.35)
         case .speed: Color(red: 0.7, green: 0.55, blue: 1)
+        case .cameraHide: Color(red: 0.35, green: 0.78, blue: 0.95)
         }
     }
 
@@ -50,7 +51,7 @@ extension EffectKind {
     var labelColor: Color {
         switch self {
         case .zoom, .speed: .white
-        case .hide, .spotlight, .text, .shape: Color.black.opacity(0.78)
+        case .hide, .spotlight, .text, .shape, .cameraHide: Color.black.opacity(0.78)
         }
     }
 }
