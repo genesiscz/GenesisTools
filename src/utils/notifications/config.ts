@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadTelegramBotConfig, resolveTelegramTarget } from "@genesiscz/utils/telegram-bot/lib/config";
+import { CHANNEL_NAMES, CHANNELS } from "./channels";
 import type {
     AppChannelOverrides,
     ChannelConfigs,
@@ -10,20 +11,15 @@ import type {
     TelegramChannelConfig,
 } from "./types";
 
-const DEFAULT_CHANNELS: ChannelConfigs = {
-    system: { enabled: true, sound: "Ping", title: "GenesisTools", ignoreDnD: false },
-    telegram: { enabled: false },
-    webhook: { enabled: false },
-    say: { enabled: false },
-};
+/** One key per channel of the table, each built by `entry` (a mapped object the compiler checks for every name). */
+function perChannel(entry: <K extends ChannelName>(name: K) => ChannelConfigs[K]): ChannelConfigs {
+    return Object.fromEntries(CHANNEL_NAMES.map((name) => [name, entry(name)])) as unknown as ChannelConfigs;
+}
+
+const DEFAULT_CHANNELS: ChannelConfigs = perChannel((name) => structuredClone(CHANNELS[name].defaults));
 
 function mergeChannels(global: ChannelConfigs, overrides: AppChannelOverrides["channels"]): ResolvedChannels {
-    return {
-        system: { ...global.system, ...overrides.system },
-        telegram: { ...global.telegram, ...overrides.telegram },
-        webhook: { ...global.webhook, ...overrides.webhook },
-        say: { ...global.say, ...overrides.say },
-    };
+    return perChannel((name) => ({ ...global[name], ...overrides[name] }));
 }
 
 /**
@@ -101,12 +97,8 @@ export class NotificationsConfig {
         const rawChannels = (raw.channels ?? {}) as Partial<ChannelConfigs>;
         const config: NotifyGlobalConfig = {
             terminalNotifierPath: raw.terminalNotifierPath as string | undefined,
-            channels: {
-                system: { ...DEFAULT_CHANNELS.system, ...rawChannels.system },
-                telegram: { ...DEFAULT_CHANNELS.telegram, ...rawChannels.telegram },
-                webhook: { ...DEFAULT_CHANNELS.webhook, ...rawChannels.webhook },
-                say: { ...DEFAULT_CHANNELS.say, ...rawChannels.say },
-            },
+            // A channel the file predates (the phone, added 2026-11-04) reads as its defaults: no migration needed.
+            channels: perChannel((name) => ({ ...DEFAULT_CHANNELS[name], ...rawChannels[name] })),
             apps: (raw.apps as Record<string, AppChannelOverrides>) ?? {},
         };
 

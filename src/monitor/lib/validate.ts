@@ -1,3 +1,4 @@
+import { CHANNELS, type ChannelFieldKind } from "@genesiscz/utils/notifications";
 import { parseHostPort } from "./checks/tcp";
 import {
     DEFAULT_INTERVAL_SEC,
@@ -8,6 +9,7 @@ import {
     MAX_TIMEOUT_MS,
     MIN_INTERVAL_SEC,
     MIN_TIMEOUT_MS,
+    NOTIFY_CHANNELS,
     type NotifyChannel,
     type NotifyTargetInput,
     type NotifyTargetPatch,
@@ -326,12 +328,11 @@ function optionalIdList(record: Record<string, unknown>, key: string): number[] 
     return [...new Set(ids)];
 }
 
-const TARGET_FIELDS: Record<NotifyChannel, { strings: readonly string[]; booleans: readonly string[] }> = {
-    system: { strings: ["sound", "title"], booleans: ["ignoreDnD"] },
-    say: { strings: ["voice", "provider"], booleans: [] },
-    telegram: { strings: ["botToken", "chatId"], booleans: [] },
-    webhook: { strings: ["url"], booleans: [] },
-};
+/** The fields a target may set: the channel's own field list, minus `enabled` (a target has its own switch). */
+function targetFieldKind(channel: NotifyChannel, key: string): ChannelFieldKind | undefined {
+    const fields = CHANNELS[channel].fields;
+    return key !== "enabled" && Object.hasOwn(fields, key) ? fields[key] : undefined;
+}
 
 export function parseNotifyTargetConfig(channel: NotifyChannel, value: unknown): Record<string, string | boolean> {
     if (value === undefined || value === null) {
@@ -339,7 +340,6 @@ export function parseNotifyTargetConfig(channel: NotifyChannel, value: unknown):
     }
 
     const record = asRecord(value);
-    const spec = TARGET_FIELDS[channel];
     const config: Record<string, string | boolean> = {};
 
     for (const [key, raw] of Object.entries(record)) {
@@ -347,7 +347,9 @@ export function parseNotifyTargetConfig(channel: NotifyChannel, value: unknown):
             continue;
         }
 
-        if (spec.strings.includes(key)) {
+        const kind = targetFieldKind(channel, key);
+
+        if (kind === "string") {
             if (typeof raw !== "string") {
                 throw new WatcherValidationError(`config.${key} must be a string`);
             }
@@ -359,7 +361,7 @@ export function parseNotifyTargetConfig(channel: NotifyChannel, value: unknown):
             continue;
         }
 
-        if (spec.booleans.includes(key)) {
+        if (kind === "boolean") {
             if (typeof raw !== "boolean") {
                 throw new WatcherValidationError(`config.${key} must be a boolean`);
             }
@@ -393,6 +395,7 @@ const REQUIRED_TARGET_FIELDS: Record<NotifyChannel, readonly string[]> = {
     say: [],
     telegram: ["botToken", "chatId"],
     webhook: ["url"],
+    phone: [],
 };
 
 /** A target that cannot deliver (webhook without url, telegram without token or chat) is refused, not stored. */
@@ -409,7 +412,7 @@ export function parseNotifyTargetInput(value: unknown): NotifyTargetInput {
     const channel = record.channel;
 
     if (!isNotifyChannel(channel)) {
-        throw new WatcherValidationError("channel must be system, say, telegram or webhook");
+        throw new WatcherValidationError(`channel must be one of ${NOTIFY_CHANNELS.join(", ")}`);
     }
 
     const name = optionalString(record, "name")?.trim();
@@ -435,7 +438,7 @@ export function parseNotifyTargetPatch(value: unknown, currentChannel: NotifyCha
 
     if (record.channel !== undefined) {
         if (!isNotifyChannel(record.channel)) {
-            throw new WatcherValidationError("channel must be system, say, telegram or webhook");
+            throw new WatcherValidationError(`channel must be one of ${NOTIFY_CHANNELS.join(", ")}`);
         }
 
         patch.channel = record.channel;

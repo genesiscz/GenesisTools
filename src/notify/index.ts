@@ -24,8 +24,8 @@ import {
     removeNotifications,
 } from "@genesiscz/utils/macos/notifications-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
-import type { ChannelConfigs } from "@genesiscz/utils/notifications";
-import { dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
+import type { ChannelConfigs, ChannelName } from "@genesiscz/utils/notifications";
+import { CHANNEL_NAMES, CHANNELS, dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
 import { notificationLedgerPath, readNotificationLedger } from "@genesiscz/utils/notifications/ledger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import {
@@ -38,6 +38,7 @@ import {
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { Command } from "commander";
 import pc from "picocolors";
+import { registerPhoneCommands } from "./commands/phone";
 
 const MACOS_SOUNDS = [
     "Basso",
@@ -206,30 +207,50 @@ async function configureSay(channels: ChannelConfigs): Promise<void> {
     p.log.success("TTS settings saved.");
 }
 
-function showCurrentConfig(channels: ChannelConfigs): void {
-    const lines: string[] = [];
-
-    lines.push(`${pc.bold("System (macOS)")}  ${channelStatus(channels.system.enabled)}`);
-    lines.push(`  title:     ${channels.system.title ?? "—"}`);
-    lines.push(`  sound:     ${channels.system.sound ?? "—"}`);
-    lines.push(`  ignoreDnD: ${channels.system.ignoreDnD ? "yes" : "no"}`);
-    lines.push("");
-
-    lines.push(`${pc.bold("Telegram")}  ${channelStatus(channels.telegram.enabled)}`);
-    lines.push(
-        `  botToken:  ${channels.telegram.botToken ? pc.dim(`••••${channels.telegram.botToken.slice(-6)}`) : "—"}`
+async function configurePhone(channels: ChannelConfigs): Promise<void> {
+    const current = channels.phone;
+    const enabled = await withCancel(
+        p.confirm({ message: "Push notifications to your phone?", initialValue: current.enabled })
     );
-    lines.push(`  chatId:    ${channels.telegram.chatId ?? "—"}`);
-    lines.push("");
+    const text = enabled
+        ? await withCancel(
+              p.confirm({
+                  message: "Show the message on the lock screen? (Apple carries the payload; off sends the title only)",
+                  initialValue: current.text !== false,
+              })
+          )
+        : current.text;
 
-    lines.push(`${pc.bold("Webhook")}  ${channelStatus(channels.webhook.enabled)}`);
-    lines.push(`  url:       ${channels.webhook.url ?? "—"}`);
-    lines.push("");
+    await notificationsConfig.setGlobalChannel("phone", { ...current, enabled, text });
+    p.log.success(enabled ? "Phone push enabled." : "Phone push disabled.");
+    p.log.info(`Devices: ${CHANNELS.phone.describe({ ...current, enabled, text })}`);
 
-    lines.push(`${pc.bold("TTS (say)")}  ${channelStatus(channels.say.enabled)}`);
-    lines.push(`  voice:     ${channels.say.voice ?? "—"}`);
+    if (!current.apns?.keyPath) {
+        p.log.info(`A real phone also needs the APNs key: ${toolCommand("notify phone apns --help")}`);
+    }
+}
 
-    p.note(lines.join("\n"), "Current notification config");
+/** The wizard step of each channel; a new channel in the table is a compile error here until it has one. */
+const CONFIGURE: Readonly<Record<ChannelName, (channels: ChannelConfigs) => Promise<void>>> = {
+    system: configureSystem,
+    telegram: configureTelegram,
+    webhook: configureWebhook,
+    say: configureSay,
+    phone: configurePhone,
+};
+
+function describeChannel<K extends ChannelName>(name: K, channels: ChannelConfigs): string {
+    return CHANNELS[name].describe(channels[name]);
+}
+
+function showCurrentConfig(channels: ChannelConfigs): void {
+    const lines = CHANNEL_NAMES.flatMap((name) => [
+        `${pc.bold(CHANNELS[name].label)}  ${channelStatus(channels[name].enabled)}`,
+        `  ${describeChannel(name, channels) || "—"}`,
+        "",
+    ]);
+
+    p.note(lines.join("\n").trimEnd(), "Current notification config");
 }
 
 async function configCommand(): Promise<void> {
@@ -250,14 +271,11 @@ async function configCommand(): Promise<void> {
             p.select({
                 message: "Configure notification channel",
                 options: [
-                    {
-                        value: "system",
-                        label: "System (macOS) notifications",
-                        hint: channelStatus(channels.system.enabled),
-                    },
-                    { value: "telegram", label: "Telegram", hint: channelStatus(channels.telegram.enabled) },
-                    { value: "webhook", label: "Webhook", hint: channelStatus(channels.webhook.enabled) },
-                    { value: "say", label: "TTS (say)", hint: channelStatus(channels.say.enabled) },
+                    ...CHANNEL_NAMES.map((name) => ({
+                        value: name,
+                        label: CHANNELS[name].label,
+                        hint: channelStatus(channels[name].enabled),
+                    })),
                     { value: "show", label: "Show current config" },
                     { value: "back", label: "Back" },
                 ],
@@ -268,14 +286,10 @@ async function configCommand(): Promise<void> {
             break;
         }
 
-        if (choice === "system") {
-            await configureSystem(channels);
-        } else if (choice === "telegram") {
-            await configureTelegram(channels);
-        } else if (choice === "webhook") {
-            await configureWebhook(channels);
-        } else if (choice === "say") {
-            await configureSay(channels);
+        const channel = CHANNEL_NAMES.find((name) => name === choice);
+
+        if (channel) {
+            await CONFIGURE[channel](channels);
         } else if (choice === "show") {
             showCurrentConfig(channels);
         }
@@ -829,6 +843,8 @@ function collectChoice(value: string, previous: AskChoice[]): AskChoice[] {
 
 async function main(): Promise<void> {
     try {
+        registerPhoneCommands(program);
+
         await runTool(program, { tool: "notify" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

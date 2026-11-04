@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import type { NotificationEvent, WebhookChannelConfig } from "../types";
+import type { ChannelDefinition, NotificationEvent, WebhookChannelConfig } from "../types";
 
 /** True when the endpoint accepted the event (or there was nothing to send). Never throws. */
 export async function dispatchWebhook(event: NotificationEvent, config: WebhookChannelConfig): Promise<boolean> {
@@ -40,3 +40,25 @@ export async function dispatchWebhook(event: NotificationEvent, config: WebhookC
         return false;
     }
 }
+
+/** The host of a webhook URL, safe to show and log; null when it is not a URL. */
+function hostOf(url: string | undefined): string | null {
+    try {
+        return url ? new URL(url).host : null;
+    } catch {
+        return null;
+    }
+}
+
+export const webhookChannel: ChannelDefinition<"webhook"> = {
+    name: "webhook",
+    label: "Webhook",
+    defaults: { enabled: false },
+    fields: { enabled: "boolean", url: "string" },
+    secretKeys: ["url"],
+    unusable: (config) => (config.url ? undefined : "no url"),
+    describe: (config) => hostOf(config.url) ?? "no url",
+    post: async (event, config) => ({ ok: await dispatchWebhook(event, config) }),
+    // An endpoint keeps what it was sent; there is no retraction call to make.
+    retract: async () => false,
+};

@@ -1,64 +1,28 @@
-import { execTool } from "@genesiscz/utils/cli/tools";
 import { logger } from "@genesiscz/utils/logger";
-import { dispatchSystem } from "./channels/system";
-import { dispatchTelegram } from "./channels/telegram";
-import { dispatchWebhook } from "./channels/webhook";
+import { CHANNEL_NAMES, CHANNELS } from "./channels";
 import { notificationsConfig } from "./config";
 import { recordNotification } from "./ledger";
-import type { ChannelName, NotificationEvent, SayChannelConfig } from "./types";
+import type { ChannelConfigs, ChannelName, ChannelReceipt, NotificationEvent } from "./types";
 
-/**
- * How long `tools say` may run before its process group is stopped. Speaking a notification takes seconds. A run past
- * this is stuck: a child that never exits, or one that left a grandchild holding its stderr pipe open, and without a
- * deadline every caller of {@link dispatchNotification} waited on it forever.
- */
-export const SAY_DISPATCH_TIMEOUT_MS = 120_000;
-
-/** True when `tools say` spoke the message (or there was nothing to say). Never throws. */
-export async function dispatchSay(
-    message: string,
-    config: SayChannelConfig,
-    { timeoutMs = SAY_DISPATCH_TIMEOUT_MS }: { timeoutMs?: number } = {}
-): Promise<boolean> {
-    if (!config.enabled) {
-        return true;
-    }
-
-    const voice = config.voice ?? "Samantha";
-    const args = ["say", message, "--voice", voice];
-
-    if (config.provider) {
-        args.push("--provider", config.provider);
-    }
-
-    try {
-        // execTool runs this checkout's tools (not whatever `tools` is on PATH) and stops its process group at the deadline.
-        const result = await execTool(args, { timeout: timeoutMs });
-
-        if (!result.success) {
-            logger.warn(
-                { exitCode: result.exitCode, timedOut: result.timedOut === true, stderr: result.stderr },
-                "Say notification dispatch failed"
-            );
-            return false;
-        }
-
-        return true;
-    } catch (err) {
-        logger.warn({ err }, "Say notification dispatch failed");
-
-        return false;
-    }
-}
+export { dispatchSay, SAY_DISPATCH_TIMEOUT_MS } from "./channels/say";
 
 type Channels = Awaited<ReturnType<typeof notificationsConfig.getChannels>>;
 
 /** A channel switched on without what it needs to send: its ledger line says suppressed, not failed. */
 export function unconfiguredChannel(name: ChannelName, channels: Channels): boolean {
-    return (
-        (name === "telegram" && (!channels.telegram.botToken || !channels.telegram.chatId)) ||
-        (name === "webhook" && !channels.webhook.url)
-    );
+    return unusableReason(name, channels) !== undefined;
+}
+
+function unusableReason<K extends ChannelName>(name: K, channels: ChannelConfigs): string | undefined {
+    return CHANNELS[name].unusable(channels[name]);
+}
+
+function postTo<K extends ChannelName>(
+    name: K,
+    event: NotificationEvent,
+    channels: ChannelConfigs
+): Promise<ChannelReceipt> {
+    return CHANNELS[name].post(event, channels[name]);
 }
 
 /**
@@ -84,37 +48,36 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
             });
         }
 
-        const channelNames = ["system", "telegram", "webhook", "say"] as const;
-        const results = await Promise.allSettled([
-            allows("system") ? dispatchSystem(event, channels.system) : Promise.resolve(true),
-            allows("telegram") ? dispatchTelegram(event, channels.telegram) : Promise.resolve(true),
-            allows("webhook") ? dispatchWebhook(event, channels.webhook) : Promise.resolve(true),
-            allows("say") ? dispatchSay(event.message, channels.say) : Promise.resolve(true),
-        ]);
+        const results = await Promise.allSettled(
+            CHANNEL_NAMES.map((name) =>
+                allows(name) ? postTo(name, event, channels) : Promise.resolve<ChannelReceipt>({ ok: true })
+            )
+        );
         let delivered = true;
 
-        for (let i = 0; i < results.length; i++) {
-            const r = results[i];
-            const unconfigured = unconfiguredChannel(channelNames[i], channels);
+        for (const [i, r] of results.entries()) {
+            const name = CHANNEL_NAMES[i];
             // The system channel records itself in postNotification, with the backend it used.
-            if (channelNames[i] !== "system" && allows(channelNames[i]) && channels[channelNames[i]].enabled) {
+            if (name !== "system" && allows(name) && channels[name].enabled) {
+                const unusable = unusableReason(name, channels);
                 await recordNotification({
                     source: event.app,
-                    channel: channelNames[i],
-                    outcome: unconfigured ? "suppressed" : r.status === "fulfilled" && r.value ? "posted" : "failed",
-                    ...(unconfigured ? { reason: "channel enabled but not configured" } : {}),
+                    channel: name,
+                    outcome: unusable ? "suppressed" : r.status === "fulfilled" && r.value.ok ? "posted" : "failed",
+                    ...(unusable ? { reason: unusable } : {}),
+                    ...(r.status === "fulfilled" && r.value.detail ? { detail: r.value.detail } : {}),
                     title: event.title,
                     body: event.message,
                 });
             }
 
             if (r.status === "rejected") {
-                logger.warn({ err: r.reason, app: event.app, channel: channelNames[i] }, "Channel dispatch failed");
+                logger.warn({ err: r.reason, app: event.app, channel: name }, "Channel dispatch failed");
                 delivered = false;
                 continue;
             }
 
-            delivered = delivered && r.value;
+            delivered = delivered && r.value.ok;
         }
 
         return delivered;
