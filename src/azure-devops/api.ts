@@ -6,6 +6,8 @@
  */
 
 import type {
+    AdoRequest,
+    AdoResponse,
     AttachmentReferenceApi,
     CommentFormat,
     CommentsResponse,
@@ -374,6 +376,22 @@ export class Api {
         }
 
         return response;
+    }
+
+    /**
+     * The transport for area clients outside this class (`lib/test-plans/`): the parsed body, `null`
+     * for an empty one (a DELETE answers 204), and the `x-ms-continuationtoken` header of a paged list.
+     */
+    async call<T>(request: AdoRequest): Promise<AdoResponse<T>> {
+        const response = await this.send(request.method, request.url, {
+            body: request.body,
+            contentType: request.contentType,
+            description: request.description,
+        });
+        const text = await response.text();
+        const data: T | null = text.trim() ? SafeJSON.parse(text, { strict: true }) : null;
+
+        return { data, continuationToken: response.headers.get("x-ms-continuationtoken") ?? undefined };
     }
 
     /**
