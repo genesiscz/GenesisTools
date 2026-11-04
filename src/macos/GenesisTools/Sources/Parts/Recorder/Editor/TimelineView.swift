@@ -560,8 +560,27 @@ private struct HiddenLaneView: View {
                 HiddenSegment(model: model, redaction: redaction, scale: scale, height: height)
                     .offset(y: CGFloat(min(rows[redaction.id] ?? 0, TimelineView.hiddenRowsShown - 1)) * (height + 2))
             }
+            if let overflow = Self.overflow(model.project.redactions ?? [], rows: rows) {
+                Text(verbatim: "+\(overflow.count)")
+                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .frame(height: height - 4)
+                    .background(Capsule().fill(Color.black.opacity(0.75)))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
+                    .instantTooltip("\(Plural.count(overflow.count, "more hidden part")) overlap this row; the Hide tab lists every part")
+                    .accessibilityLabel("\(Plural.count(overflow.count, "more hidden part")) not shown in their own row")
+                    .offset(x: max(0, scale.x(overflow.startUs) - 2), y: CGFloat(TimelineView.hiddenRowsShown - 1) * (height + 2) + 2)
+                    .zIndex(1)
+            }
         }
+    }
 
+    /// The parts past the last row shown (they share that row): how many, and where the first starts.
+    static func overflow(_ list: [EditProject.Redaction], rows: [String: Int]) -> (count: Int, startUs: Int64)? {
+        let hidden = list.filter { (rows[$0.id] ?? 0) >= TimelineView.hiddenRowsShown }
+        guard let first = hidden.map(\.startUs).min() else { return nil }
+        return (hidden.count, first)
     }
 
     /// A row per hidden part: the first row whose last part ended before this one starts.
