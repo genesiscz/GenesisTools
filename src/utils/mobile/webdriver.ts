@@ -97,6 +97,31 @@ export class AppiumSession {
         return dismissed;
     }
 
+    /** The accessibility tree as XCUITest XML (parse it with `parseSource` from `./a11y`). */
+    source(): Promise<string> {
+        return call<string>({ url: this.url("/source"), method: "GET", timeoutMs: 60_000 });
+    }
+
+    /** Taps a point in screen points; the way to reach a control that has no accessibility name. */
+    async tapAt(x: number, y: number): Promise<void> {
+        await this.execute("mobile: tap", { x, y });
+    }
+
+    /** Taps the element with this accessibility id (React Native testID) or accessibility label. */
+    async tapId(accessibilityId: string): Promise<void> {
+        const element = await call<Record<string, string>>({
+            url: this.url("/element"),
+            method: "POST",
+            body: { using: "accessibility id", value: accessibilityId },
+        });
+        const elementId = Object.values(element)[0];
+        await call({ url: this.url(`/element/${elementId}/click`), method: "POST", body: {} });
+    }
+
+    async windowSize(): Promise<{ width: number; height: number }> {
+        return call<{ width: number; height: number }>({ url: this.url("/window/rect"), method: "GET" });
+    }
+
     /** The screen as PNG bytes. */
     async screenshot(): Promise<Uint8Array> {
         const base64 = await call<string>({ url: this.url("/screenshot"), method: "GET" });

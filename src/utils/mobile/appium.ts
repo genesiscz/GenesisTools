@@ -1,8 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { PidFileState } from "@genesiscz/utils/process/pidfile";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { type DetachedService, serviceState, startDetached, stopDetached } from "./service";
+import { udidSlot } from "./simulator";
 
 const log = logger.child({ component: "mobile.appium" });
 
@@ -72,4 +77,101 @@ export async function appiumReady(port: number): Promise<boolean> {
         log.debug({ url, error }, "appium not answering");
         return false;
     }
+}
+
+/**
+ * The Appium port for one simulator: 4900 to 4999 by the udid's slot, so each simulator gets its own server and a
+ * stop of one never ends another session's run. `wdaPortsFor` uses the same hash for the WDA port.
+ */
+export function appiumPortFor(udid: string): number {
+    return 4900 + udidSlot(udid, 100);
+}
+
+export interface AppiumStatus {
+    port: number;
+    answers: boolean;
+    version: string | null;
+    /** `live` when this tool started the server and it still runs; `none` for a server another process owns. */
+    owned: PidFileState["status"];
+    pid: number | null;
+    log: string;
+}
+
+function appiumService(port: number): DetachedService {
+    const logPath = toolDataDir("mobile", "appium", `${port}.log`);
+    const appium = Bun.which("appium");
+    return {
+        name: `appium :${port}`,
+        // Run from /tmp: from a repo with a hoisted node_modules, Appium resolves its own deps from there and breaks.
+        command: [
+            ...(appium ? [appium] : ["bunx", "--yes", "appium"]),
+            "--port",
+            String(port),
+            "--log-no-colors",
+            "--log-timestamp",
+        ],
+        cwd: tmpdir(),
+        environment: { ...env.getProcessEnv(), APPIUM_HOME: appiumHome() },
+        logPath,
+        pidPath: toolDataDir("mobile", "appium", `${port}.pid`),
+        expect: "appium",
+    };
+}
+
+export async function appiumStatus(port: number): Promise<AppiumStatus> {
+    const service = appiumService(port);
+    const state = serviceState(service);
+    let version: string | null = null;
+    let answers = false;
+
+    try {
+        const response = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2_000) });
+        const body = SafeJSON.parse(await response.text()) as { value?: { build?: { version?: string } } };
+        answers = response.ok;
+        version = body.value?.build?.version ?? null;
+    } catch (error) {
+        log.debug({ port, error }, "appium not answering");
+    }
+
+    return {
+        port,
+        answers,
+        version,
+        owned: state.status,
+        pid: state.status === "live" ? state.pid : null,
+        log: service.logPath,
+    };
+}
+
+/**
+ * Starts an Appium server on the port unless one already answers there. Refuses when the XCUITest driver would
+ * reboot the simulator on this Xcode (the DeviceHub check), since every session would then fail after a reboot.
+ */
+export async function startAppium(options: {
+    port: number;
+    usesDeviceHub: boolean;
+    timeoutMs?: number;
+}): Promise<AppiumStatus> {
+    const current = await appiumStatus(options.port);
+
+    if (current.answers) {
+        return current;
+    }
+
+    const problem = xcuitestXcodeProblem(xcuitestDriverVersion(), options.usesDeviceHub);
+
+    if (problem) {
+        throw new Error(problem);
+    }
+
+    await startDetached(appiumService(options.port), {
+        ready: () => appiumReady(options.port),
+        timeoutMs: options.timeoutMs ?? 120_000,
+    });
+    return appiumStatus(options.port);
+}
+
+/** Stops the server only when this tool started it; a server another process owns is left running. */
+export function stopAppium(port: number): Promise<boolean> {
+    return stopDetached(appiumService(port));
 }
