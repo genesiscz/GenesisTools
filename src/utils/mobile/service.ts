@@ -96,10 +96,12 @@ export async function stopDetached(
 
     const signal = (name: NodeJS.Signals) => {
         try {
+            // pid-verified: serviceState() just classified the pid file's record as live against the service's command.
             process.kill(-state.pid, name);
         } catch (error) {
             log.debug({ pid: state.pid, signal: name, error }, "group signal failed, signalling the pid");
             try {
+                // pid-verified: the same pid serviceState() classified as live against the service's command.
                 process.kill(state.pid, name);
             } catch (inner) {
                 log.debug({ pid: state.pid, signal: name, error: inner }, "signal failed");
