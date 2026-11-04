@@ -140,6 +140,40 @@ export const transcriptSettingsSchema = z.object({
     fixes: z.record(z.string().regex(/^\d+$/), z.string().max(300)).default({}),
 });
 
+/**
+ * The lines in which `find` occurs, with `replace` put in: each line's text as it shows now (its fix, else what was
+ * said), and where it starts (source seconds, for a fixLine op). Case is ignored unless `matchCase`; a whole word only
+ * unless `wholeWord` is false, where a letter or digit of any language next to it makes it part of a longer word. A
+ * hidden line (fixed to "") is left out.
+ */
+export function replaceWordsInLines(
+    segments: ReadonlyArray<{ text: string; start: number }>,
+    fixes: Readonly<Record<string, string>>,
+    options: { find: string; replace: string; matchCase?: boolean; wholeWord?: boolean }
+): Array<{ from: number; text: string; was: string }> {
+    const find = options.find.trim();
+
+    if (!find) {
+        throw new RangeError("find is empty; give the words to replace");
+    }
+
+    const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const source = options.wholeWord === false ? escaped : `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`;
+    const pattern = new RegExp(source, options.matchCase ? "gu" : "giu");
+    return segments.flatMap((segment) => {
+        const fixed = fixes[String(Math.round(segment.start * 1000))];
+        const was = fixed ?? segment.text.trim();
+
+        if (fixed === "" || !pattern.test(was)) {
+            return [];
+        }
+
+        pattern.lastIndex = 0;
+        const text = was.replace(pattern, () => options.replace).trim();
+        return text === was ? [] : [{ from: segment.start, text, was }];
+    });
+}
+
 export const TEXT_STYLES = ["plate", "plain"] as const;
 
 /**

@@ -18,6 +18,7 @@ import {
     hexColor,
     outputDurationUs,
     REDACTION_STYLES,
+    replaceWordsInLines,
     SHAPE_APPEARS,
     SHAPE_KINDS,
     SPOTLIGHT_CUTOUTS,
@@ -173,6 +174,18 @@ const movieMethods = [
         z.object({ from: timeSchema, text: z.string().max(300) }).strict(),
         'Corrects the transcript line spoken at `from` (any source time inside it, e.g. a line\'s from from transcript() or find()): text is the right words ("" hides the line). Kept in the edit, so captions, transcript(), find() and movies.search() read the fixed words, and a new transcription keeps them.',
         ["from", "text"]
+    ),
+    edit(
+        "replaceWords",
+        z
+            .object({
+                find: z.string().min(1).max(100),
+                replace: z.string().max(100),
+                matchCase: z.boolean().optional(),
+                wholeWord: z.boolean().optional(),
+            })
+            .strict(),
+        'Replaces a word or phrase in every transcript line (captions, subtitles and the search all use the fixed words), saved once and undone with one undo(): e.g. { find: "genesis tolls", replace: "GenesisTools" }. Case is ignored unless matchCase; whole words only unless wholeWord: false. The result lists replaced: [{ from, was, now }]. Throws, saving nothing, when no line has it.'
     ),
     edit(
         "fixLines",
@@ -760,6 +773,29 @@ export class Movie {
             return { op: "fixLine", from: line.start, text };
         });
         return this.change(ops);
+    }
+
+    async replaceWords(options: { find: string; replace: string; matchCase?: boolean; wholeWord?: boolean }) {
+        const opened = await openProject(this.recording);
+        const cache = transcriptCachePath(opened.project.source.video);
+
+        if (!existsSync(cache)) {
+            throw new Error("this movie has no transcript yet; call transcript() first, then replace words in it");
+        }
+
+        const raw = z
+            .object({ segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })) })
+            .parse(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }));
+        const lines = replaceWordsInLines(raw.segments, opened.project.transcript?.fixes ?? {}, options);
+
+        if (!lines.length) {
+            throw new RangeError(
+                `"${options.find}" is in no line${options.wholeWord === false ? "" : " as a whole word"}; nothing was saved (find(text) searches the transcript)`
+            );
+        }
+
+        const result = await this.change(lines.map(({ from, text }): EditOp => ({ op: "fixLine", from, text })));
+        return { ...result, replaced: lines.map(({ from, was, text }) => ({ from, was, now: text })) };
     }
 
     async unfixLine(from: number | string) {

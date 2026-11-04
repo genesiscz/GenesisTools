@@ -19,6 +19,7 @@ import {
     parseEditOps,
     partOf,
     readProject,
+    replaceWordsInLines,
     shortcutsOf,
     sourceTimeOf,
     transcriptLines,
@@ -424,6 +425,28 @@ describe("edit project (edit.json)", () => {
             "captions",
         ]);
         expect(checkProject(wholeProject(source), facts)).toEqual([]);
+    });
+
+    test("replace words fixes every line with the word, whole words, any case, over earlier fixes", () => {
+        const segments = [
+            { text: "Open genesis tolls now.", start: 1 },
+            { text: "Genesis Tolls has a menu.", start: 4.25 },
+            { text: "Tollsbooth is not it.", start: 7 },
+            { text: "A hidden genesis tolls line.", start: 9 },
+        ];
+        const fixes = { "4250": "Genesis Tolls has a menu bar.", "9000": "" };
+        expect(replaceWordsInLines(segments, fixes, { find: "genesis tolls", replace: "GenesisTools" })).toEqual([
+            { from: 1, text: "Open GenesisTools now.", was: "Open genesis tolls now." },
+            { from: 4.25, text: "GenesisTools has a menu bar.", was: "Genesis Tolls has a menu bar." },
+        ]);
+        expect(replaceWordsInLines(segments, {}, { find: "tolls", replace: "x", matchCase: true })).toHaveLength(2);
+        expect(replaceWordsInLines(segments, {}, { find: "Tolls", replace: "T", wholeWord: false })[2]?.text).toBe(
+            "Tbooth is not it."
+        );
+        expect(
+            replaceWordsInLines([{ text: "Žluťoučký kůň", start: 0 }], {}, { find: "kůň", replace: "pes" })[0]?.text
+        ).toBe("Žluťoučký pes");
+        expect(() => replaceWordsInLines(segments, {}, { find: " ", replace: "x" })).toThrow("find is empty");
     });
 
     test("annotate clicks marks each click once, a double click once, and a second run adds nothing", () => {
