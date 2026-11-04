@@ -344,6 +344,15 @@ export const moviesApi = defineApi({
             effect: "read",
         }),
         defineMethod({
+            name: "search",
+            params: z.object({ text: z.string().min(1) }),
+            positional: ["text"],
+            result: z.unknown(),
+            resultName: "{ recording, title, folder, kind, at, to?, text }[]",
+            doc: 'Finds a moment across the whole library (case and accents ignored): a recording\'s title, a marker\'s label, or a line of a transcript it already has (kind "title" | "marker" | "line", at and to in source seconds); open(hit.folder) then cuts or zooms there. It never transcribes.',
+            effect: "read",
+        }),
+        defineMethod({
             name: "open",
             params: z.object({ recording: z.string() }),
             positional: ["recording"],
@@ -696,6 +705,70 @@ export class Movie {
     }
 }
 
+/** Case and accents ignored, as find() does. */
+function folded(text: string): string {
+    return text
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .toLowerCase();
+}
+
+/** A moment across the library: titles, marker labels and the lines of transcripts already cached. */
+function searchLibrary(text: string) {
+    const query = folded(text);
+    const hits: Array<{
+        recording: string;
+        title: string;
+        folder: string;
+        kind: "title" | "marker" | "line";
+        at: number;
+        to?: number;
+        text: string;
+    }> = [];
+
+    for (const row of listLibrary()) {
+        const base = { recording: row.id, title: row.title, folder: row.folder };
+
+        if (folded(row.title).includes(query)) {
+            hits.push({ ...base, kind: "title", at: 0, text: row.title });
+        }
+
+        const markers = z
+            .array(z.object({ atMs: z.number(), label: z.string() }))
+            .safeParse(readRecordingManifest(row.folder)?.settings.markers ?? []);
+
+        for (const marker of markers.success ? markers.data : []) {
+            if (folded(marker.label).includes(query)) {
+                hits.push({ ...base, kind: "marker", at: marker.atMs / 1000, text: marker.label });
+            }
+        }
+
+        const cache = row.movie ? transcriptCachePath(row.movie) : undefined;
+
+        if (!cache || !existsSync(cache)) {
+            continue;
+        }
+
+        try {
+            const raw = SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true });
+            const segments = z
+                .object({ segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })) })
+                .safeParse(raw);
+
+            for (const segment of segments.success ? segments.data.segments : []) {
+                if (folded(segment.text).includes(query)) {
+                    hits.push({ ...base, kind: "line", at: segment.start, to: segment.end, text: segment.text.trim() });
+                }
+            }
+        } catch (error) {
+            log.debug({ error, cache }, "a cached transcript does not read; search skips it");
+        }
+    }
+
+    log.debug({ text, hits: hits.length }, "library searched");
+    return hits;
+}
+
 export class MovieRecording {
     constructor(
         readonly entry: LiveEntry,
@@ -822,6 +895,7 @@ export class MoviesToolset extends ReplToolset {
             movies: {
                 list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
                 open: (recording: string) => new Movie(recording, ctx),
+                search: (text: string) => searchLibrary(text),
                 record: (options: z.infer<typeof recordSchema> = {}) => record(options, ctx),
             },
         };

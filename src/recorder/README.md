@@ -78,7 +78,8 @@ The window, the CLI and the REPL export with one renderer (AVFoundation and the 
 because the H.264 export preset lowers the rate instead (measured: 2880×1798 came out at 30 fps, 3724×2326 at 15).
 HEVC keeps the full size. `--from`/`--to` (REPL `export({ from, to })`, the window's I and O) export only the part
 that plays between two OUTPUT times; the edit itself stays whole. A GIF (10 fps, at most 960 wide) or WebM is made by ffmpeg from that movie. An export never
-overwrites a file: the default name moves on to `-edited-2`, `-3`.
+overwrites a file: the default name moves on to `-edited-2`, `-3`. The Export tab can also put the file on the
+clipboard when done (off by default) and show it in Finder (on).
 
 ## The window (GenesisTools.app, recorder part)
 
@@ -93,6 +94,7 @@ playhead's split button. Keys: Space, S (split), Z (zoom), I and O (the export p
 `tools node-repl mcp --toolset movies` (or `run`). `help("movies")` prints every signature with its ranges.
 
 ```js
+const [hit] = await movies.search("login");    // titles, markers and cached transcript lines across the library
 const m = movies.open("last");
 await m.removeIdle();                       // { …, removed: [[4.3, 5.7]] }
 const [line] = await m.find("this part is a mistake");
