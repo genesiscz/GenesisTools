@@ -150,9 +150,33 @@ function isExportFormat(value: string): value is ExportFormat {
     return EXPORT_FORMATS.some((format) => format === value);
 }
 
-/** `<name>-edited.<ext>` beside the source movie, or `-edited-2`, `-3`…: an export never overwrites a file. */
+/**
+ * The default export name, the same rule as the editor's: the recording's title made safe for a file name ("cursor
+ * test 1"), else `<movie>-edited` for a plain movie.
+ */
+export function defaultExportName(video: string): string {
+    const title = (() => {
+        try {
+            return readRecordingManifest(dirname(video))?.title;
+        } catch (error) {
+            log.debug(
+                { error, video },
+                "the manifest beside the movie does not read; the export keeps the movie's name"
+            );
+            return undefined;
+        }
+    })();
+    const safe = (title ?? "")
+        .replace(/[/:]/g, "-")
+        .trim()
+        .replace(/^\.+|\.+$/g, "")
+        .slice(0, 80);
+    return safe || `${basename(video, extname(video))}-edited`;
+}
+
+/** `<default name>.<ext>` beside the source movie, or `-2`, `-3`…: an export never overwrites a file. */
 function freeOutput(video: string, extension: string): string {
-    const stem = join(dirname(video), `${basename(video, extname(video))}-edited`);
+    const stem = join(dirname(video), defaultExportName(video));
 
     for (let index = 1; ; index++) {
         const candidate = `${stem}${index === 1 ? "" : `-${index}`}.${extension}`;
@@ -206,7 +230,13 @@ export async function exportAs(
         writeProject(opened.path, opened.project);
     }
 
-    const output = options.out ? resolve(options.out) : freeOutput(opened.project.source.video, format);
+    // A file chosen in the editor (export.output) keeps its name with this format's extension.
+    const chosen = opened.project.export.output;
+    const output = options.out
+        ? resolve(options.out)
+        : chosen
+          ? join(dirname(chosen), `${basename(chosen, extname(chosen))}.${format}`)
+          : freeOutput(opened.project.source.video, format);
 
     if (existsSync(output)) {
         return { ok: false, error: `${output} exists already; the export never overwrites a file` };

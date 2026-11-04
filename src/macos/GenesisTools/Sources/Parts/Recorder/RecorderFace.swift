@@ -251,9 +251,7 @@ private struct ExportSummary: View {
             if format != .gif { row("Size", "\(Int(size.width)) × \(Int(size.height))") }
             row("Part", part.map { "\(formatClock($0.fromUs, tenths: true)) – \(formatClock($0.toUs, tenths: true))" }
                 ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
-            if format == .mp4 {
-                PathLabel(path: EditExporter.outputURL(for: model.project).path)
-            }
+            row("File", EditExporter.outputURL(for: model.project, format: format).lastPathComponent)
             HStack {
                 Button("Settings…") { model.tab = .export; close() }
                     .buttonStyle(.genHoverPlain())

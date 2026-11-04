@@ -340,20 +340,37 @@ final class EditExporter {
         let bytes: Int64
     }
 
-    static func outputURL(for project: EditProject) -> URL {
+    /// Where an export goes: the file chosen with Change… (its extension set to the format), else beside the movie,
+    /// named after the recording's title ("cursor test 1.mp4") or `<movie>-edited` for a plain movie, with "-2", "-3"
+    /// so an export never overwrites a file. `tools recorder export` names a GIF or WebM by the same rule.
+    static func outputURL(for project: EditProject, format: EditProject.ExportFormat = .mp4) -> URL {
         if !project.export.output.isEmpty {
             return URL(fileURLWithPath: (project.export.output as NSString).expandingTildeInPath)
+                .deletingPathExtension().appendingPathExtension(format.rawValue)
         }
         let source = URL(fileURLWithPath: project.source.video)
-        let base = source.deletingPathExtension().lastPathComponent + "-edited"
+        let base = defaultName(for: project)
         let folder = source.deletingLastPathComponent()
-        var candidate = folder.appendingPathComponent(base + ".mp4")
+        var candidate = folder.appendingPathComponent("\(base).\(format.rawValue)")
         var counter = 2
         while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = folder.appendingPathComponent("\(base)-\(counter).mp4")
+            candidate = folder.appendingPathComponent("\(base)-\(counter).\(format.rawValue)")
             counter += 1
         }
         return candidate
+    }
+
+    /// The recording's title made safe for a file name, else `<movie>-edited`.
+    static func defaultName(for project: EditProject) -> String {
+        let source = URL(fileURLWithPath: project.source.video)
+        let manifest = source.deletingLastPathComponent().appendingPathComponent("recording.json")
+        if let data = try? Data(contentsOf: manifest),
+           let title = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["title"] as? String {
+            let safe = title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+            if !safe.isEmpty { return String(safe.prefix(80)) }
+        }
+        return source.deletingPathExtension().lastPathComponent + "-edited"
     }
 
     static func export(project: EditProject, to url: URL, onProgress: @escaping (Double) -> Void) async throws -> Result {

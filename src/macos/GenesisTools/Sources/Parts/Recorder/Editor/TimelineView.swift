@@ -33,22 +33,24 @@ struct TimelineView: View {
     static let clipLaneHeight: CGFloat = 64
     static let audioLaneHeight: CGFloat = 30
     static let marksLaneHeight: CGFloat = 16
-    static let hiddenLaneHeight: CGFloat = 18
+    /// One row of the hidden-parts lane; overlapping parts take a row each, up to `hiddenRowsShown`.
+    static let hiddenRowHeight: CGFloat = 16
+    static let hiddenRowsShown = 3
     static let laneGap: CGFloat = 8
     static var clipLaneTop: CGFloat { rulerHeight + 10 + zoomLaneHeight + laneGap }
-    static var marksLaneTop: CGFloat { clipLaneTop + clipLaneHeight + 4 }
-    static var hiddenLaneTop: CGFloat { marksLaneTop + marksLaneHeight + 2 }
-    static var audioLaneTop: CGFloat { hiddenLaneTop + hiddenLaneHeight + 4 }
-    static var totalHeight: CGFloat { audioLaneTop + audioLaneHeight + 40 }
+
+    /// Fitted, the whole edit fills the strip between the two insets, so nothing runs past the window's edge.
+    private var fit: Double {
+        Double(max(200, viewportWidth - 2 * TimelineScale().inset)) / max(0.5, Double(model.durationUs) / 1_000_000)
+    }
 
     private var scale: TimelineScale {
-        // Fitted, the whole edit fills the strip between the two insets, so nothing runs past the window's edge.
-        let fit = Double(max(200, viewportWidth - 2 * TimelineScale().inset)) / max(0.5, Double(model.durationUs) / 1_000_000)
-        return TimelineScale(pointsPerSecond: model.pointsPerSecond > 0 ? model.pointsPerSecond : fit)
+        TimelineScale(pointsPerSecond: model.pointsPerSecond > 0 ? model.pointsPerSecond : fit)
     }
 
     var body: some View {
         let scale = scale
+        let layout = TimelineLayout(model: model)
         let contentWidth = max(viewportWidth, scale.x(model.durationUs) + scale.inset)
         ScrollView(.horizontal, showsIndicators: true) {
             ZStack(alignment: .topLeading) {
@@ -60,21 +62,57 @@ struct TimelineView: View {
                     .offset(y: Self.rulerHeight + 10)
                 ClipLaneView(model: model, scale: scale)
                     .offset(y: Self.clipLaneTop)
-                MarksLaneView(model: model, scale: scale)
-                    .offset(y: Self.marksLaneTop)
-                HiddenLaneView(model: model, scale: scale)
-                    .offset(y: Self.hiddenLaneTop)
-                AudioLaneView(model: model, scale: scale)
-                    .offset(y: Self.audioLaneTop)
-                if let part = model.exportPart {
-                    PartBand(model: model, scale: scale, part: part)
+                if layout.marks {
+                    MarksLaneView(model: model, scale: scale)
+                        .offset(y: layout.marksTop)
                 }
-                PlayheadView(clock: model.clock, scale: scale, model: model)
+                if layout.hiddenRows > 0 {
+                    HiddenLaneView(model: model, scale: scale)
+                        .offset(y: layout.hiddenTop)
+                }
+                if layout.audio {
+                    AudioLaneView(model: model, scale: scale)
+                        .offset(y: layout.audioTop)
+                }
+                if let part = model.exportPart {
+                    PartBand(model: model, scale: scale, part: part, layout: layout)
+                }
+                PlayheadView(clock: model.clock, scale: scale, model: model, layout: layout)
             }
-            .frame(width: contentWidth, height: Self.totalHeight, alignment: .topLeading)
+            .frame(width: contentWidth, height: layout.totalHeight, alignment: .topLeading)
         }
         .background(RecorderPalette.window)
+        .onAppear { model.fittedPointsPerSecond = fit }
+        .onChange(of: fit) { _, value in model.fittedPointsPerSecond = value }
     }
+}
+
+/// Where each lane sits, from what the edit has: a marks lane only with markers, captions, texts or shortcuts to show,
+/// a hidden-parts lane with one row per overlap, and the sound lane only for a movie with sound.
+struct TimelineLayout: Equatable {
+    var marks: Bool
+    var hiddenRows: Int
+    var audio: Bool
+
+    @MainActor
+    init(model: EditorModel) {
+        let project = model.project
+        marks = !model.markers.isEmpty || !(project.texts ?? []).isEmpty
+            || (project.captions?.show == true && !model.zoom.captionLines.isEmpty)
+            || (project.keys?.show == true && !(model.cursor?.keys ?? []).isEmpty)
+        let rows = HiddenLaneView.rows(project.redactions ?? [])
+        hiddenRows = (project.redactions ?? []).isEmpty ? 0 : min(TimelineView.hiddenRowsShown, (rows.values.max() ?? 0) + 1)
+        // Until the waveform is read, keep the lane, so a movie with sound does not jump once it loads.
+        audio = !model.waveform.loaded || model.waveform.hasAudio
+    }
+
+    var marksTop: CGFloat { TimelineView.clipLaneTop + TimelineView.clipLaneHeight + 4 }
+    var hiddenTop: CGFloat { marksTop + (marks ? TimelineView.marksLaneHeight + 2 : 0) }
+    var hiddenHeight: CGFloat { hiddenRows == 0 ? 0 : CGFloat(hiddenRows) * (TimelineView.hiddenRowHeight + 2) - 2 }
+    var audioTop: CGFloat { hiddenTop + (hiddenRows > 0 ? hiddenHeight + 4 : 0) }
+    /// The bottom of the last lane shown.
+    var lanesBottom: CGFloat { audio ? audioTop + TimelineView.audioLaneHeight : audioTop - 2 }
+    var totalHeight: CGFloat { lanesBottom + 16 }
 }
 
 private struct RulerView: View {
@@ -205,6 +243,10 @@ private struct ZoomSegment: View {
         let width = max(8, scale.x(outEnd) - scale.x(outStart))
         RoundedRectangle(cornerRadius: 7, style: .continuous)
             .fill(RecorderPalette.zoom.opacity(selected ? 1 : 0.82))
+            // The zoom's motion: lighter ramps where it eases in and out.
+            .overlay(alignment: .leading) { ramp(ms: zoom.easeInMs, total: width, leading: true) }
+            .overlay(alignment: .trailing) { ramp(ms: zoom.easeOutMs, total: width, leading: false) }
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(Color.white.opacity(selected ? 0.9 : 0), lineWidth: 1.5)
@@ -221,10 +263,7 @@ private struct ZoomSegment: View {
             .frame(width: width, height: TimelineView.zoomLaneHeight)
             .offset(x: scale.x(outStart))
             .contentShape(Rectangle())
-            .onTapGesture {
-                model.selection = .zoom(zoom.id)
-                model.tab = .zoom
-            }
+            .onTapGesture { selectZoom() }
             .gesture(DragGesture(minimumDistance: 3).onChanged { value in
                 if moveFrom == nil { moveFrom = (zoom.startUs, zoom.endUs); model.selection = .zoom(zoom.id) }
                 guard let (start, end) = moveFrom else { return }
@@ -236,10 +275,28 @@ private struct ZoomSegment: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("recorder.zoom.\(zoom.id)")
             // A tap gesture alone gives the element no AXPress, so VoiceOver and agents could not select a zoom.
-            .accessibilityAction {
-                model.selection = .zoom(zoom.id)
-                model.tab = .zoom
-            }
+            .accessibilityAction { selectZoom() }
+    }
+
+    /// Selects the zoom and, when the playhead is outside it, moves to its first fully zoomed frame, so the preview
+    /// shows what the inspector changes.
+    private func selectZoom() {
+        model.selection = .zoom(zoom.id)
+        model.tab = .zoom
+        let now = TimelineMap.sourceTime(atOutput: model.clock.outUs, in: model.project)
+        guard now < zoom.startUs || now >= zoom.endUs else { return }
+        let settled = min(zoom.endUs - 1, zoom.startUs + Int64(zoom.easeInMs) * 1000)
+        if let at = TimelineMap.outputTime(ofSource: settled, in: model.project) ?? TimelineMap.outputTime(ofSource: zoom.startUs, in: model.project) {
+            model.seek(at)
+        }
+    }
+
+    private func ramp(ms: Int, total: CGFloat, leading: Bool) -> some View {
+        let width = min(total / 2, scale.width(Int64(ms) * 1000))
+        return LinearGradient(colors: [Color.white.opacity(0.32), Color.white.opacity(0)],
+                              startPoint: leading ? .leading : .trailing, endPoint: leading ? .trailing : .leading)
+            .frame(width: max(0, width))
+            .allowsHitTesting(false)
     }
 
     private func edgeHandle(leading: Bool) -> some View {
@@ -327,10 +384,15 @@ private struct ClipView: View {
     }
 
     private func trimHandle(leading: Bool, selected: Bool) -> some View {
+        // A selected clip's grips: 8 pt bars with a dark notch, so the edge reads as "drag here".
         RoundedRectangle(cornerRadius: 3)
             .fill(selected ? RecorderPalette.selected : Color.white.opacity(0.001))
-            .frame(width: selected ? 7 : 9)
-            .padding(.vertical, selected ? 0 : 0)
+            .overlay {
+                if selected {
+                    Capsule().fill(Color.black.opacity(0.55)).frame(width: 2, height: 18)
+                }
+            }
+            .frame(width: selected ? 8 : 9)
             .contentShape(Rectangle())
             .onHover { inside in
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
@@ -384,11 +446,12 @@ private struct PartBand: View {
     @Bindable var model: EditorModel
     let scale: TimelineScale
     let part: (fromUs: Int64, toUs: Int64)
+    let layout: TimelineLayout
 
     var body: some View {
         let fromX = scale.x(part.fromUs), toX = scale.x(part.toUs)
         let top = TimelineView.rulerHeight
-        let height = TimelineView.audioLaneTop + TimelineView.audioLaneHeight - top + 2
+        let height = layout.lanesBottom - top + 2
         ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(Color.accentColor.opacity(0.14))
@@ -490,16 +553,15 @@ private struct HiddenLaneView: View {
 
     var body: some View {
         let rows = Self.rows(model.project.redactions ?? [])
-        let count = max(1, (rows.values.max() ?? 0) + 1)
-        // Overlapping parts share the lane in rows; one row keeps the full height and its label.
-        let height = (TimelineView.hiddenLaneHeight - CGFloat(count - 1) * 2) / CGFloat(count)
+        let height = TimelineView.hiddenRowHeight
+        // A row per overlap, each tall enough for its label; past the last row shown, parts share that row.
         ZStack(alignment: .topLeading) {
             ForEach(model.project.redactions ?? []) { redaction in
                 HiddenSegment(model: model, redaction: redaction, scale: scale, height: height)
-                    .offset(y: CGFloat(rows[redaction.id] ?? 0) * (height + 2))
+                    .offset(y: CGFloat(min(rows[redaction.id] ?? 0, TimelineView.hiddenRowsShown - 1)) * (height + 2))
             }
         }
-        .frame(height: TimelineView.hiddenLaneHeight, alignment: .topLeading)
+
     }
 
     /// A row per hidden part: the first row whose last part ended before this one starts.
@@ -540,7 +602,7 @@ private struct HiddenSegment: View {
                         .strokeBorder(Color.white.opacity(selected ? 0.9 : 0), lineWidth: 1.5)
                 }
                 .overlay {
-                    if width > 46 && height >= 14 {
+                    if width > 46 {
                         Text(verbatim: redaction.label ?? redaction.style.rawValue.capitalized)
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(Color.black.opacity(0.75))
@@ -548,8 +610,8 @@ private struct HiddenSegment: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .overlay(alignment: .leading) { edgeHandle(leading: true) }
-                .overlay(alignment: .trailing) { edgeHandle(leading: false) }
+                .overlay(alignment: .leading) { edgeHandle(leading: true, width: min(7, width / 3)) }
+                .overlay(alignment: .trailing) { edgeHandle(leading: false, width: min(7, width / 3)) }
                 .frame(width: width, height: height)
                 .offset(x: scale.x(first.fromUs))
                 .contentShape(Rectangle())
@@ -563,7 +625,7 @@ private struct HiddenSegment: View {
                         $0.endUs = end + delta
                     }
                 }.onEnded { _ in moveFrom = nil })
-                .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move, drag an edge to trim")
+                .instantTooltip("\(redaction.label.map { "\($0) (\(redaction.style.rawValue))" } ?? redaction.style.rawValue.capitalized): drag to move, drag an edge to trim")
                 .accessibilityElement()
                 .accessibilityLabel("Hidden part, \(redaction.style.rawValue), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit)")
                 .accessibilityAddTraits(.isButton)
@@ -584,10 +646,10 @@ private struct HiddenSegment: View {
         return min(max(delta, -start), model.project.source.durationUs - length - start)
     }
 
-    private func edgeHandle(leading: Bool) -> some View {
+    private func edgeHandle(leading: Bool, width: CGFloat) -> some View {
         Rectangle()
             .fill(Color.white.opacity(0.001))
-            .frame(width: 7)
+            .frame(width: width)
             .contentShape(Rectangle())
             .onHover { inside in
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
@@ -635,6 +697,7 @@ private struct AudioLaneView: View {
             }
         }
         .frame(height: TimelineView.audioLaneHeight)
+        .instantTooltip("Sound (the waveform of the kept clips)")
         .accessibilityLabel(waveform.hasAudio ? "Audio waveform" : "No audio")
     }
 }
@@ -645,6 +708,7 @@ private struct PlayheadView: View {
     let clock: PlayheadClock
     let scale: TimelineScale
     let model: EditorModel
+    let layout: TimelineLayout
 
     var body: some View {
         let x = scale.x(clock.outUs)
@@ -652,7 +716,7 @@ private struct PlayheadView: View {
         ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(RecorderPalette.playhead)
-                .frame(width: 1.5, height: TimelineView.totalHeight - 30)
+                .frame(width: 1.5, height: layout.lanesBottom - TimelineView.rulerHeight + 8)
                 .offset(x: x - 0.75, y: TimelineView.rulerHeight - 4)
                 .allowsHitTesting(false)
             PlayheadKnob()
@@ -664,16 +728,18 @@ private struct PlayheadView: View {
                     model.seek(scale.us(value.location.x))
                 })
                 .accessibilityLabel("Playhead at \(formatClock(clock.outUs, tenths: true))")
-            if canSplit {
-                IconButton(systemName: "scissors", tooltip: "Split the clip at the playhead (S)", size: 13) {
-                    model.splitAtPlayhead()
-                }
-                .frame(width: 30, height: 28)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.24)))
-                .offset(x: min(max(x, 15), max(15, scale.x(model.durationUs) - 15)) - 15,
-                        y: TimelineView.audioLaneTop + TimelineView.audioLaneHeight + 6)
-                .accessibilityIdentifier("recorder.split")
+            // On the clip lane's top edge beside the playhead, where the cut lands; greyed at a clip edge.
+            IconButton(systemName: "scissors", tooltip: canSplit ? "Split the clip at the playhead (S)" : "No cut here: the playhead is at a clip edge",
+                       size: 11) {
+                model.splitAtPlayhead()
             }
+            .disabled(!canSplit)
+            .opacity(canSplit ? 1 : 0.45)
+            .frame(width: 24, height: 20)
+            .background(Capsule().fill(Color(white: 0.24)))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 1))
+            .offset(x: min(x + 5, max(0, scale.x(model.durationUs) - 24)), y: TimelineView.clipLaneTop + 4)
+            .accessibilityIdentifier("recorder.split")
         }
         .coordinateSpace(name: "timeline")
     }

@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import Observation
+import UniformTypeIdentifiers
 
 /// The playhead, kept apart from the model so that only the views that show the time re-render 30 times a second
 /// while a movie plays (the transport's clock and the timeline's red line), never the inspector or the lanes.
@@ -10,10 +11,13 @@ final class PlayheadClock {
     var outUs: Int64 = 0
 }
 
+/// One selection for the whole editor, so ⌫, Esc, the lanes and the inspector agree on what is selected.
 enum EditorSelection: Equatable {
     case none
     case clip(String)
     case zoom(String)
+    case redaction(String)
+    case text(String)
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
@@ -212,6 +216,17 @@ final class EditorModel {
         commit(next, rebuildMovie: next.clips != project.clips || next.audio != project.audio)
     }
 
+    /// The scale at which the whole edit fits the timeline's width; the timeline keeps it current.
+    @ObservationIgnored var fittedPointsPerSecond: Double = 100
+
+    /// The timeline's scale times `factor`, from the fitted scale when it is at Fit (0); back below Fit is Fit.
+    func zoomTimeline(by factor: Double) {
+        let fitted = fittedPointsPerSecond
+        let current = pointsPerSecond > 0 ? pointsPerSecond : fitted
+        let next = min(400, max(10, current * factor))
+        pointsPerSecond = factor < 1 && next <= fitted ? 0 : next
+    }
+
     func splitAtPlayhead() {
         guard let next = TimelineMap.split(project, atOutput: clock.outUs) else {
             show("Nothing to split here: the playhead is at the edge of a clip.", error: false)
@@ -234,6 +249,10 @@ final class EditorModel {
             next.zooms.removeAll { $0.id == id }
             selection = .none
             apply(next, rebuildMovie: false)
+        case let .redaction(id):
+            deleteRedaction(id)
+        case let .text(id):
+            deleteText(id)
         case .none:
             break
         }
@@ -252,11 +271,29 @@ final class EditorModel {
         apply(next, rebuildMovie: false)
     }
 
-    /// The redaction the Hide tab edits.
-    var selectedRedaction: String?
+    /// The redaction the Hide tab edits: the `.redaction` case of the one selection.
+    var selectedRedaction: String? {
+        get { if case let .redaction(id) = selection { id } else { nil } }
+        set {
+            if let newValue {
+                selection = .redaction(newValue)
+            } else if selectedRedaction != nil {
+                selection = .none
+            }
+        }
+    }
 
-    /// The text the Text tab edits.
-    var selectedText: String?
+    /// The text the Text tab edits: the `.text` case of the one selection.
+    var selectedText: String? {
+        get { if case let .text(id) = selection { id } else { nil } }
+        set {
+            if let newValue {
+                selection = .text(newValue)
+            } else if selectedText != nil {
+                selection = .none
+            }
+        }
+    }
 
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
     func addText(_ text: String = "Title") {
@@ -485,6 +522,21 @@ final class EditorModel {
             change(&cursor)
             project.cursor = cursor
         }
+    }
+
+    /// A save panel for the export's file, starting at the current one; the choice goes into `export.output`.
+    func chooseExportFile() {
+        let format = project.export.format ?? .mp4
+        let current = EditExporter.outputURL(for: project, format: format)
+        let panel = NSSavePanel()
+        panel.title = "Export to"
+        panel.nameFieldStringValue = current.lastPathComponent
+        panel.directoryURL = current.deletingLastPathComponent()
+        panel.allowedContentTypes = [UTType(filenameExtension: format.rawValue) ?? .movie]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        setExport { $0.output = url.path }
+        HubPerf.log("recorder.export: output set to \(url.path)")
     }
 
     func setExport(_ change: (inout EditProject.ExportSettings) -> Void) {

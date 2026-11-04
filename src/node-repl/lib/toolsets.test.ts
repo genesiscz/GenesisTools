@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
+import { defaultExportName } from "@app/recorder/lib/edit";
 import { chaptersOf, recordingFolderOf } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
@@ -180,6 +181,25 @@ describe("movie chapters", () => {
             )
         ).toEqual(["0:00 Start", "0:30 Next"]);
         expect(chaptersOf([])).toEqual([]);
+    });
+
+    test("an export is named after the recording's title, made safe, else after the movie", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-name-"));
+        const recording = join(root, "rec");
+        mkdirSync(recording);
+        writeFileSync(
+            join(recording, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id: "r",
+                title: " login/flow: v2. ",
+                startedAt: "x",
+                displays: [],
+                frames: [],
+            })
+        );
+        expect(defaultExportName(join(recording, "screen.mp4"))).toBe("login-flow- v2");
+        expect(defaultExportName(join(root, "talk.mov"))).toBe("talk-edited");
     });
 
     test("a copied recording's edit belongs to the copy, even when its movie is still the original's", () => {

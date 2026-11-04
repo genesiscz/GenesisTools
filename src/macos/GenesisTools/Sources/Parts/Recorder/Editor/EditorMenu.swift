@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// One editor command: its menu title, the key that runs it (shown in the menu and the shortcuts sheet), and what it
 /// does to the front editor. The editor's key monitor (`EditorKeys`) handles the keys; a menu click runs `run`.
@@ -41,6 +42,9 @@ enum EditorMenu {
         EditorCommand(title: "Forward One Second", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), modifiers: .shift, label: "⇧→") { $0.step(frames: 60) },
         EditorCommand(title: "To the Start", key: String(UnicodeScalar(NSHomeFunctionKey)!), label: "Home") { $0.seek(0) },
         EditorCommand(title: "To the End", key: String(UnicodeScalar(NSEndFunctionKey)!), label: "End") { $0.seek($0.durationUs) },
+        EditorCommand(title: "Zoom Timeline In", key: "=", modifiers: .command, label: "⌘=") { $0.zoomTimeline(by: 1.4) },
+        EditorCommand(title: "Zoom Timeline Out", key: "-", modifiers: .command, label: "⌘−") { $0.zoomTimeline(by: 0.7) },
+        EditorCommand(title: "Fit Timeline", key: "0", modifiers: .command, label: "⌘0") { $0.pointsPerSecond = 0 },
     ]
 
     static func install() {
@@ -104,11 +108,65 @@ enum EditorMenu {
         }
     }
 
-    /// Every command with its key, for the shortcuts sheet.
-    static var shortcutsText: String {
-        [("File", file), ("Edit", edit), ("Timeline", timeline)].map { section, commands in
-            "\(section)\n" + commands.filter { !$0.label.isEmpty }.map { "\($0.label)\t\($0.title)" }.joined(separator: "\n")
-        }.joined(separator: "\n\n")
+    /// Every command with a key, by menu, for the shortcuts sheet.
+    static var sections: [(title: String, commands: [EditorCommand])] {
+        [("File", file), ("Edit", edit), ("Timeline", timeline)].map { ($0.0, $0.1.filter { !$0.label.isEmpty }) }
+    }
+}
+
+/// The editor's keys in two aligned columns per menu, as a sheet on the editor window.
+private struct ShortcutsSheet: View {
+    let done: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Keyboard Shortcuts").font(.system(size: 15, weight: .semibold))
+            ScrollView {
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                    ForEach(EditorMenu.sections, id: \.title) { section in
+                        GridRow {
+                            Text(section.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                                .gridCellColumns(2)
+                                .padding(.top, 6)
+                        }
+                        ForEach(section.commands, id: \.title) { command in
+                            GridRow {
+                                Text(verbatim: command.label)
+                                    .font(.system(size: 12.5, weight: .medium).monospaced())
+                                    .gridColumnAlignment(.trailing)
+                                Text(command.title).font(.system(size: 12.5))
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 420)
+            HStack {
+                Spacer()
+                Button("Done", action: done).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+    }
+}
+
+@MainActor
+enum ShortcutsPresenter {
+    static func show(on window: NSWindow?) {
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        let close: () -> Void = { [weak panel] in
+            guard let panel else { return }
+            if let parent = panel.sheetParent { parent.endSheet(panel) } else { panel.close() }
+        }
+        panel.contentView = NSHostingView(rootView: ShortcutsSheet(done: close))
+        panel.setContentSize(panel.contentView?.fittingSize ?? NSSize(width: 360, height: 500))
+        if let window {
+            window.beginSheet(panel)
+        } else {
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+        }
     }
 }
 
@@ -132,21 +190,20 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
     }
 
     @objc func showShortcuts(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = "Keyboard Shortcuts"
-        alert.informativeText = EditorMenu.shortcutsText
-        alert.addButton(withTitle: "Done")
-        if let window = NSApp.keyWindow {
-            alert.beginSheetModal(for: window)
-        } else {
-            alert.runModal()
-        }
+        ShortcutsPresenter.show(on: NSApp.keyWindow)
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         guard let box = item.representedObject as? CommandBox else { return true }
         // A key with no ⌘ (Space, S, ←) belongs to a text field while one edits; a disabled item lets it through.
         if box.command.modifiers.isDisjoint(with: [.command, .control]), NSApp.keyWindow?.firstResponder is NSText { return false }
-        return EditorWindows.shared.frontModel() != nil
+        guard let model = EditorWindows.shared.frontModel() else { return false }
+        switch box.command.title {
+        case "Undo": return model.canUndo
+        case "Redo": return model.canRedo
+        case "Delete Selection", "Deselect": return model.selection != .none
+        case "Clear Part": return model.exportPart != nil
+        default: return true
+        }
     }
 }
