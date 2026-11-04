@@ -93,6 +93,19 @@ export async function watchOnce(
     const settings = await deps.settings();
 
     if (!settings.enabled) {
+        const recorder = deps.recorder();
+        const auto = readAuto(store);
+
+        if (recorder.running && auto?.meetingId && recorder.state?.meetingId === auto.meetingId) {
+            const result = await deps.run(["meetings", "record", "stop"]);
+
+            if (!result.success || deps.recorder().running) {
+                return "failed";
+            }
+
+            unlinkSync(autoPath(store));
+        }
+
         return "disabled";
     }
 
