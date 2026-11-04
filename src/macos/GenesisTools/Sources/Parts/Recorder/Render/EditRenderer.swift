@@ -92,14 +92,29 @@ struct EditRenderer {
     /// `maxHeight` 0 keeps the source size. The size is rounded to even pixels, which H.264 needs. With `h264Fps` the
     /// size also fits `h264PixelRate`, so the export keeps its frame rate instead of the encoder halving it.
     static func renderSize(source: CGSize, maxHeight: Int, h264Fps: Double? = nil) -> CGSize {
+        outputSizes(source: source, maxHeight: maxHeight, aspect: nil, h264Fps: h264Fps).canvas
+    }
+
+    /// The movie's picture and the canvas it sits on (the same size without an aspect). The canvas's short side is
+    /// the picture's height; the H.264 budget applies to the canvas, which is what the encoder gets.
+    static func outputSizes(source: CGSize, maxHeight: Int, aspect: EditProject.CanvasAspect?, h264Fps: Double? = nil)
+        -> (picture: CGSize, canvas: CGSize) {
         var scale = maxHeight > 0 && source.height > CGFloat(maxHeight) ? CGFloat(maxHeight) / source.height : 1
+        let ratio = aspect?.ratio
+        func canvas(_ height: CGFloat) -> CGSize {
+            guard let ratio else { return CGSize(width: source.width / source.height * height, height: height) }
+            return ratio >= 1 ? CGSize(width: height * ratio, height: height) : CGSize(width: height, height: height / ratio)
+        }
         if let h264Fps, h264Fps > 0 {
-            let pixels = source.width * scale * source.height * scale
+            let full = canvas(source.height * scale)
+            let pixels = full.width * full.height
             let limit = h264PixelRate / CGFloat(h264Fps)
             if pixels > limit { scale *= (limit / pixels).squareRoot() }
         }
-        func even(_ value: CGFloat) -> CGFloat { max(2, (value * scale / 2).rounded(.down) * 2) }
-        return CGSize(width: even(source.width), height: even(source.height))
+        func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded(.down) * 2) }
+        let height = source.height * scale
+        let shape = canvas(height)
+        return (CGSize(width: even(source.width * scale), height: even(height)), CGSize(width: even(shape.width), height: even(shape.height)))
     }
 
     /// The output's constant frame rate. A screen recording writes frames only while something moves, so its average
@@ -145,8 +160,9 @@ struct EditRenderer {
         guard cursor > .zero else { throw RenderError.emptyEdit }
 
         let fps = Self.exportFps(nominal: Double(nominalFps))
-        let size = renderSize(source: natural, maxHeight: maxHeight, h264Fps: project.export.codec == .h264 ? fps : nil)
-        let outputScale = size.height / natural.height
+        let (picture, size) = outputSizes(source: natural, maxHeight: maxHeight, aspect: project.frame?.aspect,
+                                          h264Fps: project.export.codec == .h264 ? fps : nil)
+        let outputScale = picture.height / natural.height
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
             let image = request.sourceImage
             let extent = image.extent
@@ -172,9 +188,9 @@ struct EditRenderer {
             if outputScale != 1 {
                 result = result.transformed(by: CGAffineTransform(scaleX: outputScale, y: outputScale))
             }
-            result = result.cropped(to: CGRect(origin: .zero, size: size))
+            result = result.cropped(to: CGRect(origin: .zero, size: picture))
             if let frame = look.frame {
-                result = Looks.applyFrame(frame, to: result, size: size)
+                result = Looks.applyFrame(frame, to: result, picture: picture, canvas: size)
             }
             request.finish(with: result, context: nil)
         }

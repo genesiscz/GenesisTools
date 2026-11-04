@@ -77,17 +77,18 @@ enum Looks {
         return cursor.composited(over: image)
     }
 
-    /// The picture scaled in by the padding, masked to a rounded rectangle, over a shadow and the background. The
-    /// output keeps `size`.
-    static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, size: CGSize) -> CIImage {
-        let padding = frame.padding * size.height
-        let scale = max(0.05, (size.height - 2 * padding) / size.height)
-        let inner = CGRect(x: (size.width - size.width * scale) / 2, y: (size.height - size.height * scale) / 2,
-                           width: size.width * scale, height: size.height * scale)
+    /// The picture fitted inside the canvas less the padding, centred, masked to a rounded rectangle, over a shadow
+    /// and the background. Sizes are fractions of the canvas's short side; the output is `canvas`.
+    static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, picture: CGSize, canvas size: CGSize) -> CIImage {
+        let unit = min(size.width, size.height)
+        let padding = frame.padding * unit
+        let scale = max(0.05, min((size.width - 2 * padding) / picture.width, (size.height - 2 * padding) / picture.height))
+        let inner = CGRect(x: (size.width - picture.width * scale) / 2, y: (size.height - picture.height * scale) / 2,
+                           width: picture.width * scale, height: picture.height * scale)
         let placed = image
             .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             .transformed(by: CGAffineTransform(translationX: inner.minX, y: inner.minY))
-        let radius = frame.cornerRadius * size.height
+        let radius = frame.cornerRadius * unit
         let mask = roundedRect(inner, radius: radius, color: .white)
         let clipped = placed.applyingFilter("CIBlendWithMask", parameters: [
             kCIInputBackgroundImageKey: CIImage.empty(),
@@ -95,9 +96,9 @@ enum Looks {
         ])
         var canvas = background(frame.background, size: size)
         if frame.shadow {
-            let blur = size.height * 0.018
+            let blur = unit * 0.018
             let shadow = roundedRect(inner, radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.55))
-                .transformed(by: CGAffineTransform(translationX: 0, y: -size.height * 0.008))
+                .transformed(by: CGAffineTransform(translationX: 0, y: -unit * 0.008))
                 .applyingGaussianBlur(sigma: blur)
             canvas = shadow.composited(over: canvas)
         }

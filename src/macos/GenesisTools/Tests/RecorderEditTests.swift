@@ -152,6 +152,19 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1920, height: 1080), maxHeight: 0, h264Fps: 60), CGSize(width: 1920, height: 1080))
     }
 
+    func testACanvasAspectKeepsThePictureHeightAsItsShortSideAndFitsTheH264Budget() {
+        let source = CGSize(width: 1728, height: 1080)
+        XCTAssertEqual(EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: .wide).canvas, CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: .square).canvas, CGSize(width: 1080, height: 1080))
+        XCTAssertEqual(EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: .portrait).canvas, CGSize(width: 1080, height: 1920))
+        XCTAssertEqual(EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: .portrait).picture, source)
+        // A 4K portrait canvas would be 2570 × 4568: H.264 at 60 fps fits it into 2560 × 1600 worth of pixels.
+        let fitted = EditRenderer.outputSizes(source: CGSize(width: 4112, height: 2570), maxHeight: 0, aspect: .portrait, h264Fps: 60)
+        XCTAssertLessThanOrEqual(fitted.canvas.width * fitted.canvas.height, 2560 * 1600)
+        XCTAssertEqual(fitted.canvas.height / fitted.canvas.width, 16.0 / 9, accuracy: 0.01)
+        XCTAssertEqual(fitted.picture.height, fitted.canvas.width, accuracy: 2)
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))

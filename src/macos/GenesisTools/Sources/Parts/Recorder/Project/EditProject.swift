@@ -105,7 +105,30 @@ struct EditProject: Codable, Equatable {
         var colors = ["#4F46E5", "#DB2777"]
     }
 
+    /// The shape of the exported picture around the movie. The canvas's short side is the movie's height, so a
+    /// 1080p export is 1920 × 1080 at 16:9, 1080 × 1080 at 1:1 and 1080 × 1920 at 9:16.
+    enum CanvasAspect: String, Codable, CaseIterable {
+        case source
+        case wide = "16:9"
+        case standard = "4:3"
+        case square = "1:1"
+        case portrait = "9:16"
+
+        /// Width over height; nil keeps the movie's own.
+        var ratio: CGFloat? {
+            switch self {
+            case .source: nil
+            case .wide: 16.0 / 9
+            case .standard: 4.0 / 3
+            case .square: 1
+            case .portrait: 9.0 / 16
+            }
+        }
+    }
+
     struct Frame: Codable, Equatable {
+        /// The canvas around the movie; nil is the movie's own shape. Optional, so an older file decodes.
+        var aspect: CanvasAspect?
         var background = Background()
         /// The margin on every side, as a fraction of the output height.
         var padding = 0.06

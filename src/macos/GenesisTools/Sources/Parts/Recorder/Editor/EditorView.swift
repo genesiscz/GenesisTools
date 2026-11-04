@@ -306,6 +306,12 @@ private struct StyleInspector: View {
             }))
             .accessibilityIdentifier("recorder.style.frame")
             if let frame {
+                SectionLabel(text: "Canvas")
+                GenSegmentedTabs("Canvas", items: EditProject.CanvasAspect.allCases.map { .init($0, $0 == .source ? "Movie" : $0.rawValue) },
+                                 selection: Binding(get: { frame.aspect ?? .source }, set: { value in
+                                     model.setLooks { $0.frame?.aspect = value == .source ? nil : value }
+                                 }),
+                                 minSegmentWidth: 40, identifier: "recorder.style.canvas")
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(38), spacing: 8), count: 6), spacing: 8) {
                     ForEach(Self.backgrounds, id: \.name) { preset in
                         let selected = frame.background.colors == preset.colors
@@ -471,8 +477,10 @@ private struct ExportInspector: View {
             }
             let source = CGSize(width: model.project.source.width, height: model.project.source.height)
             // A screen recording exports at 60 fps; the label uses the same size rule as the export.
-            let size = EditRenderer.renderSize(source: source, maxHeight: settings.maxHeight, h264Fps: settings.codec == .h264 ? 60 : nil)
-            let capped = size.height < EditRenderer.renderSize(source: source, maxHeight: settings.maxHeight).height
+            let aspect = model.project.frame?.aspect
+            let size = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect,
+                                                h264Fps: settings.codec == .h264 ? 60 : nil).canvas
+            let capped = size.height < EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect).canvas.height
             let movie = (settings.format ?? .mp4) == .mp4
             SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(model.durationUs, tenths: true))"
                                                       : formatClock(model.durationUs, tenths: true))
@@ -507,7 +515,10 @@ private struct PreviewView: View {
     let still: CGImage?
 
     var body: some View {
-        let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
+        // The canvas the export draws: the movie's own shape, or the frame's aspect.
+        let canvas = EditRenderer.outputSizes(source: CGSize(width: model.project.source.width, height: model.project.source.height),
+                                              maxHeight: 0, aspect: model.project.frame?.aspect).canvas
+        let aspect = canvas.width / max(1, canvas.height)
         ZStack {
             RecorderPalette.window
             Group {

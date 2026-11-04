@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
+    CANVAS_ASPECTS,
     describeProject,
     type EditOp,
     type EditProject,
@@ -132,6 +133,7 @@ const movieMethods = [
         z
             .object({
                 enabled: z.boolean().optional(),
+                aspect: z.enum(CANVAS_ASPECTS).optional(),
                 background: z
                     .object({
                         kind: z.enum(["none", "color", "gradient"]).optional(),
@@ -144,7 +146,7 @@ const movieMethods = [
                 shadow: z.boolean().optional(),
             })
             .strict(),
-        'Puts the movie on a background: padding (0.06 of the height), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
+        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
     ),
     edit(
         "removeIdle",

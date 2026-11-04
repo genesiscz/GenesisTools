@@ -53,8 +53,15 @@ export const clicksSchema = z.object({
     durationMs: z.number().int().min(100).max(3000).default(450),
 });
 
+/**
+ * The canvas a framed movie sits on. Its short side is the movie's height, so a 1080p export is 1920 × 1080 at 16:9,
+ * 1080 × 1080 at 1:1 and 1080 × 1920 at 9:16. Absent is the movie's own shape.
+ */
+export const CANVAS_ASPECTS = ["source", "16:9", "4:3", "1:1", "9:16"] as const;
+
 /** The movie on a background, scaled in by `padding`, with rounded corners and a shadow. Absent is the plain movie. */
 export const frameSchema = z.object({
+    aspect: z.enum(CANVAS_ASPECTS).optional(),
     background: z
         .object({
             kind: z.enum(["none", "color", "gradient"]).default("gradient"),
@@ -472,6 +479,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("frame"),
             /** false removes the frame: the plain movie again. */
             enabled: z.boolean().optional(),
+            aspect: z.enum(CANVAS_ASPECTS).optional(),
             background: z
                 .object({
                     kind: z.enum(["none", "color", "gradient"]).optional(),
@@ -627,6 +635,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                 ...project,
                 frame: frameSchema.parse({
                     ...current,
+                    ...(op.aspect === undefined ? {} : { aspect: op.aspect }),
                     ...(op.padding === undefined ? {} : { padding: op.padding }),
                     ...(op.cornerRadius === undefined ? {} : { cornerRadius: op.cornerRadius }),
                     ...(op.shadow === undefined ? {} : { shadow: op.shadow }),
