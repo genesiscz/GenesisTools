@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
-import { collapseUndo, defaultExportName, editProject, undoDepth, undoEdit } from "@app/recorder/lib/edit";
+import { collapseUndo, defaultExportName, editProject, inItsFolder, undoDepth, undoEdit } from "@app/recorder/lib/edit";
 import { chapterMetadata, chaptersOf, chaptersOfPart, recordingFolderOf, spreadTimes } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
@@ -183,6 +183,35 @@ describe("movie chapters in a movie file", () => {
         ).toBe(
             ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1500\ntitle=A\\=b\\; \\#1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1500\nEND=4000\ntitle=Next\n"
         );
+    });
+});
+
+describe("a copied recording folder", () => {
+    test("reads its own movie and cursor track, and the original when the copy has a different movie", () => {
+        const root = mkdtempSync(join(tmpdir(), "copied-rec-"));
+        const original = join(root, "original");
+        const copy = join(root, "copy");
+
+        for (const folder of [original, copy]) {
+            mkdirSync(folder);
+            writeFileSync(join(folder, "screen.mp4"), "movie bytes");
+            writeFileSync(join(folder, "cursor.jsonl"), "{}\n");
+        }
+
+        const project = wholeProject({
+            video: join(original, "screen.mp4"),
+            cursor: join(original, "cursor.jsonl"),
+            durationUs: 1_000_000,
+            width: 100,
+            height: 100,
+        });
+        expect(inItsFolder(join(copy, "edit.json"), project).source).toMatchObject({
+            video: join(copy, "screen.mp4"),
+            cursor: join(copy, "cursor.jsonl"),
+        });
+        expect(inItsFolder(join(original, "edit.json"), project)).toBe(project);
+        writeFileSync(join(copy, "screen.mp4"), "another, longer movie");
+        expect(inItsFolder(join(copy, "edit.json"), project).source.video).toBe(join(original, "screen.mp4"));
     });
 });
 

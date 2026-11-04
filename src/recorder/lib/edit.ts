@@ -75,7 +75,7 @@ export async function openProject(value: string): Promise<OpenedProject> {
     const path = resolved.endsWith(".json") ? resolved : projectPathFor(movieFor(resolved));
 
     if (existsSync(path)) {
-        return { path, project: readProject(path), fresh: false };
+        return { path, project: inItsFolder(path, readProject(path)), fresh: false };
     }
 
     const video = movieFor(resolved);
@@ -95,6 +95,38 @@ export async function openProject(value: string): Promise<OpenedProject> {
             ...(manifest ? { recording: manifest.id } : {}),
         }),
         fresh: true,
+    };
+}
+
+/**
+ * A recording folder copied whole keeps an edit.json whose source paths name the ORIGINAL folder, so a transcript or a
+ * still of the copy would read (and a refreshed transcript write) beside the original. When the edit's own folder
+ * holds the same movie (same name and size), its paths are read from that folder instead; the file changes on the
+ * next save only.
+ */
+export function inItsFolder(path: string, project: EditProject): EditProject {
+    const folder = dirname(path);
+    const video = project.source.video;
+
+    if (dirname(video) === folder) {
+        return project;
+    }
+
+    const here = join(folder, basename(video));
+
+    if (!existsSync(here) || !existsSync(video) || statSync(here).size !== statSync(video).size) {
+        return project;
+    }
+
+    const cursor = project.source.cursor ? join(folder, basename(project.source.cursor)) : undefined;
+    log.debug({ path, from: dirname(video), to: folder }, "a copied recording folder: its own movie and cursor track");
+    return {
+        ...project,
+        source: {
+            ...project.source,
+            video: here,
+            ...(cursor && existsSync(cursor) ? { cursor } : {}),
+        },
     };
 }
 
