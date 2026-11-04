@@ -47,6 +47,29 @@ enum Looks {
         return result
     }
 
+    /// One cursor to draw: its image, where its hotspot goes (0...1 from the top left), and its scale.
+    struct CursorMark {
+        var shape: CursorTrack.Shape
+        var x: Double
+        var y: Double
+        /// Movie pixels per cursor point, times the edit's size.
+        var pixelsPerPoint: Double
+    }
+
+    /// The cursor's image with its hotspot on the point. The image is twice its point size.
+    static func drawCursor(_ mark: CursorMark, on image: CIImage) -> CIImage {
+        let extent = image.extent
+        let scale = mark.pixelsPerPoint / 2
+        let hotX = extent.minX + mark.x * extent.width
+        let hotY = extent.minY + (1 - mark.y) * extent.height
+        let originX = hotX - mark.shape.hotX * mark.pixelsPerPoint
+        let originY = hotY + mark.shape.hotY * mark.pixelsPerPoint - mark.shape.height * mark.pixelsPerPoint
+        let cursor = mark.shape.image
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            .transformed(by: CGAffineTransform(translationX: originX, y: originY))
+        return cursor.composited(over: image)
+    }
+
     /// The picture scaled in by the padding, masked to a rounded rectangle, over a shadow and the background. The
     /// output keeps `size`.
     static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, size: CGSize) -> CIImage {

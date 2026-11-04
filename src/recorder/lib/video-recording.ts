@@ -27,6 +27,8 @@ export interface VideoRecordingOptions {
     fps?: number;
     audio?: ("system" | "mic")[];
     micDevice?: string;
+    /** Keep the system cursor in the movie; by default it stays out and the editor draws it from the track. */
+    systemCursor?: boolean;
     maxSeconds?: number;
     /** The red border around what is recorded (never in the movie). */
     indicator?: boolean;
@@ -87,6 +89,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
             target: options.target,
             fps: options.fps ?? 60,
             audio: { sources: options.audio ?? [], micDevice: options.micDevice },
+            cursor: options.systemCursor ? "system" : "drawn",
         },
         frames: [],
         warnings: [],
@@ -136,6 +139,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
             audio: options.audio,
             micDevice: options.micDevice,
             cursorTrack: true,
+            cursorShapes: options.systemCursor ? undefined : join(folder, "cursor-shapes"),
         }),
         join: ffmpegSegmentJoiner,
         emit,

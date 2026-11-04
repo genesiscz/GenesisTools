@@ -61,7 +61,7 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame, cursor }";
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
 
@@ -113,6 +113,17 @@ const movieMethods = [
             })
             .strict(),
         'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450).'
+    ),
+    edit(
+        "cursor",
+        z
+            .object({
+                show: z.boolean().optional(),
+                size: z.number().min(0.5).max(3).optional(),
+                smoothing: z.number().min(0).max(1).optional(),
+            })
+            .strict(),
+        "The cursor the editor draws (a movie recorded without the system cursor; describe() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5). It still sits on every click."
     ),
     edit(
         "frame",
@@ -329,6 +340,10 @@ export class Movie {
 
     async clicks(options: Omit<Extract<EditOp, { op: "clicks" }>, "op"> = {}) {
         return this.change([{ op: "clicks", ...options }]);
+    }
+
+    async cursor(options: Omit<Extract<EditOp, { op: "cursor" }>, "op"> = {}) {
+        return this.change([{ op: "cursor", ...options }]);
     }
 
     async frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {

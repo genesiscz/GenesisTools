@@ -18,6 +18,8 @@ struct EditProject: Codable, Equatable {
     var clicks: Clicks?
     /// The movie on a background with padding, rounded corners and a shadow; nil is the plain movie.
     var frame: Frame?
+    /// The drawn cursor, for a movie recorded without the system cursor; nil is `Cursor()` (shown, smoothed).
+    var cursor: Cursor?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -81,6 +83,14 @@ struct EditProject: Codable, Equatable {
         /// The disc's largest radius, as a fraction of the picture's height.
         var radius = 0.03
         var durationMs = 450
+    }
+
+    struct Cursor: Codable, Equatable {
+        var show = true
+        /// 0.5 to 3 times the recorded size.
+        var size = 1.0
+        /// 0 (the raw path) to 1 (the path averaged over ±120 ms).
+        var smoothing = 0.5
     }
 
     enum BackgroundKind: String, Codable, CaseIterable {

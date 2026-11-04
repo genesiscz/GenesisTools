@@ -26,6 +26,7 @@ final class ZoomState: @unchecked Sendable {
         var view: ZoomCurve.View
         var marks: [Looks.ClickMark]
         var clicks: EditProject.Clicks?
+        var cursor: Looks.CursorMark?
         var frame: EditProject.Frame?
     }
 
@@ -40,7 +41,19 @@ final class ZoomState: @unchecked Sendable {
             marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs)
         }
         return FrameLook(view: ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor),
-                         marks: marks, clicks: project.clicks, frame: project.frame)
+                         marks: marks, clicks: project.clicks,
+                         cursor: Self.cursorMark(atSourceUs: sourceUs, track: cursor, settings: project.cursor ?? .init(),
+                                                 videoWidth: Double(project.source.width)),
+                         frame: project.frame)
+    }
+
+    static func cursorMark(atSourceUs us: Int64, track: CursorTrack?, settings: EditProject.Cursor, videoWidth: Double) -> Looks.CursorMark? {
+        guard settings.show, let track, track.drawsCursor else { return nil }
+        let ms = Double(us) / 1000
+        guard let shape = track.shape(atMs: ms), let point = track.drawnPoint(atMs: ms, smoothing: settings.smoothing) else { return nil }
+        // A recording without the width in points is taken as a Retina display.
+        let perPoint = track.pointWidth.map { videoWidth / $0 } ?? 2
+        return Looks.CursorMark(shape: shape, x: point.x, y: point.y, pixelsPerPoint: perPoint * max(0.5, min(3, settings.size)))
     }
 }
 
@@ -140,6 +153,9 @@ struct EditRenderer {
             var result = image
             if let clicks = look.clicks, !look.marks.isEmpty {
                 result = Looks.drawClicks(look.marks, on: result, settings: clicks).cropped(to: extent)
+            }
+            if let mark = look.cursor {
+                result = Looks.drawCursor(mark, on: result).cropped(to: extent)
             }
             if view.scale > 1.0005 {
                 let rect = view.rect

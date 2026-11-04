@@ -8,7 +8,7 @@ All three edit one file, `edit.json`, so each sees the others' changes.
 
 ```bash
 tools recorder start [--audio system,mic] [--title T] [--max-seconds N] [--display I | --window IDS | --app NAME]
-                     [--fps N] [--no-controls] [--no-indicator] [--open] [--json]
+                     [--fps N] [--system-cursor] [--no-controls] [--no-indicator] [--open] [--json]
 tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
 tools recorder list [--live] [--limit N] [--json]
 tools recorder edit <recording> [--no-focus]     # the editor window; --no-focus opens it behind the front window
@@ -22,6 +22,9 @@ tools recorder proxy <recording>                 # proxy.mp4 for a frames-only r
 
 A recording is a folder in `~/.genesis-tools/recordings/library/video-<time>/`: `screen.mp4` (H.264, one audio track
 per source), `cursor.jsonl` (`{"t": ms, "x": 0..1, "y": 0..1, "click"?: "left"}` at 60 Hz) and `recording.json`.
+The system cursor stays out of the movie: each cursor image goes to `cursor-shapes/<hash>.png` (2x) with its hotspot,
+the track row where it changes names it, and the editor draws the cursor again (smoothed, at any size, or hidden).
+`--system-cursor` (or the menu's "Draw the Cursor in the Editor" off) keeps it in the picture instead.
 Pausing ends a segment, so the paused time is not in the movie; segments of the same shape join by stream copy.
 While it runs, the menu bar item and the floating controls (hidden from the capture) control it, and so do
 `tools recorder stop` and the REPL.
@@ -38,6 +41,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `clicks` (optional): a disc that grows and fades on each recorded click.
 - `frame` (optional): the movie on a background (`none`, `color`, `gradient`), with `padding`, `cornerRadius` and a
   `shadow`; sizes are fractions of the output height.
+- `cursor` (optional, a movie without the system cursor): `show`, `size` 0.5 to 3, `smoothing` 0 to 1 (the path
+  averaged over up to ±120 ms, narrower near a click so the cursor sits on it). Absent is shown, 1, 0.5.
 
 The loader refuses a newer version instead of reading it wrongly. The window watches the file, takes another
 process's save as it lands, and keeps the previous version one ⌘Z away.
@@ -47,7 +52,7 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 `split {at}`, `cut {from,to}`, `keep {from,to}`, `speed {from,to,factor}`, `zoom {from,to,scale?,focus?,follow?}`,
 `unzoom {id}`, `autoZoom {scale?}` (one zoom per group of clicks under 3 s apart; manual zooms stay), `removeIdle
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
-silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`,
+silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
 `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 

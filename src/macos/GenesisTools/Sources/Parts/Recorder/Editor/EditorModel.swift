@@ -254,6 +254,15 @@ final class EditorModel {
         apply(next, rebuildMovie: false)
     }
 
+    /// The drawn cursor's settings; a project without them starts from the defaults.
+    func setCursor(_ change: (inout EditProject.Cursor) -> Void) {
+        setLooks { project in
+            var cursor = project.cursor ?? EditProject.Cursor()
+            change(&cursor)
+            project.cursor = cursor
+        }
+    }
+
     func setExport(_ change: (inout EditProject.ExportSettings) -> Void) {
         var next = project
         change(&next.export)

@@ -82,6 +82,24 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(view.centerY, 0.6, accuracy: 0.0001)
     }
 
+    func testTheDrawnCursorHoldsStillThenMovesAndSitsOnAClick() {
+        // Rows only on a change: still at 0.2 until one sample before 1000 ms, then at 0.8; a click at 1000 ms.
+        let track = CursorTrack(samples: [
+            CursorTrack.Sample(ms: 0, x: 0.2, y: 0.2),
+            CursorTrack.Sample(ms: 1000, x: 0.8, y: 0.8, click: "left"),
+            CursorTrack.Sample(ms: 1500, x: 0.8, y: 0.8),
+        ])
+        XCTAssertEqual(track.point(atMs: 500)?.x ?? 0, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(track.point(atMs: 991.65)?.x ?? 0, 0.5, accuracy: 0.001)
+        XCTAssertEqual(track.drawnPoint(atMs: 1000, smoothing: 1)?.x ?? 0, 0.8, accuracy: 0.0001)
+        // Far from the click the path is averaged: the step is softened, not jumped.
+        let far = CursorTrack(samples: [CursorTrack.Sample(ms: 0, x: 0.2, y: 0.2), CursorTrack.Sample(ms: 1000, x: 0.8, y: 0.8)])
+        let softened = far.drawnPoint(atMs: 1000, smoothing: 1)?.x ?? 0
+        XCTAssertGreaterThan(softened, 0.3)
+        XCTAssertLessThan(softened, 0.7)
+        XCTAssertFalse(far.drawsCursor)
+    }
+
     func testTheLoaderRoundTripsAndRefusesANewerVersion() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 10_000_000)])
         XCTAssertEqual(try EditProject.decode(edit.encoded()), edit)

@@ -1020,7 +1020,8 @@ func cmdCaptureScreen() {
     let activeInterval = frameInterval(fps: options.activeFps)
     configuration.minimumFrameInterval = CMTime(value: activeInterval.value, timescale: activeInterval.timescale)
     configuration.queueDepth = 5
-    configuration.showsCursor = true
+    // The editor draws the cursor again from the track (`--cursor-shapes`), smoothed and scaled.
+    configuration.showsCursor = !CommandLine.arguments.contains("--hide-cursor")
     configuration.backgroundColor = options.selection.transparent ? captureClearColor : captureOpaqueColor
     if #available(macOS 14.0, *) {
         configuration.ignoreShadowsSingleWindow = true
@@ -1080,7 +1081,7 @@ func cmdCaptureScreen() {
     } ?? display.bounds)
     var cursorTrack: CursorTrackWriter?
     if let path = argValue("--cursor-track") {
-        cursorTrack = CursorTrackWriter(path: path) { trackedRect.value }
+        cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedRect.value }
         if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
     }
     let started = Date()
@@ -1192,7 +1193,8 @@ func cmdCaptureScreen() {
         data["videoOut"] = videoOut
     }
     if let cursorTrack {
-        data["cursorTrack"] = ["path": cursorTrack.path, "samples": cursorTrack.samples, "clicks": cursorTrack.clicks]
+        data["cursorTrack"] = ["path": cursorTrack.path, "samples": cursorTrack.samples, "clicks": cursorTrack.clicks,
+                               "shapes": cursorTrack.shapeCount]
     }
     if let windowTarget {
         data["window"] = ["id": windowTarget.id, "x": windowTarget.bounds.minX, "y": windowTarget.bounds.minY,

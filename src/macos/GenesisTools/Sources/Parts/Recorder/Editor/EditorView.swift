@@ -369,6 +369,31 @@ private struct StyleInspector: View {
                     .accessibilityIdentifier("recorder.style.clickSize")
             }
         }
+        VStack(alignment: .leading, spacing: 10) {
+            let cursor = model.project.cursor ?? EditProject.Cursor()
+            if model.cursor?.drawsCursor == true {
+                SwitchRow("Show cursor", isOn: Binding(get: { cursor.show }, set: { on in
+                    model.setCursor { $0.show = on }
+                }))
+                .accessibilityIdentifier("recorder.style.cursor")
+                if cursor.show {
+                    SectionLabel(text: "Cursor size", value: String(format: "%.1f×", cursor.size))
+                    Slider(value: Binding(get: { cursor.size }, set: { value in
+                        model.setCursor { $0.size = (value * 10).rounded() / 10 }
+                    }), in: 0.5...3)
+                        .accessibilityIdentifier("recorder.style.cursorSize")
+                    SectionLabel(text: "Smoothing", value: "\(Int((cursor.smoothing * 100).rounded()))%")
+                    Slider(value: Binding(get: { cursor.smoothing }, set: { value in
+                        model.setCursor { $0.smoothing = (value * 20).rounded() / 20 }
+                    }), in: 0...1)
+                        .accessibilityIdentifier("recorder.style.cursorSmoothing")
+                }
+            } else if model.cursor != nil {
+                Text("This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private static func swiftColor(_ hex: String) -> Color {

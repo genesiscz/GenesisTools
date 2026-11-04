@@ -1,4 +1,6 @@
+import AppKit
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 /// `capture --cursor-track <file>`: the pointer while the movie records, one JSON line per sample,
@@ -7,6 +9,13 @@ import Foundation
 /// smoothed path (GenesisTools' recorder part, CursorTrack.swift). Sampled at 60 Hz on its own queue from the
 /// window server's pointer (`CGEvent(source: nil)`) and button state, which needs no Input Monitoring grant; a
 /// sample is written only when something changed, plus one every 0.5 s so a still pointer keeps its place.
+///
+/// With `--cursor-shapes <dir>` (the movie then records without the system cursor, `--hide-cursor`) the writer also
+/// keeps the cursor's image: every 100 ms it reads `NSCursor.currentSystem` (0.64 ms a read) and hashes the image; a
+/// new image is written once as `<dir>/<hash>.png` (twice the point size) and `<dir>/<hash>.json` (`hotX`, `hotY`,
+/// `width`, `height` in points), and the next row carries `"shape": "<hash>"`. The first row also carries `"pw"`, the
+/// recorded rectangle's width in points, so a reader knows how many movie pixels one cursor point is. Shape rows exist
+/// only for a movie without the system cursor in it, which is how the editor knows to draw one.
 final class CursorTrackWriter {
     private let handle: FileHandle
     private let rect: () -> CGRect
@@ -20,16 +29,28 @@ final class CursorTrackWriter {
     private(set) var samples = 0
     private(set) var clicks = 0
     let path: String
+    private let shapesDir: String?
+    private var shapeTick = 0
+    private var currentShape: String?
+    private var pendingShape: String?
+    private var savedShapes = Set<String>()
+    private var wrotePointWidth = false
+    var shapeCount: Int { queue.sync { savedShapes.count } }
 
     /// `rect` is the recorded rectangle in global display points (top-left origin), read per sample, so a window
     /// that moves keeps its cursor coordinates right.
-    init?(path: String, rect: @escaping () -> CGRect) {
+    init?(path: String, shapes: String? = nil, rect: @escaping () -> CGRect) {
         guard FileManager.default.createFile(atPath: path, contents: nil), let handle = FileHandle(forWritingAtPath: path) else {
             return nil
         }
         self.path = path
         self.handle = handle
         self.rect = rect
+        if let shapes, (try? FileManager.default.createDirectory(atPath: shapes, withIntermediateDirectories: true)) != nil {
+            shapesDir = shapes
+        } else {
+            shapesDir = nil
+        }
     }
 
     func start(at started: Date) {
@@ -63,19 +84,57 @@ final class CursorTrackWriter {
         if left && !leftDown { click = "left" } else if right && !rightDown { click = "right" }
         leftDown = left
         rightDown = right
+        if shapesDir != nil {
+            if shapeTick % 6 == 0 { readShape() }
+            shapeTick += 1
+        }
         let moved = last.map { abs($0.x - x) > 0.0005 || abs($0.y - y) > 0.0005 } ?? true
         let stale = last.map { ms - $0.ms >= 500 } ?? true
-        guard moved || stale || click != nil else { return }
+        guard moved || stale || click != nil || pendingShape != nil else { return }
         last = (x, y, ms)
         var line = String(format: "{\"t\":%.1f,\"x\":%.5f,\"y\":%.5f", ms, x, y)
         if let click {
             line += ",\"click\":\"\(click)\""
             clicks += 1
         }
+        if let shape = pendingShape {
+            line += ",\"shape\":\"\(shape)\""
+            pendingShape = nil
+        }
+        if shapesDir != nil, !wrotePointWidth {
+            line += String(format: ",\"pw\":%.1f", frame.width)
+            wrotePointWidth = true
+        }
         line += "}\n"
         buffer.append(Data(line.utf8))
         samples += 1
         if buffer.count > 16_384 { flush() }
+    }
+
+    /// The cursor's image now; a new one is saved once and named on the next row.
+    private func readShape() {
+        guard let dir = shapesDir, let cursor = NSCursor.currentSystem, let tiff = cursor.image.tiffRepresentation else { return }
+        let hash = SHA256.hash(data: tiff).prefix(6).map { String(format: "%02x", $0) }.joined()
+        guard hash != currentShape else { return }
+        currentShape = hash
+        pendingShape = hash
+        guard !savedShapes.contains(hash) else { return }
+        savedShapes.insert(hash)
+        let size = cursor.image.size
+        let base = (dir as NSString).appendingPathComponent(hash)
+        guard !FileManager.default.fileExists(atPath: base + ".png"),
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return }
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        cursor.image.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let meta = String(format: "{\"hotX\":%.2f,\"hotY\":%.2f,\"width\":%.2f,\"height\":%.2f}\n",
+                          cursor.hotSpot.x, cursor.hotSpot.y, size.width, size.height)
+        try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: base + ".png"))
+        try? Data(meta.utf8).write(to: URL(fileURLWithPath: base + ".json"))
     }
 
     private func flush() {

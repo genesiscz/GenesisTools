@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -68,6 +68,18 @@ export const frameSchema = z.object({
     shadow: z.boolean().default(true),
 });
 
+/**
+ * The cursor the editor draws for a movie recorded without the system cursor (`tools recorder start` does that by
+ * default). Absent is the defaults: shown, at its recorded size, smoothed by half.
+ */
+export const cursorSchema = z.object({
+    show: z.boolean().default(true),
+    /** Times the recorded size. */
+    size: z.number().min(0.5).max(3).default(1),
+    /** 0 is the raw path; 1 averages it over ±120 ms. The cursor still sits on every click. */
+    smoothing: z.number().min(0).max(1).default(0.5),
+});
+
 export const editProjectSchema = z.object({
     version: z.number().int().default(EDIT_PROJECT_VERSION),
     source: z.object({
@@ -98,6 +110,7 @@ export const editProjectSchema = z.object({
         .default({ codec: "h264", maxHeight: 0, output: "" }),
     clicks: clicksSchema.optional(),
     frame: frameSchema.optional(),
+    cursor: cursorSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -312,6 +325,26 @@ export interface CursorSample {
 
 const cursorRowSchema = z.object({ t: z.number(), x: z.number(), y: z.number(), click: z.string().optional() });
 
+/**
+ * Whether the movie was recorded without the system cursor, so the editor draws it: the track's first row then names
+ * the cursor's image (`"shape"`). Reads only the start of the file.
+ */
+export function trackDrawsCursor(path: string | undefined): boolean {
+    if (!path || !existsSync(path)) {
+        return false;
+    }
+
+    const fd = openSync(path, "r");
+    try {
+        const buffer = Buffer.alloc(512);
+        const read = readSync(fd, buffer, 0, buffer.length, 0);
+        const first = buffer.subarray(0, read).toString("utf8").split("\n")[0] ?? "";
+        return first.includes('"shape":');
+    } finally {
+        closeSync(fd);
+    }
+}
+
 /** The recorder's `cursor.jsonl`: one `{t, x, y, click?}` row per change; an unreadable row is skipped. */
 export function readCursorTrack(path: string | undefined): CursorSample[] {
     if (!path || !existsSync(path)) {
@@ -421,6 +454,14 @@ export const editOpSchema = z.discriminatedUnion("op", [
             color: hexColor.optional(),
             radius: z.number().min(0.005).max(0.2).optional(),
             durationMs: z.number().int().min(100).max(3000).optional(),
+        })
+        .strict(),
+    z
+        .object({
+            op: z.literal("cursor"),
+            show: z.boolean().optional(),
+            size: z.number().min(0.5).max(3).optional(),
+            smoothing: z.number().min(0).max(1).optional(),
         })
         .strict(),
     z
@@ -562,6 +603,16 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             const { op: _op, ...change } = op;
             return { ...project, clicks: clicksSchema.parse({ ...project.clicks, ...change }) };
         }
+        case "cursor": {
+            if (!trackDrawsCursor(project.source.cursor)) {
+                throw new Error(
+                    "this movie has the system cursor in its picture, so the editor cannot change it; record without --system-cursor to get a drawn cursor"
+                );
+            }
+
+            const { op: _op, ...change } = op;
+            return { ...project, cursor: cursorSchema.parse({ ...project.cursor, ...change }) };
+        }
         case "frame": {
             if (op.enabled === false) {
                 const { frame: _frame, ...rest } = project;
@@ -611,6 +662,8 @@ export function describeProject(project: EditProject, path: string) {
         export: project.export,
         clicks: project.clicks ?? null,
         frame: project.frame ?? null,
+        /** null: the system cursor is in the picture, so there is nothing to change. */
+        cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
     };
 }
 

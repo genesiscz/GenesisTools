@@ -43,6 +43,8 @@ export interface NativeRecorderOptions {
     micDevice?: string;
     /** Each segment writes `<segment>.cursor.jsonl`; the joiner makes `<output>.cursor.jsonl` of them. */
     cursorTrack?: boolean;
+    /** Needs cursorTrack: the movie records without the system cursor and its images go here, for the editor to draw. */
+    cursorShapes?: string;
 }
 
 export { cursorTrackPath };
@@ -104,6 +106,10 @@ export function segmentCaptureSpec({
 
     if (options.cursorTrack) {
         spec.cursorTrack = cursorTrackPath(output);
+
+        if (options.cursorShapes) {
+            spec.cursorShapes = options.cursorShapes;
+        }
     }
 
     validateCaptureOptions(spec);

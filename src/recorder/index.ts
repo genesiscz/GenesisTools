@@ -26,6 +26,7 @@ interface StartFlags {
     title?: string;
     maxSeconds?: string;
     indicator?: boolean;
+    systemCursor?: boolean;
     controls?: boolean;
     open?: boolean;
     json?: boolean;
@@ -138,6 +139,10 @@ program
     .option("--title <text>", "the recording's title in the library and the menu")
     .option("--max-seconds <n>", `stop after this long, 1–${VIDEO_RECORDING_MAX_SECONDS}`)
     .option("--no-indicator", "no red border around what is recorded (never in the movie either way)")
+    .option(
+        "--system-cursor",
+        "keep the system cursor in the movie (by default it stays out and the editor draws it: smoothed, any size)"
+    )
     .option("--no-controls", "do not open the floating controls")
     .option("--open", "open the editor when the recording stops")
     .option("--json", "events and the result as JSON lines on stdout")
@@ -152,6 +157,7 @@ program
                 micDevice: flags.micDevice,
                 maxSeconds: bounded(flags.maxSeconds, "--max-seconds", 1, VIDEO_RECORDING_MAX_SECONDS),
                 indicator: flags.indicator,
+                systemCursor: flags.systemCursor,
                 panel: flags.controls !== false,
                 emit: (event) => {
                     if (flags.json) {

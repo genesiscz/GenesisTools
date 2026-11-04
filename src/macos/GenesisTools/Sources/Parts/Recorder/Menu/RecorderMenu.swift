@@ -62,6 +62,10 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         menu.addItem(row("Record Screen", symbol: "record.circle", action: #selector(recordScreen), key: ""))
         menu.addItem(row("Record Screen with Audio", symbol: "mic.circle", action: #selector(recordScreenWithAudio), key: ""))
+        let drawn = row("Draw the Cursor in the Editor", symbol: nil, action: #selector(toggleDrawnCursor), key: "")
+        drawn.state = Self.drawsCursor ? .on : .off
+        drawn.toolTip = "Records without the system cursor; the editor draws it from the cursor track, smoothed and at any size. Off keeps the system cursor in the movie."
+        menu.addItem(drawn)
         menu.addItem(.separator())
         menu.addItem(row("Open Recording…", symbol: "film", action: #selector(openRecording), key: "o"))
         menu.addItem(row("Recordings Library…", symbol: "square.grid.2x2", action: #selector(openLibrary), key: "l"))
@@ -164,6 +168,15 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
+    /// On (the default): a recording leaves the system cursor out and the editor draws it (`tools recorder start`
+    /// without `--system-cursor`).
+    static let drawCursorKey = "recorder.record.drawCursor"
+    static var drawsCursor: Bool { UserDefaults.standard.object(forKey: drawCursorKey) as? Bool ?? true }
+
+    @objc private func toggleDrawnCursor() {
+        UserDefaults.standard.set(!Self.drawsCursor, forKey: Self.drawCursorKey)
+    }
+
     @objc private func recordScreen() { startRecording(audio: false) }
     @objc private func recordScreenWithAudio() { startRecording(audio: true) }
 
@@ -172,6 +185,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     private func startRecording(audio: Bool) {
         var args = ["recorder", "start"]
         if audio { args += ["--audio", "system,mic"] }
+        if !Self.drawsCursor { args.append("--system-cursor") }
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
             try ToolsRunner.detached(args) { status, tail in
