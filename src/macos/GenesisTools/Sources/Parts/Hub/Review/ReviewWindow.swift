@@ -630,15 +630,30 @@ final class ReviewModel: ObservableObject {
     private var refsStale = true
     private var refsReadFor: String?
     private var reloadAgain = false
-    /// Roots named by watch events since the last watch reload, and when that reload started. An agent that writes
+    /// Watch events per root since the last watch reload, and when that reload started. An agent that writes
     /// all the time sent a reload per 0.35 s event batch: 394 reloads and 2,173 git runs in one hour (2026-11-02
-    /// 23:00). The first event after a quiet spell reloads at once; later ones wait for `watchGap` and go together.
-    private var watchFolders: Set<String> = []
+    /// 23:00). The first event after a quiet spell reloads at once; later ones wait for `watchGap` and go together,
+    /// or for `refreshGap` when every root reads only its changed paths.
+    private var watchBatches: [String: ReviewWatchBatch] = [:]
     private var watchReloadAt = Date.distantPast
     private var watchReloadQueued = false
     static let watchGap: TimeInterval = 1.5
-    /// Root folders whose files changed since the last load started; the next load reads only these.
+    static let refreshGap: TimeInterval = 0.5
+    /// The layout each watcher watches, by root folder: the streams are made again only when it changes. Every load
+    /// made them again before, and an event between a stream's stop and the next one's start was lost.
+    private var watchedLayouts: [String: ReviewRepositoryLayout] = [:]
+    /// Root folders the next load reads in full.
     private var pendingLoads: Set<String> = []
+    /// Root folders the next load refreshes, with the events since their last answer (`GitWorkingTreeSource.refresh`).
+    private var pendingRefresh: [String: ReviewWatchBatch] = [:]
+    /// HEAD and the index of each root's last Uncommitted answer from git (not from the cache). A root with marks
+    /// reads only its changed paths on the next watch event; one without loads in full.
+    private var workingMarks: [String: WorkingTreeMarks] = [:]
+    /// Ref reads after a ref event (another worktree's commit moves `.git/worktrees/<name>/HEAD`, a fetch moves
+    /// `refs/remotes`): at most one per `refsGap`, the first at once.
+    private var refsReadAt = Date.distantPast
+    private var refsReadQueued = false
+    static let refsGap: TimeInterval = 10
     /// Root folders showing their last snapshot from disk (`ReviewCache.diffs`) until their load answers.
     @Published private(set) var cachedFolders: Set<String> = []
     /// Root folders that have a fresh answer for this scope: a cached snapshot never replaces one.
@@ -762,37 +777,86 @@ final class ReviewModel: ObservableObject {
     func stop() {
         started = false
         watchers = []
+        watchedLayouts = [:]
     }
 
     private func watchRoots() {
-        watchers = roots.filter(\.shown).compactMap { root in
-            root.repo.map { repo in
-                let layout = repositoryLayouts[root.folder] ?? ReviewRepositoryLayout(root: repo,
-                    gitDirectory: repo.appendingPathComponent(".git"), commonDirectory: repo.appendingPathComponent(".git"))
-                return RepoWatcher(layout: layout) { [weak self] movedRefs in
-                    guard let self, self.scope.followsWorkingTree else { return }
-                    if movedRefs { self.refsStale = true }
-                    // Names the trigger of the load that follows in the perf log.
-                    HubPerf.log("review.watch \(movedRefs ? "ref" : "file") event in \(root.folder), reloading \(self.scope.title)")
-                    self.watchEvent(in: root.folder)
+        var wanted: [String: ReviewRepositoryLayout] = [:]
+        for root in roots where root.shown {
+            guard let repo = root.repo else { continue }
+            wanted[root.folder] = repositoryLayouts[root.folder] ?? ReviewRepositoryLayout(root: repo,
+                gitDirectory: repo.appendingPathComponent(".git"), commonDirectory: repo.appendingPathComponent(".git"))
+        }
+        guard wanted != watchedLayouts || watchers.count != wanted.count else { return }
+        watchedLayouts = wanted
+        watchers = wanted.map { folder, layout in
+            RepoWatcher(layout: layout) { [weak self] batch in
+                guard let self, self.scope.followsWorkingTree else { return }
+                if batch.refs {
+                    self.refsStale = true
+                    self.scheduleRefsRead()
+                }
+                // Names the trigger of the load that follows in the perf log.
+                HubPerf.log("review.watch \(batch.summary) in \(folder), reloading \(self.scope.title)")
+                self.watchEvent(in: folder, batch)
+            }
+        }
+    }
+
+    private func watchEvent(in folder: String, _ batch: ReviewWatchBatch) {
+        watchBatches[folder, default: ReviewWatchBatch()].merge(batch)
+        guard !watchReloadQueued else { return }
+        watchReloadQueued = true
+        let gap = refreshes(folder) ? Self.refreshGap : Self.watchGap
+        let wait = max(0, watchReloadAt.addingTimeInterval(gap).timeIntervalSinceNow)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self else { return }
+            watchReloadQueued = false
+            watchReloadAt = Date()
+            let batches = watchBatches
+            watchBatches = [:]
+            guard started, scope.followsWorkingTree else { return }
+            refresh(batches)
+        }
+    }
+
+    /// The commit list, worktrees and base candidates again after a ref event, at most once per `refsGap`.
+    private func scheduleRefsRead() {
+        guard !refsReadQueued else { return }
+        refsReadQueued = true
+        let wait = max(0, refsReadAt.addingTimeInterval(Self.refsGap).timeIntervalSinceNow)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self else { return }
+            refsReadQueued = false
+            guard started, refsStale else { return }
+            refsStale = false
+            refsReadAt = Date()
+            let primary = repo
+            let commitRange = remoteHead?.commitRange
+            let preferredBase = chosenBase ?? targetRef ?? branchTarget
+            refsReadFor = "\(primary.path)|\(commitRange)|\(preferredBase ?? "")"
+            DispatchQueue.global(qos: .utility).async {
+                let source = GitWorkingTreeSource(repo: primary, preferredBase: preferredBase)
+                let refs = (commits: source.commits(range: commitRange), checkouts: source.worktrees(), candidates: source.baseCandidates())
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyRefs(commits: refs.commits, checkouts: refs.checkouts, candidates: refs.candidates, primary: primary)
                 }
             }
         }
     }
 
-    private func watchEvent(in folder: String) {
-        watchFolders.insert(folder)
-        guard !watchReloadQueued else { return }
-        watchReloadQueued = true
-        let wait = max(0, watchReloadAt.addingTimeInterval(Self.watchGap).timeIntervalSinceNow)
-        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-            guard let self else { return }
-            watchReloadQueued = false
-            watchReloadAt = Date()
-            let folders = watchFolders
-            watchFolders = []
-            guard started, scope.followsWorkingTree else { return }
-            reload(folders: folders)
+    /// The ref reads' answers; an unchanged list publishes nothing, and the worktrees' activity is read again only
+    /// when the worktrees changed.
+    private func applyRefs(commits: [RepoCommit]?, checkouts: [RepoWorktree]?, candidates: [String]?, primary: URL) {
+        if let commits, commits != self.commits {
+            self.commits = commits
+        }
+        if let checkouts, primary.path == repo.path, checkouts != worktrees {
+            worktrees = checkouts
+            refreshWorktreeActivity()
+        }
+        if let candidates, candidates != baseCandidates {
+            baseCandidates = candidates
         }
     }
 
@@ -812,7 +876,10 @@ final class ReviewModel: ObservableObject {
                 next[index].files = old.files
                 next[index].branch = old.branch
                 next[index].error = old.error
+                continue
             }
+            // Its files were not carried over: its next answer comes from a full load.
+            workingMarks[next[index].folder] = nil
         }
         guard next.count != roots.count || zip(next, roots).contains(where: { !$0.sameSetup(as: $1) }) else { return }
 
@@ -998,8 +1065,8 @@ final class ReviewModel: ObservableObject {
         reload(folders: Set(roots.filter(\.shown).map(\.folder)))
     }
 
-    /// One load at a time: events that arrive during a load collapse into one follow-up load of the
-    /// roots they named. A file event reloads only its own root, so an agent writing in one repository
+    /// Full loads of these roots. One load at a time: events that arrive during a load collapse into one follow-up
+    /// load of the roots they named. A file event reloads only its own root, so an agent writing in one repository
     /// does not re-read the others.
     private func reload(folders: Set<String>) {
         if !folders.isEmpty {
@@ -1007,23 +1074,69 @@ final class ReviewModel: ObservableObject {
             fileLookupRevision &+= 1
         }
         pendingLoads.formUnion(folders)
+        runLoads()
+    }
+
+    /// Watch events per root: a root with a fresh Uncommitted answer reads only what changed
+    /// (`GitWorkingTreeSource.refresh`), the others load in full.
+    private func refresh(_ batches: [String: ReviewWatchBatch]) {
+        var full: Set<String> = []
+        for (folder, batch) in batches {
+            if refreshes(folder) {
+                pendingRefresh[folder, default: ReviewWatchBatch()].merge(batch)
+            } else {
+                full.insert(folder)
+            }
+        }
+        if full.isEmpty {
+            runLoads()
+        } else {
+            reload(folders: full)
+        }
+    }
+
+    /// Whether a root's next watch reload can read only its changed paths: its answer is an Uncommitted one from git.
+    private func refreshes(_ folder: String) -> Bool {
+        scope == .uncommitted && workingMarks[folder] != nil && repositoryLayouts[folder] != nil && !cachedFolders.contains(folder)
+    }
+
+    /// A refresh's inputs: the events, where the repository's Git files are, and the answer they change.
+    private struct RefreshJob {
+        let batch: ReviewWatchBatch
+        let layout: ReviewRepositoryLayout
+        let previous: GitWorkingTreeSource.Snapshot
+    }
+
+    private func runLoads() {
         if loadInFlight {
             reloadAgain = true
             return
         }
 
         let wanted = pendingLoads
+        let batches = pendingRefresh.filter { !wanted.contains($0.key) }
         pendingLoads = []
+        pendingRefresh = [:]
         // Every wanted root in parallel, each in its own span. A commit or a range names commits of this
         // repository only, so the other roots have nothing for it.
-        let jobs = roots.filter { $0.shown && wanted.contains($0.folder) }.compactMap { root in root.repo.map { (folder: root.folder, repo: $0) } }
+        let jobs = roots.filter { $0.shown && (wanted.contains($0.folder) || batches[$0.folder] != nil) }.compactMap { root in
+            root.repo.map { repo in
+                let refresh: RefreshJob? = wanted.contains(root.folder) ? nil : batches[root.folder].flatMap { batch in
+                    guard let marks = workingMarks[root.folder], let layout = repositoryLayouts[root.folder] else { return nil }
+                    return RefreshJob(batch: batch, layout: layout,
+                                      previous: GitWorkingTreeSource.Snapshot(branch: root.branch, base: nil, files: root.files, marks: marks))
+                }
+                return (folder: root.folder, repo: repo, refresh: refresh)
+            }
+        }
         guard !jobs.isEmpty else {
-            loading = false
+            if loading { loading = false }
             return
         }
 
         loadInFlight = true
-        loading = true
+        // A refresh answers in a few milliseconds and mostly with nothing new: only a full load shows it loads.
+        if jobs.contains(where: { $0.refresh == nil }), !loading { loading = true }
         let scope = scope
         let session = session
         let primary = repo
@@ -1035,27 +1148,30 @@ final class ReviewModel: ObservableObject {
         case .commit, .range, .compare: onlyPrimary = true
         default: onlyPrimary = false
         }
-        let loadsPrimary = jobs.contains { $0.repo.path == primary.path }
+        let loadsPrimary = jobs.contains { $0.repo.path == primary.path && $0.refresh == nil }
         let refsKey = "\(primary.path)|\(commitRange)|\(preferredBase ?? "")"
         let readsRefs = loadsPrimary && (refsStale || refsReadFor != refsKey)
         if readsRefs {
             refsStale = false
             refsReadFor = refsKey
+            refsReadAt = Date()
         }
         let namesRoot = roots.count > 1
         let seeds = jobs.filter { job in
-            !freshFolders.contains(job.folder) && (!onlyPrimary || job.repo.path == primary.path)
+            job.refresh == nil && !freshFolders.contains(job.folder) && (!onlyPrimary || job.repo.path == primary.path)
                 && (roots.first { $0.folder == job.folder }?.files.isEmpty ?? false)
-        }
+        }.map { (folder: $0.folder, repo: $0.repo) }
         if !seeds.isEmpty {
             seedFromCache(seeds, scope: scope, session: session)
         }
         DispatchQueue.global(qos: .userInitiated).async {
             let lock = NSLock()
             var results: [String: Result<GitWorkingTreeSource.Snapshot, Error>] = [:]
+            var unchanged: [String: WorkingTreeMarks] = [:]
             DispatchQueue.concurrentPerform(iterations: jobs.count) { index in
                 let job = jobs[index]
-                let result: Result<GitWorkingTreeSource.Snapshot, Error>
+                var result: Result<GitWorkingTreeSource.Snapshot, Error>?
+                var same: WorkingTreeMarks?
                 if onlyPrimary && job.repo.path != primary.path {
                     result = .success(GitWorkingTreeSource.Snapshot(branch: "", base: nil, files: []))
                 } else if !FileManager.default.fileExists(atPath: job.repo.path) {
@@ -1063,15 +1179,36 @@ final class ReviewModel: ObservableObject {
                     // refresh, one plain message on the folder row.
                     result = .failure(MissingReviewFolder(path: job.repo.path))
                 } else {
-                    let span = HubPerf.begin("review.load", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
-                    let base = job.repo.path == primary.path ? preferredBase : nil
-                    var source = GitWorkingTreeSource(repo: job.repo, preferredBase: base)
-                    source.fullFiles = fullFiles[job.folder] ?? []
-                    result = Result { try source.load(scope: scope, session: session) }
-                    span.end()
+                    if let refresh = job.refresh {
+                        let span = HubPerf.begin("review.refresh", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
+                        var source = GitWorkingTreeSource(repo: refresh.layout.root)
+                        source.fullFiles = fullFiles[job.folder] ?? []
+                        switch source.refresh(refresh.previous, batch: refresh.batch, layout: refresh.layout) {
+                        case .same(let marks):
+                            same = marks
+                            span.end("same: \(refresh.batch.summary)")
+                        case .updated(let snapshot):
+                            result = .success(snapshot)
+                            span.end("updated: \(refresh.batch.summary)")
+                        case .full(let reason):
+                            span.end("full: \(reason)")
+                        }
+                    }
+                    if result == nil && same == nil {
+                        let span = HubPerf.begin("review.load", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
+                        let base = job.repo.path == primary.path ? preferredBase : nil
+                        var source = GitWorkingTreeSource(repo: job.repo, preferredBase: base)
+                        source.fullFiles = fullFiles[job.folder] ?? []
+                        result = Result { try source.load(scope: scope, session: session) }
+                        span.end()
+                    }
                 }
                 lock.lock()
-                results[job.folder] = result
+                if let same {
+                    unchanged[job.folder] = same
+                } else if let result {
+                    results[job.folder] = result
+                }
                 lock.unlock()
             }
             let primarySource = GitWorkingTreeSource(repo: primary, preferredBase: preferredBase)
@@ -1080,15 +1217,8 @@ final class ReviewModel: ObservableObject {
             let candidates = readsRefs ? primarySource.baseCandidates() : nil
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if let commits {
-                    self.commits = commits
-                }
-                if let checkouts, primary.path == self.repo.path {
-                    self.worktrees = checkouts
-                    self.refreshWorktreeActivity()
-                }
-                if let candidates {
-                    self.baseCandidates = candidates
+                if readsRefs {
+                    self.applyRefs(commits: commits, checkouts: checkouts, candidates: candidates, primary: primary)
                 }
                 self.loadInFlight = false
                 // Answers for another scope are dropped (the scope menu changed during the load), and so
@@ -1096,13 +1226,19 @@ final class ReviewModel: ObservableObject {
                 // load may name other roots only.
                 let superseded = self.reloadAgain && Set(results.keys).isSubset(of: self.pendingLoads)
                 if scope == self.scope, !superseded {
-                    self.lastLoaded = Date()
-                    self.apply(results)
+                    // A same answer publishes nothing: no load time, no re-anchored comments, no renderer push.
+                    for (folder, marks) in unchanged where self.workingMarks[folder] != nil {
+                        self.workingMarks[folder] = marks
+                    }
+                    if !results.isEmpty {
+                        self.lastLoaded = Date()
+                        self.apply(results)
+                    }
                 }
                 if self.reloadAgain {
                     self.reloadAgain = false
-                    self.reload(folders: [])
-                } else {
+                    self.runLoads()
+                } else if self.loading {
                     self.loading = false
                 }
             }
@@ -1156,6 +1292,7 @@ final class ReviewModel: ObservableObject {
                 base = diff.base
             }
             seeded.insert(folder)
+            workingMarks[folder] = nil
         }
         guard !seeded.isEmpty else { return }
         HubPerf.log("review.cache paint \(files.count) -> \(ReviewRoots.merge(next).count) files, \(scope)")
@@ -1187,6 +1324,8 @@ final class ReviewModel: ObservableObject {
     /// its folder row; only a single-root diff shows it over the whole pane.
     @MainActor
     private func apply(_ results: [String: Result<GitWorkingTreeSource.Snapshot, Error>]) {
+        // A refreshed root's files moved without the full load's reset at its start.
+        resolvedPaths.removeAll(keepingCapacity: true)
         var next = roots
         for index in next.indices {
             guard let result = results[next[index].folder] else { continue }
@@ -1195,6 +1334,7 @@ final class ReviewModel: ObservableObject {
                 if let layout = snapshot.repository { applyLayout(layout, to: &next[index]) }
                 freshFolders.insert(next[index].folder)
                 cachedFolders.remove(next[index].folder)
+                workingMarks[next[index].folder] = snapshot.marks
                 next[index].error = nil
                 next[index].files = snapshot.files
                 next[index].branch = snapshot.branch
@@ -1215,6 +1355,7 @@ final class ReviewModel: ObservableObject {
                 // The cached files stay on screen with the error on their row, but the root no longer
                 // counts as "showing the cache": blame and the header follow the error, not the paint.
                 cachedFolders.remove(next[index].folder)
+                workingMarks[next[index].folder] = nil
                 let message = "\(failure)"
                 if next[index].error != message {
                     HubPerf.log("review.load \(next[index].folder) failed: \(failure)")
@@ -1629,6 +1770,8 @@ final class ReviewModel: ObservableObject {
         }
         freshFolders = []
         cachedFolders = []
+        workingMarks = [:]
+        pendingRefresh = [:]
         rendered = false
         reload()
     }
@@ -3969,11 +4112,11 @@ private final class RepoWatcherBox {
 
 private final class RepoWatcher {
     private var stream: FSEventStreamRef?
-    /// True when the batch held an event that can move a ref (`ReviewRepositoryLayout.movesRefs`).
-    private let onChange: (Bool) -> Void
+    /// Told each batch of events that can change the diff (`ReviewRepositoryLayout.classify`).
+    private let onChange: (ReviewWatchBatch) -> Void
     private let layout: ReviewRepositoryLayout
 
-    init(layout: ReviewRepositoryLayout, onChange: @escaping (Bool) -> Void) {
+    init(layout: ReviewRepositoryLayout, onChange: @escaping (ReviewWatchBatch) -> Void) {
         self.layout = layout
         self.onChange = onChange
         var context = FSEventStreamContext(
@@ -3987,12 +4130,17 @@ private final class RepoWatcher {
             },
             copyDescription: nil
         )
-        let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info, let watcher = Unmanaged<RepoWatcherBox>.fromOpaque(info).takeUnretainedValue().watcher else { return }
-            let list = Array((unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []).prefix(count))
-            let movedRefs = list.contains(where: watcher.movesRefs)
-            if movedRefs || list.contains(where: watcher.matters) {
-                watcher.onChange(movedRefs)
+            let list = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
+            var batch = ReviewWatchBatch()
+            for index in 0..<min(count, list.count) {
+                if let event = watcher.layout.classify(list[index], flags: flags[index]) {
+                    batch.add(event)
+                }
+            }
+            if !batch.isEmpty {
+                watcher.onChange(batch)
             }
         }
         stream = FSEventStreamCreate(
@@ -4016,14 +4164,6 @@ private final class RepoWatcher {
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
         }
-    }
-
-    private func matters(_ path: String) -> Bool {
-        layout.matters(path)
-    }
-
-    private func movesRefs(_ path: String) -> Bool {
-        layout.movesRefs(path)
     }
 }
 

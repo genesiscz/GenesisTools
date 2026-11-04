@@ -218,14 +218,19 @@ public struct GitWorkingTreeSource {
         public var head: String? = nil
         /// A compare diff: paths the change and the upstream both touched; they show the older head's copy.
         public var compareConflicts: [String] = []
+        /// An Uncommitted answer: HEAD and the index as the load found them, so a live reload can read only what
+        /// changed since (`refresh`). nil for the other scopes.
+        public var marks: WorkingTreeMarks? = nil
 
-        public init(branch: String, base: String?, files: [DiffFile], repository: ReviewRepositoryLayout? = nil, head: String? = nil, compareConflicts: [String] = []) {
+        public init(branch: String, base: String?, files: [DiffFile], repository: ReviewRepositoryLayout? = nil, head: String? = nil,
+                    compareConflicts: [String] = [], marks: WorkingTreeMarks? = nil) {
             self.branch = branch
             self.base = base
             self.files = files
             self.repository = repository
             self.head = head
             self.compareConflicts = compareConflicts
+            self.marks = marks
         }
     }
 
@@ -343,8 +348,11 @@ public struct GitWorkingTreeSource {
         let layout = try repositoryLayout()
         var source = GitWorkingTreeSource(repo: layout.root, preferredBase: preferredBase)
         source.fullFiles = fullFiles
+        // Before the diff: a HEAD that moves during the load then makes the next refresh a full load.
+        let marks = scope == .uncommitted ? source.readMarks(layout) : nil
         var snapshot = try source.loadCanonical(scope: scope, session: session)
         snapshot.repository = layout
+        snapshot.marks = marks
         switch scope {
         case .range(_, let head, _, _), .commit(let head, _):
             snapshot.head = try source.git(["rev-parse", "--verify", head]).trimmed
@@ -402,69 +410,73 @@ public struct GitWorkingTreeSource {
             catFile(entries.filter { $0.status != .deleted }.map { (rev, $0.path) })
         } ?? Blobs()
 
-        let files: [DiffFile] = entries.map { entry in
-            var file = DiffFile(
-                id: entry.path,
-                path: entry.path,
-                oldPath: entry.oldPath,
-                status: entry.status,
-                additions: 0,
-                deletions: 0,
-                oldContents: nil,
-                newContents: nil,
-                skipped: nil
-            )
+        let files = entries.map { makeFile($0, old: plan.old, new: plan.new, olds: olds, news: news, counts: counts) }
+        return Snapshot(branch: branch, base: plan.base, files: files.sorted { $0.path < $1.path })
+    }
 
-            var oldNote: String?
-            var newNote: String?
-            if entry.status != .added {
-                switch olds["\(plan.old):\(entry.oldPath ?? entry.path)"] {
-                case .text(let text): file.oldContents = text
-                case .skipped(let why): oldNote = why
-                case nil: break
-                }
+    /// One entry's `DiffFile`: both sides' contents (`olds` and `news` by `rev:path`, a nil `new` side read from disk),
+    /// its picture, and its line counts.
+    func makeFile(_ entry: StatusEntry, old: String, new: String?, olds: Blobs, news: Blobs,
+                  counts: [String: (additions: Int, deletions: Int)]) -> DiffFile {
+        var file = DiffFile(
+            id: entry.path,
+            path: entry.path,
+            oldPath: entry.oldPath,
+            status: entry.status,
+            additions: 0,
+            deletions: 0,
+            oldContents: nil,
+            newContents: nil,
+            skipped: nil
+        )
+
+        var oldNote: String?
+        var newNote: String?
+        if entry.status != .added {
+            switch olds["\(old):\(entry.oldPath ?? entry.path)"] {
+            case .text(let text): file.oldContents = text
+            case .skipped(let why): oldNote = why
+            case nil: break
             }
-
-            if entry.status != .deleted {
-                let content = plan.new.map { news["\($0):\(entry.path)"] } ?? readWorkingFile(entry.path)
-                switch content {
-                case .text(let text): file.newContents = text
-                case .skipped(let why): newNote = why
-                case nil: break
-                }
-            }
-            file.skipped = Self.sidesNote(old: oldNote, new: newNote)
-
-            let working = repo.appendingPathComponent(entry.path)
-            if showsPicture(file, newOnDisk: plan.new == nil) {
-                let oldPath = entry.oldPath ?? entry.path
-                let oldName = "\(plan.old):\(oldPath)"
-                // `HEAD:` and the index move: each side loads the object id it had when the diff was read.
-                let newRevision = plan.new.map { news.oids["\($0):\(entry.path)"] } ?? DiffImage.revision(ofFile: working.path)
-                file.image = DiffImage(
-                    old: entry.status == .added ? nil
-                        : .blob(repo: repo.path, object: olds.oids[oldName] ?? oldName, path: oldPath),
-                    new: entry.status == .deleted ? nil
-                        : plan.new.map { rev in
-                            let name = "\(rev):\(entry.path)"
-                            return .blob(repo: repo.path, object: news.oids[name] ?? name, path: entry.path)
-                        } ?? .file(working.path),
-                    revision: "\(olds.oids[oldName] ?? "-") \(newRevision ?? "-")"
-                )
-            }
-
-            if let count = counts[entry.path] {
-                file.additions = count.additions
-                file.deletions = count.deletions
-            } else if entry.status == .added, let text = file.newContents {
-                let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
-                file.additions = text.hasSuffix("\n") ? lines - 1 : lines
-            }
-
-            return file
         }
 
-        return Snapshot(branch: branch, base: plan.base, files: files.sorted { $0.path < $1.path })
+        if entry.status != .deleted {
+            let content = new.map { news["\($0):\(entry.path)"] } ?? readWorkingFile(entry.path)
+            switch content {
+            case .text(let text): file.newContents = text
+            case .skipped(let why): newNote = why
+            case nil: break
+            }
+        }
+        file.skipped = Self.sidesNote(old: oldNote, new: newNote)
+
+        let working = repo.appendingPathComponent(entry.path)
+        if showsPicture(file, newOnDisk: new == nil) {
+            let oldPath = entry.oldPath ?? entry.path
+            let oldName = "\(old):\(oldPath)"
+            // `HEAD:` and the index move: each side loads the object id it had when the diff was read.
+            let newRevision = new.map { news.oids["\($0):\(entry.path)"] } ?? DiffImage.revision(ofFile: working.path)
+            file.image = DiffImage(
+                old: entry.status == .added ? nil
+                    : .blob(repo: repo.path, object: olds.oids[oldName] ?? oldName, path: oldPath),
+                new: entry.status == .deleted ? nil
+                    : new.map { rev in
+                        let name = "\(rev):\(entry.path)"
+                        return .blob(repo: repo.path, object: news.oids[name] ?? name, path: entry.path)
+                    } ?? .file(working.path),
+                revision: "\(olds.oids[oldName] ?? "-") \(newRevision ?? "-")"
+            )
+        }
+
+        if let count = counts[entry.path] {
+            file.additions = count.additions
+            file.deletions = count.deletions
+        } else if entry.status == .added, let text = file.newContents {
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
+            file.additions = text.hasSuffix("\n") ? lines - 1 : lines
+        }
+
+        return file
     }
 
     /// `tools agents changes <session> --last-turns N --json` (src/agents/commands/changes.ts).
@@ -642,8 +654,8 @@ public struct GitWorkingTreeSource {
     // MARK: git
 
     /// `gitDir` runs against another repository's objects (the change log's store) instead of this one.
-    private func gitData(_ args: [String], input: Data? = nil, gitDir: String? = nil) throws -> Data {
-        let result = try GenesisKitGT.provider.git(args, in: repo, input: input, gitDirectory: gitDir, environment: nil)
+    func gitData(_ args: [String], input: Data? = nil, gitDir: String? = nil) throws -> Data {
+        let result = try GenesisKitGT.provider.git(Self.withoutOptionalLocks(args), in: repo, input: input, gitDirectory: gitDir, environment: nil)
         if result.status != 0 {
             let message = String(decoding: result.stderr, as: UTF8.self)
             throw ReviewError.git("git \(args.joined(separator: " ")): \(message.trimmed)")
@@ -652,7 +664,7 @@ public struct GitWorkingTreeSource {
         return result.stdout
     }
 
-    private func git(_ args: [String]) throws -> String {
+    func git(_ args: [String]) throws -> String {
         String(decoding: try gitData(args), as: UTF8.self)
     }
 
@@ -660,9 +672,15 @@ public struct GitWorkingTreeSource {
         (40...64).contains(revision.count) && revision.allSatisfy(\.isHexDigit)
     }
 
+    /// Every run of this source reads, so none takes an optional lock: a plain `git diff` or `status` rewrites the
+    /// index to refresh its stat data, and that write was a file event that made the hub's review reload again.
+    static func withoutOptionalLocks(_ args: [String]) -> [String] {
+        args.first == "--no-optional-locks" ? args : ["--no-optional-locks"] + args
+    }
+
     /// `git` that reports a non-zero exit instead of throwing on it (`allowFailure`), with extra environment.
     private func gitResult(_ args: [String], environment: [String: String]?, allowFailure: Bool) throws -> (status: Int32, stdout: String) {
-        let result = try GenesisKitGT.provider.git(args, in: repo, input: nil, gitDirectory: nil, environment: environment)
+        let result = try GenesisKitGT.provider.git(Self.withoutOptionalLocks(args), in: repo, input: nil, gitDirectory: nil, environment: environment)
         if result.status != 0 && !allowFailure {
             let message = String(decoding: result.stderr, as: UTF8.self)
             throw ReviewError.git("git \(args.joined(separator: " ")): \(message.trimmed)")
@@ -712,10 +730,12 @@ public struct GitWorkingTreeSource {
 
     // MARK: parsing
 
-    private struct StatusEntry {
+    struct StatusEntry {
         var path: String
         var oldPath: String?
         var status: DiffFile.Status
+        /// Listed by `ls-files --others` or a status `?` record, not by the diff.
+        var untracked = false
     }
 
     /// `X\0path\0`, and for a rename or copy `R100\0old\0new\0`. One entry per path: during a merge
@@ -749,7 +769,7 @@ public struct GitWorkingTreeSource {
     }
 
     /// `add\tdel\tpath\0`, or for a rename `add\tdel\t\0old\0new\0`. Binary files report `-`.
-    private func parseNumstat(_ data: Data) -> [String: (additions: Int, deletions: Int)] {
+    func parseNumstat(_ data: Data) -> [String: (additions: Int, deletions: Int)] {
         let tokens = data.split(separator: 0, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
         var counts: [String: (additions: Int, deletions: Int)] = [:]
         var index = 0
@@ -771,14 +791,14 @@ public struct GitWorkingTreeSource {
         return counts
     }
 
-    private enum Content {
+    enum Content {
         case text(String)
         case skipped(String)
     }
 
     /// What `catFileBatch` read, by object name: each blob's content, and the object id the name resolved to (a large
     /// file gets an id but no content).
-    private struct Blobs {
+    struct Blobs {
         var contents: [String: Content] = [:]
         var oids: [String: String] = [:]
 
@@ -787,7 +807,7 @@ public struct GitWorkingTreeSource {
 
     /// One `git cat-file --batch` for every `rev:path` (rev "" = the index): `<oid> blob <size>\n<bytes>\n`
     /// or `<name> missing\n`. Keys of the result are `rev:path`.
-    private func catFile(_ specs: [(rev: String, path: String)]) -> Blobs {
+    func catFile(_ specs: [(rev: String, path: String)]) -> Blobs {
         let names = specs.map { "\($0.rev):\($0.path)" }
         let full = Set(specs.filter { fullFiles.contains($0.path) }.map { "\($0.rev):\($0.path)" })
         return catFileBatch(names, full: full)
@@ -833,7 +853,7 @@ public struct GitWorkingTreeSource {
 
     /// A symlink reads as its target path, which is what git stores in the blob; following it would
     /// diff the old target string against the new target's contents, or read outside the repository.
-    private func readWorkingFile(_ path: String) -> Content {
+    func readWorkingFile(_ path: String) -> Content {
         let url = repo.appendingPathComponent(path)
         if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
             guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else { return .skipped("unreadable") }

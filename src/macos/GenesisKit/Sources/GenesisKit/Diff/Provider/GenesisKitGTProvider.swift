@@ -75,7 +75,8 @@ open class GenesisKitGTCLIProvider: GenesisKitGTProvider {
     public init() {}
 
     open func git(_ arguments: [String], in repo: URL, input: Data? = nil, gitDirectory: String? = nil, environment: [String: String]? = nil) throws -> GitRunResult {
-        let span = PerfSpans.begin("git.\(arguments.first ?? "")", repo.lastPathComponent)
+        // The command, past global options such as `--no-optional-locks`.
+        let span = PerfSpans.begin("git.\(arguments.first { !$0.hasPrefix("-") } ?? "")", repo.lastPathComponent)
         defer { span.end() }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
