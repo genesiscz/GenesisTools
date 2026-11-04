@@ -150,6 +150,7 @@ await Bun.sleep(1 << 30);
 /**
  * Counts the watchdogs guarding the running process. They are detached (reparented to launchd),
  * so they are found by the `self=<pid>` marker in their argv, anchored like watchdogRunning().
+ * Polling subshells inherit that argv; only roots among the matching processes count as watchdogs.
  * Inlined into a generated child rather than imported, because these children load the guard
  * from a bare path with no repo alias graph.
  */
@@ -157,10 +158,18 @@ const COUNT_OWN_SHELLS = `
 function countOwnShells() {
     const found = Bun.spawnSync(["pgrep", "-f", "self=" + process.pid + "([^0-9]|$)"]);
 
-    return found.stdout
-        .toString()
-        .split("\\n")
-        .filter((line) => line.trim().length > 0).length;
+    const pids = found.stdout.toString().match(/[0-9]+/g) ?? [];
+    if (pids.length === 0) {
+        return 0;
+    }
+    const matched = new Set(pids.map(Number));
+    const parents = Bun.spawnSync(["ps", "-p", pids.join(","), "-o", "pid=,ppid="]);
+    if (parents.exitCode !== 0 && parents.stderr.length > 0) {
+        throw new Error(parents.stderr.toString());
+    }
+    return parents.stdout.toString().split("\\n")
+        .map((line) => (line.match(/[0-9]+/g) ?? []).map(Number))
+        .filter(([pid, parent]) => Number.isFinite(pid) && !matched.has(parent)).length;
 }
 
 /**
@@ -281,6 +290,18 @@ describe.skipIf(skip.onWindows)("orphan isolate-worker guard", () => {
         const died = await waitUntil(() => !isProcessAlive(childPid), 15_000);
         expect(died).toBe(true);
     }, 30_000);
+
+    test("watchdog counts exclude polling subshells but retain independent watchdogs", async () => {
+        const count = await runProbeChild(`
+const script = "self=" + process.pid + "\\n(sleep 1; :) &\\nwait";
+const first = Bun.spawn(["/bin/sh", "-c", script], { stdio: ["ignore", "ignore", "ignore"] });
+const second = Bun.spawn(["/bin/sh", "-c", script], { stdio: ["ignore", "ignore", "ignore"] });
+await settleShells(2);
+writeFileSync(RESULT_FILE, String(countOwnShells()));
+await Promise.all([first.exited, second.exited]);
+`);
+        expect(count).toBe("2");
+    });
 
     /**
      * `bunfig.toml` preloads this guard, and `--isolate` re-evaluates every preload once per
