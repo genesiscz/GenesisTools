@@ -48,6 +48,19 @@ export interface PhoneChannelConfig {
      */
     text?: boolean;
     apns?: PhoneApnsConfig;
+    /** When an alert goes to the phone at all (F14); absent fields take the defaults in `phoneWhen`. */
+    when?: PhoneWhenConfig;
+}
+
+/**
+ * When the phone gets an alert (F14). `desk: "away"` keeps the phone quiet while someone works at the Mac (the Mac's
+ * own banner shows it) and lets it through once the Mac is locked or idle `idleMinutes`; `"always"` sends every time.
+ * `quiet` is a local `HH:MM` span with no alert, which a time-sensitive event still breaks. Retractions always go.
+ */
+export interface PhoneWhenConfig {
+    desk?: "away" | "always";
+    idleMinutes?: number;
+    quiet?: { from: string; to: string };
 }
 
 export interface ChannelConfigs {
