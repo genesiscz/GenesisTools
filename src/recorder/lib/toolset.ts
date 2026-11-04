@@ -15,6 +15,8 @@ import {
     findInTranscript,
     hexColor,
     outputDurationUs,
+    REDACTION_STYLES,
+    shortcutsOf,
     type TranscriptLine,
     transcriptCachePath,
     transcriptLines,
@@ -64,7 +66,7 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame, cursor, captions, keys }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys }";
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
 
@@ -92,6 +94,26 @@ const movieMethods = [
         "Zooms over a source range: scale 1–4, focus {x,y} 0..1 from the top left, or follow: true for the cursor."
     ),
     edit("unzoom", z.object({ id: z.string() }), "Removes a zoom by its id.", ["id"]),
+    edit(
+        "redact",
+        z
+            .object({
+                from: timeSchema,
+                to: timeSchema,
+                rect: z
+                    .object({
+                        x: z.number().min(0).max(1),
+                        y: z.number().min(0).max(1),
+                        width: z.number().min(0.005).max(1),
+                        height: z.number().min(0.005).max(1),
+                    })
+                    .strict(),
+                style: z.enum(REDACTION_STYLES).optional(),
+            })
+            .strict(),
+        'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black". It moves with a zoom. The result lists redactions with their ids.'
+    ),
+    edit("unredact", z.object({ id: z.string() }), "Removes a redaction by its id.", ["id"]),
     edit(
         "autoZoom",
         z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
@@ -171,7 +193,7 @@ const movieMethods = [
                 shadow: z.boolean().optional(),
             })
             .strict(),
-        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill, following the cursor), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
+        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
     ),
     edit(
         "removeIdle",
@@ -212,7 +234,7 @@ const movieMethods = [
         positional: ["at"],
         result: z.unknown(),
         resultName: "{ path, width, height }",
-        doc: "Shows one frame of the edit as it exports (zoom, clicks, frame style) at OUTPUT seconds (what plays), so you can look at a change.",
+        doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. It renders at preview size (the movie at most 1080 high); export() uses the export size.",
         effect: "read",
     }),
     defineMethod({
@@ -222,6 +244,14 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ from, to, plays, text }[]",
         doc: "The transcript lines that hold the text (case and accents ignored); cut one with cut(line.from, line.to).",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "shortcuts",
+        params: z.object({}),
+        result: z.unknown(),
+        resultName: "{ at, plays, key }[]",
+        doc: 'The ⌘/⌃ shortcuts the recording kept ("⌘C"), at source seconds, plays: where each shows in the edit (null when cut). keys() draws them.',
         effect: "read",
     }),
     defineMethod({
@@ -350,6 +380,14 @@ export class Movie {
 
     async unzoom(id: string) {
         return this.change([{ op: "unzoom", id }]);
+    }
+
+    async redact(options: Omit<Extract<EditOp, { op: "redact" }>, "op">) {
+        return this.change([{ op: "redact", ...options }]);
+    }
+
+    async unredact(id: string) {
+        return this.change([{ op: "unredact", id }]);
     }
 
     async autoZoom(options: { scale?: number } = {}) {
@@ -505,6 +543,10 @@ export class Movie {
 
     async find(text: string): Promise<TranscriptLine[]> {
         return findInTranscript(await this.transcript(), text);
+    }
+
+    async shortcuts() {
+        return shortcutsOf((await openProject(this.recording)).project);
     }
 
     async show(options: { focus?: boolean } = {}) {

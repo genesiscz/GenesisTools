@@ -15,6 +15,7 @@ import {
     outputTimeOf,
     parseEditOps,
     readProject,
+    shortcutsOf,
     transcriptLines,
     wholeProject,
     writeProject,
@@ -462,6 +463,25 @@ describe("edit project (edit.json)", () => {
         expect(() => applyOp(project, { op: "normalize", targetLufs: -16 })).toThrow("needs the movie's loudness");
     });
 
+    test("a redaction hides a rectangle inside the picture for a time and is removed by its id", () => {
+        const project = wholeProject(source);
+        const hidden = applyOp(project, {
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.1 },
+        });
+        const [redaction] = hidden.redactions ?? [];
+        expect(redaction).toMatchObject({ startUs: 1_000_000, endUs: 3_000_000, x: 0.1, width: 0.3, style: "blur" });
+        expect(() =>
+            applyOp(project, { op: "redact", from: 1, to: 3, rect: { x: 0.8, y: 0, width: 0.3, height: 0.1 } })
+        ).toThrow("leaves the picture");
+        expect(applyOp(hidden, { op: "unredact", id: redaction?.id ?? "" }).redactions).toEqual([]);
+        expect(() => applyOp(hidden, { op: "unredact", id: "nope" })).toThrow(`redactions: ${redaction?.id}`);
+        // A cut keeps it in source time.
+        expect(applyOp(hidden, { op: "cut", from: 0, to: 0.5 }).redactions?.[0]?.startUs).toBe(1_000_000);
+    });
+
     test("the keys overlay needs a track that kept shortcuts", () => {
         const dir = workspace();
         const plain = join(dir, "plain.jsonl");
@@ -469,6 +489,9 @@ describe("edit project (edit.json)", () => {
         writeFileSync(plain, '{"t":0.1,"x":0.5,"y":0.5}\n');
         writeFileSync(keyed, '{"t":0.1,"x":0.5,"y":0.5}\n{"t":801.8,"x":0.5,"y":0.5,"key":"⌃F13"}\n');
         expect(() => applyOp(wholeProject({ ...source, cursor: plain }), { op: "keys" })).toThrow("kept no shortcuts");
+        const keyedProject = wholeProject({ ...source, cursor: keyed });
+        expect(shortcutsOf(keyedProject)).toEqual([{ at: 0.802, plays: 0.802, key: "⌃F13" }]);
+        expect(shortcutsOf(applyOp(keyedProject, { op: "cut", from: 0.5, to: 1 }))[0]?.plays).toBeNull();
         expect(applyOp(wholeProject({ ...source, cursor: keyed }), { op: "keys", position: "top" }).keys).toEqual({
             show: true,
             size: 0.05,

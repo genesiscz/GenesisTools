@@ -99,6 +99,31 @@ export const captionsSchema = z.object({
     position: z.enum(["bottom", "top"]).default("bottom"),
 });
 
+export const REDACTION_STYLES = ["blur", "pixelate", "black"] as const;
+
+/** A part of the SOURCE picture hidden for a time: an address, a token, a notification. It moves with a zoom. */
+export const redactionSchema = z.object({
+    id: z.string(),
+    startUs: z.number().int().nonnegative(),
+    endUs: z.number().int().positive(),
+    /** The rectangle, 0...1 of the source picture from its top left. */
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().min(0.005).max(1),
+    height: z.number().min(0.005).max(1),
+    style: z.enum(REDACTION_STYLES).default("blur"),
+});
+export type EditRedaction = z.infer<typeof redactionSchema>;
+
+const rectSchema = z
+    .object({
+        x: z.number().min(0).max(1),
+        y: z.number().min(0).max(1),
+        width: z.number().min(0.005).max(1),
+        height: z.number().min(0.005).max(1),
+    })
+    .strict();
+
 /** The ⌘/⌃ shortcuts the recording kept (`"key"` rows of the cursor track), drawn as they were pressed. Absent is off. */
 export const keysSchema = z.object({
     show: z.boolean().default(true),
@@ -152,6 +177,8 @@ export const editProjectSchema = z.object({
     cursor: cursorSchema.optional(),
     captions: captionsSchema.optional(),
     keys: keysSchema.optional(),
+    /** Absent is none; written only once a redaction exists, so an older reader keeps its files. */
+    redactions: z.array(redactionSchema).optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -160,7 +187,7 @@ export type EditProject = z.infer<typeof editProjectSchema>;
 export type EditClip = EditProject["clips"][number];
 export type EditZoom = EditProject["zooms"][number];
 
-export function newId(prefix: "c" | "z"): string {
+export function newId(prefix: "c" | "z" | "r"): string {
     return `${prefix}${randomUUID().slice(0, 8)}`;
 }
 
@@ -349,6 +376,33 @@ export function addZoom(
     return { project: { ...project, zooms }, zoom };
 }
 
+/** Hides a rectangle of the source picture from `fromUs` to `toUs`; the rectangle must lie inside the picture. */
+export function addRedaction(
+    project: EditProject,
+    options: { fromUs: number; toUs: number; rect: z.infer<typeof rectSchema>; style: EditRedaction["style"] }
+): EditProject {
+    checkRange(project, options.fromUs, options.toUs);
+    const { x, y, width, height } = options.rect;
+
+    if (x + width > 1.0001 || y + height > 1.0001) {
+        throw new RangeError(
+            `the rectangle leaves the picture: x + width is ${Math.round((x + width) * 1000) / 1000} and y + height is ${Math.round((y + height) * 1000) / 1000}; both must be at most 1`
+        );
+    }
+
+    const redaction: EditRedaction = {
+        id: newId("r"),
+        startUs: options.fromUs,
+        endUs: Math.min(project.source.durationUs, options.toUs),
+        x,
+        y,
+        width,
+        height,
+        style: options.style,
+    };
+    return { ...project, redactions: [...(project.redactions ?? []), redaction] };
+}
+
 export function removeZoom(project: EditProject, id: string): EditProject {
     if (!project.zooms.some((zoom) => zoom.id === id)) {
         throw new Error(`no zoom ${id}; zooms: ${project.zooms.map((zoom) => zoom.id).join(", ") || "none"}`);
@@ -362,9 +416,31 @@ export interface CursorSample {
     x: number;
     y: number;
     click?: string;
+    /** A ⌘/⌃ shortcut pressed at this sample. */
+    key?: string;
 }
 
-const cursorRowSchema = z.object({ t: z.number(), x: z.number(), y: z.number(), click: z.string().optional() });
+/** The shortcuts a recording kept, in source seconds, with where each plays in the edit (null when cut). */
+export function shortcutsOf(project: EditProject): Array<{ at: number; plays: number | null; key: string }> {
+    const round = (us: number) => Math.round(us / 1000) / 1000;
+    return readCursorTrack(project.source.cursor).flatMap((sample) => {
+        if (!sample.key) {
+            return [];
+        }
+
+        const sourceUs = Math.round(sample.ms * 1000);
+        const plays = outputTimeOf(project, sourceUs);
+        return [{ at: round(sourceUs), plays: plays === undefined ? null : round(plays), key: sample.key }];
+    });
+}
+
+const cursorRowSchema = z.object({
+    t: z.number(),
+    x: z.number(),
+    y: z.number(),
+    click: z.string().optional(),
+    key: z.string().optional(),
+});
 
 /**
  * Whether the movie was recorded without the system cursor, so the editor draws it: the track's first row then names
@@ -404,6 +480,7 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
                           x: row.data.x,
                           y: row.data.y,
                           ...(row.data.click ? { click: row.data.click } : {}),
+                          ...(row.data.key ? { key: row.data.key } : {}),
                       },
                   ]
                 : [];
@@ -474,6 +551,17 @@ export const editOpSchema = z.discriminatedUnion("op", [
         })
         .strict(),
     z.object({ op: z.literal("unzoom"), id: z.string() }).strict(),
+    z
+        .object({
+            op: z.literal("redact"),
+            from: timeSchema,
+            to: timeSchema,
+            /** 0...1 of the source picture from its top left; x + width and y + height stay inside it. */
+            rect: rectSchema,
+            style: z.enum(REDACTION_STYLES).optional(),
+        })
+        .strict(),
+    z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
     z.object({ op: z.literal("autoZoom"), scale: z.number().min(1).max(4).optional() }).strict(),
     z.object({ op: z.literal("volume"), volume: z.number().min(0).max(2) }).strict(),
     z.object({ op: z.literal("mute"), track: z.number().int().nonnegative(), muted: z.boolean().optional() }).strict(),
@@ -662,6 +750,24 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             }).project;
         case "unzoom":
             return removeZoom(project, op.id);
+        case "redact":
+            return addRedaction(project, {
+                fromUs: timeToUs(op.from),
+                toUs: timeToUs(op.to),
+                rect: op.rect,
+                style: op.style ?? "blur",
+            });
+        case "unredact": {
+            const list = project.redactions ?? [];
+
+            if (!list.some((redaction) => redaction.id === op.id)) {
+                throw new Error(
+                    `no redaction ${op.id}; redactions: ${list.map((redaction) => redaction.id).join(", ") || "none"}`
+                );
+            }
+
+            return { ...project, redactions: list.filter((redaction) => redaction.id !== op.id) };
+        }
         case "autoZoom":
             return autoZoom(project, readCursorTrack(project.source.cursor), op.scale);
         case "volume":
@@ -770,6 +876,13 @@ export function describeProject(project: EditProject, path: string) {
         export: project.export,
         clicks: project.clicks ?? null,
         frame: project.frame ?? null,
+        redactions: (project.redactions ?? []).map((redaction) => ({
+            id: redaction.id,
+            from: seconds(redaction.startUs),
+            to: seconds(redaction.endUs),
+            rect: { x: redaction.x, y: redaction.y, width: redaction.width, height: redaction.height },
+            style: redaction.style,
+        })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
         captions: project.captions ?? null,

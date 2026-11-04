@@ -36,6 +36,8 @@ While it runs, the menu bar item and the floating controls (hidden from the capt
 Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 
 - `clips`: the kept parts in play order, each with a `speed` (0.25 to 16). A cut is the gap between two clips.
+- `redactions` (optional): rectangles of the source picture (`x`, `y`, `width`, `height` 0 to 1 from the top left)
+  hidden from `startUs` to `endUs` by `blur`, `pixelate` or `black`; drawn before the zoom, so they move with it.
 - `zooms`: `startUs`, `endUs`, `scale` 1 to 4, `mode` `manual` (a `focusX`/`focusY` point) or `follow` (the cursor),
   `easeInMs`/`easeOutMs` on a (0.16, 1, 0.3, 1) curve.
 - `audio`: `include`, `volume` 0 to 2, `mutedTracks`.
@@ -60,7 +62,7 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 ### Ops (`tools recorder apply`, `movie.apply`)
 
 `split {at}`, `cut {from,to}`, `keep {from,to}`, `speed {from,to,factor}`, `zoom {from,to,scale?,focus?,follow?}`,
-`unzoom {id}`, `autoZoom {scale?}` (one zoom per group of clicks under 3 s apart; manual zooms stay), `removeIdle
+`unzoom {id}`, `redact {from,to,rect:{x,y,width,height},style?}`, `unredact {id}`, `autoZoom {scale?}` (one zoom per group of clicks under 3 s apart; manual zooms stay), `removeIdle
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
 silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
 `normalize {targetLufs? -16}` (measures the unmuted tracks' EBU R128 loudness and sets the volume, at most 200 %),
@@ -78,9 +80,9 @@ overwrites a file: the default name moves on to `-edited-2`, `-3`.
 ## The window (GenesisTools.app, recorder part)
 
 `GenesisTools --recorder [--edit P] [--library] [--no-focus]` runs the menu bar item (record, open, the library,
-recent recordings) and the editor and library windows. Headless: `--export P [--out F] --json`, `--still P --at S
+recent recordings, the drawn cursor and shortcut toggles) and the editor and library windows. Headless: `--export P [--out F] --json`, `--still P --at S
 --out PNG`, `--snapshot PNG` with `--edit P [--tab T] [--at S]` or `--library`. The editor: an icon rail (Zoom, Clip,
-Style, Audio, Export), the preview, the transport, and a timeline with the zoom lane, a filmstrip, the waveform and the
+Hide, Style, Audio, Export), the preview, the transport, and a timeline with the zoom lane, a filmstrip, the waveform and the
 playhead's split button. Keys: Space, S (split), Z (zoom), ⌘Z, ⇧⌘Z, ⌘S, ⌘E, Delete, the arrows, Home, End, Esc.
 
 ## Agents: the `movies` REPL toolset
