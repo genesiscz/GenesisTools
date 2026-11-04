@@ -2,10 +2,9 @@ import { buildQaDeepLink } from "@app/dev-dashboard/lib/qa-deep-link";
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
-import { removeNotifications } from "@genesiscz/utils/macos/notifications-app";
-import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { hubItemClickCommand } from "../hub-link";
+import { closeNoticeItems, NOTICE_IDS, noticeItem, postNotice } from "../notices/notices";
 import { summarizeForm } from "./render";
 import type { AskForm } from "./types";
 
@@ -25,7 +24,7 @@ export const BANNER_DEADLINE_MS = 10_000;
  * `QaNotificationRouter.notificationId(formId:)`.
  */
 export function qaNotificationId(formId: string): string {
-    return `qa-form-${formId}`;
+    return NOTICE_IDS.form(formId);
 }
 
 enum BinaryPolarity {
@@ -166,14 +165,17 @@ export async function notifyPendingForm(
         }
 
         await withTimeout(
-            dispatchNotification({
-                app: "question",
-                title: "A question is waiting for you",
-                message: summarizeForm(form),
-                open,
-                ...(hub ? { execute: hub } : {}),
-                id: qaNotificationId(form.id),
-                actions,
+            postNotice({
+                event: {
+                    app: "question",
+                    title: "A question is waiting for you",
+                    message: summarizeForm(form),
+                    open,
+                    ...(hub ? { execute: hub } : {}),
+                    id: qaNotificationId(form.id),
+                    actions,
+                },
+                items: [noticeItem("form", form.id)],
             }),
             deadlineMs,
             new Error(`the banner channels did not finish within ${deadlineMs} ms`)
@@ -190,9 +192,6 @@ export async function notifyPendingForm(
  * `QaNotificationRouter.clear(formId:)`).
  */
 export async function retractPendingNotification(formId: string): Promise<void> {
-    try {
-        await removeNotifications({ ids: [qaNotificationId(formId)] });
-    } catch (err) {
-        log.debug({ err, id: formId }, "could not retract the pending-form banner; it expires on its own");
-    }
+    // On every channel it went to (`closeNoticeItems` never throws).
+    await closeNoticeItems([noticeItem("form", formId)]);
 }

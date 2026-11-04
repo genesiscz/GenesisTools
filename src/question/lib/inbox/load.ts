@@ -5,7 +5,7 @@ import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/listing-reuse";
 import { loadDecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { loadQuestionsHookConfig } from "@genesiscz/utils/agents/dialogs/hook-config";
-import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
+import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -22,6 +22,7 @@ import {
     kindOf,
     readDecisions,
 } from "../decisions/store";
+import { closeNoticeItems, noticeItem } from "../notices/notices";
 import { listFormsSnapshot } from "../pending/store";
 import type { AskForm } from "../pending/types";
 import { type QaRow, queryEntriesSnapshot } from "../read-model";
@@ -145,6 +146,9 @@ export const realInboxDeps: InboxDeps = {
 
         const notified = new Set((await storage().getCacheFile<string[]>(DIALOG_BANNERS_KEY, "7 days")) ?? []);
         const delivered = await notifiedAfterDelivery(open, notified, (fresh) => notifyOpenQuestions(fresh, sessions));
+        // A question whose banner went out and that is no longer open was answered or closed: its banner goes.
+        const still = new Set(open.map(openQuestionKey));
+        await closeNoticeItems([...notified].filter((key) => !still.has(key)).map((key) => noticeItem("dialog", key)));
         // Only the keys still open: a question asked again under the same key is new again.
         await storage().putCacheFile(DIALOG_BANNERS_KEY, delivered, "7 days");
 

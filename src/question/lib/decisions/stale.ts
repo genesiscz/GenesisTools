@@ -2,8 +2,8 @@ import { resolve } from "node:path";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
+import { NOTICE_IDS, noticeItem, postNotice } from "../notices/notices";
 import { loadDecisionsHookConfig } from "./hook-config";
 import { decisionFiles, staleCrossings } from "./read";
 import { markNotified, readDecisions } from "./store";
@@ -34,10 +34,15 @@ export async function checkStaleDecisions({ notify }: { notify: boolean }): Prom
     if (notified && crossings.length > 0) {
         for (const crossing of crossings) {
             try {
-                await dispatchNotification({
-                    app: "question",
-                    title: `${crossing.threshold === "alarm" ? "Still waiting" : "Waiting"}: DECISION ${crossing.row.number}`,
-                    message: `${crossing.row.title ?? crossing.row.prompt} (${crossing.ageMinutes} min)`,
+                // One id per decision: the alarm replaces the warning, and the answer retracts whichever is shown.
+                await postNotice({
+                    event: {
+                        app: "question",
+                        title: `${crossing.threshold === "alarm" ? "Still waiting" : "Waiting"}: DECISION ${crossing.row.number}`,
+                        message: `${crossing.row.title ?? crossing.row.prompt} (${crossing.ageMinutes} min)`,
+                        id: NOTICE_IDS.stale(crossing.row.id),
+                    },
+                    items: [noticeItem("decision", crossing.row.id)],
                 });
             } catch (error) {
                 log.warn({ error, id: crossing.id }, "could not notify a stale decision");
