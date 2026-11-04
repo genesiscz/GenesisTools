@@ -2440,21 +2440,11 @@ struct InboxDecisionCard: View, Equatable {
     }
 
     private func noteEditor(_ placeholder: String) -> some View {
-        TextField(placeholder, text: $note, axis: .vertical)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12))
-            .lineLimit(1...4)
-            .disabled(!pickable)
-            .focused($noteFocused)
-            // Return stages the note and ⌘-Return sends it with the pick, or the other way round (the widget's
-            // "Return in an own answer"). Option-Return stays a new line.
-            .onKeyPress(.return, phases: .down) { press in
-                guard pickable, !press.modifiers.contains(.option), !press.modifiers.contains(.shift) else { return .ignored }
-                submitNote(command: press.modifiers.contains(.command))
-                return .handled
-            }
+        // Up to four lines, then the note's own text scrolls, with the keyboard in it or not (GrowingTextEditor: a
+        // TextField showed four lines of a long answer and no more).
+        GrowingTextEditor(placeholder, text: $note, focus: $noteFocused) { press in
             // Esc puts the staged note back and leaves the field.
-            .onKeyPress(.escape) {
+            if press.key == .escape {
                 note = item.draft ?? ""
                 inbox.noteTexts[item.id] = nil
                 noteDirty = false
@@ -2462,6 +2452,12 @@ struct InboxDecisionCard: View, Equatable {
                 noteFocused = false
                 return .handled
             }
+            // Return stages the note and ⌘-Return sends it with the pick, or the other way round (the widget's
+            // "Return in an own answer"). Option-Return stays a new line.
+            guard pickable else { return .ignored }
+            return GrowingTextEditor.returnKey(press) { command in submitNote(command: command) }
+        }
+        .disabled(!pickable)
     }
 
     /// The empty note of a card at rest, drawn as the field draws its placeholder but without the text field, which is
@@ -3082,10 +3078,8 @@ private struct InboxFormCard: View {
                         }
                     }
                     if question.freeText {
-                        TextField("Answer in your own words…", text: Binding(get: { texts[question.itemId] ?? "" }, set: { texts[question.itemId] = $0 }), axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12))
-                            .lineLimit(1...4)
+                        GrowingTextEditor("Answer in your own words…",
+                                          text: Binding(get: { texts[question.itemId] ?? "" }, set: { texts[question.itemId] = $0 }))
                             .padding(7)
                             .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12)))
                     }

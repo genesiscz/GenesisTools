@@ -133,29 +133,23 @@ struct WidgetAnswerField<Above: View, Below: View>: View {
                 .foregroundStyle(shownText.isEmpty ? .tertiary : .primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else if let text, let focus, !(panelMoving && !focused && height > 0) {
-            // One field in every state, so a click that opens the own answer keeps the keyboard in it.
-            TextField(placeholder, text: text, axis: .vertical)
-                .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4)
-                // Always as tall as its lines (up to four): squeezed to the send button's height, a two-line
-                // answer showed its first line cut off at the top (Martin, 2026-10-26: "multilines suck").
-                .fixedSize(horizontal: false, vertical: true)
-                .focused(focus)
+            // One field in every state, so a click that opens the own answer keeps the keyboard in it. As tall as
+            // its lines up to four (Martin, 2026-10-26: "multilines suck"), then its own text scrolls, with the
+            // keyboard in it or not (GrowingTextEditor: a TextField showed four lines of a long answer and no more).
+            // A decision's own answer: Return stages the text as its note and ⌘-Return sends it, or the other way
+            // round (Settings: Return in an own answer). The reply box sends on Return. Option-Return is a new line.
+            GrowingTextEditor(placeholder, text: text, focus: focus,
+                              accessibilityLabel: ownAnswerID == nil ? "Reply to selected agent" : "Your own answer") { press in
+                GrowingTextEditor.returnKey(press) { command in
+                    if let onReturn { onReturn(command) } else { onSubmit() }
+                }
+            }
                 // A field with the keyboard owns its text: no snapshot writes into it (FieldTextOwnership).
                 .onChange(of: focused, initial: true) { _, now in onFocusChange(now, fieldKey) }
                 .onChange(of: fieldKey) { _, key in
                     if focused { onFocusChange(true, key) }
                 }
                 .onDisappear { onFocusChange(false, fieldKey) }
-                // A decision's own answer: Return stages the text as its note and ⌘-Return sends it, or the
-                // other way round (Settings: Return in an own answer). Option-Return stays a new line.
-                .onKeyPress(.return, phases: .down) { press in
-                    guard let onReturn, !press.modifiers.contains(.option),
-                          !press.modifiers.contains(.shift) else { return .ignored }
-                    onReturn(press.modifiers.contains(.command))
-                    return .handled
-                }
-                .onSubmit(onSubmit)
-                .accessibilityLabel(ownAnswerID == nil ? "Reply to selected agent" : "Your own answer")
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { fieldHeight.wrappedValue = $0 }
                 .frameProbe(ownAnswerID == nil ? "widget.composer.field" : "widget.ownAnswer.field")
         } else {
