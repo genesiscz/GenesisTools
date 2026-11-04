@@ -636,7 +636,15 @@ final class EditorModel {
 
     static let revealAfterExportKey = "recorder.export.revealInFinder"
 
+    /// Off by default: an export puts its file on the clipboard (to paste into a chat or a mail) only when asked.
+    static let copyAfterExportKey = "recorder.export.copyToClipboard"
+
     private func reveal(_ url: URL) {
+        if UserDefaults.standard.object(forKey: Self.copyAfterExportKey) as? Bool ?? false {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects([url as NSURL])
+            HubPerf.log("recorder.export: copied \(url.lastPathComponent) to the clipboard")
+        }
         let reveal = UserDefaults.standard.object(forKey: Self.revealAfterExportKey) as? Bool ?? true
         if reveal { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }

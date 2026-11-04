@@ -641,6 +641,7 @@ private struct ExportInspector: View {
     @Bindable var model: EditorModel
     /// Opinionated, so a setting: an export reveals its file in Finder by default (Finder then comes to the front).
     @AppStorage(EditorModel.revealAfterExportKey) private var revealAfterExport = true
+    @AppStorage(EditorModel.copyAfterExportKey) private var copyAfterExport = false
     private let heights: [Int] = [0, 2160, 1440, 1080, 720]
 
     var body: some View {
@@ -705,6 +706,9 @@ private struct ExportInspector: View {
                 ProgressView(value: progress).progressViewStyle(.linear)
                 Text(verbatim: "Exporting… \(Int(progress * 100))%").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
             } else {
+                SwitchRow("Copy the file when done", isOn: $copyAfterExport)
+                    .instantTooltip("Puts the exported file on the clipboard, ready to paste into a chat or a mail")
+                    .accessibilityIdentifier("recorder.export.copy")
                 SwitchRow("Show in Finder when done", isOn: $revealAfterExport)
                     .accessibilityIdentifier("recorder.export.reveal")
                 Button((settings.format ?? .mp4) == .mp4 ? "Export Movie" : "Export \(settings.format?.rawValue.uppercased() ?? "")") { model.export() }
