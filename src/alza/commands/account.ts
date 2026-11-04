@@ -2,9 +2,11 @@ import { spawn } from "node:child_process";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { formatItemLines } from "@genesiscz/utils/watch/items";
 import type { Command } from "commander";
 import { type AccountStatus, afterSignIn, openAccountContext } from "../lib/account";
 import { REDIRECT_URI } from "../lib/auth";
+import { watchdogItems, watchdogsOf } from "../lib/watchdog-items";
 import { parseIntArg, parseNumberArg, resolveStorefront, runAccountOperation, TOOL } from "./run";
 
 const REDIRECT_HELP = [
@@ -233,8 +235,22 @@ export function registerAccountCommands(program: Command): void {
         .command("list", { isDefault: true })
         .description("Your watchdogs")
         .option("--limit <n>", "How many (max 100)", parseIntArg)
-        .action(async (flags: { limit?: number }, command: Command) => {
-            await runAccountOperation(command, "watchdog_list", { limit: flags.limit });
+        .option(
+            "--items",
+            "only the watchdogs that fire now, as Monitor item lines (tools monitor add --kind command --items)"
+        )
+        .action(async (flags: { limit?: number; items?: boolean }, command: Command) => {
+            await runAccountOperation(
+                command,
+                "watchdog_list",
+                { limit: flags.limit },
+                flags.items
+                    ? (result) => {
+                          const lines = formatItemLines(watchdogItems(watchdogsOf(result.data)));
+                          return lines ? `${lines}\n` : "";
+                      }
+                    : undefined
+            );
         });
     watchdog
         .command("add")

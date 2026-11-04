@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MonitorDatabase } from "./db";
 import { isWorthNotifying, Monitor } from "./monitor";
@@ -553,6 +556,35 @@ function feedXml(items: Array<{ guid: string; title: string }>): string {
 }
 
 describe("Monitor feed delivery", () => {
+    test("a command watcher with items primes on its first run and reports each new item once", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "monitor-items-"));
+        const file = join(dir, "items.jsonl");
+        writeFileSync(file, '{"guid":"shop:1","title":"primed"}\n');
+        const monitor = new Monitor({ dbPath: ":memory:" });
+
+        try {
+            const watcher = await monitor.createWatcher({
+                name: "shop watch",
+                kind: "command",
+                target: `cat ${file}`,
+                notify: false,
+                timeoutMs: 5_000,
+                config: { items: true },
+            });
+
+            expect((await monitor.runWatcher(watcher.id))?.newItems).toEqual([]);
+            writeFileSync(file, '{"guid":"shop:2","title":"price fell"}\n{"guid":"shop:1","title":"primed"}\n');
+            const second = await monitor.runWatcher(watcher.id);
+            const third = await monitor.runWatcher(watcher.id);
+
+            expect(second?.newItems.map((item) => item.guid)).toEqual(["shop:2"]);
+            expect(second?.check.meta).toMatchObject({ itemCount: 2 });
+            expect(third?.newItems).toEqual([]);
+        } finally {
+            await monitor.close();
+        }
+    });
+
     test("an item whose webhook failed is redelivered on the next check", async () => {
         // The whole point of storing `delivered`: a webhook that answers 500
         // must not cost the user the item. Every channel reports its outcome

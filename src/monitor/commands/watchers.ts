@@ -42,6 +42,7 @@ interface AddOptions {
     degradedMs?: string;
     components?: string;
     itemFilter?: string;
+    items?: boolean;
     expectIp?: string;
     jsonPath?: string;
     expect?: string;
@@ -64,6 +65,7 @@ interface EditOptions {
     degradedMs?: string;
     components?: string;
     itemFilter?: string;
+    items?: boolean;
     expectIp?: string;
     jsonPath?: string;
     expect?: string;
@@ -142,6 +144,7 @@ function configFromFlags(opts: Partial<EditOptions>, base: Record<string, unknow
         ["components", opts.components],
         ["itemFilter", opts.itemFilter],
         ["deliverItems", opts.deliver],
+        ["items", opts.items],
         ["expectIp", opts.expectIp],
         ["jsonPath", opts.jsonPath],
         ["expect", opts.expect],
@@ -276,7 +279,8 @@ function commonFlags(command: Command): Command {
         .option("--expect-body <text>", "website: body must contain this text")
         .option("--degraded-ms <ms>", "website/ai-provider: slower than this is degraded")
         .option("--components <names>", "statuspage: comma-separated component names to watch")
-        .option("--item-filter <words>", "rss: only items whose title/summary contains one of these words")
+        .option("--item-filter <words>", "rss, command --items: only items whose title/summary has one of these words")
+        .option("--items", "command: stdout is JSON lines of items, each new one delivered like a feed item")
         .option("--expect-ip <address>", "dns: the host must resolve to this address")
         .option("--json-path <path>", "json: dot path into the document (status.indicator, items[0].id)")
         .option("--expect <value>", "json: the value at --json-path must equal this (as text)")
