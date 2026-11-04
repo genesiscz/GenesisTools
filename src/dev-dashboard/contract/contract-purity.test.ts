@@ -24,6 +24,7 @@ const FILES = [
     "gates.ts",
     "push.ts",
     "launch.ts",
+    "watching.ts",
 ];
 
 describe("contract purity", () => {

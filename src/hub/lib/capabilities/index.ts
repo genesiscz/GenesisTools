@@ -251,6 +251,18 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /** `hub watching --json`: every watch on the Mac in one list (the phone's Watching screen, F30). Read only. */
+    watching: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { watching } = await import("../watching/index");
+            return watching();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `ai sessions tail <q> --json [--limit N] [--offset N] [--provider P]`: one page of a session's transcript. */
     transcript: {
         policy: "read",
