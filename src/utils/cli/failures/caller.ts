@@ -3,10 +3,13 @@ import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
+import { profiler } from "@genesiscz/utils/profile";
 import { defaultNativeHome, parseCodexHomeList } from "@genesiscz/utils/providers/session-paths";
 import type { FailureCaller } from "./record";
 
 const CODEX_DAYS_BACK = 7;
+
+const prof = profiler.scope("agent-context");
 
 /** Claude names a project folder after the session's cwd with every non-alphanumeric character as `-`. */
 export function claudeProjectFolder(cwd: string): string {
@@ -77,7 +80,10 @@ export function transcriptOf({ context, processEnv, now = new Date(), home }: Ca
         return null;
     }
 
-    return CALLER_TRANSCRIPTS[context.agent]({ context, processEnv, now, home }, context.sessionId);
+    const sessionId = context.sessionId;
+    return prof.measure("failures.transcriptOf", () =>
+        CALLER_TRANSCRIPTS[context.agent]({ context, processEnv, now, home }, sessionId)
+    );
 }
 
 /**
@@ -104,6 +110,10 @@ const CALLER_TRANSCRIPTS: Record<
 };
 
 export function failureCaller(inputs: CallerInputs): FailureCaller {
+    return prof.measure("failures.failureCaller", () => readFailureCaller(inputs));
+}
+
+function readFailureCaller(inputs: CallerInputs): FailureCaller {
     const { context, processEnv } = inputs;
     const transcript = transcriptOf(inputs);
     const harness = harnessOfRuntimeAgent(context.agent);

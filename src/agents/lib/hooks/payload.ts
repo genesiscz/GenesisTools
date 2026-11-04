@@ -2,7 +2,10 @@ import { byHarness, isAccountProviderAlias, type PerHarness } from "@genesiscz/u
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
 import type { HarnessName } from "./config";
+
+const prof = profiler.scope("agent-context");
 
 export interface HookPayload {
     event: string;
@@ -115,6 +118,10 @@ export function toolOutputText(payload: Pick<HookPayload, "toolResponse">): stri
 }
 
 export function parseHookPayload(text: string): HookPayload | null {
+    return prof.measure("hooks.parseHookPayload", () => readHookPayload(text));
+}
+
+function readHookPayload(text: string): HookPayload | null {
     let raw: Record<string, unknown>;
 
     try {

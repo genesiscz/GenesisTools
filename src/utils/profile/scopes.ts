@@ -63,6 +63,8 @@ export const PROFILER_SCOPE_NAMES = [
     "jev-probably",
     "jev-grep",
     "repo-context",
+    // Every agent-context gatherer (runtime context, host, say caller, failure caller, gateway peer, hook payload): one line per call.
+    "agent-context",
     "control-native",
     "control-overlay",
     "control-simulator",

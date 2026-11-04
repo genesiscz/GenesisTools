@@ -12,8 +12,10 @@ import {
     readOpenFilePaths,
     readProcessInfo,
 } from "@genesiscz/utils/process/socket-owner";
+import { profiler } from "@genesiscz/utils/profile";
 
 const log = logger.child({ component: "genesis-tools-mcp:http-caller" });
+const prof = profiler.scope("agent-context");
 
 /**
  * Executable names of the harnesses that speak MCP over HTTP to the gateway → the runtime agent name each reports. The
@@ -119,6 +121,14 @@ const UNKNOWN: ResolvedCaller = { agent: "unknown", sessionId: null, cwd: null, 
 
 /** The harness process that holds the client end of this connection, and what it is running. */
 export function resolveCallerFromPeer(opts: {
+    clientPort: number;
+    serverPort: number;
+    claudeSessionsDir?: string;
+}): ResolvedCaller {
+    return prof.measure("gateway.resolveCallerFromPeer", () => readCallerFromPeer(opts));
+}
+
+function readCallerFromPeer(opts: {
     clientPort: number;
     serverPort: number;
     claudeSessionsDir?: string;

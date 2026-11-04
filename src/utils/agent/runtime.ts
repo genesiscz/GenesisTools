@@ -8,8 +8,11 @@ import { harnessOfRuntimeAgent, harnessPluginId } from "@genesiscz/utils/ai/prov
 import { env as appEnv } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
+import { profiler } from "@genesiscz/utils/profile";
 
 export type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+
+const prof = profiler.scope("agent-context");
 
 /**
  * The harness session a request came from, when this process serves many sessions.
@@ -45,7 +48,9 @@ export function callerCwd(): string {
 
 function gitSync(args: string[], cwd: string): string | null {
     try {
-        const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
+        const r = prof.measure(`runtime.git ${args.join(" ")}`, () =>
+            Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" })
+        );
         if (r.exitCode !== 0) {
             return null;
         }
@@ -120,8 +125,15 @@ export function getAgentRuntimeContext(
     overrides: Partial<AgentRuntimeContext> = {},
     processEnv: NodeJS.ProcessEnv = appEnv.getProcessEnv()
 ): AgentRuntimeContext {
+    return prof.measure("runtime.getAgentRuntimeContext", () => readAgentRuntimeContext(overrides, processEnv));
+}
+
+function readAgentRuntimeContext(
+    overrides: Partial<AgentRuntimeContext>,
+    processEnv: NodeJS.ProcessEnv
+): AgentRuntimeContext {
     const caller = callerScope.getStore();
-    const cwd = overrides.cwd ?? caller?.cwd ?? resolveSessionCwd();
+    const cwd = overrides.cwd ?? caller?.cwd ?? prof.measure("runtime.resolveSessionCwd", resolveSessionCwd);
 
     const agentPartial: Partial<AgentRuntimeContext> = caller
         ? {
@@ -183,7 +195,10 @@ export function getAgentRuntimeContext(
 
     if (!merged.sessionTitle && historyProvider && merged.sessionId) {
         try {
-            const meta = readCachedHistoryTitle({ providerId: historyProvider, sessionId: merged.sessionId });
+            const sessionId = merged.sessionId;
+            const meta = prof.measure("runtime.titleLookup", () =>
+                readCachedHistoryTitle({ providerId: historyProvider, sessionId })
+            );
             merged.sessionTitle = meta?.customTitle ?? meta?.summary ?? null;
         } catch (error) {
             // History index is optional — log so a missing/corrupt index is diagnosable.
