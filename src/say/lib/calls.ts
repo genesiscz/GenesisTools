@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readParentPid } from "@genesiscz/utils/process/cwd";
 import type { AncestryFrame, CallerContext } from "./caller";
 import { getSayStorage } from "./storage";
 
@@ -275,7 +276,7 @@ export function finishCall(db: Database, request: SayCallRequest, outcome: SayCa
         request.app,
         isAttentionText(request.text) ? 1 : 0,
         process.cwd(),
-        process.ppid,
+        readParentPid(process.pid) ?? 0,
         request.pid,
         outcome.status,
         outcome.speakerPid,

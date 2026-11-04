@@ -3,19 +3,16 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type AncestryFrame,
-    agentFromAncestry,
     type CallerContext,
-    captureAncestry,
+    callerContextOf,
     captureCallerContext,
     describeAncestry,
-    parsePidCommands,
-    parsePidParents,
-    walkParents,
 } from "./caller";
 import {
     CALLS_MIGRATIONS,
@@ -85,37 +82,28 @@ function request(overrides: Partial<SayCallRequest> = {}): SayCallRequest {
     };
 }
 
+/** The agent the call log records for a caller whose environment names none, from a process chain alone. */
+function agentOfChain(chain: AncestryFrame[]): string {
+    const identity = whoIsCalling({ origin: "local", env: {} });
+    identity.process = { pid: 1000, ancestry: chain };
+    return callerContextOf(identity, { termProgram: null, callerPid: 1 }).agent;
+}
+
 describe("process ancestry", () => {
-    test("walks pid → ppid up to launchd and stops on a cycle", () => {
-        const parents = parsePidParents("  100   90\n 90 80\n80 1\n1 0\nbad line\n");
-        expect(walkParents(parents, 100)).toEqual([100, 90, 80]);
+    test("names the agent from the nearest agent process", () => {
+        expect(agentOfChain(CLAUDE_CHAIN)).toBe("claude-code");
         expect(
-            walkParents(
-                new Map([
-                    [5, 6],
-                    [6, 5],
-                ]),
-                5
-            )
-        ).toEqual([5, 6]);
-        expect(walkParents(parents, 4242)).toEqual([4242]);
-    });
-
-    test("reads full commands per pid and caps their length", () => {
-        const commands = parsePidCommands(`  100 /bin/zsh -c 'x'\n90 ${"a".repeat(300)}\n`);
-        expect(commands.get(100)).toBe("/bin/zsh -c 'x'");
-        expect(commands.get(90)?.length).toBe(240);
-    });
-
-    test("names the agent from the nearest agent binary", () => {
-        expect(agentFromAncestry(CLAUDE_CHAIN)).toBe("claude-code");
-        expect(
-            agentFromAncestry([
+            agentOfChain([
                 { pid: 1, command: "/bin/zsh" },
                 { pid: 2, command: "/opt/bin/codex exec" },
             ])
         ).toBe("codex");
-        expect(agentFromAncestry([{ pid: 1, command: "/bin/zsh" }])).toBe("unknown");
+        expect(agentOfChain([{ pid: 1, command: "/bin/zsh" }])).toBe("unknown");
+    });
+
+    test("a helper binary of an agent and an agent's own MCP door name no agent", () => {
+        expect(agentOfChain([{ pid: 1, command: "/opt/bin/codex-gateway serve" }])).toBe("unknown");
+        expect(agentOfChain([{ pid: 1, command: "/Users/x/.bun/bin/claude mcp serve" }])).toBe("unknown");
     });
 
     test("describes the chain without launcher noise", () => {
@@ -126,48 +114,17 @@ describe("process ancestry", () => {
     });
 });
 
-describe.skipIf(process.platform !== "darwin")("captureAncestry on live processes", () => {
-    test("walks a child of ours with exact commands or executable paths when argv is withheld", async () => {
-        const child = Bun.spawn(["/bin/sh", "-c", "echo ready; sleep 30; : 'tab\there'", "zero"], {
-            env: process.env,
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "ignore",
-        });
+describe.skipIf(process.platform !== "darwin")("the caller's ancestry on live processes", () => {
+    test("starts at our parent, stops before launchd and gives every frame a command or executable path", async () => {
+        const caller = await captureCallerContext();
 
-        try {
-            const reader = child.stdout.getReader();
-            const ready = await reader.read();
-            reader.releaseLock();
-            expect(ready.done).toBe(false);
-            expect(new TextDecoder().decode(ready.value)).toBe("ready\n");
+        expect(caller.ancestry.length).toBeGreaterThan(1);
+        expect(caller.ancestry[0]?.pid).toBe(caller.callerPid);
+        expect(caller.ancestry.map((frame) => frame.pid)).not.toContain(1);
+        expect(caller.ancestry.map((frame) => frame.pid)).not.toContain(process.pid);
 
-            const frames = await captureAncestry(child.pid);
-            const pids = frames.map((frame) => frame.pid);
-            const printed = parsePidCommands(
-                Bun.spawnSync(["ps", "-p", pids.join(","), "-o", "pid=,command="], {
-                    env: process.env,
-                }).stdout.toString()
-            );
-
-            expect(pids.slice(0, 3)).toEqual([child.pid, process.pid, process.ppid]);
-            expect(frames[0]?.command).toBe("/bin/sh -c echo ready; sleep 30; : 'tab\\011here' zero");
-            expect(pids).not.toContain(1);
-            for (const frame of frames) {
-                const expected = printed.get(frame.pid) ?? "";
-                expect(expected).not.toBe("");
-                expect(frame.command).not.toBe("");
-
-                // Full command lines remain byte-exact; an executable-only fallback must name this same process.
-                if (/\s/.test(frame.command)) {
-                    expect(frame.command).toBe(expected);
-                } else {
-                    expect(frame.command).toBe(expected.split(/\s+/)[0]);
-                }
-            }
-        } finally {
-            child.kill();
-            await child.exited;
+        for (const frame of caller.ancestry) {
+            expect(frame.command).not.toBe("");
         }
     });
 
@@ -176,12 +133,8 @@ describe.skipIf(process.platform !== "darwin")("captureAncestry on live processe
         const spawnSync = spyOn(Bun, "spawnSync");
 
         try {
-            const frames = await captureAncestry(process.pid);
-            expect(frames.length).toBeGreaterThan(1);
-
-            for (const frame of frames) {
-                expect(frame.command).not.toBe("");
-            }
+            const caller = await captureCallerContext();
+            expect(caller.ancestry.length).toBeGreaterThan(1);
 
             const psCalls = [...spawn.mock.calls, ...spawnSync.mock.calls].filter(
                 (call) => Array.isArray(call[0]) && /(?:^|[/\\])ps$/.test(call[0][0])
@@ -191,18 +144,6 @@ describe.skipIf(process.platform !== "darwin")("captureAncestry on live processe
             spawnSync.mockRestore();
             spawn.mockRestore();
         }
-    });
-
-    test("a pid that is already gone has no ancestry at all", async () => {
-        const done = Bun.spawn(["/usr/bin/true"], {
-            env: process.env,
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "ignore",
-        });
-        await done.exited;
-
-        expect(await captureAncestry(done.pid)).toEqual([]);
     });
 });
 
@@ -452,6 +393,8 @@ const CALLER_ENV_KEYS = [
     "COPILOT_AGENT_SESSION_ID",
     "AI_AGENT",
     "TOOLS_CLAUDE_ACCOUNT",
+    "TOOLS_CODEX_ACCOUNT",
+    "TOOLS_GROK_ACCOUNT",
     "CMUX_SURFACE_ID",
     "CMUX_WORKSPACE_ID",
     "CMUX_TAB_ID",
@@ -492,7 +435,7 @@ describe("characterization: the caller `tools say` records", () => {
 
     test("with no host in the env the agent is whatever the process chain names, and the session is null", async () => {
         const caller = await captureWith({});
-        expect(caller.agent).toBe(agentFromAncestry(caller.ancestry));
+        expect(caller.agent).toBe(agentOfChain(caller.ancestry));
         expect(caller.sessionId).toBeNull();
         expect(caller.callerPid).toBe(process.ppid);
         expect(caller.cwd).toBe(process.cwd());
@@ -527,16 +470,27 @@ describe("characterization: the caller `tools say` records", () => {
         });
     });
 
-    test("the account is TOOLS_CLAUDE_ACCOUNT whatever the host is", async () => {
-        expect((await captureWith({ TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBe("work");
-        expect((await captureWith({ GROK_SESSION_ID: "g1", TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBe("work");
+    // Changed 2026-11-04 (spec decision on candidate 5): the account is the stamp of the caller's OWN harness, so a
+    // Codex or Grok caller has an account and a caller the environment does not name has none. It was
+    // TOOLS_CLAUDE_ACCOUNT whatever the host was.
+    test("the account is the stamp of the caller's own harness", async () => {
+        expect((await captureWith({ CLAUDECODE: "1", TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBe("work");
+        expect((await captureWith({ CODEX_THREAD_ID: "t1", TOOLS_CODEX_ACCOUNT: "side" })).account).toBe("side");
+        expect((await captureWith({ GROK_SESSION_ID: "g1", TOOLS_GROK_ACCOUNT: "shop" })).account).toBe("shop");
     });
 
+    test("another harness's stamp is no account, and a caller the environment does not name has none", async () => {
+        expect((await captureWith({ GROK_SESSION_ID: "g1", TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBeNull();
+        expect((await captureWith({ TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBeNull();
+    });
+
+    // Changed 2026-11-04 (defect 4 of the W1 list: a label read for Codex, which has none): a Codex caller's label is
+    // null. It was AI_AGENT, so the call log disagreed with every other record of the same caller.
     test("aiAgent is the host's label: AI_AGENT for Claude, Grok and no host, null for Codex", async () => {
         expect((await captureWith({ CLAUDECODE: "1", AI_AGENT: "label" })).aiAgent).toBe("label");
         expect((await captureWith({ GROK_SESSION_ID: "g1", AI_AGENT: "label" })).aiAgent).toBe("label");
         expect((await captureWith({ AI_AGENT: "label" })).aiAgent).toBe("label");
-        expect((await captureWith({ CODEX_CI: "1", AI_AGENT: "label" })).aiAgent).toBe("label");
+        expect((await captureWith({ CODEX_CI: "1", AI_AGENT: "label" })).aiAgent).toBeNull();
     });
 
     test("the agent comes from the ancestry binary name only when the env names none", () => {
@@ -546,8 +500,8 @@ describe("characterization: the caller `tools say` records", () => {
             { pid: 10, command: "/Users/x/.bun/bin/claude --resume" },
         ];
         // The nearest agent binary wins, so Codex running inside Claude reads as Codex here.
-        expect(agentFromAncestry(chain)).toBe("codex");
-        expect(agentFromAncestry([...chain].reverse())).toBe("claude-code");
+        expect(agentOfChain(chain)).toBe("codex");
+        expect(agentOfChain([...chain].reverse())).toBe("claude-code");
     });
 });
 
@@ -604,10 +558,14 @@ test("the on-disk say call row stores caller fields and JSON argv and ancestry",
     }
 });
 
+// Changed 2026-11-04 (spec: terminal and account are facets of the identity, and a blank value names nothing, as a
+// whitespace-only TMUX_PANE already did for send-self): a blank or whitespace cmux, tmux or account value is recorded
+// as null. It was recorded as given (an empty string, or the whitespace untrimmed). The label and the terminal program
+// are no facet and keep their old answer.
 describe("characterization: blank labels and terminal ids in say callers", () => {
-    test("empty label, account and terminal values are recorded as empty strings", async () => {
+    test("empty account and terminal values are recorded as null, an empty label and program as given", async () => {
         const caller = await captureWith({
-            CODEX_THREAD_ID: "thread-1",
+            CLAUDE_CODE_SESSION_ID: "thread-1",
             AI_AGENT: "",
             TOOLS_CLAUDE_ACCOUNT: "",
             CMUX_SURFACE_ID: "",
@@ -617,24 +575,24 @@ describe("characterization: blank labels and terminal ids in say callers", () =>
             TERM_PROGRAM: "",
         });
         expect(caller).toMatchObject({
-            agent: "codex",
+            agent: "claude-code",
             sessionId: "thread-1",
             aiAgent: "",
-            account: "",
-            surfaceId: "",
-            workspaceId: "",
-            tabId: "",
-            tmuxPane: "",
+            account: null,
+            surfaceId: null,
+            workspaceId: null,
+            tabId: null,
+            tmuxPane: null,
             termProgram: "",
         });
     });
 
-    test("whitespace label, account and terminal values are recorded without trimming", async () => {
+    test("whitespace account and terminal values are recorded as null, a whitespace label and program as given", async () => {
         const value = " \t ";
         const caller = await captureWith({
             GROK_SESSION_ID: " g1 ",
             AI_AGENT: value,
-            TOOLS_CLAUDE_ACCOUNT: value,
+            TOOLS_GROK_ACCOUNT: value,
             CMUX_SURFACE_ID: value,
             CMUX_WORKSPACE_ID: value,
             CMUX_TAB_ID: value,
@@ -645,12 +603,23 @@ describe("characterization: blank labels and terminal ids in say callers", () =>
             agent: "grok",
             sessionId: "g1",
             aiAgent: value,
-            account: value,
-            surfaceId: value,
-            workspaceId: value,
-            tabId: value,
-            tmuxPane: value,
+            account: null,
+            surfaceId: null,
+            workspaceId: null,
+            tabId: null,
+            tmuxPane: null,
             termProgram: value,
         });
+    });
+
+    test("a workspace and a tab are kept only beside a surface, and trimmed", async () => {
+        expect(await captureWith({ CMUX_WORKSPACE_ID: "workspace-1", CMUX_TAB_ID: "tab-1" })).toMatchObject({
+            surfaceId: null,
+            workspaceId: null,
+            tabId: null,
+        });
+        expect(await captureWith({ CMUX_SURFACE_ID: " surface-1 ", CMUX_WORKSPACE_ID: " workspace-1 " })).toMatchObject(
+            { surfaceId: "surface-1", workspaceId: "workspace-1", tabId: null }
+        );
     });
 });

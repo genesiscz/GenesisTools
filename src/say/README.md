@@ -174,7 +174,7 @@ tools say stats --since 24h --json
 Each row records:
 
 - **The request:** the text, the raw argv, the `--app` profile, and whether the text carries the `Attention` marker.
-- **The caller:** the agent (`claude` / `codex` / `grok` / `copilot`) and its session id from the environment (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `GROK_SESSION_ID`), the account (`TOOLS_CLAUDE_ACCOUNT`), the cmux workspace / surface / tab ids (or the tmux pane), the terminal program, the cwd, and the process chain above `tools say` (two `ps` calls, captured in the foreground before it exits). The chain is what identifies a caller that set none of those variables.
+- **The caller:** the agent (`claude` / `codex` / `grok` / `copilot`) and its session id from the environment (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `GROK_SESSION_ID`), the account its own harness was launched as, the cmux workspace / surface / tab ids (or the tmux pane), the terminal program, the cwd, and the process chain above `tools say` (read from the kernel, captured in the foreground before it exits). All of it comes from the agent identity module (`src/utils/agent/identity/`). A blank value is recorded as no value. The chain is what identifies a caller that set none of those variables.
 - **The outcome:** `spoken`, `written` (`--output`), `muted`, or `failed` with the error, plus the provider and voice that actually spoke, whether the audio came from the cache, which provider it fell back from, and when it finished.
 
 The `WHERE` column shows the cmux workspace title when cmux is running (resolved at view time, so a renamed workspace shows its current name), otherwise the short workspace id. `tools claude cmux focus <session>` jumps to the pane of a listed session.
