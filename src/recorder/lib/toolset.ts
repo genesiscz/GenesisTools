@@ -202,7 +202,7 @@ const movieMethods = [
                 enabled: z.boolean().optional(),
             })
             .strict(),
-        "Music under the movie: file (an mp3, m4a, wav… path; needed the first time), looped to the movie's length, volume 0 to 1 (0.25), fading in and out over fadeMs (1500). While a transcript line plays it drops by duck (0.6 = to 40 %), so speech stays clear; without transcript() nothing ducks. enabled: false removes it."
+        "Music under the movie: file (an mp3, m4a, wav… path; needed the first time), looped to the movie's length, volume 0 to 1 (0.25), fading in and out over fadeMs (1500). While a transcript line plays it drops by duck (0.6 = to 40 %), so speech stays clear; without transcript() nothing ducks (audio.music.ducks in the result says which). enabled: false removes it."
     ),
     edit(
         "spotlight",
@@ -222,7 +222,7 @@ const movieMethods = [
                 follow: z.boolean().optional(),
             })
             .strict(),
-        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer). The same as redact with style "spotlight"; unredact(id) removes it.'
+        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer). The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
@@ -792,8 +792,8 @@ export class Movie {
         return this.change([{ op: "music", ...options }]);
     }
 
-    async spotlight(options: Omit<Extract<EditOp, { op: "redact" }>, "op" | "style">) {
-        return this.change([{ op: "redact", ...options, style: "spotlight" }]);
+    async spotlight(options: Omit<Extract<EditOp, { op: "spotlight" }>, "op">) {
+        return this.change([{ op: "spotlight", ...options }]);
     }
 
     async export(

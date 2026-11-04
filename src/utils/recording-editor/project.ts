@@ -676,6 +676,17 @@ export const editOpSchema = z.discriminatedUnion("op", [
             follow: z.boolean().optional(),
         })
         .strict(),
+    z
+        .object({
+            op: z.literal("spotlight"),
+            from: timeSchema,
+            to: timeSchema,
+            /** Stays as it is while the rest of the picture dims; with follow, its size around the cursor. */
+            rect: rectSchema,
+            label: z.string().max(60).optional(),
+            follow: z.boolean().optional(),
+        })
+        .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
     z
         .object({
@@ -953,6 +964,15 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                 label: op.label,
                 follow: op.follow,
             });
+        case "spotlight":
+            return addRedaction(project, {
+                fromUs: timeToUs(op.from),
+                toUs: timeToUs(op.to),
+                rect: op.rect,
+                style: "spotlight",
+                label: op.label,
+                follow: op.follow,
+            });
         case "unredact": {
             const list = project.redactions ?? [];
 
@@ -1161,7 +1181,16 @@ export function describeProject(project: EditProject, path: string) {
             mode: zoom.mode,
             focus: { x: zoom.focusX, y: zoom.focusY },
         })),
-        audio: project.audio,
+        audio: project.audio.music
+            ? {
+                  ...project.audio,
+                  // Ducking reads the transcript's lines; without a cached transcript the music plays level.
+                  music: {
+                      ...project.audio.music,
+                      ducks: project.audio.music.duck > 0 && existsSync(transcriptCachePath(project.source.video)),
+                  },
+              }
+            : project.audio,
         export: project.export,
         clicks: project.clicks ?? null,
         frame: project.frame ?? null,
@@ -1172,6 +1201,7 @@ export function describeProject(project: EditProject, path: string) {
             rect: { x: redaction.x, y: redaction.y, width: redaction.width, height: redaction.height },
             style: redaction.style,
             ...(redaction.label ? { label: redaction.label } : {}),
+            ...(redaction.follow ? { follow: true } : {}),
         })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,

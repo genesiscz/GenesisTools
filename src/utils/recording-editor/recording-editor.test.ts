@@ -535,6 +535,14 @@ describe("edit project (edit.json)", () => {
             follow: true,
         });
         expect(following.redactions?.[0]).toMatchObject({ style: "spotlight", follow: true });
+        expect(describeProject(following, "/p/edit.json").redactions[0]).toMatchObject({ follow: true });
+        const lit = applyOp(project, {
+            op: "spotlight",
+            from: 1,
+            to: 3,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+        });
+        expect(lit.redactions?.[0]?.style).toBe("spotlight");
         expect(redaction).not.toHaveProperty("follow");
         // A cut keeps it in source time.
         expect(applyOp(hidden, { op: "cut", from: 0, to: 0.5 }).redactions?.[0]?.startUs).toBe(1_000_000);

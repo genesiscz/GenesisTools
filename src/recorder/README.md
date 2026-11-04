@@ -93,7 +93,7 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 ### Ops (`tools recorder apply`, `movie.apply`)
 
 `split {at}`, `cut {from,to}`, `keep {from,to}`, `speed {from,to,factor}`, `zoom {from,to,scale?,focus?,follow?}`,
-`unzoom {id}`, `redact {from,to,rect:{x,y,width,height},style?}`, `unredact {id}`, `autoZoom {scale?}` (one zoom per group of clicks under 3 s apart; manual zooms stay), `removeIdle
+`unzoom {id}`, `redact {from,to,rect:{x,y,width,height},style?,label?,follow?}`, `spotlight {from,to,rect,label?,follow?}`, `unredact {id}`, `autoZoom {scale?}` (one zoom per group of clicks under 3 s apart; manual zooms stay), `removeIdle
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
 silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
 `normalize {targetLufs? -16}` (measures the unmuted tracks' EBU R128 loudness and sets the volume, at most 200 %),
