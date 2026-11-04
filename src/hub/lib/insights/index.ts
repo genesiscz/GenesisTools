@@ -11,6 +11,7 @@ import { resumeCommandLine } from "@genesiscz/utils/agent-sessions";
 import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
+import type { FleetStuckCheck } from "@genesiscz/utils/ai/live-sessions/fleet";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import {
     allTranscriptTurns,
@@ -187,6 +188,15 @@ async function stuckOf(resolved: ResolvedTranscript, thresholds: StuckThresholds
         terminated: envelope.terminated === "end" || envelope.terminated === "error",
     });
 }
+
+/**
+ * The stuck verdict as the fleet view's check, with the saved thresholds:
+ * `readFleetView({ stuck: fleetStuckCheck })` (`@genesiscz/utils/ai/live-sessions/fleet`).
+ */
+export const fleetStuckCheck: FleetStuckCheck = async ({ transcript }) => {
+    const verdict = await stuckOf(transcript, readStuckThresholds(), Date.now());
+    return verdict ? { kind: verdict.kind, detail: verdict.detail } : null;
+};
 
 export interface InsightsOptions {
     sessionId: string;
