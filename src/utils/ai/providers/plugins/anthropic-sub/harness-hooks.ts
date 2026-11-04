@@ -21,4 +21,13 @@ export const claudeHooks: HookFacts = {
     homeBindsAccount: false,
     launchAuthFromAncestor: true,
     journalOmitsProvider: true,
+    payload: {
+        spelling: "snake_case",
+        transcriptName: /[/\\]projects[/\\][^/\\]+[/\\][^/\\]+\.jsonl$/,
+        nullTranscript: false,
+        // Claude names its model on SessionStart only (code.claude.com/docs/en/hooks).
+        modelEvents: ["SessionStart"],
+        turnIdField: null,
+        subagentIdField: "agent_id",
+    },
 };

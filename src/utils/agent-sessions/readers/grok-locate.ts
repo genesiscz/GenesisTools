@@ -12,10 +12,11 @@ import {
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { env } from "@genesiscz/utils/env";
 import { sessionsDir } from "@genesiscz/utils/grok/worker-paths";
-import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
+import type { CallerTranscriptQuery, TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { defaultNativeHome, nativeHomeOverrideVariable } from "@genesiscz/utils/providers/session-paths";
 
 /** The Grok driver's `locate` part: `<cwd>/<sessionId>/updates.jsonl` under the Grok home, and worker turn files. */
 export const grokLocate: TranscriptLocator = {
@@ -39,7 +40,37 @@ export const grokLocate: TranscriptLocator = {
     rootsOfHome: (home) => ({ native: [home] }),
     // Each session folder's summary names its title.
     titledSessions: ({ roots }) => grokSessions(roots),
+    callerTranscript: grokCallerTranscript,
 };
+
+/**
+ * `TranscriptLocator.callerTranscript` for Grok: `<grok home>/sessions/<url-encoded cwd>/<session>/updates.jsonl`,
+ * tried for each cwd, then one listing of the cwd folders. The home is the caller's `GROK_HOME`, else the default.
+ */
+function grokCallerTranscript({ sessionId, env: callerEnv, cwds, home }: CallerTranscriptQuery): string | null {
+    if (!sessionId || sessionId.includes("/") || sessionId.includes("\\")) {
+        return null;
+    }
+
+    const grokHome = callerEnv[nativeHomeOverrideVariable("grok")]?.trim() || defaultNativeHome("grok", home);
+    const root = join(grokHome, "sessions");
+
+    for (const cwd of cwds) {
+        const direct = join(root, encodeURIComponent(cwd), sessionId, "updates.jsonl");
+        if (existsSync(direct)) {
+            return direct;
+        }
+    }
+
+    for (const folder of listDir(root)) {
+        const candidate = join(root, folder, sessionId, "updates.jsonl");
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
 
 export function findGrokNative(query: string, grokHome: string, fs: FolderReads): RankedHit[] {
     const hits: RankedHit[] = [];

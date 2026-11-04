@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lastClaudeTitleIn } from "@genesiscz/utils/agent-sessions/readers/claude-title";
 import type { FolderReads, HarnessRoots, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -12,9 +12,14 @@ import {
 } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { FindByTitleOptions, TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { workersDir } from "@genesiscz/utils/claude/worker-paths";
-import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
+import type { CallerTranscriptQuery, TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { logger } from "@genesiscz/utils/logger";
-import { nativeSessionRoots, nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
+import {
+    defaultNativeHome,
+    nativeHomeOverrideVariable,
+    nativeSessionRoots,
+    nativeSessionRootsForHome,
+} from "@genesiscz/utils/providers/session-paths";
 import { canonicalClaudeCopy } from "./claude-discovery";
 import { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath } from "./claude-paths";
 
@@ -42,7 +47,44 @@ export const claudeLocate: TranscriptLocator = {
     // The `custom-title` rows of the transcripts written in the last `maxAgeDays`, within a time budget.
     titledSessions: ({ options, roots, now }) =>
         claudeSessions({ roots, maxAgeDays: options.maxAgeDays ?? 14, budgetMs: options.budgetMs ?? 8000, now }),
+    callerTranscript: claudeCallerTranscript,
 };
+
+/** Claude names a project folder after the session's cwd with every non-alphanumeric character as `-`. */
+export function claudeProjectFolder(cwd: string): string {
+    return cwd.replace(/[^A-Za-z0-9]/g, "-");
+}
+
+/**
+ * `TranscriptLocator.callerTranscript` for Claude: `<config dir>/projects/<cwd as folder>/<session>.jsonl`, tried for
+ * each cwd, then one listing of the project folders. The config dir is the caller's `CLAUDE_CONFIG_DIR`, else the
+ * default under `home`. One path join per cwd on a hit, so a failed run pays no walk over every session folder.
+ */
+function claudeCallerTranscript({ sessionId, env, cwds, home }: CallerTranscriptQuery): string | null {
+    const configDir = env[nativeHomeOverrideVariable("claude")]?.trim() || defaultNativeHome("claude", home);
+    const projects = join(configDir, "projects");
+    const file = `${sessionId}.jsonl`;
+
+    for (const cwd of cwds) {
+        const direct = join(projects, claudeProjectFolder(cwd), file);
+        if (existsSync(direct)) {
+            return direct;
+        }
+    }
+
+    if (!existsSync(projects)) {
+        return null;
+    }
+
+    for (const folder of readdirSync(projects)) {
+        const candidate = join(projects, folder, file);
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
 
 const folderReads: FolderReads = {
     listDir,
