@@ -33,6 +33,8 @@ struct RecorderRequest {
     var tab: InspectorTab?
     var selectZoom: Int?
     var selectClip: Int?
+    /// `--library`: the recordings library window (with `--snapshot`, a picture of it).
+    var library = false
 
     static func parse(_ args: [String]) -> RecorderRequest {
         var request = RecorderRequest()
@@ -56,6 +58,7 @@ struct RecorderRequest {
             case "--tab": request.tab = value().flatMap(InspectorTab.init(rawValue:))
             case "--select-zoom": request.selectZoom = value().flatMap(Int.init)
             case "--select-clip": request.selectClip = value().flatMap(Int.init)
+            case "--library": request.library = true
             default: break
             }
             index += 1
@@ -88,12 +91,14 @@ package func runRecorder(_ args: [String]) -> Never {
             let next = RecorderRequest.parse(forwarded)
             MainActor.assumeIsolated {
                 if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus) }
+                if next.library { LibraryWindow.shared.show(focus: next.focus) }
             }
         }
         RecorderMenu.shared.install()
         // The live recordings' item and floating controls; the hub defers to this face while it runs.
         LiveRecordingsStatusItem.shared.start(preferred: true)
         if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus) }
+        if request.library { LibraryWindow.shared.show(focus: request.focus) }
         app.run()
     }
     exit(0)
@@ -266,13 +271,35 @@ private func runHeadlessExport(source: String, out: String?, json: Bool) -> Neve
     exit(0)
 }
 
+@MainActor
+private func snapshotLibrary(_ request: RecorderRequest, to path: String) async throws {
+    let model = LibraryModel()
+    model.load()
+    for _ in 0..<100 where !model.loaded {
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    let window = LibraryWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
+    window.orderInForSnapshot()
+    try await Task.sleep(for: .milliseconds(600))
+    guard let capture = await WindowSnapshot.capture(window),
+          let png = capture.image.representation(using: .png, properties: [:]) else {
+        throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the window could not be drawn"])
+    }
+    try png.write(to: URL(fileURLWithPath: path))
+    FileHandle.standardError.write(Data("recorder snapshot: \(path) by \(capture.method) (\(model.items.count) recordings)\n".utf8))
+}
+
 private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         Task {
             do {
-                guard let edit = request.edit else { throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--snapshot needs --edit <path>"]) }
+                if request.library {
+                    try await snapshotLibrary(request, to: path)
+                    exit(0)
+                }
+                guard let edit = request.edit else { throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--snapshot needs --edit <path> or --library"]) }
                 let (store, project) = try await ProjectStore.open(path: edit)
                 let model = EditorModel(project: project, store: store)
                 if let tab = request.tab { model.tab = tab }

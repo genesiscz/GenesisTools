@@ -67,7 +67,14 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
     const id = `video-${stamp()}`;
     const folder = recordingsLibraryDir(id);
     const movie = join(folder, "screen.mp4");
-    const title = options.title?.trim() || describeRecordingTarget(options.target);
+    // "display 0" (the target's own description) said nothing in the library; a time does.
+    const started = new Date();
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const title =
+        options.title?.trim() ||
+        (options.target.kind === "display"
+            ? `Screen recording ${pad(started.getHours())}:${pad(started.getMinutes())}`
+            : describeRecordingTarget(options.target));
     await mkdir(folder, { recursive: true, mode: 0o700 });
     const manifest: RecordingManifest = {
         version: 1,

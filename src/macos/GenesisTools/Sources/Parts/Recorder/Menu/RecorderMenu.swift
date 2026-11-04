@@ -14,6 +14,10 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         let started: Date
         let thumbnail: URL?
         let hasMovie: Bool
+        /// `edit.json` exists beside the recording.
+        var edited = false
+        /// The movie's length from `recording.json` (video recordings write it when they end).
+        var durationMs: Double?
     }
 
     private var item: NSStatusItem?
@@ -60,6 +64,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         menu.addItem(row("Record Screen with Audio", symbol: "mic.circle", action: #selector(recordScreenWithAudio), key: ""))
         menu.addItem(.separator())
         menu.addItem(row("Open Recording…", symbol: "film", action: #selector(openRecording), key: "o"))
+        menu.addItem(row("Recordings Library…", symbol: "square.grid.2x2", action: #selector(openLibrary), key: "l"))
         menu.addItem(row("Open Recordings Folder", symbol: "folder", action: #selector(openFolder), key: ""))
         if !recents.isEmpty {
             menu.addItem(.separator())
@@ -125,28 +130,33 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             let movie = dir.appendingPathComponent("screen.mp4")
             let hasMovie = manager.fileExists(atPath: movie.path)
             let firstFrame = ((root["frames"] as? [[String: Any]])?.first?["file"] as? String).map { dir.appendingPathComponent($0) }
+            let video = (root["settings"] as? [String: Any])?["video"] as? [String: Any]
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
-                               started: started, thumbnail: hasMovie ? movie : firstFrame, hasMovie: hasMovie))
+                               started: started, thumbnail: hasMovie ? movie : firstFrame, hasMovie: hasMovie,
+                               edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
+                               durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue))
         }
         return list.sorted { $0.started > $1.started }
     }
 
-    nonisolated static func thumbnail(_ url: URL) -> NSImage? {
-        let size = NSSize(width: 44, height: 28)
+    /// The first frame of a movie, or a frame image, drawn into `size` points with rounded corners (3× pixels).
+    nonisolated static func thumbnail(_ url: URL, size: NSSize = NSSize(width: 44, height: 28), radius: CGFloat = 4) -> NSImage? {
         var cg: CGImage?
+        let pixels = max(size.width, size.height) * 3
         if url.pathExtension == "mp4" || url.pathExtension == "mov" {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
-            generator.maximumSize = CGSize(width: 132, height: 84)
+            generator.maximumSize = CGSize(width: pixels, height: pixels)
+            generator.appliesPreferredTrackTransform = true
             cg = try? generator.copyCGImage(at: .zero, actualTime: nil)
         } else if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
             cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 132,
+                kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: pixels,
             ] as CFDictionary)
         }
         guard let cg else { return nil }
         let image = NSImage(size: size)
         image.lockFocus()
-        NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 4, yRadius: 4).addClip()
+        NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: radius, yRadius: radius).addClip()
         NSImage(cgImage: cg, size: size).draw(in: NSRect(origin: .zero, size: size))
         image.unlockFocus()
         return image
@@ -193,6 +203,10 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     @objc private func openRecent(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
         EditorWindows.shared.open(path: path)
+    }
+
+    @objc private func openLibrary() {
+        LibraryWindow.shared.show(focus: true)
     }
 
     @objc private func openFolder() {
