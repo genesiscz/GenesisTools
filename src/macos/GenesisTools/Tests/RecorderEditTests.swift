@@ -509,6 +509,12 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(EditorModel.changeName(from: base, to: both).name, "Changes")
     }
 
+    func testTheSizeEstimateMatchesAMeasuredExport() {
+        let bytes = EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .h264)
+        XCTAssertEqual(Double(bytes), 10_300_000, accuracy: 600_000, "the export measured at 10.3 MB")
+        XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc), bytes)
+    }
+
     func testClickTicksPlayAtTheirOutputTimesOneTickApart() {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
         project.clips = [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 6_000_000, toUs: 10_000_000)]

@@ -1426,6 +1426,16 @@ private struct ExportInspector: View {
             }
             SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(length, tenths: true))"
                                                       : formatClock(length, tenths: true))
+            if movie {
+                let bytes = EditExporter.estimatedBytes(size: size, lengthUs: length, codec: settings.codec)
+                SectionLabel(text: "File size", value: "about \(ByteFormat.file(bytes))")
+                    .instantTooltip("From screen exports of this kind (about 0.08 bits per pixel and frame at 60 fps, HEVC 40 % less); a busy movie can be twice as large")
+                if bytes > 25_000_000 {
+                    Text("Many chats take 25 MB at most: the Chat preset (720p) or a part from In to Out makes it smaller.")
+                        .font(.system(size: 11)).foregroundStyle(Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if capped && movie {
                 Text(verbatim: "H.264 at 60 fps stops at \(Int(size.width)) × \(Int(size.height)). HEVC keeps \(Int(full.width)) × \(Int(full.height)).")
                     .font(.system(size: 11))

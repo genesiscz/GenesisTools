@@ -636,6 +636,13 @@ final class EditExporter {
     /// Where an export goes: the file chosen with Change… (its extension set to the format), else beside the movie,
     /// named after the recording's title ("cursor test 1.mp4") or `<movie>-edited` for a plain movie, with "-2", "-3"
     /// so an export never overwrites a file. `tools recorder export` names a GIF or WebM by the same rule.
+    /// The MP4's likely size before it is made: screen exports measured at about 0.082 bits per pixel and frame at
+    /// 60 fps with H.264 (1152 × 720 for 20 s gave 10.3 MB), HEVC about 40 % less. An estimate for the Export tab.
+    nonisolated static func estimatedBytes(size: CGSize, lengthUs: Int64, codec: EditProject.Codec) -> Int64 {
+        let bitsPerSecond = Double(size.width * size.height) * 60 * 0.082 * (codec == .hevc ? 0.6 : 1)
+        return Int64(bitsPerSecond / 8 * Double(lengthUs) / 1_000_000)
+    }
+
     static func outputURL(for project: EditProject, format: EditProject.ExportFormat = .mp4) -> URL {
         if !project.export.output.isEmpty {
             return URL(fileURLWithPath: (project.export.output as NSString).expandingTildeInPath)
