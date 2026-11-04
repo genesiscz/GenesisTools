@@ -343,6 +343,51 @@ tools azure-devops maintenance check src/ado
 - A check reads each file's kind from `meta.kind` (a file without one is a field manifest) and its work item types from the file, unless `--types` is given. It ignores `meta`.
 - `findField(manifest, { type?, label?, value? })` from `lib/field-manifest.ts` returns the one matching field (reference name, label, type, allowed values, the types that have it), `undefined` when none matches, and throws when the query matches several. A string label matches exactly ignoring case; a RegExp is tested. `findFields` returns every match.
 
+## Test plans (`testplan`)
+
+Read and change the Test Plans hub with `testplan`, never with a hand-built `az` token and `curl`.
+Every command takes a plan id or a pasted Test Plans URL (`_testPlans/define?planId=…&suiteId=…`);
+a suite command takes `<plan> <suite>` or one URL with both ids. Reads print markdown (`-f json`
+for data) and save a snapshot under `.claude/azure/testplans/` (`--no-save` skips it).
+
+```bash
+tools azure-devops testplan list --active --owner alice        # plans: id, name, state, owner, iteration, dates
+tools azure-devops testplan show <plan|url>                     # plan details + the suite tree with test case counts
+tools azure-devops testplan search "checkout" --kind suite,case # plans, suites, test cases by name or id (--plan narrows suites)
+tools azure-devops testplan suite show <plan> <suite>           # type, parent, child suites, test cases with points
+tools azure-devops testplan points <plan> <suite>               # the Execute tab: outcome, tester, configuration
+tools azure-devops testplan case show <id|url>                  # fields, numbered steps + expected, shared steps, parameters, suites
+```
+
+Writes print the request they would send and send nothing until `--confirm`:
+
+```bash
+tools azure-devops testplan create --name "Release 5" --start 2026-11-10 --end 2026-11-20 --confirm
+tools azure-devops testplan update <plan> --state Inactive --confirm
+tools azure-devops testplan suite create <plan> --name "Cart" --parent <suite> --confirm   # static by default
+tools azure-devops testplan suite update <plan> <suite> --name "Basket" --parent <suite> --confirm  # rename, move
+tools azure-devops testplan suite add <plan> <suite> --cases 101,102 --confirm   # existing test cases
+tools azure-devops testplan suite remove <plan> <suite> --cases 101 --confirm    # the work items stay
+tools azure-devops testplan case create --title "Pay by card" --steps steps.md --plan <plan> --suite <suite> --confirm
+tools azure-devops testplan case update <id> --steps steps.md --rev 4 --confirm
+tools azure-devops testplan outcome <plan> <suite> --cases 101 --outcome passed --confirm   # or --points; 'active' resets
+```
+
+Steps are a numbered markdown list (the same form `case show` prints) or JSON
+(`[{"action":"…","expected":"…"},{"sharedStepsId":123}]`):
+
+```md
+1. Open the sign-in page
+   Expected: The form shows a user name field
+2. Shared steps #12345
+3. Press **Sign in**
+```
+
+Know before you delete: `testplan delete` and `suite delete` keep the plan or suite 14 days in the
+recycle bin; `case delete` deletes the test case for good, with its points and results. The counts
+in `show` come from the preview `testplan/Count` route, then the 5.0 `test` area route; the line
+"no test case counts" means neither answered.
+
 ## Comments
 
 ```bash
