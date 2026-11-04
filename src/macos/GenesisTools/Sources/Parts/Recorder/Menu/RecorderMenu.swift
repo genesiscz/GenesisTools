@@ -122,8 +122,16 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                 row.image = recent.thumbnail.flatMap { thumbnails[$0] } ?? NSImage(systemSymbolName: "video", accessibilityDescription: nil)
                 row.toolTip = "\(recent.folder.lastPathComponent)\(recent.hasMovie ? "" : " (frames only)")"
                 row.isEnabled = true
+                if Self.recentActions {
+                    // A row with a submenu opens it on hover; Open in Editor is its first entry.
+                    row.submenu = MenuButtonPresenter.menu(RecordingActions.menuItems(for: recent) { [weak self] in self?.report($0) })
+                }
                 menu.addItem(row)
             }
+            let actions = row("Quick Actions in Recent", symbol: nil, action: #selector(toggleRecentActions), key: "")
+            actions.state = Self.recentActions ? .on : .off
+            actions.toolTip = "Each recent recording opens a menu: open, copy the movie or a GIF, show in Finder, rename, its meeting, Trash. Off, a click opens the editor."
+            menu.addItem(actions)
         }
         menu.addItem(.separator())
         menu.addItem(row("Quit Recorder", symbol: nil, action: #selector(quit), key: "q"))
@@ -254,6 +262,35 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     @objc private func toggleShortcuts() {
         UserDefaults.standard.set(!Self.recordsShortcuts, forKey: Self.recordShortcutsKey)
+    }
+
+    /// On (the default): each Recent row opens a submenu of quick actions; off, a click on the row opens the editor.
+    static let recentActionsKey = "recorder.menu.recentActions"
+    static var recentActions: Bool { UserDefaults.standard.object(forKey: recentActionsKey) as? Bool ?? true }
+
+    @objc private func toggleRecentActions() {
+        UserDefaults.standard.set(!Self.recentActions, forKey: Self.recentActionsKey)
+    }
+
+    /// A quick action's outcome from the menu: a failure is an alert, a GIF in the making shows an hourglass on the
+    /// item until it is copied, and a change reads the list again.
+    private func report(_ outcome: RecordingActions.Outcome) {
+        switch outcome {
+        case let .working(text):
+            item?.button?.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: text)
+            item?.button?.toolTip = text
+        case .notice:
+            item?.button?.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "GenesisTools recorder")
+            item?.button?.toolTip = nil
+        case let .failed(text):
+            item?.button?.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "GenesisTools recorder")
+            let alert = NSAlert()
+            alert.messageText = text
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        case .trashed, .renamed:
+            refresh()
+        }
     }
 
     @objc private func recordScreen() { startRecording(audio: false) }

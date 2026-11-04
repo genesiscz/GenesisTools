@@ -70,6 +70,7 @@ import {
     stillOfEdit,
 } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
+import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { findOnScreen, type ScreenHit } from "./screen-search";
 
 const { log } = logger.scoped("recorder-toolset");
@@ -683,6 +684,30 @@ const movieMethods = [
             toolCommand("recorder mark") +
             "), at source seconds, plays: where each is in the edit (null when cut).",
         effect: "read",
+    }),
+    defineMethod({
+        name: "copy",
+        params: z.object({ gif: z.boolean().optional() }).strict(),
+        result: z.unknown(),
+        resultName: '{ path, kind: "movie" | "gif", exported }',
+        doc: "Puts the recording's movie on the clipboard as a file (the newest export beside it, else its own movie), so a paste in Finder, Slack or Mail gets it; gif: true copies a GIF of the edit, exporting one when none is newer than the edit (exported says so). The menu bar's Recent list and the library window do the same.",
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "reveal",
+        params: z.object({ meeting: z.boolean().optional() }).strict(),
+        result: z.unknown(),
+        resultName: "{ revealed }",
+        doc: "Shows the recording's folder in Finder; meeting: true shows its meeting's meeting.json (a meeting's screen recording only).",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "trash",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ trashed }",
+        doc: "Moves a library recording's folder to the Trash (Finder's Put Back restores it). A meeting's screen recording is refused: its folder holds the whole meeting.",
+        effect: "destructive",
     }),
     defineMethod({
         name: "rename",
@@ -1561,6 +1586,31 @@ export class Movie {
         }
 
         return this.change(ops);
+    }
+
+    /** The recording's folder, for the quick actions; a plain movie has none. */
+    private async folder(what: string): Promise<string> {
+        const opened = await openProject(this.recording);
+        const folder = recordingFolderOf(opened);
+
+        if (!folder) {
+            throw new Error(`${opened.project.source.video} is a plain movie, not a recording folder, so ${what}`);
+        }
+
+        return folder;
+    }
+
+    async copy(options: { gif?: boolean } = {}) {
+        await ensureRecorderPart();
+        return copyRecording(await this.folder("it has no library copy"), options);
+    }
+
+    async reveal(options: { meeting?: boolean } = {}) {
+        return revealRecording(await this.folder("Finder shows the movie itself"), options);
+    }
+
+    async trash() {
+        return trashRecording(await this.folder("move the movie to the Trash in Finder"));
     }
 
     async rename(title: string) {

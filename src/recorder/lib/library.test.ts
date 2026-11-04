@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { editorOpenStatePath, readEditorOpenState, resolveRecording } from "./library";
 import { framesForPlan, overrideRanges, planMostChange, proxyVideoFilter } from "./proxy";
+import { currentGif, isMeetingFolder, meetingOf, shareableMovie, trashRecording } from "./quick-actions";
 
 function writeState(state: Record<string, unknown>): void {
     mkdirSync(dirname(editorOpenStatePath()), { recursive: true });
@@ -120,5 +122,61 @@ describe("the proxy's picture size", () => {
         ).toBe(
             "scale=2880:1862:force_original_aspect_ratio=decrease,pad=2880:1862:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
         );
+    });
+});
+
+describe("a recording's quick actions", () => {
+    /** A recording folder with files, each `[name, seconds since 2026-11-04 10:00]`, so their order is known. */
+    function folderWith(files: Array<[string, number]>): string {
+        const folder = mkdtempSync(join(tmpdir(), "gt-quick-"));
+
+        for (const [name, offset] of files) {
+            writeFileSync(join(folder, name), "x");
+            const at = new Date(Date.UTC(2026, 10, 4, 10, 0, offset));
+            utimesSync(join(folder, name), at, at);
+        }
+
+        return folder;
+    }
+
+    it("copies the newest export, else the recording's own movie", () => {
+        expect(shareableMovie(folderWith([["screen.mp4", 0]]))).toEndWith("/screen.mp4");
+        const exported = folderWith([
+            ["screen.mp4", 0],
+            ["screen-edited.mp4", 10],
+            ["screen-edited.gif", 20],
+            ["screen-edited.partial.mp4", 30],
+        ]);
+        expect(shareableMovie(exported)).toEndWith("/screen-edited.gif");
+    });
+
+    it("reuses a GIF only while the edit and the movie are older than it", () => {
+        const fresh = folderWith([
+            ["screen.mp4", 0],
+            ["edit.json", 5],
+            ["screen-edited.gif", 10],
+        ]);
+        expect(currentGif(fresh)).toEndWith("/screen-edited.gif");
+        const stale = folderWith([
+            ["screen.mp4", 0],
+            ["screen-edited.gif", 10],
+            ["edit.json", 20],
+        ]);
+        expect(currentGif(stale)).toBeUndefined();
+    });
+
+    it("knows a meeting's folder, opens its record, and never moves it to the Trash", async () => {
+        const meetings = mkdtempSync(join(tmpdir(), "gt-meetings-"));
+        const meeting = join(meetings, "2026-11-04_10-00-standup");
+        mkdirSync(meeting);
+        writeFileSync(join(meeting, "meeting.json"), "{}");
+
+        expect(isMeetingFolder(meeting, meetings)).toBe(true);
+        expect(isMeetingFolder(`${meetings}-other/x`, meetings)).toBe(false);
+        expect(meetingOf(meeting, meetings)).toBe(join(meeting, "meeting.json"));
+        expect(meetingOf(folderWith([["screen.mp4", 0]]), meetings)).toBeUndefined();
+        // The refusal comes before anything is moved: the folder is still there.
+        await expect(trashRecording(meeting, { meetingsRoot: meetings })).rejects.toThrow("holds the whole meeting");
+        expect(existsSync(join(meeting, "meeting.json"))).toBe(true);
     });
 });

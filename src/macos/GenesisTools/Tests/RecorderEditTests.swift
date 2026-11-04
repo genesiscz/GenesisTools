@@ -202,6 +202,17 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(fast.outputDurationUs, 9_000_000)
     }
 
+    func testARecordingOffersItsQuickActionsAndAMeetingNeverOffersTheTrash() {
+        let folder = URL(fileURLWithPath: "/tmp/recordings/one")
+        let library = RecorderMenu.Recent(folder: folder, title: "One", started: .distantPast, thumbnail: nil, hasMovie: true)
+        XCTAssertEqual(RecordingAction.offered(for: library), [.open, .copyMovie, .copyGIF, .reveal, .rename, .trash])
+        var meeting = library
+        meeting.isMeeting = true
+        XCTAssertEqual(RecordingAction.offered(for: meeting), [.open, .copyMovie, .copyGIF, .reveal, .rename, .openMeeting])
+        let framesOnly = RecorderMenu.Recent(folder: folder, title: "Frames", started: .distantPast, thumbnail: nil, hasMovie: false)
+        XCTAssertFalse(RecordingAction.offered(for: framesOnly).contains(.copyMovie), "nothing to copy before a proxy exists")
+    }
+
     func testZoomsNeverOverlap() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 10_000_000)])
         let (first, firstID) = try XCTUnwrap(TimelineMap.addZoom(edit, startUs: 1_000_000, endUs: 3_000_000, scale: 2))

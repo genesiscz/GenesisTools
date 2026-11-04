@@ -28,6 +28,8 @@ final class LibraryModel {
     /// The last recording moved to the Trash (where it was, where it went), for Put Back; and the last failure.
     private(set) var trashed: (title: String, from: URL, to: URL)?
     private(set) var failure: String?
+    /// The last quick action's short notice ("Copied a GIF…"), shown in a pill that fades.
+    private(set) var notice: String?
     @ObservationIgnored private var spokenSearch: DispatchWorkItem?
 
     struct SpokenHit: Equatable {
@@ -160,30 +162,29 @@ final class LibraryModel {
         }
     }
 
-    /// Asks for a new title and writes it through `tools recorder rename`, the same command the CLI and REPL use.
     func rename(_ item: RecorderMenu.Recent) {
-        let alert = NSAlert()
-        alert.messageText = "Rename “\(item.title)”"
-        alert.informativeText = "The library, the editor window and movies.list() show this title."
-        let field = NSTextField(string: item.title)
-        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title != item.title else { return }
-        ToolsRunner.run(["recorder", "rename", item.folder.path, title]) { [weak self] status, _, stderr in
-            if status != 0 {
-                HubPerf.log("recorder.library: rename \(item.folder.path) failed: \(stderr)")
-                self?.failure = "“\(item.title)” was not renamed: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")"
-            }
-            self?.load()
+        RecordingActions.run(.rename, item) { [weak self] in self?.handle($0) }
+    }
+
+    /// What a quick action did: a notice that fades, a failure strip, or the Put Back strip after a move to the Trash.
+    func handle(_ outcome: RecordingActions.Outcome) {
+        switch outcome {
+        case let .working(text), let .notice(text):
+            notice = text
+        case let .failed(text):
+            failure = text
+        case let .trashed(from, to):
+            let title = items.first { $0.folder == from }?.title ?? from.lastPathComponent
+            trashed = (title, from, to)
+            if selected == from { selected = nil }
+            load()
+        case .renamed:
+            load()
         }
     }
 
     func dismissFailure() { failure = nil }
+    func dismissNotice() { notice = nil }
     func dismissTrashed() { trashed = nil }
 
     /// Moves the keyboard selection by `delta` cards through the visible list, in the order the sections show it.
@@ -215,23 +216,7 @@ final class LibraryModel {
 
     /// As Finder does: no question, the Trash is the undo; the strip under the header puts it back (⌘Z too).
     func moveToTrash(_ item: RecorderMenu.Recent) {
-        guard !item.isMeeting else {
-            failure = "“\(item.title)” is a meeting's screen recording; its folder holds the whole meeting, so it stays. Remove the meeting with tools meetings."
-            return
-        }
-        NSWorkspace.shared.recycle([item.folder]) { [weak self] moved, error in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if let error {
-                    HubPerf.log("recorder.library: trash \(item.folder.path) failed: \(error.localizedDescription)")
-                    self.failure = "“\(item.title)” was not moved to the Trash: \(error.localizedDescription)"
-                } else if let to = moved[item.folder] {
-                    self.trashed = (item.title, item.folder, to)
-                    if self.selected == item.folder { self.selected = nil }
-                }
-                self.load()
-            }
-        }
+        RecordingActions.run(.trash, item) { [weak self] in self?.handle($0) }
     }
 
     /// Moves the last trashed recording back to its folder.
@@ -310,6 +295,11 @@ struct LibraryView: View {
                 InfoStrip(failure, tone: .warning, dismiss: { model.dismissFailure() })
                     .padding(.horizontal, 20).padding(.top, 8)
             }
+            if let notice = model.notice {
+                NoticePill(text: notice, isError: false, dismiss: { model.dismissNotice() })
+                    .padding(.top, 8)
+                    .id(notice)
+            }
             if let trashed = model.trashed {
                 InfoStrip("Moved “\(trashed.title)” to the Trash. Click here or press ⌘Z to put it back.", tone: .info,
                           symbol: "arrow.uturn.backward", action: { model.putBack() }, actionTooltip: "Put it back where it was",
@@ -357,11 +347,7 @@ struct LibraryView: View {
                                         RecorderMenu.open(item, atSourceSeconds: model.spoken[item.folder]?.at)
                                     } select: {
                                         model.selected = item.folder
-                                    } rename: {
-                                        model.rename(item)
-                                    } trash: {
-                                        model.moveToTrash(item)
-                                    }
+                                    } report: { model.handle($0) }
                                     .id(item.folder)
                                 }
                             } header: {
@@ -404,7 +390,7 @@ struct LibraryView: View {
     }
 }
 
-private struct LibraryCard: View {
+struct LibraryCard: View {
     let item: RecorderMenu.Recent
     /// What matched the search in what was said or marked, shown under the title.
     let spoken: LibraryModel.SpokenHit?
@@ -417,8 +403,8 @@ private struct LibraryCard: View {
     let open: () -> Void
     /// A click selects (⌘⌫ then trashes it, Return opens it); a double-click opens, as in Finder and Photos.
     let select: () -> Void
-    let rename: () -> Void
-    let trash: () -> Void
+    /// A quick action's outcome (RecordingActions.swift), for the library's notice and strips.
+    let report: (RecordingActions.Outcome) -> Void
     @State private var scrubAt: Double?
     @State private var cardWidth: CGFloat = 248
 
@@ -515,20 +501,7 @@ private struct LibraryCard: View {
             guard let movie = Self.shareableMovie(in: item.folder) else { return NSItemProvider() }
             return NSItemProvider(contentsOf: movie) ?? NSItemProvider()
         }
-        .contextMenu {
-            Button("Open in Editor", action: open)
-            Button("Rename…", action: rename)
-            Divider()
-            Button("Copy Movie") {
-                guard let movie = Self.shareableMovie(in: item.folder) else { return }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([movie as NSURL])
-            }
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }
-            Button("Copy Folder Path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.folder.path, forType: .string) }
-            Divider()
-            Button("Move to Trash", role: .destructive, action: trash)
-        }
+        .contextMenu { RecordingActionsMenu(item: item, report: report) }
         .contentShape(Rectangle())
         .liveRow()
     }

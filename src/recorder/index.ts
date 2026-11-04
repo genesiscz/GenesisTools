@@ -41,6 +41,7 @@ import {
 } from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
 import { type DisplayRange, makeProxy, PROXY_DISPLAY_POLICIES, type ProxyDisplay, type ProxyResult } from "./lib/proxy";
+import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
 import { findOnScreen } from "./lib/screen-search";
 import { Movie } from "./lib/toolset";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
@@ -413,6 +414,52 @@ program
         try {
             const manifest = renameRecording(resolveRecording(value), title);
             out.result({ id: manifest.id, title: manifest.title });
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("copy")
+    .description(
+        "Copy a recording's movie (the newest export, else its own movie) to the clipboard as a file; --gif copies a GIF of the edit, exporting one when none is current"
+    )
+    .argument("<recording>", "a library id, `last` or a recording folder")
+    .option("--gif", "a GIF of the edit instead of the movie")
+    .action(async (value: string, flags: { gif?: boolean }) => {
+        try {
+            await ensureRecorderPart((line) => out.printlnErr(line));
+            out.result(await copyRecording(resolveRecording(value), { gif: flags.gif }));
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("reveal")
+    .description("Show a recording's folder in Finder; --meeting shows its meeting's record instead")
+    .argument("<recording>", "a library id, `last` or a recording folder")
+    .option("--meeting", "the meeting.json of a meeting's screen recording")
+    .action(async (value: string, flags: { meeting?: boolean }) => {
+        try {
+            out.result(await revealRecording(resolveRecording(value), { meeting: flags.meeting }));
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("trash")
+    .description(
+        "Move a library recording to the Trash (Finder's Put Back restores it); a meeting's screen recording is refused"
+    )
+    .argument("<recording>", "a library id, `last` or a recording folder")
+    .action(async (value: string) => {
+        try {
+            out.result(await trashRecording(resolveRecording(value)));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
