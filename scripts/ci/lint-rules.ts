@@ -492,6 +492,46 @@ function namesProcess(name: string): boolean {
         .some((word) => PROCESS_NAME_WORDS.has(word.toLowerCase()));
 }
 
+/** Methods of a regex or a list that take the subject as their argument: `TAIL.exec(command)`, `NAMES.has(comm)`. */
+const SUBJECT_ARGUMENT_METHODS = new Set(["exec", "test", "has", "includes", "indexOf"]);
+/** String methods that take the regex as their first argument: `command.replace(WORDS, "")`. */
+const SUBJECT_OBJECT_METHODS = new Set(["match", "matchAll", "replace", "replaceAll", "split", "search"]);
+
+/**
+ * True when a table declared under a neutral name (`TOOLS_RUN_TAIL`) is applied to a command line, argv or process
+ * somewhere in its module: the name alone does not say what it classifies, its use does.
+ */
+function appliedToProcess(declarator: SgNode, name: string): boolean {
+    if (!/^[A-Za-z_$][\w$]*$/.test(name)) {
+        return false;
+    }
+
+    let root = declarator;
+
+    for (let up = root.parent(); up; up = up.parent()) {
+        root = up;
+    }
+
+    return root.findAll({ rule: { kind: "call_expression" } }).some((call) => {
+        const callee = call.field("function");
+
+        if (callee?.kind() !== "member_expression") {
+            return false;
+        }
+
+        const object = callee.field("object")?.text() ?? "";
+        const method = callee.field("property")?.text() ?? "";
+        const args = call.field("arguments");
+
+        if (object === name && SUBJECT_ARGUMENT_METHODS.has(method)) {
+            return AGENT_SUBJECT.test(args?.text() ?? "");
+        }
+
+        const first = args?.children().find((child) => child.isNamed());
+        return SUBJECT_OBJECT_METHODS.has(method) && first?.text() === name && AGENT_SUBJECT.test(object);
+    });
+}
+
 /**
  * True when the table is about processes: it is declared under a name like `AGENT_BINARIES` or keyed by one, or it is
  * the regex or list a call checks a command, argv or process against (`/claude|codex/.test(command)`,
@@ -506,7 +546,8 @@ function isInProcessContext(node: SgNode): boolean {
         const kind = up.kind();
 
         if (kind === "variable_declarator") {
-            return namesProcess(up.field("name")?.text() ?? "");
+            const name = up.field("name")?.text() ?? "";
+            return namesProcess(name) || appliedToProcess(up, name);
         }
 
         if (kind === "pair") {

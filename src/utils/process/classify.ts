@@ -1,6 +1,6 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { copilotHost } from "@genesiscz/utils/agent/hosts/copilot";
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 
 /**
@@ -44,6 +44,15 @@ const WRAPPER_TOOLS: Readonly<Record<string, AgentProvider>> = Object.fromEntrie
     ["cursor-agent", "cursor-agent"],
 ]);
 const WRAPPER_VERBS = new Set(["run", "resume", "start"]);
+
+/**
+ * The harness a `tools <word> run|start` wrapper word names: its id or one of its driver aliases (`cc`), or null.
+ * cursor-agent's words are a wrapper too, but of no harness.
+ */
+export function wrapperHarnessOf(word: string): AccountProviderAlias | null {
+    const provider = Object.hasOwn(WRAPPER_TOOLS, word) ? WRAPPER_TOOLS[word] : undefined;
+    return ACCOUNT_PROVIDER_ALIASES.find((alias) => alias === provider) ?? null;
+}
 /** `tools <agent> run|start|resume …` from any checkout path or off PATH: the launcher that starts the agent. */
 const TOOLS_LAUNCHER = /(?:^|[\s/])tools\s+([\w-]+)\s+(?:run|start|resume)\b/;
 /** A Codex helper binary (`codex-gateway`); a versioned Codex binary has the same shape and tells itself apart by a session. */

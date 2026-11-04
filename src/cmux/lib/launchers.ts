@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { wrapperHarnessOf } from "@genesiscz/utils/process/classify";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 
 interface CommandToken {
@@ -183,8 +184,11 @@ export function launcherRes(): Launchers {
 
 export const GROK_LAUNCHER = /^grok(?![\w-])/;
 export const CODEX_LAUNCHER = /^codex(?![\w-])/;
-/** `tools <agent> run|start`: the GenesisTools wrapper, which takes an account and passes native args after `--`. */
-const TOOLS_RUN_TAIL = /^\s+(cc|claude|codex|grok)\s+(?:run|start)(?![\w-])/;
+/**
+ * `tools <agent> run|start`: the GenesisTools wrapper, which takes an account and passes native args after `--`. The
+ * word is any tool name; the shared classification says which harness it is (`wrapperHarnessOf`).
+ */
+const TOOLS_RUN_TAIL = /^\s+([\w-]+)\s+(?:run|start)(?![\w-])/;
 
 /** The wrapper's agent and where its launcher words end; a cc-run alias (`cr`) is a Claude wrapper too. */
 export function toolsRunLauncher(command: string): { kind: AccountProviderAlias; end: number } | undefined {
@@ -195,11 +199,10 @@ export function toolsRunLauncher(command: string): { kind: AccountProviderAlias;
             ? TOOLS_RUN_TAIL.exec(command.slice(executable.end))
             : null;
 
-    if (tools && executable) {
-        return {
-            kind: tools[1] === "cc" ? "claude" : (tools[1] as AccountProviderAlias),
-            end: executable.end + tools[0].length,
-        };
+    const kind = tools ? wrapperHarnessOf(tools[1]) : null;
+
+    if (tools && kind && executable) {
+        return { kind, end: executable.end + tools[0].length };
     }
 
     const alias = launcherRes().ccRun.exec(command);

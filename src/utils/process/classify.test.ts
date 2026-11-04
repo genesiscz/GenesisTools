@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { argvSessionId, classifyCommand, isAgentProcess, runsAgent } from "./classify";
+import {
+    argvSessionId,
+    classifyCommand,
+    isAgentProcess,
+    runsAgent,
+    runtimeAgentOfCommand,
+    wrapperHarnessOf,
+} from "./classify";
 
 // Invented pids, paths and session ids; the process shapes are copied from a real `ps -axo` dump.
 const S1 = "11111111-1111-4111-8111-111111111111";
@@ -177,5 +184,25 @@ describe("classifyCommand", () => {
         expect(argvSessionId("claude --resume agents-window")).toBeNull();
         expect(argvSessionId(`claude --resume=${S1}`)).toBe(S1);
         expect(argvSessionId(`claude -r '${S2}'`)).toBe(S2);
+    });
+});
+
+describe("wrapperHarnessOf and runtimeAgentOfCommand", () => {
+    test("a wrapper word names its harness by id or driver alias; cursor and other words name none", () => {
+        expect(wrapperHarnessOf("cc")).toBe("claude");
+        expect(wrapperHarnessOf("claude")).toBe("claude");
+        expect(wrapperHarnessOf("codex")).toBe("codex");
+        expect(wrapperHarnessOf("grok")).toBe("grok");
+        expect(wrapperHarnessOf("cursor")).toBeNull();
+        expect(wrapperHarnessOf("ls")).toBeNull();
+        expect(wrapperHarnessOf("toString")).toBeNull();
+    });
+
+    test("a session process names its runtime agent, Copilot included; a helper or MCP door names none", () => {
+        expect(runtimeAgentOfCommand("/opt/bin/claude --resume x")).toBe("claude-code");
+        expect(runtimeAgentOfCommand("/opt/homebrew/bin/copilot")).toBe("copilot");
+        expect(runtimeAgentOfCommand("/opt/bin/codex-gateway serve")).toBeNull();
+        expect(runtimeAgentOfCommand("/Users/x/.bun/bin/claude mcp serve")).toBeNull();
+        expect(runtimeAgentOfCommand("/bin/zsh")).toBeNull();
     });
 });

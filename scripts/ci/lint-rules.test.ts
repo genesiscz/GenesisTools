@@ -1521,6 +1521,10 @@ describe("the agent-context rules (spec 2026-11-04, section 5)", () => {
                 "const AGENT_PROGRAM = /(?:^|\\/)(?:claude|codex|copilot)(?=\\s|$)/;",
                 'const live = ["claude", "grok"].includes(comm);',
                 'const live = new Set(["codex", "copilot"]).has(command);',
+                // A neutral name, applied to a command line where it is used.
+                "const TAIL = /^\\s+(claude|codex|grok)\\s+run/; export const kind = (command: string) => TAIL.exec(command);",
+                "const WORDS = /(claude|codex)/; export const strip = (command: string) => command.replace(WORDS, '');",
+                'const NAMES = ["claude", "codex"]; export const live = (comm: string) => NAMES.includes(comm);',
             ],
             owners: ["src/utils/process/classify.ts", "src/utils/ai/providers/plugins/openai-sub/harness.ts"],
             misses: [
@@ -1528,6 +1532,7 @@ describe("the agent-context rules (spec 2026-11-04, section 5)", () => {
                 'const LABEL = { claude: "Claude", codex: "Codex" };',
                 'const AGENT_BINARIES = ["claude"];',
                 'const BIN = ["claude", "ls"];',
+                'const AGENTS = ["claude", "codex"]; export const label = (name: string) => AGENTS.includes(name);',
             ],
         },
         {
