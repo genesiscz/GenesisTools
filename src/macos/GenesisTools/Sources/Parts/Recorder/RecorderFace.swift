@@ -44,6 +44,8 @@ struct RecorderRequest {
     /// `--sheet <edit> --times <s,s,…> --out <png>`: those frames of the edit on one picture, each with its time.
     var sheet: String?
     var times: [Double] = []
+    /// `--full` with `--still`: the frame at the export's size (a poster), not the 1080 pixel preview.
+    var full = false
 
     static func parse(_ args: [String]) -> RecorderRequest {
         var request = RecorderRequest()
@@ -74,6 +76,7 @@ struct RecorderRequest {
             case "--filter": request.filter = value()
             case "--still": request.still = value().map(absolute)
             case "--sheet": request.sheet = value().map(absolute)
+            case "--full": request.full = true
             case "--times": request.times = (value() ?? "").split(separator: ",").compactMap { Double($0) }
             default: break
             }
@@ -93,7 +96,7 @@ package func runRecorder(_ args: [String]) -> Never {
         runHeadlessExport(source: export, out: request.out, json: request.json)
     }
     if let still = request.still {
-        runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out)
+        runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out, full: request.full)
     }
     if let sheet = request.sheet {
         runHeadlessSheet(source: sheet, times: request.times, out: request.out)
@@ -369,7 +372,7 @@ private func jsonLine(_ object: [String: Any]) -> String {
 
 /// `--still <edit> --at <seconds> --out <png>`: one frame of the edited movie as it exports (zoom, clicks, frame
 /// style), for an agent to look at without a window.
-private func runHeadlessStill(source: String, atSeconds: Double, out: String?) -> Never {
+private func runHeadlessStill(source: String, atSeconds: Double, out: String?, full: Bool) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
@@ -378,7 +381,7 @@ private func runHeadlessStill(source: String, atSeconds: Double, out: String?) -
                 let (_, project) = try await ProjectStore.open(path: source)
                 let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
                 let at = Int64((atSeconds * 1_000_000).rounded())
-                let image = try await stillFrame(project: project, atOutput: at, zoom: zoom)
+                let image = try await stillFrame(project: project, atOutput: at, zoom: zoom, maxHeight: full ? project.export.maxHeight : 1080)
                 let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-still-\(UUID().uuidString.prefix(8)).png")
                 let rep = NSBitmapImageRep(cgImage: image)
                 guard let png = rep.representation(using: .png, properties: [:]) else {
@@ -602,9 +605,9 @@ func stillFrames(project: EditProject, atOutput times: [Int64], zoom: ZoomState)
 
 /// One frame of the edit as the export draws it, for the snapshot's preview.
 @MainActor
-func stillFrame(project: EditProject, atOutput outUs: Int64, zoom: ZoomState) async throws -> CGImage {
+func stillFrame(project: EditProject, atOutput outUs: Int64, zoom: ZoomState, maxHeight: Int = 1080) async throws -> CGImage {
     let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
-    let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1080)
+    let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: maxHeight)
     let generator = AVAssetImageGenerator(asset: rendered.composition)
     generator.videoComposition = rendered.videoComposition
     generator.requestedTimeToleranceBefore = .zero

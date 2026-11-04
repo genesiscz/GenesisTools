@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -33,6 +33,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import {
     collapseUndo,
+    defaultExportName,
     EXPORT_FORMATS,
     type ExportFormat,
     editProject,
@@ -406,6 +407,14 @@ const movieMethods = [
         resultName: "{ from, to, plays, text }[]",
         doc: "The spoken lines in source seconds (plays: where each starts in the edit, null when cut), from tools transcribe; cached beside the movie, refresh: true transcribes again. The first run may ask for the AI vault key.",
         effect: "read",
+    }),
+    defineMethod({
+        name: "poster",
+        params: z.object({ at: timeSchema.optional(), out: z.string().optional() }).strict(),
+        result: z.unknown(),
+        resultName: "{ path, width, height }",
+        doc: "One frame of the edit at OUTPUT seconds `at` (0), rendered at the export's full size with every look, as a PNG for a video thumbnail or a README: at out, or beside the movie as <export name>-poster.png (never over a file). still() is the quick preview-size look.",
+        effect: "reversible",
     }),
     defineMethod({
         name: "sheet",
@@ -958,6 +967,40 @@ export class Movie {
     }
 
     /** One frame of the edit as it exports, shown to the model; `at` is OUTPUT seconds (what plays). */
+    async poster(options: { at?: z.infer<typeof timeSchema>; out?: string } = {}) {
+        const opened = await openProject(this.recording);
+
+        if (opened.fresh) {
+            writeProject(opened.path, opened.project);
+        }
+
+        const atUs = timeToUs(options.at ?? 0);
+        const lengthUs = outputDurationUs(opened.project);
+
+        if (atUs > lengthUs) {
+            throw new Error(
+                `at (${atUs / 1_000_000} s) is after the end of the edit (${Math.round(lengthUs / 1000) / 1000} s); poster() takes OUTPUT seconds`
+            );
+        }
+
+        const video = opened.project.source.video;
+        const out = options.out ? resolve(options.out) : join(dirname(video), `${defaultExportName(video)}-poster.png`);
+
+        if (existsSync(out)) {
+            throw new Error(`${out} exists already; poster() never overwrites a file (pass out)`);
+        }
+
+        await ensureRecorderPart();
+        const answer = await stillOfEdit({ path: opened.path, atSeconds: atUs / 1_000_000, out, full: true });
+
+        if (!answer.ok || !answer.path) {
+            throw new Error(answer.error ?? "the poster failed without a reason");
+        }
+
+        await this.ctx?.show({ path: answer.path });
+        return { path: answer.path, width: answer.width, height: answer.height };
+    }
+
     async sheet(
         options: {
             from?: z.infer<typeof timeSchema>;

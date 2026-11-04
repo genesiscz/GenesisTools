@@ -206,9 +206,29 @@ function parseOrUndefined(line: string): unknown {
 }
 
 /** One frame of the edit as it exports (zoom, clicks, frame style), from a headless run of the recorder face. */
-export function stillOfEdit({ path, atSeconds, out }: { path: string; atSeconds: number; out: string }) {
+export function stillOfEdit({
+    path,
+    atSeconds,
+    out,
+    full = false,
+}: {
+    path: string;
+    atSeconds: number;
+    out: string;
+    /** The export's size (a poster frame) instead of the 1080 pixel preview. */
+    full?: boolean;
+}) {
     return runRecorderFace({
-        argv: ["--recorder", "--still", path, "--at", String(atSeconds), "--out", resolve(out)],
+        argv: [
+            "--recorder",
+            "--still",
+            path,
+            "--at",
+            String(atSeconds),
+            "--out",
+            resolve(out),
+            ...(full ? ["--full"] : []),
+        ],
         schema: stillAnswerSchema,
         what: "still",
     });
