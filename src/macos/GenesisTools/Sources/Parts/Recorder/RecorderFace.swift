@@ -146,6 +146,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
 
     private func show(_ model: EditorModel, focus wanted: Bool) {
         let window = Self.makeWindow(model: model, size: NSSize(width: 1440, height: 920))
+        Self.rememberFrame(window)
         window.delegate = self
         let monitor = EditorKeys.install(model: model, window: window)
         open[ObjectIdentifier(window)] = (window, model, monitor)
@@ -167,6 +168,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = model.title
+        window.representedURL = URL(fileURLWithPath: model.project.source.video)
         window.minSize = NSSize(width: 980, height: 640)
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(white: 0.105, alpha: 1)
@@ -177,9 +179,13 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         accessory.view = NSHostingView(rootView: TitlebarExport(model: model))
         accessory.view.frame.size = NSSize(width: 190, height: 28)
         window.addTitlebarAccessoryViewController(accessory)
-        window.setFrameAutosaveName("GenesisToolsRecorderEditor")
         window.center()
         return window
+    }
+
+    /// The live window keeps the size the user left it at; a snapshot keeps the size it asked for.
+    static func rememberFrame(_ window: NSWindow) {
+        window.setFrameAutosaveName("GenesisToolsRecorderEditor")
     }
 
     func windowWillClose(_ notification: Notification) {

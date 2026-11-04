@@ -68,6 +68,8 @@ final class Filmstrip {
 final class Waveform {
     private(set) var peaks: [Float] = []
     private(set) var hasAudio = false
+    /// The read finished; with `hasAudio` false the movie has no sound track.
+    private(set) var loaded = false
     private var task: Task<Void, Never>?
 
     func load(video: URL, buckets: Int = 1200) {
@@ -79,7 +81,10 @@ final class Waveform {
             guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
                   let duration = try? await asset.load(.duration), duration.seconds > 0,
                   let reader = try? AVAssetReader(asset: asset) else {
-                await MainActor.run { self?.hasAudio = false }
+                await MainActor.run {
+                    self?.hasAudio = false
+                    self?.loaded = true
+                }
                 return
             }
             let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
@@ -108,10 +113,13 @@ final class Waveform {
                     }
                 }
             }
-            let result = peaks
+            // Scaled to the movie's own loudest moment, so a quiet recording still shows its shape.
+            let loudest = peaks.max() ?? 0
+            let result = loudest > 0.0005 ? peaks.map { $0 / loudest } : peaks
             await MainActor.run {
                 self?.peaks = result
                 self?.hasAudio = true
+                self?.loaded = true
             }
         }
     }

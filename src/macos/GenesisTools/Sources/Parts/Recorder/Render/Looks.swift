@@ -87,8 +87,9 @@ enum Looks {
     }
 
     /// The cursor's image with its hotspot on the point. The image is twice its point size.
-    static func drawCursor(_ mark: CursorMark, on image: CIImage) -> CIImage {
-        let extent = image.extent
+    /// The cursor alone, placed on a picture of `extent` (clear around it), so the renderer can zoom and frame it like
+    /// the picture and lay it over the captions and the shortcut plates.
+    static func cursorSprite(_ mark: CursorMark, extent: CGRect) -> CIImage {
         let scale = mark.pixelsPerPoint / 2
         let hotX = extent.minX + mark.x * extent.width
         let hotY = extent.minY + (1 - mark.y) * extent.height
@@ -102,7 +103,38 @@ enum Looks {
                 "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(mark.opacity)),
             ])
         }
-        return cursor.composited(over: image)
+        return cursor
+    }
+
+    /// Where the frame puts the picture: an optional cover crop (Core Image coordinates of the picture), then a scale
+    /// and the rectangle it lands in on the canvas.
+    struct FramePlacement {
+        var crop: CGRect?
+        var scale: CGFloat
+        var inner: CGRect
+
+        func place(_ image: CIImage) -> CIImage {
+            var source = image
+            if let crop {
+                source = image.cropped(to: crop).transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+            }
+            return source
+                .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                .transformed(by: CGAffineTransform(translationX: inner.minX, y: inner.minY))
+        }
+    }
+
+    static func framePlacement(_ frame: EditProject.Frame, picture: CGSize, canvas size: CGSize,
+                               focus: CGPoint = CGPoint(x: 0.5, y: 0.5)) -> FramePlacement {
+        let unit = min(size.width, size.height)
+        let padding = frame.padding * unit
+        let room = CGSize(width: max(2, size.width - 2 * padding), height: max(2, size.height - 2 * padding))
+        let crop = frame.fit == .cover ? coverCrop(picture: picture, room: room, focus: focus) : nil
+        let shown = crop?.size ?? picture
+        let scale = max(0.05, min(room.width / shown.width, room.height / shown.height))
+        let inner = CGRect(x: (size.width - shown.width * scale) / 2, y: (size.height - shown.height * scale) / 2,
+                           width: shown.width * scale, height: shown.height * scale)
+        return FramePlacement(crop: crop, scale: scale, inner: inner)
     }
 
     /// The picture fitted inside the canvas less the padding, centred, masked to a rounded rectangle, over a shadow
@@ -111,22 +143,13 @@ enum Looks {
     /// `focus` (0...1 from the top left) as far as the picture's edges allow.
     static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, picture: CGSize, canvas size: CGSize,
                            focus: CGPoint = CGPoint(x: 0.5, y: 0.5)) -> CIImage {
+        applyFrame(frame, to: image, canvas: size, placement: framePlacement(frame, picture: picture, canvas: size, focus: focus))
+    }
+
+    static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, canvas size: CGSize, placement: FramePlacement) -> CIImage {
         let unit = min(size.width, size.height)
-        let padding = frame.padding * unit
-        let room = CGSize(width: max(2, size.width - 2 * padding), height: max(2, size.height - 2 * padding))
-        var source = image
-        var shown = picture
-        if frame.fit == .cover {
-            let crop = coverCrop(picture: picture, room: room, focus: focus)
-            source = image.cropped(to: crop).transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
-            shown = crop.size
-        }
-        let scale = max(0.05, min(room.width / shown.width, room.height / shown.height))
-        let inner = CGRect(x: (size.width - shown.width * scale) / 2, y: (size.height - shown.height * scale) / 2,
-                           width: shown.width * scale, height: shown.height * scale)
-        let placed = source
-            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            .transformed(by: CGAffineTransform(translationX: inner.minX, y: inner.minY))
+        let inner = placement.inner
+        let placed = placement.place(image)
         let radius = frame.cornerRadius * unit
         let mask = roundedRect(inner, radius: radius, color: .white)
         let clipped = placed.applyingFilter("CIBlendWithMask", parameters: [

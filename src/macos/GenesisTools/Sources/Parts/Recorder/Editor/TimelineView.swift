@@ -16,7 +16,7 @@ enum RecorderPalette {
 
 /// Output time and x position on the timeline, both ways.
 struct TimelineScale {
-    var pointsPerSecond: Double
+    var pointsPerSecond: Double = 100
     var inset: CGFloat = 28
 
     func x(_ us: Int64) -> CGFloat { inset + CGFloat(Double(us) / 1_000_000 * pointsPerSecond) }
@@ -40,7 +40,8 @@ struct TimelineView: View {
     static var totalHeight: CGFloat { audioLaneTop + audioLaneHeight + 40 }
 
     private var scale: TimelineScale {
-        let fit = Double(max(200, viewportWidth - 32)) / max(0.5, Double(model.durationUs) / 1_000_000)
+        // Fitted, the whole edit fills the strip between the two insets, so nothing runs past the window's edge.
+        let fit = Double(max(200, viewportWidth - 2 * TimelineScale().inset)) / max(0.5, Double(model.durationUs) / 1_000_000)
         return TimelineScale(pointsPerSecond: model.pointsPerSecond > 0 ? model.pointsPerSecond : fit)
     }
 
@@ -88,7 +89,10 @@ private struct RulerView: View {
                 let text = Text(verbatim: formatClock(Int64(at * 1_000_000), tenths: step < 1))
                     .font(.system(size: 10.5, weight: .medium).monospacedDigit())
                     .foregroundStyle(RecorderPalette.dim)
-                context.draw(text, at: CGPoint(x: x, y: 8), anchor: .center)
+                // A label at either end of the strip leans inward instead of being cut in half.
+                let half = context.resolve(text).measure(in: size).width / 2
+                let anchor: UnitPoint = x - half < 0 ? .leading : (x + half > size.width ? .trailing : .center)
+                context.draw(text, at: CGPoint(x: x, y: 8), anchor: anchor)
                 at += step
             }
         }
@@ -104,6 +108,16 @@ func formatClock(_ us: Int64, tenths: Bool = false) -> String {
         return String(format: "%02d:%02d.%d", minutes, seconds, Int((total * 10).rounded(.down)) % 10)
     }
     return String(format: "%02d:%02d", minutes, seconds)
+}
+
+/// A source range as the edit plays it, the time the ruler shows ("00:00.5 – 00:03.0", or "Cut from the edit" when
+/// none of it plays), and the range in the recording when the edit moved it (nil when the two read the same).
+func editRange(_ project: EditProject, fromUs: Int64, toUs: Int64) -> (edit: String, recording: String?) {
+    let source = "\(formatClock(fromUs, tenths: true)) – \(formatClock(toUs, tenths: true))"
+    let spans = TimelineMap.outputSpans(fromUs: fromUs, toUs: toUs, in: project)
+    guard let first = spans.first, let last = spans.last else { return ("Cut from the edit", "\(source) in the recording") }
+    let edit = "\(formatClock(first.fromUs, tenths: true)) – \(formatClock(last.toUs, tenths: true))"
+    return (edit, edit == source ? nil : "\(source) in the recording")
 }
 
 // MARK: - Zoom lane
@@ -494,7 +508,8 @@ private struct PlayheadView: View {
                 }
                 .frame(width: 30, height: 28)
                 .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.24)))
-                .offset(x: x - 15, y: TimelineView.clipLaneTop + TimelineView.clipLaneHeight + TimelineView.laneGap + TimelineView.audioLaneHeight + 6)
+                .offset(x: min(max(x, 15), max(15, scale.x(model.durationUs) - 15)) - 15,
+                        y: TimelineView.clipLaneTop + TimelineView.clipLaneHeight + TimelineView.laneGap + TimelineView.audioLaneHeight + 6)
                 .accessibilityIdentifier("recorder.split")
             }
         }

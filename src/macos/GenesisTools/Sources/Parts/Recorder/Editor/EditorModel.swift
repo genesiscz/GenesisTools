@@ -17,15 +17,17 @@ enum EditorSelection: Equatable {
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case zoom, clip, hide, style, audio, export
+    case zoom, clip, hide, style, cursor, captions, audio, export
     var id: String { rawValue }
 
     var symbol: String {
         switch self {
         case .zoom: "plus.magnifyingglass"
-        case .clip: "scissors"
+        case .clip: "film"
         case .hide: "eye.slash"
         case .style: "paintpalette"
+        case .cursor: "cursorarrow.rays"
+        case .captions: "captions.bubble"
         case .audio: "speaker.wave.2"
         case .export: "square.and.arrow.up"
         }
@@ -34,9 +36,11 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .zoom: "Zoom"
-        case .clip: "Clip and speed"
-        case .hide: "Hide parts"
+        case .clip: "Clips"
+        case .hide: "Hide Parts"
         case .style: "Style"
+        case .cursor: "Cursor and Clicks"
+        case .captions: "Captions and Shortcuts"
         case .audio: "Audio"
         case .export: "Export"
         }
@@ -107,7 +111,17 @@ final class EditorModel {
         rebuild()
     }
 
-    var title: String { URL(fileURLWithPath: project.source.video).lastPathComponent }
+    /// The recording's title from its manifest (the name the library shows), else its folder's name, else the file's.
+    var title: String { Self.readTitle(video: project.source.video) }
+
+    static func readTitle(video: String) -> String {
+        let url = URL(fileURLWithPath: video)
+        let folder = url.deletingLastPathComponent()
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("recording.json")) else { return url.lastPathComponent }
+        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let title = root?["title"] as? String, !title.trimmingCharacters(in: .whitespaces).isEmpty { return title }
+        return folder.lastPathComponent
+    }
     var durationUs: Int64 { project.outputDurationUs }
 
     // MARK: - Playback

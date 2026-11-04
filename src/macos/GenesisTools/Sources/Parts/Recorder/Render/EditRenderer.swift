@@ -250,24 +250,30 @@ struct EditRenderer {
             if let clicks = look.clicks, !look.marks.isEmpty {
                 result = Looks.drawClicks(look.marks, on: result, settings: clicks).cropped(to: extent)
             }
-            if let mark = look.cursor {
-                result = Looks.drawCursor(mark, on: result).cropped(to: extent)
+            // The cursor is its own layer: zoomed and framed like the picture, laid over the captions and plates last.
+            var cursor = look.cursor.map { Looks.cursorSprite($0, extent: extent).cropped(to: extent) }
+            // Core Image counts y from the bottom; the project counts it from the top.
+            let rect = view.rect
+            let crop = CGRect(x: extent.minX + rect.minX * extent.width, y: extent.minY + (1 - rect.maxY) * extent.height,
+                              width: rect.width * extent.width, height: rect.height * extent.height)
+            let toPicture = { (layer: CIImage) -> CIImage in
+                var image = layer
+                if view.scale > 1.0005 {
+                    image = image.cropped(to: crop)
+                        .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+                        .transformed(by: CGAffineTransform(scaleX: extent.width / crop.width, y: extent.height / crop.height))
+                }
+                if outputScale != 1 {
+                    image = image.transformed(by: CGAffineTransform(scaleX: outputScale, y: outputScale))
+                }
+                return image.cropped(to: CGRect(origin: .zero, size: picture))
             }
-            if view.scale > 1.0005 {
-                let rect = view.rect
-                // Core Image counts y from the bottom; the project counts it from the top.
-                let crop = CGRect(x: extent.minX + rect.minX * extent.width, y: extent.minY + (1 - rect.maxY) * extent.height,
-                                  width: rect.width * extent.width, height: rect.height * extent.height)
-                result = result.cropped(to: crop)
-                    .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
-                    .transformed(by: CGAffineTransform(scaleX: extent.width / crop.width, y: extent.height / crop.height))
-            }
-            if outputScale != 1 {
-                result = result.transformed(by: CGAffineTransform(scaleX: outputScale, y: outputScale))
-            }
-            result = result.cropped(to: CGRect(origin: .zero, size: picture))
+            result = toPicture(result)
+            cursor = cursor.map(toPicture)
             if let frame = look.frame {
-                result = Looks.applyFrame(frame, to: result, picture: picture, canvas: size, focus: look.coverFocus)
+                let placement = Looks.framePlacement(frame, picture: picture, canvas: size, focus: look.coverFocus)
+                result = Looks.applyFrame(frame, to: result, canvas: size, placement: placement)
+                cursor = cursor.map { placement.place($0).cropped(to: placement.inner) }
             }
             var captionUsed: CGFloat = 0
             if let caption = look.caption {
@@ -280,6 +286,9 @@ struct EditRenderer {
                 result = Looks.drawKey(key.label, opacity: key.opacity, plates: zoom.keyPlates, settings: key.settings, on: result,
                                        size: size, below: sameEdge ? captionUsed - min(size.width, size.height) * 0.05 : 0)
                     .cropped(to: CGRect(origin: .zero, size: size))
+            }
+            if let cursor {
+                result = cursor.composited(over: result).cropped(to: CGRect(origin: .zero, size: size))
             }
             request.finish(with: result, context: nil)
         }
