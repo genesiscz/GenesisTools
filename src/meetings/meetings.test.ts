@@ -1879,6 +1879,8 @@ describe("the meetings recorder loop", () => {
         readonly commands: string[] = [];
         private piece = 0;
         private notified = -1;
+        /** How often the recorder asked for the connected displays (once per piece, and per socket call that needs it). */
+        displayReads = 0;
 
         constructor(
             private readonly script: {
@@ -1922,6 +1924,7 @@ describe("the meetings recorder loop", () => {
         }
 
         async displays(): Promise<DisplayInfo[]> {
+            this.displayReads += 1;
             const index = Math.min(this.piece, this.script.displays.length - 1);
             this.piece += 1;
             return this.script.displays[index] ?? [];
@@ -2034,7 +2037,7 @@ describe("the meetings recorder loop", () => {
         actions?: Array<
             (
                 call: (method: string, params?: unknown) => Promise<unknown>,
-                live: { id: string; dir: string; folder: string }
+                live: { id: string; dir: string; folder: string; files: { pid: string; state: string } }
             ) => Promise<unknown>
         >;
     }) {
@@ -2065,11 +2068,14 @@ describe("the meetings recorder loop", () => {
                 const index = answers.length;
                 answers.push(undefined);
                 const next = options.actions?.shift() ?? ((send) => send("stop"));
-                void next(call, { id: meetingLiveId(created.id), dir: liveDir, folder: store.folder(created.id) }).then(
-                    (answer) => {
-                        answers[index] = answer;
-                    }
-                );
+                void next(call, {
+                    id: meetingLiveId(created.id),
+                    dir: liveDir,
+                    folder: store.folder(created.id),
+                    files: recorderFiles(store),
+                }).then((answer) => {
+                    answers[index] = answer;
+                });
             }
         );
         const state = await runRecorder({
@@ -2186,6 +2192,125 @@ describe("the meetings recorder loop", () => {
             `${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}-${pad(at.getMilliseconds(), 3)}-d1.jpg`
         );
         expect(run.state.frames).toBe(1);
+    });
+
+    test("characterization (stage 3): each piece asks the displays once, one capture per display with the sound on the first only, numbered outDirs", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["frames", "frames", "hang", "hang"],
+            audio: true,
+        });
+        const shape = run.recorder.requests.map((request) => ({
+            target: request.target,
+            durationSec: request.durationSec,
+            outDir: request.outDir.split("/").slice(-2).join("/"),
+            audio: request.audio,
+            activeFps: request.activeFps,
+            idleFps: request.idleFps,
+            thresholdPercent: request.thresholdPercent,
+            maxLongSidePx: request.maxLongSidePx,
+            hooks: request.hooks !== undefined,
+        }));
+        const settings = {
+            durationSec: 1,
+            activeFps: capture.activeFps,
+            idleFps: capture.idleFps,
+            thresholdPercent: capture.threshold * 100,
+            maxLongSidePx: capture.resolutionCap,
+            hooks: true,
+        };
+
+        expect(shape).toEqual([
+            {
+                target: { kind: "display", displayId: 1 },
+                outDir: ".piece/d1-1",
+                audio: { sources: ["mic"] },
+                ...settings,
+            },
+            { target: { kind: "display", displayId: 4 }, outDir: ".piece/d4-2", audio: undefined, ...settings },
+            {
+                target: { kind: "display", displayId: 1 },
+                outDir: ".piece/d1-3",
+                audio: { sources: ["mic"] },
+                ...settings,
+            },
+            { target: { kind: "display", displayId: 4 }, outDir: ".piece/d4-4", audio: undefined, ...settings },
+        ]);
+        expect(run.recorder.displayReads).toBe(2);
+        expect(run.state.stopReason).toBe("requested");
+    });
+
+    test("characterization (stage 3): a capture that ends with no frames is no failure; only thrown captures count", async () => {
+        const empty = await recordWith({ displays: [[builtIn]], steps: ["empty", "empty", "empty", "frames", "hang"] });
+
+        expect(empty.state.stopReason).toBe("requested");
+        expect(empty.state.frames).toBe(1);
+        expect(empty.recorder.requests).toHaveLength(5);
+
+        const mixed = await recordWith({
+            displays: [[builtIn]],
+            steps: ["fail", "fail", "frames", "fail", "fail", "hang"],
+        });
+
+        expect(mixed.state.stopReason).toBe("requested");
+        expect(mixed.recorder.requests).toHaveLength(6);
+    });
+
+    test("characterization (stage 5): the pid and the state file while it records, recorder-last.json after, and the history it writes", async () => {
+        let during: { pid: string; state: unknown; running: boolean } | undefined;
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["frames", "frames", "hang", "hang", "frames", "hang", "hang"],
+            actions: [
+                async (send, live) => {
+                    during = {
+                        pid: readFileSync(live.files.pid, "utf8"),
+                        state: SafeJSON.parse(readFileSync(live.files.state, "utf8"), { strict: true }),
+                        running: existsSync(live.files.pid),
+                    };
+                    return [await send("pause"), await Bun.sleep(30), await send("resume")];
+                },
+                async (send) => send("stop"),
+            ],
+        });
+        const files = recorderFiles(run.store);
+        const last = SafeJSON.parse(readFileSync(join(run.folder, "recorder-last.json"), "utf8"), { strict: true });
+
+        expect(during?.pid).toContain(String(process.pid));
+        expect(during?.state).toEqual({
+            meetingId: run.state.meetingId,
+            pid: process.pid,
+            startedAt: run.state.startedAt,
+            display: "all",
+            backend: "native",
+            frames: 2,
+            bytes: 8,
+            lastFrameAt: expect.any(String),
+            displays: [
+                { id: 1, name: "Built-in" },
+                { id: 4, name: "External" },
+            ],
+        });
+        expect(existsSync(files.pid)).toBe(false);
+        expect(existsSync(files.state)).toBe(false);
+        expect(last).toMatchObject({
+            meetingId: run.state.meetingId,
+            stopReason: "requested",
+            paused: false,
+            frames: 3,
+        });
+        expect(run.saved?.history.map((entry) => `${entry.command}: ${entry.change}`)).toEqual([
+            "record start: created",
+            "record start: display all (native)",
+            "record: paused",
+            "record: resumed",
+            "record stop: 3 frames, 0 MB, requested",
+        ]);
+        expect(run.saved?.recording?.spans?.map((span) => [Boolean(span.to), span.stopReason])).toEqual([
+            [true, "paused"],
+            [true, "requested"],
+        ]);
+        expect(run.notes).toEqual([]);
     });
 
     test("captures that fail three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
@@ -2539,6 +2664,56 @@ describe("the screen at a moment, per display", () => {
     });
 });
 
+describe("characterization (stage 2): which displays a piece records", () => {
+    const display = (id: number, index: number, main = false): DisplayInfo => ({
+        id,
+        index,
+        name: `D${id}`,
+        main,
+        widthPt: 100,
+        heightPt: 100,
+        scale: 1,
+    });
+    const displays = [display(1, 0, true), display(4, 1), display(7, 2)];
+    const pick = (options: Partial<Parameters<typeof pieceTargets>[0]>) => {
+        const result = pieceTargets({ policy: "all", displays, followFocus: false, ...options });
+        return { targets: result.targets, fallback: result.fallback };
+    };
+    const d = (id: number) => ({
+        target: { kind: "display" as const, displayId: id },
+        displayId: id,
+        label: `D${id} (${id})`,
+    });
+
+    test("policies, chosen ids, follow-focus and a missing display", () => {
+        expect(pick({})).toEqual({ targets: [d(1), d(4), d(7)], fallback: undefined });
+        expect(pick({ policy: "main" })).toEqual({ targets: [d(1)], fallback: undefined });
+        expect(pick({ policy: 2 })).toEqual({ targets: [d(7)], fallback: undefined });
+        expect(pick({ policy: 5 })).toEqual({
+            targets: [d(1)],
+            fallback: "display 5 was not connected; the main display was recorded while it was missing",
+        });
+        expect(pick({ policy: "follow-focus", followFocus: true })).toEqual({
+            targets: [{ target: { kind: "follow-focus" as const }, displayId: 1, label: "the focused display" }],
+            fallback: undefined,
+        });
+        expect(pick({ policy: "follow-focus" })).toEqual({
+            targets: [d(1)],
+            fallback: "this recorder cannot follow the focused display; the main display was recorded",
+        });
+        expect(pick({ chosen: [7, 4] })).toEqual({ targets: [d(4), d(7)], fallback: undefined });
+        expect(pick({ chosen: [9] })).toEqual({
+            targets: [d(1)],
+            fallback: "displays 9 were not connected; the main display was recorded while they were missing",
+        });
+        expect(pick({ chosen: [4, 7], parallel: false })).toEqual({
+            targets: [d(4)],
+            fallback: "this recorder records one display at a time; only one display was recorded",
+        });
+        expect(pieceTargets({ policy: "all", displays: [], followFocus: false })).toEqual({ targets: [] });
+    });
+});
+
 describe("a recorder that records one display at a time", () => {
     const displays = [
         { id: 4, index: 1, name: "External", main: false, widthPt: 2560, heightPt: 1440, scale: 1 },
@@ -2554,6 +2729,23 @@ describe("a recorder that records one display at a time", () => {
         expect(both.targets.map((target) => target.displayId)).toEqual([4, 1]);
         expect(both.fallback).toBeUndefined();
     });
+});
+
+test("characterization (stage 5): a live recorder's claim is refused and left as it is", async () => {
+    const store = new MeetingStore(new Storage("recorder-claim-live"));
+    const record = await store.create(
+        { title: "Claim fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const files = recorderFiles(store);
+    writePidFile(files.pid);
+    const before = readFileSync(files.pid, "utf8");
+
+    await expect(
+        runRecorder({ store, meetingId: record.id, capture: meetingsConfigSchema.parse({}).global.capture })
+    ).rejects.toThrow();
+    expect(readFileSync(files.pid, "utf8")).toBe(before);
+    expect(existsSync(files.state)).toBe(false);
 });
 
 test("a stale recorder claim is recovered and an initialization failure releases it", async () => {

@@ -688,3 +688,201 @@ describe("frame output", () => {
         });
     });
 });
+
+describe("characterization: what a library recording asks its recorder for", () => {
+    const left: DisplayInfo = { id: 1, index: 0, name: "left", main: true, widthPt: 64, heightPt: 40, scale: 1 };
+    const right: DisplayInfo = { id: 4, index: 1, name: "right", main: false, widthPt: 64, heightPt: 40, scale: 1 };
+
+    /** Each capture: `frames` (two frames) or `empty`, then it waits out its piece or the abort. */
+    class ScriptRecorder extends FrameRecorder {
+        readonly id = "native" as const;
+        readonly requests: CaptureRequest[] = [];
+        readonly commands: string[] = [];
+        started = Promise.withResolvers<void>();
+
+        constructor(
+            private readonly script: { step?: "frames" | "empty"; audio?: boolean; liveSettings?: boolean } = {}
+        ) {
+            super();
+        }
+
+        get supports(): FrameRecorderSupport {
+            return {
+                followFocus: false,
+                displayId: true,
+                motionBoxes: false,
+                heartbeat: false,
+                liveControl: true,
+                parallelCaptures: true,
+                audio: this.script.audio === true,
+            };
+        }
+
+        async available(): Promise<{ ok: true }> {
+            return { ok: true };
+        }
+
+        async displays(): Promise<DisplayInfo[]> {
+            return [left, right];
+        }
+
+        async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+            this.requests.push(request);
+            const startedAtMs = Date.now();
+            const displayId = request.target.kind === "display" ? request.target.displayId : 0;
+            request.hooks?.onLive?.({
+                switchDisplay: async (id) => {
+                    this.commands.push(`switch ${id}`);
+                },
+                pause: () => this.commands.push(`pause ${displayId}`),
+                resume: () => this.commands.push(`resume ${displayId}`),
+                ...(this.script.liveSettings
+                    ? {
+                          setRates: async (active: number, idle: number) => {
+                              this.commands.push(`rates ${displayId} ${active} ${idle}`);
+                          },
+                          setThreshold: async (percent: number) => {
+                              this.commands.push(`threshold ${displayId} ${percent}`);
+                          },
+                          setMaxLongSide: async (px: number) => {
+                              this.commands.push(`long side ${displayId} ${px}`);
+                          },
+                      }
+                    : {}),
+            });
+            this.started.resolve();
+            mkdirSync(request.outDir, { recursive: true });
+            const frames: CaptureResult["frames"] = [];
+
+            if (this.script.step !== "empty") {
+                const path = join(request.outDir, "keep-0.png");
+                writeFileSync(path, "png");
+                frames.push({ path, atMs: 0, displayId, changePercent: 5, reason: "first" });
+            }
+
+            await new Promise<void>((resolve) => {
+                const timer = setTimeout(resolve, request.durationSec * 1000);
+                signal?.addEventListener("abort", () => {
+                    clearTimeout(timer);
+                    resolve();
+                });
+            });
+            return { startedAtMs, frames };
+        }
+    }
+
+    const start = (recorder: ScriptRecorder, options: Partial<Parameters<typeof startRecording>[0]> = {}) => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-char-"));
+        return startRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            maxDurationSec: 30,
+            pieceSec: 5,
+            ...options,
+        } as Parameters<typeof startRecording>[0] & { recorder: FrameRecorder });
+    };
+
+    test("stage 2: main, all, ids (deduplicated), an index, an unknown id, and follow-focus records every display", async () => {
+        const shown = async (displays: "all" | "main" | number[]) => {
+            const recording = await start(new ScriptRecorder(), { displays });
+            const status = await recording.status();
+            await recording.stop();
+            return status.displays.map((one) => one.id);
+        };
+
+        expect(await shown("main")).toEqual([1]);
+        expect(await shown("all")).toEqual([1, 4]);
+        expect(await shown([4, 4])).toEqual([4]);
+        await expect(start(new ScriptRecorder(), { displays: [99] })).rejects.toMatchObject({
+            code: RPC_ERRORS.unknownDisplay,
+        });
+
+        const recording = await start(new ScriptRecorder());
+        expect((await recording.setDisplayMode(1)).chosen).toEqual([4]);
+        expect((await recording.setDisplayMode("follow-focus")).chosen).toEqual([1, 4]);
+        expect((await recording.setDisplayMode("main")).chosen).toEqual([1]);
+        await recording.stop();
+    });
+
+    test("stage 3: one capture per display per piece, the sound on every capture, numbered outDirs, the piece cut to the time left", async () => {
+        const recorder = new ScriptRecorder({ audio: true });
+        const recording = await start(recorder, {
+            displays: "all",
+            audio: { mic: true },
+            maxDurationSec: 0.5,
+            pieceSec: 0.4,
+        });
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 5_000 })).toBe(true);
+        await recording.stop();
+        const shape = recorder.requests.map((request) => ({
+            target: request.target,
+            outDir: request.outDir.split("/").slice(-2).join("/"),
+            audio: request.audio,
+            durationSec: request.durationSec,
+        }));
+
+        expect(shape.slice(0, 2)).toEqual([
+            {
+                target: { kind: "display", displayId: 1 },
+                outDir: ".pieces/d1-1",
+                audio: { sources: ["mic"] },
+                durationSec: 0.4,
+            },
+            {
+                target: { kind: "display", displayId: 4 },
+                outDir: ".pieces/d4-2",
+                audio: { sources: ["mic"] },
+                durationSec: 0.4,
+            },
+        ]);
+        expect(shape[2]).toMatchObject({ outDir: ".pieces/d1-3", durationSec: 0.4 });
+    });
+
+    test("stage 3: three pieces in a row without a frame end the recording with a warning", async () => {
+        const recorder = new ScriptRecorder({ step: "empty" });
+        const recording = await start(recorder, { maxDurationSec: 30, pieceSec: 0.05 });
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 5_000 })).toBe(true);
+        const answer = await recording.stop();
+
+        expect(recorder.requests).toHaveLength(3);
+        expect(answer.notes).toContain("three captures in a row recorded nothing; the recording ends");
+    });
+
+    test("stage 4: settings change live through every capture, else restart; heartbeat always restarts; pause and resume go live", async () => {
+        const live = new ScriptRecorder({ liveSettings: true });
+        const recording = await start(live, { displays: "all" });
+        await live.started.promise;
+        await Bun.sleep(20);
+
+        expect(await recording.setSettings({ activeFps: 3, idleFps: 1, threshold: 4 })).toMatchObject({
+            applied: "live",
+        });
+        expect((await recording.setSettings({ ocr: { minChars: 3 } })).applied).toBe("live");
+        expect(await recording.pause()).toEqual({ state: "paused" });
+        expect(await recording.resume()).toEqual({ state: "recording" });
+        expect(live.commands.sort()).toEqual(
+            [
+                "rates 1 3 1",
+                "rates 4 3 1",
+                "threshold 1 4",
+                "threshold 4 4",
+                "pause 1",
+                "pause 4",
+                "resume 1",
+                "resume 4",
+            ].sort()
+        );
+        expect((await recording.setSettings({ heartbeatSec: 5 })).applied).toBe("restart");
+        await recording.stop();
+
+        const plain = new ScriptRecorder();
+        const restarted = await start(plain, { displays: "main" });
+        await plain.started.promise;
+        plain.started = Promise.withResolvers<void>();
+        expect((await restarted.setSettings({ activeFps: 3 })).applied).toBe("restart");
+        await plain.started.promise;
+        await restarted.stop();
+        expect(plain.requests.map((request) => request.activeFps)).toEqual([2, 3]);
+    });
+});
