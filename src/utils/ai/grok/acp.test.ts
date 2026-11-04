@@ -102,14 +102,23 @@ function leaderAgent(prompt: (request: Request, reply: Reply) => void) {
 describe("GrokAcpClient leader form", () => {
     test("settled leader RPCs clear their deadline timers", async () => {
         const cleared = spyOn(globalThis, "clearTimeout");
+        const scheduled = spyOn(globalThis, "setTimeout");
         const agent = leaderAgent(() => undefined);
         const client = new GrokAcpClient(0, { leader: { socket: "/fixture/leader.sock" }, spawn: agent.spawn });
         try {
             await client.listSessions();
-            expect(cleared).toHaveBeenCalledTimes(3);
+            const deadlines = scheduled.mock.calls.flatMap((call, index) =>
+                call[1] === 15_000 || call[1] === 30_000 ? [scheduled.mock.results[index].value] : []
+            );
+            expect(deadlines).toHaveLength(3);
+
+            for (const timer of deadlines) {
+                expect(cleared).toHaveBeenCalledWith(timer);
+            }
         } finally {
             client.reset();
             cleared.mockRestore();
+            scheduled.mockRestore();
         }
     });
 

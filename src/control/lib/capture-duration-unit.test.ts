@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import type { Plan } from "./capture-plan";
 
 /**
@@ -20,7 +20,9 @@ import type { Plan } from "./capture-plan";
  * screen.
  */
 
-const realPeekaboo = await import("./peekaboo");
+// A copy, not the namespace: mock.module patches the live namespace, and bun keeps a module mock for
+// every later test file in the process, so afterAll puts the real exports back.
+const realPeekaboo = { ...(await import("./peekaboo")) };
 const captured: string[][] = [];
 const STUB_STOP = "stub: peekaboo is never spawned from tests";
 
@@ -31,6 +33,10 @@ mock.module("./peekaboo", () => ({
         throw new Error(STUB_STOP);
     },
 }));
+
+afterAll(() => {
+    mock.module("./peekaboo", () => realPeekaboo);
+});
 
 const { runCapturePlan } = await import("./capture-runner");
 
