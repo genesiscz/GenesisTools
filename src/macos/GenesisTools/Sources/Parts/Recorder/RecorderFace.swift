@@ -135,6 +135,7 @@ package func runRecorder(_ args: [String]) -> Never {
 final class EditorWindows: NSObject, NSWindowDelegate {
     static let shared = EditorWindows()
     private var open: [ObjectIdentifier: (NSWindow, EditorModel, Any?)] = [:]
+    private var frontWindow: ObjectIdentifier?
     /// Where a window that is still opening goes once its model exists.
     private var pendingPlacement: [String: (EditorModel) -> Void] = [:]
 
@@ -201,6 +202,44 @@ final class EditorWindows: NSObject, NSWindowDelegate {
             window.orderBack(nil)
         }
         HubPerf.log("recorder.editor: opened \(model.title) (\(Plural.count(model.project.clips.count, "clip")), \(Plural.count(model.project.zooms.count, "zoom")))")
+        writeOpenState(front: wanted ? window : nil)
+    }
+
+    /// `recordings/editor-open.json`: which recordings the editor shows and which one is in front, so the CLI and the
+    /// REPL can act on "the open one" (`tools recorder … open`, `tools recorder opened --wait`). Rewritten when a
+    /// window opens, comes to the front or closes. `front` keeps the last window that was in front while it is open;
+    /// `pid` lets a reader drop the file of a process that is gone (a crash, a rebuild's reap).
+    private func writeOpenState(front window: NSWindow?) {
+        if let window, open[ObjectIdentifier(window)] != nil { frontWindow = ObjectIdentifier(window) }
+        if let id = frontWindow, open[id] == nil { frontWindow = nil }
+        func row(_ entry: (NSWindow, EditorModel, Any?)) -> [String: Any] {
+            ["path": entry.1.store.url.deletingLastPathComponent().path, "title": entry.1.title]
+        }
+        var state: [String: Any] = [
+            "version": 1,
+            "pid": Int(ProcessInfo.processInfo.processIdentifier),
+            "updatedAt": Self.stamp.string(from: Date()),
+            "open": open.values.map(row),
+        ]
+        if let id = frontWindow, let entry = open[id] { state["front"] = row(entry) }
+        let url = RecorderMenu.libraryFolder.deletingLastPathComponent().appendingPathComponent("editor-open.json")
+        do {
+            let data = try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: url, options: .atomic)
+        } catch {
+            HubPerf.log("recorder.editor: could not write \(url.path): \(error.localizedDescription)")
+        }
+    }
+
+    private static let stamp: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, open[ObjectIdentifier(window)] != nil else { return }
+        writeOpenState(front: window)
     }
 
     private func focus(_ window: NSWindow) {
@@ -250,6 +289,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         entry.1.close()
         if let monitor = entry.2 { NSEvent.removeMonitor(monitor) }
         open[ObjectIdentifier(window)] = nil
+        writeOpenState(front: nil)
         if open.isEmpty { NSApp.setActivationPolicy(.accessory) }
     }
 }

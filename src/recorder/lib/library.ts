@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -66,6 +66,20 @@ export function listLibrary(root = recordingsLibraryDir()): LibraryRow[] {
  * recording folder or an edit file. Throws with the ids it knows when nothing matches.
  */
 export function resolveRecording(value: string): string {
+    if (value === "open") {
+        const state = readEditorOpenState();
+        // The window last in front; with one window open, that one even if it never came to the front.
+        const front = state?.front ?? (state?.open.length === 1 ? state.open[0] : undefined);
+
+        if (!front) {
+            throw new Error(
+                "No recording is open in the editor. Pick one with `tools recorder library`, or name one (`last`, an id)."
+            );
+        }
+
+        return front.path;
+    }
+
     if (value === "last") {
         const newest = listLibrary()[0];
 
@@ -107,6 +121,96 @@ export async function ensureRecorderPart(onStep?: (line: string) => void): Promi
     onStep?.("GenesisTools.app has no recorder part yet: building it (about a minute)");
     log.info({ parts: status.parts }, "recorder: adding the recorder part");
     await buildApp({ onStep, parts: { add: ["recorder"] } });
+}
+
+const editorWindowSchema = z.object({ path: z.string(), title: z.string() });
+const editorOpenSchema = z.object({
+    version: z.literal(1),
+    pid: z.number().int().optional(),
+    updatedAt: z.string(),
+    front: editorWindowSchema.optional(),
+    open: z.array(editorWindowSchema),
+});
+
+export type EditorOpenState = z.infer<typeof editorOpenSchema>;
+export type EditorWindowRow = z.infer<typeof editorWindowSchema>;
+
+/** The file the editor rewrites whenever a window opens, comes to the front or closes. */
+export function editorOpenStatePath(): string {
+    return join(dirname(recordingsLibraryDir()), "editor-open.json");
+}
+
+function processAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        // EPERM means it exists but belongs to someone else.
+        return error instanceof Error && "code" in error && error.code === "EPERM";
+    }
+}
+
+/** Which recordings the editor shows and which one is in front; null when no editor ran since the app was built. */
+export function readEditorOpenState(): EditorOpenState | null {
+    const path = editorOpenStatePath();
+
+    if (!existsSync(path)) {
+        return null;
+    }
+
+    const parsed = editorOpenSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8")));
+
+    if (!parsed.success) {
+        log.warn({ path, issues: parsed.error.issues }, "recorder: editor-open.json has an unknown shape");
+        return null;
+    }
+
+    // The editor that wrote it is gone (a crash, a rebuild's reap): its windows are closed whatever the file says.
+    if (parsed.data.pid !== undefined && !processAlive(parsed.data.pid)) {
+        log.debug({ path, pid: parsed.data.pid }, "recorder: editor-open.json is from a process that is gone");
+        return { ...parsed.data, front: undefined, open: [] };
+    }
+
+    return parsed.data;
+}
+
+/**
+ * Waits until the editor brings a recording to the front after this call (a pick in the library, a double-click, a
+ * click on another editor window), and returns it. Throws when `timeoutMs` passes first.
+ */
+export async function waitForEditorOpen({ timeoutMs }: { timeoutMs: number }): Promise<EditorWindowRow> {
+    const startedAt = readEditorOpenState()?.updatedAt ?? "";
+    const deadline = Date.now() + timeoutMs;
+    log.debug({ path: editorOpenStatePath(), timeoutMs }, "recorder: wait for the editor to open a recording");
+
+    while (Date.now() < deadline) {
+        const state = readEditorOpenState();
+
+        if (state?.front && state.updatedAt > startedAt) {
+            log.debug({ front: state.front }, "recorder: the editor opened a recording");
+            return state.front;
+        }
+
+        await Bun.sleep(Math.min(500, Math.max(0, deadline - Date.now())));
+    }
+
+    throw new Error(`No recording came to the front in the editor within ${Math.round(timeoutMs / 1000)} s.`);
+}
+
+/** Opens the recordings library window, where a double-click opens a recording in the editor. */
+export function openLibraryWindow({ focus = true }: { focus?: boolean } = {}): void {
+    const args = ["-n", ...(focus ? [] : ["-g"]), genesisAppBundlePath(), "--args", "--recorder", "--library"];
+
+    if (!focus) {
+        args.push("--no-focus");
+    }
+
+    log.debug({ args }, "recorder: open the library");
+    const result = spawnSync("open", args, { encoding: "utf8" });
+
+    if (result.status !== 0) {
+        throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
+    }
 }
 
 /** Opens the editor through Launch Services; a running recorder takes the request. */

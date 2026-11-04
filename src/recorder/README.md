@@ -20,6 +20,10 @@ tools recorder list [--live] [--limit N] [--json]
 tools recorder edit <recording> [--no-focus] [--at T] [--tab NAME]  # the editor window; --at puts the playhead at an
                                                  # OUTPUT time, --tab opens an inspector tab (zoom, clip, hide, text,
                                                  # style, cursor, captions, audio, export)
+tools recorder edit                              # no recording: a list in a terminal, the library window otherwise
+tools recorder library                           # the recordings library window; a double-click opens the editor
+tools recorder opened [--wait [S]] [--json]      # the recordings the editor shows, ▶ the one in front; --wait
+                                                 # blocks until a recording comes to the front and prints its folder
 tools recorder project <recording>               # the edit as JSON (source seconds)
 tools recorder apply <recording> '<op or [ops]>' # change the edit; - reads the ops from stdin
 tools recorder export <recording> [--format mp4|gif|webm] [--from T] [--to T] [--out FILE] [--json]
@@ -40,6 +44,10 @@ and macOS sends no key while a password field has secure input on. `--no-shortcu
 Pausing ends a segment, so the paused time is not in the movie; segments of the same shape join by stream copy.
 While it runs, the menu bar item and the floating controls (hidden from the capture) control it, and so do
 `tools recorder stop` and the REPL.
+
+A `<recording>` is a library id, `last` (the newest), `open` (the one in front in the editor; with one window open,
+that one), a recording folder, a movie or an `edit.json`. The editor writes which windows it shows to
+`~/.genesis-tools/recordings/editor-open.json` with its pid, so a reader drops the file of an editor that is gone.
 
 ## The edit (`edit.json`, version 1)
 
