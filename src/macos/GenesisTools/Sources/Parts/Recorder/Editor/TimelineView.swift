@@ -551,9 +551,33 @@ private struct MarksLaneView: View {
             }
         }
         .frame(height: TimelineView.marksLaneHeight)
-        .instantTooltip("Markers (purple flags), caption lines (blue), texts (green), arrows and boxes (red) and shortcuts (white lines)")
+        .contentShape(Rectangle())
+        .onTapGesture { location in select(atX: location.x) }
+        .instantTooltip("Markers (purple flags), caption lines (blue), texts (green), arrows and boxes (red) and shortcuts (white lines). Click a text or an arrow to edit it, a marker to go to it.")
         .accessibilityElement()
-        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
+        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count((project.texts ?? []).count, "text")), \(Plural.count((project.shapes ?? []).count, "shape")), \(Plural.count(keys.count, "shortcut"))")
+    }
+
+    /// A click on the lane: a marker within 6 pt puts the playhead on it; otherwise the arrow, box or text playing
+    /// there is selected on the Text tab and the playhead goes to the click.
+    private func select(atX x: CGFloat) {
+        let project = model.project
+        for marker in model.markers {
+            if let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project), abs(scale.x(outUs) - x) <= 6 {
+                model.seek(outUs)
+                return
+            }
+        }
+        let outUs = scale.us(x)
+        let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
+        if let shape = (project.shapes ?? []).last(where: { sourceUs >= $0.startUs && sourceUs < $0.endUs }) {
+            model.selectedShape = shape.id
+            model.tab = .text
+        } else if let note = (project.texts ?? []).last(where: { sourceUs >= $0.startUs && sourceUs < $0.endUs }) {
+            model.selectedText = note.id
+            model.tab = .text
+        }
+        model.seek(outUs)
     }
 }
 
