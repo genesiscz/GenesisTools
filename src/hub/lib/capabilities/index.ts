@@ -293,6 +293,29 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /**
+     * `hub timesheet --json [--date d]`: the Clarity week of a day as the phone's Friday swipe shows it (F27). It reads
+     * Clarity and the time logs; it writes nothing (the fill is its own keyed route).
+     */
+    timesheet: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input) {
+            const date = text(input, "date");
+
+            if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                throw new CapabilityRefusedError("bad-input", "date: YYYY-MM-DD");
+            }
+
+            return { date: date ?? new Date().toLocaleDateString("sv-SE") };
+        },
+        async run({ date }, { signal }) {
+            signal.throwIfAborted();
+            const { timesheetWeek } = await import("../timesheet/index");
+            return timesheetWeek(date);
+        },
+    } satisfies HubCapability<{ date: string }>,
+
     /** `hub wake --json`: the wakeup relay this Mac is registered with (F26), login included. Read only. */
     wake: {
         policy: "read",

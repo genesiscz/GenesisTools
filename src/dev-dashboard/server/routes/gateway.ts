@@ -19,6 +19,7 @@ import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
 import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
+import { fillTimesheetWeek, type TimesheetDeps } from "@app/hub/lib/timesheet/index";
 import { fixPr, type MergeRunner, mergePr } from "@app/hub/lib/triage/index";
 import { transcribeVoiceClip, VoiceClipError, type VoiceDeps } from "@app/hub/lib/voice/index";
 import { muteWatch, WATCH_SOURCE_IDS, WATCH_SOURCES } from "@app/hub/lib/watching/index";
@@ -40,6 +41,7 @@ export const GATEWAY_ROWS = {
     watching: ENDPOINTS.gatewayWatching,
     brief: ENDPOINTS.gatewayBrief,
     wake: ENDPOINTS.gatewayWake,
+    timesheet: ENDPOINTS.gatewayTimesheet,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
     stuck: ENDPOINTS.gatewayStuck,
@@ -95,6 +97,8 @@ export interface GatewayDeps {
     launch?: StartAgentDeps;
     /** The mute route's sources; tests pass fakes, so no Monitor database is written. */
     watchSources?: typeof WATCH_SOURCES;
+    /** The timesheet fill's preview and writer; tests pass fakes, so nothing reaches Clarity. */
+    timesheet?: TimesheetDeps;
 }
 
 /**
@@ -233,6 +237,16 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             }),
             invalid: "expected { agent, repo, account, prompt?, name?, model? }",
             run: (input) => startAgent(input, deps.launch),
+        }),
+        // Writes real hours: a keyed write behind the full login that names the revision the phone showed (F27).
+        bindEndpoint(ENDPOINTS.timesheetFill, {
+            input: z.object({
+                date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+                timesheetId: z.number().int().positive(),
+                revision: z.string().min(1),
+            }),
+            invalid: "expected { date, timesheetId, revision }",
+            run: (input) => fillTimesheetWeek(input, deps.timesheet),
         }),
         bindEndpoint(ENDPOINTS.watchingMute, {
             input: z.object({

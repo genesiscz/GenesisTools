@@ -25,6 +25,11 @@ import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/cont
 import type { ForecastDto, GlanceDto } from "@app/dev-dashboard/contract/glance";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
+import type {
+    TimesheetFillInput,
+    TimesheetFillReceiptDto,
+    TimesheetWeekDto,
+} from "@app/dev-dashboard/contract/timesheet";
 import type { HealthDto, WakeRelayDto } from "@app/dev-dashboard/contract/wake";
 import type { WatchingDto, WatchMuteInput, WatchMuteReceiptDto } from "@app/dev-dashboard/contract/watching";
 
@@ -401,6 +406,15 @@ export const ENDPOINTS = {
     gatewayWake: row<GatewayInput, WakeRelayDto>("GET", "/api/gateway/wake", "read"),
     /** Answers while the server runs: the phone's probe after a wake (F26). */
     health: row<Record<string, never>, HealthDto>("GET", "/api/health", "read"),
+    /** One Clarity week for the Friday swipe (F27): tasks, minutes per day, unmapped time and its revision. */
+    gatewayTimesheet: row<GatewayInput, TimesheetWeekDto | null>("GET", "/api/gateway/timesheet", "read", "slow"),
+    /** Writes the week into Clarity when it still matches the revision the phone showed (F27). */
+    timesheetFill: row<TimesheetFillInput, TimesheetFillReceiptDto>(
+        "POST",
+        "/api/timesheet/fill",
+        "keyed-write",
+        "slow"
+    ),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;
