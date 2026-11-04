@@ -245,8 +245,8 @@ const movieMethods = [
     edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }), "Several ops at once, saved once.", ["ops"]),
     edit(
         "undo",
-        z.object({}),
-        'Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps). The result names the ops it took back (undone: ["text"]) and stepsLeft. Refused when the editor window changed it since: undo that with ⌘Z there.'
+        z.object({ all: z.boolean().optional() }).strict(),
+        'Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps); undo({ all: true }) goes back through every saved step. The result names the ops it took back (undone: ["text"]) and stepsLeft, how many more undo() calls there are. The revision number still rises: an undo is a new save of the older content. Refused when the editor window changed it since: undo that with ⌘Z there.'
     ),
     edit(
         "shape",
@@ -662,8 +662,12 @@ function summarize(project: EditProject, title: string | undefined): string {
         count(redactions.length - spotlights, "hidden part"),
         count(spotlights, "spotlight"),
         count((project.texts ?? []).length, "text"),
+        count((project.shapes ?? []).length, "shape"),
         `captions ${project.captions?.show ? "on" : "off"}`,
         `frame ${project.frame ? (project.frame.aspect ?? "on") : "off"}`,
+        `music ${project.audio.music ? `${project.audio.music.file.split(/[/\\]/).pop()}${project.audio.music.loop === false ? " once" : ""}` : "none"}`,
+        `click rings ${project.clicks?.highlight === false ? "off" : "on"}${project.clicks?.sound ? ", click sound" : ""}`,
+        count(Object.keys(project.transcript?.fixes ?? {}).length, "edited caption line"),
     ];
     return `${title ? `"${title}": ` : ""}${parts.join(", ")}`;
 }
@@ -819,7 +823,14 @@ export class Movie {
     }
 
     async annotateClicks(options: Omit<Extract<EditOp, { op: "annotateClicks" }>, "op"> = {}) {
-        return this.change([{ op: "annotateClicks", ...options }]);
+        const result = await this.change([{ op: "annotateClicks", ...options }]);
+        // Say why nothing was added, not only that nothing changed.
+        const warnings = (result.warnings ?? []).map((warning) =>
+            warning === "nothing changed, so nothing was saved"
+                ? "every click in the range has its mark already, so nothing was saved"
+                : warning
+        );
+        return warnings.length ? { ...result, warnings } : result;
     }
 
     async volume(volume: number) {
@@ -934,10 +945,17 @@ export class Movie {
         return this.change([{ op: "normalize", targetLufs: options.targetLufs ?? -16 }]);
     }
 
-    async undo() {
-        const undone = await undoEdit(this.recording);
+    async undo(options: { all?: boolean } = {}) {
+        let undone = await undoEdit(this.recording);
+        const ops = [...(undone.undone ?? [])];
+
+        while (options.all && undoDepth(undone.path) > 0) {
+            undone = await undoEdit(this.recording);
+            ops.push(...(undone.undone ?? []));
+        }
+
         return {
-            undone: undone.undone ?? [],
+            undone: ops,
             stepsLeft: undoDepth(undone.path),
             ...describeProject(undone.project, undone.path),
         };
