@@ -9,6 +9,7 @@ import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
 import {
     applyOp,
     autoZoom,
+    describeProject,
     editProjectSchema,
     findInTranscript,
     outputDurationUs,
@@ -517,6 +518,25 @@ describe("edit project (edit.json)", () => {
         expect(() => applyOp(hidden, { op: "unredact", id: "nope" })).toThrow(`redactions: ${redaction?.id}`);
         // A cut keeps it in source time.
         expect(applyOp(hidden, { op: "cut", from: 0, to: 0.5 }).redactions?.[0]?.startUs).toBe(1_000_000);
+        // A text sits in the canvas with its defaults, follows source time, and goes with untext.
+        const titled = applyOp(project, { op: "text", from: 1, to: 2.5, text: "  Step 1: sign in " });
+        const [note] = titled.texts ?? [];
+        expect(note).toMatchObject({
+            startUs: 1_000_000,
+            endUs: 2_500_000,
+            text: "Step 1: sign in",
+            x: 0.5,
+            y: 0.12,
+            style: "plate",
+        });
+        expect(describeProject(titled, "/p/edit.json").texts[0]).toMatchObject({
+            from: 1,
+            to: 2.5,
+            at: { x: 0.5, y: 0.12 },
+        });
+        expect(() => applyOp(project, { op: "text", from: 1, to: 2, text: " " })).toThrow();
+        expect(applyOp(titled, { op: "untext", id: note?.id ?? "" }).texts).toBeUndefined();
+        expect(() => applyOp(titled, { op: "untext", id: "nope" })).toThrow(`texts: ${note?.id}`);
         // A name is trimmed and kept; a blank one is left out.
         const named = applyOp(project, {
             op: "redact",

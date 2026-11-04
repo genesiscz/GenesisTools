@@ -446,7 +446,10 @@ private struct MarksLaneView: View {
                     context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
                 }
             }
-            for line in captions { bar(&context, line.fromUs, line.toUs, row: 5, color: Color(red: 0.36, green: 0.62, blue: 1).opacity(0.8)) }
+            for line in captions { bar(&context, line.fromUs, line.toUs, row: 2, color: Color(red: 0.36, green: 0.62, blue: 1).opacity(0.8)) }
+            for note in project.texts ?? [] {
+                bar(&context, note.startUs, note.endUs, row: 9, color: Color(red: 0.3, green: 0.85, blue: 0.5).opacity(0.85))
+            }
             for marker in markers {
                 guard let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project) else { continue }
                 let x = scale.x(outUs)
@@ -474,7 +477,7 @@ private struct MarksLaneView: View {
             }
         }
         .frame(height: TimelineView.marksLaneHeight)
-        .instantTooltip("Markers (purple flags), caption lines (blue) and shortcuts (white lines)")
+        .instantTooltip("Markers (purple flags), caption lines (blue), texts (green) and shortcuts (white lines)")
         .accessibilityElement()
         .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
     }

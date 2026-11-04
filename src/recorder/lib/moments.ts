@@ -1,17 +1,33 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type EditProject, outputTimeOf, transcriptCachePath } from "@genesiscz/utils/recording-editor/project";
-import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { RECORDING_MANIFEST, readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
 import { listLibrary } from "./library";
 
 const { log } = logger.scoped("recorder-moments");
 
+/**
+ * The recording folder an opened edit belongs to: the edit file's own folder when it holds a manifest (a copied
+ * recording keeps its edit, whose movie may still point at the original), else the movie's folder; undefined for a
+ * plain movie.
+ */
+export function recordingFolderOf(opened: { path: string; project: EditProject }): string | undefined {
+    return [dirname(opened.path), dirname(opened.project.source.video)].find((folder) =>
+        existsSync(join(folder, RECORDING_MANIFEST))
+    );
+}
+
 /** The moments marked while it recorded, from its manifest, with where each plays in the edit (null when cut). */
-export function markersOf(project: EditProject): Array<{ at: number; plays: number | null; label: string }> {
-    const manifest = readRecordingManifest(dirname(project.source.video));
+export function markersOf(opened: {
+    path: string;
+    project: EditProject;
+}): Array<{ at: number; plays: number | null; label: string }> {
+    const { project } = opened;
+    const folder = recordingFolderOf(opened);
+    const manifest = folder ? readRecordingManifest(folder) : undefined;
     const parsed = z
         .array(z.object({ atMs: z.number(), label: z.string() }))
         .safeParse(manifest?.settings.markers ?? []);

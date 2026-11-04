@@ -274,14 +274,14 @@ program
     .option("--chapters", 'as "0:00 Intro" chapter lines for a video description (cut markers left out)')
     .action(async (value: string, flags: { chapters?: boolean }) => {
         try {
-            const { project } = await openProject(value);
+            const opened = await openProject(value);
 
             if (flags.chapters) {
-                out.print(`${chaptersOf(markersOf(project)).join("\n")}\n`);
+                out.print(`${chaptersOf(markersOf(opened)).join("\n")}\n`);
                 return;
             }
 
-            out.result(markersOf(project));
+            out.result(markersOf(opened));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

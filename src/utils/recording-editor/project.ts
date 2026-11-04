@@ -123,6 +123,26 @@ export const redactionSchema = z.object({
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
+export const TEXT_STYLES = ["plate", "plain"] as const;
+
+/**
+ * A line of text over the picture for a time (a title, a step's name, a note), in the CANVAS: it stays where it is
+ * through a zoom. `x`/`y` are its centre, 0...1 of the canvas from the top left; it fades in and out over 0.2 s.
+ */
+export const textNoteSchema = z.object({
+    id: z.string(),
+    startUs: z.number().int().nonnegative(),
+    endUs: z.number().int().positive(),
+    text: z.string().min(1).max(200),
+    x: z.number().min(0).max(1).default(0.5),
+    y: z.number().min(0).max(1).default(0.12),
+    /** The text height, as a fraction of the canvas's short side. */
+    size: z.number().min(0.02).max(0.15).default(0.055),
+    /** `plate`: white on a dark rounded plate; `plain`: white with a soft shadow. */
+    style: z.enum(TEXT_STYLES).default("plate"),
+});
+export type EditTextNote = z.infer<typeof textNoteSchema>;
+
 const rectSchema = z
     .object({
         x: z.number().min(0).max(1),
@@ -187,6 +207,8 @@ export const editProjectSchema = z.object({
     keys: keysSchema.optional(),
     /** Absent is none; written only once a redaction exists, so an older reader keeps its files. */
     redactions: z.array(redactionSchema).optional(),
+    /** Absent is none; written only once a text exists. */
+    texts: z.array(textNoteSchema).optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -195,7 +217,7 @@ export type EditProject = z.infer<typeof editProjectSchema>;
 export type EditClip = EditProject["clips"][number];
 export type EditZoom = EditProject["zooms"][number];
 
-export function newId(prefix: "c" | "z" | "r"): string {
+export function newId(prefix: "c" | "z" | "r" | "t"): string {
     return `${prefix}${randomUUID().slice(0, 8)}`;
 }
 
@@ -613,6 +635,20 @@ export const editOpSchema = z.discriminatedUnion("op", [
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
+    z
+        .object({
+            op: z.literal("text"),
+            from: timeSchema,
+            to: timeSchema,
+            text: z.string().trim().min(1).max(200),
+            /** The centre, 0...1 of the canvas from the top left; 0.5, 0.12 (top middle) by default. */
+            x: z.number().min(0).max(1).optional(),
+            y: z.number().min(0).max(1).optional(),
+            size: z.number().min(0.02).max(0.15).optional(),
+            style: z.enum(TEXT_STYLES).optional(),
+        })
+        .strict(),
+    z.object({ op: z.literal("untext"), id: z.string() }).strict(),
     z.object({ op: z.literal("autoZoom"), scale: z.number().min(1).max(4).optional() }).strict(),
     z.object({ op: z.literal("volume"), volume: z.number().min(0).max(2) }).strict(),
     z.object({ op: z.literal("mute"), track: z.number().int().nonnegative(), muted: z.boolean().optional() }).strict(),
@@ -824,6 +860,33 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
 
             return { ...project, redactions: list.filter((redaction) => redaction.id !== op.id) };
         }
+        case "text": {
+            const fromUs = timeToUs(op.from);
+            const toUs = timeToUs(op.to);
+            checkRange(project, fromUs, toUs);
+            const note = textNoteSchema.parse({
+                id: newId("t"),
+                startUs: fromUs,
+                endUs: Math.min(project.source.durationUs, toUs),
+                // applyOp also takes an op that was never parsed, so the trim happens here too.
+                text: op.text.trim(),
+                ...(op.x === undefined ? {} : { x: op.x }),
+                ...(op.y === undefined ? {} : { y: op.y }),
+                ...(op.size === undefined ? {} : { size: op.size }),
+                ...(op.style === undefined ? {} : { style: op.style }),
+            });
+            return { ...project, texts: [...(project.texts ?? []), note] };
+        }
+        case "untext": {
+            const list = project.texts ?? [];
+
+            if (!list.some((note) => note.id === op.id)) {
+                throw new Error(`no text ${op.id}; texts: ${list.map((note) => note.id).join(", ") || "none"}`);
+            }
+
+            const rest = list.filter((note) => note.id !== op.id);
+            return { ...project, texts: rest.length ? rest : undefined };
+        }
         case "autoZoom":
             return autoZoom(project, readCursorTrack(project.source.cursor), op.scale);
         case "volume":
@@ -959,6 +1022,15 @@ export function describeProject(project: EditProject, path: string) {
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
         captions: project.captions ?? null,
         keys: project.keys ?? null,
+        texts: (project.texts ?? []).map((note) => ({
+            id: note.id,
+            from: seconds(note.startUs),
+            to: seconds(note.endUs),
+            text: note.text,
+            at: { x: note.x, y: note.y },
+            size: note.size,
+            style: note.style,
+        })),
     };
 }
 

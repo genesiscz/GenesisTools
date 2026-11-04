@@ -63,6 +63,18 @@ program
     .option("--file <path>", "read the code from a file")
     .option("--timeout <ms>", "wall-clock budget", "30000")
     .option("--toolset [list]", `comma-separated toolsets to preload: ${REPL_TOOLSET_IDS.join(", ")}`)
+    .addHelpText(
+        "after",
+        [
+            "",
+            "Inside a turn:",
+            "  help()                     the loaded toolsets' docs",
+            '  search("cut")              the methods whose name, doc or parameters hold the words',
+            '  describe("movies")         the methods of one toolset or object (describe() lists every name)',
+            '  describe("movies.Movie.cut")  one method in full: signature, doc, parameters, result',
+            "Each `run` is a fresh process, so bindings do not survive between calls; the mcp server keeps them.",
+        ].join("\n")
+    )
     .action(async (code: string | undefined, opts: { file?: string; timeout: string; toolset?: string | boolean }) => {
         // Bun fires a timer scheduled with NaN or a negative delay immediately, so an unchecked
         // --timeout reports "the turn overran" for what is a bad argument.

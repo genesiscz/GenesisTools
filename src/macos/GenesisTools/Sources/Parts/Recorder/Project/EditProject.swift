@@ -26,6 +26,8 @@ struct EditProject: Codable, Equatable {
     var keys: Keys?
     /// Parts of the source picture hidden for a time; nil is none. Optional, so an older file decodes.
     var redactions: [Redaction]?
+    /// Lines of text over the picture for a time (titles, step names); nil is none.
+    var texts: [TextNote]?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -129,6 +131,23 @@ struct EditProject: Codable, Equatable {
         var style: RedactionStyle = .blur
         /// What it hides ("API token"), for the lists; absent shows the style.
         var label: String?
+    }
+
+    enum TextStyle: String, Codable, CaseIterable {
+        case plate, plain
+    }
+
+    /// A line of text in the CANVAS (it stays put through a zoom) from `startUs` to `endUs` of the source; `x`/`y`
+    /// is its centre, 0...1 from the top left, and `size` its height as a fraction of the short side.
+    struct TextNote: Codable, Equatable, Identifiable {
+        var id: String
+        var startUs: Int64
+        var endUs: Int64
+        var text: String
+        var x = 0.5
+        var y = 0.12
+        var size = 0.055
+        var style: TextStyle = .plate
     }
 
     struct Keys: Codable, Equatable {

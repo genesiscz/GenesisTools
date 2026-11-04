@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -18,6 +18,7 @@ import {
     outputDurationUs,
     REDACTION_STYLES,
     shortcutsOf,
+    TEXT_STYLES,
     type TranscriptLine,
     transcriptCachePath,
     transcriptLines,
@@ -30,7 +31,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./edit";
 import { ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
-import { chaptersOf, markersOf, searchLibrary } from "./moments";
+import { chaptersOf, markersOf, recordingFolderOf, searchLibrary } from "./moments";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -68,7 +69,8 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys, texts }";
+
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
 
@@ -77,8 +79,8 @@ const movieMethods = [
         name: "info",
         params: z.object({}),
         result: z.unknown(),
-        resultName: movieDoc,
-        doc: "The edit as it is on disk now (the window may have changed it).",
+        resultName: movieDoc.replace(" }", ", title, folder }"),
+        doc: "The edit as it is on disk now (the window may have changed it), with the recording's title and folder (null for a plain movie).",
         effect: "read",
     }),
     edit("split", z.object({ at: timeSchema }), "Splits the clip at a source time.", ["at"]),
@@ -117,6 +119,22 @@ const movieMethods = [
         'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black", label (what it hides, "API token"). It moves with a zoom. The result lists redactions with their ids.'
     ),
     edit("unredact", z.object({ id: z.string() }), "Removes a redaction by its id.", ["id"]),
+    edit(
+        "text",
+        z
+            .object({
+                from: timeSchema,
+                to: timeSchema,
+                text: z.string().trim().min(1).max(200),
+                x: z.number().min(0).max(1).optional(),
+                y: z.number().min(0).max(1).optional(),
+                size: z.number().min(0.02).max(0.15).optional(),
+                style: z.enum(TEXT_STYLES).optional(),
+            })
+            .strict(),
+        'Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids.'
+    ),
+    edit("untext", z.object({ id: z.string() }), "Removes a text by its id.", ["id"]),
     edit(
         "autoZoom",
         z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
@@ -287,8 +305,8 @@ const movieMethods = [
         params: z.object({ title: z.string().min(1).max(120) }),
         positional: ["title"],
         result: z.unknown(),
-        resultName: "{ id, title }",
-        doc: "Gives the recording a new title (the library, the editor window and movies.list() show it); only a recording folder has one.",
+        resultName: "{ id, title, folder }",
+        doc: "Gives the recording a new title (the library, the editor window, info() and movies.list() show it); a plain movie has no title and refuses.",
         effect: "reversible",
     }),
     defineMethod({
@@ -296,7 +314,7 @@ const movieMethods = [
         params: z.object({ intro: z.string().optional(), minSeconds: z.number().positive().optional() }),
         result: z.unknown(),
         resultName: "string[]",
-        doc: 'The markers as video chapters, "0:00 Intro" lines in output time for a YouTube or Vimeo description: a first chapter at 0:00 (named intro, "Intro" by default), cut markers left out, a marker under minSeconds (10) after the one before it left out.',
+        doc: 'The markers as video chapters, "0:00 Intro" lines in output time for a YouTube or Vimeo description: none without markers; with markers a first chapter at 0:00 (named intro, "Intro" by default), cut markers left out, a marker under minSeconds (10) after the one before it left out.',
         effect: "read",
     }),
     defineMethod({
@@ -411,7 +429,13 @@ export class Movie {
 
     async info() {
         const opened = await openProject(this.recording);
-        return describeProject(opened.project, opened.path);
+        const folder = recordingFolderOf(opened);
+        const manifest = folder ? readRecordingManifest(folder) : undefined;
+        return {
+            ...describeProject(opened.project, opened.path),
+            title: manifest?.title ?? null,
+            folder: folder ?? null,
+        };
     }
 
     private async change(ops: EditOp[]) {
@@ -459,6 +483,14 @@ export class Movie {
 
     async unredact(id: string) {
         return this.change([{ op: "unredact", id }]);
+    }
+
+    async text(options: Omit<Extract<EditOp, { op: "text" }>, "op">) {
+        return this.change([{ op: "text", ...options }]);
+    }
+
+    async untext(id: string) {
+        return this.change([{ op: "untext", id }]);
     }
 
     async autoZoom(options: { scale?: number } = {}) {
@@ -692,17 +724,25 @@ export class Movie {
 
     /** The moments marked while it recorded (`recording.mark()`, `tools recorder mark`), with where each plays. */
     async markers() {
-        return markersOf((await openProject(this.recording)).project);
+        return markersOf(await openProject(this.recording));
     }
 
     async rename(title: string) {
-        const { project } = await openProject(this.recording);
-        const manifest = renameRecording(dirname(project.source.video), title);
-        return { id: manifest.id, title: manifest.title };
+        const opened = await openProject(this.recording);
+        const folder = recordingFolderOf(opened);
+
+        if (!folder) {
+            throw new Error(
+                `${opened.project.source.video} is a plain movie, not a recording folder, so it has no title to change`
+            );
+        }
+
+        const manifest = renameRecording(folder, title);
+        return { id: manifest.id, title: manifest.title, folder };
     }
 
     async chapters(options: { intro?: string; minSeconds?: number } = {}) {
-        return chaptersOf(markersOf((await openProject(this.recording)).project), options);
+        return chaptersOf(markersOf(await openProject(this.recording)), options);
     }
 
     async show(options: { focus?: boolean } = {}) {

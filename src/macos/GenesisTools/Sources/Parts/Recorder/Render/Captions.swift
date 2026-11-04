@@ -60,22 +60,23 @@ final class TextPlates: @unchecked Sendable {
     private let lock = NSLock()
     private var images: [String: CIImage] = [:]
 
-    func plate(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold) -> CIImage? {
-        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)"
+    /// `plain`: no plate, the text with a soft shadow, for a title over a busy picture.
+    func plate(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold, plain: Bool = false) -> CIImage? {
+        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)"
         lock.lock()
         if let cached = images[key] {
             lock.unlock()
             return cached
         }
         lock.unlock()
-        guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight) else { return nil }
+        guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, plain: plain) else { return nil }
         lock.lock()
         images[key] = image
         lock.unlock()
         return image
     }
 
-    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight) -> CIImage? {
+    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight, plain: Bool) -> CIImage? {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         let attributed = NSAttributedString(string: text, attributes: [
@@ -91,9 +92,13 @@ final class TextPlates: @unchecked Sendable {
               let context = CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         let plate = CGPath(roundedRect: CGRect(origin: .zero, size: size), cornerWidth: fontSize * 0.45, cornerHeight: fontSize * 0.45, transform: nil)
-        context.addPath(plate)
-        context.setFillColor(CGColor(gray: 0, alpha: 0.72))
-        context.fillPath()
+        if plain {
+            context.setShadow(offset: CGSize(width: 0, height: -fontSize * 0.04), blur: fontSize * 0.25, color: CGColor(gray: 0, alpha: 0.85))
+        } else {
+            context.addPath(plate)
+            context.setFillColor(CGColor(gray: 0, alpha: 0.72))
+            context.fillPath()
+        }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
         attributed.draw(with: CGRect(x: inset.width, y: inset.height, width: size.width - 2 * inset.width, height: bounds.height),
@@ -104,6 +109,22 @@ final class TextPlates: @unchecked Sendable {
 }
 
 extension Looks {
+    /// A text note centred at its point of the canvas (kept inside it), faded by `opacity`.
+    static func drawText(_ note: EditProject.TextNote, opacity: Double, plates: TextPlates, on image: CIImage, size: CGSize) -> CIImage {
+        let unit = min(size.width, size.height)
+        let fontSize = max(8, (note.size * unit).rounded())
+        guard var plate = plates.plate(note.text, fontSize: fontSize, maxWidth: size.width * 0.8, weight: .semibold,
+                                       plain: note.style == .plain) else { return image }
+        if opacity < 0.999 {
+            plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))])
+        }
+        let width = plate.extent.width, height = plate.extent.height
+        // The project counts y from the top; Core Image from the bottom.
+        let x = min(max(0, note.x * size.width - width / 2), max(0, size.width - width))
+        let y = min(max(0, (1 - note.y) * size.height - height / 2), max(0, size.height - height))
+        return plate.transformed(by: CGAffineTransform(translationX: x.rounded(), y: y.rounded())).composited(over: image)
+    }
+
     /// The caption plate centred near the bottom (or the top) of the output, sized from its short side. Returns the
     /// picture and the height the plate takes from its edge, so the keys overlay can sit beside it.
     static func drawCaption(_ line: CaptionTrack.Line, track: CaptionTrack, settings: EditProject.Captions, on image: CIImage,

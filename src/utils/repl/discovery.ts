@@ -19,15 +19,32 @@ function entries(apis: readonly ApiDescriptor[]) {
     ]);
 }
 
+/** A result schema that says nothing (z.unknown()) is only its `$schema` key. */
+function saysNothing(schema: unknown): boolean {
+    return typeof schema === "object" && schema !== null && Object.keys(schema).every((key) => key === "$schema");
+}
+
 function fullDescriptor(owner: string, method: MethodDescriptor): string {
+    const result = jsonSchemaOf(method.result, "output");
+    const resultLine = saysNothing(result)
+        ? `Result: ${method.resultName ?? "unknown"}`
+        : `Result: ${method.resultName ? `${method.resultName} ` : ""}${SafeJSON.stringify(result, null, 2)}`;
     return [
         methodSignature(owner, method),
         method.doc,
         `Effect: ${method.effect}`,
         `Parameters: ${SafeJSON.stringify(jsonSchemaOf(method.params), null, 2)}`,
-        `Result: ${SafeJSON.stringify(jsonSchemaOf(method.result, "output"), null, 2)}`,
-        `MCP: ${SafeJSON.stringify(method.mcp ?? {})}`,
+        resultLine,
+        ...(method.mcp && Object.keys(method.mcp).length ? [`MCP: ${SafeJSON.stringify(method.mcp)}`] : []),
     ].join("\n");
+}
+
+/** One line per method of an owner (`movies`, `movies.Movie`, or its alias `movie`), like search's lines. */
+function ownerListing(list: ReturnType<typeof entries>, owner: string): string {
+    return list
+        .filter((entry) => entry.owner === owner)
+        .map(({ method }) => `${methodSignature(owner, method)} [${method.effect}] — ${method.doc}`)
+        .join("\n");
 }
 
 export function searchMethods(apis: readonly ApiDescriptor[], query: string): string {
@@ -44,17 +61,54 @@ export function searchMethods(apis: readonly ApiDescriptor[], query: string): st
     );
 }
 
-export function describeMethod(apis: readonly ApiDescriptor[], name: string): string {
-    const matches = entries(apis).filter(
-        ({ owner, alias, method }) =>
-            `${owner}.${method.name}` === name || `${alias}.${method.name}` === name || method.name === name
+/**
+ * One method in full (`movies.open`, `movies.Movie.cut`, its alias `movie.cut`, or a bare `cut` when only one
+ * method has the name), or every method of a toolset or object (`movies`, `movies.Movie`, `Movie`, `movie`).
+ * With no name it lists every toolset and object with its method names.
+ */
+export function describeMethod(apis: readonly ApiDescriptor[], name?: string): string {
+    const list = entries(apis);
+    const owners = [...new Set(list.map((entry) => entry.owner))];
+    const index = owners
+        .map(
+            (owner) =>
+                `${owner}: ${list
+                    .filter((entry) => entry.owner === owner)
+                    .map((entry) => entry.method.name)
+                    .join(", ")}`
+        )
+        .join("\n");
+
+    if (name === undefined || name.trim() === "") {
+        return `${index}\n\ndescribe("<owner>") lists one of them with docs; describe("<owner>.<method>") prints one in full.`;
+    }
+
+    const wanted = name.trim();
+    const owner = owners.find(
+        (one) =>
+            one === wanted ||
+            one.split(".").at(-1) === wanted ||
+            list.some((entry) => entry.owner === one && entry.alias === wanted && entry.alias !== entry.owner)
     );
 
-    if (matches.length !== 1) {
+    if (owner) {
+        return ownerListing(list, owner);
+    }
+
+    const matches = list.filter(
+        ({ owner, alias, method }) =>
+            `${owner}.${method.name}` === wanted || `${alias}.${method.name}` === wanted || method.name === wanted
+    );
+
+    if (matches.length === 1) {
+        return fullDescriptor(matches[0].owner, matches[0].method);
+    }
+
+    if (matches.length > 1) {
         throw new Error(
-            matches.length === 0 ? `Unknown method: ${name}` : `Ambiguous method: ${name}; use a fully qualified name.`
+            `Ambiguous method: ${wanted}; use one of ${matches.map((entry) => `${entry.owner}.${entry.method.name}`).join(", ")}`
         );
     }
 
-    return fullDescriptor(matches[0].owner, matches[0].method);
+    throw new Error(`Unknown method: ${wanted}. The loaded names:\n${index}`);
 }

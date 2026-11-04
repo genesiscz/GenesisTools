@@ -91,6 +91,7 @@ private struct InspectorView: View {
                 case .audio: AudioInspector(model: model)
                 case .export: ExportInspector(model: model)
                 case .hide: HideInspector(model: model)
+                case .text: TextInspector(model: model)
                 }
             }
             // A fixed width, so a wide row wraps or truncates instead of moving the column's left edge.
@@ -539,6 +540,95 @@ private struct CaptionsInspector: View {
 private func swiftColor(_ hex: String) -> Color {
     let color = Looks.color(hex)
     return Color(red: color.red, green: color.green, blue: color.blue)
+}
+
+/// Lines of text over the picture: a list, and for the selected one its words, place, size, style and length.
+private struct TextInspector: View {
+    @Bindable var model: EditorModel
+    private static let places: [(name: String, x: Double, y: Double)] = [
+        ("Top left", 0.2, 0.12), ("Top", 0.5, 0.12), ("Top right", 0.8, 0.12),
+        ("Left", 0.2, 0.5), ("Middle", 0.5, 0.5), ("Right", 0.8, 0.5),
+        ("Bottom left", 0.2, 0.88), ("Bottom", 0.5, 0.88), ("Bottom right", 0.8, 0.88),
+    ]
+
+    var body: some View {
+        let list = model.project.texts ?? []
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Text").font(.system(size: 15, weight: .semibold))
+            Text("A title or a step's name over the picture for a time. It stays in place through a zoom and fades in and out.")
+                .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            WideButton(title: "Add Text at Playhead", systemImage: "textformat") { model.addText() }
+                .instantTooltip("A 3 s text at the top middle, from the playhead")
+                .accessibilityIdentifier("recorder.text.add")
+            ForEach(list) { note in
+                let selected = model.selectedText == note.id
+                HStack(spacing: 4) {
+                    Button {
+                        model.selectedText = selected ? nil : note.id
+                        if !selected, let at = TimelineMap.outputTime(ofSource: note.startUs, in: model.project) { model.seek(at) }
+                    } label: {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(verbatim: note.text).font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                                Text(verbatim: editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)
+                                    .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: selected ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(RecorderPalette.dim)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.genHoverRow())
+                    .accessibilityLabel("Text \(note.text), \(editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)")
+                    IconButton(systemName: "trash", tooltip: "Delete this text", size: 12) { model.deleteText(note.id) }
+                }
+                if selected { editor(note) }
+            }
+        }
+    }
+
+    private func editor(_ note: EditProject.TextNote) -> some View {
+        let id = note.id
+        return VStack(alignment: .leading, spacing: 8) {
+            TextField("Text", text: Binding(get: { note.text }, set: { value in
+                let words = String(value.prefix(200))
+                if !words.trimmingCharacters(in: .whitespaces).isEmpty { model.updateText(id) { $0.text = words } }
+            }), axis: .vertical)
+            .lineLimit(1...3)
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("recorder.text.words")
+            SectionLabel(text: "Place")
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 3), spacing: 6) {
+                ForEach(Self.places, id: \.name) { place in
+                    let here = abs(note.x - place.x) < 0.01 && abs(note.y - place.y) < 0.01
+                    Button { model.updateText(id) { $0.x = place.x; $0.y = place.y } } label: {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(here ? RecorderPalette.zoom : Color.white.opacity(0.08))
+                            .frame(width: 30, height: 20)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip(place.name)
+                    .accessibilityLabel("Place \(place.name)")
+                }
+            }
+            GenSegmentedTabs("Style", items: [.init(EditProject.TextStyle.plate, "On a plate"), .init(.plain, "Plain")],
+                             selection: Binding(get: { note.style }, set: { value in model.updateText(id) { $0.style = value } }),
+                             minSegmentWidth: 90, identifier: "recorder.text.style")
+            SectionLabel(text: "Size", value: String(format: "%.1f%%", note.size * 100))
+            Slider(value: Binding(get: { note.size }, set: { value in model.updateText(id) { $0.size = (value * 1000).rounded() / 1000 } }), in: 0.02...0.15)
+                .accessibilityIdentifier("recorder.text.size")
+            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(note.endUs - note.startUs) / 1_000_000))
+            Slider(value: Binding(get: { Double(note.endUs - note.startUs) / 1_000_000 }, set: { value in
+                model.updateText(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
+            }), in: 0.2...max(0.3, Double(model.project.source.durationUs - note.startUs) / 1_000_000))
+            WideButton(title: "Delete", systemImage: "trash", role: .destructive) { model.deleteText(id) }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
+    }
 }
 
 /// The parts of the picture to hide: a list, and for the selected one a frame to drag it on, its size, style and time.

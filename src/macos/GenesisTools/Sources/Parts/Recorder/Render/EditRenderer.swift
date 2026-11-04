@@ -75,6 +75,8 @@ final class ZoomState: @unchecked Sendable {
         var key: KeyMark?
         /// The redactions active at the frame's source time.
         var redactions: [EditProject.Redaction] = []
+        /// The texts showing at the frame's source time, each with its fade.
+        var texts: [(note: EditProject.TextNote, opacity: Double)] = []
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -113,7 +115,18 @@ final class ZoomState: @unchecked Sendable {
                              guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          },
-                         redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs })
+                         redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs },
+                         texts: Self.texts(atSourceUs: sourceUs, project: project))
+    }
+
+    /// The texts showing at a source time, each fading in and out over 0.2 s (less for a short one).
+    static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double)] {
+        (project.texts ?? []).compactMap { note in
+            guard us >= note.startUs, us < note.endUs else { return nil }
+            let fade = Double(min(200_000, max(1, (note.endUs - note.startUs) / 3)))
+            let opacity = min(1, Double(us - note.startUs) / fade, Double(note.endUs - us) / fade)
+            return (note, max(0, opacity))
+        }
     }
 
     /// The cursor, averaged over ±0.7 s and moved into the zoomed view; the centre without a track or a cover fit.
@@ -285,6 +298,10 @@ struct EditRenderer {
                 let sameEdge = look.caption?.settings.position == key.settings.position
                 result = Looks.drawKey(key.label, opacity: key.opacity, plates: zoom.keyPlates, settings: key.settings, on: result,
                                        size: size, below: sameEdge ? captionUsed - min(size.width, size.height) * 0.05 : 0)
+                    .cropped(to: CGRect(origin: .zero, size: size))
+            }
+            for text in look.texts {
+                result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             if let cursor {

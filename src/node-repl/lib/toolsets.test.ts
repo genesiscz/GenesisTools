@@ -1,15 +1,16 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
-import { chaptersOf } from "@app/recorder/lib/moments";
+import { chaptersOf, recordingFolderOf } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
+import { wholeProject } from "@genesiscz/utils/recording-editor/project";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecordingHandle, recorderApi } from "@genesiscz/utils/repl/toolsets/recorder";
@@ -179,6 +180,29 @@ describe("movie chapters", () => {
             )
         ).toEqual(["0:00 Start", "0:30 Next"]);
         expect(chaptersOf([])).toEqual([]);
+    });
+
+    test("a copied recording's edit belongs to the copy, even when its movie is still the original's", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-folder-"));
+        const original = join(root, "original");
+        const copy = join(root, "copy");
+        const plain = join(root, "plain");
+        for (const folder of [original, copy, plain]) {
+            mkdirSync(folder, { recursive: true });
+        }
+        writeFileSync(join(original, "recording.json"), "{}");
+        writeFileSync(join(copy, "recording.json"), "{}");
+        const project = wholeProject({
+            video: join(original, "screen.mp4"),
+            durationUs: 1_000_000,
+            width: 10,
+            height: 10,
+        });
+
+        expect(recordingFolderOf({ path: join(copy, "edit.json"), project })).toBe(copy);
+        expect(recordingFolderOf({ path: join(original, "edit.json"), project })).toBe(original);
+        const loose = wholeProject({ video: join(plain, "movie.mp4"), durationUs: 1_000_000, width: 10, height: 10 });
+        expect(recordingFolderOf({ path: join(plain, "movie.edit.json"), project: loose })).toBeUndefined();
     });
 });
 

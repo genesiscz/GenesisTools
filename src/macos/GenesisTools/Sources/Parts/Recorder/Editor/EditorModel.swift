@@ -17,7 +17,7 @@ enum EditorSelection: Equatable {
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case zoom, clip, hide, style, cursor, captions, audio, export
+    case zoom, clip, hide, text, style, cursor, captions, audio, export
     var id: String { rawValue }
 
     var symbol: String {
@@ -25,6 +25,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .zoom: "plus.magnifyingglass"
         case .clip: "film"
         case .hide: "eye.slash"
+        case .text: "textformat"
         case .style: "paintpalette"
         case .cursor: "cursorarrow.rays"
         case .captions: "captions.bubble"
@@ -38,6 +39,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .zoom: "Zoom"
         case .clip: "Clips"
         case .hide: "Hide Parts"
+        case .text: "Text"
         case .style: "Style"
         case .cursor: "Cursor and Clicks"
         case .captions: "Captions and Shortcuts"
@@ -252,6 +254,45 @@ final class EditorModel {
 
     /// The redaction the Hide tab edits.
     var selectedRedaction: String?
+
+    /// The text the Text tab edits.
+    var selectedText: String?
+
+    /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
+    func addText(_ text: String = "Title") {
+        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
+        let end = min(project.source.durationUs, start + 3_000_000)
+        guard end - start >= 100_000 else {
+            show("The playhead is at the end of the recording; move it back to add a text.", error: false)
+            return
+        }
+        let id = "t" + UUID().uuidString.prefix(8).lowercased()
+        var next = project
+        next.texts = (next.texts ?? []) + [EditProject.TextNote(id: id, startUs: start, endUs: end, text: text)]
+        selectedText = id
+        tab = .text
+        apply(next, rebuildMovie: false)
+    }
+
+    func updateText(_ id: String, _ change: (inout EditProject.TextNote) -> Void) {
+        guard var list = project.texts, let index = list.firstIndex(where: { $0.id == id }) else { return }
+        change(&list[index])
+        list[index].x = min(max(0, list[index].x), 1)
+        list[index].y = min(max(0, list[index].y), 1)
+        list[index].size = min(max(0.02, list[index].size), 0.15)
+        list[index].endUs = max(list[index].startUs + 100_000, min(project.source.durationUs, list[index].endUs))
+        var next = project
+        next.texts = list
+        apply(next, rebuildMovie: false)
+    }
+
+    func deleteText(_ id: String) {
+        var next = project
+        next.texts = (next.texts ?? []).filter { $0.id != id }
+        if next.texts?.isEmpty == true { next.texts = nil }
+        if selectedText == id { selectedText = nil }
+        apply(next, rebuildMovie: false)
+    }
 
     /// How the source picture maps onto the canvas at the playhead: the zoom there and the frame (for the preview's
     /// hidden-part handles).

@@ -44,6 +44,10 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   hidden from `startUs` to `endUs` by `blur`, `pixelate` or `black`; drawn before the zoom, so they move with it. An
   optional `label` names what it hides ("API token"). In the editor a hidden part is drawn, moved and sized on the
   preview itself (Hide tab), and moved or trimmed on its own timeline lane.
+- `texts` (optional): lines of text over the picture (a title, a step's name) from `startUs` to `endUs`: `text`,
+  `x`/`y` its centre as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by default), `size` 0.02 to
+  0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over 0.2 s. Ops `text` and
+  `untext`; the editor's Text tab.
 - `zooms`: `startUs`, `endUs`, `scale` 1 to 4, `mode` `manual` (a `focusX`/`focusY` point) or `follow` (the cursor),
   `easeInMs`/`easeOutMs` on a (0.16, 1, 0.3, 1) curve.
 - `audio`: `include`, `volume` 0 to 2, `mutedTracks`.
