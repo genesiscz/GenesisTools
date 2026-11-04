@@ -14,6 +14,7 @@ import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/ser
 import { type BoardStopDeps, stopAgentSession } from "@app/hub/lib/board/stop";
 import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
+import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
 import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -27,6 +28,7 @@ export const GATEWAY_ROWS = {
     agents: ENDPOINTS.gatewayAgents,
     board: ENDPOINTS.gatewayBoard,
     gates: ENDPOINTS.gatewayGates,
+    launch: ENDPOINTS.gatewayLaunch,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
     stuck: ENDPOINTS.gatewayStuck,
@@ -66,6 +68,8 @@ export interface GatewayDeps {
     send?: BoardSendDeps;
     /** The raise route's ledger and window openers; tests pass fakes, so no window opens. */
     gates?: GateRaiseDeps;
+    /** The new-agent route's runner; tests pass a fake, so no workspace opens. */
+    launch?: StartAgentDeps;
 }
 
 /**
@@ -135,6 +139,22 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             input: z.object({ id: z.string().min(1) }),
             invalid: "expected { id }",
             run: (input) => raiseGate(input.id, deps.gates),
+        }),
+        // A keyed write: a replayed start (a dropped answer) must not open a second workspace.
+        bindEndpoint(ENDPOINTS.agentsNew, {
+            input: z.object({
+                agent: z.string().min(1),
+                repo: z.string().min(1),
+                account: z.string().min(1),
+                prompt: z
+                    .string()
+                    .max(64 * 1024)
+                    .optional(),
+                name: z.string().max(80).optional(),
+                model: z.string().max(80).optional(),
+            }),
+            invalid: "expected { agent, repo, account, prompt?, name?, model? }",
+            run: (input) => startAgent(input, deps.launch),
         }),
         bindEndpoint(ENDPOINTS.gatewayUpload, {
             input: z.object({}),

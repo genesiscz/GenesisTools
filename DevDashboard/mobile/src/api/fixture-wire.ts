@@ -45,6 +45,7 @@ import {
     mockWeather,
 } from "@/api/fixtures/data";
 import { MOCK_GATES } from "@/api/fixtures/gates";
+import { MOCK_LAUNCH } from "@/api/fixtures/launch";
 import { fixtureAnswerForm, fixtureDraft, fixtureQueue, fixtureSendDrafts } from "@/api/fixtures/queue";
 
 /**
@@ -247,6 +248,14 @@ const ROUTES: FixtureRoute[] = [
         method: ENDPOINTS.gatesRaise.method,
         path: ENDPOINTS.gatesRaise.path,
         handle: ({ body }) => ({ id: text(body.id), outcome: "asked", detail: "mock data: no window on a Mac" }),
+    },
+
+    // The New agent sheet (F21); a start is refused, since a fixture has no cmux to open a workspace in.
+    { method: ENDPOINTS.gatewayLaunch.method, path: ENDPOINTS.gatewayLaunch.path, handle: () => MOCK_LAUNCH },
+    {
+        method: ENDPOINTS.agentsNew.method,
+        path: ENDPOINTS.agentsNew.path,
+        handle: () => ({ started: false, name: null, workspace: null, cwd: null, error: "mock data: no Mac to start on" }),
     },
 
     // The agents board (F9) and its session view; a stop is refused, since a fixture has no process to end.
