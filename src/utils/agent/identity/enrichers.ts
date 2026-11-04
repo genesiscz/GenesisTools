@@ -4,7 +4,15 @@ import { cmuxCallerEnricher } from "@genesiscz/utils/cmux/caller-enricher";
 import { logger } from "@genesiscz/utils/logger";
 import { t3codeCallerEnricher } from "@genesiscz/utils/t3code/caller-enricher";
 import { tmuxCallerEnricher } from "@genesiscz/utils/tmux/caller-enricher";
-import type { AgentIdentity, ContextEnricher, EnricherId, EnricherSlots, EnricherView } from "./types";
+import type {
+    AgentIdentity,
+    CallerHost,
+    ContextEnricher,
+    EnricherId,
+    EnricherSlots,
+    EnricherView,
+    IdentityField,
+} from "./types";
 
 const { log } = logger.scoped("agent-context");
 
@@ -40,10 +48,19 @@ const ENRICHERS: { readonly [Id in EnricherId]: ContextEnricher<Id> } = {
     account: accountCallerEnricher,
 };
 
-/** Where each enricher's slot goes in the identity, and the field its source is recorded under. */
+/** Whether a host slot carries more than its env thread id: the details only the host's own store gives. */
+function hasHostDetails(host: CallerHost): boolean {
+    return Object.keys(host).some((key) => key !== "app" && key !== "threadId");
+}
+
+/**
+ * Where each enricher's slot goes in the identity, and the source it records there. `field` is the identity field
+ * the slot fills: an override of that field wins, so its enricher does not run. Each observation records its own
+ * source path, so a cmux surface and a tmux pane in one `terminal` keep their own provenance.
+ */
 const PLACE: {
     readonly [Id in EnricherId]: {
-        field: "terminal" | "host" | "account";
+        field: Extract<IdentityField, "terminal" | "host" | "account">;
         put: (identity: AgentIdentity, value: EnricherSlots[Id]) => void;
     };
 } = {
@@ -51,24 +68,32 @@ const PLACE: {
         field: "terminal",
         put: (identity, value) => {
             identity.terminal = { ...identity.terminal, cmux: value };
+            identity.sources["terminal.cmux"] = "cmux";
         },
     },
     tmux: {
         field: "terminal",
         put: (identity, value) => {
             identity.terminal = { ...identity.terminal, tmux: value };
+            identity.sources["terminal.tmux"] = "tmux";
         },
     },
     t3code: {
         field: "host",
         put: (identity, value) => {
             identity.host = value;
+            identity.sources["host.threadId"] = "t3code";
+
+            if (hasHostDetails(value)) {
+                identity.sources["host.details"] = "t3code-store";
+            }
         },
     },
     account: {
         field: "account",
         put: (identity, value) => {
             identity.account = value;
+            identity.sources.account = "account";
         },
     },
 };
@@ -87,13 +112,17 @@ function runEnricher<Id extends EnricherId>(id: Id, identity: AgentIdentity, vie
 
     if (value !== undefined) {
         PLACE[id].put(identity, value);
-        identity.sources[PLACE[id].field] = id;
     }
 }
 
-/** Run every enricher over a local caller's identity, in place. */
-export function enrichIdentity(identity: AgentIdentity, view: EnricherView): void {
+/**
+ * Run every enricher over a local caller's identity, in place. A field the caller of `whoIsCalling` gave (`given`,
+ * the override keys) is an answer already: its enricher does not run, so it neither replaces the value nor reads.
+ */
+export function enrichIdentity(identity: AgentIdentity, view: EnricherView, given: ReadonlySet<IdentityField>): void {
     for (const id of Object.keys(ENRICHERS) as EnricherId[]) {
-        runEnricher(id, identity, view);
+        if (!given.has(PLACE[id].field)) {
+            runEnricher(id, identity, view);
+        }
     }
 }

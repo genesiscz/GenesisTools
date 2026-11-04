@@ -244,7 +244,7 @@ describe("the enrichers the gatherer unification added (agent identity module)",
             env: { CODEX_THREAD_ID: "x1", T3CODE_THREAD_ID: "t3-thread" },
         });
         expect(identity.host).toEqual({ app: "t3code", threadId: "t3-thread" });
-        expect(identity.sources.host).toBe("t3code");
+        expect(identity.sources["host.threadId"]).toBe("t3code");
     });
 
     it("the Claude subagent id: a Claude hook payload's agent_id reaches the runtime context as the subagent id", () => {

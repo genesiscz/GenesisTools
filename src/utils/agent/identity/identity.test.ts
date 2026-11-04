@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readT3ThreadDetails } from "@genesiscz/utils/t3code/caller-enricher";
 import { type CallerSource, clearGitFactsCache, readPeerCaller, whoIsCalling } from "./index";
@@ -349,5 +351,159 @@ describe("the git facet's cache", () => {
         git(["pack-refs", "--all"], repo);
         git(["commit", "-q", "--allow-empty", "-m", "third"], repo);
         expect(read()).toMatchObject({ branch: "feat/other", commitMessage: "third" });
+    });
+});
+
+describe("whoIsCalling: overrides and retargeting", () => {
+    const oldSession = {
+        origin: "local" as const,
+        env: { CLAUDE_EFFORT: "high" },
+        hook: {
+            caller: "claude" as const,
+            sessionId: "old",
+            model: "old-model",
+            transcriptPath: "/fixture/old.jsonl",
+            turnId: "old-turn",
+            subagentId: "old-agent",
+            toolUseId: "old-tool",
+        },
+    };
+
+    it("an override that names another session drops every fact of the old session", () => {
+        const identity = whoIsCalling(oldSession, { overrides: { sessionId: "new", turnId: "new-turn" } });
+
+        expect(identity).toMatchObject({ agent: "claude-code", sessionId: "new", turnId: "new-turn" });
+
+        for (const field of ["model", "transcriptPath", "subagentId", "toolUseId", "effort", "sessionTitle"] as const) {
+            expect([field, identity[field]]).toEqual([field, undefined]);
+            expect([field, identity.sources[field]]).toEqual([field, undefined]);
+        }
+
+        expect(identity.sources).toMatchObject({ sessionId: "override", turnId: "override" });
+    });
+
+    it("a retargeted caller's transcript facet looks up the NEW session, never keeps the old path", () => {
+        const home = scratch("retarget-home-");
+        const identity = whoIsCalling(oldSession, {
+            overrides: { sessionId: "new", cwd: "/fixture/project" },
+            facets: ["transcript", "model"],
+            home,
+        });
+
+        expect(identity).toMatchObject({ sessionId: "new", transcriptPath: null, model: null });
+        expect(identity.sources).toMatchObject({ transcriptPath: "transcript", model: "transcript" });
+    });
+
+    it("an override of the same session keeps the session's facts", () => {
+        const identity = whoIsCalling(oldSession, { overrides: { sessionId: "old" } });
+        expect(identity).toMatchObject({
+            transcriptPath: "/fixture/old.jsonl",
+            turnId: "old-turn",
+            model: "old-model",
+        });
+    });
+
+    it("a failed transcript or model lookup leaves the resolved caller intact and the facet unset", () => {
+        const locate = harnessDriver("claude").parts.locate;
+        const denied = Object.assign(new Error("EACCES: permission denied, scandir"), { code: "EACCES" });
+        const lookup = spyOn(locate, "callerTranscript").mockImplementation(() => {
+            throw denied;
+        });
+
+        try {
+            const identity = whoIsCalling(local({ CLAUDE_CODE_SESSION_ID: "s1", TMUX_PANE: "%4" }), {
+                facets: ["transcript", "model"],
+                overrides: { cwd: "/fixture/project" },
+            });
+
+            expect(lookup).toHaveBeenCalled();
+            expect(identity).toMatchObject({
+                agent: "claude-code",
+                sessionId: "s1",
+                terminal: { tmux: { pane: "%4" } },
+            });
+            expect(identity.transcriptPath).toBeUndefined();
+            expect(identity.model).toBeUndefined();
+            expect(identity.sources.transcriptPath).toBeUndefined();
+        } finally {
+            lookup.mockRestore();
+        }
+
+        const model = spyOn(harnessHooks("claude"), "currentModel").mockImplementation(() => {
+            throw denied;
+        });
+
+        try {
+            const identity = whoIsCalling(
+                {
+                    origin: "local",
+                    env: {},
+                    hook: { caller: "claude", sessionId: "s1", transcriptPath: "/fixture/t.jsonl" },
+                },
+                { facets: ["model"] }
+            );
+
+            expect(identity).toMatchObject({ sessionId: "s1", transcriptPath: "/fixture/t.jsonl" });
+            expect(identity.model).toBeUndefined();
+        } finally {
+            model.mockRestore();
+        }
+    });
+
+    it("an explicit account, terminal or host is never replaced by an enricher", () => {
+        const env = {
+            CLAUDE_CODE_SESSION_ID: "c1",
+            [accountEnvVar("claude")]: "ambient",
+            CMUX_SURFACE_ID: "ambient-surface",
+            TMUX_PANE: "%7",
+            T3CODE_THREAD_ID: "ambient-thread",
+        };
+        const account = { harness: "claude" as const, account: "explicit", proxyTarget: null };
+        const terminal = { tmux: { pane: "%1" } };
+        const host = { app: "t3code" as const, threadId: "explicit-thread" };
+        const identity = whoIsCalling(local(env), { overrides: { account, terminal, host } });
+
+        expect(identity).toMatchObject({ account, terminal, host });
+        expect(identity.terminal?.cmux).toBeUndefined();
+        expect(identity.sources).toMatchObject({ account: "override", terminal: "override", host: "override" });
+        expect(identity.sources["terminal.cmux"]).toBeUndefined();
+    });
+
+    it("an explicit null model, transcript or title is an answer: no lookup runs", () => {
+        const lookup = spyOn(harnessDriver("claude").parts.locate, "callerTranscript");
+
+        try {
+            const identity = whoIsCalling(local({ CLAUDE_CODE_SESSION_ID: "s1" }), {
+                facets: ["model", "transcript", "title"],
+                overrides: { model: null, transcriptPath: null, sessionTitle: null, cwd: "/fixture/project" },
+            });
+
+            expect(lookup).not.toHaveBeenCalled();
+            expect(identity).toMatchObject({ model: null, transcriptPath: null, sessionTitle: null });
+            expect(identity.sources).toMatchObject({
+                model: "override",
+                transcriptPath: "override",
+                sessionTitle: "override",
+            });
+        } finally {
+            lookup.mockRestore();
+        }
+    });
+});
+
+describe("provenance: each independent observation keeps its own source", () => {
+    it("cmux and tmux each record their own source, in either order", () => {
+        const identity = whoIsCalling(local({ CLAUDE_CODE_SESSION_ID: "c1", CMUX_SURFACE_ID: "s-1", TMUX_PANE: "%3" }));
+
+        expect(identity.sources["terminal.cmux"]).toBe("cmux");
+        expect(identity.sources["terminal.tmux"]).toBe("tmux");
+        expect(identity.sources.terminal).toBeUndefined();
+    });
+
+    it("the host thread id comes from the env, its details from the host's store", () => {
+        const env = { CODEX_THREAD_ID: "t1", T3CODE_THREAD_ID: "thread:x", T3CODE_HOME: scratch("t3-none-") };
+
+        expect(whoIsCalling(local(env)).sources).toMatchObject({ "host.threadId": "t3code" });
+        expect(whoIsCalling(local(env)).sources["host.details"]).toBeUndefined();
     });
 });

@@ -195,11 +195,11 @@ function applyOverrides(identity: AgentIdentity, options: WhoIsCallingOptions): 
     }
 }
 
-function readTitle(identity: AgentIdentity): void {
+function readTitle(identity: AgentIdentity, given: ReadonlySet<IdentityField>): void {
     const harness = harnessOfRuntimeAgent(identity.agent);
     const sessionId = identity.sessionId;
 
-    if (identity.sessionTitle || !harness || !sessionId) {
+    if (given.has("sessionTitle") || identity.sessionTitle || !harness || !sessionId) {
         return;
     }
 
@@ -255,28 +255,90 @@ export function callerModelOf(agent: CallerAgent, transcriptPath: string | null)
     return transcriptPath && harness ? harnessHooks(harness).currentModel(transcriptPath) : null;
 }
 
-function readTranscriptAndModel(
-    identity: AgentIdentity,
-    input: CallerInput,
-    options: WhoIsCallingOptions,
-    facets: Set<IdentityFacet>
-): void {
-    const needModel = facets.has("model") && !identity.model;
+/**
+ * The transcript and model facets. A given value (an override, null included) is the answer and nothing is read.
+ * Both lookups are optional facts: a failure (an unreadable folder, a race) is logged and leaves that fact unset,
+ * never a claim that the transcript does not exist, and every fact already resolved stands.
+ */
+function readTranscriptAndModel({
+    identity,
+    input,
+    options,
+    facets,
+    given,
+}: {
+    identity: AgentIdentity;
+    input: CallerInput;
+    options: WhoIsCallingOptions;
+    facets: Set<IdentityFacet>;
+    given: ReadonlySet<IdentityField>;
+}): void {
+    const needModel = facets.has("model") && !given.has("model") && !identity.model;
+    const needPath = facets.has("transcript") || needModel;
 
-    if ((facets.has("transcript") || needModel) && identity.transcriptPath === undefined) {
-        const path = callerTranscriptOf({
-            agent: identity.agent,
-            sessionId: identity.sessionId,
-            env: input.origin === "local" ? input.env : {},
-            cwds: [identity.cwd ?? "", identity.repoRoot ?? ""],
-            now: options.now,
-            home: options.home,
-        });
-        setFact(identity, "transcriptPath", path, "transcript");
+    if (needPath && !given.has("transcriptPath") && identity.transcriptPath === undefined) {
+        try {
+            const path = callerTranscriptOf({
+                agent: identity.agent,
+                sessionId: identity.sessionId,
+                env: input.origin === "local" ? input.env : {},
+                cwds: [identity.cwd ?? "", identity.repoRoot ?? ""],
+                now: options.now,
+                home: options.home,
+            });
+            setFact(identity, "transcriptPath", path, "transcript");
+        } catch (error) {
+            log.debug({ error, sessionId: identity.sessionId }, "agent-context: the transcript lookup failed");
+            return;
+        }
     }
 
-    if (needModel) {
+    if (!needModel) {
+        return;
+    }
+
+    try {
         setFact(identity, "model", callerModelOf(identity.agent, identity.transcriptPath ?? null), "transcript");
+    } catch (error) {
+        log.debug({ error, transcriptPath: identity.transcriptPath }, "agent-context: the model lookup failed");
+    }
+}
+
+/**
+ * The facts that belong to one session, not to the caller's place: when an override names another caller, the
+ * named session's values describe nobody it is, so they go unless the override gave them too. The requested facets
+ * then read them for the new session. `sourceMessage` keeps its own slot (set to undefined), as the runtime context
+ * always had it.
+ */
+const SESSION_BOUND = [
+    "sessionTitle",
+    "model",
+    "effort",
+    "transcriptPath",
+    "turnId",
+    "subagentId",
+    "toolUseId",
+] as const;
+
+function dropRetargetedFacts(
+    identity: AgentIdentity,
+    named: Pick<AgentIdentity, "agent" | "sessionId">,
+    given: ReadonlySet<IdentityField>
+): void {
+    if (identity.agent === named.agent && identity.sessionId === named.sessionId) {
+        return;
+    }
+
+    if (!given.has("sourceMessage")) {
+        identity.sourceMessage = undefined;
+        delete identity.sources.sourceMessage;
+    }
+
+    for (const field of SESSION_BOUND) {
+        if (!given.has(field)) {
+            delete identity[field];
+            delete identity.sources[field];
+        }
     }
 }
 
@@ -304,6 +366,7 @@ function readProcess(identity: AgentIdentity, input: CallerInput): void {
 
 function compose(input: CallerInput, options: WhoIsCallingOptions, sources: readonly CallerSource[]): AgentIdentity {
     const facets = new Set(options.facets ?? []);
+    const given = new Set(Object.keys(options.overrides ?? {}) as IdentityField[]);
     const identity: AgentIdentity = { agent: "unknown", sessionId: null, isInAgent: false, aiAgent: null, sources: {} };
     const readings = sources.flatMap((source) => {
         const reading = readSafely(source, input);
@@ -325,32 +388,24 @@ function compose(input: CallerInput, options: WhoIsCallingOptions, sources: read
     }
 
     applyOverrides(identity, options);
-
-    // A source message anchors a row of the named session; once an override names another caller it anchors nothing.
-    if (
-        !Object.hasOwn(options.overrides ?? {}, "sourceMessage") &&
-        (identity.agent !== named.agent || identity.sessionId !== named.sessionId)
-    ) {
-        identity.sourceMessage = undefined;
-        delete identity.sources.sourceMessage;
-    }
+    dropRetargetedFacts(identity, named, given);
 
     if (facets.has("title")) {
-        readTitle(identity);
+        readTitle(identity, given);
     }
 
-    readTranscriptAndModel(identity, input, options, facets);
+    readTranscriptAndModel({ identity, input, options, facets, given });
 
     if (facets.has("process")) {
         readProcess(identity, input);
     }
 
     if (input.origin === "local") {
-        enrichIdentity(identity, {
-            caller: { agent: identity.agent, sessionId: identity.sessionId },
-            env: input.env,
-            facets,
-        });
+        enrichIdentity(
+            identity,
+            { caller: { agent: identity.agent, sessionId: identity.sessionId }, env: input.env, facets },
+            given
+        );
     }
 
     return identity;

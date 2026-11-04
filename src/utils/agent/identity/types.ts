@@ -6,8 +6,9 @@ export type CallerAgent = AgentRuntimeContext["agent"];
 
 /**
  * Where one fact came from. A source names the caller (`hook-payload`, `caller-scope`, `mcp-peer`, `env`); a facet
- * or an enricher describes it (`git`, `history`, `process`, `transcript`, `cmux`, `tmux`, `t3code`, `account`);
- * `override` is a value the caller of `whoIsCalling` passed in.
+ * or an enricher describes it (`git`, `history`, `process`, `transcript`, `cmux`, `tmux`, `account`, `t3code` for the
+ * host's env thread id and `t3code-store` for the details read from the host's own database); `override` is a value
+ * the caller of `whoIsCalling` passed in.
  */
 export type FactSource =
     | "hook-payload"
@@ -25,6 +26,7 @@ export type FactSource =
     | "cmux"
     | "tmux"
     | "t3code"
+    | "t3code-store"
     | "account";
 
 /** The cmux surface a caller runs in, as its environment names it. */
@@ -107,10 +109,20 @@ export interface AgentIdentity {
     terminal?: CallerTerminals;
     host?: CallerHost;
     process?: CallerProcess;
-    sources: Partial<Record<IdentityField, FactSource>>;
+    sources: Partial<Record<FactPath, FactSource>>;
 }
 
 export type IdentityField = Exclude<keyof AgentIdentity, "sources">;
+
+/**
+ * A part of a field that an observer of its own fills: the cmux surface and the tmux pane sit side by side in
+ * `terminal`, and the host's thread id (its env) is a separate observation from the details its database adds. An
+ * override of the whole field is recorded under the field itself (`terminal`, `host`).
+ */
+export type FactPart = "terminal.cmux" | "terminal.tmux" | "host.threadId" | "host.details";
+
+/** What `sources` is keyed by: a whole field, or one independently observed part of it. */
+export type FactPath = IdentityField | FactPart;
 
 /**
  * The facts that cost I/O, filled only when asked. `cwd` is the session's live cwd (a process walk); `git` the six
