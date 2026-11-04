@@ -91,6 +91,23 @@ final class RecorderEditTests: XCTestCase {
         }
     }
 
+    func testLooksAreOptionalAndRoundTripTheShapeTheCliWrites() throws {
+        // The shape TypeScript's project.ts writes; a file from before the looks has neither key.
+        let old = #"{"version":1,"source":{"video":"/m.mp4","durationUs":10000000,"width":1920,"height":1080},"clips":[{"id":"c1","fromUs":0,"toUs":10000000,"speed":1}],"zooms":[],"audio":{"include":true,"volume":1,"mutedTracks":[]},"export":{"codec":"h264","maxHeight":0,"output":""},"revision":3}"#
+        let decoded = try EditProject.decode(Data(old.utf8))
+        XCTAssertNil(decoded.clicks)
+        XCTAssertNil(decoded.frame)
+
+        var styled = decoded
+        styled.clicks = EditProject.Clicks(highlight: true, color: "#FF453A", radius: 0.05, durationMs: 600)
+        styled.frame = EditProject.Frame(background: .init(kind: .color, colors: ["#101010"]), padding: 0.1, cornerRadius: 0.02, shadow: false)
+        XCTAssertEqual(try EditProject.decode(styled.encoded()), styled)
+        XCTAssertEqual(Looks.color("#FF8000").red, 1)
+        XCTAssertEqual(Looks.color("nonsense"), .white)
+        XCTAssertEqual(Looks.marks(atSourceMs: 1200, clicks: [.init(ms: 1000, x: 0.2, y: 0.3, click: "left")], durationMs: 400),
+                       [.init(x: 0.2, y: 0.3, progress: 0.5)])
+    }
+
     func testExportFpsKeepsFilmRatesAndLiftsScreenRecordings() {
         XCTAssertEqual(EditRenderer.exportFps(nominal: 45.26), 60)
         XCTAssertEqual(EditRenderer.exportFps(nominal: 120), 60)

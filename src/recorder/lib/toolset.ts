@@ -94,6 +94,37 @@ const movieMethods = [
     edit("undo", z.object({}), "Puts back the edit as it was before this handle's last change."),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
+        "clicks",
+        z
+            .object({
+                highlight: z.boolean().optional(),
+                color: z.string().optional(),
+                radius: z.number().min(0.005).max(0.2).optional(),
+                durationMs: z.number().int().min(100).max(3000).optional(),
+            })
+            .strict(),
+        'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450).'
+    ),
+    edit(
+        "frame",
+        z
+            .object({
+                enabled: z.boolean().optional(),
+                background: z
+                    .object({
+                        kind: z.enum(["none", "color", "gradient"]).optional(),
+                        colors: z.array(z.string()).optional(),
+                    })
+                    .strict()
+                    .optional(),
+                padding: z.number().min(0).max(0.3).optional(),
+                cornerRadius: z.number().min(0).max(0.1).optional(),
+                shadow: z.boolean().optional(),
+            })
+            .strict(),
+        'Puts the movie on a background: padding (0.06 of the height), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
+    ),
+    edit(
         "removeIdle",
         z
             .object({
@@ -249,6 +280,14 @@ export class Movie {
 
     reset() {
         return this.change([{ op: "reset" }]);
+    }
+
+    clicks(options: Omit<Extract<EditOp, { op: "clicks" }>, "op"> = {}) {
+        return this.change([{ op: "clicks", ...options }]);
+    }
+
+    frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {
+        return this.change([{ op: "frame", ...options }]);
     }
 
     removeIdle(options: { minSeconds?: number; keepSeconds?: number } = {}) {

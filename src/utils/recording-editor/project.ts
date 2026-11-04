@@ -38,6 +38,32 @@ const zoomSchema = z.object({
     easeOutMs: z.number().int().nonnegative().default(450),
 });
 
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
+
+/** Clicks drawn from the cursor track: a soft disc that grows and fades after each click. Absent is off. */
+export const clicksSchema = z.object({
+    highlight: z.boolean().default(true),
+    color: hexColor.default("#FFD60A"),
+    /** The disc's largest radius, as a fraction of the output height. */
+    radius: z.number().min(0.005).max(0.2).default(0.03),
+    durationMs: z.number().int().min(100).max(3000).default(450),
+});
+
+/** The movie on a background, scaled in by `padding`, with rounded corners and a shadow. Absent is the plain movie. */
+export const frameSchema = z.object({
+    background: z
+        .object({
+            kind: z.enum(["none", "color", "gradient"]).default("gradient"),
+            colors: z.array(hexColor).min(1).max(2).default(["#4F46E5", "#DB2777"]),
+        })
+        .default({ kind: "gradient", colors: ["#4F46E5", "#DB2777"] }),
+    /** The margin on every side, as a fraction of the output height. */
+    padding: z.number().min(0).max(0.3).default(0.06),
+    /** As a fraction of the output height. */
+    cornerRadius: z.number().min(0).max(0.1).default(0.012),
+    shadow: z.boolean().default(true),
+});
+
 export const editProjectSchema = z.object({
     version: z.number().int().default(EDIT_PROJECT_VERSION),
     source: z.object({
@@ -64,6 +90,8 @@ export const editProjectSchema = z.object({
             output: z.string().default(""),
         })
         .default({ codec: "h264", maxHeight: 0, output: "" }),
+    clicks: clicksSchema.optional(),
+    frame: frameSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -381,6 +409,32 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("reset") }).strict(),
     z
         .object({
+            op: z.literal("clicks"),
+            highlight: z.boolean().optional(),
+            color: hexColor.optional(),
+            radius: z.number().min(0.005).max(0.2).optional(),
+            durationMs: z.number().int().min(100).max(3000).optional(),
+        })
+        .strict(),
+    z
+        .object({
+            op: z.literal("frame"),
+            /** false removes the frame: the plain movie again. */
+            enabled: z.boolean().optional(),
+            background: z
+                .object({
+                    kind: z.enum(["none", "color", "gradient"]).optional(),
+                    colors: z.array(hexColor).min(1).max(2).optional(),
+                })
+                .strict()
+                .optional(),
+            padding: z.number().min(0).max(0.3).optional(),
+            cornerRadius: z.number().min(0).max(0.1).optional(),
+            shadow: z.boolean().optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("removeIdle"),
             /** The shortest still and silent stretch that is cut, in seconds. */
             minSeconds: z.number().min(0.5).max(600).default(2),
@@ -496,6 +550,28 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             };
         case "reset":
             return { ...wholeProject(project.source), revision: project.revision };
+        case "clicks": {
+            const { op: _op, ...change } = op;
+            return { ...project, clicks: clicksSchema.parse({ ...project.clicks, ...change }) };
+        }
+        case "frame": {
+            if (op.enabled === false) {
+                const { frame: _frame, ...rest } = project;
+                return rest;
+            }
+
+            const current = project.frame ?? frameSchema.parse({});
+            return {
+                ...project,
+                frame: frameSchema.parse({
+                    ...current,
+                    ...(op.padding === undefined ? {} : { padding: op.padding }),
+                    ...(op.cornerRadius === undefined ? {} : { cornerRadius: op.cornerRadius }),
+                    ...(op.shadow === undefined ? {} : { shadow: op.shadow }),
+                    background: { ...current.background, ...op.background },
+                }),
+            };
+        }
     }
 }
 
@@ -525,5 +601,7 @@ export function describeProject(project: EditProject, path: string) {
         })),
         audio: project.audio,
         export: project.export,
+        clicks: project.clicks ?? null,
+        frame: project.frame ?? null,
     };
 }

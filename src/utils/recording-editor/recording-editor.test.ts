@@ -417,6 +417,30 @@ describe("edit project (edit.json)", () => {
         ]);
     });
 
+    test("clicks and frame are optional looks with defaults, merged on change and removable", () => {
+        const project = wholeProject(source);
+        expect(project.clicks).toBeUndefined();
+        expect(project.frame).toBeUndefined();
+
+        const clicked = applyOp(project, { op: "clicks", radius: 0.05 });
+        expect(clicked.clicks).toEqual({ highlight: true, color: "#FFD60A", radius: 0.05, durationMs: 450 });
+        expect(applyOp(clicked, { op: "clicks", highlight: false }).clicks?.radius).toBe(0.05);
+
+        const framed = applyOp(project, {
+            op: "frame",
+            padding: 0.1,
+            background: { kind: "color", colors: ["#101010"] },
+        });
+        expect(framed.frame).toEqual({
+            background: { kind: "color", colors: ["#101010"] },
+            padding: 0.1,
+            cornerRadius: 0.012,
+            shadow: true,
+        });
+        expect(applyOp(framed, { op: "frame", enabled: false }).frame).toBeUndefined();
+        expect(() => parseEditOps({ op: "clicks", color: "yellow" })).toThrow("a color is #RRGGBB");
+    });
+
     test("writes every field the Swift decoder needs and refuses a newer version", () => {
         const dir = mkdtempSync(join(tmpdir(), "edit-project-"));
         const path = join(dir, "edit.json");

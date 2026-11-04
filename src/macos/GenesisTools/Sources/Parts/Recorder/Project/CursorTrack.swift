@@ -12,9 +12,12 @@ final class CursorTrack: @unchecked Sendable {
     }
 
     let samples: [Sample]
+    /// The presses, in time order; kept once because the click highlight reads them for every frame.
+    let clicks: [Sample]
 
     init(samples: [Sample]) {
         self.samples = samples.sorted { $0.ms < $1.ms }
+        clicks = self.samples.filter { $0.click != nil }
     }
 
     static func load(_ path: String?) -> CursorTrack? {
@@ -29,7 +32,6 @@ final class CursorTrack: @unchecked Sendable {
         return samples.isEmpty ? nil : CursorTrack(samples: samples)
     }
 
-    var clicks: [Sample] { samples.filter { $0.click != nil } }
 
     /// The cursor position averaged over 300 ms around the time, so a followed zoom glides instead of shaking.
     func smoothedPoint(atUs us: Int64) -> (x: Double, y: Double)? {

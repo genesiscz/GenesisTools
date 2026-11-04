@@ -17,13 +17,14 @@ enum EditorSelection: Equatable {
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case zoom, clip, audio, export
+    case zoom, clip, style, audio, export
     var id: String { rawValue }
 
     var symbol: String {
         switch self {
         case .zoom: "plus.magnifyingglass"
         case .clip: "scissors"
+        case .style: "paintpalette"
         case .audio: "speaker.wave.2"
         case .export: "square.and.arrow.up"
         }
@@ -33,6 +34,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .zoom: "Zoom"
         case .clip: "Clip and speed"
+        case .style: "Style"
         case .audio: "Audio"
         case .export: "Export"
         }
@@ -245,6 +247,13 @@ final class EditorModel {
         apply(next, rebuildMovie: true)
     }
 
+    /// The looks (frame and click highlight): drawn per frame from the project, so no movie rebuild.
+    func setLooks(_ change: (inout EditProject) -> Void) {
+        var next = project
+        change(&next)
+        apply(next, rebuildMovie: false)
+    }
+
     func setExport(_ change: (inout EditProject.ExportSettings) -> Void) {
         var next = project
         change(&next.export)
@@ -252,7 +261,7 @@ final class EditorModel {
     }
 
     /// One zoom on every click of the cursor track: clicks closer than 3 s share a zoom, which starts 0.6 s before
-    /// its first click and holds 1.6 s after its last. Replaces the zooms the recording had.
+    /// its first click and holds 1.6 s after its last. Replaces earlier auto zooms and keeps the manual ones.
     func autoZoom() {
         guard let cursor, !cursor.clicks.isEmpty else {
             show("This recording has no clicks to zoom on (no cursor track).", error: false)

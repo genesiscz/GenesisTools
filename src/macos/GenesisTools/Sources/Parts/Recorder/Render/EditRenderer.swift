@@ -20,13 +20,27 @@ final class ZoomState: @unchecked Sendable {
         lock.unlock()
     }
 
-    func view(atOutput outUs: Int64) -> ZoomCurve.View {
+
+    /// Everything one frame draws: the zoom, the clicks animating at its source time, and the frame style.
+    struct FrameLook {
+        var view: ZoomCurve.View
+        var marks: [Looks.ClickMark]
+        var clicks: EditProject.Clicks?
+        var frame: EditProject.Frame?
+    }
+
+    func look(atOutput outUs: Int64) -> FrameLook {
         lock.lock()
         let project = project
         let cursor = cursor
         lock.unlock()
         let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
-        return ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
+        var marks: [Looks.ClickMark] = []
+        if let clicks = project.clicks, clicks.highlight, let cursor {
+            marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs)
+        }
+        return FrameLook(view: ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor),
+                         marks: marks, clicks: project.clicks, frame: project.frame)
     }
 }
 
@@ -121,21 +135,29 @@ struct EditRenderer {
             let image = request.sourceImage
             let extent = image.extent
             let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded())
-            let view = zoom.view(atOutput: outUs)
+            let look = zoom.look(atOutput: outUs)
+            let view = look.view
             var result = image
+            if let clicks = look.clicks, !look.marks.isEmpty {
+                result = Looks.drawClicks(look.marks, on: result, settings: clicks).cropped(to: extent)
+            }
             if view.scale > 1.0005 {
                 let rect = view.rect
                 // Core Image counts y from the bottom; the project counts it from the top.
                 let crop = CGRect(x: extent.minX + rect.minX * extent.width, y: extent.minY + (1 - rect.maxY) * extent.height,
                                   width: rect.width * extent.width, height: rect.height * extent.height)
-                result = image.cropped(to: crop)
+                result = result.cropped(to: crop)
                     .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
                     .transformed(by: CGAffineTransform(scaleX: extent.width / crop.width, y: extent.height / crop.height))
             }
             if outputScale != 1 {
                 result = result.transformed(by: CGAffineTransform(scaleX: outputScale, y: outputScale))
             }
-            request.finish(with: result.cropped(to: CGRect(origin: .zero, size: size)), context: nil)
+            result = result.cropped(to: CGRect(origin: .zero, size: size))
+            if let frame = look.frame {
+                result = Looks.applyFrame(frame, to: result, size: size)
+            }
+            request.finish(with: result, context: nil)
         }
         videoComposition.renderSize = size
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))

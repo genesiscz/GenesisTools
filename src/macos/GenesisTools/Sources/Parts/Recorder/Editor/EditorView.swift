@@ -85,6 +85,7 @@ private struct InspectorView: View {
                 switch model.tab {
                 case .zoom: ZoomInspector(model: model)
                 case .clip: ClipInspector(model: model)
+                case .style: StyleInspector(model: model)
                 case .audio: AudioInspector(model: model)
                 case .export: ExportInspector(model: model)
                 }
@@ -105,6 +106,24 @@ private struct SectionLabel: View {
             Spacer()
             if let value { Text(verbatim: value).font(.system(size: 12.5, weight: .semibold).monospacedDigit()) }
         }
+    }
+}
+
+/// A switch at the right edge of the inspector with its label on the left, like the rows of System Settings.
+private struct SwitchRow: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    init(_ title: String, isOn: Binding<Bool>) {
+        self.title = title
+        _isOn = isOn
+    }
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Text(title).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toggleStyle(.switch)
     }
 }
 
@@ -263,6 +282,101 @@ private struct ClipInspector: View {
     }
 }
 
+private struct StyleInspector: View {
+    @Bindable var model: EditorModel
+
+    /// Background presets: two colors are a gradient from the top left, one is a flat color.
+    private static let backgrounds: [(name: String, colors: [String])] = [
+        ("Indigo", ["#4F46E5", "#DB2777"]),
+        ("Ocean", ["#0EA5E9", "#14B8A6"]),
+        ("Sunset", ["#F97316", "#E11D48"]),
+        ("Forest", ["#16A34A", "#0F766E"]),
+        ("Graphite", ["#27272A"]),
+        ("Paper", ["#F4F4F5"]),
+    ]
+    private static let clickColors = ["#FFD60A", "#FF453A", "#0A84FF", "#FFFFFF"]
+
+    var body: some View {
+        let frame = model.project.frame
+        let clicks = model.project.clicks
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Style").font(.system(size: 15, weight: .semibold))
+            SwitchRow("Background", isOn: Binding(get: { frame != nil }, set: { on in
+                model.setLooks { $0.frame = on ? ($0.frame ?? EditProject.Frame()) : nil }
+            }))
+            .accessibilityIdentifier("recorder.style.frame")
+            if let frame {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(38), spacing: 8), count: 6), spacing: 8) {
+                    ForEach(Self.backgrounds, id: \.name) { preset in
+                        let selected = frame.background.colors == preset.colors
+                        Button {
+                            model.setLooks {
+                                $0.frame?.background = EditProject.Background(kind: preset.colors.count > 1 ? .gradient : .color,
+                                                                              colors: preset.colors)
+                            }
+                        } label: {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(LinearGradient(colors: preset.colors.map(Self.swiftColor), startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 38, height: 26)
+                                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(selected ? 0.95 : 0.15), lineWidth: selected ? 2 : 1))
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip(preset.name)
+                        .accessibilityLabel("\(preset.name) background")
+                    }
+                }
+                SectionLabel(text: "Padding", value: "\(Int((frame.padding * 100).rounded()))%")
+                Slider(value: Binding(get: { frame.padding }, set: { value in model.setLooks { $0.frame?.padding = (value * 200).rounded() / 200 } }),
+                       in: 0...0.2)
+                    .accessibilityIdentifier("recorder.style.padding")
+                SectionLabel(text: "Corners", value: String(format: "%.1f%%", frame.cornerRadius * 100))
+                Slider(value: Binding(get: { frame.cornerRadius }, set: { value in model.setLooks { $0.frame?.cornerRadius = (value * 1000).rounded() / 1000 } }),
+                       in: 0...0.05)
+                    .accessibilityIdentifier("recorder.style.corners")
+                SwitchRow("Shadow", isOn: Binding(get: { frame.shadow }, set: { on in model.setLooks { $0.frame?.shadow = on } }))
+            }
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            SwitchRow("Highlight clicks", isOn: Binding(get: { clicks?.highlight == true }, set: { on in
+                model.setLooks { project in
+                    var next = project.clicks ?? EditProject.Clicks()
+                    next.highlight = on
+                    project.clicks = next
+                }
+            }))
+            .accessibilityIdentifier("recorder.style.clicks")
+            if model.cursor == nil {
+                Text("This recording has no cursor track, so there are no clicks to draw.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let clicks, clicks.highlight {
+                HStack(spacing: 8) {
+                    ForEach(Self.clickColors, id: \.self) { hex in
+                        Button {
+                            model.setLooks { $0.clicks?.color = hex }
+                        } label: {
+                            Circle().fill(Self.swiftColor(hex)).frame(width: 20, height: 20)
+                                .overlay(Circle().strokeBorder(Color.white.opacity(clicks.color == hex ? 0.95 : 0.2), lineWidth: clicks.color == hex ? 2 : 1))
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .accessibilityLabel("Click color \(hex)")
+                    }
+                }
+                SectionLabel(text: "Size", value: String(format: "%.1f%%", clicks.radius * 100))
+                Slider(value: Binding(get: { clicks.radius }, set: { value in model.setLooks { $0.clicks?.radius = (value * 1000).rounded() / 1000 } }),
+                       in: 0.01...0.1)
+                    .accessibilityIdentifier("recorder.style.clickSize")
+            }
+        }
+    }
+
+    private static func swiftColor(_ hex: String) -> Color {
+        let color = Looks.color(hex)
+        return Color(red: color.red, green: color.green, blue: color.blue)
+    }
+}
+
 private struct AudioInspector: View {
     @Bindable var model: EditorModel
 
@@ -270,8 +384,7 @@ private struct AudioInspector: View {
         let audio = model.project.audio
         VStack(alignment: .leading, spacing: 10) {
             Text("Audio").font(.system(size: 15, weight: .semibold))
-            Toggle("Include audio", isOn: Binding(get: { audio.include }, set: { value in model.setAudio { $0.include = value } }))
-                .toggleStyle(.switch)
+            SwitchRow("Include audio", isOn: Binding(get: { audio.include }, set: { value in model.setAudio { $0.include = value } }))
                 .accessibilityIdentifier("recorder.audio.include")
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Volume", value: "\(Int((audio.volume * 100).rounded()))%")

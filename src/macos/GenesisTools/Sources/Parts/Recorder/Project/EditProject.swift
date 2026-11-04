@@ -14,6 +14,10 @@ struct EditProject: Codable, Equatable {
     var zooms: [Zoom] = []
     var audio = AudioSettings()
     var export = ExportSettings()
+    /// Clicks drawn from the cursor track; nil is off. Optional, so a file from before it decodes.
+    var clicks: Clicks?
+    /// The movie on a background with padding, rounded corners and a shadow; nil is the plain movie.
+    var frame: Frame?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -68,6 +72,34 @@ struct EditProject: Codable, Equatable {
         var volume = 1.0
         /// Muted source audio tracks by index (0 is the first audio track of the movie).
         var mutedTracks: [Int] = []
+    }
+
+    struct Clicks: Codable, Equatable {
+        var highlight = true
+        /// #RRGGBB.
+        var color = "#FFD60A"
+        /// The disc's largest radius, as a fraction of the picture's height.
+        var radius = 0.03
+        var durationMs = 450
+    }
+
+    enum BackgroundKind: String, Codable, CaseIterable {
+        case none, color, gradient
+    }
+
+    struct Background: Codable, Equatable {
+        var kind: BackgroundKind = .gradient
+        /// One color for `color`, two (top left to bottom right) for `gradient`.
+        var colors = ["#4F46E5", "#DB2777"]
+    }
+
+    struct Frame: Codable, Equatable {
+        var background = Background()
+        /// The margin on every side, as a fraction of the output height.
+        var padding = 0.06
+        /// As a fraction of the output height.
+        var cornerRadius = 0.012
+        var shadow = true
     }
 
     enum Codec: String, Codable, CaseIterable {
