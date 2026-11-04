@@ -570,9 +570,26 @@ private struct MarksLaneView: View {
             }
         }
         .frame(height: TimelineView.marksLaneHeight)
+        .overlay(alignment: .topLeading) {
+            // Each text and shape bar is its own segment: a click selects it, a drag moves it, an edge trims it.
+            ZStack(alignment: .topLeading) {
+                ForEach(project.texts ?? []) { note in
+                    MarkSegment(model: model, scale: scale, id: note.id, startUs: note.startUs, endUs: note.endUs,
+                                name: "Text “\(note.text)”", selected: model.selectedText == note.id,
+                                select: { model.selectedText = note.id; model.selectedShape = nil; model.tab = .text },
+                                move: { start, end in model.updateText(note.id) { $0.startUs = start; $0.endUs = end } })
+                }
+                ForEach(project.shapes ?? []) { shape in
+                    MarkSegment(model: model, scale: scale, id: shape.id, startUs: shape.startUs, endUs: shape.endUs,
+                                name: shape.kind.rawValue.capitalized, selected: model.selectedShape == shape.id,
+                                select: { model.selectedShape = shape.id; model.selectedText = nil; model.tab = .text },
+                                move: { start, end in model.updateShape(shape.id) { $0.startUs = start; $0.endUs = end } })
+                }
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { location in select(atX: location.x) }
-        .instantTooltip("Markers (purple flags), caption lines (blue), texts (green), arrows and boxes (red) and shortcuts (white lines). Click a text or an arrow to edit it, a marker to go to it.")
+        .instantTooltip("Markers (purple flags), caption lines (blue), texts (green), arrows and boxes (red) and shortcuts (white lines). Click a text or a shape to edit it, drag it to move it in time, a marker to go to it.")
         .accessibilityElement()
         .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count((project.texts ?? []).count, "text")), \(Plural.count((project.shapes ?? []).count, "shape")), \(Plural.count(keys.count, "shortcut"))")
     }
@@ -597,6 +614,82 @@ private struct MarksLaneView: View {
             model.tab = .text
         }
         model.seek(outUs)
+    }
+}
+
+/// A text or a shape on the marks lane, over the bar the lane draws: a click selects it on the Annotate tab, a drag
+/// moves it in time with snapping, an edge trims it. The selected one has a white outline.
+private struct MarkSegment: View {
+    let model: EditorModel
+    let scale: TimelineScale
+    let id: String
+    let startUs: Int64
+    let endUs: Int64
+    let name: String
+    let selected: Bool
+    let select: () -> Void
+    let move: (Int64, Int64) -> Void
+    @State private var moveFrom: (Int64, Int64)?
+
+    private static let top: CGFloat = 7
+    private static let height: CGFloat = 9
+
+    var body: some View {
+        let spans = TimelineMap.outputSpans(fromUs: startUs, toUs: endUs, in: model.project)
+        if let first = spans.first, let last = spans.last {
+            let width = max(6, scale.x(last.toUs) - scale.x(first.fromUs))
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color.white.opacity(0.001))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .strokeBorder(Color.white.opacity(selected ? 0.95 : 0), lineWidth: 1.25)
+                }
+                .overlay(alignment: .leading) { edgeHandle(leading: true, width: min(6, width / 3)) }
+                .overlay(alignment: .trailing) { edgeHandle(leading: false, width: min(6, width / 3)) }
+                .frame(width: width, height: Self.height)
+                .contentShape(Rectangle())
+                .onTapGesture { select() }
+                .gesture(DragGesture(minimumDistance: 3).onChanged { value in
+                    if moveFrom == nil { moveFrom = (startUs, endUs); select() }
+                    guard let (start, end) = moveFrom else { return }
+                    let raw = shift(value.translation.width, start: start, end: end)
+                    let delta = raw + model.snappedMove(start: start + raw, end: end + raw, excluding: id)
+                    let length = end - start
+                    let moved = min(max(0, start + delta), model.project.source.durationUs - length)
+                    move(moved, moved + length)
+                }.onEnded { _ in moveFrom = nil; model.endSnap() })
+                .instantTooltip("\(name): drag to move, drag an edge to trim")
+                .offset(x: scale.x(first.fromUs), y: Self.top)
+                .accessibilityHidden(true)
+                .liveRow(selected: selected)
+                // Texts and shapes share one row: the selected one is on top, so a drag where two overlap moves it.
+                .zIndex(selected ? 1 : 0)
+        }
+    }
+
+    /// The source shift of a drag, kept inside the recording.
+    private func shift(_ points: CGFloat, start: Int64, end: Int64) -> Int64 {
+        let delta = Int64(Double(points) / scale.pointsPerSecond * 1_000_000)
+        return min(max(delta, -start), model.project.source.durationUs - (end - start) - start)
+    }
+
+    private func edgeHandle(leading: Bool, width: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.001))
+            .frame(width: width)
+            .contentShape(Rectangle())
+            .onHover { inside in (inside ? NSCursor.resizeLeftRight : NSCursor.arrow).set() }
+            .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+                if moveFrom == nil { moveFrom = (startUs, endUs); select() }
+                guard let (start, end) = moveFrom else { return }
+                let delta = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000)
+                let edge = model.snapped(leading ? start + delta : end + delta, excluding: id)
+                if leading {
+                    move(max(0, min(edge, end - 100_000)), end)
+                } else {
+                    move(start, max(start + 100_000, edge))
+                }
+            }.onEnded { _ in moveFrom = nil; model.endSnap() })
     }
 }
 
