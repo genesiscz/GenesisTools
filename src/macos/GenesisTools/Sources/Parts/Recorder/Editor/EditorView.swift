@@ -725,7 +725,7 @@ private struct TextInspector: View {
     var body: some View {
         let list = model.project.texts ?? []
         VStack(alignment: .leading, spacing: 10) {
-            Text("Text").font(.system(size: 15, weight: .semibold))
+            Text("Annotate").font(.system(size: 15, weight: .semibold))
             Text("A title or a step's name over the picture for a time. It stays in place through a zoom and fades in and out. An arrow, box or circle points at something and moves with a zoom.")
                 .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -825,13 +825,19 @@ private struct HideInspector: View {
     var body: some View {
         let list = model.project.redactions ?? []
         VStack(alignment: .leading, spacing: 10) {
-            Text("Hide Parts").font(.system(size: 15, weight: .semibold))
+            Text("Hide and Spotlight").font(.system(size: 15, weight: .semibold))
             Text("Blur, pixelate or black out a part of the picture for a time: an address, a token, a notification. A spotlight does the opposite: it dims the rest to point at it. Each moves with a zoom.")
                 .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                 .fixedSize(horizontal: false, vertical: true)
-            WideButton(title: "Add Hidden Part", systemImage: "eye.slash") { model.addRedaction() }
-                .instantTooltip("A 3 s hidden part in the middle of the picture; or drag on the preview to draw one")
-                .accessibilityIdentifier("recorder.hide.add")
+            HStack(spacing: 8) {
+                WideButton(title: "Hide a Part", systemImage: "eye.slash") { model.addRedaction() }
+                    .instantTooltip("A 3 s blur in the middle of the picture; or drag on the preview to draw one")
+                    .accessibilityIdentifier("recorder.hide.add")
+                WideButton(title: "Spotlight", systemImage: "light.max") { model.addSpotlight() }
+                    .instantTooltip(model.cursor == nil ? "A 3 s spotlight in the middle: the rest of the picture dims"
+                                    : "A 3 s spotlight on the pointer: it follows the cursor and the rest of the picture dims")
+                    .accessibilityIdentifier("recorder.hide.spotlight")
+            }
             ForEach(list) { redaction in
                 let selected = model.selectedRedaction == redaction.id
                 let range = editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs)
@@ -861,7 +867,7 @@ private struct HideInspector: View {
                     }
                     .buttonStyle(.genHoverRow())
                     .instantTooltip(range.recording.map { "\(range.edit) in the edit; \($0)" } ?? "\(range.edit) in the edit")
-                    .accessibilityLabel("Hidden part, \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit), \(redaction.style.rawValue)")
+                    .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit), \(redaction.style.rawValue)")
                     IconButton(systemName: "trash", tooltip: "Delete this hidden part", size: 12) { model.deleteRedaction(redaction.id) }
                 }
                 if selected { RedactionEditor(model: model, redaction: redaction) }
@@ -992,8 +998,8 @@ private struct AudioInspector: View {
         if model.waveform.loaded && !model.waveform.hasAudio {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Audio").font(.system(size: 15, weight: .semibold))
-                EmptyState(symbol: "speaker.slash", text: "This recording has no sound",
-                           detail: "Record with the microphone or the system audio on to get a sound track.")
+                EmptyState(symbol: "speaker.slash", text: "The recording has no sound of its own",
+                           detail: "Record with the microphone or the system audio on to get a sound track, or put music under it below.")
                 MusicSection(model: model)
             }
         } else {
@@ -1058,11 +1064,15 @@ private struct MusicSection: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel(text: "Music")
             if let music = model.project.audio.music {
+                let missing = !FileManager.default.fileExists(atPath: music.file)
                 HStack(spacing: 8) {
-                    Image(systemName: "music.note").foregroundStyle(RecorderPalette.dim)
-                    Text(verbatim: URL(fileURLWithPath: music.file).lastPathComponent)
+                    Image(systemName: missing ? "exclamationmark.triangle.fill" : "music.note")
+                        .foregroundStyle(missing ? Color.red : RecorderPalette.dim)
+                    Text(verbatim: missing ? "Missing: \(URL(fileURLWithPath: music.file).lastPathComponent)" : URL(fileURLWithPath: music.file).lastPathComponent)
+                        .foregroundStyle(missing ? Color.red : Color.primary)
                         .lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .instantTooltip(missing ? "\(music.file) is gone; the export plays without music. Choose the file again below." : music.file)
                     IconButton(systemName: "trash", tooltip: "Remove the music") { model.setAudio { $0.music = nil } }
                         .accessibilityIdentifier("recorder.audio.music.remove")
                 }
@@ -1356,7 +1366,7 @@ private struct HiddenPartHandles: View {
                             move(redaction.id, to: start.offsetBy(dx: value.translation.width, dy: value.translation.height), size: size, map: map)
                         }.onEnded { _ in grabbed = nil })
                         .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move")
-                        .accessibilityLabel("Hidden part, \(redaction.style.rawValue)")
+                        .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(redaction.style.rawValue)")
                     if selected {
                         ForEach(Grip.allCases, id: \.self) { grip in
                             let corner = Self.corner(grip, of: rect)

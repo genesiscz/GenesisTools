@@ -30,7 +30,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .zoom: "plus.magnifyingglass"
         case .clip: "film"
         case .hide: "eye.slash"
-        case .text: "textformat"
+        case .text: "pencil.and.outline"
         case .style: "paintpalette"
         case .cursor: "cursorarrow.rays"
         case .captions: "captions.bubble"
@@ -43,8 +43,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .zoom: "Zoom"
         case .clip: "Clips"
-        case .hide: "Hide Parts"
-        case .text: "Text"
+        case .hide: "Hide and Spotlight"
+        case .text: "Annotate"
         case .style: "Style"
         case .cursor: "Cursor and Clicks"
         case .captions: "Captions and Shortcuts"
@@ -630,7 +630,13 @@ final class EditorModel {
 
     /// Hides a part of the picture (the middle, or a rectangle drawn on the preview, 0...1 of the source) for 3 s from
     /// the playhead; the Hide tab then moves and sizes it.
-    func addRedaction(rect: CGRect = CGRect(x: 0.35, y: 0.42, width: 0.3, height: 0.16)) {
+    /// A 3 s spotlight from the playhead: on the pointer when the recording has a cursor track, else in the middle.
+    func addSpotlight() {
+        addRedaction(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), style: .spotlight, follow: cursor != nil)
+    }
+
+    func addRedaction(rect: CGRect = CGRect(x: 0.35, y: 0.42, width: 0.3, height: 0.16), style: EditProject.RedactionStyle = .blur,
+                      follow: Bool = false) {
         let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
         let end = min(project.source.durationUs, start + 3_000_000)
         guard end - start >= 100_000 else {
@@ -642,7 +648,8 @@ final class EditorModel {
         let clamped = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard !clamped.isNull, clamped.width >= 0.01, clamped.height >= 0.01 else { return }
         next.redactions = (next.redactions ?? []) + [EditProject.Redaction(id: id, startUs: start, endUs: end, x: clamped.minX, y: clamped.minY,
-                                                                           width: clamped.width, height: clamped.height)]
+                                                                           width: clamped.width, height: clamped.height, style: style,
+                                                                           follow: follow ? true : nil)]
         selectedRedaction = id
         tab = .hide
         apply(next, rebuildMovie: false)
