@@ -2,8 +2,10 @@
 // transcript page and the stop receipt. Types only, written here rather than imported from the hub lib, so the phone's
 // `tsc` never walks the server tree (`contract-purity.test.ts`). `src/hub/lib/board` returns these shapes.
 
-/** The harness of a session: the provider alias the fleet view uses. */
-export type AgentBoardProvider = "claude" | "codex" | "grok";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+
+/** The harness of a session: the provider alias the fleet view uses (a leaf module, so the phone walks no server code). */
+export type AgentBoardProvider = AccountProviderAlias;
 
 /** The fleet phase of a session (`FLEET_PHASES` in `@genesiscz/utils/ai/live-sessions/phase`). */
 export type AgentBoardPhase = "thinking" | "tool" | "waiting" | "idle" | "interrupted";
