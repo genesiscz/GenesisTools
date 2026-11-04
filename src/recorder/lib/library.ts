@@ -8,6 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 
 const { log } = logger.scoped("recorder-library");
@@ -64,8 +65,8 @@ export function listLibrary(root = recordingsLibraryDir()): LibraryRow[] {
 }
 
 /**
- * What a recording argument names: a library id (`library-…`), `last` (the newest), or a path to a movie, a
- * recording folder or an edit file. Throws with the ids it knows when nothing matches.
+ * What a recording argument names: a library id (`library-…`), `last` (the newest), a meeting id (its folder), or a
+ * path to a movie, a recording folder or an edit file. Throws with the ids it knows when nothing matches.
  */
 export function resolveRecording(value: string, { alive }: { alive?: (pid: number) => boolean } = {}): string {
     if (value === "open") {
@@ -104,6 +105,13 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
 
     if (existsSync(folder) && statSync(folder).isDirectory()) {
         return folder;
+    }
+
+    // A meeting id: the meeting's folder holds its frames (and, once the editor opened it, recording.json).
+    const meeting = toolDataDir("meetings", value);
+
+    if (existsSync(join(meeting, "frames")) && statSync(meeting).isDirectory()) {
+        return meeting;
     }
 
     const known = listLibrary()

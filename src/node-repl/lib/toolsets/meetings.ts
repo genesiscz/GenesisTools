@@ -1,4 +1,5 @@
 import { decideItems } from "@app/meetings/lib/decide";
+import { meetingEditorSource } from "@app/meetings/lib/editor-project";
 import { findingItems, findingProblems, findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
@@ -197,6 +198,26 @@ const screen = defineMethod({
     effect: "read",
     doc: 'The screen frames at a transcript time (at, windowSec) or that show a text (match, limit), from the recording\'s ocr.jsonl. With boxes: { outDir }, each frame\'s OCR boxes in frame pixels (level "block" default, or "line"): the ones holding match, or without match the ones that changed since the display\'s earlier frame, drawn numbered on the frame plus one PNG crop each in outDir.',
 });
+const editorProject = defineMethod({
+    name: "editorProject",
+    params: z
+        .object({
+            /** "most-change" (default) or a display id. */
+            display: z.union([z.literal("most-change"), z.number().int().nonnegative()]).optional(),
+            windowSec: z.number().positive().optional(),
+            /** Ranges in recording seconds that show a given display whatever the policy picks. */
+            switches: z
+                .array(
+                    z.object({ from: z.number().nonnegative(), to: z.number().positive(), display: z.number().int() })
+                )
+                .optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "{ folder, proxy: { path, frames, plan }, transcript, captions }",
+    effect: "reversible",
+    doc: "Makes the meeting's screen recording an editor project in its folder: recording.json, proxy.mp4 (per 10 s window the display that changed most, or one display) and proxy.transcript.json, the transcript as captions with the speakers' names. Then movies.open(folder) edits it, and its findOnScreen(text) searches the OCR.",
+});
 
 /** The meeting as an agent reads it: the record's facts, the item counts and a one-line summary. */
 function describe(record: MeetingRecord) {
@@ -255,6 +276,7 @@ export class MeetingsToolset extends ReplToolset {
                     recordingSettings,
                     setRecordingSettings,
                     screen,
+                    editorProject,
                 ],
             },
         ],
@@ -440,6 +462,24 @@ export class MeetingsToolset extends ReplToolset {
                     }
                 );
                 return describe(record);
+            },
+            editorProject: async (input: z.input<typeof editorProject.params> = {}) => {
+                const options = editorProject.params.parse(input);
+                return meetingEditorSource({
+                    store,
+                    record: current(),
+                    ...(options.display !== undefined ? { display: options.display } : {}),
+                    ...(options.windowSec !== undefined ? { windowSec: options.windowSec } : {}),
+                    ...(options.switches
+                        ? {
+                              overrides: options.switches.map((one) => ({
+                                  fromUs: Math.round(one.from * 1_000_000),
+                                  toUs: Math.round(one.to * 1_000_000),
+                                  displayId: one.display,
+                              })),
+                          }
+                        : {}),
+                });
             },
             screen: async (input: z.input<typeof screen.params>) => {
                 const options = screen.params.parse(input);

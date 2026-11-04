@@ -27,6 +27,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
+import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
@@ -2851,5 +2852,31 @@ describe("screen boxes", () => {
                 5
             ).map((row) => row.file)
         ).toEqual(["frames/b-d1.png"]);
+    });
+});
+
+describe("a meeting recording as an editor project", () => {
+    test("transcript lines become captions with the speaker on the recording's clock; a line said into the start stays, one after the end goes", () => {
+        const zeroMs = Date.parse("2026-11-04T15:00:00.000Z");
+        const segments = captionSegments({
+            entries: [
+                { speaker: "Alice", text: "before the recording", startSec: 2 },
+                { speaker: "Alice", text: "Hello", startSec: 10 },
+                { speaker: "Bob", text: " Hi there ", startSec: 14 },
+                { speaker: "Bob", text: "no time" },
+                { speaker: "Alice", text: "a long one", startSec: 40 },
+                { speaker: "Alice", text: "after the end", startSec: 200 },
+            ],
+            zeroMs,
+            startedMs: zeroMs + 8_000,
+            durationSec: 60,
+        });
+
+        expect(segments).toEqual([
+            { text: "Alice: before the recording", start: 0, end: 2, speaker: "Alice" },
+            { text: "Alice: Hello", start: 2, end: 6, speaker: "Alice" },
+            { text: "Bob: Hi there", start: 6, end: 18, speaker: "Bob" },
+            { text: "Alice: a long one", start: 32, end: 44, speaker: "Alice" },
+        ]);
     });
 });

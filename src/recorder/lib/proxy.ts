@@ -1,11 +1,15 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { imageSize } from "@genesiscz/utils/macos/ocr-boxes";
 import { concatList } from "@genesiscz/utils/recording-editor/ffmpeg";
-import { readFrameFolder } from "@genesiscz/utils/recording-editor/source";
+import { readFrameFolder, type SourceFrame } from "@genesiscz/utils/recording-editor/source";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { z } from "zod";
 
 const { log } = logger.scoped("recorder-proxy");
 
@@ -14,11 +18,204 @@ const AUDIO_PIECE = /^(\d+(?:\.\d+)?)-d(\d+)-audio-(mic|system)\.m4a$/;
 /** H.264 needs even sides; frames of a display with an odd size lose one pixel. */
 const EVEN_SIZE = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
 
+/**
+ * The video filter for the shown frames: one size keeps the frames as they are (even sides); several sizes (a plan
+ * over displays of different shapes) fit each frame into the largest width and height with black bars, because one
+ * H.264 stream cannot change its size and ffmpeg would stretch every later frame to the first one's.
+ */
+export function proxyVideoFilter(sizes: ReadonlyArray<{ width: number; height: number }>): string {
+    const distinct = new Set(sizes.map((size) => `${size.width}x${size.height}`));
+
+    if (distinct.size <= 1) {
+        return EVEN_SIZE;
+    }
+
+    const even = (value: number) => Math.ceil(value / 2) * 2;
+    const width = even(Math.max(...sizes.map((size) => size.width)));
+    const height = even(Math.max(...sizes.map((size) => size.height)));
+    return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
+}
+
+/** The pixel size of the first shown frame of each display (frames of one display share a size). */
+function shownSizes(frames: readonly SourceFrame[]): Array<{ width: number; height: number }> {
+    const firstOf = new Map<number | undefined, string>();
+
+    for (const frame of frames) {
+        if (!firstOf.has(frame.displayId)) {
+            firstOf.set(frame.displayId, frame.path);
+        }
+    }
+
+    return [...firstOf.values()].filter((path) => existsSync(path)).map((path) => imageSize(path));
+}
+
 export interface ProxyResult {
     path: string;
     frames: number;
     audioPieces: number;
+    /** The display of the whole movie, when one display is shown throughout. */
     displayId?: number;
+    /** Which display the movie shows when (`proxy.json`). */
+    plan: DisplayPlan;
+}
+
+/** Which display a frames recording of several displays shows: one display, or per window the one that changed most. */
+export const PROXY_DISPLAY_POLICIES = ["most-change"] as const;
+export type ProxyDisplay = number | (typeof PROXY_DISPLAY_POLICIES)[number];
+
+export interface DisplayRange {
+    fromUs: number;
+    /** Exclusive; the last range ends at Infinity on read and at the last frame's time in `proxy.json`. */
+    toUs: number;
+    displayId: number;
+}
+
+const displayPlanSchema = z.object({
+    version: z.literal(1),
+    policy: z.enum(["most-change", "display"]),
+    windowSec: z.number(),
+    ranges: z.array(z.object({ fromUs: z.number(), toUs: z.number(), displayId: z.number() })),
+});
+export type DisplayPlan = z.infer<typeof displayPlanSchema>;
+const audioRowSchema = z.object({ file: z.string(), at: z.string() });
+
+export const PROXY_PLAN_FILE = "proxy.json";
+const DEFAULT_WINDOW_SEC = 10;
+
+/**
+ * Per window of `windowUs`, the display whose frames changed most: the sum of their change percents (a frame without
+ * one counts 1, since a frame is kept only when the screen changed). A window without frames, or a tie, keeps the
+ * display before it, so the movie does not flicker between screens. Consecutive windows of one display merge.
+ */
+export function planMostChange(frames: readonly SourceFrame[], windowUs: number): DisplayRange[] {
+    const displays = [...new Set(frames.map((frame) => frame.displayId).filter((id) => id !== undefined))];
+
+    if (displays.length === 0) {
+        return [];
+    }
+
+    const endUs = Math.max(...frames.map((frame) => frame.atUs)) + 1;
+    const ranges: DisplayRange[] = [];
+    let current = frames.find((frame) => frame.displayId !== undefined)?.displayId ?? displays[0];
+
+    for (let fromUs = 0; fromUs < endUs; fromUs += windowUs) {
+        const score = new Map<number, number>();
+
+        for (const frame of frames) {
+            if (frame.displayId !== undefined && frame.atUs >= fromUs && frame.atUs < fromUs + windowUs) {
+                const weight = frame.changePercent && frame.changePercent > 0 ? frame.changePercent : 1;
+                score.set(frame.displayId, (score.get(frame.displayId) ?? 0) + weight);
+            }
+        }
+
+        const best = Math.max(0, ...score.values());
+
+        if (best > 0 && (score.get(current) ?? 0) < best) {
+            current = [...score].find(([, value]) => value === best)?.[0] ?? current;
+        }
+
+        const last = ranges.at(-1);
+
+        if (last && last.displayId === current) {
+            last.toUs = fromUs + windowUs;
+        } else {
+            ranges.push({ fromUs, toUs: fromUs + windowUs, displayId: current });
+        }
+    }
+
+    return ranges;
+}
+
+/** `ranges` with each override laid over them: inside an override its display wins. */
+export function overrideRanges(ranges: readonly DisplayRange[], overrides: readonly DisplayRange[]): DisplayRange[] {
+    let result = [...ranges];
+
+    for (const over of overrides) {
+        const cut: DisplayRange[] = [];
+
+        for (const range of result) {
+            if (range.toUs <= over.fromUs || range.fromUs >= over.toUs) {
+                cut.push(range);
+                continue;
+            }
+
+            if (range.fromUs < over.fromUs) {
+                cut.push({ ...range, toUs: over.fromUs });
+            }
+
+            if (range.toUs > over.toUs) {
+                cut.push({ ...range, fromUs: over.toUs });
+            }
+        }
+
+        result = [...cut, over].sort((a, b) => a.fromUs - b.fromUs);
+    }
+
+    return result.reduce<DisplayRange[]>((merged, range) => {
+        const last = merged.at(-1);
+
+        if (last && last.displayId === range.displayId && last.toUs >= range.fromUs) {
+            last.toUs = Math.max(last.toUs, range.toUs);
+        } else {
+            merged.push({ ...range });
+        }
+
+        return merged;
+    }, []);
+}
+
+/**
+ * The frames the movie shows for a plan: in each range the frames of its display, led by the frame of that display that
+ * was still on its screen when the range starts. The first frame is moved to 0, so movie time is recording time.
+ */
+export function framesForPlan(frames: readonly SourceFrame[], ranges: readonly DisplayRange[]): SourceFrame[] {
+    const shown: SourceFrame[] = [];
+
+    for (const [index, range] of ranges.entries()) {
+        const toUs = index === ranges.length - 1 ? Number.POSITIVE_INFINITY : range.toUs;
+        const own = frames.filter((frame) => frame.displayId === range.displayId);
+        const lead = own.findLast((frame) => frame.atUs <= range.fromUs) ?? own.find((frame) => frame.atUs < toUs);
+
+        if (lead) {
+            shown.push({ ...lead, atUs: range.fromUs });
+        }
+
+        shown.push(...own.filter((frame) => frame !== lead && frame.atUs > range.fromUs && frame.atUs < toUs));
+    }
+
+    const ordered = shown.sort((a, b) => a.atUs - b.atUs);
+    return ordered.length > 0 ? [{ ...ordered[0], atUs: 0 }, ...ordered.slice(1)] : ordered;
+}
+
+/** The display plan a proxy was made with, or undefined for a proxy from before plans (or none). */
+export function readDisplayPlan(folder: string): DisplayPlan | undefined {
+    const path = join(folder, PROXY_PLAN_FILE);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    const parsed = displayPlanSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+    return parsed.success ? parsed.data : undefined;
+}
+
+/** An audio file of a meeting: `audio.jsonl` rows `{ file, at }` (wall time of the piece's start). */
+function meetingAudioPieces(folder: string, startedMs: number): Array<{ path: string; delayMs: number }> {
+    const index = join(folder, "audio.jsonl");
+
+    if (!existsSync(index)) {
+        return [];
+    }
+
+    return readFileSync(index, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .flatMap((line) => {
+            const row = audioRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
+            return row.success ? [row.data] : [];
+        })
+        .map((row) => ({ path: join(folder, row.file), delayMs: Math.max(0, Date.parse(row.at) - startedMs) }))
+        .filter((piece) => existsSync(piece.path));
 }
 
 /**
@@ -26,7 +223,17 @@ export interface ProxyResult {
  * next one (the recording's own timing), with the audio pieces placed at their start times and mixed. The frames and
  * the audio files stay; the proxy is only what the editor plays and cuts.
  */
-export async function makeProxy(folder: string, { displayId }: { displayId?: number } = {}): Promise<ProxyResult> {
+export async function makeProxy(
+    folder: string,
+    options: {
+        /** One display, or `most-change` (default): per window the display whose frames changed most. */
+        display?: ProxyDisplay;
+        /** The window of `most-change`, in seconds. Default 10. */
+        windowSec?: number;
+        /** Ranges that show a given display whatever the policy picks. */
+        overrides?: DisplayRange[];
+    } = {}
+): Promise<ProxyResult> {
     const manifest = readRecordingManifest(folder);
     const frames = readFrameFolder(folder);
 
@@ -34,13 +241,35 @@ export async function makeProxy(folder: string, { displayId }: { displayId?: num
         throw new Error(`${folder} has no frames to make a movie of`);
     }
 
-    const display = displayId ?? frames[0].displayId;
-    const chosen = display === undefined ? frames : frames.filter((frame) => frame.displayId === display);
+    const windowSec = options.windowSec ?? DEFAULT_WINDOW_SEC;
+    const single = typeof options.display === "number" ? options.display : undefined;
+    const displays = new Set(frames.map((frame) => frame.displayId).filter((id) => id !== undefined));
+
+    if (single !== undefined && !displays.has(single)) {
+        throw new Error(`${folder} has no frames of display ${single}; it has ${[...displays].join(", ") || "none"}`);
+    }
+
+    const endUs = frames[frames.length - 1].atUs + 1;
+    const base =
+        single !== undefined
+            ? [{ fromUs: 0, toUs: endUs, displayId: single }]
+            : planMostChange(frames, Math.round(windowSec * 1_000_000));
+    const ranges = overrideRanges(base, options.overrides ?? []);
+    const chosen = ranges.length > 0 ? framesForPlan(frames, ranges) : frames;
+    const plan: DisplayPlan = {
+        version: 1,
+        policy: single !== undefined ? "display" : "most-change",
+        windowSec,
+        ranges: ranges.map((range) => ({ ...range, toUs: Math.min(range.toUs, endUs) })),
+    };
+    const shownDisplays = [...new Set(ranges.map((range) => range.displayId))];
+    const display = shownDisplays.length === 1 ? shownDisplays[0] : undefined;
+    const videoFilter = proxyVideoFilter(shownSizes(chosen));
     const list = join(folder, ".proxy-frames.txt");
     await writeFile(list, concatList(chosen.map((frame) => ({ path: frame.path, atUs: frame.atUs }))));
     const startedMs = manifest ? Date.parse(manifest.startedAt) : Number.NaN;
     const audioDir = join(folder, "audio");
-    const pieces =
+    const libraryPieces =
         existsSync(audioDir) && Number.isFinite(startedMs)
             ? readdirSync(audioDir)
                   .map((name) => ({ name, match: AUDIO_PIECE.exec(name) }))
@@ -51,13 +280,17 @@ export async function makeProxy(folder: string, { displayId }: { displayId?: num
                   }))
                   .sort((a, b) => a.delayMs - b.delayMs)
             : [];
+    const pieces =
+        libraryPieces.length > 0 || !Number.isFinite(startedMs)
+            ? libraryPieces
+            : meetingAudioPieces(folder, startedMs).sort((a, b) => a.delayMs - b.delayMs);
     const output = join(folder, "proxy.mp4");
     const partial = join(folder, ".proxy.partial.mp4");
     const audioInputs = pieces.flatMap((piece) => ["-i", piece.path]);
     const audioGraph = pieces.length
         ? [
               "-filter_complex",
-              `[0:v]${EVEN_SIZE}[vout];` +
+              `[0:v]${videoFilter}[vout];` +
                   `${pieces.map((piece, index) => `[${index + 1}:a]adelay=${Math.round(piece.delayMs)}:all=1[a${index}]`).join(";")};` +
                   `${pieces.map((_, index) => `[a${index}]`).join("")}amix=inputs=${pieces.length}:normalize=0[aout]`,
               "-map",
@@ -69,7 +302,7 @@ export async function makeProxy(folder: string, { displayId }: { displayId?: num
               "-b:a",
               "160k",
           ]
-        : ["-vf", EVEN_SIZE];
+        : ["-vf", videoFilter];
     const argv = [
         "ffmpeg",
         "-nostdin",
@@ -98,7 +331,10 @@ export async function makeProxy(folder: string, { displayId }: { displayId?: num
         "+faststart",
         partial,
     ];
-    log.info({ folder, frames: chosen.length, display, audioPieces: pieces.length }, "making the proxy movie");
+    log.info(
+        { folder, frames: chosen.length, ranges: ranges.length, policy: plan.policy, audioPieces: pieces.length },
+        "making the proxy movie"
+    );
 
     try {
         await runVideoCommand({ command: argv, timeoutMs: 10 * 60_000 });
@@ -107,5 +343,12 @@ export async function makeProxy(folder: string, { displayId }: { displayId?: num
     }
 
     await rename(partial, output);
-    return { path: output, frames: chosen.length, audioPieces: pieces.length, displayId: display };
+    atomicWriteFileSync(join(folder, PROXY_PLAN_FILE), SafeJSON.stringify(plan, null, 2));
+    return {
+        path: output,
+        frames: chosen.length,
+        audioPieces: pieces.length,
+        ...(display !== undefined ? { displayId: display } : {}),
+        plan,
+    };
 }

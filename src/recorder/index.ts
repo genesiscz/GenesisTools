@@ -1,9 +1,12 @@
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } from "@app/control/lib/recording-targets";
+import { meetingEditorSource } from "@app/meetings/lib/editor-project";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { describeProject, EDIT_OP_NAMES, parseEditOps } from "@genesiscz/utils/recording-editor/project";
@@ -36,7 +39,8 @@ import {
     waitForEditorOpen,
 } from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
-import { makeProxy } from "./lib/proxy";
+import { type DisplayRange, makeProxy, PROXY_DISPLAY_POLICIES, type ProxyDisplay, type ProxyResult } from "./lib/proxy";
+import { findOnScreen } from "./lib/screen-search";
 import { Movie } from "./lib/toolset";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
 
@@ -59,6 +63,66 @@ interface StartFlags {
     controls?: boolean;
     open?: boolean;
     json?: boolean;
+}
+
+/** `--display`: `most-change` or a display id. */
+function parseProxyDisplay(raw: string): ProxyDisplay {
+    if ((PROXY_DISPLAY_POLICIES as readonly string[]).includes(raw)) {
+        return "most-change";
+    }
+
+    const id = Number(raw);
+
+    if (!Number.isInteger(id) || id < 0) {
+        throw new Error(`--display takes ${PROXY_DISPLAY_POLICIES.join(", ")} or a display id (got "${raw}")`);
+    }
+
+    return id;
+}
+
+/** `--switch 10:00-12:30=4`: a range on the recording's clock and the display it shows. */
+function parseDisplaySwitch(raw: string): DisplayRange {
+    const match = /^([^-=]+)-([^=]+)=(\d+)$/.exec(raw.trim());
+
+    if (!match) {
+        throw new Error(`--switch takes <from>-<to>=<display>, e.g. 10:00-12:30=4 (got "${raw}")`);
+    }
+
+    const fromUs = timeToUs(parseTime(match[1], "--switch"));
+    const toUs = timeToUs(parseTime(match[2], "--switch"));
+
+    if (toUs <= fromUs) {
+        throw new Error(`--switch ${raw}: the end must come after the start`);
+    }
+
+    return { fromUs, toUs, displayId: Number(match[3]) };
+}
+
+/**
+ * proxy.mp4 for a frames folder; a meeting's folder also gets its recording.json and the transcript as captions with
+ * the speakers' names (meetingEditorSource).
+ */
+async function prepareFramesMovie(
+    folder: string,
+    options: { display?: ProxyDisplay; windowSec?: number; overrides?: DisplayRange[] }
+): Promise<ProxyResult & { transcript?: string; captions?: number }> {
+    if (!existsSync(join(folder, "meeting.json"))) {
+        return makeProxy(folder, options);
+    }
+
+    const store = new MeetingStore();
+    const record = store.read(basename(folder));
+
+    if (!record) {
+        return makeProxy(folder, options);
+    }
+
+    const prepared = await meetingEditorSource({ store, record, ...options });
+    return {
+        ...prepared.proxy,
+        ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
+        captions: prepared.captions,
+    };
 }
 
 /** A `--from`/`--to` time: seconds or m:ss, with a plain message instead of a zod dump. */
@@ -660,7 +724,7 @@ program
 
             if (!value.endsWith(".mp4") && !value.endsWith(".mov") && !value.endsWith(".json") && !movieOf(path)) {
                 out.printlnErr("This recording has frames only; making proxy.mp4 for the editor…");
-                await makeProxy(path);
+                await prepareFramesMovie(path, {});
             }
 
             await ensureRecorderPart((line) => out.printlnErr(line));
@@ -846,14 +910,54 @@ program
     .description(
         "Make proxy.mp4 for a frames-only recording (frames at their times, audio pieces mixed in), so the editor opens it"
     )
-    .argument("<recording>", "a library id, `last` or a recording folder")
-    .option("--display <id>", "the display whose frames to use (default the first frame's)")
-    .action(async (value: string, flags: { display?: string }) => {
+    .argument("<recording>", "a library id, `last`, a meeting id or a recording folder")
+    .option("--display <display>", "most-change (default: per window the display that changed most) or a display id")
+    .option("--window <seconds>", "the window most-change picks a display for", "10")
+    .option(
+        "--switch <from-to=display...>",
+        "show this display in this range whatever the policy picks, e.g. 10:00-12:30=4 (repeatable)"
+    )
+    .action(async (value: string, flags: { display?: string; window?: string; switch?: string[] }) => {
         try {
-            const result = await makeProxy(resolveRecording(value), {
-                displayId: flags.display === undefined ? undefined : Number(flags.display),
+            const display = flags.display === undefined ? undefined : parseProxyDisplay(flags.display);
+            const result = await prepareFramesMovie(resolveRecording(value), {
+                ...(display !== undefined ? { display } : {}),
+                windowSec: Number(flags.window ?? 10),
+                overrides: (flags.switch ?? []).map(parseDisplaySwitch),
             });
             out.result(result);
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("find-screen")
+    .description("Where a text was on the screen of a frames recording or a meeting (OCR), at source seconds")
+    .argument("<recording>", "a library id, `last`, a meeting id or a recording folder")
+    .argument("<text>", "the text to look for (case and accents ignored)")
+    .option("--limit <n>", "at most this many frames", "50")
+    .option("--json", "print JSON")
+    .action(async (value: string, text: string, flags: { limit?: string; json?: boolean }) => {
+        try {
+            const hits = findOnScreen(resolveRecording(value), text, { limit: Number(flags.limit ?? 50) });
+
+            if (flags.json) {
+                out.result(hits);
+                return;
+            }
+
+            for (const hit of hits) {
+                const clock = new Date(hit.sec * 1000).toISOString().slice(11, 19);
+                out.println(
+                    `${clock}  d${hit.displayId ?? "?"}${hit.shown ? "" : " (not the shown display)"}  ${hit.lines.join(" | ")}`
+                );
+            }
+
+            if (hits.length === 0) {
+                out.printlnErr(`No frame shows "${text}".`);
+            }
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

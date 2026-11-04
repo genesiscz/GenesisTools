@@ -66,6 +66,7 @@ import {
     stillOfEdit,
 } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
+import { findOnScreen, type ScreenHit } from "./screen-search";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -555,6 +556,14 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ from, to, plays, text }[]",
         doc: "The transcript lines that hold the text (case and accents ignored); cut one with cut(line.from, line.to).",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "findOnScreen",
+        params: z.object({ text: z.string().min(1), limit: z.number().int().positive().optional() }).strict(),
+        result: z.unknown(),
+        resultName: "{ sec, displayId, file, lines, shown }[]",
+        doc: "Where a text was on the screen of a frames recording (a meeting, or a library recording with OCR): each frame whose OCR holds it (case and accents ignored), at source seconds, with the matching lines; shown: the proxy movie shows that display then. Jump there with show({ at: sec }).",
         effect: "read",
     }),
     defineMethod({
@@ -1345,6 +1354,17 @@ export class Movie {
 
     async find(text: string): Promise<TranscriptLine[]> {
         return findInTranscript(await this.transcript(), text);
+    }
+
+    async findOnScreen(input: { text: string; limit?: number }): Promise<ScreenHit[]> {
+        const opened = await openProject(this.recording);
+        const folder = recordingFolderOf(opened);
+
+        if (!folder) {
+            throw new Error(`${opened.project.source.video} is a plain movie: it has no frames with OCR to search`);
+        }
+
+        return findOnScreen(folder, input.text, input.limit !== undefined ? { limit: input.limit } : {});
     }
 
     async shortcuts() {

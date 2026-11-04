@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { editorOpenStatePath, readEditorOpenState, resolveRecording } from "./library";
+import { framesForPlan, overrideRanges, planMostChange, proxyVideoFilter } from "./proxy";
 
 function writeState(state: Record<string, unknown>): void {
     mkdirSync(dirname(editorOpenStatePath()), { recursive: true });
@@ -43,5 +44,81 @@ describe("the recording open in the editor", () => {
 
         expect(readEditorOpenState()?.open).toEqual([]);
         expect(() => resolveRecording("open")).toThrow("No recording is open");
+    });
+});
+
+describe("which display a proxy of several displays shows", () => {
+    const frame = (displayId: number, sec: number, changePercent = 0) => ({
+        path: `/f/${displayId}-${sec}.jpg`,
+        atUs: sec * 1_000_000,
+        displayId,
+        changePercent,
+    });
+
+    it("per window the display that changed most, a tie or an empty window keeping the one before", () => {
+        const frames = [
+            frame(1, 0, 5),
+            frame(4, 1, 2),
+            frame(4, 12, 30),
+            frame(1, 14, 3),
+            frame(1, 25, 10),
+            frame(4, 26, 10),
+            frame(1, 41, 1),
+        ];
+
+        expect(planMostChange(frames, 10_000_000)).toEqual([
+            { fromUs: 0, toUs: 10_000_000, displayId: 1 },
+            { fromUs: 10_000_000, toUs: 40_000_000, displayId: 4 },
+            { fromUs: 40_000_000, toUs: 50_000_000, displayId: 1 },
+        ]);
+        expect(planMostChange([frame(2, 0), frame(2, 3), frame(3, 4)], 10_000_000)).toEqual([
+            { fromUs: 0, toUs: 10_000_000, displayId: 2 },
+        ]);
+    });
+
+    it("an override wins inside its range and merges with a neighbour of its display", () => {
+        const ranges = [
+            { fromUs: 0, toUs: 10, displayId: 1 },
+            { fromUs: 10, toUs: 30, displayId: 4 },
+            { fromUs: 30, toUs: 50, displayId: 1 },
+        ];
+
+        expect(overrideRanges(ranges, [{ fromUs: 5, toUs: 20, displayId: 1 }])).toEqual([
+            { fromUs: 0, toUs: 20, displayId: 1 },
+            { fromUs: 20, toUs: 30, displayId: 4 },
+            { fromUs: 30, toUs: 50, displayId: 1 },
+        ]);
+    });
+
+    it("each range opens with its display's frame still on screen, and the movie starts at 0", () => {
+        const frames = [frame(1, 2), frame(4, 3), frame(1, 8), frame(4, 15), frame(1, 21)];
+        const shown = framesForPlan(frames, [
+            { fromUs: 0, toUs: 10_000_000, displayId: 1 },
+            { fromUs: 10_000_000, toUs: 20_000_000, displayId: 4 },
+            { fromUs: 20_000_000, toUs: 30_000_000, displayId: 1 },
+        ]);
+
+        expect(shown.map((one) => [one.path, one.atUs / 1_000_000])).toEqual([
+            ["/f/1-2.jpg", 0],
+            ["/f/1-8.jpg", 8],
+            ["/f/4-3.jpg", 10],
+            ["/f/4-15.jpg", 15],
+            ["/f/1-8.jpg", 20],
+            ["/f/1-21.jpg", 21],
+        ]);
+    });
+});
+
+describe("the proxy's picture size", () => {
+    it("one size keeps the frames; several sizes letterbox into the largest even width and height", () => {
+        expect(proxyVideoFilter([{ width: 2560, height: 1440 }])).toBe("scale=trunc(iw/2)*2:trunc(ih/2)*2");
+        expect(
+            proxyVideoFilter([
+                { width: 2560, height: 1440 },
+                { width: 2880, height: 1861 },
+            ])
+        ).toBe(
+            "scale=2880:1862:force_original_aspect_ratio=decrease,pad=2880:1862:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+        );
     });
 });
