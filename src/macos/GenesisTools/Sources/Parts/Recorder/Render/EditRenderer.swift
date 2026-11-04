@@ -70,11 +70,21 @@ final class ZoomState: @unchecked Sendable {
         var redactions: [EditProject.Redaction] = []
     }
 
+    /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
+    private var drawn = 0
+
+    var framesDrawn: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return drawn
+    }
+
     func look(atOutput outUs: Int64) -> FrameLook {
         lock.lock()
         let project = project
         let cursor = cursor
         let captions = captions
+        drawn += 1
         lock.unlock()
         let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
         var marks: [Looks.ClickMark] = []

@@ -117,16 +117,33 @@ final class EditorModel {
             logPlayback()
         } else {
             if clock.outUs >= durationUs - 20_000 { seek(0) }
+            playStart = (Date(), clock.outUs, zoom.framesDrawn)
             player.play()
         }
         isPlaying = player.rate != 0
     }
 
-    /// The preview's own frame counts for the run that just paused (the player item's access log): how smooth the
-    /// zoomed preview played, read with `rg recorder.editor.playback ~/.genesis-tools/logs/app-perf.log`.
+    /// When the current playback started: the wall clock, the output time and the renderer's frame count.
+    @ObservationIgnored private var playStart: (date: Date, outUs: Int64, frames: Int)?
+
+    /// How smooth the run that just paused played: the frames the renderer drew against the frames its stretch of
+    /// the edit holds at the composition's rate, and how far the playhead ran against the wall clock. A composition
+    /// item has no access log, so the counts are the renderer's own. Read with
+    /// `rg recorder.editor.playback ~/.genesis-tools/logs/app-perf.log`.
     private func logPlayback() {
-        guard let event = player.currentItem?.accessLog()?.events.last else { return }
-        HubPerf.log("recorder.editor.playback watched \(String(format: "%.1f", event.durationWatched)) s, dropped \(event.numberOfDroppedVideoFrames) frames, stalls \(event.numberOfStalls), \(project.source.width)×\(project.source.height) source, \(project.zooms.count) zooms")
+        guard let start = playStart else { return }
+        playStart = nil
+        let wall = Date().timeIntervalSince(start.date)
+        let played = Double(clock.outUs - start.outUs) / 1_000_000
+        guard wall > 0.2, played > 0 else { return }
+        let frame = player.currentItem?.videoComposition?.frameDuration.seconds ?? 0
+        let fps = frame > 0 ? 1 / frame : 60
+        let drawn = zoom.framesDrawn - start.frames
+        let expected = Int((played * fps).rounded())
+        let looks = [project.frame != nil ? "frame" : nil, project.cursor?.show != false ? "cursor" : nil,
+                     project.captions?.show == true ? "captions" : nil, project.keys?.show == true ? "keys" : nil,
+                     (project.redactions?.isEmpty == false) ? "\(project.redactions?.count ?? 0) redactions" : nil].compactMap { $0 }
+        HubPerf.log("recorder.editor.playback played \(String(format: "%.1f", played)) s in \(String(format: "%.1f", wall)) s, drew \(drawn) of \(expected) frames (\(String(format: "%.0f", Double(drawn) / max(0.1, wall))) fps), \(project.source.width)×\(project.source.height) source, \(project.zooms.count) zooms, looks: \(looks.isEmpty ? "none" : looks.joined(separator: ", "))")
     }
 
     func seek(_ outUs: Int64) {
