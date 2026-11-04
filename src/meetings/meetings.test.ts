@@ -2018,7 +2018,11 @@ describe("the meetings recorder loop", () => {
         steps: Step[];
         failOnJpeg?: boolean;
         beforeJpeg?: (png: string) => Promise<void>;
-        ocrBlocks?: Array<{ text: string; confidence: number; bounds: unknown }>;
+        ocrBlocks?: Array<{
+            text: string;
+            confidence: number;
+            bounds: { x: number; y: number; width: number; height: number };
+        }>;
         liveControl?: boolean;
         liveSettings?: boolean;
         audio?: boolean;

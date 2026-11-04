@@ -17,7 +17,6 @@ import { type JobInfo, JobRegistry } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
-import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import {
     type DisplayPolicy,
     displayPolicySchema,
@@ -61,6 +60,15 @@ import {
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { mainDisplay } from "@genesiscz/utils/screen-recorder/displays";
+import {
+    FrameOutput,
+    type JpegConverter,
+    JsonlOcrSink,
+    type OcrRecognizer,
+    sipsJpeg,
+    visionOcr,
+    wallClockFrameName,
+} from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
@@ -129,39 +137,9 @@ export function readRecorderState(store: MeetingStore): { running: boolean; stat
     return { running, ...(parsed?.success ? { state: parsed.data } : {}) };
 }
 
-function pad(n: number, width = 2): string {
-    return String(n).padStart(width, "0");
-}
-
 /** `15-23-41-502-d4.jpg`: the frame's local wall time, sortable within a day, and its display. */
 export function frameName(at: Date, displayId: number): string {
-    return `${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}-${pad(at.getMilliseconds(), 3)}-d${displayId}.jpg`;
-}
-
-async function run(argv: string[]): Promise<{ exitCode: number; stderr: string }> {
-    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
-    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    return { exitCode, stderr };
-}
-
-/** PNG to a reduced JPEG with the system's own `sips`. */
-async function sipsJpeg(png: string, jpg: string, quality: number): Promise<void> {
-    const result = await run([
-        "sips",
-        "-s",
-        "format",
-        "jpeg",
-        "-s",
-        "formatOptions",
-        String(Math.round(quality * 100)),
-        png,
-        "--out",
-        jpg,
-    ]);
-
-    if (result.exitCode !== 0) {
-        throw new Error(`sips failed for ${png}: ${result.stderr.trim()}`);
-    }
+    return wallClockFrameName(at, displayId);
 }
 
 /** The frames a recording holds on disk, their size, and the count per display (from the `-d<id>` of the name). */
@@ -402,11 +380,8 @@ export interface RecorderNote {
 /** What the recorder uses beside the store, so a test can replace each part. */
 export interface RecorderDeps {
     recorder: FrameRecorder;
-    toJpeg: (png: string, jpg: string, quality: number) => Promise<void>;
-    ocr: (
-        jpg: string,
-        languages: string[]
-    ) => Promise<{ text: string; blocks: Array<{ text: string; confidence: number; bounds: unknown }> }>;
+    toJpeg: JpegConverter;
+    ocr: OcrRecognizer;
     notify: (note: RecorderNote) => Promise<void>;
     /** Where the live recording entry goes (the genesis-tools root's `recordings/live/` by default). */
     liveDir?: string;
@@ -422,7 +397,7 @@ function defaultDeps(capture: MeetingsConfig["global"]["capture"]): RecorderDeps
     return {
         recorder: FRAME_RECORDERS[capture.backend]({ axTool: async (options) => [await ensureBinaryAsync(options)] }),
         toJpeg: sipsJpeg,
-        ocr: (jpg, languages) => recognizeText(jpg, { languages }),
+        ocr: visionOcr,
         notify: async (note) => {
             await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
                 log.warn({ err }, "notification failed")
@@ -1046,6 +1021,19 @@ export async function runRecorder(options: {
             }
         };
 
+        const output = new FrameOutput({
+            folder,
+            naming: "wall-clock",
+            format: { kind: "jpeg", quality: capture.jpegQuality },
+            convert: deps.toJpeg,
+            ocr: {
+                settings: () => settings.ocr,
+                sink: new JsonlOcrSink(ocrPath),
+                recognize: deps.ocr,
+                onError: (err, jpg) => log.warn({ err, jpg }, "OCR failed for a frame"),
+            },
+        });
+
         /** `streamed`: the socket announced these frames as they landed already. */
         const keepFrames = async (
             result: CaptureResult,
@@ -1056,48 +1044,25 @@ export async function runRecorder(options: {
             let done = 0;
 
             for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
-                const at = new Date(result.startedAtMs + frame.atMs);
-                const displayId = frame.displayId ?? target.displayId;
-                const name = frameName(at, displayId);
-                const jpg = join(framesDir, name);
-                await deps.toJpeg(frame.path, jpg, capture.jpegQuality);
-                const read = settings.ocr.enabled
-                    ? await deps.ocr(jpg, settings.ocr.languages).catch((err: unknown) => {
-                          log.warn({ err, jpg }, "OCR failed for a frame");
-                          return { text: "", blocks: [] };
-                      })
-                    : { text: "", blocks: [] };
-                const ocr = read.text.trim().length < settings.ocr.minChars ? { text: "", blocks: [] } : read;
+                const kept = await output.keep(frame, {
+                    atMs: result.startedAtMs + frame.atMs,
+                    originMs: Date.parse(state.startedAt),
+                    displayId: frame.displayId ?? target.displayId,
+                });
 
-                if (settings.ocr.enabled && state.frames === 0 && read.text.trim().length < EMPTY_FRAME_CHARS) {
+                if (kept.read && state.frames === 0 && kept.read.text.trim().length < EMPTY_FRAME_CHARS) {
                     note(
                         `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
                     );
                 }
 
-                appendFileSync(
-                    ocrPath,
-                    `${SafeJSON.stringify({
-                        file: `frames/${name}`,
-                        at: at.toISOString(),
-                        displayId,
-                        changePercent: frame.changePercent,
-                        reason: frame.reason,
-                        text: ocr.text,
-                        blocks: ocr.blocks.map((block) => ({
-                            text: block.text,
-                            confidence: block.confidence,
-                            bounds: block.bounds,
-                        })),
-                    })}\n`
-                );
                 state.frames += 1;
                 runFrames += 1;
-                state.bytes += statSync(jpg).size;
-                state.lastFrameAt = at.toISOString();
+                state.bytes += kept.bytes;
+                state.lastFrameAt = kept.at.toISOString();
 
                 if (!streamed) {
-                    live.emit("frame", { displayId, at: at.toISOString(), file: jpg });
+                    live.emit("frame", { displayId: kept.displayId, at: kept.at.toISOString(), file: kept.path });
                 }
 
                 done += 1;
