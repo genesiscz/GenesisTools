@@ -10,6 +10,7 @@ import { SparklineRow } from "@/features/pulse/components/SparklineRow";
 import { WeatherCard } from "@/features/pulse/components/WeatherCard";
 import { usePulse, usePulseHistory, useWeather } from "@/features/pulse/hooks";
 import { DASH, formatClock, gb, pct, ratioPct } from "@/features/pulse/units";
+import { useLiveChannel } from "@/live/provider";
 import { type MetricPoint, MetricChart } from "@/ui/MetricChart";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
@@ -27,6 +28,7 @@ export default function PulseScreen() {
     const [rangeMinutes, setRangeMinutes] = useState<number>(HISTORY_RANGES[0].minutes);
 
     const snap = usePulse();
+    const pulseLive = useLiveChannel("pulse");
     const cpuHistory = usePulseHistory("cpu", rangeMinutes);
     const memHistory = usePulseHistory("mem_free", rangeMinutes);
     const swapHistory = usePulseHistory("swap", rangeMinutes);
@@ -84,11 +86,11 @@ export default function PulseScreen() {
                 >
                     SYSTEM PULSE_
                 </Text>
-                {/* Live pulse dot — emerald when fetching live data this tick, muted otherwise. */}
+                {/* Live pulse dot: emerald while the live stream carries pulse or a fallback poll runs, muted otherwise. */}
                 <View
                     testID="pulse-live-dot"
                     className="h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: snap.isFetching ? c.accent : c.textMuted }}
+                    style={{ backgroundColor: pulseLive || snap.isFetching ? c.accent : c.textMuted }}
                 />
             </View>
 
