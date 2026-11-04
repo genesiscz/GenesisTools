@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -24,9 +24,15 @@ import {
     RpcError,
     readLiveRecording,
 } from "./live";
-import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, nativeArgv } from "./native";
+import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, NativeLiveCapture, nativeArgv } from "./native";
 import { peekabooCaptureError } from "./peekaboo";
 import { CaptureError, type CaptureRequest, type LiveCapture } from "./types";
+
+test("an unreadable live entry does not break the inventory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "unreadable-live-"));
+    symlinkSync(join(dir, "gone"), join(dir, "ended.json"));
+    expect(listLiveRecordings(dir)).toEqual([]);
+});
 
 const axScreens = {
     ok: true,
@@ -147,6 +153,44 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
     const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
     const recorder = new NativeFrameRecorder({ axTool: async () => [process.execPath, fake], launch: (argv) => argv });
 
+    test("a failed help probe is retried on the next availability check", async () => {
+        const marker = join(mkdtempSync(join(tmpdir(), "help-retry-")), "once");
+        const retrying = new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake, `--fixture-help-once=${marker}`],
+            launch: (argv) => argv,
+        });
+        await retrying.available();
+        expect(retrying.supports.liveControl).toBe(false);
+        await retrying.available();
+        expect(retrying.supports.liveControl).toBe(true);
+    });
+
+    test("truncated native output still returns frames already written", async () => {
+        const broken = new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake, "--fixture-corrupt-output"],
+            launch: (argv) => argv,
+        });
+        const outDir = mkdtempSync(join(tmpdir(), "salvage-capture-"));
+        const result = await broken.capture(request({ outDir, durationSec: 1 }));
+        expect(result.frames).toHaveLength(1);
+        expect(existsSync(result.frames[0].path)).toBe(true);
+    });
+
+    test("replacing a pending display switch clears its deadline and completes the replacement", async () => {
+        const clear = spyOn(globalThis, "clearTimeout");
+        try {
+            const channel = new NativeLiveCapture(() => undefined, 1, {});
+            const replaced = channel.switchDisplay(4).catch((error: unknown) => error);
+            const replacement = channel.switchDisplay(9);
+            expect(clear).toHaveBeenCalledTimes(1);
+            channel.receive(SafeJSON.stringify({ event: "display-switch", from: 1, to: 9 }));
+            await replacement;
+            expect(await replaced).toMatchObject({ kind: "failed" });
+        } finally {
+            clear.mockRestore();
+        }
+    });
+
     test("frames arrive as they land, a switch moves the running capture, and an abort keeps its frames", async () => {
         expect(await recorder.available()).toEqual({ ok: true });
         expect(recorder.supports.liveControl).toBe(true);
@@ -212,6 +256,11 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
 });
 
 describe("a failed peekaboo capture", () => {
+    test("malformed output preserves the diagnostic fallback", () => {
+        expect(peekabooCaptureError(1, '{"broken":', "capture crashed").message).toContain("capture crashed");
+        expect(peekabooCaptureError(1, "not json", "permission denied").kind).toBe("no-permission");
+    });
+
     const stderr = "[Visualizer][INFO] Visualizer client forcing mac-app context via PEEKABOO_VISUALIZER_FORCE_APP";
 
     test("names peekaboo's own error from its JSON, not its log line", () => {

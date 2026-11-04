@@ -245,6 +245,20 @@ describe("a label that tracks no one person", () => {
         );
     });
 
+    test("an applied term does not give a label a voice", () => {
+        const record = meetingRecordSchema.parse({
+            ...base,
+            items: [
+                { ...label, toSec: 0 },
+                item({ id: "i2", kind: "term", heard: "Začneme", proposed: "Pokračujeme", atSec: 0, scope: "line" }),
+            ],
+        });
+        const result = correctTranscript({ record, transcript: mixed, config, format: "txt", withSuggested: true });
+        expect(result.entries[0]?.text).toContain("Pokračujeme");
+        expect(result.entries[0]?.speaker).toContain("nejasné");
+        expect(result.outcomes.find((outcome) => outcome.item === "i1")).toMatchObject({ status: "applied" });
+    });
+
     test("a rejected label item changes nothing", () => {
         const record = meetingRecordSchema.parse({ ...base, items: [{ ...label, status: "rejected" }] });
         const result = correctTranscript({ record, transcript: mixed, config, format: "txt", withSuggested: true });

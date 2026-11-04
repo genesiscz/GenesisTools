@@ -20,6 +20,11 @@ public final class LiveRecordingsWatcher: ObservableObject {
         self.store = store
     }
 
+    deinit {
+        timer?.invalidate()
+        source?.cancel()
+    }
+
     public func start() {
         guard timer == nil else { return }
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in

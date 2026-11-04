@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ReplEngine } from "@app/node-repl/lib/engine";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
+import { type Clip, EditorToolset, editorApi } from "@genesiscz/utils/repl/toolsets/editor";
+import { RecordingHandle, recorderApi } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
@@ -15,9 +20,6 @@ import {
     type LiveCapture,
 } from "@genesiscz/utils/screen-recorder/types";
 import { createCanvas } from "@napi-rs/canvas";
-import type { ToolsetContext } from "../toolset";
-import { type Clip, EditorToolset, editorApi } from "./editor";
-import { RecordingHandle, recorderApi } from "./recorder";
 
 /** Writes one PNG every 60 ms of a colour that changes with each frame, until the capture ends. */
 class FakeRecorder extends FrameRecorder {
@@ -99,6 +101,29 @@ const ctx: ToolsetContext = {
 };
 
 describe("recorder and editor toolsets", () => {
+    test("a parent-owned recording survives a timed-out turn and reset finalizes it", async () => {
+        const engine = new ReplEngine({ toolsets: ["recorder"], recorder: { create: async () => new FakeRecorder() } });
+        try {
+            const started = await engine.run('const rec = await recorder.start({ displays: "all" }); rec.id', 10_000);
+            expect(started.error).toBeUndefined();
+            expect(started.ok).toBe(true);
+            const id = started.text;
+            const expired = await engine.run("await new Promise(() => {})", 100);
+            expect(expired.ok).toBe(false);
+            const listed = await engine.run("await recorder.list()");
+            expect(listed.text).toContain(id);
+            const attached = await engine.run(
+                `const attached = await recorder.attach(${SafeJSON.stringify(id)}); await attached.status()`
+            );
+            expect(attached.ok).toBe(true);
+            const folder = await engine.run("attached.folder");
+            await engine.reset();
+            expect(readRecordingManifest(folder.text)?.endedAt).toBeDefined();
+        } finally {
+            await engine.shutdown();
+        }
+    }, 30_000);
+
     test("docs come from the descriptors, handles included", () => {
         const recorder = renderDocs(recorderApi);
         expect(recorder).toContain('recording.audio.mute(source: "mic" | "system") → AudioState [reversible]');
@@ -133,7 +158,8 @@ describe("recorder and editor toolsets", () => {
         expect((await handle.status()).state).toBe("paused");
         await handle.resume();
         await expect(handle.audio.mute("mic")).rejects.toThrow("cannot audio.mute");
-        await handle.displays.switch(4);
+        expect((await handle.displays.switch(4)).applied).toBe("live");
+        expect(recorder.calls).toContain("switch 4");
         await Bun.sleep(300);
 
         const stopped = await handle.stop();

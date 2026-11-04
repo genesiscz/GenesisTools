@@ -131,7 +131,16 @@ export function listLiveRecordings(dir = liveRecordingsDir()): LiveEntry[] {
             continue;
         }
 
-        const parsed = liveEntrySchema.safeParse(parseOrNull(readFileSync(join(dir, name), "utf8")));
+        let text: string;
+
+        try {
+            text = readFileSync(join(dir, name), "utf8");
+        } catch (error) {
+            log.debug({ error, name }, "live recording entry disappeared or is unreadable");
+            continue;
+        }
+
+        const parsed = liveEntrySchema.safeParse(parseOrNull(text));
 
         if (!parsed.success) {
             log.debug({ name, issues: parsed.error.issues }, "unreadable live recording entry");

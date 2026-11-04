@@ -25,7 +25,7 @@ export function jsDescription(toolsetLines: readonly string[]): string {
     }
 
     const lines = toolsetLines.map((line) => `- ${line}`).join("\n");
-    return `${JS_DESCRIPTION} Preloaded globals, built once per worker (help(name) for the full API):\n${lines}`;
+    return `${JS_DESCRIPTION} Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset):\n${lines}`;
 }
 
 /**

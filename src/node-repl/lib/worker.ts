@@ -75,6 +75,8 @@ let imageCounter = 0;
 declare global {
     var nodeRepl: typeof replApi;
     var help: (name?: string) => string;
+    var search: (query: string) => string;
+    var describe: (name: string) => string;
     var show: (input: ShowInput | ShowInput[]) => Promise<void>;
     var sleep: (ms: number) => Promise<void>;
 }
@@ -97,6 +99,8 @@ const replApi = {
 
 globalThis.nodeRepl = replApi;
 
+import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
+
 const toolsets: ReplToolset[] = [];
 
 async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
@@ -107,6 +111,7 @@ async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
 }
 
 const CORE_HELP = [
+    "search(query) finds methods across loaded toolsets; describe(name) prints a method's complete descriptor.",
     "help(name?) prints the docs of a loaded toolset; show(image | path | Buffer) returns an image to the model.",
     "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes, mimeType }) is show() without the type check; await sleep(ms) waits.",
 ];
@@ -129,12 +134,70 @@ function helpText(name?: string): string {
 }
 
 globalThis.help = helpText;
+globalThis.search = (query) =>
+    searchMethods(
+        toolsets.map((one) => one.api),
+        query
+    );
+globalThis.describe = (name) =>
+    describeMethod(
+        toolsets.map((one) => one.api),
+        name
+    );
 globalThis.show = showImages;
 globalThis.sleep = (ms: number) => Bun.sleep(ms);
 
+let recordingRequestId = 0;
+const recordingRequests = new Map<number, { resolve(id: string): void; reject(error: Error): void }>();
+process.on("message", (message: unknown) => {
+    if (typeof message !== "object" || message === null || !("id" in message) || typeof message.id !== "number") {
+        return;
+    }
+
+    const pending = recordingRequests.get(message.id);
+
+    if (!pending) {
+        return;
+    }
+
+    recordingRequests.delete(message.id);
+
+    if ("recordingId" in message && typeof message.recordingId === "string") {
+        pending.resolve(message.recordingId);
+    } else {
+        pending.reject(new Error("error" in message ? String(message.error) : "Recording start failed"));
+    }
+});
+
+function startHostedRecording(options: unknown): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const id = ++recordingRequestId;
+        const timer = setTimeout(() => {
+            recordingRequests.delete(id);
+            reject(new Error("Recording start exceeded 120 seconds"));
+        }, 120_000);
+        recordingRequests.set(id, {
+            resolve: (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            reject: (error) => {
+                clearTimeout(timer);
+                reject(error);
+            },
+        });
+        process.send?.({ id, recordingStart: options });
+    });
+}
+
 async function preload(request: PreloadRequest): Promise<string> {
     const { createToolsets } = await import("./toolsets");
-    const ctx: ToolsetContext = { scratchDir: request.scratchDir, show: showImages, write: replApi.write };
+    const ctx: ToolsetContext = {
+        scratchDir: request.scratchDir,
+        show: showImages,
+        write: replApi.write,
+        recorder: { start: startHostedRecording },
+    };
 
     for (const toolset of await createToolsets(request.toolsets)) {
         Object.assign(globalThis, await toolset.bootstrap(ctx));

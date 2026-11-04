@@ -1,7 +1,11 @@
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
+import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
+import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 
 /**
  * Parent side of the REPL: owns one worker process, one request at a time, and the wall clock.
@@ -34,8 +38,14 @@ interface WorkerResponse {
 }
 
 const WORKER_PATH = join(import.meta.dir, "worker.ts");
-function spawnWorker() {
-    return Bun.spawn([process.execPath, WORKER_PATH], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+function spawnWorker(ipc: (message: unknown) => void) {
+    return Bun.spawn([process.execPath, WORKER_PATH], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        ipc,
+        env: env.getProcessEnv(),
+    });
 }
 type ReplWorker = ReturnType<typeof spawnWorker>;
 
@@ -68,6 +78,7 @@ export function resultMessage(result: Pick<ReplResult, "ok" | "text" | "error" |
 }
 
 export interface ReplEngineOptions {
+    recorder?: { create(): Promise<FrameRecorder> };
     defaultTimeoutMs?: number;
     /** Toolset ids from `REPL_TOOLSETS`, preloaded into every worker this engine spawns. */
     toolsets?: readonly string[];
@@ -86,11 +97,13 @@ export class ReplEngine {
     private moduleDirs: string[] = [];
     private queue: Promise<unknown> = Promise.resolve();
     private scratch?: TemporaryArtifacts;
+    private readonly recordings = new Set<LibraryRecording>();
+    private readonly recordingStarts = new Set<Promise<void>>();
     readonly defaultTimeoutMs: number;
     readonly preloadTimeoutMs: number;
     readonly toolsets: readonly string[];
 
-    constructor(options: ReplEngineOptions = {}) {
+    constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
         this.preloadTimeoutMs = options.preloadTimeoutMs ?? 120_000;
         this.toolsets = options.toolsets ?? [];
@@ -109,7 +122,44 @@ export class ReplEngine {
             this.workerStopped();
         }
 
-        const worker = spawnWorker();
+        let worker: ReplWorker;
+        worker = spawnWorker((message) => {
+            if (
+                typeof message !== "object" ||
+                message === null ||
+                !("recordingStart" in message) ||
+                !("id" in message)
+            ) {
+                return;
+            }
+
+            const requestId = message.id;
+            const task = (async () => {
+                try {
+                    const options = recorderStartSchema.parse(message.recordingStart);
+                    const { FRAME_RECORDERS } = await import("@genesiscz/utils/screen-recorder/recorders");
+                    const { ensureBinaryAsync } = await import("@app/control/lib/runner");
+                    const recording = await startRecording({
+                        ...options,
+                        ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined,
+                        recorder: this.options.recorder
+                            ? await this.options.recorder.create()
+                            : FRAME_RECORDERS.native({ axTool: async (input) => [await ensureBinaryAsync(input)] }),
+                    });
+                    this.recordings.add(recording);
+
+                    if (worker.exitCode === null) {
+                        worker.send({ id: requestId, recordingId: recording.id });
+                    }
+                } catch (error) {
+                    if (worker.exitCode === null) {
+                        worker.send({ id: requestId, error: String(error) });
+                    }
+                }
+            })();
+            this.recordingStarts.add(task);
+            void task.finally(() => this.recordingStarts.delete(task));
+        });
         logger.debug({ pid: worker.pid, toolsets: this.toolsets }, "node-repl worker started");
         this.worker = worker;
         void this.readResponses(worker);
@@ -365,7 +415,19 @@ export class ReplEngine {
                 }
             }
 
+            await Promise.all(this.recordingStarts);
+
+            const results = await Promise.allSettled([...this.recordings].map((recording) => recording.stop()));
+            this.recordings.clear();
             this.killWorker(reason);
+            const failures = results.filter((result) => result.status === "rejected");
+
+            if (failures.length > 0) {
+                throw new AggregateError(
+                    failures.map((result) => result.reason),
+                    "Recording post-processing failed"
+                );
+            }
         });
         this.queue = stop.catch(() => undefined);
         await stop;

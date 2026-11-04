@@ -164,7 +164,15 @@ export function renderChoiceFrame<T>(
         }
     }
 
-    return paint(build({ context: false, hint: false, headings: false }));
+    const ordered = [...answers, ...actions];
+    const focused = Math.max(0, ordered.indexOf(row!));
+    const room = Math.max(1, budget - 3);
+    const start = Math.max(0, Math.min(focused - Math.floor(room / 2), ordered.length - room));
+    return paint([
+        `${pc.cyan("◆")}  ${question[0]?.slice(3) ?? ""}`,
+        ...ordered.slice(start, start + room).map(line),
+        ...footer,
+    ]);
 }
 
 /** Shows the select. Returns the picked row's value, or the cancel symbol on Esc (test it with `isCancel`). */

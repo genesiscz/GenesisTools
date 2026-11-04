@@ -148,6 +148,7 @@ private struct LiveRecordingControlsHost: View {
 @MainActor
 final class LiveRecordingPanel {
     let id: String
+    let slot: Int
     private let panel = RecordingControlsPanel()
     private let model: LiveRecordingPanelModel
 
@@ -155,6 +156,7 @@ final class LiveRecordingPanel {
     init(recording: LiveRecording, stack: Int, send: @escaping (LiveRecordingCommand) -> Void,
          hide: @escaping () -> Void) {
         id = recording.id
+        slot = stack
         model = LiveRecordingPanelModel(recording: recording)
         panel.window.title = "Recording controls: \(recording.title)"
         panel.window.identifier = NSUserInterfaceItemIdentifier("live-recording.controls")
@@ -163,9 +165,12 @@ final class LiveRecordingPanel {
         // placement half off the screen.
         let size = NSHostingView(rootView: LiveRecordingControlsView(recording: recording, send: { _ in }, hide: {})
             .fixedSize()).fittingSize
-        var frame = RecordingPanelLayout.frame(size: size, placement: .topRight, targetCG: nil, displayIndex: nil,
+        let preferred = RecordingSettings.shared.placement
+        let placement = preferred == .nearTarget ? .topRight : preferred
+        var frame = RecordingPanelLayout.frame(size: size, placement: placement, targetCG: nil, displayIndex: nil,
                                                screens: RecordingPanelLayout.liveScreens)
-        frame.origin.y -= CGFloat(stack) * (size.height + 8)
+        let offset = CGFloat(stack) * (size.height + 8)
+        frame.origin.y += (placement == .bottomLeft || placement == .bottomRight) ? offset : -offset
         panel.window.setFrame(frame, display: true)
     }
 

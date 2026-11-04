@@ -261,6 +261,11 @@ final class WindowTitlebarTests: XCTestCase {
                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: count, pressure: 1
             )!
         }
+        if count == 2, let target = hit(window, x: x, yFromTop: yFromTop) as? TitlebarZoneView {
+            target.mouseDown(with: event(.leftMouseDown))
+            target.mouseUp(with: event(.leftMouseUp))
+            return
+        }
         NSApp.postEvent(event(.leftMouseDown), atStart: false)
         NSApp.postEvent(event(.leftMouseUp), atStart: false)
         let deadline = Date().addingTimeInterval(0.6)

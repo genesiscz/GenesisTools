@@ -108,6 +108,19 @@ async function fixture(items: Record<string, unknown>[]) {
 }
 
 describe("listen session", () => {
+    test("an adapter failure records an aborted round and preserves the error", async () => {
+        const { session, logPath } = await fixture([question("i1")]);
+        const error = new Error("clip unavailable");
+        const adapter = new ScriptedAdapter([
+            async () => {
+                throw error;
+            },
+        ]);
+        await expect(session(adapter).run()).rejects.toBe(error);
+        expect(readAnswerEvents(logPath).at(-1)).toMatchObject({ event: "round-end", reason: "aborted" });
+        expect(adapter.notes.at(-1)).toMatchObject({ kind: "ended", reason: "aborted" });
+    });
+
     test("an answer decides its items, and a word answer settles the other question on the same heard words", async () => {
         const { session, item, ledger, logPath } = await fixture([
             term("i1", 50, { proposed: "ADA" }),

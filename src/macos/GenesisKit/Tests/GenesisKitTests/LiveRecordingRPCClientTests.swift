@@ -46,6 +46,10 @@ private final class FakeRecorderServer: @unchecked Sendable {
         if connection >= 0 { shutdown(connection, SHUT_RDWR) }
     }
 
+    func notifyDisplays() {
+        send(["jsonrpc": "2.0", "method": "displays", "params": ["connected": [], "removed": [4]]])
+    }
+
     private func send(_ object: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
         let bytes = Array(data) + [10]
@@ -95,6 +99,29 @@ private final class FakeRecorderServer: @unchecked Sendable {
 }
 
 final class LiveRecordingRPCClientTests: XCTestCase {
+    @MainActor
+    func testSessionStopDoesNotWaitAndHotplugReloadsDisplays() async throws {
+        let entry = LiveRecording(id: "test", kind: "screen", title: "Test", pid: 1, startedAt: Date(), state: "recording", frames: 0, socket: server.path)
+        let session = LiveRecordingSession(entry: entry)
+        session.connectIfNeeded()
+        defer { session.close() }
+        session.call("stop", label: "Stop")
+        try await Task.sleep(for: .milliseconds(100))
+        let stop = try XCTUnwrap(server.requests.first { $0["method"] as? String == "stop" })
+        XCTAssertEqual((stop["params"] as? [String: Any])?["wait"] as? Bool, false)
+        let before = server.requests.filter { $0["method"] as? String == "displays.list" }.count
+        server.notifyDisplays()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(server.requests.filter { $0["method"] as? String == "displays.list" }.count, before + 1)
+        var single = entry
+        single.controls = ["displays.list", "displays.switch"]
+        single.connectedDisplays = [.init(id: 1, name: "Display", recorded: true)]
+        let menu = LiveRecordingsStatusItem().displaysMenu(single)
+        XCTAssertTrue(menu.items.contains { $0.identifier?.rawValue == "live-recording.only.1" })
+        XCTAssertFalse(menu.items.contains { $0.identifier?.rawValue.hasPrefix("live-recording.mode.") == true })
+        XCTAssertFalse(menu.items.contains { $0.identifier?.rawValue == "live-recording.display.1" })
+    }
+
     private var server: FakeRecorderServer!
 
     override func setUpWithError() throws {

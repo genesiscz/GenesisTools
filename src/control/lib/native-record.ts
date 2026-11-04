@@ -222,6 +222,10 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         throw new Error("audio applies to screen, window and region mode");
     }
 
+    if (cap.audioSidecar !== undefined && typeof cap.audioSidecar !== "boolean") {
+        throw new Error("audioSidecar must be a boolean");
+    }
+
     if (cap.audio?.length && !cap.videoOut && !cap.audioSidecar) {
         throw new Error("audio needs videoOut (tracks in the movie) or audioSidecar (.m4a files)");
     }

@@ -94,9 +94,21 @@ struct MarkdownWebView: NSViewRepresentable {
         static func between(old: String, new: String) -> [DiffMark] {
             let oldBody = MarkdownFrontmatter.split(old).1
             let newBody = MarkdownFrontmatter.split(new).1
-            return GitHunks.between(old: oldBody, new: newBody).filter { !$0.isTrailingNewlineOnly }.map { hunk in
-                DiffMark(first: hunk.newStart, last: hunk.newStart + max(1, hunk.newCount) - 1, kind: hunk.kind,
-                         old: hunk.oldLines.joined(separator: "\n"))
+            return GitHunks.between(old: oldBody, new: newBody).filter { !$0.isTrailingNewlineOnly }.flatMap { hunk -> [DiffMark] in
+                // A line diff can absorb a removed paragraph into the preceding replacement.
+                // Keep the paragraph boundary so the renderer can pair the changed paragraph.
+                if hunk.kind == .modified, hunk.newCount > 0,
+                   hunk.oldLines.firstIndex(of: "") == hunk.newCount,
+                   hunk.oldLines.count > hunk.newCount + 1 {
+                    return [
+                        DiffMark(first: hunk.newStart, last: hunk.newStart + hunk.newCount - 1, kind: .modified,
+                                 old: hunk.oldLines.prefix(hunk.newCount).joined(separator: "\n")),
+                        DiffMark(first: hunk.newStart + hunk.newCount, last: hunk.newStart + hunk.newCount, kind: .deleted,
+                                 old: hunk.oldLines.dropFirst(hunk.newCount + 1).joined(separator: "\n")),
+                    ]
+                }
+                return [DiffMark(first: hunk.newStart, last: hunk.newStart + max(1, hunk.newCount) - 1, kind: hunk.kind,
+                                 old: hunk.oldLines.joined(separator: "\n"))]
             }
         }
     }

@@ -93,9 +93,18 @@ function detectFlags(axTool: string[]): Promise<Set<NativeOptionalFlag>> {
 
     if (!cached) {
         cached = boundedCommand({ command: [...axTool, "--help"], timeoutMs: HELP_TIMEOUT_MS }).then((result) => {
+            if (result.status !== 0) {
+                helpCache.delete(key);
+                return new Set<NativeOptionalFlag>();
+            }
+
             const flags = flagsInHelp(`${result.stdout}\n${result.stderr}`);
             log.debug({ axTool, flags: [...flags] }, "ax-tool capture options");
             return flags;
+        });
+        cached = cached.catch((error: unknown) => {
+            helpCache.delete(key);
+            throw error;
         });
         helpCache.set(key, cached);
     }
@@ -367,10 +376,16 @@ export class NativeLiveCapture implements LiveCapture {
             return Promise.resolve();
         }
 
-        this.pendingSwitch?.reject(new CaptureError("failed", "another switch replaced this one"));
+        if (this.pendingSwitch) {
+            clearTimeout(this.pendingSwitch.timer);
+            this.pendingSwitch.reject(new CaptureError("failed", "another switch replaced this one"));
+        }
         return new Promise<void>((resolve, reject) => {
             const timer = setTimeout(() => {
-                this.pendingSwitch = undefined;
+                if (this.pendingSwitch?.timer === timer) {
+                    this.pendingSwitch = undefined;
+                }
+
                 reject(new CaptureError("timeout", `the recorder did not switch to display ${displayId}`));
             }, SWITCH_TIMEOUT_MS);
             this.pendingSwitch = { to: displayId, resolve, reject, timer };
@@ -571,7 +586,13 @@ export class NativeFrameRecorder extends FrameRecorder {
             );
         }
 
-        const json = SafeJSON.parse(run.stdout.slice(Math.max(0, run.stdout.indexOf("{"))) || "null");
+        let json: unknown = null;
+
+        try {
+            json = SafeJSON.parse(run.stdout.slice(Math.max(0, run.stdout.indexOf("{"))) || "null", { strict: true });
+        } catch (error) {
+            log.debug({ error }, "native capture result is incomplete; trying frame salvage");
+        }
         const parsed = nativeResult.safeParse(json);
 
         if (run.exitCode === 0 && parsed.success) {

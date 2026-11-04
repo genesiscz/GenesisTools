@@ -40,6 +40,20 @@ const frame = (opts: ChoiceSelectOptions<string>, state: string, cursor: number,
     stripAnsi(renderChoiceFrame(opts, state, cursor, { columns, rows: height })).split("\n");
 
 describe("renderChoiceFrame", () => {
+    test("every focused row stays visible in a short terminal", () => {
+        const many: ChoiceRow<string>[] = Array.from({ length: 20 }, (_, i) => ({
+            value: String(i),
+            label: `Choice ${i} end`,
+            kind: i < 15 ? "answer" : "action",
+        }));
+        for (let cursor = 0; cursor < many.length; cursor += 1) {
+            const lines = frame(options({ rows: many }), "active", cursor, 80, 7);
+            expect(lines.join("\n")).toContain(`Choice ${cursor} end`);
+            expect(lines.some((line) => line.includes("❯") && line.includes(`Choice ${cursor} end`))).toBe(true);
+            expect(lines.length).toBeLessThanOrEqual(6);
+        }
+    });
+
     test("answers and actions sit under their own headings, the hint of the focused row on its own line", () => {
         const lines = frame(options(), "active", 2);
         const text = lines.join("\n");

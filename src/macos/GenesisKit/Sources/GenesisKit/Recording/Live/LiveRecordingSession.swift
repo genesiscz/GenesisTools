@@ -151,7 +151,7 @@ final class LiveRecordingSession {
         switch method {
         case "state": changeOverlay { $0.applyStatus(params) }
         case "frame": changeOverlay { $0.applyFrame(params) }
-        case "displays": changeOverlay { $0.applyDisplays(params) }
+        case "displays": reloadDisplays()
         case "warning": changeOverlay { $0.applyWarning(params) }
         case "ended":
             link = .ended
@@ -186,7 +186,8 @@ final class LiveRecordingSession {
             return
         }
 
-        client.call(method, params: params) { [weak self] result in
+        let requestParams = method == "stop" ? ["wait": false] : params
+        client.call(method, params: requestParams) { [weak self] result in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 switch result {

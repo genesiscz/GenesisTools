@@ -237,7 +237,9 @@ describe("toolsets", () => {
         const engine = new ReplEngine({ toolsets: [`${FIXTURE}#CounterToolset`] });
         try {
             const list = await engine.run("help()");
-            expect(list.text).toContain("counter: Counts the preloads of this worker. counter.logTo(path)");
+            expect(list.text).toContain("counter: Counts the preloads of this worker.");
+            expect((await engine.run('search("path")')).text).toContain("counter.logTo");
+            expect((await engine.run('describe("counter.logTo")')).text).toContain("Parameters:");
             const docs = await engine.run('help("counter")');
             expect(docs.text).toContain("- counter.logTo(path: string) → unknown [reversible]");
             expect((await engine.run('help("nope")')).error).toContain('No toolset "nope" is loaded');
@@ -276,7 +278,7 @@ describe("toolsets", () => {
     it("the js description lists each preloaded toolset's one line", () => {
         expect(jsDescription([])).not.toContain("Preloaded globals");
         expect(jsDescription(["counter: Counts. counter.logTo(path)"])).toContain(
-            "Preloaded globals, built once per worker (help(name) for the full API):\n- counter: Counts. counter.logTo(path)"
+            "Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset):\n- counter: Counts. counter.logTo(path)"
         );
     });
 });

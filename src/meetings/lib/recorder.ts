@@ -32,7 +32,14 @@ import {
     type RecordingSpan,
     type RecordingStopReason,
 } from "@genesiscz/utils/meetings/record";
-import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
+import {
+    attemptStaleTakeover,
+    classifyPidRecord,
+    clearPidFile,
+    inspectPidFile,
+    parsePidRecord,
+    writePidFile,
+} from "@genesiscz/utils/process/pidfile";
 import {
     type AudioDevices,
     type AudioSource,
@@ -53,8 +60,9 @@ import {
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { mainDisplay } from "@genesiscz/utils/screen-recorder/displays";
-import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
+import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
+import { startRecording } from "@genesiscz/utils/screen-recorder/start";
 import {
     CaptureError,
     type CaptureHooks,
@@ -64,7 +72,7 @@ import {
     type FrameRecorder,
     type LiveCapture,
 } from "@genesiscz/utils/screen-recorder/types";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
@@ -473,880 +481,906 @@ export async function runRecorder(options: {
     let audioFiles = 0;
     const record = store.read(meetingId);
 
-    writePidFile(files.pid, { exclusive: true });
-
-    const state: RecorderState = {
-        meetingId,
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        display: policy,
-        backend: deps.recorder.id,
-        frames: 0,
-        bytes: 0,
-    };
-    const notes: string[] = [];
-    const note = (text: string) => {
-        if (!notes.includes(text)) {
-            notes.push(text);
-        }
-    };
-    const seenDisplays = new Map<number, string>(
-        (record?.recording?.displays ?? []).map((display) => [display.id, display.name])
-    );
-    const spans: RecordingSpan[] = [...(record?.recording?.spans ?? [])];
-    let paused = false;
-    let pausedAt: string | undefined;
-    let stopRequested = false;
-    /** The captures of the running piece, by the display each records. */
-    const running = new Map<number, RunningCapture>();
-    let inPiece = false;
-    let wake: (() => void) | undefined;
-    const abortAll = () => {
-        for (const capture of running.values()) {
-            capture.controller.abort();
-        }
-    };
-    const stopping = new AbortController();
-    const saveState = () => atomicWriteFileSync(files.state, SafeJSON.stringify(state, null, 2));
-    const connected = async (displayId: number): Promise<DisplayInfo> => {
-        const display = (await deps.recorder.displays()).find((one) => one.id === displayId);
-
-        if (!display) {
-            throw new RpcError(RPC_ERRORS.unknownDisplay, `display ${displayId} is not connected`);
-        }
-
-        return display;
-    };
-    const refuseWhenStopping = () => {
-        if (stopRequested) {
-            throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
-        }
-    };
-    const answer = (how: "live" | "started" | "stopped" | "restart" | "next-piece") => ({
-        mode: policy,
-        chosen: chosen ?? null,
-        applied: how,
-    });
-    /** A change no running capture can take: the running piece ends and the next starts with the new set at once. */
-    const restart = (change: () => void) => {
-        refuseWhenStopping();
-        change();
-        log.info({ policy, chosen }, "recorded displays chosen over the socket; the piece restarts");
-        abortAll();
-        return answer("restart");
-    };
-    const currentIds = () => chosen ?? state.displays?.map((one) => one.id) ?? [];
-    /**
-     * Applies changed settings to every running capture: each change through its live command, or, when a capture
-     * lacks one, a restart of that capture with the new settings. No capture running: the next piece takes them.
-     */
-    const applyLive = async (
-        changes: Array<((capture: LiveCapture) => Promise<void> | undefined) | undefined>
-    ): Promise<"live" | "restart" | "next-piece"> => {
-        const wanted = changes.filter((change) => change !== undefined);
-
-        if (running.size === 0 || wanted.length === 0) {
-            return "next-piece";
-        }
-
-        let restarted = false;
-
-        for (const capture of running.values()) {
-            const channel = capture.live;
-            const results = channel ? wanted.map((change) => change(channel)) : [undefined];
-
-            if (results.some((result) => result === undefined)) {
-                capture.controller.abort();
-                restarted = true;
-                continue;
-            }
-
-            await Promise.all(results);
-        }
-
-        return restarted ? "restart" : "live";
-    };
-    const finishJobId = `finish-${meetingId}-${Date.now()}`;
-    const stopped = Promise.withResolvers<StopAnswer>();
-    const jobs = new JobRegistry((event) => live.emit("progress", { ...event }));
-    const liveStatus = (): RecorderStatus => {
-        const entry = live.current;
-        return {
-            kind: entry.kind,
-            title: entry.title,
-            state: entry.state,
-            displays: entry.displays,
-            frames: entry.frames,
-            ...(entry.lastFrameAt ? { lastFrameAt: entry.lastFrameAt } : {}),
-            ...(entry.warning ? { warning: entry.warning } : {}),
-            ...(entry.folder ? { folder: entry.folder } : {}),
-        };
-    };
-    const live = new LiveRecordingServer({
-        id: meetingLiveId(meetingId),
-        kind: "meeting",
-        title: record?.title || meetingId,
-        folder,
-        dir: deps.liveDir,
-        control: new MeetingRecorderControl({
-            status: async () => liveStatus(),
-            stop: async (options) => {
-                if (stopRequested) {
-                    throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
-                }
-
-                requestStop();
-                return options.wait === false ? { state: "stopping", job: finishJobId } : await stopped.promise;
-            },
-            listJobs: async () => jobs.list(),
-            getSettings: async () => ({ settings, audio: { ...audio, muted: { ...audio.muted } } }),
-            setSettings: async (patch) => {
-                refuseWhenStopping();
-                const before = settings;
-                settings = recorderSettingsSchema.parse({
-                    ...settings,
-                    ...patch,
-                    ocr: { ...settings.ocr, ...patch.ocr },
-                });
-                const applied = await applyLive([
-                    settings.activeFps !== before.activeFps || settings.idleFps !== before.idleFps
-                        ? (one) => one.setRates?.(settings.activeFps, settings.idleFps)
-                        : undefined,
-                    settings.threshold !== before.threshold
-                        ? (one) => one.setThreshold?.(settings.threshold)
-                        : undefined,
-                    settings.maxLongSide !== before.maxLongSide
-                        ? (one) => one.setMaxLongSide?.(settings.maxLongSide)
-                        : undefined,
-                    // ax-tool has no live heartbeat command, so a change of it restarts the capture.
-                    settings.heartbeatSec !== before.heartbeatSec ? () => undefined : undefined,
-                ]);
-                log.info({ settings, applied }, "recorder settings changed over the socket");
-                return { settings, audio, applied };
-            },
-            listAudioDevices: async () => {
-                try {
-                    return await deps.recorder.audioDevices();
-                } catch (error) {
-                    throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
-                }
-            },
-            muteAudio: async (source, muted) => {
-                refuseWhenStopping();
-
-                if (!audio.sources.includes(source)) {
-                    throw new RpcError(RPC_ERRORS.invalidParams, `this recording records no ${source} sound`);
-                }
-
-                const capture = [...running.values()].find((one) => one.audio);
-
-                if (capture && !capture.live?.mute) {
-                    throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot mute while it records");
-                }
-
-                await capture?.live?.mute?.(source, muted).catch((error: unknown) => {
-                    throw new RpcError(RPC_ERRORS.internal, errorText(error));
-                });
-                audio.muted[source] = muted;
-                log.info({ source, muted }, "audio muted over the socket");
-                return { ...audio, muted: { ...audio.muted } };
-            },
-            setAudioInput: async (deviceId) => {
-                refuseWhenStopping();
-
-                if (!audio.sources.includes("mic")) {
-                    throw new RpcError(RPC_ERRORS.invalidParams, "this recording records no microphone");
-                }
-
-                const devices = await deps.recorder.audioDevices().catch((error: unknown) => {
-                    throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
-                });
-
-                if (!devices.inputs.some((device) => device.id === deviceId)) {
-                    throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
-                }
-
-                audio.micDevice = deviceId;
-                const capture = [...running.values()].find((one) => one.audio);
-
-                if (capture?.live?.setMic) {
-                    await capture.live.setMic(deviceId).catch((error: unknown) => {
-                        throw new RpcError(RPC_ERRORS.internal, errorText(error));
-                    });
-                } else {
-                    capture?.controller.abort();
-                }
-
-                return { ...audio, muted: { ...audio.muted } };
-            },
-            pause: async () => {
-                if (stopRequested) {
-                    throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
-                }
-
-                if (paused) {
-                    throw new RpcError(RPC_ERRORS.alreadyPaused, "the recording is already paused");
-                }
-
-                paused = true;
-                pausedAt = new Date().toISOString();
-                const captures = [...running.values()];
-
-                // A capture with a live channel pauses in place; any other ends its piece.
-                if (captures.length > 0 && captures.every((one) => one.live)) {
-                    for (const one of captures) {
-                        one.live?.pause();
-                    }
-                } else {
-                    abortAll();
-                }
-
-                markPaused();
-                return { state: "paused" };
-            },
-            resume: async () => {
-                if (!paused || stopRequested) {
-                    throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
-                }
-
-                paused = false;
-
-                for (const one of running.values()) {
-                    one.live?.resume();
-                }
-
-                markResumed();
-                wake?.();
-                return { state: "recording" };
-            },
-            listDisplays: async () => {
-                const recordedIds = new Set(state.displays?.map((display) => display.id) ?? []);
-                return (await deps.recorder.displays()).map((display) => ({
-                    ...display,
-                    recorded: recordedIds.has(display.id),
-                }));
-            },
-            addDisplay: async (displayId) => {
-                const display = await connected(displayId);
-                refuseWhenStopping();
-
-                if (!deps.recorder.supports.parallelCaptures) {
-                    throw new RpcError(
-                        RPC_ERRORS.invalidParams,
-                        `the ${deps.recorder.id} recorder records one display at a time; use displays.switch`
-                    );
-                }
-
-                chosen = [...new Set([...currentIds(), display.id])];
-
-                if (!inPiece || paused || running.has(display.id)) {
-                    return answer("next-piece");
-                }
-
-                startCapture(targetOf(display));
-                return answer("started");
-            },
-            removeDisplay: async (displayId) => {
-                const current = currentIds();
-
-                if (!current.includes(displayId)) {
-                    throw new RpcError(RPC_ERRORS.unknownDisplay, `display ${displayId} is not being recorded`);
-                }
-
-                if (current.length === 1) {
-                    throw new RpcError(
-                        RPC_ERRORS.lastDisplay,
-                        "the last recorded display cannot be removed; pause or stop instead"
-                    );
-                }
-
-                refuseWhenStopping();
-                chosen = current.filter((id) => id !== displayId);
-                const capture = running.get(displayId);
-
-                if (!capture) {
-                    return answer("next-piece");
-                }
-
-                capture.controller.abort();
-                return answer("stopped");
-            },
-            switchDisplay: async (displayId) => {
-                const display = await connected(displayId);
-                refuseWhenStopping();
-                const [only, ...others] = [...running.values()];
-
-                // One capture with a live channel moves its stream to the display without a restart.
-                if (only?.live && others.length === 0 && only.target.target.kind === "display") {
-                    try {
-                        await only.live.switchDisplay(display.id);
-                    } catch (error) {
-                        throw new RpcError(
-                            error instanceof CaptureError && error.kind === "display-missing"
-                                ? RPC_ERRORS.unknownDisplay
-                                : RPC_ERRORS.internal,
-                            errorText(error)
-                        );
-                    }
-
-                    running.delete(only.target.displayId);
-                    only.target = targetOf(display);
-                    running.set(display.id, only);
-                    chosen = [display.id];
-                    syncDisplays();
-                    return answer("live");
-                }
-
-                return restart(() => {
-                    chosen = [display.id];
-                });
-            },
-            setDisplayMode: async (mode) =>
-                restart(() => {
-                    policy = mode;
-                    chosen = undefined;
-                    state.display = policy;
-                }),
-        }),
-    });
-    const requestStop = () => {
-        stopRequested = true;
-        live.update({ state: "stopping" });
-        abortAll();
-        stopping.abort();
-        wake?.();
-    };
-    const onSignal = () => requestStop();
-    process.on("SIGTERM", onSignal);
-    process.on("SIGINT", onSignal);
-
-    const updateRecording = (change: string, mutate: (recording: RecordingBlock) => void) =>
-        store.update(meetingId, { command: "record", change }, (current) => {
-            const recording: RecordingBlock = { ...current.recording };
-            mutate(recording);
-            current.recording = recording;
-        });
-    const openSpan = () => spans.push({ from: new Date().toISOString() });
-    /** `at`: when it was asked for; the running piece converts its frames after that. */
-    const closeSpan = (stopReason: RecordingStopReason, at = new Date().toISOString()) => {
-        const open = spans.at(-1);
-
-        if (open && !open.to) {
-            open.to = at;
-            open.stopReason = stopReason;
-        }
-    };
-
-    const markPaused = () => {
-        closeSpan("paused", pausedAt);
-        state.paused = true;
-        saveState();
-        live.update({ state: "paused" });
-        void updateRecording("paused", (recording) => {
-            recording.status = "paused";
-            recording.spans = spans;
-        }).catch((err: unknown) => log.warn({ err }, "pause not written to the record"));
-    };
-    const markResumed = () => {
-        openSpan();
-        state.paused = false;
-        saveState();
-        live.update({ state: "recording" });
-        void updateRecording("resumed", (recording) => {
-            recording.status = "recording";
-            recording.spans = spans;
-        }).catch((err: unknown) => log.warn({ err }, "resume not written to the record"));
-    };
-    const targetOf = (display: DisplayInfo): PieceTarget => ({
-        target: { kind: "display", displayId: display.id },
-        displayId: display.id,
-        label: `${display.name} (${display.id})`,
-    });
-    const liveFrames = () => state.frames + [...running.values()].reduce((sum, one) => sum + one.streamed, 0);
-    let lastDisplayIds = "";
-    /** The recorded displays follow the running captures. */
-    const syncDisplays = () => {
-        const ids = [...running.keys()].sort((a, b) => a - b).join(",");
-
-        if (ids === lastDisplayIds || running.size === 0) {
-            return;
-        }
-
-        log.info({ from: lastDisplayIds, to: ids }, "recorded displays changed");
-        lastDisplayIds = ids;
-        state.displays = [...running.values()].map((one) => ({
-            id: one.target.displayId,
-            name: seenDisplays.get(one.target.displayId) ?? one.target.label,
-        }));
-        live.update({ displays: state.displays });
-    };
-    let pieceOutcome: { recorded: boolean; lastError?: unknown; count: number } = { recorded: false, count: 0 };
-    let captureSeq = 0;
-
-    const startCapture = (target: PieceTarget): void => {
-        const outDir = join(pieceDir, `d${target.displayId}-${++captureSeq}`);
-        mkdirSync(outDir, { recursive: true });
-        // One capture records the sound: two would write the same microphone twice.
-        const withAudio =
-            audio.sources.length > 0 && deps.recorder.supports.audio && ![...running.values()].some((one) => one.audio);
-        const entry: RunningCapture = {
-            target,
-            controller: new AbortController(),
-            streamed: 0,
-            audio: withAudio,
-            done: Promise.resolve(),
-        };
-        running.set(target.displayId, entry);
-        pieceOutcome.count += 1;
-        syncDisplays();
-        const hooks: CaptureHooks = {
-            onFrame: (frame) => {
-                entry.streamed += 1;
-                live.update({ frames: liveFrames(), lastFrameAt: new Date().toISOString() });
-                live.emit("frame", {
-                    displayId: frame.displayId ?? entry.target.displayId,
-                    at: new Date().toISOString(),
-                    file: frame.path,
-                });
-            },
-            onLive: (channel) => {
-                entry.live = channel;
-
-                if (paused) {
-                    channel.pause();
-                }
-
-                for (const source of withAudio ? audio.sources : []) {
-                    if (audio.muted[source]) {
-                        void channel.mute?.(source, true).catch((err: unknown) => log.warn({ err }, "mute failed"));
-                    }
-                }
-            },
-        };
-        entry.done = deps.recorder
-            .capture(
-                {
-                    target: target.target,
-                    durationSec: deps.pieceSec,
-                    activeFps: settings.activeFps,
-                    idleFps: settings.idleFps,
-                    thresholdPercent: settings.threshold,
-                    maxLongSidePx: settings.maxLongSide,
-                    ...nativeKeys,
-                    ...(settings.heartbeatSec > 0 ? { heartbeatSec: settings.heartbeatSec } : {}),
-                    ...(withAudio
-                        ? {
-                              audio: {
-                                  sources: audio.sources,
-                                  ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}),
-                              },
-                          }
-                        : {}),
-                    outDir,
-                    hooks,
-                },
-                entry.controller.signal
-            )
-            .then(
-                async (result) => {
-                    pieceOutcome.recorded = true;
-                    keepTracks(result, entry.target);
-                    await jobs.task("ocr", (ctx) =>
-                        keepFrames(result, entry.target, entry.streamed > 0, (done) =>
-                            ctx.progress({ done, total: result.frames.length, unit: "frames" })
-                        )
-                    ).done;
-                    entry.streamed = 0;
-
-                    if (result.endedEarly === "display-removed") {
-                        log.info({ display: entry.target.label }, "a display left during a piece");
-                    }
-                },
-                (err: unknown) => {
-                    pieceOutcome.lastError = err;
-
-                    if (err instanceof CaptureError && err.kind === "display-missing") {
-                        log.info({ display: entry.target.label }, "a display left before its capture");
-                        return;
-                    }
-
-                    log.warn({ err, display: entry.target.label }, "a capture failed");
-
-                    if (pieceOutcome.count > 1) {
-                        note(`${entry.target.label}: ${errorText(err)}`);
-                    }
-                }
-            )
-            .finally(() => {
-                if (running.get(entry.target.displayId) === entry) {
-                    running.delete(entry.target.displayId);
-                }
-
-                rmSync(outDir, { recursive: true, force: true });
-            });
-    };
-
-    let failures = 0;
-    let failureNoticeOpen = Boolean(record?.recording?.failureNotifiedAt);
-    let runFrames = 0;
-    let lastConnected = "";
-
-    /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
-    const keepTracks = (result: CaptureResult, target: PieceTarget): void => {
-        for (const track of result.tracks ?? []) {
-            if (!track.path || !existsSync(track.path)) {
-                continue;
-            }
-
-            const at = new Date(result.startedAtMs);
-            const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
-            mkdirSync(audioDir, { recursive: true });
-            renameSync(track.path, join(audioDir, name));
-            appendFileSync(
-                join(folder, "audio.jsonl"),
-                `${SafeJSON.stringify({ file: `audio/${name}`, source: track.source, at: at.toISOString(), durationMs: track.durationMs, mutedSpans: track.mutedSpans })}\n`
-            );
-            audioFiles += 1;
-        }
-    };
-
-    /** `streamed`: the socket announced these frames as they landed already. */
-    const keepFrames = async (
-        result: CaptureResult,
-        target: PieceTarget,
-        streamed: boolean,
-        onFrame: (done: number) => void = () => undefined
-    ): Promise<void> => {
-        let done = 0;
-
-        for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
-            const at = new Date(result.startedAtMs + frame.atMs);
-            const displayId = frame.displayId ?? target.displayId;
-            const name = frameName(at, displayId);
-            const jpg = join(framesDir, name);
-            await deps.toJpeg(frame.path, jpg, capture.jpegQuality);
-            const read = settings.ocr.enabled
-                ? await deps.ocr(jpg, settings.ocr.languages).catch((err: unknown) => {
-                      log.warn({ err, jpg }, "OCR failed for a frame");
-                      return { text: "", blocks: [] };
-                  })
-                : { text: "", blocks: [] };
-            const ocr = read.text.trim().length < settings.ocr.minChars ? { text: "", blocks: [] } : read;
-
-            if (settings.ocr.enabled && state.frames === 0 && read.text.trim().length < EMPTY_FRAME_CHARS) {
-                note(
-                    `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
-                );
-            }
-
-            appendFileSync(
-                ocrPath,
-                `${SafeJSON.stringify({
-                    file: `frames/${name}`,
-                    at: at.toISOString(),
-                    displayId,
-                    text: ocr.text,
-                    blocks: ocr.blocks.map((block) => ({
-                        text: block.text,
-                        confidence: block.confidence,
-                        bounds: block.bounds,
-                    })),
-                })}\n`
-            );
-            state.frames += 1;
-            runFrames += 1;
-            state.bytes += statSync(jpg).size;
-            state.lastFrameAt = at.toISOString();
-
-            if (!streamed) {
-                live.emit("frame", { displayId, at: at.toISOString(), file: jpg });
-            }
-
-            done += 1;
-            onFrame(done);
-        }
-    };
-
-    /** One piece: every target at once. False when every capture failed. */
-    const capturePiece = async (): Promise<boolean> => {
-        const displays = await deps.recorder.displays();
-        const { targets, fallback } = pieceTargets({
-            policy,
-            displays,
-            followFocus: deps.recorder.supports.followFocus,
-            chosen,
-            parallel: deps.recorder.supports.parallelCaptures,
-        });
-        const connectedIds = displays.map((display) => display.id).join(",");
-
-        if (connectedIds !== lastConnected) {
-            const before = new Set(lastConnected.split(",").filter(Boolean).map(Number));
-            const now = new Set(displays.map((display) => display.id));
-            live.emit("displays", {
-                connected: displays.map((display) => ({ id: display.id, name: display.name })),
-                removed: [...before].filter((id) => !now.has(id)),
-            });
-            lastConnected = connectedIds;
-        }
-
-        if (fallback) {
-            note(`${fallback} (since ${localTime(new Date().toISOString())})`);
-        }
-
-        for (const display of displays) {
-            seenDisplays.set(display.id, display.name);
-        }
-
-        if (targets.length === 0) {
-            throw new CaptureError("display-missing", "no display is connected");
-        }
-
-        if (paused || stopRequested) {
-            return false;
-        }
-
-        pieceOutcome = { recorded: false, count: 0 };
-        inPiece = true;
-
-        try {
-            for (const target of targets) {
-                startCapture(target);
-            }
-
-            // A display added over the socket joins this piece, so wait until every capture has ended.
-            while (running.size > 0) {
-                await Promise.race([...running.values()].map((one) => one.done));
-            }
-        } catch (err) {
-            abortAll();
-            await Promise.allSettled([...running.values()].map((one) => one.done));
-            throw err;
-        } finally {
-            inPiece = false;
-        }
-
-        if (!pieceOutcome.recorded && !paused && !stopRequested && pieceOutcome.lastError !== undefined) {
-            throw pieceOutcome.lastError;
-        }
-
-        return pieceOutcome.recorded;
-    };
+    const previous = readFileIfExistsSync(files.pid);
+    const content = previous ? Buffer.from(previous).toString("utf8") : undefined;
+    const owner = content ? parsePidRecord(content) : null;
+    const status = owner ? classifyPidRecord(owner).status : undefined;
+    const reclaimed =
+        content && (status === "dead" || status === "foreign") ? await attemptStaleTakeover(files.pid, content) : false;
+
+    if (!reclaimed) {
+        writePidFile(files.pid, { exclusive: true });
+    }
 
     try {
         mkdirSync(framesDir, { recursive: true });
-        rmSync(pieceDir, { recursive: true, force: true });
-        mkdirSync(pieceDir, { recursive: true });
-        saveState();
-        openSpan();
-        await store.update(
+        const state: RecorderState = {
             meetingId,
-            { command: "record start", change: `display ${policy} (${deps.recorder.id})` },
-            (current) => {
-                current.recording = {
-                    ...current.recording,
-                    startedAt: state.startedAt,
-                    backend: deps.recorder.id,
-                    displayPolicy: policy,
-                    framesDir: "frames",
-                    ocr: "ocr.jsonl",
-                    status: "recording",
-                    spans,
-                };
-                delete current.recording.stoppedAt;
-                delete current.recording.stopReason;
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+            display: policy,
+            backend: deps.recorder.id,
+            frames: 0,
+            bytes: 0,
+        };
+        const notes: string[] = [];
+        const note = (text: string) => {
+            if (!notes.includes(text)) {
+                notes.push(text);
             }
+        };
+        const seenDisplays = new Map<number, string>(
+            (record?.recording?.displays ?? []).map((display) => [display.id, display.name])
         );
-        const ready = await deps.recorder.available();
-
-        if (!ready.ok) {
-            throw new CaptureError("unavailable", `the ${deps.recorder.id} recorder is not available: ${ready.reason}`);
-        }
-
-        while (!stopRequested) {
-            if (paused) {
-                await new Promise<void>((resolve) => {
-                    wake = resolve;
-
-                    if (!paused || stopRequested) {
-                        resolve();
-                    }
-                });
-                wake = undefined;
-
-                if (stopRequested) {
-                    break;
-                }
+        const spans: RecordingSpan[] = [...(record?.recording?.spans ?? [])];
+        let paused = false;
+        let pausedAt: string | undefined;
+        let stopRequested = false;
+        /** The captures of the running piece, by the display each records. */
+        const running = new Map<number, RunningCapture>();
+        let inPiece = false;
+        let wake: (() => void) | undefined;
+        const abortAll = () => {
+            for (const capture of running.values()) {
+                capture.controller.abort();
             }
+        };
+        const stopping = new AbortController();
+        const saveState = () => atomicWriteFileSync(files.state, SafeJSON.stringify(state, null, 2));
+        const connected = async (displayId: number): Promise<DisplayInfo> => {
+            const display = (await deps.recorder.displays()).find((one) => one.id === displayId);
+
+            if (!display) {
+                throw new RpcError(RPC_ERRORS.unknownDisplay, `display ${displayId} is not connected`);
+            }
+
+            return display;
+        };
+        const refuseWhenStopping = () => {
+            if (stopRequested) {
+                throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
+            }
+        };
+        const answer = (how: "live" | "started" | "stopped" | "restart" | "next-piece") => ({
+            mode: policy,
+            chosen: chosen ?? null,
+            applied: how,
+        });
+        /** A change no running capture can take: the running piece ends and the next starts with the new set at once. */
+        const restart = (change: () => void) => {
+            refuseWhenStopping();
+            change();
+            log.info({ policy, chosen }, "recorded displays chosen over the socket; the piece restarts");
+            abortAll();
+            return answer("restart");
+        };
+        const currentIds = () => chosen ?? state.displays?.map((one) => one.id) ?? [];
+        /**
+         * Applies changed settings to every running capture: each change through its live command, or, when a capture
+         * lacks one, a restart of that capture with the new settings. No capture running: the next piece takes them.
+         */
+        const applyLive = async (
+            changes: Array<((capture: LiveCapture) => Promise<void> | undefined) | undefined>
+        ): Promise<"live" | "restart" | "next-piece"> => {
+            const wanted = changes.filter((change) => change !== undefined);
+
+            if (running.size === 0 || wanted.length === 0) {
+                return "next-piece";
+            }
+
+            let restarted = false;
+
+            for (const capture of running.values()) {
+                const channel = capture.live;
+                const results = channel ? wanted.map((change) => change(channel)) : [undefined];
+
+                if (results.some((result) => result === undefined)) {
+                    capture.controller.abort();
+                    restarted = true;
+                    continue;
+                }
+
+                await Promise.all(results);
+            }
+
+            return restarted ? "restart" : "live";
+        };
+        const finishJobId = `finish-${meetingId}-${Date.now()}`;
+        const stopped = Promise.withResolvers<StopAnswer>();
+        const jobs = new JobRegistry((event) => live.emit("progress", { ...event }));
+        const liveStatus = (): RecorderStatus => {
+            const entry = live.current;
+            return {
+                kind: entry.kind,
+                title: entry.title,
+                state: entry.state,
+                displays: entry.displays,
+                frames: entry.frames,
+                ...(entry.lastFrameAt ? { lastFrameAt: entry.lastFrameAt } : {}),
+                ...(entry.warning ? { warning: entry.warning } : {}),
+                ...(entry.folder ? { folder: entry.folder } : {}),
+            };
+        };
+        const session = startRecording({
+            recorder: deps.recorder,
+            session: {
+                id: meetingLiveId(meetingId),
+                kind: "meeting",
+                title: record?.title || meetingId,
+                folder,
+                dir: deps.liveDir,
+                control: new MeetingRecorderControl({
+                    status: async () => liveStatus(),
+                    stop: async (options) => {
+                        if (stopRequested) {
+                            throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
+                        }
+
+                        requestStop();
+                        return options.wait === false ? { state: "stopping", job: finishJobId } : await stopped.promise;
+                    },
+                    listJobs: async () => jobs.list(),
+                    getSettings: async () => ({ settings, audio: { ...audio, muted: { ...audio.muted } } }),
+                    setSettings: async (patch) => {
+                        refuseWhenStopping();
+                        const before = settings;
+                        settings = recorderSettingsSchema.parse({
+                            ...settings,
+                            ...patch,
+                            ocr: { ...settings.ocr, ...patch.ocr },
+                        });
+                        const applied = await applyLive([
+                            settings.activeFps !== before.activeFps || settings.idleFps !== before.idleFps
+                                ? (one) => one.setRates?.(settings.activeFps, settings.idleFps)
+                                : undefined,
+                            settings.threshold !== before.threshold
+                                ? (one) => one.setThreshold?.(settings.threshold)
+                                : undefined,
+                            settings.maxLongSide !== before.maxLongSide
+                                ? (one) => one.setMaxLongSide?.(settings.maxLongSide)
+                                : undefined,
+                            // ax-tool has no live heartbeat command, so a change of it restarts the capture.
+                            settings.heartbeatSec !== before.heartbeatSec ? () => undefined : undefined,
+                        ]);
+                        log.info({ settings, applied }, "recorder settings changed over the socket");
+                        return { settings, audio, applied };
+                    },
+                    listAudioDevices: async () => {
+                        try {
+                            return await deps.recorder.audioDevices();
+                        } catch (error) {
+                            throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
+                        }
+                    },
+                    muteAudio: async (source, muted) => {
+                        refuseWhenStopping();
+
+                        if (!audio.sources.includes(source)) {
+                            throw new RpcError(RPC_ERRORS.invalidParams, `this recording records no ${source} sound`);
+                        }
+
+                        const capture = [...running.values()].find((one) => one.audio);
+
+                        if (capture && !capture.live?.mute) {
+                            throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot mute while it records");
+                        }
+
+                        await capture?.live?.mute?.(source, muted).catch((error: unknown) => {
+                            throw new RpcError(RPC_ERRORS.internal, errorText(error));
+                        });
+                        audio.muted[source] = muted;
+                        log.info({ source, muted }, "audio muted over the socket");
+                        return { ...audio, muted: { ...audio.muted } };
+                    },
+                    setAudioInput: async (deviceId) => {
+                        refuseWhenStopping();
+
+                        if (!audio.sources.includes("mic")) {
+                            throw new RpcError(RPC_ERRORS.invalidParams, "this recording records no microphone");
+                        }
+
+                        const devices = await deps.recorder.audioDevices().catch((error: unknown) => {
+                            throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
+                        });
+
+                        if (!devices.inputs.some((device) => device.id === deviceId)) {
+                            throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
+                        }
+
+                        audio.micDevice = deviceId;
+                        const capture = [...running.values()].find((one) => one.audio);
+
+                        if (capture?.live?.setMic) {
+                            await capture.live.setMic(deviceId).catch((error: unknown) => {
+                                throw new RpcError(RPC_ERRORS.internal, errorText(error));
+                            });
+                        } else {
+                            capture?.controller.abort();
+                        }
+
+                        return { ...audio, muted: { ...audio.muted } };
+                    },
+                    pause: async () => {
+                        if (stopRequested) {
+                            throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
+                        }
+
+                        if (paused) {
+                            throw new RpcError(RPC_ERRORS.alreadyPaused, "the recording is already paused");
+                        }
+
+                        paused = true;
+                        pausedAt = new Date().toISOString();
+                        const captures = [...running.values()];
+
+                        // A capture with a live channel pauses in place; any other ends its piece.
+                        if (captures.length > 0 && captures.every((one) => one.live)) {
+                            for (const one of captures) {
+                                one.live?.pause();
+                            }
+                        } else {
+                            abortAll();
+                        }
+
+                        markPaused();
+                        return { state: "paused" };
+                    },
+                    resume: async () => {
+                        if (!paused || stopRequested) {
+                            throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
+                        }
+
+                        paused = false;
+
+                        for (const one of running.values()) {
+                            one.live?.resume();
+                        }
+
+                        markResumed();
+                        wake?.();
+                        return { state: "recording" };
+                    },
+                    listDisplays: async () => {
+                        const recordedIds = new Set(state.displays?.map((display) => display.id) ?? []);
+                        return (await deps.recorder.displays()).map((display) => ({
+                            ...display,
+                            recorded: recordedIds.has(display.id),
+                        }));
+                    },
+                    addDisplay: async (displayId) => {
+                        const display = await connected(displayId);
+                        refuseWhenStopping();
+
+                        if (!deps.recorder.supports.parallelCaptures) {
+                            throw new RpcError(
+                                RPC_ERRORS.invalidParams,
+                                `the ${deps.recorder.id} recorder records one display at a time; use displays.switch`
+                            );
+                        }
+
+                        chosen = [...new Set([...currentIds(), display.id])];
+
+                        if (!inPiece || paused || running.has(display.id)) {
+                            return answer("next-piece");
+                        }
+
+                        startCapture(targetOf(display));
+                        return answer("started");
+                    },
+                    removeDisplay: async (displayId) => {
+                        const current = currentIds();
+
+                        if (!current.includes(displayId)) {
+                            throw new RpcError(RPC_ERRORS.unknownDisplay, `display ${displayId} is not being recorded`);
+                        }
+
+                        if (current.length === 1) {
+                            throw new RpcError(
+                                RPC_ERRORS.lastDisplay,
+                                "the last recorded display cannot be removed; pause or stop instead"
+                            );
+                        }
+
+                        refuseWhenStopping();
+                        chosen = current.filter((id) => id !== displayId);
+                        const capture = running.get(displayId);
+
+                        if (!capture) {
+                            return answer("next-piece");
+                        }
+
+                        if (capture.audio) {
+                            return restart(() => undefined);
+                        }
+
+                        capture.controller.abort();
+                        return answer("stopped");
+                    },
+                    switchDisplay: async (displayId) => {
+                        const display = await connected(displayId);
+                        refuseWhenStopping();
+                        const [only, ...others] = [...running.values()];
+
+                        if (only?.live && only.target.target.kind === "display") {
+                            try {
+                                await only.live.switchDisplay(display.id);
+                            } catch (error) {
+                                throw new RpcError(
+                                    error instanceof CaptureError && error.kind === "display-missing"
+                                        ? RPC_ERRORS.unknownDisplay
+                                        : RPC_ERRORS.internal,
+                                    errorText(error)
+                                );
+                            }
+
+                            for (const other of others) {
+                                other.controller.abort();
+                            }
+
+                            running.delete(only.target.displayId);
+                            only.target = targetOf(display);
+                            running.set(display.id, only);
+                            chosen = [display.id];
+                            syncDisplays();
+                            return answer("live");
+                        }
+
+                        return restart(() => {
+                            chosen = [display.id];
+                        });
+                    },
+                    setDisplayMode: async (mode) =>
+                        restart(() => {
+                            policy = mode;
+                            chosen = undefined;
+                            state.display = policy;
+                        }),
+                }),
+            },
+        });
+        const live = session.live;
+        const requestStop = () => {
+            stopRequested = true;
+            live.update({ state: "stopping" });
+            abortAll();
+            stopping.abort();
+            wake?.();
+        };
+        const onSignal = () => requestStop();
+        process.on("SIGTERM", onSignal);
+        process.on("SIGINT", onSignal);
+
+        const updateRecording = (change: string, mutate: (recording: RecordingBlock) => void) =>
+            store.update(meetingId, { command: "record", change }, (current) => {
+                const recording: RecordingBlock = { ...current.recording };
+                mutate(recording);
+                current.recording = recording;
+            });
+        const openSpan = () => spans.push({ from: new Date().toISOString() });
+        /** `at`: when it was asked for; the running piece converts its frames after that. */
+        const closeSpan = (stopReason: RecordingStopReason, at = new Date().toISOString()) => {
+            const open = spans.at(-1);
+
+            if (open && !open.to) {
+                open.to = at;
+                open.stopReason = stopReason;
+            }
+        };
+
+        const markPaused = () => {
+            closeSpan("paused", pausedAt);
+            state.paused = true;
+            saveState();
+            live.update({ state: "paused" });
+            void updateRecording("paused", (recording) => {
+                recording.status = "paused";
+                recording.spans = spans;
+            }).catch((err: unknown) => log.warn({ err }, "pause not written to the record"));
+        };
+        const markResumed = () => {
+            openSpan();
+            state.paused = false;
+            saveState();
+            live.update({ state: "recording" });
+            void updateRecording("resumed", (recording) => {
+                recording.status = "recording";
+                recording.spans = spans;
+            }).catch((err: unknown) => log.warn({ err }, "resume not written to the record"));
+        };
+        const targetOf = (display: DisplayInfo): PieceTarget => ({
+            target: { kind: "display", displayId: display.id },
+            displayId: display.id,
+            label: `${display.name} (${display.id})`,
+        });
+        const liveFrames = () => state.frames + [...running.values()].reduce((sum, one) => sum + one.streamed, 0);
+        let lastDisplayIds = "";
+        /** The recorded displays follow the running captures. */
+        const syncDisplays = () => {
+            const ids = [...running.keys()].sort((a, b) => a - b).join(",");
+
+            if (ids === lastDisplayIds || running.size === 0) {
+                return;
+            }
+
+            log.info({ from: lastDisplayIds, to: ids }, "recorded displays changed");
+            lastDisplayIds = ids;
+            state.displays = [...running.values()].map((one) => ({
+                id: one.target.displayId,
+                name: seenDisplays.get(one.target.displayId) ?? one.target.label,
+            }));
+            live.update({ displays: state.displays });
+        };
+        let pieceOutcome: { recorded: boolean; lastError?: unknown; count: number } = { recorded: false, count: 0 };
+        let captureSeq = 0;
+
+        const startCapture = (target: PieceTarget): void => {
+            const outDir = join(pieceDir, `d${target.displayId}-${++captureSeq}`);
+            mkdirSync(outDir, { recursive: true });
+            // One capture records the sound: two would write the same microphone twice.
+            const withAudio =
+                audio.sources.length > 0 &&
+                deps.recorder.supports.audio &&
+                ![...running.values()].some((one) => one.audio);
+            const entry: RunningCapture = {
+                target,
+                controller: new AbortController(),
+                streamed: 0,
+                audio: withAudio,
+                done: Promise.resolve(),
+            };
+            running.set(target.displayId, entry);
+            pieceOutcome.count += 1;
+            syncDisplays();
+            const hooks: CaptureHooks = {
+                onFrame: (frame) => {
+                    entry.streamed += 1;
+                    live.update({ frames: liveFrames(), lastFrameAt: new Date().toISOString() });
+                    live.emit("frame", {
+                        displayId: frame.displayId ?? entry.target.displayId,
+                        at: new Date().toISOString(),
+                        file: frame.path,
+                    });
+                },
+                onLive: (channel) => {
+                    entry.live = channel;
+
+                    if (paused) {
+                        channel.pause();
+                    }
+
+                    for (const source of withAudio ? audio.sources : []) {
+                        if (audio.muted[source]) {
+                            void channel.mute?.(source, true).catch((err: unknown) => log.warn({ err }, "mute failed"));
+                        }
+                    }
+                },
+            };
+            entry.done = session
+                .capture(
+                    {
+                        target: target.target,
+                        durationSec: deps.pieceSec,
+                        activeFps: settings.activeFps,
+                        idleFps: settings.idleFps,
+                        thresholdPercent: settings.threshold,
+                        maxLongSidePx: settings.maxLongSide,
+                        ...nativeKeys,
+                        heartbeatSec: settings.heartbeatSec,
+                        ...(withAudio
+                            ? {
+                                  audio: {
+                                      sources: audio.sources,
+                                      ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}),
+                                  },
+                              }
+                            : {}),
+                        outDir,
+                        hooks,
+                    },
+                    entry.controller.signal
+                )
+                .then(
+                    async (result) => {
+                        pieceOutcome.recorded = true;
+                        keepTracks(result, entry.target);
+                        await jobs.task("ocr", (ctx) =>
+                            keepFrames(result, entry.target, entry.streamed > 0, (done) =>
+                                ctx.progress({ done, total: result.frames.length, unit: "frames" })
+                            )
+                        ).done;
+                        entry.streamed = 0;
+
+                        if (result.endedEarly === "display-removed") {
+                            log.info({ display: entry.target.label }, "a display left during a piece");
+                        }
+                    },
+                    (err: unknown) => {
+                        pieceOutcome.lastError = err;
+
+                        if (err instanceof CaptureError && err.kind === "display-missing") {
+                            log.info({ display: entry.target.label }, "a display left before its capture");
+                            return;
+                        }
+
+                        log.warn({ err, display: entry.target.label }, "a capture failed");
+
+                        if (pieceOutcome.count > 1) {
+                            note(`${entry.target.label}: ${errorText(err)}`);
+                        }
+                    }
+                )
+                .finally(() => {
+                    if (running.get(entry.target.displayId) === entry) {
+                        running.delete(entry.target.displayId);
+                    }
+
+                    rmSync(outDir, { recursive: true, force: true });
+                });
+        };
+
+        let failures = 0;
+        let failureNoticeOpen = Boolean(record?.recording?.failureNotifiedAt);
+        let runFrames = 0;
+        let lastConnected = "";
+
+        /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
+        const keepTracks = (result: CaptureResult, target: PieceTarget): void => {
+            for (const track of result.tracks ?? []) {
+                if (!track.path || !existsSync(track.path)) {
+                    continue;
+                }
+
+                const at = new Date(result.startedAtMs);
+                const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
+                mkdirSync(audioDir, { recursive: true });
+                renameSync(track.path, join(audioDir, name));
+                appendFileSync(
+                    join(folder, "audio.jsonl"),
+                    `${SafeJSON.stringify({ file: `audio/${name}`, source: track.source, at: at.toISOString(), durationMs: track.durationMs, mutedSpans: track.mutedSpans })}\n`
+                );
+                audioFiles += 1;
+            }
+        };
+
+        /** `streamed`: the socket announced these frames as they landed already. */
+        const keepFrames = async (
+            result: CaptureResult,
+            target: PieceTarget,
+            streamed: boolean,
+            onFrame: (done: number) => void = () => undefined
+        ): Promise<void> => {
+            let done = 0;
+
+            for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
+                const at = new Date(result.startedAtMs + frame.atMs);
+                const displayId = frame.displayId ?? target.displayId;
+                const name = frameName(at, displayId);
+                const jpg = join(framesDir, name);
+                await deps.toJpeg(frame.path, jpg, capture.jpegQuality);
+                const read = settings.ocr.enabled
+                    ? await deps.ocr(jpg, settings.ocr.languages).catch((err: unknown) => {
+                          log.warn({ err, jpg }, "OCR failed for a frame");
+                          return { text: "", blocks: [] };
+                      })
+                    : { text: "", blocks: [] };
+                const ocr = read.text.trim().length < settings.ocr.minChars ? { text: "", blocks: [] } : read;
+
+                if (settings.ocr.enabled && state.frames === 0 && read.text.trim().length < EMPTY_FRAME_CHARS) {
+                    note(
+                        `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
+                    );
+                }
+
+                appendFileSync(
+                    ocrPath,
+                    `${SafeJSON.stringify({
+                        file: `frames/${name}`,
+                        at: at.toISOString(),
+                        displayId,
+                        text: ocr.text,
+                        blocks: ocr.blocks.map((block) => ({
+                            text: block.text,
+                            confidence: block.confidence,
+                            bounds: block.bounds,
+                        })),
+                    })}\n`
+                );
+                state.frames += 1;
+                runFrames += 1;
+                state.bytes += statSync(jpg).size;
+                state.lastFrameAt = at.toISOString();
+
+                if (!streamed) {
+                    live.emit("frame", { displayId, at: at.toISOString(), file: jpg });
+                }
+
+                done += 1;
+                onFrame(done);
+            }
+        };
+
+        /** One piece: every target at once. False when every capture failed. */
+        const capturePiece = async (): Promise<boolean> => {
+            const displays = await deps.recorder.displays();
+            const { targets, fallback } = pieceTargets({
+                policy,
+                displays,
+                followFocus: deps.recorder.supports.followFocus,
+                chosen,
+                parallel: deps.recorder.supports.parallelCaptures,
+            });
+            const connectedIds = displays.map((display) => display.id).join(",");
+
+            if (connectedIds !== lastConnected) {
+                const before = new Set(lastConnected.split(",").filter(Boolean).map(Number));
+                const now = new Set(displays.map((display) => display.id));
+                live.emit("displays", {
+                    connected: displays.map((display) => ({ id: display.id, name: display.name })),
+                    removed: [...before].filter((id) => !now.has(id)),
+                });
+                lastConnected = connectedIds;
+            }
+
+            if (fallback) {
+                note(`${fallback} (since ${localTime(new Date().toISOString())})`);
+            }
+
+            for (const display of displays) {
+                seenDisplays.set(display.id, display.name);
+            }
+
+            if (targets.length === 0) {
+                throw new CaptureError("display-missing", "no display is connected");
+            }
+
+            if (paused || stopRequested) {
+                return false;
+            }
+
+            pieceOutcome = { recorded: false, count: 0 };
+            inPiece = true;
 
             try {
-                const recorded = await capturePiece();
-
-                if (recorded) {
-                    failures = 0;
+                for (const target of targets) {
+                    startCapture(target);
                 }
 
-                if (recorded && failureNoticeOpen) {
-                    failureNoticeOpen = false;
-                    await updateRecording("capture works again", (recording) => {
-                        delete recording.failureNotifiedAt;
-                    });
+                // A display added over the socket joins this piece, so wait until every capture has ended.
+                while (running.size > 0) {
+                    await Promise.race([...running.values()].map((one) => one.done));
                 }
             } catch (err) {
-                // Only a capture fails a piece; anything else (a frame that cannot be converted) ends the recording.
-                if (!(err instanceof CaptureError)) {
-                    throw err;
+                abortAll();
+                await Promise.allSettled([...running.values()].map((one) => one.done));
+                throw err;
+            } finally {
+                inPiece = false;
+            }
+
+            if (!pieceOutcome.recorded && !paused && !stopRequested && pieceOutcome.lastError !== undefined) {
+                throw pieceOutcome.lastError;
+            }
+
+            return pieceOutcome.recorded;
+        };
+
+        try {
+            rmSync(pieceDir, { recursive: true, force: true });
+            mkdirSync(pieceDir, { recursive: true });
+            saveState();
+            openSpan();
+            await store.update(
+                meetingId,
+                { command: "record start", change: `display ${policy} (${deps.recorder.id})` },
+                (current) => {
+                    current.recording = {
+                        ...current.recording,
+                        startedAt: state.startedAt,
+                        backend: deps.recorder.id,
+                        displayPolicy: policy,
+                        framesDir: "frames",
+                        ocr: "ocr.jsonl",
+                        status: "recording",
+                        spans,
+                    };
+                    delete current.recording.stoppedAt;
+                    delete current.recording.stopReason;
+                }
+            );
+            await session.ready();
+
+            while (!stopRequested) {
+                if (paused) {
+                    await new Promise<void>((resolve) => {
+                        wake = resolve;
+
+                        if (!paused || stopRequested) {
+                            resolve();
+                        }
+                    });
+                    wake = undefined;
+
+                    if (stopRequested) {
+                        break;
+                    }
                 }
 
-                failures += 1;
-                log.warn({ err, failures }, "capture piece failed");
+                try {
+                    const recorded = await capturePiece();
 
-                if (failures >= MAX_FAILURES) {
-                    note(`capture failed ${failures} times in a row: ${errorText(err)}`);
-                    state.stopReason = "failed";
-                    break;
+                    if (recorded) {
+                        failures = 0;
+                    }
+
+                    if (recorded && failureNoticeOpen) {
+                        failureNoticeOpen = false;
+                        await updateRecording("capture works again", (recording) => {
+                            delete recording.failureNotifiedAt;
+                        });
+                    }
+                } catch (err) {
+                    // Only a capture fails a piece; anything else (a frame that cannot be converted) ends the recording.
+                    if (!(err instanceof CaptureError)) {
+                        throw err;
+                    }
+
+                    failures += 1;
+                    log.warn({ err, failures }, "capture piece failed");
+
+                    if (failures >= MAX_FAILURES) {
+                        note(`capture failed ${failures} times in a row: ${errorText(err)}`);
+                        state.stopReason = "failed";
+                        break;
+                    }
+
+                    await abortableSleep(deps.failurePauseMs, stopping.signal).catch(() => undefined);
                 }
 
-                await abortableSleep(deps.failurePauseMs, stopping.signal).catch(() => undefined);
+                state.warning = notes.length > 0 ? notes.join("; ") : undefined;
+                live.update({ frames: liveFrames(), lastFrameAt: state.lastFrameAt, warning: state.warning });
+                saveState();
+            }
+        } catch (err) {
+            log.error({ err, meetingId }, "the recorder stopped on an error");
+            note(`the recorder stopped on an error: ${errorText(err)}`);
+            state.stopReason = "error";
+        } finally {
+            process.off("SIGTERM", onSignal);
+            process.off("SIGINT", onSignal);
+            rmSync(pieceDir, { recursive: true, force: true });
+        }
+
+        try {
+            const finished = await jobs.run({
+                kind: "finish",
+                id: finishJobId,
+                initial: [] as string[],
+                steps: [
+                    {
+                        name: "summary",
+                        run: async (ctx) => {
+                            await finishRecording();
+                            ctx.progress({ done: 1, total: 1, unit: "steps", message: `${state.frames} frames` });
+                            return ctx.state;
+                        },
+                    },
+                    {
+                        name: "collect",
+                        run: async () => {
+                            const current = store.read(meetingId);
+                            return current ? (await collectRecord(store, current)).notes.map((one) => one.text) : [];
+                        },
+                    },
+                ],
+            }).done;
+            stopped.resolve({
+                state: "stopped",
+                outcome: state.stopReason,
+                job: finishJobId,
+                frames: state.frames,
+                notes: finished.state,
+            });
+        } catch (err) {
+            log.error({ err, meetingId }, "the recording summary could not be written");
+            stopped.resolve({ state: "stopped", outcome: state.stopReason, job: finishJobId, frames: state.frames });
+        } finally {
+            // A waiting `stop` call gets its answer before the socket closes.
+            await Bun.sleep(STOP_ANSWER_MS);
+            live.close(state.stopReason);
+
+            if (existsSync(files.state)) {
+                renameSync(files.state, join(folder, "recorder-last.json"));
+            }
+        }
+
+        log.info(
+            { meetingId, frames: state.frames, bytes: state.bytes, stopReason: state.stopReason },
+            "recording stopped"
+        );
+        return state;
+
+        async function finishRecording(): Promise<void> {
+            state.stopReason ??= "requested";
+
+            if (runFrames === 0) {
+                note(
+                    `No frame was recorded${state.stopReason === "requested" ? " before the stop" : ""}. Check the recorder: ${toolCommand("control", "doctor")}`
+                );
             }
 
             state.warning = notes.length > 0 ? notes.join("; ") : undefined;
-            live.update({ frames: liveFrames(), lastFrameAt: state.lastFrameAt, warning: state.warning });
+            closeSpan(state.stopReason);
             saveState();
-        }
-    } catch (err) {
-        log.error({ err, meetingId }, "the recorder stopped on an error");
-        note(`the recorder stopped on an error: ${errorText(err)}`);
-        state.stopReason = "error";
-    } finally {
-        process.off("SIGTERM", onSignal);
-        process.off("SIGINT", onSignal);
-        rmSync(pieceDir, { recursive: true, force: true });
-    }
+            const stoppedAt = new Date().toISOString();
+            const total = existsSync(framesDir)
+                ? framesOnDisk(framesDir)
+                : { frames: 0, bytes: 0, perDisplay: new Map() };
+            const current = store.read(meetingId);
+            const ref = current ? sourceRefOf(current) : undefined;
+            const sourceClock = ref
+                ? await (async () =>
+                      CallTimeline.sourceClock({
+                          source: await meetingSource(ref.sourceId),
+                          sourceMeetingId: ref.sourceMeetingId,
+                      }))().catch((err: unknown) => {
+                      log.warn({ err, meetingId }, "source clock unavailable; finalizing without it");
+                      return undefined;
+                  })
+                : undefined;
+            const clock = sourceClock?.source
+                ? { source: sourceClock.source, startedAt: sourceClock.startedAt }
+                : undefined;
 
-    try {
-        const finished = await jobs.run({
-            kind: "finish",
-            id: finishJobId,
-            initial: [] as string[],
-            steps: [
+            const failed = state.stopReason === "failed" || state.stopReason === "error";
+            const notifyFailure = failed && !current?.recording?.failureNotifiedAt;
+            await store.update(
+                meetingId,
                 {
-                    name: "summary",
-                    run: async (ctx) => {
-                        await finishRecording();
-                        ctx.progress({ done: 1, total: 1, unit: "steps", message: `${state.frames} frames` });
-                        return ctx.state;
-                    },
+                    command: "record stop",
+                    change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB${total.frames > state.frames ? ` (${total.frames} frames, ${Math.round(total.bytes / 1_000_000)} MB in all)` : ""}, ${state.stopReason}${state.warning && failed ? `, ${state.warning}` : ""}`,
                 },
-                {
-                    name: "collect",
-                    run: async () => {
-                        const current = store.read(meetingId);
-                        return current ? (await collectRecord(store, current)).notes.map((one) => one.text) : [];
-                    },
-                },
-            ],
-        }).done;
-        stopped.resolve({
-            state: "stopped",
-            outcome: state.stopReason,
-            job: finishJobId,
-            frames: state.frames,
-            notes: finished.state,
-        });
-    } catch (err) {
-        log.error({ err, meetingId }, "the recording summary could not be written");
-        stopped.resolve({ state: "stopped", outcome: state.stopReason, job: finishJobId, frames: state.frames });
-    } finally {
-        // A waiting `stop` call gets its answer before the socket closes.
-        await Bun.sleep(STOP_ANSWER_MS);
-        live.close(state.stopReason);
+                (next) => {
+                    const recording: RecordingBlock = {
+                        ...next.recording,
+                        startedAt: state.startedAt,
+                        stoppedAt,
+                        frames: total.frames,
+                        bytes: total.bytes,
+                        status: "stopped",
+                        stopReason: state.stopReason,
+                        displayPolicy: policy,
+                        ...(audio.sources.length > 0 ? { audio: { sources: audio.sources, files: audioFiles } } : {}),
+                        spans,
+                        displays: [...seenDisplays].map(([id, name]) => ({
+                            id,
+                            name,
+                            frames: total.perDisplay.get(id) ?? 0,
+                        })),
+                        ...(clock ? { clock } : {}),
+                        ...(notifyFailure ? { failureNotifiedAt: stoppedAt } : {}),
+                    };
 
-        if (existsSync(files.state)) {
-            renameSync(files.state, join(folder, "recorder-last.json"));
-        }
+                    if (state.warning) {
+                        recording.warning = state.warning;
+                    } else {
+                        delete recording.warning;
+                    }
 
-        clearPidFile(files.pid);
-    }
-
-    log.info(
-        { meetingId, frames: state.frames, bytes: state.bytes, stopReason: state.stopReason },
-        "recording stopped"
-    );
-    return state;
-
-    async function finishRecording(): Promise<void> {
-        state.stopReason ??= "requested";
-
-        if (runFrames === 0) {
-            note(
-                `No frame was recorded${state.stopReason === "requested" ? " before the stop" : ""}. Check the recorder: ${toolCommand("control", "doctor")}`
-            );
-        }
-
-        state.warning = notes.length > 0 ? notes.join("; ") : undefined;
-        closeSpan(state.stopReason);
-        saveState();
-        const stoppedAt = new Date().toISOString();
-        const total = existsSync(framesDir) ? framesOnDisk(framesDir) : { frames: 0, bytes: 0, perDisplay: new Map() };
-        const current = store.read(meetingId);
-        const ref = current ? sourceRefOf(current) : undefined;
-        const sourceClock = ref
-            ? await CallTimeline.sourceClock({
-                  source: await meetingSource(ref.sourceId),
-                  sourceMeetingId: ref.sourceMeetingId,
-              })
-            : undefined;
-        const clock = sourceClock?.source
-            ? { source: sourceClock.source, startedAt: sourceClock.startedAt }
-            : undefined;
-
-        const failed = state.stopReason === "failed" || state.stopReason === "error";
-        const notifyFailure = failed && !current?.recording?.failureNotifiedAt;
-        await store.update(
-            meetingId,
-            {
-                command: "record stop",
-                change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB${total.frames > state.frames ? ` (${total.frames} frames, ${Math.round(total.bytes / 1_000_000)} MB in all)` : ""}, ${state.stopReason}${state.warning && failed ? `, ${state.warning}` : ""}`,
-            },
-            (next) => {
-                const recording: RecordingBlock = {
-                    ...next.recording,
-                    startedAt: state.startedAt,
-                    stoppedAt,
-                    frames: total.frames,
-                    bytes: total.bytes,
-                    status: "stopped",
-                    stopReason: state.stopReason,
-                    displayPolicy: policy,
-                    ...(audio.sources.length > 0 ? { audio: { sources: audio.sources, files: audioFiles } } : {}),
-                    spans,
-                    displays: [...seenDisplays].map(([id, name]) => ({
-                        id,
-                        name,
-                        frames: total.perDisplay.get(id) ?? 0,
-                    })),
-                    ...(clock ? { clock } : {}),
-                    ...(notifyFailure ? { failureNotifiedAt: stoppedAt } : {}),
-                };
-
-                if (state.warning) {
-                    recording.warning = state.warning;
-                } else {
-                    delete recording.warning;
+                    next.recording = recording;
                 }
+            );
 
-                next.recording = recording;
+            if (notifyFailure) {
+                const byWatcher = readAuto(store)?.meetingId === meetingId;
+                await deps.notify({
+                    title: "Screen recording stopped",
+                    message: `${state.warning ?? "The capture failed."} ${byWatcher ? `It starts again every ${RETRY_AFTER_MS / 60_000} min while the meeting runs.` : `Start it again: ${toolCommand("meetings", "record", "start", "--meeting", meetingId)}`}`,
+                    open: folder,
+                });
             }
-        );
-
-        if (notifyFailure) {
-            const byWatcher = readAuto(store)?.meetingId === meetingId;
-            await deps.notify({
-                title: "Screen recording stopped",
-                message: `${state.warning ?? "The capture failed."} ${byWatcher ? `It starts again every ${RETRY_AFTER_MS / 60_000} min while the meeting runs.` : `Start it again: ${toolCommand("meetings", "record", "start", "--meeting", meetingId)}`}`,
-                open: folder,
-            });
         }
+    } finally {
+        clearPidFile(files.pid);
     }
 }
 

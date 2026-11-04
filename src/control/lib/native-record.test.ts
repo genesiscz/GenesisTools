@@ -221,6 +221,9 @@ describe("nativeCaptureArgv", () => {
             validateCaptureOptions({ ...screen, backend: "peekaboo", audio: ["system"], videoOut: "/v.mp4" })
         ).toThrow(/backend native/);
         expect(() => validateCaptureOptions({ ...screen, audio: ["mic"], audioSidecar: true })).not.toThrow();
+        const invalid = { ...screen, audio: ["mic" as const], audioSidecar: true };
+        Object.assign(invalid, { audioSidecar: "false" });
+        expect(() => validateCaptureOptions(invalid)).toThrow(/audioSidecar must be a boolean/);
     });
 
     it("rejects the native screen options where they do not apply", () => {

@@ -3,6 +3,7 @@ import { basename, extname, join } from "node:path";
 import { type JobInfo, JobRegistry } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import {
     type AudioDevices,
@@ -37,6 +38,37 @@ import {
 
 const { log } = logger.scoped("screen-recorder-start");
 
+export interface ManagedRecordingOptions {
+    recorder: FrameRecorder;
+    session: ConstructorParameters<typeof LiveRecordingServer>[0];
+}
+
+export class ManagedRecording {
+    readonly live: LiveRecordingServer;
+    private readiness?: Promise<void>;
+
+    constructor(private readonly options: ManagedRecordingOptions) {
+        this.live = new LiveRecordingServer(options.session);
+    }
+
+    ready(): Promise<void> {
+        this.readiness ??= this.options.recorder.available().then((available) => {
+            if (!available.ok) {
+                throw new CaptureError(
+                    "unavailable",
+                    `the ${this.options.recorder.id} recorder is not available: ${available.reason}`
+                );
+            }
+        });
+        return this.readiness;
+    }
+
+    async capture(...args: Parameters<FrameRecorder["capture"]>): ReturnType<FrameRecorder["capture"]> {
+        await this.ready();
+        return this.options.recorder.capture(...args);
+    }
+}
+
 export interface StartRecordingOptions {
     recorder: FrameRecorder;
     id?: string;
@@ -50,7 +82,7 @@ export interface StartRecordingOptions {
     maxLongSide?: number;
     heartbeatSec?: number;
     audio?: { mic?: boolean; system?: boolean; micDeviceId?: string };
-    /** Kept with the settings; this recorder runs no OCR (the meetings recorder does). */
+    /** Vision OCR settings for each kept frame. */
     ocr?: Partial<RecorderSettings["ocr"]>;
     /** The recording ends by itself after this long. Default 10 minutes. */
     maxDurationSec?: number;
@@ -109,6 +141,7 @@ export class LibraryRecording extends RecorderControl {
     readonly folder: string;
     readonly startedAt = new Date();
     private server?: LiveRecordingServer;
+    private session?: ManagedRecording;
     private readonly jobs = new JobRegistry((event) => this.server?.emit("progress", { ...event }));
     private settings: RecorderSettings;
     private audio: AudioState;
@@ -163,20 +196,20 @@ export class LibraryRecording extends RecorderControl {
             this.audio = { ...this.audio, sources: [] };
         }
 
-        if (this.settings.ocr.enabled) {
-            this.warn("this recorder runs no OCR; the settings are kept with the recording");
-        }
-
         mkdirSync(join(this.folder, "frames"), { recursive: true });
-        this.server = new LiveRecordingServer({
-            id: this.id,
-            kind: this.kind,
-            title: this.options.title ?? this.id,
-            folder: this.folder,
-            displays: this.recordedDisplays(),
-            control: this,
-            dir: this.options.liveDir,
+        this.session = startRecording({
+            recorder,
+            session: {
+                id: this.id,
+                kind: this.kind,
+                title: this.options.title ?? this.id,
+                folder: this.folder,
+                displays: this.recordedDisplays(),
+                control: this,
+                dir: this.options.liveDir,
+            },
         });
+        this.server = this.session.live;
         this.loop = this.run();
         log.info({ id: this.id, displays: this.chosen, recorder: recorder.id }, "library recording started");
         return this;
@@ -263,7 +296,7 @@ export class LibraryRecording extends RecorderControl {
         this.running.set(displayId, entry);
 
         try {
-            const result = await this.options.recorder.capture(
+            const result = await this.session!.capture(
                 {
                     target: { kind: "display", displayId },
                     durationSec,
@@ -321,8 +354,8 @@ export class LibraryRecording extends RecorderControl {
 
             return false;
         } finally {
-            if (this.running.get(displayId) === entry) {
-                this.running.delete(displayId);
+            if (this.running.get(entry.displayId) === entry) {
+                this.running.delete(entry.displayId);
             }
         }
     }
@@ -455,6 +488,14 @@ export class LibraryRecording extends RecorderControl {
             }
 
             item.frame = { ...item.frame, path: join(this.folder, "frames", name) };
+            if (this.settings.ocr.enabled) {
+                const result = await recognizeText(item.frame.path, { languages: this.settings.ocr.languages });
+
+                if (result.text.trim().length >= this.settings.ocr.minChars) {
+                    atomicWriteFileSync(`${item.frame.path}.ocr.json`, SafeJSON.stringify(result));
+                }
+            }
+
             ctx.progress({ done: index + 1, total: frames.length, unit: "frames" });
         }
 
@@ -526,10 +567,15 @@ export class LibraryRecording extends RecorderControl {
         const [to] = this.pick([displayId]);
         const captures = [...this.running.values()];
 
-        if (captures.length === 1 && captures[0].live && this.chosen.length === 1) {
+        if (captures[0]?.live) {
             await captures[0].live.switchDisplay(to);
+            for (const other of captures.slice(1)) {
+                other.controller.abort();
+            }
+
             this.running.delete(captures[0].displayId);
-            this.running.set(to, { ...captures[0], displayId: to });
+            captures[0].displayId = to;
+            this.running.set(to, captures[0]);
             this.chosen = [to];
             this.server?.update({ displays: this.recordedDisplays() });
             return { mode: "all", chosen: [to], applied: "live" };
@@ -625,6 +671,14 @@ export class LibraryRecording extends RecorderControl {
 }
 
 /** Starts a library recording and returns it once its live socket listens. */
-export function startRecording(options: StartRecordingOptions): Promise<LibraryRecording> {
+export function startRecording(options: ManagedRecordingOptions): ManagedRecording;
+export function startRecording(options: StartRecordingOptions): Promise<LibraryRecording>;
+export function startRecording(
+    options: StartRecordingOptions | ManagedRecordingOptions
+): Promise<LibraryRecording> | ManagedRecording {
+    if ("session" in options) {
+        return new ManagedRecording(options);
+    }
+
     return new LibraryRecording(options).start();
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { InputGuard, OverwriteInputError } from "./guard";
 import { JobCancelledError, JobRegistry, type JobStep, runJob } from "./runner";
 import type { ProgressEvent } from "./types";
@@ -30,6 +30,27 @@ function writer(dir: string, name: string, runs: string[]): JobStep<Counted> {
 }
 
 describe("job runner", () => {
+    test("initialization failure finishes the job and releases its caller signal", async () => {
+        const controller = new AbortController();
+        const circular: { self?: unknown } = {};
+        circular.self = circular;
+        const job = runJob({
+            kind: "test",
+            initial: null,
+            fingerprint: circular,
+            signal: controller.signal,
+            steps: [{ name: "unused", key: 1, run: async () => null }],
+        });
+        await expect(job.done).rejects.toThrow();
+        expect(job.state).toBe("failed");
+        expect(job.info().endedAt).toBeDefined();
+        controller.abort();
+        expect(job.signal.aborted).toBe(false);
+        const normal = runJob({ kind: "test", initial: null, signal: new AbortController().signal, steps: [] });
+        await normal.done;
+        expect(normal.state).toBe("done");
+    });
+
     test("steps run in order, report progress, and a rerun skips the steps its receipts cover", async () => {
         const dir = workspace();
         const runs: string[] = [];
@@ -80,6 +101,13 @@ describe("job runner", () => {
         writeFileSync(input, "x");
         const guard = new InputGuard([input]);
         expect(() => guard.claim(join(dir, ".", "input.mp4"))).toThrow(OverwriteInputError);
+        const alias = join(dir, "alias.mp4");
+        symlinkSync(input, alias);
+        expect(() => guard.claim(alias)).toThrow(OverwriteInputError);
+        expect(() => guard.claim(relative(process.cwd(), input))).toThrow(OverwriteInputError);
+        const folderGuard = new InputGuard([dir]);
+        expect(() => folderGuard.claim(dir)).toThrow(OverwriteInputError);
+        expect(folderGuard.claim(input)).toBe(guard.claim(join(dir, "output.mp4")).replace("output.mp4", "input.mp4"));
         expect(guard.claim(join(dir, "output.mp4"))).toBe(join(dir, "output.mp4"));
 
         const job = runJob({

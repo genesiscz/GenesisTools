@@ -1,9 +1,10 @@
 import type { ApiDescriptor } from "@genesiscz/utils/api-descriptor";
-import { renderDocs, renderOneLine } from "@genesiscz/utils/api-descriptor";
+import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import type { ShowInput } from "./show";
 
 /** What a toolset gets from the kernel when it is preloaded into a fresh worker. */
 export interface ToolsetContext {
+    recorder?: { start(options: unknown): Promise<string> };
     /** A private folder for this worker's life; the kernel removes it when the worker stops. */
     scratchDir: string;
     /** Returns an image to the model with the current turn's result. */
@@ -38,7 +39,7 @@ export abstract class ReplToolset {
 
     /** The one line the `js` tool description carries. */
     oneLine(): string {
-        return renderOneLine(this.api);
+        return `${this.api.global}: ${this.api.summary}`;
     }
 
     /** Builds the globals inside the worker; runs once per spawn, outside every turn's timeout. */

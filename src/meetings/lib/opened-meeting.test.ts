@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -67,6 +67,27 @@ async function newRecord(fields: Record<string, unknown> = {}) {
 }
 
 describe("OpenedMeeting", () => {
+    test("inspecting uncached audio creates neither a cache nor record history", async () => {
+        const { store, record } = await newRecord();
+        const audioPath = join(store.folder(record.id), "audio.wav");
+        writeFileSync(audioPath, "fixture");
+        const opened = OpenedMeeting.of(store, record, {
+            source: fakeSource({
+                evidence: {
+                    audioPath,
+                    segments: [],
+                    speaking: [],
+                    files: [],
+                },
+            }),
+            sourceMeetingId: "abc",
+        });
+        expect(await opened.energy()).toEqual({});
+        expect(await opened.silentCallSpans()).toEqual([]);
+        expect(existsSync(join(store.folder(record.id), "evidence"))).toBe(false);
+        expect(store.read(record.id)?.history).toHaveLength(1);
+    });
+
     test("reading the source, evidence, presence and energy never writes the record", async () => {
         const { store, record } = await newRecord({
             attendance: {
@@ -105,6 +126,22 @@ describe("OpenedMeeting", () => {
 });
 
 describe("CallTimeline", () => {
+    test("an open stay reaches the meeting end instead of the last departure", async () => {
+        const { store, record } = await newRecord({ end: "2026-11-02T16:00:00.000Z" });
+        const saved = await CallTimeline.stored(record).store(
+            store,
+            {
+                note: "fixture",
+                presence: [
+                    { name: "Voice A", fromSec: 0, toSec: Infinity },
+                    { name: "Voice B", fromSec: 0, toSec: 1200 },
+                ],
+            },
+            "teams"
+        );
+        expect(saved.attendance?.people.map((stay) => stay.toSec)).toEqual([3600, 1200]);
+    });
+
     test("second 0 is the source's clock, else what the recorder stored, else the record's start", async () => {
         const { record } = await newRecord({
             recording: { clock: { source: "wisprflow", startedAt: "2026-11-02T15:00:02.000Z" } },
@@ -129,7 +166,7 @@ describe("CallTimeline", () => {
     });
 
     test("stores stays once, with the user under their own name and sections derived", async () => {
-        const { store, record } = await newRecord();
+        const { store, record } = await newRecord({ end: "2026-11-02T15:01:30.000Z" });
         const timeline = CallTimeline.stored(record);
         const stored = await timeline.store(
             store,
@@ -187,6 +224,37 @@ describe("attendance from a file", () => {
 });
 
 describe("the word check provider per language", () => {
+    test("Slovak remains available when Czech is off or unavailable", async () => {
+        const { WORD_LANGUAGES } = await import("./word-languages");
+        const { wordCheckFor } = await import("./word-check");
+        const cs = spyOn(WORD_LANGUAGES.cs!, "open").mockResolvedValue({ available: false, reason: "missing" });
+        const dispose = () => {};
+        const sk = spyOn(WORD_LANGUAGES.sk!, "open").mockResolvedValue({
+            available: true,
+            check: {
+                provider: "fixture",
+                language: "sk",
+                verdict: () => ({ class: "unknown", count: 0 }),
+                dispose,
+            },
+        });
+        try {
+            for (const czech of ["off", "hunspell"] as const) {
+                const opened = await wordCheckFor({ perLanguage: (code) => (code === "cs" ? czech : "hunspell") }, [
+                    { speaker: "A", startSec: 0, text: "ľahký môžem ďalej" },
+                    { speaker: "B", startSec: 10, text: "ještě dobře děkuju" },
+                ]);
+                expect(opened.check?.verdict("ľahký").class).toBe("unknown");
+                expect(opened.check?.verdict("ještě").class).toBe("spoken");
+                opened.check?.dispose();
+            }
+            expect(sk).toHaveBeenCalledTimes(2);
+        } finally {
+            cs.mockRestore();
+            sk.mockRestore();
+        }
+    });
+
     test("each language uses its languages.<code>.wordCheck, and an unknown or missing one the default", async () => {
         const { configuredWordCheck, DEFAULT_WORD_CHECK, wordCheckFor } = await import("./word-check");
         const config = meetingsConfigSchema.parse({

@@ -5,6 +5,11 @@ import { ReplToolset, type ReplToolsetFactory } from "@genesiscz/utils/repl/tool
 import { EditorToolset } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecorderToolset } from "@genesiscz/utils/repl/toolsets/recorder";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
+import { BrowserToolset } from "./toolsets/browser";
+import { ControlToolset } from "./toolsets/control";
+import { GithubToolset } from "./toolsets/github";
+import { HubToolset } from "./toolsets/hub";
+import { MeetingsToolset } from "./toolsets/meetings";
 
 /**
  * Every toolset `--toolset` can preload by name. The table lives in the tool, not in `@genesiscz/utils/repl`,
@@ -17,6 +22,11 @@ export const REPL_TOOLSETS = {
             FRAME_RECORDERS.native({ axTool: async (options) => [await ensureBinaryAsync(options)] })
         ),
     editor: () => new EditorToolset(),
+    meetings: () => new MeetingsToolset(),
+    control: () => new ControlToolset(),
+    browser: () => new BrowserToolset(),
+    hub: () => new HubToolset(),
+    github: () => new GithubToolset(),
 } satisfies Record<string, ReplToolsetFactory>;
 
 export type ReplToolsetId = keyof typeof REPL_TOOLSETS;

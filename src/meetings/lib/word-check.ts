@@ -91,10 +91,6 @@ export async function wordCheckFor(
         return { reason: "turned off with --word-check off" };
     }
 
-    if (choiceOf(DEFAULT_WORD_LANGUAGE) === "off") {
-        return { reason: `turned off for ${DEFAULT_WORD_LANGUAGE} (languages.${DEFAULT_WORD_LANGUAGE}.wordCheck)` };
-    }
-
     const codes = lineLanguages(transcript);
     const wordsOf = new Map<string, Set<string>>();
     const languagesOf = new Map<string, Set<string>>();
@@ -114,9 +110,8 @@ export async function wordCheckFor(
         }
     }
 
-    wordsOf.set(DEFAULT_WORD_LANGUAGE, wordsOf.get(DEFAULT_WORD_LANGUAGE) ?? new Set());
     const checks = new Map<string, WordCheck>();
-    let defaultReason: string | undefined;
+    const reasons: string[] = [];
 
     for (const [code, words] of wordsOf) {
         const language = WORD_LANGUAGES[code];
@@ -125,17 +120,18 @@ export async function wordCheckFor(
 
         if (opened?.available) {
             checks.set(code, opened.check);
-        } else if (code === DEFAULT_WORD_LANGUAGE) {
-            defaultReason = opened?.reason ?? `no word language "${code}"`;
+        } else {
+            reasons.push(
+                opened?.reason ??
+                    (choice === "off"
+                        ? `turned off for ${code} (languages.${code}.wordCheck)`
+                        : `no word language "${code}"`)
+            );
         }
     }
 
-    if (defaultReason) {
-        for (const check of checks.values()) {
-            check.dispose();
-        }
-
-        return { reason: defaultReason };
+    if (checks.size === 0) {
+        return { reason: reasons.join("; ") || "no words to check" };
     }
 
     return { check: new LanguageWordCheck(checks, languagesOf) };

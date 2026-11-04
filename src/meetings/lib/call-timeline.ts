@@ -139,10 +139,15 @@ export class CallTimeline {
      */
     async store(store: MeetingStore, loaded: LoadedPresence, from: string): Promise<MeetingRecord> {
         const people = this.named(loaded.presence);
-        const lastKnown = Math.max(
-            ...people.flatMap((stay) => [stay.fromSec, Number.isFinite(stay.toSec) ? stay.toSec : stay.fromSec])
-        );
-        const stored = people.map((stay) => ({ ...stay, toSec: Number.isFinite(stay.toSec) ? stay.toSec : lastKnown }));
+        const endSec = this.end ? this.secAt(Date.parse(this.end)) : undefined;
+        if (people.some((stay) => !Number.isFinite(stay.toSec)) && (endSec === undefined || !Number.isFinite(endSec))) {
+            throw new Error("Cannot store open attendance without a known meeting end.");
+        }
+
+        const stored = people.map((stay) => ({
+            ...stay,
+            toSec: Number.isFinite(stay.toSec) ? stay.toSec : Math.max(stay.fromSec, endSec!),
+        }));
         const sections = presenceSections(stored);
         return store.update(
             this.record.id,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -9,6 +9,7 @@ import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { writePidFile } from "@genesiscz/utils/process/pidfile";
 import { callRecorder, listLiveRecordings, RecorderClient, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
 import {
     CaptureError,
@@ -37,7 +38,7 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
-import { meetingLiveId, pieceTargets, type RecorderNote, runRecorder } from "./lib/recorder";
+import { meetingLiveId, pieceTargets, type RecorderNote, recorderFiles, runRecorder } from "./lib/recorder";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
@@ -76,6 +77,42 @@ const record = meetingRecordSchema.parse({
 });
 
 describe("suggestItems", () => {
+    test("a later round asks existing findings that the first budget left out", () => {
+        const pending = meetingRecordSchema.parse({
+            ...record,
+            items: [0, 100].map((atSec, index) => ({
+                id: `i${index + 1}`,
+                kind: "term",
+                status: "suggested",
+                heard: `API${index}`,
+                proposed: `API${index}Fixed`,
+                atSec,
+                scope: "line",
+                confidence: 0.2,
+                rules: [],
+                suggestedAt: meeting.start,
+            })),
+        });
+        const options = {
+            record: pending,
+            meeting,
+            rules: [],
+            dictionary: { abbrExpansion: "every" as const, entries: [] },
+            sourceWords: [],
+            now: meeting.start,
+            questionBudget: 1,
+        };
+        const first = suggestItems(options);
+        expect(first).toHaveLength(1);
+        expect(first[0]).toMatchObject({ kind: "question", decides: ["i1"] });
+        pending.items.push(...first);
+        const second = suggestItems(options);
+        expect(second).toHaveLength(1);
+        expect(second[0]).toMatchObject({ kind: "question", decides: ["i2"] });
+        pending.items.push(...second);
+        expect(suggestItems(options)).toEqual([]);
+    });
+
     test("a goodbye another label answered becomes a range, a cut word becomes a join, each with its rules", () => {
         const items = suggestItems({
             record,
@@ -787,6 +824,17 @@ describe("watchOnce", () => {
         expect(other.runs).toEqual([]);
     });
 
+    test("a failed stop retains ownership and retries on the next tick", async () => {
+        const h = harness();
+        await watchOnce(h.store, { deps: h.deps, now });
+        const successfulRun = h.deps.run!;
+        h.deps.run = async () => ({ success: false, exitCode: 1, stderr: "timeout" });
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("failed");
+        h.deps.run = successfulRun;
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 215_000 })).toBe("stopped");
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop"]);
+    });
+
     test("a stop that failed keeps the recording the watcher's own, and the next look stops it again", async () => {
         let stopWorks = false;
         const h = harness();
@@ -802,6 +850,17 @@ describe("watchOnce", () => {
 
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 215_000 })).toBe("stopped");
         expect(existsSync(join(h.store.root, "watch-auto.json"))).toBe(false);
+    });
+
+    test("an already stopped recorder still refreshes when the source meeting ends", async () => {
+        const h = harness();
+        await watchOnce(h.store, { deps: h.deps, now });
+        h.deps.recorder = () => ({ running: false });
+        h.deps.liveRecording = async () => null;
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 15_000 })).toBe("idle");
+        expect(h.refreshed).toEqual(["m1 wisprflow:w1"]);
+        const auto = SafeJSON.parse(readFileSync(join(h.store.root, "watch-auto.json"), "utf8"), { strict: true });
+        expect(auto.refreshUntil).toBeDefined();
     });
 
     test("when Wispr ends the meeting, the record is linked again until the source gives it an end", async () => {
@@ -1139,6 +1198,60 @@ describe("questions (R2.3)", () => {
 });
 
 describe("several voices", () => {
+    test("answering sub-line voices preserves the unresolved range in the rendered transcript", () => {
+        const draft = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Speaker 1",
+                    fromSec: 0,
+                    toSec: 0,
+                    confidence: 0.2,
+                    candidates: ["Voice A", "Voice B"],
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i2",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 0,
+                    toSec: 16,
+                    question: "Who speaks?",
+                    choices: ["Voice A", "Voice B"],
+                    decides: ["i1"],
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+            ],
+        });
+        const transcript = [line("Speaker 1", 0, "one two three four five six seven eight nine ten")];
+        const parts = splitQuestion(draft, "i2", {
+            transcript,
+            now: meeting.start,
+            micShare: (from) => (from < 8 ? 0 : 1),
+        });
+        expect(parts).toHaveLength(2);
+        for (const part of parts) {
+            answerQuestion(draft, part.id, { answer: "Voice A", now: meeting.start });
+        }
+        expect(draft.items[0]?.status).toBe("suggested");
+        const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), {
+            withSuggested: true,
+            format: "txt",
+        });
+        expect(corrections.unclear?.passages).toContainEqual(
+            expect.objectContaining({ speaker: "Speaker 1", fromSec: 0 })
+        );
+        const rendered = applyCorrections(transcript, corrections);
+        expect(rendered.unclear).toBe(1);
+        expect(rendered.entries[0]?.speaker).toContain("Speaker 1");
+    });
+
     const now = "2026-11-02T15:00:00.000Z";
     const question = (fromSec: number, toSec: number) =>
         meetingRecordSchema.parse({
@@ -1612,6 +1725,22 @@ describe("a term fix for one line, and a word that a question and an unlinked lo
                 format: "txt",
             })
         ).entries.map((entry) => entry.text);
+
+    test("a low-confidence line term leaves the same words elsewhere unmarked", () => {
+        const fix = item({
+            id: "i1",
+            kind: "term",
+            atSec: 10,
+            heard: "Ada",
+            proposed: "ADO",
+            scope: "line",
+            confidence: 0.2,
+            rules: [MeetingRule.Agent],
+        });
+        const result = apply([fix], [line("A", 0, "Ada řekla ne."), line("A", 10, "Je to v Ada.")]);
+        expect(result[0]).toBe("Ada řekla ne.");
+        expect(result[1]).not.toBe("Je to v Ada.");
+    });
 
     test("a fix scoped to its line leaves the same words elsewhere as heard", () => {
         const fix = item({
@@ -2109,6 +2238,33 @@ describe("the meetings recorder loop", () => {
         ]);
     });
 
+    test("removing the audio owner restarts audio on the remaining display", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang", "hang"],
+            audio: true,
+            actions: [async (call) => call("displays.remove", { displayId: 1 })],
+        });
+        expect(run.answers[0]).toMatchObject({ applied: "restart", chosen: [4] });
+        expect(run.recorder.requests.at(-1)).toMatchObject({
+            target: { kind: "display", displayId: 4 },
+            audio: { sources: ["mic"] },
+        });
+    });
+
+    test("disabling heartbeat passes zero to the restarted capture", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang", "hang"],
+            actions: [
+                async (call) => call("settings.set", { heartbeatSec: 10 }),
+                async (call) => call("settings.set", { heartbeatSec: 0 }),
+            ],
+        });
+        expect(run.recorder.requests.at(-1)?.heartbeatSec).toBe(0);
+        expect(run.recorder.requests.some((request) => request.heartbeatSec === 10)).toBe(true);
+    });
+
     test("a display added in mode all starts its capture at once, inside the running piece", async () => {
         const run = await recordWith({
             displays: [[builtIn, external]],
@@ -2300,4 +2456,19 @@ describe("a recorder that records one display at a time", () => {
         expect(both.targets.map((target) => target.displayId)).toEqual([4, 1]);
         expect(both.fallback).toBeUndefined();
     });
+});
+
+test("a stale recorder claim is recovered and an initialization failure releases it", async () => {
+    const store = new MeetingStore(new Storage("recorder-claim-regression"));
+    const record = await store.create(
+        { title: "Claim fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const files = recorderFiles(store);
+    writePidFile(files.pid, { pid: 99999999 });
+    writeFileSync(join(store.folder(record.id), "frames"), "blocks the frames directory");
+    await expect(
+        runRecorder({ store, meetingId: record.id, capture: meetingsConfigSchema.parse({}).global.capture })
+    ).rejects.toThrow();
+    expect(existsSync(files.pid)).toBe(false);
 });

@@ -4,8 +4,8 @@ import { logger } from "@genesiscz/utils/logger";
 import {
     type ChannelCalibration,
     calibrateChannels,
-    channelEnergy,
     micShare,
+    readCachedChannelEnergy,
     type SilentCallSpan,
     silentCallSpans,
 } from "@genesiscz/utils/meetings/energy";
@@ -34,7 +34,7 @@ export async function energyMicShareFor(
         return {};
     }
 
-    const energy = await channelEnergy(evidence.audioPath, join(store.folder(record.id), "evidence", "energy.bin"));
+    const energy = readCachedChannelEnergy(join(store.folder(record.id), "evidence", "energy.bin"), evidence.audioPath);
 
     if (!energy) {
         return {};

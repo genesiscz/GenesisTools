@@ -103,7 +103,14 @@ export function framesAtPerDisplay(options: {
     const groups = new Map<number | undefined, OcrLine[]>();
 
     for (const line of options.lines) {
-        groups.set(line.displayId, [...(groups.get(line.displayId) ?? []), line]);
+        let group = groups.get(line.displayId);
+
+        if (!group) {
+            group = [];
+            groups.set(line.displayId, group);
+        }
+
+        group.push(line);
     }
 
     let recorded = false;

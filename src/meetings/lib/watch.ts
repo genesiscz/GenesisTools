@@ -207,7 +207,7 @@ export async function watchOnce(
         log.info({ meeting: auto.meetingId, exitCode: result.exitCode, ended, silent }, "auto recording stopped");
 
         // Not stopped yet: the next look tries again, and still knows the recording is its own.
-        if (!result.success) {
+        if (!result.success || deps.recorder().running) {
             return "failed";
         }
 
@@ -220,6 +220,12 @@ export async function watchOnce(
         }
 
         return "stopped";
+    }
+
+    if (auto?.meetingId && !auto.refreshUntil && live?.sourceMeetingId !== auto.sourceMeetingId) {
+        const pending = { ...auto, refreshUntil: new Date(now + REFRESH_FOR_MS).toISOString() };
+        writeAuto(store, pending);
+        await refreshEnded({ store, deps, sourceId: source.id, auto: pending, now });
     }
 
     if (!live || !isFresh(live, settings.liveWithinSec, now)) {

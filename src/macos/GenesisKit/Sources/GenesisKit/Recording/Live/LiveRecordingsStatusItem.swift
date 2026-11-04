@@ -191,7 +191,7 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
                                     recording: recording, enabled: true, id: "live-recording.folder"))
             }
 
-            if recording.canControl {
+            if recording.canControl && recording.controls.contains("displays.list") {
                 let displays = action("Displays", symbol: "display.2", selector: nil, recording: recording,
                                       enabled: !recording.isStopping, id: "live-recording.displays")
                 displays.submenu = displaysMenu(recording)
@@ -205,7 +205,7 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
 
     /// Each connected display, checked while recorded (a click adds or removes it), "Record only …" per display, and
     /// the two modes.
-    private func displaysMenu(_ recording: LiveRecording) -> NSMenu {
+    func displaysMenu(_ recording: LiveRecording) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         if recording.connectedDisplays.isEmpty {
@@ -213,7 +213,7 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
                                  color: .secondaryLabelColor))
         }
 
-        for display in recording.connectedDisplays {
+        for display in recording.connectedDisplays where recording.controls.contains(display.recorded ? "displays.remove" : "displays.add") {
             let row = displayRow(display.name, selector: #selector(toggleDisplay(_:)), recording: recording,
                                  display: display.id, id: "live-recording.display.\(display.id)")
             row.state = display.recorded ? .on : .off
@@ -222,7 +222,7 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
             menu.addItem(row)
         }
 
-        if recording.connectedDisplays.count > 1 {
+        if !recording.connectedDisplays.isEmpty && recording.controls.contains("displays.switch") {
             menu.addItem(.separator())
             for display in recording.connectedDisplays {
                 menu.addItem(displayRow("Record only \(display.name)", selector: #selector(switchDisplay(_:)),
@@ -232,7 +232,7 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        for (mode, title) in Self.modes {
+        for (mode, title) in Self.modes where recording.controls.contains("displays.mode") {
             let row = NSMenuItem(title: title, action: #selector(setMode(_:)), keyEquivalent: "")
             row.target = self
             row.representedObject = LiveRecordingTarget(id: recording.id, value: mode)
@@ -354,7 +354,7 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
 
         let id = recording.id
         let panel = LiveRecordingPanel(
-            recording: recording, stack: panels.count,
+            recording: recording, stack: (0...panels.count).first { slot in !panels.values.contains { $0.slot == slot } } ?? 0,
             send: { [weak self] command in self?.send(command, to: id) },
             hide: { [weak self] in
                 self?.panels[id]?.close()

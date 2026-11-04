@@ -164,6 +164,10 @@ public struct BlockRect: Equatable {
 /// Merges overlapping rectangles until none overlap, then the pair whose union adds the least area until at most
 /// `maxBoxes` remain.
 public func mergeMotionRegions(_ regions: [BlockRect], maxBoxes: Int) -> [BlockRect] {
+    // Fragmented changes trade precision for bounded capture-queue work.
+    if regions.count > 64, let first = regions.first {
+        return [regions.dropFirst().reduce(first) { $0.union($1) }]
+    }
     var rects = regions
     var mergedAny = true
     while mergedAny {

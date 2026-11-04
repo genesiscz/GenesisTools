@@ -51,8 +51,6 @@ async function evidence(
         }
 
         const opened = OpenedMeeting.of(store, record);
-        // The rules read what collect stores (platform, attendance, channels): --raw shows the same inputs.
-        await opened.collectWhenIncomplete();
         const { source } = await opened.linked();
         const meeting = await opened.meeting();
         const found = await opened.evidence();

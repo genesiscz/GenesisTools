@@ -39,9 +39,18 @@ const liveOutput = z.object({
 
 const peekabooError = z.object({ error: z.object({ code: z.string().optional(), message: z.string() }) });
 
+function parseOutput(stdout: string): unknown {
+    try {
+        return SafeJSON.parse(stdout.trim() || "null", { strict: true });
+    } catch (error) {
+        log.debug({ error }, "peekaboo output is not complete JSON");
+        return null;
+    }
+}
+
 /** A failed peekaboo run as a CaptureError: peekaboo prints its own error as JSON on stdout; stderr holds its log. */
 export function peekabooCaptureError(exitCode: number | null, stdout: string, stderr: string): CaptureError {
-    const parsed = peekabooError.safeParse(SafeJSON.parse(stdout.trim() || "null"));
+    const parsed = peekabooError.safeParse(parseOutput(stdout));
     const reason = parsed.success ? parsed.data.error.message : stderr.trim().slice(-300);
     const kind = parsed.success && /screen index \d+ not found/i.test(reason) ? "display-missing" : "failed";
     return new CaptureError(
@@ -133,7 +142,7 @@ export class PeekabooFrameRecorder extends FrameRecorder {
             );
         }
 
-        const parsed = liveOutput.safeParse(SafeJSON.parse(run.stdout.trim() || "null"));
+        const parsed = liveOutput.safeParse(parseOutput(run.stdout));
 
         if (run.aborted && (run.exitCode !== 0 || !parsed.success)) {
             log.info({ exitCode: run.exitCode }, "peekaboo stopped before it printed its frames");

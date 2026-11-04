@@ -92,9 +92,12 @@ async function startScene(): Promise<{ pid: number; changes: number[]; stop: () 
     const proc = Bun.spawn(["swift", script, String(CHANGE_EVERY_MS / 1000)], { stdout: "pipe", stderr: "inherit" });
     const changes: number[] = [];
     let ready: () => void = () => undefined;
-    const isReady = new Promise<void>((resolve) => {
+    let fail: (error: Error) => void = () => undefined;
+    const isReady = new Promise<void>((resolve, reject) => {
         ready = resolve;
+        fail = reject;
     });
+    void proc.exited.then((code) => fail(new Error(`scene exited before readiness: ${code}`)));
     void (async () => {
         let pending = "";
 
@@ -113,10 +116,19 @@ async function startScene(): Promise<{ pid: number; changes: number[]; stop: () 
                 }
             }
         }
-    })();
-    const deadline = setTimeout(() => ready(), 60_000);
-    await isReady;
-    clearTimeout(deadline);
+    })().catch((error: unknown) => {
+        log.warn({ error }, "scene output failed");
+        fail(error instanceof Error ? error : new Error(String(error)));
+    });
+    const deadline = setTimeout(() => fail(new Error("scene readiness timed out")), 60_000);
+    try {
+        await isReady;
+    } catch (error) {
+        proc.kill("SIGTERM");
+        throw error;
+    } finally {
+        clearTimeout(deadline);
+    }
     return { pid: proc.pid, changes, stop: () => proc.kill("SIGTERM") };
 }
 
@@ -186,7 +198,8 @@ async function oneRun(options: {
     const endedAt = Date.now();
     const samples = sampler.stop();
     const changes = scene.changes.filter((at) => at >= startedAt + 3_000 && at <= endedAt - 2_000);
-    const errors: string[] = [];
+    const errors: string[] =
+        changes.length === 0 ? ["no scene changes in the measured window; counts are not meaningful"] : [];
     const lags: number[] = [];
     let frames = 0;
     let missed = 0;

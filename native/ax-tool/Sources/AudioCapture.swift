@@ -258,7 +258,13 @@ final class NativeAudio: NSObject, SCStreamOutput {
         let time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let buffer: CMSampleBuffer
         if track.muted {
-            buffer = silentCopy(sampleBuffer) ?? sampleBuffer
+            guard let silent = silentCopy(sampleBuffer) else {
+                if !track.failures.contains("could not silence muted audio") {
+                    track.failures.append("could not silence muted audio")
+                }
+                return
+            }
+            buffer = silent
             if track.mutedSpans.last.map({ $0.end != nil }) ?? true {
                 track.mutedSpans.append((time, nil))
             }

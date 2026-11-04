@@ -488,6 +488,10 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    func cancelPendingDisplay() {
+        queue.sync { pendingDisplay = nil }
+    }
+
     /// A warning from outside the frame queue; a repeat of the same text is dropped.
     func warn(_ text: String) {
         queue.async { [self] in
@@ -657,10 +661,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         lastTimestamp = timestamp
         captured += 1
         guard !paused else { return }
-        if let pendingDisplay, CVPixelBufferGetWidth(pixelBuffer) == pendingDisplay.width,
-           CVPixelBufferGetHeight(pixelBuffer) == pendingDisplay.height {
-            applyDisplayChange(pendingDisplay.id)
-        }
+        // Configuration can deliver the new size before the content filter succeeds.
+        guard pendingDisplay == nil else { return }
         if let adaptor, let writerInput, writerInput.isReadyForMoreMediaData {
             // A refused append is how a dimension or format mismatch shows itself. Warn once:
             // the rest of the recording would repeat it on every frame.
@@ -1295,6 +1297,7 @@ private final class ScreenStreamHost {
 
         deadTicks += 1
         if !displayIsActive(display.id) {
+            if options.followFocus && (switching || deadTicks < 4) { return true }
             displayRemoved = true
             return false
         }
@@ -1449,7 +1452,7 @@ private final class ScreenStreamHost {
             return
         }
 
-        guard target != display.id else { return }
+        guard !lost, target != display.id else { return }
         if let failedSwitch, failedSwitch.id == target, Date().timeIntervalSince(failedSwitch.at) < 5 {
             return
         }
@@ -1478,6 +1481,8 @@ private final class ScreenStreamHost {
         switching = true
         let geometry = displayGeometry(target)
         let size = outputSize(for: geometry)
+        let previousDisplay = display
+        let previousSize = outputSize(for: display)
         let excluded = excludedWindowIDs
         let stream = self.stream
         let recorder = self.recorder
@@ -1498,6 +1503,15 @@ private final class ScreenStreamHost {
                     self.switching = false
                 }
             } catch {
+                if let previousSize {
+                    do {
+                        let configuration = recorder.setOutputSize(width: Int(previousSize.width), height: Int(previousSize.height), for: previousDisplay.id)
+                        try await stream.updateConfiguration(configuration)
+                    } catch {
+                        recorder.warn("could not restore the recording size: \(error.localizedDescription)")
+                    }
+                }
+                recorder.cancelPendingDisplay()
                 recorder.warn("could not switch the recording to display \(target): \(error.localizedDescription)")
                 CaptureEvents.error("failed", "could not switch the recording to display \(target): \(error.localizedDescription)")
                 DispatchQueue.main.async {

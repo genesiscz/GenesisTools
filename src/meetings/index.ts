@@ -14,9 +14,7 @@ import { registerWatchCommands } from "./commands/watch";
 const program = new Command();
 program
     .name("meetings")
-    .description(
-        "Meetings as one record each: projects, the transcript dictionary, and (to come) recording and review"
-    );
+    .description("Meetings as one record each: projects, the transcript dictionary, recording and review");
 registerMeetingCommands(program);
 registerItemCommands(program);
 registerEvidenceCommand(program);

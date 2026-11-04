@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -15,7 +15,7 @@ import {
     resolveDictionary,
     sourceFolders,
 } from "./config";
-import { calibrateChannels, micShare } from "./energy";
+import { calibrateChannels, channelEnergy, micShare } from "./energy";
 import { MeetingStore, nextId, titleSlug } from "./record";
 
 let stores = 0;
@@ -297,4 +297,38 @@ describe("calibrateChannels", () => {
         });
         expect(micShare(energyOf("left"), "unknown", 0, 2)).toBeUndefined();
     });
+});
+
+test.skipIf(!Bun.which("ffmpeg"))("concurrent energy builders publish complete stereo caches", async () => {
+    const dir = new Storage("energy-concurrent-test").getBaseDir();
+    mkdirSync(dir, { recursive: true });
+    const audio = join(dir, "stereo.wav");
+    const samples = 4000;
+    const wav = Buffer.alloc(44 + samples * 4);
+    wav.write("RIFF", 0);
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(2, 22);
+    wav.writeUInt32LE(2000, 24);
+    wav.writeUInt32LE(8000, 28);
+    wav.writeUInt16LE(4, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write("data", 36);
+    wav.writeUInt32LE(samples * 4, 40);
+    for (let i = 0; i < samples; i += 1) {
+        wav.writeInt16LE(1000, 44 + i * 4);
+        wav.writeInt16LE(100, 46 + i * 4);
+    }
+    writeFileSync(audio, wav);
+    const cache = join(dir, "energy.bin");
+    const results = await Promise.all([channelEnergy(audio, cache), channelEnergy(audio, cache)]);
+    for (const energy of results) {
+        expect(energy?.left.length).toBe(20);
+        expect(energy?.left[0]).toBeCloseTo(1000, 0);
+        expect(energy?.right[0]).toBeCloseTo(100, 0);
+    }
+    expect(await channelEnergy(audio, cache)).toEqual(results[0]);
+    expect(readdirSync(dir).sort()).toEqual(["energy.bin", "stereo.wav"]);
 });

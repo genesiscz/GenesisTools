@@ -39,8 +39,8 @@ function unclearPassages(
         unaskedLow(item)
             ? [
                   {
-                      fromSec: 0,
-                      toSec: Number.POSITIVE_INFINITY,
+                      fromSec: item.scope === "line" && item.atSec !== undefined ? item.atSec : 0,
+                      toSec: item.scope === "line" && item.atSec !== undefined ? item.atSec : Number.POSITIVE_INFINITY,
                       heard: item.heard,
                       readings: withConfidence([item.proposed], item.confidence),
                   },
@@ -293,8 +293,14 @@ function labelOutcomes(
     const lines = new TranscriptLines(transcript);
     const voiced = new Map<number, string>();
 
+    const voiceItems = new Set(
+        record.items
+            .filter((item) => (item.kind === "speaker-range" || item.kind === "join") && item.speaker)
+            .map((item) => item.id)
+    );
+
     for (const outcome of outcomes) {
-        if (outcome.status === "applied") {
+        if (outcome.status === "applied" && voiceItems.has(outcome.item)) {
             for (const line of outcome.lines) {
                 voiced.set(line.index, outcome.item);
             }

@@ -257,6 +257,9 @@ export class ListenSession {
 
                 await this.decide(question, outcome);
             }
+        } catch (error) {
+            reason = "aborted";
+            throw error;
         } finally {
             this.end(reason);
         }

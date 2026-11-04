@@ -424,10 +424,15 @@ export class RecorderToolset extends ReplToolset {
         super();
     }
 
-    async bootstrap(_ctx: ToolsetContext): Promise<Record<string, unknown>> {
+    async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         const recorder = {
             start: async (input: z.input<typeof recorderStartSchema> = {}) => {
                 const options = recorderStartSchema.parse(input);
+                if (ctx.recorder) {
+                    const id = await ctx.recorder.start(options);
+                    return this.track(new RecordingHandle(await RecorderClient.connect(id)));
+                }
+
                 const recording = await startRecording({
                     recorder: this.createRecorder(),
                     ...options,

@@ -26,6 +26,11 @@ private func inside(_ x: Int, _ y: Int, _ rect: (Int, Int, Int, Int)) -> Bool {
 }
 
 final class MotionBoxTests: XCTestCase {
+    func testFragmentedChangesHaveBoundedReductionAndKeepEveryRegion() {
+        let regions = (0..<10_000).map { BlockRect(minX: $0 * 2, minY: 0, maxX: $0 * 2, maxY: 0) }
+        XCTAssertEqual(mergeMotionRegions(regions, maxBoxes: 8), [BlockRect(minX: 0, minY: 0, maxX: 19_998, maxY: 0)])
+    }
+
     // 4 px sampling stride and 4x4 sample blocks: one block is 16x16 output pixels.
     func testOneChangedPatchGivesOneBoxInOutputPixels() {
         let before = signature(width: 128, height: 64) { _, _ in 0 }

@@ -86,7 +86,7 @@ final class MarkdownPropertiesWebTests: XCTestCase {
     func testEditingTheTextValuePostsTheWholeRowListOnBlur() async throws {
         try await render(editable: true)
         _ = try await eval("""
-        (function(){var i=document.querySelector('#gn-props input[type=text]');i.focus();i.value='Changed';i.blur();})()
+        (function(){var i=document.querySelector('#gn-props input[type=text]');i.value='Changed';i.dispatchEvent(new FocusEvent('blur'));})()
         """)
         let rows = await posted()
         XCTAssertEqual(rows?.map(\.key), ["title", "tags", "done", "n"])

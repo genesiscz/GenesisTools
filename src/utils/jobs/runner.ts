@@ -44,7 +44,7 @@ export interface RunJobOptions<S> {
     id?: string;
     initial: S;
     steps: JobStep<S>[];
-    /** Files and folders no step may write. */
+    /** Exact input paths no step may overwrite. A folder protects its own path, not its descendants. */
     inputs?: string[];
     /** The folder for the receipts; without it every step runs. */
     receipts?: string;
@@ -69,7 +69,7 @@ interface Receipt {
     at: string;
 }
 
-function receiptPath(dir: string, index: number, name: string): string {
+function receiptPath({ dir, index, name }: { dir: string; index: number; name: string }): string {
     return join(dir, `${String(index).padStart(2, "0")}-${name.replace(/[^A-Za-z0-9._-]+/g, "-")}.json`);
 }
 
@@ -123,6 +123,7 @@ export class Job<S> {
     private error?: string;
     private readonly listeners = new Set<(event: ProgressEvent) => void>();
     private readonly controller = new AbortController();
+    private readonly forwardAbort = () => this.controller.abort(this.options.signal?.reason);
 
     constructor(private readonly options: RunJobOptions<S>) {
         this.id = options.id ?? `${options.kind}-${randomUUID().slice(0, 8)}`;
@@ -136,7 +137,7 @@ export class Job<S> {
             if (options.signal.aborted) {
                 this.controller.abort(options.signal.reason);
             } else {
-                options.signal.addEventListener("abort", () => this.controller.abort(options.signal?.reason), {
+                options.signal.addEventListener("abort", this.forwardAbort, {
                     once: true,
                 });
             }
@@ -200,18 +201,20 @@ export class Job<S> {
         // Let the caller attach listeners before the first event.
         await Promise.resolve();
         const { steps, receipts } = this.options;
-        const guard = new InputGuard(this.options.inputs);
-        const keys = chainKeys(steps, this.options.fingerprint);
         let state = this.options.initial;
         let start = 0;
 
         try {
+            const guard = new InputGuard(this.options.inputs);
+            const keys = chainKeys(steps, this.options.fingerprint);
             if (receipts) {
                 mkdirSync(receipts, { recursive: true });
 
                 for (let index = steps.length - 1; index >= 0; index--) {
                     const key = keys[index];
-                    const receipt = key ? readReceipt(receiptPath(receipts, index, steps[index].name)) : undefined;
+                    const receipt = key
+                        ? readReceipt(receiptPath({ dir: receipts, index, name: steps[index].name }))
+                        : undefined;
 
                     if (receipt && receipt.key === key) {
                         const restored = receipt.state as S;
@@ -261,7 +264,7 @@ export class Job<S> {
                 if (receipts && key) {
                     const receipt: Receipt = { version: 1, key, state, at: new Date().toISOString() };
                     atomicWriteFileSync(
-                        guard.claim(receiptPath(receipts, index, step.name)),
+                        guard.claim(receiptPath({ dir: receipts, index, name: step.name })),
                         SafeJSON.stringify(receipt, null, 2)
                     );
                 }
@@ -284,6 +287,7 @@ export class Job<S> {
     }
 
     private finish(state: JobState, error?: unknown): void {
+        this.options.signal?.removeEventListener("abort", this.forwardAbort);
         this.currentState = state;
         this.endedAt = new Date().toISOString();
 

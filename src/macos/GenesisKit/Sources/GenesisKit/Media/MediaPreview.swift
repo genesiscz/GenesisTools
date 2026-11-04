@@ -32,6 +32,7 @@ public final class MediaPreviewState: ObservableObject {
 
     /// The item the preview opened on: its thumbnail opened it, and gets the keyboard back when it closes.
     private var openedID: String?
+    private var pendingFocusReturn: String?
     /// The opener's item id, sent once the preview has closed and the surface under it takes input again
     /// (`MediaThumbnailView` focuses its button on it). A passthrough, so a late subscriber is not focused.
     public let focusReturns = PassthroughSubject<String, Never>()
@@ -132,6 +133,7 @@ public final class MediaPreviewState: ObservableObject {
         self.items = items
         index = items.firstIndex { $0.id == selectedID } ?? 0
         openedID = items[index].id
+        pendingFocusReturn = nil
         Self.active = self
     }
 
@@ -151,11 +153,13 @@ public final class MediaPreviewState: ObservableObject {
         index = 0
         openedID = nil
         if Self.active === self { Self.active = nil }
-        guard returningFocus, let opener else { return }
-        // A turn later: the surface is disabled while the preview is up, and a disabled button takes no focus.
-        DispatchQueue.main.async { [weak self] in
-            self?.focusReturns.send(opener)
-        }
+        pendingFocusReturn = returningFocus ? opener : nil
+    }
+
+    func surfaceEnabled() {
+        guard !isOpen, let opener = pendingFocusReturn else { return }
+        pendingFocusReturn = nil
+        focusReturns.send(opener)
     }
 
     public func step(_ delta: Int) {
@@ -248,6 +252,11 @@ private struct MediaPreviewHost: ViewModifier {
             }
             .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.26, dampingFraction: 0.9),
                 value: state.isOpen)
+            .onChange(of: state.isOpen) { open in
+                if !open {
+                    DispatchQueue.main.async { state.surfaceEnabled() }
+                }
+            }
             .onDisappear { state.dismiss() }
     }
 }

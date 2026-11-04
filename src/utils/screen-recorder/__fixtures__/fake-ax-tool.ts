@@ -3,7 +3,7 @@
  * --control-stdin` keeps one frame, then takes switch, pause, resume and stop as JSON lines on stdin and answers with
  * events on stderr, as the real recorder does. The end of stdin or SIGINT stops it with the normal result on stdout.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
@@ -19,10 +19,20 @@ const commandSchema = z.object({
 });
 
 const args = process.argv.slice(2);
+const fixtureMode = args[0]?.startsWith("--fixture-") ? args.shift() : undefined;
 const print = (value: unknown, stream: "stdout" | "stderr" = "stdout") =>
     process[stream].write(`${SafeJSON.stringify(value)}\n`);
 
 if (args[0] === "--help") {
+    if (fixtureMode?.startsWith("--fixture-help-once=")) {
+        const marker = fixtureMode.slice("--fixture-help-once=".length);
+
+        if (!existsSync(marker)) {
+            writeFileSync(marker, "failed");
+            process.exit(1);
+        }
+    }
+
     process.stdout.write(
         "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n"
     );
@@ -95,6 +105,11 @@ const finish = (cancelled: boolean) => {
     }
 
     finished = true;
+    if (fixtureMode === "--fixture-corrupt-output") {
+        process.stdout.write('{"data":');
+        process.exit(1);
+    }
+
     print({ ok: true, success: true, data: { frames, cancelled, stats: { keptFrames: frames.length } } });
     process.exit(0);
 };

@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const { log } = logger.scoped("meetings-energy");
 
@@ -39,7 +41,7 @@ function rmsBlocks(raw: Buffer): Float32Array {
     return blocks;
 }
 
-function readCache(path: string, audioPath: string): ChannelEnergy | undefined {
+export function readCachedChannelEnergy(path: string, audioPath: string): ChannelEnergy | undefined {
     if (!existsSync(path) || statSync(path).mtimeMs < statSync(audioPath).mtimeMs) {
         return undefined;
     }
@@ -55,7 +57,7 @@ function readCache(path: string, audioPath: string): ChannelEnergy | undefined {
  * on a mono file, returns undefined and logs why, and callers leave the energy terms out.
  */
 export async function channelEnergy(audioPath: string, cachePath: string): Promise<ChannelEnergy | undefined> {
-    const cached = readCache(cachePath, audioPath);
+    const cached = readCachedChannelEnergy(cachePath, audioPath);
 
     if (cached) {
         return cached;
@@ -68,8 +70,9 @@ export async function channelEnergy(audioPath: string, cachePath: string): Promi
 
     const dir = dirname(cachePath);
     mkdirSync(dir, { recursive: true });
-    const leftRaw = join(dir, "L.raw");
-    const rightRaw = join(dir, "R.raw");
+    const build = randomUUID();
+    const leftRaw = join(dir, `${build}-L.raw`);
+    const rightRaw = join(dir, `${build}-R.raw`);
     const proc = Bun.spawn(
         [
             "ffmpeg",
@@ -110,7 +113,7 @@ export async function channelEnergy(audioPath: string, cachePath: string): Promi
         const joined = new Float32Array(energy.left.length * 2);
         joined.set(energy.left, 0);
         joined.set(energy.right.subarray(0, energy.left.length), energy.left.length);
-        writeFileSync(cachePath, Buffer.from(joined.buffer));
+        atomicWriteFileSync(cachePath, Buffer.from(joined.buffer));
         log.debug({ cachePath, blocks: energy.left.length }, "energy cached");
         return energy;
     } finally {

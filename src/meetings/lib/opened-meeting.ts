@@ -1,7 +1,8 @@
+import { join } from "node:path";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import type { ChannelCalibration, SilentCallSpan } from "@genesiscz/utils/meetings/energy";
+import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
@@ -193,6 +194,13 @@ export class OpenedMeeting {
      * when the source keeps no audio or ffmpeg is missing.
      */
     async calibrate(): Promise<ChannelCalibration | undefined> {
+        const evidence = await this.sourceEvidence();
+
+        if (evidence?.audioPath) {
+            await channelEnergy(evidence.audioPath, join(this.store.folder(this.current.id), "evidence", "energy.bin"));
+            this.energyOnce = undefined;
+        }
+
         const energy = await this.energy();
 
         if (!energy.calibration) {
