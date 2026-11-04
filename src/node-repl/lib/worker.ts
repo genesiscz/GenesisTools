@@ -5,6 +5,8 @@ import { basename, join } from "node:path";
 import { Writable } from "node:stream";
 import vm from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readShowable, type ShowInput } from "@genesiscz/utils/repl/show";
+import type { ReplToolset, ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { rewriteTurn } from "./rewrite";
 import { type ImportPolicy, importAllowed, loadImportPolicy } from "./trust";
 
@@ -29,7 +31,19 @@ interface AddDirRequest {
     dir: string;
 }
 
-type Request = RunRequest | AddDirRequest;
+interface PreloadRequest {
+    id: number;
+    op: "preload";
+    toolsets: string[];
+    scratchDir: string;
+}
+
+interface DisposeRequest {
+    id: number;
+    op: "dispose";
+}
+
+type Request = RunRequest | AddDirRequest | PreloadRequest | DisposeRequest;
 
 interface EmittedImage {
     mimeType: string;
@@ -60,6 +74,9 @@ let imageCounter = 0;
 
 declare global {
     var nodeRepl: typeof replApi;
+    var help: (name?: string) => string;
+    var show: (input: ShowInput | ShowInput[]) => Promise<void>;
+    var sleep: (ms: number) => Promise<void>;
 }
 
 const replApi = {
@@ -79,6 +96,67 @@ const replApi = {
 };
 
 globalThis.nodeRepl = replApi;
+
+const toolsets: ReplToolset[] = [];
+
+async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
+    for (const one of Array.isArray(input) ? input : [input]) {
+        const image = await readShowable(one);
+        await replApi.emitImage({ bytes: image.bytes, mimeType: image.mimeType });
+    }
+}
+
+const CORE_HELP = [
+    "help(name?) prints the docs of a loaded toolset; show(image | path | Buffer) returns an image to the model.",
+    "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes, mimeType }) is show() without the type check; await sleep(ms) waits.",
+];
+
+function helpText(name?: string): string {
+    if (name === undefined) {
+        const loaded = toolsets.map((toolset) => toolset.oneLine());
+        return [...CORE_HELP, ...(loaded.length > 0 ? loaded : ["No toolsets are loaded (--toolset a,b)."])].join("\n");
+    }
+
+    const toolset = toolsets.find((one) => one.id === name || one.api.global === name);
+
+    if (!toolset) {
+        throw new Error(
+            `No toolset "${name}" is loaded; loaded: ${toolsets.map((one) => one.id).join(", ") || "none"}`
+        );
+    }
+
+    return toolset.docs();
+}
+
+globalThis.help = helpText;
+globalThis.show = showImages;
+globalThis.sleep = (ms: number) => Bun.sleep(ms);
+
+async function preload(request: PreloadRequest): Promise<string> {
+    const { createToolsets } = await import("./toolsets");
+    const ctx: ToolsetContext = { scratchDir: request.scratchDir, show: showImages, write: replApi.write };
+
+    for (const toolset of await createToolsets(request.toolsets)) {
+        Object.assign(globalThis, await toolset.load(ctx));
+        toolsets.push(toolset);
+    }
+
+    return `toolsets preloaded: ${toolsets.map((toolset) => toolset.id).join(", ")}`;
+}
+
+async function disposeToolsets(): Promise<string[]> {
+    const failures: string[] = [];
+
+    for (const toolset of toolsets.splice(0).reverse()) {
+        try {
+            await toolset.dispose();
+        } catch (error) {
+            failures.push(`${toolset.id}: ${describeError(error).message}`);
+        }
+    }
+
+    return failures;
+}
 
 /**
  * stdout carries the line protocol, so a bare console.log corrupts it: the parent cannot parse the
@@ -156,6 +234,22 @@ async function handle(request: Request): Promise<Response> {
     output = [];
     images = [];
 
+    if (request.op === "preload") {
+        try {
+            return { id: request.id, ok: true, text: await preload(request), images };
+        } catch (error) {
+            const { message, stack } = describeError(error);
+            return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack };
+        }
+    }
+
+    if (request.op === "dispose") {
+        const failures = await disposeToolsets();
+        return failures.length > 0
+            ? { id: request.id, ok: false, text: "", images: [], error: failures.join("; ") }
+            : { id: request.id, ok: true, text: "toolsets disposed", images: [] };
+    }
+
     if (request.op === "addDir") {
         if (!moduleDirs.includes(request.dir)) {
             moduleDirs.push(request.dir);
@@ -199,6 +293,19 @@ function readRequest(line: string): { request: Request } | { failure: Response }
         return { request: { id, op: "addDir", dir: fields.dir } };
     }
 
+    if (
+        fields.op === "preload" &&
+        Array.isArray(fields.toolsets) &&
+        fields.toolsets.every((one) => typeof one === "string") &&
+        typeof fields.scratchDir === "string"
+    ) {
+        return { request: { id, op: "preload", toolsets: fields.toolsets, scratchDir: fields.scratchDir } };
+    }
+
+    if (fields.op === "dispose") {
+        return { request: { id, op: "dispose" } };
+    }
+
     return { failure: { id, ok: false, text: "", images: [], error: `unsupported request: ${line.slice(0, 200)}` } };
 }
 
@@ -222,6 +329,13 @@ async function main(): Promise<void> {
 
             newline = buffered.indexOf("\n");
         }
+    }
+
+    // The parent closed stdin: it is stopping without a dispose request, so release the toolsets here.
+    const failures = await disposeToolsets();
+
+    if (failures.length > 0) {
+        process.stderr.write(`toolset dispose failed: ${failures.join("; ")}\n`);
     }
 }
 
