@@ -270,6 +270,10 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
                                 enabled: recording.toggleCommand != nil, id: "live-recording.\(toggle.rawValue)"))
             menu.addItem(action("Stop", symbol: "stop.fill", selector: #selector(sendStop(_:)), recording: recording,
                                 enabled: recording.allows(.stop), id: "live-recording.stop"))
+            if recording.canControl && recording.controls.contains("marker.add") {
+                menu.addItem(action("Add Marker", symbol: "flag.fill", selector: #selector(addMarker(_:)), recording: recording,
+                                    enabled: !recording.isPaused && !recording.isStopping, id: "live-recording.marker"))
+            }
             if recording.folder != nil {
                 menu.addItem(action("Open folder", symbol: "folder", selector: #selector(openFolder(_:)),
                                     recording: recording, enabled: true, id: "live-recording.folder"))
@@ -412,6 +416,17 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     @objc private func sendToggle(_ sender: NSMenuItem) {
         guard let recording = recording(of: sender), let command = recording.toggleCommand else { return }
         send(command, to: recording.id)
+    }
+
+    /// Markers added from the menu, per recording, so each gets the next number.
+    private var markerCounts: [String: Int] = [:]
+
+    /// A marker at this moment, named "Marker N"; the editor and an agent's movie.markers() show it.
+    @objc private func addMarker(_ sender: NSMenuItem) {
+        guard let recording = recording(of: sender) else { return }
+        let next = (markerCounts[recording.id] ?? 0) + 1
+        markerCounts[recording.id] = next
+        sessions[recording.id]?.call("marker.add", params: ["label": "Marker \(next)"], label: "Marker \(next)")
     }
 
     @objc private func sendStop(_ sender: NSMenuItem) {
