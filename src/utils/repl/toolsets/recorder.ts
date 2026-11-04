@@ -13,8 +13,9 @@ import {
     recorderSettingsPatchSchema,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
+import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { type LiveNotification, listLiveRecordings, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
-import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
+import { FRAME_FLUSHES, type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
 import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import { z } from "zod";
 import { ReplToolset, type ToolsetContext } from "../toolset";
@@ -39,6 +40,18 @@ export const recorderStartSchema = z
                 languages: z.array(z.string()).optional(),
                 minChars: z.number().int().optional(),
             })
+            .optional(),
+        /** Where each frame's OCR goes: `<frame>.ocr.json` beside it (default) or an `ocr.jsonl` row per frame. */
+        ocrSink: z.enum(OCR_SINK_KINDS).optional(),
+        /** How frames are written: format, JPEG quality, naming, and whether a piece's frames land as it ends. */
+        frames: z
+            .object({
+                format: z.enum(["original", "jpeg"]).optional(),
+                jpegQuality: z.number().min(0.1).max(1).optional(),
+                naming: z.enum(FRAME_NAMINGS).optional(),
+                flush: z.enum(FRAME_FLUSHES).optional(),
+            })
+            .strict()
             .optional(),
         maxDurationSec: z.number().min(1).max(7200).optional(),
         pieceSec: z.number().min(5).max(180).optional(),
@@ -239,7 +252,7 @@ export const recorderApi = defineApi({
             params: recorderStartSchema,
             result: z.unknown(),
             resultName: "Recording",
-            doc: "Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle.",
+            doc: 'Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. Frames default to the recorder\'s files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece\'s JPEGs and ocr.jsonl rows exist while it records).',
             effect: "reversible",
         }),
         defineMethod({

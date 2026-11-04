@@ -16,6 +16,7 @@ import {
     type StopAnswer,
 } from "./control";
 import { outputScaleFor, parseDisplayList } from "./displays";
+import { FrameOutput, ocrSinkFor, SidecarOcrSink } from "./frame-output";
 import { readRecordingManifest, renameRecording } from "./library";
 import {
     type LiveNotification,
@@ -586,5 +587,104 @@ describe("library recording frames", () => {
         expect(manifest.frames.map((frame) => frame.atMs)).toEqual(files.map((name) => Number(name.slice(0, 8))));
         expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
         expect(files.some((name) => name.endsWith(".ocr.json"))).toBe(false);
+    });
+    test("flush per piece: JPEG frames and their ocr.jsonl rows exist while it records, under wall-clock names", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-piece-"));
+        const recorder = new PieceRecorder();
+        recorder.folder = join(root, "rec");
+        const converted: number[] = [];
+        const recording = await startRecording({
+            recorder,
+            folder: recorder.folder,
+            liveDir: join(root, "live"),
+            maxDurationSec: 0.5,
+            pieceSec: 0.2,
+            ocr: { enabled: true, minChars: 5 },
+            ocrSink: "jsonl",
+            frames: { format: "jpeg", jpegQuality: 0.6, naming: "wall-clock", flush: "piece" },
+            deps: {
+                convert: async (_source, target, quality) => {
+                    converted.push(quality);
+                    writeFileSync(target, "jpeg");
+                },
+                recognize: async () => ({
+                    text: "Sprint board",
+                    blocks: [{ text: "Sprint board", confidence: 1, bounds: { x: 0, y: 0, width: 1, height: 1 } }],
+                }),
+            },
+        });
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 3_000 })).toBe(true);
+        await recording.stop();
+        const files = readdirSync(join(recording.folder, "frames")).sort();
+        const rows = readFileSync(join(recording.folder, "ocr.jsonl"), "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => SafeJSON.parse(line, { strict: true }));
+
+        expect(recorder.framesSeenAtCapture.slice(1).every((count) => count > 0)).toBe(true);
+        expect(files.every((name) => /^\d{2}-\d{2}-\d{2}-\d{3}-d1\.jpg$/.test(name))).toBe(true);
+        expect(converted.every((quality) => quality === 0.6)).toBe(true);
+        expect(rows.map((row: { file: string }) => row.file).sort()).toEqual(files.map((name) => `frames/${name}`));
+        expect(rows[0]).toMatchObject({ displayId: 1, changePercent: 12.5, text: "Sprint board" });
+        expect(readRecordingManifest(recording.folder)!.frames.map((frame) => frame.file)).toEqual(
+            files.map((name) => `frames/${name}`)
+        );
+    });
+});
+
+describe("frame output", () => {
+    const frameIn = (dir: string) => {
+        const path = join(dir, "keep.png");
+        writeFileSync(path, "png");
+        return { path, atMs: 0, displayId: 2, changePercent: 3, reason: "change" };
+    };
+
+    test("a sidecar is written only for a read with minChars or more; OCR off still gives the jsonl sink a row", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-frame-out-"));
+        let enabled = true;
+        const recognize = async () => ({ text: "abc", blocks: [] });
+        const sidecar = new FrameOutput({
+            folder: dir,
+            naming: "elapsed",
+            format: { kind: "original" },
+            ocr: {
+                settings: () => ({ enabled, languages: ["en-US"], minChars: 4 }),
+                sink: new SidecarOcrSink(),
+                recognize,
+            },
+        });
+        const kept = await sidecar.keep(frameIn(dir), { atMs: 5_000, originMs: 1_000, displayId: 2 });
+
+        expect(kept).toMatchObject({
+            file: "frames/00004000-d2.png",
+            elapsedMs: 4_000,
+            bytes: 3,
+            read: { text: "abc" },
+        });
+        expect(existsSync(`${kept.path}.ocr.json`)).toBe(false);
+
+        const jsonl = new FrameOutput({
+            folder: dir,
+            naming: "elapsed",
+            format: { kind: "original" },
+            ocr: {
+                settings: () => ({ enabled, languages: ["en-US"], minChars: 0 }),
+                sink: ocrSinkFor("jsonl", dir),
+                recognize,
+            },
+        });
+        enabled = false;
+        const quiet = await jsonl.keep(frameIn(dir), { atMs: 6_000, originMs: 1_000, displayId: 2 });
+
+        expect(quiet.read).toBeUndefined();
+        expect(SafeJSON.parse(readFileSync(join(dir, "ocr.jsonl"), "utf8"), { strict: true })).toEqual({
+            file: "frames/00005000-d2.png",
+            at: new Date(6_000).toISOString(),
+            displayId: 2,
+            changePercent: 3,
+            reason: "change",
+            text: "",
+            blocks: [],
+        });
     });
 });

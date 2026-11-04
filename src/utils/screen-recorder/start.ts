@@ -1,9 +1,8 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, join } from "node:path";
 import { type JobInfo, JobRegistry } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import {
     type AudioDevices,
@@ -24,6 +23,14 @@ import {
     type StopAnswer,
 } from "./control";
 import { mainDisplay } from "./displays";
+import {
+    type FrameNaming,
+    FrameOutput,
+    type JpegConverter,
+    type OcrRecognizer,
+    type OcrSinkKind,
+    ocrSinkFor,
+} from "./frame-output";
 import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from "./library";
 import { LiveRecordingServer, liveRecordingId } from "./live";
 import {
@@ -87,6 +94,21 @@ export interface StartRecordingOptions {
     audio?: { mic?: boolean; system?: boolean; micDeviceId?: string };
     /** Vision OCR settings for each kept frame. */
     ocr?: Partial<RecorderSettings["ocr"]>;
+    /** Where the OCR of each frame goes: `<frame>.ocr.json` beside it (default) or one `ocr.jsonl` row per frame. */
+    ocrSink?: OcrSinkKind;
+    /**
+     * How kept frames are written. Defaults: the recorder's own file, named by elapsed ms, moved when the recording
+     * stops. `flush: "piece"` writes each piece's frames (and their OCR) as the piece ends, so they exist while it records.
+     */
+    frames?: {
+        format?: "original" | "jpeg";
+        /** 0 to 1; default 0.75 (the meetings default). */
+        jpegQuality?: number;
+        naming?: FrameNaming;
+        flush?: FrameFlush;
+    };
+    /** Replacements for the JPEG conversion and the OCR (tests). */
+    deps?: { convert?: JpegConverter; recognize?: OcrRecognizer };
     /** The recording ends by itself after this long. Default 10 minutes. */
     maxDurationSec?: number;
     /** One capture lasts at most this long before the next one starts. Default 60 s. */
@@ -106,7 +128,13 @@ interface PendingFrame {
     frame: CapturedFrame;
     displayId: number;
     atMs: number;
+    /** Written under `frames/` already (`frames.flush: "piece"`); `frame.path` is its final file. */
+    kept?: boolean;
 }
+
+/** When a piece's frames are written under `frames/`: as the piece ends, or all at the stop. */
+export const FRAME_FLUSHES = ["finish", "piece"] as const;
+export type FrameFlush = (typeof FRAME_FLUSHES)[number];
 
 const METHODS: readonly RecorderMethod[] = [
     "status",
@@ -162,6 +190,8 @@ export class LibraryRecording extends RecorderControl {
     private wake?: () => void;
     private loop?: Promise<void>;
     private finishing?: { job: string; done: Promise<StopAnswer> };
+    private readonly output: FrameOutput;
+    private readonly flush: FrameFlush;
 
     constructor(private readonly options: StartRecordingOptions) {
         super();
@@ -180,6 +210,21 @@ export class LibraryRecording extends RecorderControl {
             ...(options.audio?.system ? (["system"] as const) : []),
         ];
         this.audio = { sources, muted: { mic: false, system: false }, micDevice: options.audio?.micDeviceId };
+        const frames = options.frames ?? {};
+        this.flush = frames.flush ?? "finish";
+        this.output = new FrameOutput({
+            folder: this.folder,
+            naming: frames.naming ?? "elapsed",
+            format:
+                frames.format === "jpeg" ? { kind: "jpeg", quality: frames.jpegQuality ?? 0.75 } : { kind: "original" },
+            convert: options.deps?.convert,
+            ocr: {
+                settings: () => this.settings.ocr,
+                sink: ocrSinkFor(options.ocrSink ?? "sidecar", this.folder),
+                recognize: options.deps?.recognize,
+                onError: (error, path) => this.warn(`OCR failed for ${basename(path)}: ${String(error)}`),
+            },
+        });
     }
 
     /** Resolves the displays, opens the live socket, and starts recording. */
@@ -357,12 +402,18 @@ export class LibraryRecording extends RecorderControl {
                 entry.controller.signal
             );
 
-            for (const frame of result.frames) {
-                this.pending.push({
+            for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
+                const item: PendingFrame = {
                     frame,
                     displayId: frame.displayId ?? displayId,
                     atMs: result.startedAtMs + frame.atMs - this.startedAt.getTime(),
-                });
+                };
+
+                if (this.flush === "piece") {
+                    await this.keep(item);
+                }
+
+                this.pending.push(item);
             }
 
             for (const track of result.tracks ?? []) {
@@ -509,22 +560,8 @@ export class LibraryRecording extends RecorderControl {
         const audioDir = join(this.folder, "audio");
 
         for (const [index, item] of frames.entries()) {
-            const name = `${String(Math.max(0, Math.round(item.atMs))).padStart(8, "0")}-d${item.displayId}${extname(item.frame.path) || ".png"}`;
-
-            if (existsSync(item.frame.path)) {
-                renameSync(item.frame.path, join(this.folder, "frames", name));
-            }
-
-            item.frame = { ...item.frame, path: join(this.folder, "frames", name) };
-            if (this.settings.ocr.enabled) {
-                try {
-                    const result = await recognizeText(item.frame.path, { languages: this.settings.ocr.languages });
-                    if (result.text.trim().length >= this.settings.ocr.minChars) {
-                        atomicWriteFileSync(`${item.frame.path}.ocr.json`, SafeJSON.stringify(result));
-                    }
-                } catch (error) {
-                    this.warn(`OCR failed for ${basename(item.frame.path)}: ${String(error)}`);
-                }
+            if (!item.kept) {
+                await this.keep(item);
             }
 
             ctx.progress({ done: index + 1, total: frames.length, unit: "frames" });
@@ -541,6 +578,17 @@ export class LibraryRecording extends RecorderControl {
 
         rmSync(join(this.folder, ".pieces"), { recursive: true, force: true });
         return frames.length;
+    }
+
+    /** Writes one frame under `frames/` (name, format, OCR) and points the item at its file. */
+    private async keep(item: PendingFrame): Promise<void> {
+        const kept = await this.output.keep(item.frame, {
+            atMs: this.startedAt.getTime() + item.atMs,
+            originMs: this.startedAt.getTime(),
+            displayId: item.displayId,
+        });
+        item.frame = { ...item.frame, path: kept.path };
+        item.kept = true;
     }
 
     private writeManifest(): void {
