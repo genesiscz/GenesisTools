@@ -28,6 +28,7 @@ import type {
     RenderContext,
     RenderOptions,
     Row,
+    SpeechBlock,
     TableBlockInput,
 } from "./types";
 import { formatScalar } from "./value";
@@ -128,8 +129,19 @@ function renderCallout(block: CalloutBlock, ctx: RenderContext): string {
     const fold = block.fold === "closed" ? "-" : block.fold === "open" ? "+" : "";
     const title = block.title ? ` ${block.title}` : "";
     const body = ctx.render(block.body);
+    const label = block.labelCase === "lower" ? CALLOUT_LABEL[block.kind].toLowerCase() : CALLOUT_LABEL[block.kind];
 
-    return prefixLines(`[!${CALLOUT_LABEL[block.kind]}]${fold}${title}\n${body}`, "> ");
+    return prefixLines(`[!${label}]${fold}${title}\n${body}`, "> ");
+}
+
+function renderSpeech(block: SpeechBlock): string {
+    const text = block.text.replace(/\s*\n\n\s*/g, "\n\n").trim();
+    const play = block.time && block.play ? `<sup>${renderLink({ source: block.play, title: "play" })}</sup>` : "";
+    const stamp = block.time ? `\`${block.time}\`${play}` : "";
+    const separator = text.startsWith(">") ? "\n\n" : " ";
+    const head = block.speaker ? [`**${block.speaker}:**`, stamp].filter(Boolean).join(" ") : stamp;
+
+    return head ? `${head}${separator}${text}` : text;
 }
 
 function renderDefinitions(entries: DefinitionEntry[]): string {
@@ -233,6 +245,7 @@ export function builtinConverters(): Record<string, Converter> {
         p: ((value: string | string[]) => asLines(value).join("\n\n")) as Converter,
         blockquote: ((value: string | string[]) => prefixLines(asLines(value).join("\n\n"), "> ")) as Converter,
         callout: ((data: CalloutBlock, ctx) => renderCallout(data, ctx)) as Converter,
+        speech: ((data: SpeechBlock) => renderSpeech(data)) as Converter,
         ul: ((items: ListInput[], ctx) => renderList(items, false, ctx)) as Converter,
         ol: ((items: ListInput[], ctx) => renderList(items, true, ctx)) as Converter,
         tasks: ((items: ListInput[], ctx) =>
