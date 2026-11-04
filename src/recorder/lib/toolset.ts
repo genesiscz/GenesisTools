@@ -210,6 +210,17 @@ const movieMethods = [
         "One zoom per group of recorded clicks, following the cursor; replaces earlier auto zooms, keeps manual ones, and throws when there are no clicks."
     ),
     edit(
+        "titleMarkers",
+        z
+            .object({
+                seconds: z.number().min(0.5).max(15).optional(),
+                numbered: z.boolean().optional(),
+                y: z.number().min(0).max(1).optional(),
+            })
+            .strict(),
+        'Puts each marker\'s label on screen as a step title for `seconds` (2.5), "1. Open the settings" (numbered: false drops the number), at the top middle (y 0...1 of the canvas, 0.12): one text per marker in the kept movie, saved once, one undo(). A marker that has a text already is left alone, so running it again adds nothing. Throws when there is no marker.'
+    ),
+    edit(
         "annotateClicks",
         z
             .object({
@@ -1178,6 +1189,46 @@ export class Movie {
     /** The moments marked while it recorded (`recording.mark()`, `tools recorder mark`), with where each plays. */
     async markers() {
         return markersOf(await openProject(this.recording));
+    }
+
+    async titleMarkers(options: { seconds?: number; numbered?: boolean; y?: number } = {}) {
+        const opened = await openProject(this.recording);
+        const marks = markersOf(opened).filter((mark) => mark.plays !== null);
+
+        if (!marks.length) {
+            throw new RangeError(
+                "the recording has no marker in the kept movie; mark moments while recording (recording.mark(), tools recorder mark), or add texts with text()"
+            );
+        }
+
+        const lengthUs = Math.round((options.seconds ?? 2.5) * 1_000_000);
+        // A marker that already has a text starting within 0.1 s keeps it, so a second run adds nothing.
+        const taken = (opened.project.texts ?? []).map((note) => note.startUs);
+        const ops = marks.flatMap((mark, index): EditOp[] => {
+            const startUs = Math.round(mark.at * 1_000_000);
+
+            if (taken.some((us) => Math.abs(us - startUs) <= 100_000)) {
+                return [];
+            }
+
+            const text = options.numbered === false ? mark.label : `${index + 1}. ${mark.label}`;
+            const to = Math.min(opened.project.source.durationUs, startUs + lengthUs) / 1_000_000;
+            return [
+                {
+                    op: "text",
+                    from: mark.at,
+                    to,
+                    text: text.slice(0, 200),
+                    ...(options.y === undefined ? {} : { y: options.y }),
+                },
+            ];
+        });
+
+        if (!ops.length) {
+            throw new RangeError(`every marker has its title already (${marks.length}); nothing was saved`);
+        }
+
+        return this.change(ops);
     }
 
     async rename(title: string) {
