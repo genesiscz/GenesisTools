@@ -74,6 +74,15 @@ enum EditorMenu {
         EditorCommand(title: "Fit Timeline", key: "0", modifiers: .command, label: "⌘0") { $0.pointsPerSecond = 0 },
     ]
 
+    /// ⌘1 to ⌘9 open the inspector tabs in the rail's order.
+    static var tabs: [EditorCommand] {
+        InspectorTab.allCases.compactMap { tab in
+            tab.shortcutIndex.map { index in
+                EditorCommand(title: "Show \(tab.title)", key: "\(index)", modifiers: .command, label: "⌘\(index)") { $0.tab = tab }
+            }
+        }
+    }
+
     static func install() {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
         let bar = NSMenu()
@@ -101,7 +110,8 @@ enum EditorMenu {
 
         bar.addItem(withTitle: "Timeline", action: nil, keyEquivalent: "").submenu = menu("Timeline", timeline)
 
-        let view = NSMenu(title: "View")
+        let view = menu("View", tabs)
+        view.addItem(.separator())
         let scrub = view.addItem(withTitle: "Scrub Library Cards on Hover", action: #selector(EditorMenuTarget.toggleHoverScrub(_:)), keyEquivalent: "")
         scrub.target = EditorMenuTarget.shared
         let snap = view.addItem(withTitle: "Snap While Dragging", action: #selector(EditorMenuTarget.toggleSnap(_:)), keyEquivalent: "")
@@ -147,7 +157,7 @@ enum EditorMenu {
 
     /// Every command with a key, by menu, for the shortcuts sheet.
     static var sections: [(title: String, commands: [EditorCommand])] {
-        [("File", file), ("Edit", edit), ("Timeline", timeline)].map { ($0.0, $0.1.filter { !$0.label.isEmpty }) }
+        [("File", file), ("Edit", edit), ("Timeline", timeline), ("View", tabs)].map { ($0.0, $0.1.filter { !$0.label.isEmpty }) }
     }
 }
 

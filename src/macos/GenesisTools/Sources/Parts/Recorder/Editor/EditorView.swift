@@ -64,8 +64,9 @@ private struct IconRail: View {
                             .fill(model.tab == tab ? RecorderPalette.zoom : Color.clear))
                 }
                 .buttonStyle(.genHoverPlain())
-                .instantTooltip(tab.title)
+                .instantTooltip(tab.shortcutIndex.map { "\(tab.title) (⌘\($0))" } ?? tab.title)
                 .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
                 .accessibilityIdentifier("recorder.tab.\(tab.rawValue)")
             }
             Spacer()
@@ -305,7 +306,8 @@ private struct FocusPicker: View {
 
 private struct ClipInspector: View {
     @Bindable var model: EditorModel
-    private let speeds: [Double] = [0.5, 1, 1.5, 2, 4]
+    /// 8× is what Speed Up Still Parts sets, so such a clip shows its own segment.
+    private let speeds: [Double] = [0.5, 1, 1.5, 2, 4, 8]
 
     var body: some View {
         let placed = TimelineMap.placed(model.project)
@@ -320,8 +322,12 @@ private struct ClipInspector: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Speed", value: speedLabel(clip.speed))
                 GenSegmentedTabs("Speed", items: speeds.map { .init($0, speedLabel($0)) },
-                                 selection: Binding(get: { speeds.contains(clip.speed) ? clip.speed : 1 }, set: { model.setSpeed(id, $0) }),
-                                 minSegmentWidth: 44, identifier: "recorder.clip.speed", fillsWidth: true)
+                                 selection: Binding(get: { clip.speed }, set: { model.setSpeed(id, $0) }),
+                                 minSegmentWidth: 38, identifier: "recorder.clip.speed", fillsWidth: true)
+                if !speeds.contains(clip.speed) {
+                    Text(verbatim: "Plays at \(speedLabel(clip.speed)); pick a speed above to change it.")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                }
             }
             WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
                 .instantTooltip("Splits the clip under the playhead in two (S)")

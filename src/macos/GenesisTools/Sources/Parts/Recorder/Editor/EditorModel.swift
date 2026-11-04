@@ -21,6 +21,14 @@ enum EditorSelection: Equatable {
     case shape(String)
 }
 
+extension InspectorTab {
+    /// ⌘1 to ⌘9 in the rail's order; a tenth tab gets no key.
+    var shortcutIndex: Int? {
+        guard let index = Self.allCases.firstIndex(of: self), index < 9 else { return nil }
+        return index + 1
+    }
+}
+
 enum InspectorTab: String, CaseIterable, Identifiable {
     case zoom, clip, hide, text, style, cursor, captions, audio, export
     var id: String { rawValue }
