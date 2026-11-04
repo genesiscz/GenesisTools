@@ -548,6 +548,13 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditorModel.issues(fromCheck: Data("not json".utf8)))
     }
 
+    func testTrimmingASelectionToThePlayheadNeedsThePlayheadInsideIt() {
+        XCTAssertEqual(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 2_000_000, side: .start)?.start, 2_000_000)
+        XCTAssertEqual(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 2_000_000, side: .end)?.end, 2_000_000)
+        XCTAssertNil(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 5_000_000, side: .end))
+        XCTAssertNil(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 3_950_000, side: .start))
+    }
+
     func testMovingASelectionInTimeKeepsItsLengthInsideTheRecording() {
         XCTAssertEqual(EditorModel.shifted(start: 1_000_000, end: 3_000_000, by: 500_000, durationUs: 10_000_000).start, 1_500_000)
         let atStart = EditorModel.shifted(start: 200_000, end: 1_200_000, by: -1_000_000, durationUs: 10_000_000)

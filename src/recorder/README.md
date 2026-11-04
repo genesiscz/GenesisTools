@@ -113,7 +113,8 @@ one undo step; the Export tab's Fix All does the same, and its Remove, Lengthen 
 ops through `tools recorder apply`.
 
 In the editor, texts and shapes are segments on the marks lane (a drag moves one in time, an edge trims it), and
-⌥← / ⌥→ move the selected zoom, hidden part, text or shape by 0.1 s (⇧ for a second).
+⌥← / ⌥→ move the selected zoom, hidden part, text or shape by 0.1 s (⇧ for a second). [ and ] trim the selected item's
+start or end to the playhead; with no item selected they trim the clip under it.
 
 ## Export
 

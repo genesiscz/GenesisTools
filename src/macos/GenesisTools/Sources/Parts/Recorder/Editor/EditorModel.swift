@@ -422,13 +422,49 @@ final class EditorModel {
     }
 
     /// `[` / `]`: cuts the clip under the playhead from its start to here, or from here to its end.
+    /// [ and ]: with a zoom, hidden part, text or shape selected, its start or end moves to the playhead; otherwise the
+    /// clip under the playhead is trimmed there.
     func trimToPlayhead(_ side: TimelineMap.TrimSide) {
+        if let span = selectedSpan {
+            let at = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
+            guard let trimmed = Self.trimmed(start: span.start, end: span.end, at: at, side: side) else {
+                show("Put the playhead inside the selection to trim it there.", error: false)
+                return
+            }
+            switch selection {
+            case let .zoom(id): moveZoom(id, startUs: trimmed.start, endUs: trimmed.end)
+            case let .redaction(id): updateRedaction(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
+            case let .text(id): updateText(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
+            case let .shape(id): updateShape(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
+            case .clip, .none: break
+            }
+            return
+        }
         guard let (next, playhead) = TimelineMap.trimToPlayhead(project, atOutput: clock.outUs, side: side) else {
             show("Nothing to trim here: the playhead is at the edge of a clip.", error: false)
             return
         }
         clock.outUs = playhead
         apply(next, rebuildMovie: true)
+    }
+
+    /// The start and end of the selected zoom, hidden part, text or shape; nil for a clip or nothing.
+    private var selectedSpan: (start: Int64, end: Int64)? {
+        switch selection {
+        case let .zoom(id): return project.zooms.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .redaction(id): return project.redactions?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .text(id): return project.texts?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .shape(id): return project.shapes?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case .clip, .none: return nil
+        }
+    }
+
+    /// A span with its start (or end) moved to `at`; nil unless `at` leaves at least 0.1 s of it.
+    nonisolated static func trimmed(start: Int64, end: Int64, at: Int64, side: TimelineMap.TrimSide) -> (start: Int64, end: Int64)? {
+        switch side {
+        case .start: return at > start && at <= end - 100_000 ? (at, end) : nil
+        case .end: return at < end && at >= start + 100_000 ? (start, at) : nil
+        }
     }
 
     func deleteSelection() {
