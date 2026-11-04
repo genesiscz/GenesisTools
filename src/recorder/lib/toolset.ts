@@ -115,8 +115,9 @@ const movieMethods = [
         name: "check",
         params: z.object({}),
         result: z.unknown(),
-        resultName: '{ ok, issues: { severity: "fix" | "check", item, message, fix?, at? }[] }',
-        doc: 'What to look at before export(): items whose whole time is cut (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does; ok is true when there is no "fix" issue. It changes nothing.',
+        resultName:
+            '{ ok, issues: { severity: "fix" | "check", item, message, fix?, at?, target?, action?: { label, ops } }[] }',
+        doc: 'What to look at before export(): items whose whole time is cut (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); ok is true when there is no "fix" issue. It changes nothing.',
         effect: "read",
     }),
     edit("split", z.object({ at: timeSchema }), "Splits the clip at a source time.", ["at"]),
