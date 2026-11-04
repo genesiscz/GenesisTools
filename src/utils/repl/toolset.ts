@@ -81,8 +81,14 @@ export abstract class ReplToolset {
                               : args[0];
                         const parsed = method.params.safeParse(input);
                         if (!parsed.success || args.length > (method.positional?.length ?? 1)) {
+                            const problems = parsed.success
+                                ? [`too many arguments (${args.length})`]
+                                : parsed.error.issues.map(
+                                      (issue) =>
+                                          `${issue.path.length ? issue.path.join(".") : "options"}: ${issue.message}`
+                                  );
                             throw new TypeError(
-                                `Invalid arguments for ${owner}.${name}. Expected ${methodSignature(owner, method)}. ${parsed.success ? "Too many arguments." : parsed.error.message}`
+                                `Invalid arguments for ${owner}.${name}:\n${problems.map((line) => `  - ${line}`).join("\n")}\nExpected ${methodSignature(owner, method)}`
                             );
                         }
                         const params = parsed.data;

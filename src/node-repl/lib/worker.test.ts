@@ -62,9 +62,19 @@ describe("node-repl worker protocol", () => {
             SafeJSON.stringify({ id: 7, op: "run", code: "1 + 1" }),
             SafeJSON.stringify({ id: 3, op: "nonsense" }),
             SafeJSON.stringify({ id: 4, op: "run", code: "'still here'" }),
+            SafeJSON.stringify({ id: 5, op: "run", code: "const a = 1;\nnull.x" }),
+            SafeJSON.stringify({ id: 6, op: "run", code: "try { 'tried' } catch (error) { error }" }),
         ]);
 
-        expect(replies).toHaveLength(4);
+        expect(replies).toHaveLength(6);
+
+        // The stack names the turn's own line and none of the kernel's frames.
+        expect(replies[4]).toMatchObject({ id: 5, ok: false });
+        expect(String(replies[4].stack)).toContain("turn:2");
+        expect(String(replies[4].stack)).not.toContain("worker.ts");
+        expect(String(replies[4].stack)).not.toContain("repl-turn.js");
+
+        expect(replies[5]).toMatchObject({ id: 6, ok: true, text: "tried" });
 
         expect(replies[0]).toMatchObject({ ok: false });
         expect(String(replies[0].error)).toContain("not JSON");

@@ -284,12 +284,33 @@ async function runTurn(code: string): Promise<Response["text"]> {
     return output.join("\n");
 }
 
+/** Frames of the kernel itself (this worker, the vm call, the toolset argument check), which say nothing about the turn. */
+const KERNEL_FRAME =
+    /node-repl[/\\]lib[/\\]worker\.ts|utils[/\\]repl[/\\]toolset\.ts|runInThisContext|processTicksAndRejections/;
+/** The script's own top level, which only calls the turn's wrapper. */
+const WRAPPER_FRAME = /^\s+at repl-turn\.js:\d+:\d+$/;
+/** `(async () => {` puts the turn one line below where its author wrote it. */
+const TURN_FRAME = /repl-turn\.js:(\d+)/g;
+
+/** The stack as the turn's author reads it: kernel frames dropped, turn lines numbered as written. */
+export function turnStack(stack: string): string {
+    return stack
+        .split("\n")
+        .filter((line) => !(/^\s+at /.test(line) && KERNEL_FRAME.test(line)) && !WRAPPER_FRAME.test(line))
+        .map((line) =>
+            /^\s+at /.test(line)
+                ? line.replace(TURN_FRAME, (_, row: string) => `turn:${Math.max(1, Number(row) - 1)}`)
+                : line
+        )
+        .join("\n");
+}
+
 /** An error thrown inside the vm context comes from that realm's Error, so instanceof is useless here. */
 function describeError(error: unknown): { message: string; stack?: string } {
     const details: ErrorLike = typeof error === "object" && error !== null ? error : {};
     return {
         message: typeof details.message === "string" ? details.message : String(error),
-        stack: typeof details.stack === "string" ? details.stack : undefined,
+        stack: typeof details.stack === "string" ? turnStack(details.stack) : undefined,
     };
 }
 
