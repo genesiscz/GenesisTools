@@ -1,5 +1,5 @@
 import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } from "@app/control/lib/recording-targets";
-import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { describeProject, parseEditOps } from "@genesiscz/utils/recording-editor/project";
@@ -7,8 +7,8 @@ import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-record
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
 
-import { editProject, openProject } from "./lib/edit";
-import { ensureRecorderPart, exportEdit, listLibrary, movieOf, openEditor, resolveRecording } from "./lib/library";
+import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./lib/edit";
+import { ensureRecorderPart, listLibrary, movieOf, openEditor, resolveRecording } from "./lib/library";
 import { makeProxy } from "./lib/proxy";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
 
@@ -43,7 +43,7 @@ function parseAudio(raw: string | undefined): AudioSource[] | undefined {
     const unknown = sources.filter((value) => !AUDIO_SOURCES.includes(value as AudioSource));
 
     if (unknown.length > 0) {
-        throw new Error(suggestEnumFlag("tools recorder start", "--audio", [...AUDIO_SOURCES]));
+        throw new Error(`--audio takes system, mic or system,mic (got "${raw}")`);
     }
 
     return sources as AudioSource[];
@@ -106,6 +106,16 @@ function liveId(id: string | undefined): string {
     }
 
     return newest.id;
+}
+
+function parseFormat(raw: string): ExportFormat {
+    const format = EXPORT_FORMATS.find((candidate) => candidate === raw.toLowerCase());
+
+    if (!format) {
+        throw new Error(`--format takes ${EXPORT_FORMATS.join(", ")} (got "${raw}")`);
+    }
+
+    return format;
 }
 
 const program = new Command()
@@ -171,7 +181,7 @@ program
                 openEditor(result.folder);
             }
         } catch (error) {
-            log.error({ error }, "recorder start failed");
+            log.debug({ error }, "recorder start failed");
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
         }
@@ -309,12 +319,22 @@ program
         "Render a recording's edit (or a whole movie) to an MP4 with the editor's own renderer, without a window"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-    .option("--out <file>", "the movie to write (default <name>-edited.mp4 beside the source; never an existing file)")
+    .option(
+        "--out <file>",
+        "the file to write (default <name>-edited.<format> beside the source; never an existing file)"
+    )
+    .option(
+        "--format <format>",
+        `${EXPORT_FORMATS.join(", ")} (default the --out extension, else mp4; a gif is 10 fps, at most 960 wide)`
+    )
     .option("--json", "the result as JSON")
-    .action(async (value: string, flags: { out?: string; json?: boolean }) => {
+    .action(async (value: string, flags: { out?: string; format?: string; json?: boolean }) => {
         try {
             await ensureRecorderPart((line) => out.printlnErr(line));
-            const answer = await exportEdit(resolveRecording(value), flags.out);
+            const answer = await exportAs(value, {
+                out: flags.out,
+                format: flags.format === undefined ? undefined : parseFormat(flags.format),
+            });
 
             if (flags.json) {
                 out.result(answer);

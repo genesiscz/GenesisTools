@@ -149,6 +149,10 @@ describe("toolset method names", () => {
         expect(() => Reflect.get(movie, "trim")).toThrow('movies.Movie has no "trim"');
         expect(Reflect.get(movie, "then")).toBeUndefined();
         expect(Bun.inspect(movie)).toContain("Movie");
+
+        // A bad argument of an async method rejects, so `.catch()` sees it, with one line per problem.
+        const clicks = Reflect.get(movie, "clicks") as (options: unknown) => Promise<unknown>;
+        await expect(clicks({ color: "red" })).rejects.toThrow("  - color: a color is #RRGGBB");
     });
 });
 
@@ -436,11 +440,11 @@ describe("recorder and editor toolsets", () => {
         const { editor } = (await toolset.load(ctx)) as { editor: { open(source: string): Clip } };
         expect(() => Reflect.apply(editor.open, editor, [{ recording: "x" }])).toThrow("editor.open(source: string)");
         const clip = editor.open(recording.folder);
-        expect(() => Reflect.apply(clip.speed, clip, ["fast"])).toThrow("editor.Clip.speed(factor: number)");
+        expect(() => Reflect.apply(clip.speed, clip, ["fast"])).toThrow("editor.Clip.speed(factor: number");
         const trimmedJob = clip.trim({ from: 0, to: 0.1 });
         const trimmed = await trimmedJob.done;
         expect(await trimmedJob).toBe(trimmed);
-        expect(() => Reflect.apply(trimmed.speed, trimmed, ["fast"])).toThrow("editor.Clip.speed(factor: number)");
+        expect(() => Reflect.apply(trimmed.speed, trimmed, ["fast"])).toThrow("editor.Clip.speed(factor: number");
         const framesJob = clip.frames({ changeOnly: true, threshold: 2 });
         const events: string[] = [];
         framesJob.on("progress", (event) => events.push(`${event.step} ${event.done}/${event.total} ${event.unit}`));

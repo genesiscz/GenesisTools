@@ -18,7 +18,46 @@ type JsonSchema = {
     additionalProperties?: boolean | JsonSchema;
     default?: unknown;
     title?: string;
+    minimum?: number;
+    maximum?: number;
+    exclusiveMinimum?: number;
+    exclusiveMaximum?: number;
 };
+
+/**
+ * A number's bounds as the reader needs them: `(0–0.3)`, `(≥0.5)`, `(>0)`. Without them an agent learned a limit only
+ * from the error of its first wrong call (blind test 2026-11-04).
+ */
+function rangeText(raw: JsonSchema): string {
+    // zod's .int() bounds every integer by the safe range, which says nothing to a reader.
+    const real = (value: number | undefined) =>
+        value !== undefined && Math.abs(value) < Number.MAX_SAFE_INTEGER ? value : undefined;
+    const schema = {
+        minimum: real(raw.minimum),
+        maximum: real(raw.maximum),
+        exclusiveMinimum: real(raw.exclusiveMinimum),
+        exclusiveMaximum: real(raw.exclusiveMaximum),
+    };
+    const low = schema.minimum ?? schema.exclusiveMinimum;
+    const high = schema.maximum ?? schema.exclusiveMaximum;
+
+    if (
+        low !== undefined &&
+        high !== undefined &&
+        schema.exclusiveMinimum === undefined &&
+        schema.exclusiveMaximum === undefined
+    ) {
+        return ` (${low}–${high})`;
+    }
+
+    const parts = [
+        schema.minimum !== undefined ? `≥${schema.minimum}` : undefined,
+        schema.exclusiveMinimum !== undefined ? `>${schema.exclusiveMinimum}` : undefined,
+        schema.maximum !== undefined ? `≤${schema.maximum}` : undefined,
+        schema.exclusiveMaximum !== undefined ? `<${schema.exclusiveMaximum}` : undefined,
+    ].filter(Boolean);
+    return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
 
 /** The JSON Schema of one side of a schema; `{}` (any) where zod cannot express it (a function, a custom type). */
 export function jsonSchemaOf(schema: z.ZodType, io: "input" | "output" = "input"): Record<string, unknown> {
@@ -65,7 +104,7 @@ export function typeText(schema: JsonSchema, depth = 3): string {
             return "string";
         case "integer":
         case "number":
-            return "number";
+            return `number${rangeText(schema)}`;
         case "boolean":
             return "boolean";
         case "null":

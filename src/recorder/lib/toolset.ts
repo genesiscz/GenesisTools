@@ -7,6 +7,7 @@ import {
     type EditOp,
     type EditProject,
     editOpSchema,
+    hexColor,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
@@ -52,7 +53,8 @@ const recordSchema = z
     })
     .strict();
 
-const movieDoc = "{ path, revision, sourceSeconds, outputSeconds, clips, zooms, audio, export }";
+const movieDoc =
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame }";
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
 
@@ -98,7 +100,7 @@ const movieMethods = [
         z
             .object({
                 highlight: z.boolean().optional(),
-                color: z.string().optional(),
+                color: hexColor.optional(),
                 radius: z.number().min(0.005).max(0.2).optional(),
                 durationMs: z.number().int().min(100).max(3000).optional(),
             })
@@ -113,7 +115,7 @@ const movieMethods = [
                 background: z
                     .object({
                         kind: z.enum(["none", "color", "gradient"]).optional(),
-                        colors: z.array(z.string()).optional(),
+                        colors: z.array(hexColor).min(1).max(2).optional(),
                     })
                     .strict()
                     .optional(),
@@ -132,7 +134,7 @@ const movieMethods = [
                 keepSeconds: z.number().min(0).max(5).optional(),
             })
             .strict(),
-        "Cuts every stretch where the picture does not change and nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end."
+        "Cuts every stretch where the picture does not change AND nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end; a still picture under speech stays. The result adds removed: [[from, to], …] in source seconds."
     ),
     defineMethod({
         name: "export",
@@ -231,66 +233,70 @@ export class Movie {
         const before = await openProject(this.recording);
         const edited = await editProject(this.recording, ops);
         this.history.push(before.project);
-        return describeProject(edited.project, edited.path);
+        const described = describeProject(edited.project, edited.path);
+        const seconds = (us: number) => Math.round(us / 1000) / 1000;
+        return edited.removedIdleUs
+            ? { ...described, removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
+            : described;
     }
 
-    split(at: z.infer<typeof timeSchema>) {
+    async split(at: z.infer<typeof timeSchema>) {
         return this.change([{ op: "split", at }]);
     }
 
-    cut(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+    async cut(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
         return this.change([{ op: "cut", from, to }]);
     }
 
-    keep(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+    async keep(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
         return this.change([{ op: "keep", from, to }]);
     }
 
-    speed(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>, factor: number) {
+    async speed(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>, factor: number) {
         return this.change([{ op: "speed", from, to, factor }]);
     }
 
-    zoom(options: z.infer<typeof zoomSchema>) {
+    async zoom(options: z.infer<typeof zoomSchema>) {
         return this.change([{ op: "zoom", ...options }]);
     }
 
-    unzoom(id: string) {
+    async unzoom(id: string) {
         return this.change([{ op: "unzoom", id }]);
     }
 
-    autoZoom(options: { scale?: number } = {}) {
+    async autoZoom(options: { scale?: number } = {}) {
         return this.change([{ op: "autoZoom", ...options }]);
     }
 
-    volume(volume: number) {
+    async volume(volume: number) {
         return this.change([{ op: "volume", volume }]);
     }
 
-    mute(track: number) {
+    async mute(track: number) {
         return this.change([{ op: "mute", track, muted: true }]);
     }
 
-    unmute(track: number) {
+    async unmute(track: number) {
         return this.change([{ op: "mute", track, muted: false }]);
     }
 
-    apply(ops: EditOp[]) {
+    async apply(ops: EditOp[]) {
         return this.change(ops);
     }
 
-    reset() {
+    async reset() {
         return this.change([{ op: "reset" }]);
     }
 
-    clicks(options: Omit<Extract<EditOp, { op: "clicks" }>, "op"> = {}) {
+    async clicks(options: Omit<Extract<EditOp, { op: "clicks" }>, "op"> = {}) {
         return this.change([{ op: "clicks", ...options }]);
     }
 
-    frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {
+    async frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {
         return this.change([{ op: "frame", ...options }]);
     }
 
-    removeIdle(options: { minSeconds?: number; keepSeconds?: number } = {}) {
+    async removeIdle(options: { minSeconds?: number; keepSeconds?: number } = {}) {
         return this.change([
             { op: "removeIdle", minSeconds: options.minSeconds ?? 2, keepSeconds: options.keepSeconds ?? 0.3 },
         ]);

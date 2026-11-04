@@ -88,9 +88,16 @@ export abstract class ReplToolset {
                                       (issue) =>
                                           `${issue.path.length ? issue.path.join(".") : "options"}: ${issue.message}`
                                   );
-                            throw new TypeError(
+                            const error = new TypeError(
                                 `Invalid arguments for ${owner}.${name}:\n${problems.map((line) => `  - ${line}`).join("\n")}\nExpected ${methodSignature(owner, method)}`
                             );
+
+                            // An async method's caller may use .catch(); a throw at the call would skip it.
+                            if (value.constructor?.name === "AsyncFunction") {
+                                return Promise.reject(error);
+                            }
+
+                            throw error;
                         }
                         const params = parsed.data;
                         const callArgs =

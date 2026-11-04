@@ -38,7 +38,7 @@ const zoomSchema = z.object({
     easeOutMs: z.number().int().nonnegative().default(450),
 });
 
-const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
+export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
 
 /** Clicks drawn from the cursor track: a soft disc that grows and fades after each click. Absent is off. */
 export const clicksSchema = z.object({
