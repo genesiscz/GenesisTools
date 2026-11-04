@@ -209,6 +209,11 @@ private struct ZoomSegment: View {
             .accessibilityLabel("Zoom \(Int((zoom.scale * 100).rounded())) percent")
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("recorder.zoom.\(zoom.id)")
+            // A tap gesture alone gives the element no AXPress, so VoiceOver and agents could not select a zoom.
+            .accessibilityAction {
+                model.selection = .zoom(zoom.id)
+                model.tab = .zoom
+            }
     }
 
     private func edgeHandle(leading: Bool) -> some View {
@@ -288,6 +293,10 @@ private struct ClipView: View {
             .accessibilityLabel("Clip \(placed.index + 1), \(formatClock(clip.outputDurationUs))")
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("recorder.clip.\(placed.index)")
+            .accessibilityAction {
+                model.selection = .clip(clip.id)
+                model.tab = .clip
+            }
     }
 
     private func trimHandle(leading: Bool, selected: Bool) -> some View {

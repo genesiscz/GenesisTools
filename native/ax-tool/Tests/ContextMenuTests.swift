@@ -488,6 +488,16 @@ final class CoordinateStaleRefusalTests: XCTestCase {
         XCTAssertEqual((coordinateStaleRefusal(scope, windowStableKey: "k") as? SnapshotError)?.category, .scopeChanged)
     }
 
+    func testAnElementActOnAChangedTreeNamesTheIdentityFlags() {
+        let error = elementStaleRefusal(SnapshotError.refusal(.staleObservation, SnapshotToken.changedMessage))
+
+        XCTAssertTrue(error.localizedDescription.hasPrefix("UI changed"))
+        XCTAssertTrue(error.localizedDescription.contains("--target-key"))
+        XCTAssertTrue(error.localizedDescription.contains("--revalidate-scope element"))
+        let other = SnapshotError.refusal(.missingTarget, "element index outside snapshot")
+        XCTAssertEqual(elementStaleRefusal(other).localizedDescription, other.localizedDescription)
+    }
+
     func testTheTokenRefusesAChangedTreeWithTheMessageTheRewriteMatches() {
         let token = SnapshotToken(pid: 4, launch: 1, window: 9, depth: 5, digest: "old", created: 1)
 
@@ -518,12 +528,26 @@ final class ObservationDriftTests: XCTestCase {
         XCTAssertNotNil(toleratedObservationDrift(before: [window, text(99, x: 300)], after: [window, text(129, x: 270)]))
     }
 
-    func testAChangedValueIsNotTolerated() {
-        XCTAssertNil(toleratedObservationDrift(before: [window, text(99)], after: [window, text(129, value: "saved 4 min ago")]))
+    // A playing movie's clock ticks and its playhead moves; neither takes an action.
+    func testAPassiveRowThatChangesItsValueAndPositionIsTolerated() {
+        XCTAssertNotNil(toleratedObservationDrift(before: [window, text(99)], after: [window, text(99, value: "saved 4 min ago")]))
+        XCTAssertNotNil(toleratedObservationDrift(before: [window, text(99, x: 10)], after: [window, text(99, x: 30)]))
     }
 
-    func testAnXMoveAloneIsNotTolerated() {
-        XCTAssertNil(toleratedObservationDrift(before: [window, text(99, x: 10)], after: [window, text(99, x: 30)]))
+    func testAChangedValueThatReachesAnActionableNeighbourIsNotTolerated() {
+        var button = text(60, value: "Play")
+        button["role"] = "AXButton"
+        button["actions"] = ["AXPress"]
+        var moved = button
+        moved["targetKey"] = "folded the new clock text"
+
+        XCTAssertNil(toleratedObservationDrift(before: [window, text(99), button], after: [window, text(99, value: "00:01.3"), moved]))
+    }
+
+    func testARoleChangeIsNotTolerated() {
+        var after = text(99)
+        after["role"] = "AXButton"
+        XCTAssertNil(toleratedObservationDrift(before: [window, text(99)], after: [window, after]))
     }
 
     func testAButtonWidthChangeIsNotTolerated() {
@@ -531,6 +555,8 @@ final class ObservationDriftTests: XCTestCase {
         var after = text(129)
         before["role"] = "AXButton"
         after["role"] = "AXButton"
+        before["actions"] = ["AXPress"]
+        after["actions"] = ["AXPress"]
 
         XCTAssertNil(toleratedObservationDrift(before: [window, before], after: [window, after]))
     }
