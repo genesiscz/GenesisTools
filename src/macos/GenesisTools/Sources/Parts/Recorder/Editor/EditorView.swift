@@ -612,11 +612,28 @@ private func swiftColor(_ hex: String) -> Color {
 /// edit as a fix, so a new transcription keeps them), and the eye hides a line from the captions.
 private struct CaptionLinesList: View {
     @Bindable var model: EditorModel
+    @State private var find = ""
+    @State private var replacement = ""
 
     var body: some View {
         let lines = model.zoom.captionLines
         let fixes = model.project.transcript?.fixes ?? [:]
         VStack(alignment: .leading, spacing: 6) {
+            // A name the transcriber got wrong is wrong in every line: one replace fixes them all (one ⌘Z).
+            SectionLabel(text: "Replace in every line")
+            TextField("Find words, e.g. a name it misheard", text: $find)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("recorder.captions.find")
+            HStack(spacing: 6) {
+                TextField("Replace with", text: $replacement)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { model.replaceWords(find: find, replace: replacement) }
+                    .accessibilityIdentifier("recorder.captions.replace")
+                GhostButton("Replace All", symbol: "text.badge.checkmark", tooltip: "Replace these words in every line (whole words, any case; ⌘Z takes it back)",
+                            identifier: "recorder.captions.replaceAll") { model.replaceWords(find: find, replace: replacement) }
+                    .disabled(find.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.bottom, 4)
             HStack {
                 Text("Lines").font(.system(size: 12.5, weight: .medium))
                 Spacer()

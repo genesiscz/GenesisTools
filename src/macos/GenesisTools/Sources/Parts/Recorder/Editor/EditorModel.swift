@@ -1063,6 +1063,23 @@ final class EditorModel {
         }
     }
 
+    /// Replaces a word or phrase in every caption line with `tools recorder replace-words` (the REPL's replaceWords);
+    /// the file watcher brings the result in, one ⌘Z away.
+    func replaceWords(find: String, replace: String) {
+        let find = find.trimmingCharacters(in: .whitespaces)
+        guard !find.isEmpty else { return }
+        ToolsRunner.run(["recorder", "replace-words", store.url.path, "--find", find, "--replace", replace]) { [weak self] status, stdout, stderr in
+            guard let self else { return }
+            guard status == 0 else {
+                self.show(stderr.split(separator: "\n").last.map(String.init) ?? "The replace failed (exit \(status))", error: true)
+                return
+            }
+            let summary = stderr.split(separator: "\n").last.map(String.init) ?? "replaced"
+            HubPerf.log("recorder.replaceWords: \(summary) \(stdout.count) bytes")
+            self.show("“\(find)” → “\(replace)”: \(summary).", error: false)
+        }
+    }
+
     /// Sets the volume so the export reaches -16 LUFS, measured by `tools recorder apply {"op":"normalize"}`.
     /// The loudness `normalize` measured at volume 1, in LUFS; nil until it ran in this window.
     private(set) var measuredLufs: Double?
