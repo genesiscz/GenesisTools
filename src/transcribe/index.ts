@@ -8,6 +8,7 @@ import { formatUsd } from "@app/transcribe/lib/price";
 import { type PriceQuote, priceQuote, unsupportedYoutubeFlags } from "@app/transcribe/lib/quote";
 import { transcribeYoutubeSource } from "@app/transcribe/lib/youtube-source";
 import * as p from "@clack/prompts";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
 import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber";
 import {
@@ -582,8 +583,17 @@ async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | u
         return picked as string;
     }
 
+    // Without a terminal, the configured default answers (`tools ai config default set transcribe <ref>`): an
+    // undefined provider lets the Transcriber's resolution ladder pick it, as an app or agent run needs.
+    const taskDefault = (await AiConfigStore.readOnly()).data().defaults.task?.transcribe;
+
+    if (taskDefault) {
+        return undefined;
+    }
+
     const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
-    out.error(pc.red("No --provider specified and not in an interactive terminal."));
+    out.error(pc.red("No --provider specified, no default transcribe model, and not in an interactive terminal."));
+    out.error(pc.dim("Set a default once: tools ai config default set transcribe <provider or model ref>"));
     out.error(pc.dim(suggestCommand("tools transcribe", { add: ["--provider", `<${choices}>`] })));
     process.exit(1);
 }

@@ -1150,7 +1150,10 @@ export class Movie {
         const result = await execTool(args, { timeout: 60 * 60_000 });
 
         if (!result.success || !existsSync(cache)) {
-            const reason = result.stderr.trim().split("\n").filter(Boolean).at(-1) ?? `exit ${result.exitCode}`;
+            // The CLI's error lines start with ■; the last line alone is often only the suggested command.
+            const lines = result.stderr.trim().split("\n").filter(Boolean);
+            const marked = lines.filter((line) => line.includes("■")).map((line) => line.replace(/^.*■\s*/, ""));
+            const reason = (marked.length > 0 ? marked.join("; ") : lines.at(-1)) ?? `exit ${result.exitCode}`;
             throw new Error(`the transcription failed: ${reason}`);
         }
 

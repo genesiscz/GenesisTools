@@ -11,6 +11,7 @@ import { detectAudioFormat } from "@genesiscz/utils/audio/detect-format";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { LIVE_STT_MODELS } from "../../stt/models";
 import { XAIClient } from "./XAIClient";
 
 interface XAITranscriptionWord {
@@ -55,7 +56,12 @@ const SUPPORTED_TASKS: ReadonlySet<AITask> = new Set(["transcribe"]);
 
 export class AIXAITranscriptionProvider implements AITranscriptionProvider {
     readonly type: AIProviderType = "xai";
-    private readonly client = new XAIClient();
+    private readonly client: XAIClient;
+
+    /** `apiKey`: the key of the account the binding resolved; without it the client walks the provider ladder. */
+    constructor(options: { apiKey?: string } = {}) {
+        this.client = new XAIClient(options.apiKey);
+    }
 
     async isAvailable(): Promise<boolean> {
         return this.client.isConfigured();
@@ -67,6 +73,8 @@ export class AIXAITranscriptionProvider implements AITranscriptionProvider {
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
         const form = new FormData();
+        // The batch endpoint answers 404 "Not Found" without a model; the batch and streaming APIs share the model.
+        form.append("model", LIVE_STT_MODELS.xai);
 
         if (options?.language) {
             form.append("language", options.language);
