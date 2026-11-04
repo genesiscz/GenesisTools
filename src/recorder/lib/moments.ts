@@ -28,6 +28,54 @@ export function markersOf(project: EditProject): Array<{ at: number; plays: numb
     });
 }
 
+/**
+ * The markers as video chapters ("0:00 Intro" lines, the form YouTube and Vimeo read): each kept marker at its output
+ * time, a first chapter at 0:00 when no marker sits there, and markers closer than `minSeconds` folded into the first.
+ */
+export function chaptersOf(
+    markers: ReadonlyArray<{ plays: number | null; label: string }>,
+    options: { intro?: string; minSeconds?: number } = {}
+): string[] {
+    const minSeconds = options.minSeconds ?? 10;
+    const kept = markers
+        .flatMap((marker) => (marker.plays === null ? [] : [{ at: marker.plays, label: marker.label }]))
+        .sort((a, b) => a.at - b.at);
+    const chapters: Array<{ at: number; label: string }> = [];
+
+    for (const marker of kept) {
+        const last = chapters.at(-1);
+
+        if (marker.at < 1 && !last) {
+            chapters.push({ at: 0, label: marker.label });
+            continue;
+        }
+
+        if (!last) {
+            chapters.push({ at: 0, label: options.intro ?? "Intro" });
+        }
+
+        const previous = chapters.at(-1);
+
+        if (previous && marker.at - previous.at < minSeconds) {
+            log.debug({ marker, previous }, "a marker too close to the chapter before it is left out");
+            continue;
+        }
+
+        chapters.push(marker);
+    }
+
+    return chapters.map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
+}
+
+/** 75.4 → "1:15", 3725 → "1:02:05". */
+function clock(seconds: number): string {
+    const whole = Math.floor(seconds);
+    const hours = Math.floor(whole / 3600);
+    const minutes = Math.floor((whole % 3600) / 60);
+    const rest = String(whole % 60).padStart(2, "0");
+    return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
+}
+
 /** Case and accents ignored, as find() does. */
 function folded(text: string): string {
     return text

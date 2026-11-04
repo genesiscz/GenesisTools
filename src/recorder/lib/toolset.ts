@@ -30,7 +30,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./edit";
 import { ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
-import { markersOf, searchLibrary } from "./moments";
+import { chaptersOf, markersOf, searchLibrary } from "./moments";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -279,6 +279,14 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ at, plays, label }[]",
         doc: "The moments marked while it recorded (recording.mark(label) or `tools recorder mark`), at source seconds, plays: where each is in the edit (null when cut).",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "chapters",
+        params: z.object({ intro: z.string().optional(), minSeconds: z.number().positive().optional() }),
+        result: z.unknown(),
+        resultName: "string[]",
+        doc: 'The markers as video chapters, "0:00 Intro" lines in output time for a YouTube or Vimeo description: a first chapter at 0:00 (named intro, "Intro" by default), cut markers left out, a marker under minSeconds (10) after the one before it left out.',
         effect: "read",
     }),
     defineMethod({
@@ -675,6 +683,10 @@ export class Movie {
     /** The moments marked while it recorded (`recording.mark()`, `tools recorder mark`), with where each plays. */
     async markers() {
         return markersOf((await openProject(this.recording)).project);
+    }
+
+    async chapters(options: { intro?: string; minSeconds?: number } = {}) {
+        return chaptersOf(markersOf((await openProject(this.recording)).project), options);
     }
 
     async show(options: { focus?: boolean } = {}) {

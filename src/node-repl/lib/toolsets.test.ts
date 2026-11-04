@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
+import { chaptersOf } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -155,6 +156,29 @@ describe("toolset method names", () => {
         // A bad argument of an async method rejects, so `.catch()` sees it, with one line per problem.
         const clicks = Reflect.get(movie, "clicks") as (options: unknown) => Promise<unknown>;
         await expect(clicks({ color: "red" })).rejects.toThrow("  - color: a color is #RRGGBB");
+    });
+});
+
+describe("movie chapters", () => {
+    test("an intro at 0:00, cut and too-close markers left out, hours shown past an hour", () => {
+        const markers = [
+            { plays: 75.4, label: "Settings" },
+            { plays: null, label: "cut away" },
+            { plays: 3, label: "too early" },
+            { plays: 80, label: "too close" },
+            { plays: 3725, label: "Wrap up" },
+        ];
+        expect(chaptersOf(markers)).toEqual(["0:00 Intro", "1:15 Settings", "1:02:05 Wrap up"]);
+        expect(
+            chaptersOf(
+                [
+                    { plays: 0.4, label: "Start" },
+                    { plays: 30, label: "Next" },
+                ],
+                { intro: "x" }
+            )
+        ).toEqual(["0:00 Start", "0:30 Next"]);
+        expect(chaptersOf([])).toEqual([]);
     });
 });
 

@@ -10,7 +10,7 @@ import { Command } from "commander";
 
 import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./lib/edit";
 import { ensureRecorderPart, listLibrary, movieOf, openEditor, resolveRecording } from "./lib/library";
-import { markersOf, searchLibrary } from "./lib/moments";
+import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
 import { makeProxy } from "./lib/proxy";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
 
@@ -255,9 +255,17 @@ program
     .command("markers")
     .description("The moments marked while a recording ran, with where each plays in its edit (null when cut)")
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-    .action(async (value: string) => {
+    .option("--chapters", 'as "0:00 Intro" chapter lines for a video description (cut markers left out)')
+    .action(async (value: string, flags: { chapters?: boolean }) => {
         try {
-            out.result(markersOf((await openProject(value)).project));
+            const { project } = await openProject(value);
+
+            if (flags.chapters) {
+                out.print(`${chaptersOf(markersOf(project)).join("\n")}\n`);
+                return;
+            }
+
+            out.result(markersOf(project));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
