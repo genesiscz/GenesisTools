@@ -1,3 +1,4 @@
+export * from "@app/dev-dashboard/contract/agents";
 export * from "@app/dev-dashboard/contract/auth-header";
 export * from "@app/dev-dashboard/contract/box-types";
 export * from "@app/dev-dashboard/contract/client";

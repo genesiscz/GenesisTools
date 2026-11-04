@@ -4,8 +4,9 @@
 // A channel is one key of `LiveChannelFrames`; its value maps each frame type to its payload. Adding a channel is
 // one key here, then one row in each table the compiler names: the server's `LIVE_PRODUCERS`
 // (`lib/live/producers.ts`) and the phone's `LIVE_CACHE_TABLE` and `LIVE_POLL_FALLBACK`
-// (`DevDashboard/mobile/src/live/`). The agent phase channel arrives that way once the session locator exists.
+// (`DevDashboard/mobile/src/live/`).
 
+import type { AgentBoardPhaseRow } from "@app/dev-dashboard/contract/agents";
 import type { AiUsageResult } from "@app/dev-dashboard/contract/ai-accounts";
 import type { EnrichedQaEntry, PortInfo, PortsResult, PulseSnapshot } from "@app/dev-dashboard/contract/dto";
 import type { AskForm, PendingEventKind } from "@app/question/lib/pending/types";
@@ -17,6 +18,11 @@ export interface LiveDecisionEvent {
     id?: string;
     ids?: string[];
     ts: string;
+    /**
+     * The state an `updated` event moved the decision to (`answered`, `acknowledged`, `dismissed`, …). With `ev`, a
+     * client tells a posted decision (`created`) from an answered one (`updated` with `state: "answered"`).
+     */
+    state?: string;
 }
 
 /** A pending ask form changed: created, answered, cancelled or timed out. */
@@ -48,6 +54,11 @@ export interface LiveChannelFrames {
     decisions: { event: LiveDecisionEvent };
     pending: { snapshot: { forms: AskForm[] }; event: LivePendingEvent };
     handoffs: { event: LiveHandoffEvent };
+    /**
+     * The live agent sessions (F3, from the fleet view). `snapshot` is the whole set, sent on join and whenever a
+     * session starts or ends; `phase` is one session whose phase, stalled flag or stuck verdict changed.
+     */
+    agents: { snapshot: { sessions: AgentBoardPhaseRow[] }; phase: AgentBoardPhaseRow };
 }
 
 export type LiveChannel = keyof LiveChannelFrames;

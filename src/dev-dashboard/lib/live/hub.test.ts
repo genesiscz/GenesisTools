@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AgentBoardPhaseRow } from "@app/dev-dashboard/contract/agents";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createLiveHub } from "./hub";
-import { type LiveProducer, type LiveProducerTable, startLiveProducers } from "./producers";
+import {
+    createAgentsProducer,
+    createDecisionsProducer,
+    type LiveProducer,
+    type LiveProducerTable,
+    startLiveProducers,
+} from "./producers";
 import type { LiveChannel, LiveDataFrame, LiveFrame } from "./types";
 
 function mockEmit() {
@@ -123,6 +133,7 @@ function fakeTable() {
         decisions: make("decisions"),
         pending: make("pending"),
         handoffs: make("handoffs"),
+        agents: make("agents"),
     };
 
     return { log, table };
@@ -183,5 +194,96 @@ describe("live producers", () => {
 
         expect(late.frames.filter((f) => f.channel === "ports")).toEqual([]);
         hub._reset();
+    });
+});
+
+function phaseRow(key: string, extra: Partial<AgentBoardPhaseRow> = {}): AgentBoardPhaseRow {
+    return {
+        key,
+        provider: "claude",
+        sessionId: key.split(":")[1] ?? null,
+        phase: "thinking",
+        label: "thinking",
+        stalled: false,
+        stuck: null,
+        pid: 4100,
+        lastActivityAt: 1,
+        ...extra,
+    };
+}
+
+describe("agents producer", () => {
+    test("snapshot first, a phase frame per changed session, a snapshot again when a session starts or ends", async () => {
+        const hub = createLiveHub();
+        const viewer = mockEmit();
+        hub.open(viewer.emit, ["agents"]);
+        const reads = [
+            [phaseRow("claude:s1"), phaseRow("codex:s2", { provider: "codex" })],
+            [
+                phaseRow("claude:s1", { phase: "waiting", label: "waiting" }),
+                phaseRow("codex:s2", { provider: "codex" }),
+            ],
+            [phaseRow("claude:s1", { phase: "waiting", label: "waiting" })],
+        ];
+        let at = 0;
+        const producer = createAgentsProducer(hub, async () => reads[Math.min(at++, reads.length - 1)]);
+
+        await producer.refresh();
+        await producer.refresh();
+        await producer.refresh();
+        const agents = viewer.frames.filter((frame) => frame.channel === "agents");
+
+        expect(agents.map((frame) => frame.type)).toEqual(["snapshot", "phase", "snapshot"]);
+        expect(agents[1]).toMatchObject({ type: "phase", payload: { key: "claude:s1", label: "waiting" } });
+        expect(await producer.snapshot?.()).toEqual([
+            { v: 1, channel: "agents", type: "snapshot", payload: { sessions: reads[2] } },
+        ]);
+
+        producer.stop();
+        expect(await producer.snapshot?.()).toEqual([]);
+        hub._reset();
+    });
+
+    test("reads nothing while nobody subscribes", async () => {
+        const hub = createLiveHub();
+        let reads = 0;
+        const producer = createAgentsProducer(hub, async () => {
+            reads++;
+            return [];
+        });
+
+        await producer.refresh();
+        expect(reads).toBe(0);
+        hub._reset();
+    });
+});
+
+describe("decisions producer", () => {
+    test("forwards a posted decision and its answer, with the state the update moved it to", async () => {
+        const hub = createLiveHub();
+        const viewer = mockEmit();
+        hub.open(viewer.emit, ["decisions"]);
+        const path = join(mkdtempSync(join(tmpdir(), "gt-live-decisions-")), "events.jsonl");
+        writeFileSync(path, "");
+        const producer = createDecisionsProducer(hub, () => path);
+        producer.start();
+
+        try {
+            appendFileSync(path, '{"ev":"created","id":"d1","ts":"2026-01-01T00:00:00.000Z"}\n');
+            appendFileSync(path, '{"ev":"updated","id":"d1","ts":"2026-01-01T00:01:00.000Z","state":"answered"}\n');
+            const deadline = Date.now() + 5_000;
+
+            while (viewer.frames.filter((f) => f.channel === "decisions").length < 2 && Date.now() < deadline) {
+                await Bun.sleep(50);
+            }
+
+            expect(viewer.frames.filter((f) => f.channel === "decisions").map((f) => f.payload)).toEqual([
+                { ev: "created", id: "d1", ts: "2026-01-01T00:00:00.000Z" },
+                { ev: "updated", id: "d1", ts: "2026-01-01T00:01:00.000Z", state: "answered" },
+            ]);
+        } finally {
+            producer.stop();
+            hub._reset();
+        }
     });
 });

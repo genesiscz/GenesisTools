@@ -1,3 +1,4 @@
+import type { AgentBoardPhaseRow } from "@app/dev-dashboard/contract/agents";
 import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
 import { createAiUsageProducer } from "@app/dev-dashboard/lib/live/ai-usage-producer";
 import type { LiveHub } from "@app/dev-dashboard/lib/live/hub";
@@ -9,6 +10,7 @@ import { createPendingStream } from "@app/dev-dashboard/lib/qa-pending-sse";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream } from "@app/dev-dashboard/lib/qa-sse";
 import { getCachedPulse, markPulseClientSeen } from "@app/dev-dashboard/lib/system/poller";
+import { diffPhases } from "@app/hub/lib/board/phases";
 import { decisionFiles } from "@app/question/lib/decisions/paths";
 import { listPendingForms } from "@app/question/lib/pending/ask";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
@@ -17,6 +19,11 @@ import { logger } from "@genesiscz/utils/logger";
 const PORTS_INTERVAL_MS = 10_000;
 const PULSE_INTERVAL_MS = 5_000;
 const CLASSIFY_CHUNK = 8;
+/**
+ * The fleet view with the stuck verdict is safe every 15 s or slower (`readFleetView`): it reads `ps`, the cmux tree,
+ * the journal and each live transcript's tail.
+ */
+const AGENTS_INTERVAL_MS = 15_000;
 /**
  * How many waiting forms one snapshot carries (here, `/api/qa/stream` and `/api/qa/pending`). The store default is 50,
  * which silently hid the OLDEST pending forms once more than that were waiting: the newest 50 win the ORDER BY.
@@ -182,6 +189,7 @@ interface DecisionEventLine {
     id?: unknown;
     ids?: unknown;
     ts?: unknown;
+    state?: unknown;
 }
 
 /** Each line of the decision event log. A notice: the client refetches the waiting set it covers. */
@@ -215,6 +223,7 @@ export function createDecisionsProducer(hub: LiveHub, events = () => decisionFil
                                     ? { ids: line.ids.filter((id): id is string => typeof id === "string") }
                                     : {}),
                                 ts: typeof line.ts === "string" ? line.ts : new Date().toISOString(),
+                                ...(typeof line.state === "string" ? { state: line.state } : {}),
                             },
                         });
                     },
@@ -304,6 +313,76 @@ export function createHandoffsProducer(hub: LiveHub): LiveProducer {
     };
 }
 
+async function readAgentPhasesNow(): Promise<AgentBoardPhaseRow[]> {
+    const { readAgentPhases } = await import("@app/hub/lib/board/index");
+    return readAgentPhases();
+}
+
+/**
+ * The live agent sessions every 15 s: the whole set as a snapshot on the first read and whenever a session starts or
+ * ends, else one `phase` frame per session whose phase, stalled flag, pid or stuck verdict changed. A joining
+ * connection gets the last read; before the first read lands it gets nothing and its client refetches the board.
+ */
+export function createAgentsProducer(
+    hub: LiveHub,
+    read: () => Promise<AgentBoardPhaseRow[]> = readAgentPhasesNow
+): LiveProducer & { refresh(): Promise<void> } {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let busy = false;
+    let current: AgentBoardPhaseRow[] | null = null;
+
+    async function tick(): Promise<void> {
+        if (busy || hub.subscriberCount("agents") === 0) {
+            return;
+        }
+
+        busy = true;
+        try {
+            const next = await read();
+            const before = current;
+            current = next;
+            const diff = before ? diffPhases(before, next) : null;
+
+            if (!diff || diff.membershipChanged) {
+                hub.publish({ v: 1, channel: "agents", type: "snapshot", payload: { sessions: next } });
+                return;
+            }
+
+            for (const row of diff.changed) {
+                hub.publish({ v: 1, channel: "agents", type: "phase", payload: row });
+            }
+        } catch (err) {
+            logger.debug({ err }, "live/producers: agents tick failed");
+        } finally {
+            busy = false;
+        }
+    }
+
+    return {
+        start() {
+            if (timer) {
+                return;
+            }
+
+            void tick();
+            timer = setInterval(() => void tick(), AGENTS_INTERVAL_MS);
+        },
+        stop() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+
+            current = null;
+        },
+        async snapshot() {
+            return current ? [{ v: 1, channel: "agents", type: "snapshot", payload: { sessions: current } }] : [];
+        },
+        /** One read now, as the timer would run it (tests drive the producer with it). */
+        refresh: tick,
+    };
+}
+
 /**
  * One row per channel. `satisfies Record<LiveChannel, …>` makes a new channel in the contract's `LiveChannelFrames`
  * fail to compile until its row exists here.
@@ -316,6 +395,7 @@ export const LIVE_PRODUCERS = {
     decisions: (hub) => createDecisionsProducer(hub),
     pending: (hub) => createPendingProducer(hub),
     handoffs: createHandoffsProducer,
+    agents: (hub) => createAgentsProducer(hub),
 } satisfies Record<LiveChannel, LiveProducerFactory>;
 
 export type LiveProducerTable = Record<LiveChannel, LiveProducerFactory>;

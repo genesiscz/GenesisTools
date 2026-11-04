@@ -1,3 +1,5 @@
+import type { AgentStopInput, AgentStopReceiptDto, AgentsBoardDto } from "@app/dev-dashboard/contract/agents";
+
 /**
  * The endpoint table: one row per non-board endpoint the phone and the web reach. The server binds a row
  * (`server/bind.ts`), the front proxy reads its timeout tier, and one generic client method calls any row
@@ -305,6 +307,13 @@ export const ENDPOINTS = {
     gatewayPrompts: row<GatewayInput, unknown>("GET", "/api/gateway/prompts", "read"),
     gatewayWidgetSnapshot: row<GatewayInput, unknown>("GET", "/api/gateway/widget-snapshot", "read", "slow"),
     gatewayUpload: row<Record<string, never>, UploadReceipt>("POST", "/api/gateway/upload", "keyed-write"),
+    /** The agents board (F9): every live session with its phase, project, account, model, prompt and sub-agents. */
+    gatewayBoard: row<GatewayInput, AgentsBoardDto>("GET", "/api/gateway/board", "read", "slow"),
+    /**
+     * Ends one live session's process tree (F19). A keyed write behind the full login, not the act scope: an act token
+     * alone answers one decision letter, and ending a process needs more than that (`src/hub/lib/board/stop.ts`).
+     */
+    agentsStop: row<AgentStopInput, AgentStopReceiptDto>("POST", "/api/agents/stop", "keyed-write"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;

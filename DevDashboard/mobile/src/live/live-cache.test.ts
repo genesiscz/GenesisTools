@@ -8,6 +8,8 @@ import {
 } from "@dd/contract";
 import { QueryClient } from "@tanstack/react-query";
 import { mockPulse } from "@/api/fixtures/data";
+import { MOCK_BOARD } from "@/api/fixtures/agents";
+import { agentsKeys } from "@/features/agents/queries";
 import { answerQueueKeys } from "@/features/answer-queue/queries";
 import { portKillerKeys } from "@/features/port-killer/queries";
 import { pulseKeys } from "@/features/pulse/queries";
@@ -97,6 +99,40 @@ describe("the live cache table", () => {
         );
 
         expect(queryClient.getQueryState(answerQueueKeys.queue)?.isInvalidated).toBe(true);
+    });
+
+    it("an agents phase frame patches its session on the board; an unknown session refetches the board", () => {
+        const queryClient = new QueryClient();
+        queryClient.setQueryData(agentsKeys.board, MOCK_BOARD);
+        const first = MOCK_BOARD.sessions[0];
+        applyLiveFrame(
+            LIVE_CACHE_TABLE,
+            { v: 1, channel: "agents", type: "phase", payload: { ...first, phase: "waiting", label: "waiting" } },
+            queryClient
+        );
+
+        const board = queryClient.getQueryData<typeof MOCK_BOARD>(agentsKeys.board);
+        expect(board?.sessions[0]).toMatchObject({ key: first.key, label: "waiting", project: first.project });
+        expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(false);
+
+        applyLiveFrame(
+            LIVE_CACHE_TABLE,
+            { v: 1, channel: "agents", type: "phase", payload: { ...first, key: "claude:new" } },
+            queryClient
+        );
+        expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(true);
+    });
+
+    it("an agents snapshot with a session that ended refetches the board", () => {
+        const queryClient = new QueryClient();
+        queryClient.setQueryData(agentsKeys.board, MOCK_BOARD);
+        applyLiveFrame(
+            LIVE_CACHE_TABLE,
+            { v: 1, channel: "agents", type: "snapshot", payload: { sessions: MOCK_BOARD.sessions.slice(1) } },
+            queryClient
+        );
+
+        expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(true);
     });
 });
 

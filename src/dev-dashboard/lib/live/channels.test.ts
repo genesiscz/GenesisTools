@@ -7,7 +7,7 @@ describe("parseChannelsQuery", () => {
     });
 
     test("every channel of the producer table is known", () => {
-        for (const name of ["ports", "pulse", "ai-usage", "qa", "decisions", "pending", "handoffs"]) {
+        for (const name of ["ports", "pulse", "ai-usage", "qa", "decisions", "pending", "handoffs", "agents"]) {
             expect(isLiveChannel(name)).toBe(true);
         }
 

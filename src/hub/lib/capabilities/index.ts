@@ -208,6 +208,21 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<AgentsInput>,
 
+    /**
+     * `hub board --json`: every live Claude, Codex and Grok session with its phase, stuck verdict, project, account,
+     * model, newest prompt and folded sub-agents and workers (the phone's agents board, F9).
+     */
+    board: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { agentsBoard } = await import("../board/index");
+            return agentsBoard();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `ai sessions tail <q> --json [--limit N] [--offset N] [--provider P]`: one page of a session's transcript. */
     transcript: {
         policy: "read",
