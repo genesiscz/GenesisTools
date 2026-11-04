@@ -77,6 +77,8 @@ final class ZoomState: @unchecked Sendable {
         var redactions: [EditProject.Redaction] = []
         /// The texts showing at the frame's source time, each with its fade.
         var texts: [(note: EditProject.TextNote, opacity: Double)] = []
+        /// How far the spotlights' dim has faded in (0...1): it comes and goes over 0.2 s, where a hiding style never fades.
+        var spotlightFade = 1.0
         /// The shapes showing at the frame's source time: how far each has drawn itself on (0...1) and its fade.
         var shapes: [(shape: EditProject.Shape, drawn: Double, opacity: Double)] = []
         /// The zoom one output frame earlier, for the motion blur; nil at the start and across a cut.
@@ -137,6 +139,10 @@ final class ZoomState: @unchecked Sendable {
         look.previousView = previousView
         look.motionBlur = motionBlur
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
+        look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
+            let fade = Double(min(200_000, max(1, (spot.endUs - spot.startUs) / 3)))
+            return min(1, Double(sourceUs - spot.startUs) / fade, Double(spot.endUs - sourceUs) / fade)
+        }.max() ?? 1
         return look
     }
 
@@ -423,7 +429,7 @@ struct EditRenderer {
             let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded())
             let look = zoom.look(atOutput: outUs)
             let view = look.view
-            var result = Looks.redact(look.redactions, on: image).cropped(to: extent)
+            var result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
             for drawn in look.shapes {
                 result = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: result).cropped(to: extent)
             }

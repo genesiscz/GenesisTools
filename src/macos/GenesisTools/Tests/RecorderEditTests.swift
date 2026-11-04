@@ -415,6 +415,26 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertLessThan(gray(100, 80), 160)
     }
 
+    func testTwoSpotlightsBothStayLitAndTheRestDimsOnce() {
+        let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let left = EditProject.Redaction(id: "a", startUs: 0, endUs: 1, x: 0, y: 0, width: 0.2, height: 0.5, style: .spotlight)
+        let right = EditProject.Redaction(id: "b", startUs: 0, endUs: 1, x: 0.8, y: 0, width: 0.2, height: 0.5, style: .spotlight)
+        let context = CIContext()
+        func gray(_ image: CIImage, _ x: Int, _ yFromTop: Int) -> UInt8 {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            context.render(image, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: 100 - 1 - yFromTop, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            return pixel[0]
+        }
+        let both = Looks.redact([left, right], on: white)
+        let one = Looks.redact([left], on: white)
+        XCTAssertGreaterThan(gray(both, 20, 10), 240, "the first stays lit")
+        XCTAssertGreaterThan(gray(both, 180, 10), 240, "the second is lit too")
+        XCTAssertEqual(Int(gray(both, 100, 80)), Int(gray(one, 100, 80)), accuracy: 1, "the rest is dimmed once, not twice")
+        let fading = Looks.redact([left], on: white, spotlightFade: 0.5)
+        XCTAssertGreaterThan(gray(fading, 100, 80), gray(one, 100, 80), "half way into its fade it dims less")
+    }
+
     func testARedactionCoversOnlyItsRectangleOfTheSource() throws {
         let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
         let redaction = EditProject.Redaction(id: "r", startUs: 0, endUs: 1, x: 0.25, y: 0, width: 0.5, height: 0.5, style: .black)

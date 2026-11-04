@@ -163,21 +163,23 @@ enum Looks {
 
     /// Hides each rectangle with a blur, big pixels or black, or dims everything around a spotlight's rectangle. The
     /// blur reads the picture clamped at the rectangle's edges, so nothing from outside bleeds in and its edge stays sharp.
-    static func redact(_ redactions: [EditProject.Redaction], on image: CIImage) -> CIImage {
+    static func redact(_ redactions: [EditProject.Redaction], on image: CIImage, spotlightFade: Double = 1) -> CIImage {
         guard !redactions.isEmpty else { return image }
         let extent = image.extent
         var result = image
-        for redaction in redactions {
-            let rect = CGRect(x: extent.minX + redaction.x * extent.width,
-                              y: extent.minY + (1 - redaction.y - redaction.height) * extent.height,
-                              width: redaction.width * extent.width, height: redaction.height * extent.height).integral
+        let rectOf = { (redaction: EditProject.Redaction) in
+            CGRect(x: extent.minX + redaction.x * extent.width,
+                   y: extent.minY + (1 - redaction.y - redaction.height) * extent.height,
+                   width: redaction.width * extent.width, height: redaction.height * extent.height).integral
                 .intersection(extent)
+        }
+        // The hiding styles first: a spotlight never lights up a hidden token.
+        for redaction in redactions where redaction.style != .spotlight {
+            let rect = rectOf(redaction)
             guard rect.width > 1, rect.height > 1 else { continue }
             let patch: CIImage
             switch redaction.style {
             case .spotlight:
-                let dim = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: spotlightDim)).cropped(to: extent)
-                result = result.cropped(to: rect).composited(over: dim.composited(over: result))
                 continue
             case .blur:
                 patch = image.cropped(to: rect).clampedToExtent().applyingGaussianBlur(sigma: max(6, extent.height * 0.012))
@@ -189,6 +191,17 @@ enum Looks {
                 patch = CIImage(color: CIColor(red: 0.04, green: 0.04, blue: 0.05))
             }
             result = patch.cropped(to: rect).composited(over: result)
+        }
+        // Every spotlight showing together: one dim over the picture, then each lit rectangle put back from the
+        // picture before the dim, so two spotlights both stay lit and the rest is dimmed once.
+        let lit = redactions.filter { $0.style == .spotlight }.map(rectOf).filter { $0.width > 1 && $0.height > 1 }
+        if !lit.isEmpty, spotlightFade > 0 {
+            let clear = result
+            let dim = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: spotlightDim * min(1, spotlightFade))).cropped(to: extent)
+            result = dim.composited(over: result)
+            for rect in lit {
+                result = clear.cropped(to: rect).composited(over: result)
+            }
         }
         return result
     }
