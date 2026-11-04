@@ -7,6 +7,7 @@ import {
 } from "@genesiscz/utils/ai/live-sessions/locate";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
+import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
 import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { liveTree } from "@genesiscz/utils/cmux/live-layout";
@@ -282,7 +283,7 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
         async closeSurface(surface, window) {
             await runCmuxOk(["close-surface", "--surface", surface, ...(window ? ["--window", window] : [])]);
         },
-        callerWorkspaceId: () => env.device.getCmuxWorkspaceId(),
+        callerWorkspaceId: () => readCmuxTerminal(env.getProcessEnv())?.workspaceId ?? undefined,
         async turnState(record) {
             let tmuxPanes: string[] = [];
 

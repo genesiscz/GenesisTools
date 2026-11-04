@@ -13,6 +13,14 @@ import { agentHostFromEnv, listActiveAgentProcesses, parseLsofCwd, parsePsLine }
  * `who` is what a person consults before killing something.
  */
 
+describe("agentHostFromEnv: the T3 thread id", () => {
+    test("the T3 thread id is read like the identity reads it: trimmed, and a blank one is no id", () => {
+        expect(agentHostFromEnv({ T3CODE_THREAD_ID: " thread-1 " })).toEqual({ kind: "t3", id: "thread-1" });
+        expect(agentHostFromEnv({ T3CODE_THREAD_ID: "  ", T3CODE_CLI_PATH: "/x/t3" })).toEqual({ kind: "t3" });
+        expect(agentHostFromEnv({ T3CODE_THREAD_ID: "  " })).toBeNull();
+    });
+});
+
 describe("parsePsLine", () => {
     test("reads the pid, tty, start time and argv out of one BSD ps row", () => {
         const row = parsePsLine(

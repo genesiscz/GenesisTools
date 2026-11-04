@@ -2,6 +2,7 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { agentSessionIds, resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { readTerminalApp } from "@genesiscz/utils/agent/identity/terminal";
 import { untilAborted } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -118,8 +119,8 @@ export function recordSource(): string {
     const agentIds = agentSessionIds(e).map((s) => s.id);
     const parts = [
         ...agentIds,
-        env.device.getItermSessionId(),
-        env.device.getTermSessionId(),
+        readTerminalApp(e)?.itermSessionId,
+        readTerminalApp(e)?.termSessionId,
         readTmuxTerminal(e)?.pane,
     ].filter(Boolean);
     return parts.length ? parts.join(":") : "unknown";

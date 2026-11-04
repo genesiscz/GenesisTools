@@ -8,6 +8,7 @@ import {
     readProcessEnvironment,
     readProcessUsages,
 } from "@genesiscz/utils/process/processes";
+import { readT3Thread } from "@genesiscz/utils/t3code/thread-env";
 import { accountEnvVar, accountFromEnv } from "./account-env";
 
 /**
@@ -58,8 +59,14 @@ export interface AgentHost {
  * Claude child only; a Codex app-server or a Grok ACP process serves its threads without one, and every child gets
  * `T3CODE_CLI_PATH` (checked 2026-11-01). A new host is rows here (and in the pin hook's copy).
  */
-const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string; carriesId: boolean }[] = [
-    { kind: "t3", envKey: "T3CODE_THREAD_ID", carriesId: true },
+const AGENT_HOST_MARKERS: readonly {
+    kind: string;
+    envKey: string;
+    carriesId: boolean;
+    /** The host subject's own reader of the value, when it has one, so the identity and this table read it alike. */
+    read?: (environment: NodeJS.ProcessEnv) => string | undefined;
+}[] = [
+    { kind: "t3", envKey: "T3CODE_THREAD_ID", carriesId: true, read: readT3Thread },
     { kind: "t3", envKey: "T3CODE_CLI_PATH", carriesId: false },
 ];
 
@@ -68,7 +75,7 @@ export const AGENT_HOST_KINDS: readonly string[] = [...new Set(AGENT_HOST_MARKER
 
 export function agentHostFromEnv(environment: Readonly<Record<string, string>> | null | undefined): AgentHost | null {
     for (const marker of AGENT_HOST_MARKERS) {
-        const value = environment?.[marker.envKey];
+        const value = marker.read ? marker.read(environment ?? {}) : environment?.[marker.envKey];
 
         if (value) {
             return marker.carriesId ? { kind: marker.kind, id: value } : { kind: marker.kind };

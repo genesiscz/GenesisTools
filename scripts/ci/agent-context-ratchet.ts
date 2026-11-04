@@ -18,7 +18,6 @@ export const RAW_AGENT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([
 
 export const RAW_TERMINAL_ENV_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/claude/lib/teams/ui.ts", // TMUX, until the agent-context unification (spec 2026-11-04)
-    "src/say/lib/caller.ts", // CMUX_SURFACE_ID, CMUX_TAB_ID, CMUX_WORKSPACE_ID (and more), until the agent-context unification (spec 2026-11-04)
     "src/utils/bun/preload-test-sandbox.ts", // TERM_PROGRAM, TMUX, TMUX_PANE (and more), until the agent-context unification (spec 2026-11-04)
     "src/utils/bun/preload-test-tmpdir.ts", // TMUX, until the agent-context unification (spec 2026-11-04)
 ]);

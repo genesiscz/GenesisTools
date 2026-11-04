@@ -137,12 +137,8 @@ export function describeAncestry(frames: AncestryFrame[]): string {
  * The call log's caller row from an identity (the process facet filled). The agent is the identity's, or, when the
  * environment named none, the one the process chain names. The terminal and account come from the identity's own
  * facets: a blank value is no value, and an account is the one the caller's harness was launched as.
- * `termProgram` is the one terminal fact the identity does not carry, so the caller reads it.
  */
-export function callerContextOf(
-    identity: AgentIdentity,
-    extra: { termProgram: string | null; callerPid: number }
-): CallerContext {
+export function callerContextOf(identity: AgentIdentity, extra: { callerPid: number }): CallerContext {
     const ancestry = identity.process?.ancestry ?? [];
 
     return {
@@ -154,7 +150,7 @@ export function callerContextOf(
         workspaceId: identity.terminal?.cmux?.workspaceId ?? null,
         tabId: identity.terminal?.cmux?.tabId ?? null,
         tmuxPane: identity.terminal?.tmux?.pane ?? null,
-        termProgram: extra.termProgram,
+        termProgram: identity.terminal?.app?.program ?? null,
         cwd: identity.cwd ?? process.cwd(),
         callerPid: extra.callerPid,
         ancestry,
@@ -167,11 +163,6 @@ export async function captureCallerContext(): Promise<CallerContext> {
 }
 
 async function readCallerContext(): Promise<CallerContext> {
-    const processEnv = env.getProcessEnv();
-    const identity = whoIsCalling({ origin: "local", env: processEnv }, { facets: ["process"] });
-
-    return callerContextOf(identity, {
-        termProgram: processEnv.TERM_PROGRAM ?? null,
-        callerPid: process.ppid,
-    });
+    const identity = whoIsCalling({ origin: "local", env: env.getProcessEnv() }, { facets: ["process"] });
+    return callerContextOf(identity, { callerPid: process.ppid });
 }

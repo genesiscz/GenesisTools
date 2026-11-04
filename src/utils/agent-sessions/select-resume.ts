@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import * as p from "@clack/prompts";
 import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
@@ -176,7 +177,7 @@ export async function selectResumeSession(
  */
 export function runsElsewhere(
     entry: RunningCmuxSession,
-    here = env.device.getCmuxSurfaceId(),
+    here = readCmuxTerminal(env.getProcessEnv())?.surfaceId,
     state: (pid: number) => string | null = processState
 ): boolean {
     // The cmux tree reports surface UUIDs in lower case, CMUX_SURFACE_ID in upper case (2026-10-27).

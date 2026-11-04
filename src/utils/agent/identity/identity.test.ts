@@ -527,6 +527,27 @@ describe("whoIsCalling: overrides and retargeting", () => {
     });
 });
 
+describe("the terminal app: its program and its session ids", () => {
+    it("TERM_PROGRAM, ITERM_SESSION_ID and TERM_SESSION_ID, trimmed, beside cmux and tmux, with their own source", () => {
+        const identity = whoIsCalling(
+            local({
+                CLAUDE_CODE_SESSION_ID: "c1",
+                TERM_PROGRAM: " iTerm.app ",
+                ITERM_SESSION_ID: "w0t0p0:ABC",
+                TERM_SESSION_ID: "T-1",
+                TMUX_PANE: "%2",
+            })
+        );
+
+        expect(identity.terminal).toEqual({
+            app: { program: "iTerm.app", itermSessionId: "w0t0p0:ABC", termSessionId: "T-1" },
+            tmux: { pane: "%2" },
+        });
+        expect(identity.sources["terminal.app"]).toBe("terminal");
+        expect(whoIsCalling(local({ TERM_PROGRAM: " " })).terminal).toBeUndefined();
+    });
+});
+
 describe("provenance: each independent observation keeps its own source", () => {
     it("cmux and tmux each record their own source, in either order", () => {
         const identity = whoIsCalling(local({ CLAUDE_CODE_SESSION_ID: "c1", CMUX_SURFACE_ID: "s-1", TMUX_PANE: "%3" }));
