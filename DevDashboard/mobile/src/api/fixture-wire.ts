@@ -278,6 +278,24 @@ const ROUTES: FixtureRoute[] = [
         }),
     },
 
+    // The steer composer and Esc (F10, F19): refused, since a fixture has no session to reach.
+    {
+        method: ENDPOINTS.agentsSend.method,
+        path: ENDPOINTS.agentsSend.path,
+        handle: ({ body }) => ({
+            key: text(body.key),
+            outcome: "refused",
+            timing: text(body.timing) || "now",
+            route: "none",
+            detail: "mock data: no session to reach",
+        }),
+    },
+    {
+        method: ENDPOINTS.agentsInterrupt.method,
+        path: ENDPOINTS.agentsInterrupt.path,
+        handle: ({ body }) => ({ key: text(body.key), outcome: "refused", route: "none", detail: "mock data: no pane" }),
+    },
+
     // The answer queue (F6): the waiting set and its writes.
     { method: ENDPOINTS.qaWaiting.method, path: ENDPOINTS.qaWaiting.path, handle: () => fixtureQueue() },
     {
