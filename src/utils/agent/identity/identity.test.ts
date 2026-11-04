@@ -352,6 +352,19 @@ describe("the git facet's cache", () => {
         git(["commit", "-q", "--allow-empty", "-m", "third"], repo);
         expect(read()).toMatchObject({ branch: "feat/other", commitMessage: "third" });
     });
+
+    it("a reftable repository: a commit or a branch switch is seen at once", () => {
+        const repo = scratch("identity-reftable-");
+        git(["init", "-q", "--ref-format=reftable", "-b", "main"], repo);
+        git(["commit", "-q", "--allow-empty", "-m", "first"], repo);
+        const read = () => whoIsCalling(local({}), { facets: ["git"], overrides: { cwd: repo } });
+
+        expect(read()).toMatchObject({ branch: "main", commitMessage: "first" });
+        git(["commit", "-q", "--allow-empty", "-m", "second"], repo);
+        expect(read().commitMessage).toBe("second");
+        git(["checkout", "-q", "-b", "feat/other"], repo);
+        expect(read().branch).toBe("feat/other");
+    });
 });
 
 describe("whoIsCalling: overrides and retargeting", () => {
