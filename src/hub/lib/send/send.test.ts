@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { FleetEntry } from "@genesiscz/utils/ai/live-sessions/fleet";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { handOffError, handOffToSession } from "./hand-off";
 import {
     interruptBoardSession,
     interruptSession,
@@ -184,5 +185,37 @@ describe("board sends", () => {
         );
         expect(noId.outcome).toBe("refused");
         expect(calls).toEqual([]);
+    });
+});
+
+describe("hand-off (M5: PR fix, check fix, saved prompts)", () => {
+    test("a live session is reached through its own harness sender, an ended one through the caller's harness", async () => {
+        const calls: string[] = [];
+        const live = await handOffToSession(
+            { sessionId: "s-1", provider: "claude", text: "Read /tmp/task.md" },
+            { fleet: async () => [entry({ provider: "codex" })], edges: fakeEdges(calls) }
+        );
+        expect(live).toMatchObject({ outcome: "delivered", timing: "now" });
+        expect(handOffError(live)).toBeNull();
+
+        const ended = await handOffToSession(
+            { sessionId: "s-2", provider: "grok", text: "Read /tmp/task.md" },
+            { fleet: async () => [], edges: fakeEdges(calls) }
+        );
+        expect(ended.outcome).toBe("delivered");
+        expect(calls).toEqual(["now:s-1", "now:s-2"]);
+    });
+
+    test("an unknown harness is refused before any transport runs, and an unknown delivery says to check first", async () => {
+        const calls: string[] = [];
+        const refused = await handOffToSession(
+            { sessionId: "s-9", provider: "gemini", text: "x" },
+            { fleet: async () => [], edges: fakeEdges(calls) }
+        );
+        expect(handOffError(refused)).toContain("gemini");
+        expect(calls).toEqual([]);
+        expect(handOffError({ outcome: "unknown", timing: "now", route: "cmux", detail: "timeout" })).toContain(
+            "check the session"
+        );
     });
 });

@@ -2,18 +2,17 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { PreparedPromptDto, PromptVariableDto } from "@app/dev-dashboard/contract/agents";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
-import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 import { promptVariables, renderPrompt } from "@genesiscz/utils/template";
-import { noPaneMatched } from "./fix-threads";
+import { handOffError, handOffToSession } from "./send/hand-off";
 
 // The hub's prompt library: `~/.genesis-tools/hub/prompts.json`. A prompt is a text with named
-// variables (`{{branch}}`, `{{pr}}`, `{{file}}`); sending renders it and types it into a session's
-// cmux pane through `tools claude cmux send`, the path every other hub send takes. Written by
+// variables (`{{branch}}`, `{{pr}}`, `{{file}}`); sending renders it and types it into the
+// session through the hub's one hand-off (`send/hand-off.ts`, the session's harness sender). Written by
 // `tools hub prompts add|remove` and by each send (its use count, for "most used" ordering).
 
 const log = logger.child({ component: "hub/prompts" });
@@ -55,7 +54,6 @@ export class HubPromptError extends Error {
 const NAME = /^[A-Za-z0-9][\w .:-]{0,63}$/;
 /** cmux reads these escapes as keys (Enter, Tab): a text holding one cannot be typed as it is. */
 const CMUX_ESCAPE = /\\[nrt]/;
-const SEND_TIMEOUT_MS = 30_000;
 
 /** Shown until the first `add`; then they live in the file like any other prompt. */
 export function defaultPrompts(now = new Date()): SavedPrompt[] {
@@ -391,19 +389,7 @@ export const realSendPromptDeps: SendPromptDeps = {
         const facts = await repoFacts({ path: cwd, withPr });
         return { branch: facts.branch, root: facts.root, pr: facts.pr ? String(facts.pr.number) : null };
     },
-    send: async (session, text) => {
-        // After `--`: a line that starts with a hyphen is text, not an option.
-        const run = await execTool(["claude", "cmux", "send", "--first", "--json", "--", session, text], {
-            timeout: SEND_TIMEOUT_MS,
-        });
-
-        if (run.success) {
-            return null;
-        }
-
-        const reason = noPaneMatched(run.stdout) ? "no cmux pane runs this session" : run.stderr || run.stdout;
-        return reason.split("\n").slice(-3).join(" ").slice(0, 300) || `exit ${run.exitCode}`;
-    },
+    send: async (session, text) => handOffError(await handOffToSession({ sessionId: session, text })),
     write: async (file, text) => {
         await mkdir(dirname(file), { recursive: true });
         // Exclusive: two sends in one millisecond share a name, and the second must not replace the first.
