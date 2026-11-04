@@ -22,17 +22,18 @@
  *        [--frames 40] [--reads <reads-*.jsonl of an earlier run, to score again without OCR>] [--json]
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { macos } from "@genesiscz/utils/transcribe/languages/spell/macos";
 import { z } from "zod";
 import { median } from "../fs/shared";
 
-const DEFAULT_MEETING = join(homedir(), ".genesis-tools", "meetings", "2026-11-04_16-32-meeting");
-const DEFAULT_SCRATCH = "/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/laneB/correction-bench";
+const DEFAULT_MEETING = genesisToolsDir("meetings", "2026-11-04_16-32-meeting");
+const DEFAULT_SCRATCH = join(tmpdir(), "meetings-ocr-bench", "correction");
 const EVERY_NTH = 13;
 const CZECH = /[áčďéěíňóřšťúůýž]/i;
 const CODE_LIKE = /[a-z][._/\\-][a-z0-9]|[a-z]\d|\d[a-z]|[a-z][A-Z]/;

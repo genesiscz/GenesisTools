@@ -19,7 +19,7 @@
  * Usage: bun scripts/benchmarks/meetings-ocr/keep.ts [--runs 3] [--meeting <folder>] [--scratch <dir>] [--json]
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -27,10 +27,11 @@ import { out } from "@genesiscz/utils/logger";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import { captureSync, listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
 import { FrameOutput, JsonlOcrSink, sipsJpeg, wallClockFrameName } from "@genesiscz/utils/screen-recorder/frame-output";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { median } from "../fs/shared";
 
-const DEFAULT_MEETING = join(homedir(), ".genesis-tools", "meetings", "2026-11-04_16-32-meeting");
-const DEFAULT_SCRATCH = "/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/laneB/keep-bench";
+const DEFAULT_MEETING = genesisToolsDir("meetings", "2026-11-04_16-32-meeting");
+const DEFAULT_SCRATCH = join(tmpdir(), "meetings-ocr-bench", "keep");
 const LANGUAGES = ["en-US"];
 const QUALITY = 0.8;
 

@@ -11,6 +11,7 @@
  * Usage: bun scripts/benchmarks/recorder-denoise/bench.ts <movie> [--db 8,12,20] [--scratch <dir>] [--json]
  */
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -84,7 +85,7 @@ async function main(): Promise<void> {
         throw new Error("give the movie: bun scripts/benchmarks/recorder-denoise/bench.ts <movie>");
     }
 
-    const scratch = flagValue("--scratch") ?? "/tmp/cc/GenesisTools/recorder-denoise-bench";
+    const scratch = flagValue("--scratch") ?? join(tmpdir(), "recorder-denoise-bench");
     mkdirSync(scratch, { recursive: true });
     const strengths = (flagValue("--db") ?? "8,12,20").split(",").map(Number);
     const before = summary(await windowLevels(movie));
