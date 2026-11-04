@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useDashboardClient } from "@/api/client-provider";
 import { usageAccountsQuery, usageHistoryQuery, usageTotalsQuery } from "@/features/claude-usage/queries";
+import { useLiveRefetchInterval } from "@/live/provider";
 
 /**
  * Component-facing claude-usage hooks (D32). Components import THESE — never raw `useQuery`. Each is
@@ -9,8 +10,10 @@ import { usageAccountsQuery, usageHistoryQuery, usageTotalsQuery } from "@/featu
  * ► REFERENCE SHAPE: `export const useX = () => useQuery(xQuery(useDashboardClient()));`
  */
 
+/** The account usage. An `ai-usage` frame refetches it while the stream is up; else it polls. */
 export function useUsageAccounts() {
-    return useQuery(usageAccountsQuery(useDashboardClient()));
+    const refetchInterval = useLiveRefetchInterval("ai-usage");
+    return useQuery({ ...usageAccountsQuery(useDashboardClient()), refetchInterval });
 }
 
 export function useUsageHistory(account: string, minutes: number) {
