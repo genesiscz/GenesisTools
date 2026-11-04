@@ -25,6 +25,9 @@ final class LibraryModel {
     /// The spoken search is running (the empty state waits for it); `searchFailed` is its last error.
     private(set) var searching = false
     private(set) var searchFailed: String?
+    /// The last recording moved to the Trash (where it was, where it went), for Put Back; and the last failure.
+    private(set) var trashed: (title: String, from: URL, to: URL)?
+    private(set) var failure: String?
     @ObservationIgnored private var spokenSearch: DispatchWorkItem?
 
     struct SpokenHit: Equatable {
@@ -167,10 +170,16 @@ final class LibraryModel {
         let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title != item.title else { return }
         ToolsRunner.run(["recorder", "rename", item.folder.path, title]) { [weak self] status, _, stderr in
-            if status != 0 { HubPerf.log("recorder.library: rename \(item.folder.path) failed: \(stderr)") }
+            if status != 0 {
+                HubPerf.log("recorder.library: rename \(item.folder.path) failed: \(stderr)")
+                self?.failure = "“\(item.title)” was not renamed: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")"
+            }
             self?.load()
         }
     }
+
+    func dismissFailure() { failure = nil }
+    func dismissTrashed() { trashed = nil }
 
     /// Moves the keyboard selection by `delta` cards through the visible list, in the order the sections show it.
     func moveSelection(_ delta: Int) {
@@ -199,20 +208,35 @@ final class LibraryModel {
         return [("Today", today), ("Yesterday", yesterday), ("Earlier", earlier)].filter { !$0.1.isEmpty }
     }
 
+    /// As Finder does: no question, the Trash is the undo; the strip under the header puts it back (⌘Z too).
     func moveToTrash(_ item: RecorderMenu.Recent) {
-        let alert = NSAlert()
-        alert.messageText = "Move “\(item.title)” to the Trash?"
-        alert.informativeText = "The whole recording folder goes: the movie, its edit and its frames. You can put it back from the Trash."
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons.first?.hasDestructiveAction = true
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        NSWorkspace.shared.recycle([item.folder]) { [weak self] _, error in
+        NSWorkspace.shared.recycle([item.folder]) { [weak self] moved, error in
             MainActor.assumeIsolated {
-                if let error { HubPerf.log("recorder.library: trash \(item.folder.path) failed: \(error.localizedDescription)") }
-                self?.load()
+                guard let self else { return }
+                if let error {
+                    HubPerf.log("recorder.library: trash \(item.folder.path) failed: \(error.localizedDescription)")
+                    self.failure = "“\(item.title)” was not moved to the Trash: \(error.localizedDescription)"
+                } else if let to = moved[item.folder] {
+                    self.trashed = (item.title, item.folder, to)
+                    if self.selected == item.folder { self.selected = nil }
+                }
+                self.load()
             }
         }
+    }
+
+    /// Moves the last trashed recording back to its folder.
+    func putBack() {
+        guard let trashed else { return }
+        do {
+            try FileManager.default.moveItem(at: trashed.to, to: trashed.from)
+            self.trashed = nil
+            selected = trashed.from
+        } catch {
+            HubPerf.log("recorder.library: put back \(trashed.from.path) failed: \(error.localizedDescription)")
+            failure = "“\(trashed.title)” could not be put back: \(error.localizedDescription). It is still in the Trash."
+        }
+        load()
     }
 }
 
@@ -271,6 +295,22 @@ struct LibraryView: View {
                 InfoStrip("The search of what was said failed: \(failed). Titles still match.", tone: .warning)
                     .padding(.horizontal, 20).padding(.top, 8)
             }
+            if let failure = model.failure {
+                InfoStrip(failure, tone: .warning, dismiss: { model.dismissFailure() })
+                    .padding(.horizontal, 20).padding(.top, 8)
+            }
+            if let trashed = model.trashed {
+                InfoStrip("Moved “\(trashed.title)” to the Trash. Click here or press ⌘Z to put it back.", tone: .info,
+                          symbol: "arrow.uturn.backward", action: { model.putBack() }, actionTooltip: "Put it back where it was",
+                          dismiss: { model.dismissTrashed() })
+                    .padding(.horizontal, 20).padding(.top, 8)
+                    .background {
+                        Button("Put Back") { model.putBack() }
+                            .keyboardShortcut("z", modifiers: .command)
+                            .opacity(0).frame(width: 0, height: 0)
+                            .accessibilityHidden(true)
+                    }
+            }
             if model.loaded && model.visible.isEmpty {
                 VStack(spacing: 10) {
                     EmptyState(symbol: model.searching ? "magnifyingglass" : "film.stack",
@@ -300,6 +340,8 @@ struct LibraryView: View {
                                                 selected: model.selected == item.folder) {
                                         // A search hit opens at the moment it found.
                                         EditorWindows.shared.open(path: item.folder.path, atSourceSeconds: model.spoken[item.folder]?.at)
+                                    } select: {
+                                        model.selected = item.folder
                                     } rename: {
                                         model.rename(item)
                                     } trash: {
@@ -358,6 +400,8 @@ private struct LibraryCard: View {
     /// The keyboard's card: a ring in the accent colour.
     let selected: Bool
     let open: () -> Void
+    /// A click selects (⌘⌫ then trashes it, Return opens it); a double-click opens, as in Finder and Photos.
+    let select: () -> Void
     let rename: () -> Void
     let trash: () -> Void
     @State private var scrubAt: Double?
@@ -365,7 +409,7 @@ private struct LibraryCard: View {
 
     var body: some View {
         // Live only under the pointer: a library of 100 cards keeps no 100 responders at rest.
-        LiveButton(tooltip: "Open in the editor", pressable: true, action: open) {
+        LiveButton(tooltip: "Click to select, double-click to open in the editor", pressable: true, action: select) {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .bottomTrailing) {
                     Group {
@@ -441,6 +485,8 @@ private struct LibraryCard: View {
         }
         .accessibilityLabel("\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), \(item.edited ? "edited" : "not edited")")
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAction(named: "Open in Editor", open)
+        .simultaneousGesture(TapGesture(count: 2).onEnded { open() })
         .contextMenu {
             Button("Open in Editor", action: open)
             Button("Rename…", action: rename)
@@ -448,7 +494,7 @@ private struct LibraryCard: View {
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }
             Button("Copy Folder Path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.folder.path, forType: .string) }
             Divider()
-            Button("Move to Trash…", role: .destructive, action: trash)
+            Button("Move to Trash", role: .destructive, action: trash)
         }
         .contentShape(Rectangle())
         .liveRow()
