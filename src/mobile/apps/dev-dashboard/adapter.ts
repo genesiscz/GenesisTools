@@ -64,6 +64,18 @@ export const devDashboardApp: MobileApp = {
             rootId: `screen-${route}`,
         }));
 
-        return [...tabRoutes, ...moreRoutes];
+        // The root screens outside the groups: the connect gate, and the pairing landing a QR or link opens. A pairing
+        // link never connects by itself (the screen waits for a Pair tap), so the tour can show it safely. Only a tunnel or
+        // managed tier makes a valid link.
+        const rootRoutes: MobileRoute[] = [
+            { name: "connect", url: `${SCHEME}://connect`, rootId: "connect-screen" },
+            {
+                name: "pair",
+                url: `${SCHEME}://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent("https://mac.example.com")}&username=demo`,
+                rootId: "pair-screen",
+            },
+        ];
+
+        return [...tabRoutes, ...moreRoutes, ...rootRoutes];
     },
 };

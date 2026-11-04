@@ -40,6 +40,7 @@ describe("dev-dashboard adapter", () => {
         expect(routes[0].url).toBe("devdashboard:///");
         expect(routes.find((route) => route.name === "weather")?.url).toBe("devdashboard://weather");
         expect(names).not.toContain("_layout");
+        expect(names.slice(-2)).toEqual(["connect", "pair"]);
         expect(new Set(names).size).toBe(names.length);
     });
 
