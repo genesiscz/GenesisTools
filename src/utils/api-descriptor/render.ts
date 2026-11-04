@@ -210,8 +210,19 @@ export function renderDocs(api: ApiDescriptor): string {
         lines.push("", ...renderHandle(handle));
     }
 
-    if (api.notes?.length) {
-        lines.push("", ...api.notes.map((note) => `Note: ${note}`));
+    const methods = [...api.methods, ...(api.handles ?? []).flatMap((handle) => handle.methods)];
+    const positional = methods.find((method) => (method.positional?.length ?? 0) > 1);
+
+    if (api.notes?.length || positional) {
+        lines.push("", ...(api.notes ?? []).map((note) => `Note: ${note}`));
+    }
+
+    if (positional?.positional) {
+        // The REPL binding takes both forms (src/utils/repl/toolset.ts); say so once, with a real method.
+        const names = positional.positional.join(", ");
+        lines.push(
+            `Note: a method with positional parameters also takes one object of their names: ${positional.name}(${names}) or ${positional.name}({ ${names} }).`
+        );
     }
 
     return lines.join("\n");
