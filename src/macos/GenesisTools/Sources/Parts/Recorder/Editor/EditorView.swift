@@ -19,6 +19,14 @@ struct EditorView: View {
                     Divider().overlay(RecorderPalette.hairline)
                     VStack(spacing: 0) {
                         PreviewView(model: model, still: stillPreview)
+                            // On the preview's bottom edge: over the transport bar it covered the play buttons.
+                            .overlay(alignment: .bottom) {
+                                if let notice = model.notice {
+                                    NoticePill(text: notice, isError: model.noticeIsError, dismiss: { model.notice = nil })
+                                        .padding(.bottom, 12)
+                                        .id(notice)
+                                }
+                            }
                         Divider().overlay(RecorderPalette.hairline)
                         TransportBar(model: model)
                     }
@@ -28,13 +36,6 @@ struct EditorView: View {
                     .frame(height: TimelineView.totalHeight)
             }
             .background(RecorderPalette.window)
-            .overlay(alignment: .bottom) {
-                if let notice = model.notice {
-                    NoticePill(text: notice, isError: model.noticeIsError, dismiss: { model.notice = nil })
-                        .padding(.bottom, TimelineView.totalHeight + 12)
-                        .id(notice)
-                }
-            }
         }
         .preferredColorScheme(.dark)
     }
