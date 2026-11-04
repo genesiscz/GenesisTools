@@ -19,6 +19,7 @@
  *   tools azure-devops sprint [nameOrPath] [options]
  *   tools azure-devops wiki <list|pages|get|search|history|diff> [options]
  *   tools azure-devops comment <list|add|edit|delete> <workitem> [options]
+ *   tools azure-devops testplan <list|show|search|create|update|delete|suite|points|outcome|case> [options]
  */
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
@@ -47,6 +48,7 @@ import { registerHistoryCommand } from "@app/azure-devops/commands/history";
 import { registerMaintenanceCommand } from "@app/azure-devops/commands/maintenance";
 import { registerQueryCommand, setWorkItemHandler } from "@app/azure-devops/commands/query";
 import { registerSprintCommands } from "@app/azure-devops/commands/sprint";
+import { registerTestPlanCommand } from "@app/azure-devops/commands/test-plan";
 import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
 import { registerTreeCommand } from "@app/azure-devops/commands/tree";
 import { registerWikiCommand } from "@app/azure-devops/commands/wiki";
@@ -93,6 +95,7 @@ registerSprintCommands(program);
 registerWikiCommand(program);
 registerMaintenanceCommand(program);
 registerCommentCommand(program);
+registerTestPlanCommand(program);
 
 function showHelpFull(): void {
     out.println(`
@@ -119,6 +122,7 @@ Commands:
   sprint [nameOrPath]    List the work items of one sprint
   wiki <subcommand>      Wikis: list, pages, get, search, history, diff
   comment <subcommand>   Work item comments: list, add, edit, delete
+  testplan <subcommand>  Test plans, suites, test cases and test points
 
 Global Options:
   --config <path>        Config file to use (or set AZURE_DEVOPS_CONFIG); wins over the search from the working directory
@@ -268,6 +272,16 @@ Comment Commands:
   ${toolCommand("azure-devops comment add")} <id> --file note.md       Post markdown (--text "...", --file - for stdin, --html)
   ${toolCommand("azure-devops comment edit")} <id> <commentId> --file note.md   Replace a comment's text
   ${toolCommand("azure-devops comment delete")} <id> <commentId> --yes Delete a comment (--yes is required without a terminal)
+
+Test Plan Commands (writes are dry runs until --confirm; -f md|json):
+  ${toolCommand("azure-devops testplan list")} --active --owner alice   Plans of the project
+  ${toolCommand("azure-devops testplan show")} <plan|url>                Plan with its suite tree and counts
+  ${toolCommand("azure-devops testplan search")} "checkout"              Plans, suites and test cases by name or id
+  ${toolCommand("azure-devops testplan suite show")} <plan> <suite>      Suite with its test cases
+  ${toolCommand("azure-devops testplan points")} <plan> <suite>          The Execute tab: outcome, tester, configuration
+  ${toolCommand("azure-devops testplan case show")} <id>                 Test case with numbered steps and parameters
+  ${toolCommand("azure-devops testplan case create")} --title "..." --steps steps.md --plan <plan> --suite <suite> --confirm
+  ${toolCommand("azure-devops testplan outcome")} <plan> <suite> --cases 123 --outcome passed --confirm
 
 History Commands:
   ${toolCommand("azure-devops history show")} <id>          Show history for a work item
