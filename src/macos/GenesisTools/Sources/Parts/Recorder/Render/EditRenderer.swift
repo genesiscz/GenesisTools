@@ -196,6 +196,39 @@ final class ZoomState: @unchecked Sendable {
     }
 }
 
+/// Short volume dips at the cuts, so a join between two places of the sound does not click.
+enum Declick {
+    static let halfUs: Int64 = 25_000
+
+    /// The output times where the sound jumps: the start of every clip that does not continue the one before it in
+    /// the source at the same speed (a split alone joins nothing).
+    static func cuts(in project: EditProject) -> [Int64] {
+        var cuts: [Int64] = []
+        var at: Int64 = 0
+        var previous: EditProject.Clip?
+        for clip in project.clips where clip.sourceDurationUs > 0 {
+            if let previous, previous.toUs != clip.fromUs || previous.speed != clip.speed { cuts.append(at) }
+            at += clip.outputDurationUs
+            previous = clip
+        }
+        return cuts
+    }
+
+    /// Each cut as a ramp down to silence over the 25 ms before it and back up over the 25 ms after; cuts closer than
+    /// that share their silence. Volumes are factors of the track's own volume. Measured on a 440 Hz tone: a 10 ms
+    /// ramp left the cut at 65 % (the mix applies ramps coarsely), 25 ms brings it to 6 %.
+    static func ramps(at cuts: [Int64], lengthUs: Int64) -> [(startUs: Int64, endUs: Int64, from: Double, to: Double)] {
+        var ramps: [(startUs: Int64, endUs: Int64, from: Double, to: Double)] = []
+        for cut in cuts {
+            let down = max(ramps.last?.endUs ?? 0, cut - halfUs)
+            if cut > down { ramps.append((down, cut, 1, 0)) }
+            let up = min(lengthUs, cut + halfUs)
+            if up > cut { ramps.append((cut, up, 0, 1)) }
+        }
+        return ramps
+    }
+}
+
 /// Music under the movie: looped to its length, faded in and out, ducked under the transcript's lines.
 enum MusicMix {
     /// How long the music takes to dip under a line and come back.
@@ -455,7 +488,15 @@ struct EditRenderer {
         var inputs: [AVMutableAudioMixInputParameters] = audioOut.enumerated().map { index, track in
             let parameters = AVMutableAudioMixInputParameters(track: track)
             let muted = project.audio.mutedTracks.contains(index)
-            parameters.setVolume(muted ? 0 : Float(project.audio.volume), at: .zero)
+            let volume = muted ? 0 : Float(project.audio.volume)
+            parameters.setVolume(volume, at: .zero)
+            // A cut joins two places of the sound; a 25 ms dip on each side keeps the jump from clicking.
+            if volume > 0 {
+                for ramp in Declick.ramps(at: Declick.cuts(in: project), lengthUs: project.outputDurationUs) {
+                    parameters.setVolumeRamp(fromStartVolume: volume * Float(ramp.from), toEndVolume: volume * Float(ramp.to),
+                                             timeRange: CMTimeRange(start: us(ramp.startUs), duration: us(ramp.endUs - ramp.startUs)))
+                }
+            }
             return parameters
         }
         if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()), project: project) {

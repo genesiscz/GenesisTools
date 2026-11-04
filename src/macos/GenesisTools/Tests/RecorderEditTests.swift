@@ -53,6 +53,17 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(corner.y, 0, accuracy: 0.001)
     }
 
+    func testCutsDipTheSoundButASplitDoesNot() {
+        let edit = project([.init(id: "a", fromUs: 0, toUs: 2_000_000), .init(id: "b", fromUs: 2_000_000, toUs: 3_000_000),
+                            .init(id: "c", fromUs: 5_000_000, toUs: 6_000_000), .init(id: "d", fromUs: 6_000_000, toUs: 8_000_000, speed: 2)])
+        XCTAssertEqual(Declick.cuts(in: edit), [3_000_000, 4_000_000], "a split joins nothing; a cut and a speed change do")
+        let ramps = Declick.ramps(at: [3_000_000], lengthUs: 5_000_000)
+        XCTAssertEqual(ramps.map(\.startUs), [2_975_000, 3_000_000])
+        XCTAssertEqual(ramps.map(\.endUs), [3_000_000, 3_025_000])
+        XCTAssertEqual(ramps.map(\.from), [1, 0])
+        XCTAssertEqual(ramps.map(\.to), [0, 1])
+    }
+
     func testMusicFadesAtBothEndsAndDucksUnderSpeech() {
         let music = EditProject.Music(file: "/m.mp3", volume: 0.5, duck: 0.6, fadeMs: 1000)
         let speech: [(fromUs: Int64, toUs: Int64)] = [(4_000_000, 6_000_000)]
