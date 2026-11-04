@@ -87,6 +87,8 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 severity: "check",
                 item: name,
                 message: `The ${entry.said} shows for ${seconds(entry.endUs - entry.startUs)} s, too short to ${entry.kind === "zoom" ? "follow" : "read"}`,
+                // Long enough to read (1.5 s), unless the movie ends first.
+                fix: `movie.retime({ id: "${entry.id}", to: ${seconds(Math.min(project.source.durationUs, entry.startUs + 1_500_000))} })`,
                 at: seconds(entry.startUs),
                 target,
             });

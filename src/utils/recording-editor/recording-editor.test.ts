@@ -417,6 +417,9 @@ describe("edit project (edit.json)", () => {
         expect(issues.map((issue) => issue.severity)).toEqual(["fix", "check", "check"]);
         expect(issues[1]?.message).toContain('"Step one" and "Step two"');
         expect(issues[2]?.message).toContain("too short to read");
+        const spotId = project.redactions?.[0]?.id;
+        expect(issues[2]?.fix).toBe(`movie.retime({ id: "${spotId}", to: 8.5 })`);
+        expect(applyOp(project, { op: "retime", id: spotId ?? "", to: 8.5 }).redactions?.[0]?.endUs).toBe(8_500_000);
         const captioned = {
             ...wholeProject(source),
             captions: { show: true, size: 0.038, position: "bottom" as const },
