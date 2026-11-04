@@ -34,6 +34,8 @@ final class LibraryModel {
         var at: Double
         var text: String
         var marker: Bool
+        /// The other moments of the same recording that match, after this first one; and when they are.
+        var more: [Double] = []
     }
     /// The card the keyboard is on (arrows move it, Return opens it, ⌘⌫ moves it to the Trash).
     var selected: URL?
@@ -79,8 +81,11 @@ final class LibraryModel {
                     guard let kind = row["kind"] as? String, kind != "title", let folder = row["folder"] as? String,
                           let text = row["text"] as? String else { continue }
                     let url = URL(fileURLWithPath: folder)
+                    let at = (row["at"] as? NSNumber)?.doubleValue ?? 0
                     if hits[url] == nil {
-                        hits[url] = SpokenHit(at: (row["at"] as? NSNumber)?.doubleValue ?? 0, text: text, marker: kind == "marker")
+                        hits[url] = SpokenHit(at: at, text: text, marker: kind == "marker")
+                    } else {
+                        hits[url]?.more.append(at)
                     }
                 }
                 HubPerf.log("recorder.library.search \"\(query)\": \(hits.count) recordings by what was said or marked")
@@ -475,6 +480,14 @@ private struct LibraryCard: View {
                     HStack(spacing: 4) {
                         Image(systemName: spoken.marker ? "flag.fill" : "quote.bubble")
                         Text(verbatim: "\(formatClock(Int64(spoken.at * 1_000_000))) \(spoken.text)").lineLimit(2)
+                        if !spoken.more.isEmpty {
+                            Text(verbatim: "+\(spoken.more.count)")
+                                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Capsule().fill(Color.white.opacity(0.1)))
+                                .instantTooltip("Also at " + spoken.more.prefix(8).map { formatClock(Int64($0 * 1_000_000)) }.joined(separator: ", ")
+                                                + (spoken.more.count > 8 ? " and \(spoken.more.count - 8) more" : ""))
+                        }
                     }
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .accessibilityLabel("\(spoken.marker ? "Marker" : "Said") at \(formatClock(Int64(spoken.at * 1_000_000))): \(spoken.text)")
