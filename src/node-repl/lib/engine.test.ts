@@ -198,6 +198,21 @@ const PNG_1X1 = Buffer.from(
 );
 
 describe("toolsets", () => {
+    it("describe accepts handle names from both help and search", async () => {
+        const engine = new ReplEngine({ toolsets: ["recorder"] });
+        try {
+            expect((await engine.run('help("recorder")')).text).toContain("recording.displays.mode");
+            expect((await engine.run('search("display")')).text).toContain("recorder.Recording.displays.mode");
+            const qualified = await engine.run('describe("recorder.Recording.displays.mode")');
+            const shorthand = await engine.run('describe("recording.displays.mode")');
+            expect(qualified.ok).toBe(true);
+            expect(shorthand.ok).toBe(true);
+            expect(shorthand.text).toBe(qualified.text);
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
     it("the shared loader validates toolset arguments before invoking their implementation", async () => {
         const engine = new ReplEngine({ toolsets: ["editor"] });
         try {
@@ -256,7 +271,9 @@ describe("toolsets", () => {
         const engine = new ReplEngine({ toolsets: [`${FIXTURE}#CounterToolset`] });
         try {
             const list = await engine.run("help()");
-            expect(list.text).toContain("counter: Counts the preloads of this worker. counter.logTo(path)");
+            expect(list.text).toContain("counter: Counts the preloads of this worker.");
+            expect((await engine.run('search("path")')).text).toContain("counter.logTo");
+            expect((await engine.run('describe("counter.logTo")')).text).toContain("Parameters:");
             const docs = await engine.run('help("counter")');
             expect(docs.text).toContain("- counter.logTo(path: string) → unknown [reversible]");
             expect((await engine.run('help("nope")')).error).toContain('No toolset "nope" is loaded');
@@ -295,7 +312,7 @@ describe("toolsets", () => {
     it("the js description lists each preloaded toolset's one line", () => {
         expect(jsDescription([])).not.toContain("Preloaded globals");
         expect(jsDescription(["counter: Counts. counter.logTo(path)"])).toContain(
-            "Preloaded globals, built once per worker (help(name) for the full API):\n- counter: Counts. counter.logTo(path)"
+            "Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset):\n- counter: Counts. counter.logTo(path)"
         );
     });
 });
@@ -322,4 +339,18 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
         await reset;
         engine.dispose();
     }
+});
+
+it("discovery covers handle names, missing names and ambiguous names", async () => {
+    const { createToolsets } = await import("./toolsets");
+    const { searchMethods, describeMethod } = await import("@genesiscz/utils/repl/discovery");
+    const apis = (await createToolsets(["meetings", "browser", "control"])).map((toolset) => toolset.api);
+    expect(searchMethods(apis, "items.add")).toContain("meetings.Meeting.items.add");
+    expect(describeMethod(apis, "meetings.Meeting.items.add")).toContain("Parameters:");
+    expect(() => describeMethod(apis, "missing.method")).toThrow("Unknown method");
+    expect(() => describeMethod(apis, "open")).toThrow("Ambiguous method");
+    expect(searchMethods(apis, "no-such-method-xyz")).toBe("No matching methods in the loaded toolsets.");
+    const notes = apis.find((api) => api.global === "control")!.notes!.join(" ");
+    expect(notes).toContain("control.read_image");
+    expect(notes).not.toContain("computer.read_image");
 });
