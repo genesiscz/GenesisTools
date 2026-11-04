@@ -1,16 +1,10 @@
 import { logger } from "@genesiscz/utils/logger";
-import { AlertWatcher, alertBackendFor } from "@genesiscz/utils/mobile/alerts";
-import type { MobileRoute } from "@genesiscz/utils/mobile/project";
-import {
-    installedAppInfo,
-    launchApp,
-    openUrl,
-    screenshot as simctlScreenshot,
-    wdaPortsFor,
-} from "@genesiscz/utils/mobile/simulator";
-import { WdaClient } from "@genesiscz/utils/mobile/wda";
-import type { AppiumSession } from "@genesiscz/utils/mobile/webdriver";
+import { AlertWatcher, alertBackendFor } from "./alerts";
+import type { MobileRoute } from "./project";
 import { attachSession, ensureAppium } from "./session";
+import { installedAppInfo, launchApp, openUrl, screenshot as simctlScreenshot, wdaPortsFor } from "./simulator";
+import { WdaClient } from "./wda";
+import type { AppiumSession } from "./webdriver";
 
 const log = logger.child({ component: "mobile.screen" });
 export const ROOT_TIMEOUT_MS = 15_000;

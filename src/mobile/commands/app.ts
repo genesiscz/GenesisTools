@@ -10,15 +10,13 @@ import {
 } from "@genesiscz/utils/mobile/alerts";
 import { readMetroLogFile } from "@genesiscz/utils/mobile/metro";
 import { iosApp } from "@genesiscz/utils/mobile/project";
+import { attachSession, ensureAppium, pickSimulator, requireAppInstalled } from "@genesiscz/utils/mobile/session";
 import { installedAppInfo, launchApp, terminateApp, wdaPortsFor } from "@genesiscz/utils/mobile/simulator";
 import type { Command } from "commander";
 import { builtAppPath, defaultDerivedData } from "../lib/build";
-import { pickSimulator } from "../lib/device";
 import { freshInstall, preseedFirstRun } from "../lib/first-run";
 import { LOGBOX_CLEAR_MODES, readLogBoxEntries } from "../lib/logbox";
 import { loadProject, withConfig } from "../lib/project";
-import { attachSession, ensureAppium } from "../lib/session";
-import { requireInstalled } from "../lib/tour";
 
 function parseBackends(value: string | undefined): AlertBackendKind[] | undefined {
     if (!value) {
@@ -131,7 +129,7 @@ export function registerAppCommands(program: Command): void {
                 const ios = iosApp(project);
                 const device = await pickSimulator(options.udid);
                 const bundleId = ios.bundleId;
-                await requireInstalled(device.udid, bundleId);
+                await requireAppInstalled(device.udid, bundleId);
                 const port = await ensureAppium({
                     udid: device.udid,
                     port: options.appiumPort ? Number(options.appiumPort) : undefined,

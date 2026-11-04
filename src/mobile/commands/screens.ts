@@ -1,15 +1,15 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
+import { captureScreen } from "@genesiscz/utils/mobile/capture";
 import { iosApp, projectRoutes } from "@genesiscz/utils/mobile/project";
+import { openScreenDriver, parseScreenDriver, SCREEN_DRIVERS } from "@genesiscz/utils/mobile/screen-driver";
+import { pickSimulator, requireAppInstalled } from "@genesiscz/utils/mobile/session";
 import type { Command } from "commander";
-import { captureScreen } from "../lib/capture";
-import { pickSimulator } from "../lib/device";
 import { runDirFor } from "../lib/paths";
 import { loadProject, type ProjectOptions, withConfig } from "../lib/project";
 import { projectRoute, selectRoutes } from "../lib/routes";
-import { openScreenDriver, parseScreenDriver, SCREEN_DRIVERS } from "../lib/screen-driver";
-import { requireInstalled, runTour } from "../lib/tour";
+import { runTour } from "../lib/tour";
 
 interface ScreenOptions extends ProjectOptions {
     udid?: string;
@@ -31,7 +31,7 @@ async function openDriver(options: ScreenOptions) {
     const project = await loadProject(options);
     const device = await pickSimulator(options.udid);
     const { bundleId } = iosApp(project);
-    await requireInstalled(device.udid, bundleId);
+    await requireAppInstalled(device.udid, bundleId);
     const driver = await openScreenDriver(parseScreenDriver(options.driver), {
         udid: device.udid,
         bundleId,

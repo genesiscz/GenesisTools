@@ -1,10 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { MobileRoute } from "@genesiscz/utils/mobile/project";
-import { appInstalled } from "@genesiscz/utils/mobile/simulator";
-import { openScreenDriver, RootMissingError, type ScreenDriverKind } from "./screen-driver";
+import { openScreenDriver, RootMissingError, type ScreenDriverKind } from "@genesiscz/utils/mobile/screen-driver";
+import { requireAppInstalled } from "@genesiscz/utils/mobile/session";
 
 const log = logger.child({ component: "mobile.tour" });
 
@@ -12,12 +11,6 @@ export interface TourShot {
     route: MobileRoute;
     file?: string;
     error?: string;
-}
-
-export async function requireInstalled(udid: string, bundleId: string): Promise<void> {
-    if (!(await appInstalled(udid, bundleId))) {
-        throw new Error(`${bundleId} is not installed on ${udid}; build it first: ${toolCommand("mobile build")}`);
-    }
 }
 
 /**
@@ -35,7 +28,7 @@ export async function runTour(options: {
     onShot?: (shot: TourShot, index: number, total: number) => void;
 }): Promise<TourShot[]> {
     const { routes, udid, bundleId, outDir, settleMs, onShot } = options;
-    await requireInstalled(udid, bundleId);
+    await requireAppInstalled(udid, bundleId);
 
     mkdirSync(outDir, { recursive: true });
     log.debug({ udid, bundleId, driver: options.driver, routes: routes.length, outDir, settleMs }, "tour start");

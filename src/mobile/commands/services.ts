@@ -2,8 +2,8 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { appiumPortFor, appiumStatus, startAppium, stopAppium } from "@genesiscz/utils/mobile/appium";
 import { metroStatus, readMetroLogFile, stopMetro } from "@genesiscz/utils/mobile/metro";
+import { pickSimulator, usesDeviceHub } from "@genesiscz/utils/mobile/session";
 import type { Command } from "commander";
-import { pickSimulator, usesDeviceHub } from "../lib/device";
 
 /** `appium start|stop|status` and `metro status|stop`: the background servers this tool owns, one per port. */
 export function registerServices(program: Command): void {

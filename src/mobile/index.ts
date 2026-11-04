@@ -4,6 +4,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { IOS_CONFIGURATIONS, type IosConfiguration, projectRoutes } from "@genesiscz/utils/mobile/project";
+import { pickSimulator } from "@genesiscz/utils/mobile/session";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 import { registerAppCommands } from "./commands/app";
@@ -13,7 +14,6 @@ import { registerScreens } from "./commands/screens";
 import { registerServices } from "./commands/services";
 import { registerUp } from "./commands/up";
 import { buildAndInstall } from "./lib/build";
-import { pickSimulator } from "./lib/device";
 import { mobileDoctor } from "./lib/doctor";
 import { loadProject, type ProjectOptions, withConfig } from "./lib/project";
 

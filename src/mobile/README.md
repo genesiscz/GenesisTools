@@ -76,7 +76,9 @@ Metro (`bunx expo start` from the app folder, `CI` removed so it rebuilds) keeps
 More shared pieces: `service` (a detached server with a pidfile), `wda` (WebDriverAgent's session-less routes, so a
 second actor can read the screen while a run holds the only Appium session), `alerts` (a rule table that answers known
 system alerts for the app under test through WDA or idb and leaves every other alert alone), `idb` and `a11y` (the
-XCUITest tree parser, the readable tree, the LogBox reader).
+XCUITest tree parser, the readable tree, the LogBox reader). `session` picks the simulator, starts the per-simulator
+Appium and attaches an XCUITest session to the installed app; `screen-driver` and `capture` open a screen and save it.
+Another tool (`tools e2e`) drives the same simulator through these.
 
 ## up
 
@@ -106,7 +108,7 @@ tools mobile capture order?id=a1 --udid <udid>
 tools mobile tour --udid <udid> --only home order
 ```
 
-All three go through one table (`src/mobile/lib/screen-driver.ts`):
+All three go through one table (`@genesiscz/utils/mobile/screen-driver`):
 
 - `appium` (the default) opens a link with `mobile: deepLink`, so iOS shows no "Open in <app>?" alert, and waits up to
   15 s for the screen's root element (its `rootId`). The session attaches to the installed app (`noReset`,
