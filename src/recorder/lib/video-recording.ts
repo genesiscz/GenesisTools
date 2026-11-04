@@ -200,6 +200,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
             ...manifest.settings,
             video: existsSync(movie) ? { file: "screen.mp4", durationMs } : undefined,
             outcome,
+            markers: activeControl.markers,
         },
         warnings,
     });

@@ -387,6 +387,7 @@ private struct MarksLaneView: View {
         let captions = project.captions?.show == true ? model.zoom.captionLines : []
         let keys = project.keys?.show == true ? (model.cursor?.keys ?? []) : []
         let redactions = project.redactions ?? []
+        let markers = model.markers
         Canvas { context, size in
             func bar(_ context: inout GraphicsContext, _ from: Int64, _ to: Int64, row: CGFloat, color: Color) {
                 for span in TimelineMap.outputSpans(fromUs: from, toUs: to, in: project) {
@@ -397,6 +398,21 @@ private struct MarksLaneView: View {
             for line in captions { bar(&context, line.fromUs, line.toUs, row: 1, color: Color(red: 0.36, green: 0.62, blue: 1).opacity(0.8)) }
             for redaction in redactions {
                 bar(&context, redaction.startUs, redaction.endUs, row: 9, color: Color(red: 1, green: 0.62, blue: 0.2).opacity(0.85))
+            }
+            for marker in markers {
+                guard let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project) else { continue }
+                let x = scale.x(outUs)
+                let flag = Path { path in
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x + 7, y: 3.5))
+                    path.addLine(to: CGPoint(x: x, y: 7))
+                    path.closeSubpath()
+                }
+                let marked = Color(red: 0.75, green: 0.55, blue: 1)
+                context.fill(flag, with: .color(marked))
+                context.fill(Path(CGRect(x: x - 0.75, y: 0, width: 1.5, height: size.height)), with: .color(marked))
+                context.draw(Text(marker.label).font(.system(size: 9, weight: .semibold)).foregroundStyle(marked),
+                             at: CGPoint(x: x + 9, y: 4), anchor: .leading)
             }
             for key in keys {
                 let sourceUs = Int64(key.ms * 1000)
@@ -411,7 +427,7 @@ private struct MarksLaneView: View {
         }
         .frame(height: TimelineView.marksLaneHeight)
         .accessibilityElement()
-        .accessibilityLabel("Marks: \(Plural.count(captions.count, "caption line")), \(Plural.count(redactions.count, "hidden part")), \(Plural.count(keys.count, "shortcut"))")
+        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count(redactions.count, "hidden part")), \(Plural.count(keys.count, "shortcut"))")
     }
 }
 

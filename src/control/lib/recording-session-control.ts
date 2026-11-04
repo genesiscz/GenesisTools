@@ -7,6 +7,7 @@ import {
     RecorderControl,
     type RecorderMethod,
     type RecorderStatus,
+    type RecordingMarker,
     RPC_ERRORS,
     RpcError,
     type StopAnswer,
@@ -45,7 +46,10 @@ export class SessionRecorderControl extends RecorderControl {
         "displays.list",
         "displays.switch",
         "jobs.list",
+        "marker.add",
     ];
+    /** The moments marked while it records, at their movie time. */
+    readonly markers: RecordingMarker[] = [];
     private state: ControlState = "recording";
     private target: RecordingTarget;
     private warning?: string;
@@ -104,6 +108,17 @@ export class SessionRecorderControl extends RecorderControl {
             ...(this.limitMs === undefined ? {} : { limitMs: this.limitMs }),
             ...(this.warning ? { warning: this.warning } : {}),
         };
+    }
+
+    async addMarker(label: string): Promise<RecordingMarker> {
+        if (this.state !== "recording") {
+            throw new RpcError(RPC_ERRORS.unsupported, `a marker needs a running recording; this one is ${this.state}`);
+        }
+
+        const marker = { atMs: Math.round(this.session.elapsedMs()), label };
+        this.markers.push(marker);
+        log.debug({ marker }, "recording marker added");
+        return marker;
     }
 
     async pause(): Promise<{ state: ControlState }> {

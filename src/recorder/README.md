@@ -10,6 +10,7 @@ All three edit one file, `edit.json`, so each sees the others' changes.
 tools recorder start [--audio system,mic] [--title T] [--max-seconds N] [--display I | --window IDS | --app NAME]
                      [--fps N] [--system-cursor] [--no-controls] [--no-indicator] [--open] [--json]
 tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
+tools recorder mark <label> [id]                 # a marker at this moment; the editor and movie.markers() show it
 tools recorder list [--live] [--limit N] [--json]
 tools recorder edit <recording> [--no-focus]     # the editor window; --no-focus opens it behind the front window
 tools recorder project <recording>               # the edit as JSON (source seconds)

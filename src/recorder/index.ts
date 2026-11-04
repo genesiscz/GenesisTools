@@ -237,6 +237,20 @@ for (const method of ["stop", "pause", "resume", "status"] as const) {
 }
 
 program
+    .command("mark")
+    .description("Mark this moment of the live recording with a label; the editor and movie.markers() show it")
+    .argument("<label>", "what happened (1 to 80 characters)")
+    .argument("[id]", "a live recording id, or its end (`tools recorder list --live`)")
+    .action(async (label: string, id: string | undefined) => {
+        try {
+            out.result(await callRecorder({ id: liveId(id), method: "marker.add", params: { label } }));
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
     .command("list")
     .description("The recordings library, newest first (or the running recordings with --live)")
     .option("--live", "the recordings that run now")

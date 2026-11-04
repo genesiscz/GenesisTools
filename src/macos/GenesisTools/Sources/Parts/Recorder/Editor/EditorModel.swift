@@ -88,6 +88,7 @@ final class EditorModel {
         cursor = CursorTrack.load(project.source.cursor)
         zoom = ZoomState(project: project, cursor: cursor)
         hasTranscript = zoom.hasCaptions
+        markers = Self.readMarkers(video: project.source.video)
         asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         player.actionAtItemEnd = .pause
         let interval = CMTime(value: 1, timescale: 30)
@@ -237,6 +238,21 @@ final class EditorModel {
 
     /// The redaction the Hide tab edits.
     var selectedRedaction: String?
+
+    /// The moments marked while it recorded (`recording.json` settings.markers), at source microseconds.
+    private(set) var markers: [(us: Int64, label: String)] = []
+
+    /// Reads the markers the recorder wrote into the recording's manifest; a plain movie has none.
+    static func readMarkers(video: String) -> [(us: Int64, label: String)] {
+        let manifest = URL(fileURLWithPath: video).deletingLastPathComponent().appendingPathComponent("recording.json")
+        guard let data = try? Data(contentsOf: manifest),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = (root["settings"] as? [String: Any])?["markers"] as? [[String: Any]] else { return [] }
+        return list.compactMap { row in
+            guard let ms = (row["atMs"] as? NSNumber)?.doubleValue, let label = row["label"] as? String else { return nil }
+            return (Int64(ms * 1000), label)
+        }
+    }
 
     /// The part to export, in output microseconds (I and O at the playhead); not saved, so the edit stays whole.
     var partInUs: Int64?

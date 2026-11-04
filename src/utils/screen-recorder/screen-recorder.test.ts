@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 import {
     type DisplayEntry,
+    RECORDER_DISPATCH,
     RecorderControl,
     type RecorderMethod,
     type RecorderState,
@@ -318,6 +319,23 @@ class TestControl extends RecorderControl {
         return [];
     }
 }
+
+describe("recording markers", () => {
+    test("marker.add reaches addMarker with a trimmed label, refuses an empty one, and is unsupported by default", async () => {
+        const plain = new TestControl();
+        await expect(RECORDER_DISPATCH["marker.add"](plain, { label: "x" })).rejects.toThrow("marker.add");
+
+        const marking = new TestControl();
+        marking.addMarker = async (label: string) => ({ atMs: 1200, label });
+        expect(await RECORDER_DISPATCH["marker.add"](marking, { label: "  login done " })).toEqual({
+            atMs: 1200,
+            label: "login done",
+        });
+        await expect((async () => RECORDER_DISPATCH["marker.add"](marking, { label: "  " }))()).rejects.toThrow(
+            "1 to 80 characters"
+        );
+    });
+});
 
 describe("live recordings", () => {
     test("closing inside stop removes discovery immediately and delivers the final answer", async () => {

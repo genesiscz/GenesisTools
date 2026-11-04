@@ -22,6 +22,7 @@ export const RECORDER_METHODS = [
     "audio.setInput",
     "settings.get",
     "settings.set",
+    "marker.add",
 ] as const;
 export type RecorderMethod = (typeof RECORDER_METHODS)[number];
 
@@ -162,6 +163,12 @@ function unsupported(kind: string, method: RecorderMethod): never {
  * capture session, and a remote one over the live recording socket (`RecorderClient`). A kind implements what it has
  * and lists it in `methods`; the rest answers `unsupported`.
  */
+/** A moment of a recording an agent or the user marked, at its time in the movie. */
+export interface RecordingMarker {
+    atMs: number;
+    label: string;
+}
+
 export abstract class RecorderControl {
     abstract readonly kind: string;
     abstract readonly methods: readonly RecorderMethod[];
@@ -226,6 +233,11 @@ export abstract class RecorderControl {
         return unsupported(this.kind, "audio.setInput");
     }
 
+    /** Marks this moment of the recording with a label; the editor lists it at its movie time. */
+    async addMarker(_label: string): Promise<RecordingMarker> {
+        return unsupported(this.kind, "marker.add");
+    }
+
     async getSettings(): Promise<SettingsAnswer> {
         return unsupported(this.kind, "settings.get");
     }
@@ -284,6 +296,11 @@ export const RECORDER_DISPATCH: Record<
     },
     "audio.setInput": (control, params) =>
         control.setAudioInput(parse(z.object({ deviceId: z.string().min(1) }), params, "{ deviceId }").deviceId),
+    "marker.add": (control, params) =>
+        control.addMarker(
+            parse(z.object({ label: z.string().trim().min(1).max(80) }), params, "{ label: <1 to 80 characters> }")
+                .label
+        ),
     "settings.get": (control) => control.getSettings(),
     "settings.set": (control, params) =>
         control.setSettings(

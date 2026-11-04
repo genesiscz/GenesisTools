@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,6 +16,7 @@ import {
     findInTranscript,
     hexColor,
     outputDurationUs,
+    outputTimeOf,
     REDACTION_STYLES,
     shortcutsOf,
     type TranscriptLine,
@@ -272,6 +273,14 @@ const movieMethods = [
         effect: "read",
     }),
     defineMethod({
+        name: "markers",
+        params: z.object({}),
+        result: z.unknown(),
+        resultName: "{ at, plays, label }[]",
+        doc: "The moments marked while it recorded (recording.mark(label) or `tools recorder mark`), at source seconds, plays: where each is in the edit (null when cut).",
+        effect: "read",
+    }),
+    defineMethod({
         name: "shortcuts",
         params: z.object({}),
         result: z.unknown(),
@@ -299,6 +308,15 @@ const recordingMethods = [
     }),
     defineMethod({ name: "pause", params: z.object({}), result: z.unknown(), doc: "Pauses.", effect: "reversible" }),
     defineMethod({ name: "resume", params: z.object({}), result: z.unknown(), doc: "Resumes.", effect: "reversible" }),
+    defineMethod({
+        name: "mark",
+        params: z.object({ label: z.string().min(1).max(80) }),
+        positional: ["label"],
+        result: z.unknown(),
+        resultName: "{ atMs, label }",
+        doc: 'Marks this moment with a label ("login done"); after stop(), movie.markers() lists it at its movie time, so you can cut or zoom by what you did.',
+        effect: "reversible",
+    }),
     defineMethod({
         name: "stop",
         params: z.object({}),
@@ -639,6 +657,26 @@ export class Movie {
         return shortcutsOf((await openProject(this.recording)).project);
     }
 
+    /** The moments marked while it recorded (`recording.mark()`, `tools recorder mark`), with where each plays. */
+    async markers(): Promise<Array<{ at: number; plays: number | null; label: string }>> {
+        const { project } = await openProject(this.recording);
+        const manifest = readRecordingManifest(dirname(project.source.video));
+        const parsed = z
+            .array(z.object({ atMs: z.number(), label: z.string() }))
+            .safeParse(manifest?.settings.markers ?? []);
+
+        if (!parsed.success) {
+            log.debug({ issues: parsed.error.issues }, "the manifest's markers do not read");
+            return [];
+        }
+
+        const round = (us: number) => Math.round(us / 1000) / 1000;
+        return parsed.data.map((marker) => {
+            const plays = outputTimeOf(project, marker.atMs * 1000);
+            return { at: marker.atMs / 1000, plays: plays === undefined ? null : round(plays), label: marker.label };
+        });
+    }
+
     async show(options: { focus?: boolean } = {}) {
         const opened = await openProject(this.recording);
 
@@ -676,6 +714,10 @@ export class MovieRecording {
 
     resume() {
         return callRecorder({ id: this.id, method: "resume" });
+    }
+
+    mark(label: string) {
+        return callRecorder({ id: this.id, method: "marker.add", params: { label } });
     }
 
     /** Stops, then waits until the recorder wrote the final manifest, so the movie is complete. */
