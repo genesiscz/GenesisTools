@@ -45,6 +45,7 @@ import {
     mockWeather,
 } from "@/api/fixtures/data";
 import { MOCK_APPROVALS } from "@/api/fixtures/approvals";
+import { MOCK_BRIEF } from "@/api/fixtures/brief";
 import { MOCK_GATES } from "@/api/fixtures/gates";
 import { MOCK_LAUNCH } from "@/api/fixtures/launch";
 import { MOCK_WATCHING } from "@/api/fixtures/watching";
@@ -273,6 +274,9 @@ const ROUTES: FixtureRoute[] = [
         path: ENDPOINTS.agentsNew.path,
         handle: () => ({ started: false, name: null, workspace: null, cwd: null, error: "mock data: no Mac to start on" }),
     },
+
+    // The morning brief (F29), as the daemon task stored it.
+    { method: ENDPOINTS.gatewayBrief.method, path: ENDPOINTS.gatewayBrief.path, handle: () => MOCK_BRIEF },
 
     // The Watching screen (F30); a mute answers that the fixture has no Monitor to write.
     { method: ENDPOINTS.gatewayWatching.method, path: ENDPOINTS.gatewayWatching.path, handle: () => MOCK_WATCHING },

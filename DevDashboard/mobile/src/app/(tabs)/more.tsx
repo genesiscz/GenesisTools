@@ -59,6 +59,7 @@ const MORE_GROUPS: MoreGroup[] = [
     {
         heading: "Productivity",
         links: [
+            { title: "Morning brief", route: "/brief", testID: "more-link-brief", icon: "sunrise" },
             { title: "Reminders", route: "/reminders-todos", testID: "more-link-reminders-todos", icon: "check-square" },
         ],
     },
