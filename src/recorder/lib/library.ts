@@ -1,0 +1,163 @@
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+
+const { log } = logger.scoped("recorder-library");
+
+/** The movie a recording folder holds, in the order the editor looks for one. */
+export const RECORDING_MOVIES = ["screen.mp4", "screen.mov", "proxy.mp4"] as const;
+
+export interface LibraryRow {
+    id: string;
+    title: string;
+    folder: string;
+    startedAt: string;
+    endedAt?: string;
+    /** The movie the editor opens, when the recording has one. */
+    movie?: string;
+    frames: number;
+    /** `edit.json` exists: the recording was edited. */
+    edited: boolean;
+}
+
+export function movieOf(folder: string): string | undefined {
+    return RECORDING_MOVIES.map((name) => join(folder, name)).find((path) => existsSync(path));
+}
+
+/** Every library recording, newest first. */
+export function listLibrary(root = recordingsLibraryDir()): LibraryRow[] {
+    if (!existsSync(root)) {
+        return [];
+    }
+
+    const rows: LibraryRow[] = [];
+
+    for (const name of readdirSync(root)) {
+        const folder = join(root, name);
+        const manifest = readRecordingManifest(folder);
+
+        if (!manifest) {
+            continue;
+        }
+
+        rows.push({
+            id: manifest.id,
+            title: manifest.title,
+            folder,
+            startedAt: manifest.startedAt,
+            endedAt: manifest.endedAt,
+            movie: movieOf(folder),
+            frames: manifest.frames.length,
+            edited: existsSync(join(folder, "edit.json")),
+        });
+    }
+
+    return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/**
+ * What a recording argument names: a library id (`library-…`), `last` (the newest), or a path to a movie, a
+ * recording folder or an edit file. Throws with the ids it knows when nothing matches.
+ */
+export function resolveRecording(value: string): string {
+    if (value === "last") {
+        const newest = listLibrary()[0];
+
+        if (!newest) {
+            throw new Error("The recordings library is empty; record one with `tools recorder start`.");
+        }
+
+        return newest.folder;
+    }
+
+    const path = resolve(value);
+
+    if (existsSync(path)) {
+        return path;
+    }
+
+    const folder = recordingsLibraryDir(value);
+
+    if (existsSync(folder) && statSync(folder).isDirectory()) {
+        return folder;
+    }
+
+    const known = listLibrary()
+        .slice(0, 5)
+        .map((row) => row.id);
+    throw new Error(
+        `No recording "${value}": not a path and not a library id. Newest ids: ${known.join(", ") || "none"} (or "last").`
+    );
+}
+
+/** Builds the app with the recorder part when the installed one lacks it. */
+export async function ensureRecorderPart(onStep?: (line: string) => void): Promise<void> {
+    const status = appStatus();
+
+    if (status.built && status.parts.includes("recorder")) {
+        return;
+    }
+
+    onStep?.("GenesisTools.app has no recorder part yet: building it (about a minute)");
+    log.info({ parts: status.parts }, "recorder: adding the recorder part");
+    await buildApp({ onStep, parts: { add: ["recorder"] } });
+}
+
+/** Opens the editor through Launch Services; a running recorder takes the request. */
+export function openEditor(path: string, { focus = true }: { focus?: boolean } = {}): void {
+    const args = ["-n", ...(focus ? [] : ["-g"]), genesisAppBundlePath(), "--args", "--recorder", "--edit", path];
+
+    if (!focus) {
+        args.push("--no-focus");
+    }
+
+    log.info({ args }, "recorder: open the editor");
+    const result = spawnSync("open", args, { encoding: "utf8" });
+
+    if (result.status !== 0) {
+        throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
+    }
+}
+
+export interface ExportAnswer {
+    ok: boolean;
+    path?: string;
+    bytes?: number;
+    seconds?: number;
+    error?: string;
+}
+
+/**
+ * Renders an edit with the editor's own renderer (AVFoundation, hardware encoder) in a headless run of the app's
+ * recorder face, so an agent's export is the movie the window would export.
+ */
+export async function exportEdit(path: string, out?: string): Promise<ExportAnswer> {
+    const binary = join(genesisAppBundlePath(), "Contents/MacOS/GenesisTools");
+    const argv = ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])];
+    log.info({ binary, argv }, "recorder: headless export");
+    const child = spawn(binary, argv, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+    });
+    const code = await new Promise<number>((done) => child.on("close", (status) => done(status ?? 1)));
+    const line = stdout.trim().split("\n").at(-1) ?? "";
+
+    try {
+        const answer = SafeJSON.parse(line, { strict: true }) as ExportAnswer;
+        log.info({ code, answer }, "recorder: export finished");
+        return answer;
+    } catch (error) {
+        log.warn({ error, code, stdout, stderr }, "recorder: export printed no answer");
+        return { ok: false, error: `the export exited ${code}: ${(stderr || stdout).trim().slice(-400)}` };
+    }
+}

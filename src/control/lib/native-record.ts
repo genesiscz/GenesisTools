@@ -20,6 +20,7 @@ export type NativeCaptureOptions = Pick<
     | "audio"
     | "micDevice"
     | "audioSidecar"
+    | "cursorTrack"
 >;
 
 export const CAPTURE_AUDIO_SOURCES = ["system", "mic"] as const;
@@ -150,6 +151,10 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         }
     }
 
+    if (cap.cursorTrack) {
+        argv.push("--cursor-track", cap.cursorTrack);
+    }
+
     return argv;
 }
 
@@ -226,6 +231,13 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         throw new Error("audioSidecar must be a boolean");
     }
 
+    if (
+        cap.cursorTrack !== undefined &&
+        (typeof cap.cursorTrack !== "string" || !cap.cursorTrack || cap.mode === "isolated")
+    ) {
+        throw new Error("cursorTrack needs a file path and the screen, window or region mode");
+    }
+
     if (cap.audio?.length && !cap.videoOut && !cap.audioSidecar) {
         throw new Error("audio needs videoOut (tracks in the movie) or audioSidecar (.m4a files)");
     }
@@ -265,6 +277,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.audio,
         cap.micDevice,
         cap.audioSidecar,
+        cap.cursorTrack,
     ];
     if (cap.backend === "peekaboo" && (cap.mode === "isolated" || extended.some((value) => value !== undefined))) {
         throw new Error(

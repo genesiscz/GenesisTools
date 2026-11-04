@@ -1073,12 +1073,26 @@ func cmdCaptureScreen() {
         }
         CGDisplayRegisterReconfigurationCallback(displayReconfigurationCallback, nil)
     }
+    // The rectangle the cursor track is relative to, in global points: the window as it moves, the region, or the
+    // recorded display (which a switch or follow-focus changes). The loop's 0.25 s tick keeps it current.
+    let trackedRect = LockedRect(windowTarget?.bounds ?? options.region ?? sourceRect.map {
+        $0.offsetBy(dx: display.bounds.minX, dy: display.bounds.minY)
+    } ?? display.bounds)
+    var cursorTrack: CursorTrackWriter?
+    if let path = argValue("--cursor-track") {
+        cursorTrack = CursorTrackWriter(path: path) { trackedRect.value }
+        if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
+    }
     let started = Date()
+    cursorTrack?.start(at: started)
     let cancelled = runRecordingLoop(duration: options.duration) {
         if let target = windowTarget,
            let rows = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.id) as? [[CFString: Any]],
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
+            trackedRect.value = bounds
+        } else if options.mode == "screen", sourceRect == nil {
+            trackedRect.value = host.display.bounds
         }
         guard options.mode == "screen" else { return recorder.failure == nil && !host.stopRequested }
 
@@ -1089,6 +1103,7 @@ func cmdCaptureScreen() {
         displayReconfigurationHandler = nil
     }
     indicator.close()
+    cursorTrack?.stop()
     recorder.stopHeartbeat()
     let streamFailure = recorder.failure
     if streamFailure == nil {
@@ -1175,6 +1190,9 @@ func cmdCaptureScreen() {
     }
     if let videoOut = options.videoOut {
         data["videoOut"] = videoOut
+    }
+    if let cursorTrack {
+        data["cursorTrack"] = ["path": cursorTrack.path, "samples": cursorTrack.samples, "clicks": cursorTrack.clicks]
     }
     if let windowTarget {
         data["window"] = ["id": windowTarget.id, "x": windowTarget.bounds.minX, "y": windowTarget.bounds.minY,

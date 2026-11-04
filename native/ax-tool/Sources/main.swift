@@ -93,6 +93,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       stop | status | mute/unmute {"source":"mic"|"system"} | set-mic {"deviceId"} |
                       set-fps {"active","idle"} | set-threshold {"percent"} | set-max-long-side {"px"};
                       JSON-line events on stderr (frame, state, settings, display-switch, error); stdin EOF stops
+                      [--cursor-track FILE]  the pointer as JSON lines (t ms, x/y 0-1 of the recorded area, clicks)
                       [--audio system,mic] [--mic-device UID] [--audio-sidecar]  audio tracks in the movie and/or
                       audio-<source>.m4a; the result lists tracks with durationMs, peakDbfs and mutedSpans
       ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution

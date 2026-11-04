@@ -11,8 +11,11 @@ import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as captureRunner from "./capture-runner";
 import { nativeSegmentRecorder } from "./recording-native";
 import {
+    concatCopyArgv,
+    concatListLine,
     FIRST_FRAME_MESSAGE,
     type FinishedSegment,
+    joinCursorTracks,
     joinSegmentsArgv,
     PREPARING_MESSAGE,
     parseRecordingCommand,
@@ -704,6 +707,51 @@ describe("nativeSegmentRecorder", () => {
         expect(probes).toBe(0);
         expect(result).toEqual({ ok: true, endedBy: "stop", durationMs: undefined });
         expect(existsSync(output)).toBe(true);
+    });
+});
+
+describe("joining segments with their audio and cursor tracks", () => {
+    it("copies same-shape segments with every stream and quotes paths for the concat list", () => {
+        const argv = concatCopyArgv({ list: "/s/list.txt", output: "/o.mp4" });
+        expect(argv.slice(argv.indexOf("-f"), argv.indexOf("-f") + 6)).toEqual([
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            "/s/list.txt",
+        ]);
+        expect(argv).toContain("copy");
+        expect(argv[argv.indexOf("-map") + 1]).toBe("0");
+        expect(concatListLine("/a/it's.mp4")).toBe("file '/a/it'\\''s.mp4'");
+    });
+
+    it("keeps the audio when it re-encodes segments of different sizes", () => {
+        const argv = joinSegmentsArgv({
+            inputs: ["/a.mp4", "/b.mp4"],
+            width: 1280,
+            height: 720,
+            output: "/o.mp4",
+            audio: true,
+        });
+        const graph = argv[argv.indexOf("-filter_complex") + 1];
+        expect(graph).toContain("[0:a]aresample=async=1:first_pts=0[a0]");
+        expect(graph).toEndWith("[v0][a0][v1][a1]concat=n=2:v=1:a=1[out][aout]");
+        expect(argv).toContain("[aout]");
+        expect(argv[argv.indexOf("-c:a") + 1]).toBe("aac");
+    });
+
+    it("moves each segment's cursor samples by the length of the segments before it", () => {
+        const joined = joinCursorTracks([
+            { text: '{"t":0.0,"x":0.1,"y":0.2}\n{"t":500.5,"x":0.3,"y":0.4,"click":"left"}\n', offsetMs: 0 },
+            { text: 'not json\n{"t":10.0,"x":0.5,"y":0.6}\n', offsetMs: 2000 },
+        ]);
+        expect(joined.trim().split("\n")).toEqual([
+            '{"t":0.0,"x":0.1,"y":0.2}',
+            '{"t":500.5,"x":0.3,"y":0.4,"click":"left"}',
+            '{"t":2010.0,"x":0.5,"y":0.6}',
+        ]);
+        expect(joinCursorTracks([])).toBe("");
     });
 });
 

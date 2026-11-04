@@ -502,6 +502,11 @@ export class RecordingSession {
      * the output first and renamed there: the output is either the old file or the whole new movie, never a part.
      */
     private async moveMovie(source: string): Promise<void> {
+        // A one-segment recording's cursor track goes with its movie; the joiner makes the track of several.
+        if (existsSync(cursorTrackPath(source))) {
+            await rename(cursorTrackPath(source), cursorTrackPath(this.options.output));
+        }
+
         try {
             await rename(source, this.options.output);
         } catch (error) {
@@ -581,6 +586,65 @@ function formatLimit(ms: number): string {
     return seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} s`;
 }
 
+/** Where a segment's or a saved movie's cursor track lives (`ax-tool capture --cursor-track`). */
+export function cursorTrackPath(movie: string): string {
+    return `${movie}.cursor.jsonl`;
+}
+
+/**
+ * ffmpeg arguments that join segments which share one size and codec without decoding them: the concat demuxer
+ * copies every stream (the audio tracks included), so a long recording joins in seconds at the recorder's quality.
+ * `list` is a concat list file (`file '<path>'` per line).
+ */
+export function concatCopyArgv({ list, output }: { list: string; output: string }): string[] {
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        list,
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        output,
+    ];
+}
+
+/** One concat list line; a quote in a path is closed, escaped and reopened, as the concat demuxer reads it. */
+export function concatListLine(path: string): string {
+    return `file '${path.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * The cursor tracks of the segments (`<segment>.cursor.jsonl`) as one track of the joined movie: each segment's
+ * times move by the length of the segments before it, so a pause leaves no gap in the track either.
+ */
+export function joinCursorTracks(parts: Array<{ text: string; offsetMs: number }>): string {
+    const lines: string[] = [];
+
+    for (const part of parts) {
+        for (const line of part.text.split("\n")) {
+            const match = /^\{"t":(-?[\d.]+)(,.*)$/.exec(line.trim());
+
+            if (match) {
+                lines.push(`{"t":${(Number(match[1]) + part.offsetMs).toFixed(1)}${match[2]}`);
+            }
+        }
+    }
+
+    return lines.length ? `${lines.join("\n")}\n` : "";
+}
+
 /**
  * ffmpeg arguments that join segments of any sizes into one H.264 MP4 at the first segment's size: each input is
  * scaled to fit, padded with black and given square pixels, then the concat filter chains them. The recorder writes
@@ -591,20 +655,60 @@ export function joinSegmentsArgv({
     width,
     height,
     output,
+    audio = false,
 }: {
     inputs: string[];
     width: number;
     height: number;
     output: string;
+    /** Every input has one audio track: it is joined too (resampled across the cuts), as AAC. */
+    audio?: boolean;
 }): string[] {
     const w = Math.max(2, Math.floor(width / 2) * 2);
     const h = Math.max(2, Math.floor(height / 2) * 2);
     const chains = inputs.map(
         (_, index) =>
             `[${index}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
-            `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]`
+            `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
+            (audio ? `;[${index}:a]aresample=async=1:first_pts=0[a${index}]` : "")
     );
-    const labels = inputs.map((_, index) => `[v${index}]`).join("");
+    const labels = inputs.map((_, index) => (audio ? `[v${index}][a${index}]` : `[v${index}]`)).join("");
+
+    if (audio) {
+        return [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            ...inputs.flatMap((input) => ["-i", input]),
+            "-filter_complex",
+            `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=1[out][aout]`,
+            "-map",
+            "[out]",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-fps_mode",
+            "vfr",
+            "-movflags",
+            "+faststart",
+            output,
+        ];
+    }
+
     return [
         "ffmpeg",
         "-hide_banner",

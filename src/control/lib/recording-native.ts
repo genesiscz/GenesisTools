@@ -1,12 +1,22 @@
 import { existsSync } from "node:fs";
-import { rm, unlink } from "node:fs/promises";
+import { readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { logger } from "@genesiscz/utils/logger";
+import { audioStreamCount, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import type { CaptureSpec } from "./capture-plan";
 import { CaptureRunError, runCapturePlanWithSignal } from "./capture-runner";
 import { captureFromFlags, validateCaptureOptions } from "./native-record";
-import { joinSegmentsArgv, type SegmentJoiner, type SegmentRecorder, type SegmentResult } from "./recording-session";
+import {
+    concatCopyArgv,
+    concatListLine,
+    cursorTrackPath,
+    joinCursorTracks,
+    joinSegmentsArgv,
+    type SegmentJoiner,
+    type SegmentRecorder,
+    type SegmentResult,
+} from "./recording-session";
 import type { RecordingTarget } from "./recording-targets";
 
 const { log } = logger.scoped("control-recording-native");
@@ -27,7 +37,15 @@ export interface NativeRecorderOptions {
     fps?: number;
     /** False hides the red border around what is recorded (it never shows in the movie either way). */
     indicator?: boolean;
+    /** Audio tracks in each segment's movie, joined with the video. */
+    audio?: ("system" | "mic")[];
+    /** The microphone's input UID from `ax-tool audio-devices`; needs audio "mic". */
+    micDevice?: string;
+    /** Each segment writes `<segment>.cursor.jsonl`; the joiner makes `<output>.cursor.jsonl` of them. */
+    cursorTrack?: boolean;
 }
+
+export { cursorTrackPath };
 
 /** The capture spec one segment records: isolated windows or an app's windows, or a whole display. */
 export function segmentCaptureSpec({
@@ -74,6 +92,18 @@ export function segmentCaptureSpec({
 
     if (options.excludeWindowIds?.length) {
         spec.excludeWindowIds = options.excludeWindowIds;
+    }
+
+    if (options.audio?.length) {
+        spec.audio = options.audio;
+
+        if (options.micDevice) {
+            spec.micDevice = options.micDevice;
+        }
+    }
+
+    if (options.cursorTrack) {
+        spec.cursorTrack = cursorTrackPath(output);
     }
 
     validateCaptureOptions(spec);
@@ -155,17 +185,73 @@ async function playable(path: string): Promise<boolean> {
     }
 }
 
-/** ffmpeg concat of the segments at the first segment's size; one H.264 MP4. */
+/**
+ * Joins the segments into one MP4. Segments of one size and codec with the same audio tracks (one display, no
+ * window switch) are copied as they are, audio included: no decode, no quality loss, seconds for an hour. Anything
+ * else is re-encoded at the first segment's size, keeping the audio when every segment has a track. The segments'
+ * cursor tracks become `<output>.cursor.jsonl`.
+ */
 export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) => {
-    const first = await probeVideo({ input: segments[0].path });
-    const argv = joinSegmentsArgv({
-        inputs: segments.map((segment) => segment.path),
-        width: first.displayWidth,
-        height: first.displayHeight,
-        output,
-    });
+    const facts = await Promise.all(segments.map((segment) => readMediaFacts({ input: segment.path })));
+    const videos = facts.map(primaryVideo);
+    const first = videos[0];
+    const audioCounts = facts.map(audioStreamCount);
+    const sameShape =
+        first !== null &&
+        videos.every(
+            (video) => video?.codec === first.codec && video.width === first.width && video.height === first.height
+        ) &&
+        audioCounts.every((count) => count === audioCounts[0]);
     const totalMs = segments.reduce((sum, segment) => sum + segment.durationMs, 0);
-    await runVideoCommand({ command: argv, timeoutMs: Math.max(120_000, totalMs * 2) });
+    const timeoutMs = Math.max(120_000, totalMs * 2);
+
+    if (sameShape) {
+        const list = `${output}.concat.txt`;
+        await writeFile(list, `${segments.map((segment) => concatListLine(segment.path)).join("\n")}\n`);
+        try {
+            await runVideoCommand({ command: concatCopyArgv({ list, output }), timeoutMs });
+        } finally {
+            await rm(list, { force: true });
+        }
+    } else {
+        const probe = await probeVideo({ input: segments[0].path });
+        const argv = joinSegmentsArgv({
+            inputs: segments.map((segment) => segment.path),
+            width: probe.displayWidth,
+            height: probe.displayHeight,
+            output,
+            audio: audioCounts.every((count) => count > 0),
+        });
+        await runVideoCommand({ command: argv, timeoutMs });
+    }
+
+    log.info(
+        { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0 },
+        sameShape ? "segments joined by stream copy" : "segments joined by re-encoding"
+    );
+    await joinSegmentCursorTracks(segments, output);
     const joined = await probeVideo({ input: output });
     return { durationMs: Math.round(joined.durationUs / 1000) };
 };
+
+async function joinSegmentCursorTracks(
+    segments: Array<{ path: string; durationMs: number }>,
+    output: string
+): Promise<void> {
+    const parts: Array<{ text: string; offsetMs: number }> = [];
+    let offsetMs = 0;
+
+    for (const segment of segments) {
+        const path = cursorTrackPath(segment.path);
+
+        if (existsSync(path)) {
+            parts.push({ text: await readFile(path, "utf8"), offsetMs });
+        }
+
+        offsetMs += segment.durationMs;
+    }
+
+    if (parts.length > 0) {
+        await writeFile(cursorTrackPath(output), joinCursorTracks(parts));
+    }
+}

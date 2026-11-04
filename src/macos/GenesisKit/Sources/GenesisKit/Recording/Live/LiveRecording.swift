@@ -33,6 +33,8 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
     public var controls: [String]
     /// The recorder's Unix domain socket (JSON-RPC 2.0, one message per line).
     public var socket: String?
+    /// The recorder asked for its floating controls (`panel` in the entry); the host opens them once.
+    public var panel = false
     /// Every connected display, `recorded` or not (`displays.list`); empty until the socket answered.
     public var connectedDisplays: [ConnectedDisplay] = []
     /// `all` or `follow-focus` (or the recorder's own word), from the socket.
@@ -57,7 +59,7 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
     public init(id: String, kind: String, title: String, pid: Int32, startedAt: Date, state: String,
                 displays: [Display] = [], frames: Int = 0, lastFrameAt: Date? = nil, warning: String? = nil,
                 folder: String? = nil, controls: [String] = LiveRecordingCommand.allCases.map(\.rawValue),
-                socket: String? = nil) {
+                socket: String? = nil, panel: Bool = false) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -71,6 +73,7 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
         self.folder = folder
         self.controls = controls
         self.socket = socket
+        self.panel = panel
     }
 
     public var isRecording: Bool { state == "recording" }
@@ -170,7 +173,8 @@ public struct LiveRecordingStore: Sendable {
             frames: (object["frames"] as? NSNumber)?.intValue ?? 0, lastFrameAt: date(object["lastFrameAt"]),
             warning: (object["warning"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             folder: (object["folder"] as? String).flatMap { $0.isEmpty ? nil : $0 }, controls: controls,
-            socket: (object["socket"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+            socket: (object["socket"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            panel: object["panel"] as? Bool ?? false)
     }
 
     /// An ISO 8601 string, with or without fractional seconds, or epoch milliseconds.

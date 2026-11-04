@@ -18,6 +18,8 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     private var detailRows: [String: NSMenuItem] = [:]
     private var panels: [String: LiveRecordingPanel] = [:]
     private var sessions: [String: LiveRecordingSession] = [:]
+    /// Recordings whose asked-for floating controls this host opened already (closing them must not reopen them).
+    private var panelsOpened: Set<String> = []
     /// The live files' entries as last read.
     private var entries: [LiveRecording] = []
     /// What the menu shows: the entries whose socket answers, with what it said.
@@ -105,6 +107,11 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
 
         installItem()
         renderIcon(list)
+        for recording in list where recording.panel && !panelsOpened.contains(recording.id) {
+            panelsOpened.insert(recording.id)
+            showControls(for: recording)
+        }
+        panelsOpened.formIntersection(list.map(\.id))
         if menuIsOpen { refreshDetails(list) }
     }
 

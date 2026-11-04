@@ -65,6 +65,8 @@ export const liveEntrySchema = z.object({
     controls: z.array(z.string()).default([...LIVE_COMMANDS]),
     /** The JSON-RPC socket that controls the recording. */
     socket: z.string(),
+    /** Asks the menu bar host to open the recording's floating controls once it sees the entry. */
+    panel: z.boolean().optional(),
 });
 export type LiveEntry = z.infer<typeof liveEntrySchema>;
 
@@ -226,6 +228,8 @@ export class LiveRecordingServer {
         displays?: LiveEntry["displays"];
         control: RecorderControl;
         dir?: string;
+        /** The host opens the floating controls for it (`tools recorder start`, the menu's Record Screen). */
+        panel?: boolean;
     }) {
         const dir = options.dir ?? liveRecordingsDir();
         mkdirSync(dir, { recursive: true });
@@ -279,6 +283,7 @@ export class LiveRecordingServer {
             ...(options.folder ? { folder: options.folder } : {}),
             controls: [...control.methods],
             socket,
+            ...(options.panel ? { panel: true } : {}),
         };
         this.write();
         log.info({ id: options.id, kind: options.kind, socket }, "live recording listening");
