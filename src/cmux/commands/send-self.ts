@@ -4,6 +4,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { readTmuxTerminal } from "@genesiscz/utils/tmux/caller-enricher";
 import type { Command } from "commander";
 
 export type SelfTarget = { kind: "tmux"; pane: string } | { kind: "cmux"; workspaceId?: string; surfaceId: string };
@@ -12,7 +13,8 @@ export function resolveSelfTarget(
     environment: NodeJS.ProcessEnv,
     prefer: "auto" | "tmux" | "cmux" = "auto"
 ): SelfTarget | null {
-    const pane = environment.TMUX_PANE;
+    // A whitespace-only TMUX_PANE (an unset variable a shell expanded) names no pane, so it cannot beat a cmux surface.
+    const pane = readTmuxTerminal(environment)?.pane;
     const surfaceId = environment.CMUX_SURFACE_ID;
     const workspaceId = environment.CMUX_WORKSPACE_ID;
 

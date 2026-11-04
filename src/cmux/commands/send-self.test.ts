@@ -73,8 +73,13 @@ describe("resolveSelfTarget", () => {
 });
 
 describe("characterization: blank terminal ids", () => {
-    it("a whitespace-only tmux pane still wins over a valid cmux surface", () => {
-        expect(resolveSelfTarget({ ...CMUX_ENV, TMUX_PANE: " \t " })).toEqual({ kind: "tmux", pane: " \t " });
+    it("a whitespace-only tmux pane names no pane, so a valid cmux surface wins", () => {
+        expect(resolveSelfTarget({ ...CMUX_ENV, TMUX_PANE: " \t " })).toEqual({
+            kind: "cmux",
+            surfaceId: "F89A4C33",
+            workspaceId: "C0503E81",
+        });
+        expect(resolveSelfTarget({ ...CMUX_ENV, TMUX_PANE: " %3 " })).toEqual({ kind: "tmux", pane: "%3" });
         expect(resolveSelfTarget({ ...CMUX_ENV, TMUX_PANE: " \t " }, "cmux")).toEqual({
             kind: "cmux",
             surfaceId: "F89A4C33",
