@@ -613,3 +613,56 @@ export function describeProject(project: EditProject, path: string) {
         frame: project.frame ?? null,
     };
 }
+
+/** One spoken line of the movie: its source times, where it plays in the edit now, and its words. */
+export interface TranscriptLine {
+    from: number;
+    to: number;
+    /** Output seconds where the line starts in the current edit; null when its middle was cut. */
+    plays: number | null;
+    text: string;
+}
+
+const transcriptSchema = z.object({
+    text: z.string().default(""),
+    segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })).default([]),
+});
+
+/**
+ * A transcription result (`tools transcribe --format json`) as lines in source seconds with their place in the edit,
+ * so an agent can cut "the part where I say X" with `cut(line.from, line.to)`.
+ */
+export function transcriptLines(raw: unknown, project: EditProject): TranscriptLine[] {
+    const parsed = transcriptSchema.safeParse(raw);
+
+    if (!parsed.success) {
+        throw new Error("the transcription result has no segments to read");
+    }
+
+    const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+    return parsed.data.segments
+        .filter((segment) => segment.text.trim())
+        .map((segment) => {
+            // A line whose middle was cut is cut: its start alone sat on the edge of the clip before the cut.
+            const middle = outputTimeOf(project, Math.round(((segment.start + segment.end) / 2) * 1_000_000));
+            const plays =
+                middle === undefined ? undefined : outputTimeOf(project, Math.round(segment.start * 1_000_000));
+            return {
+                from: round(segment.start),
+                to: round(segment.end),
+                plays: plays === undefined ? null : round(plays / 1_000_000),
+                text: segment.text.trim(),
+            };
+        });
+}
+
+/** The lines whose text holds `query`, case and accents ignored. */
+export function findInTranscript(lines: readonly TranscriptLine[], query: string): TranscriptLine[] {
+    const fold = (text: string) =>
+        text
+            .normalize("NFD")
+            .replace(/\p{Diacritic}/gu, "")
+            .toLowerCase();
+    const needle = fold(query.trim());
+    return needle ? lines.filter((line) => fold(line.text).includes(needle)) : [];
+}

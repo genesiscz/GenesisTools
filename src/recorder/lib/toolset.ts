@@ -1,5 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
-import { spawnToolDetached } from "@genesiscz/utils/cli";
+import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { timeSchema } from "@genesiscz/utils/recording-editor/plan";
 import {
@@ -7,7 +10,10 @@ import {
     type EditOp,
     type EditProject,
     editOpSchema,
+    findInTranscript,
     hexColor,
+    type TranscriptLine,
+    transcriptLines,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
@@ -143,6 +149,25 @@ const movieMethods = [
         resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds }",
         doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; throws when the file exists (it never overwrites).',
         effect: "reversible",
+    }),
+    defineMethod({
+        name: "transcript",
+        params: z
+            .object({ provider: z.string().optional(), lang: z.string().optional(), refresh: z.boolean().optional() })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ from, to, plays, text }[]",
+        doc: "The spoken lines in source seconds (plays: where each starts in the edit, null when cut), from tools transcribe; cached beside the movie, refresh: true transcribes again. The first run may ask for the AI vault key.",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "find",
+        params: z.object({ text: z.string().min(1) }),
+        positional: ["text"],
+        result: z.unknown(),
+        resultName: "{ from, to, plays, text }[]",
+        doc: "The transcript lines that hold the text (case and accents ignored); cut one with cut(line.from, line.to).",
+        effect: "read",
     }),
     defineMethod({
         name: "show",
@@ -337,6 +362,41 @@ export class Movie {
             height: info.height,
             renderSeconds: answer.seconds,
         };
+    }
+
+    /** `<movie>.transcript.json` beside the movie: the raw result, so a later edit maps it again for free. */
+    async transcript(options: { provider?: string; lang?: string; refresh?: boolean } = {}): Promise<TranscriptLine[]> {
+        const opened = await openProject(this.recording);
+        const video = opened.project.source.video;
+        const cache = join(dirname(video), `${basename(video, extname(video))}.transcript.json`);
+
+        if (!options.refresh && existsSync(cache)) {
+            return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
+        }
+
+        const args = ["transcribe", video, "--format", "json", "-o", cache];
+
+        if (options.provider) {
+            args.push("--provider", options.provider);
+        }
+
+        if (options.lang) {
+            args.push("--lang", options.lang);
+        }
+
+        log.info({ video, provider: options.provider ?? "default", cache }, "transcribing the movie");
+        const result = await execTool(args, { timeout: 60 * 60_000 });
+
+        if (!result.success || !existsSync(cache)) {
+            const reason = result.stderr.trim().split("\n").filter(Boolean).at(-1) ?? `exit ${result.exitCode}`;
+            throw new Error(`the transcription failed: ${reason}`);
+        }
+
+        return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
+    }
+
+    async find(text: string): Promise<TranscriptLine[]> {
+        return findInTranscript(await this.transcript(), text);
     }
 
     async show(options: { focus?: boolean } = {}) {

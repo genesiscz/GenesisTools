@@ -10,10 +10,12 @@ import {
     applyOp,
     autoZoom,
     editProjectSchema,
+    findInTranscript,
     outputDurationUs,
     outputTimeOf,
     parseEditOps,
     readProject,
+    transcriptLines,
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
@@ -447,6 +449,27 @@ describe("edit project (edit.json)", () => {
             maxHeight: 720,
         });
         expect(() => parseEditOps({ op: "clicks", color: "yellow" })).toThrow("a color is #RRGGBB");
+    });
+
+    test("transcript lines carry where they play in the edit, and search ignores case and accents", () => {
+        const raw = {
+            text: "",
+            segments: [
+                { text: " Dobrý den. ", start: 0, end: 1.5 },
+                { text: "Tohle vystřihni.", start: 2, end: 3 },
+                { text: "Konec.", start: 5, end: 6 },
+            ],
+        };
+        const edited = applyOp(wholeProject(source), { op: "cut", from: 1.8, to: 3.2 });
+        const lines = transcriptLines(raw, edited);
+
+        expect(lines.map((line) => [line.text, line.plays])).toEqual([
+            ["Dobrý den.", 0],
+            ["Tohle vystřihni.", null],
+            ["Konec.", 3.6],
+        ]);
+        expect(findInTranscript(lines, "VYSTRIHNI").map((line) => line.from)).toEqual([2]);
+        expect(() => transcriptLines({ segments: "no" }, edited)).toThrow("no segments");
     });
 
     test("writes every field the Swift decoder needs and refuses a newer version", () => {
