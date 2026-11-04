@@ -1295,11 +1295,39 @@ final class WidgetVisibilityTests: XCTestCase {
         try await waitFor { model.cards.count == 2 }
         XCTAssertEqual(model.cards.count, 2)
 
-        func read<V: View>(_ name: String, _ content: V) throws -> String {
-            let renderer = ImageRenderer(content: content.frame(width: 440).padding(12)
-                .environment(\.colorScheme, .dark).background(Color.black))
-            renderer.scale = 2
-            let image = try XCTUnwrap(renderer.cgImage)
+        func read<V: View>(_ name: String, _ content: V, nativeScroll: Bool = false) async throws -> String {
+            let rendered = content.frame(width: 440).padding(12)
+                .environment(\.colorScheme, .dark).background(Color.black)
+            let image: CGImage
+            if nativeScroll {
+                let host = NSHostingView(rootView: rendered)
+                let window = NSWindow(contentRect: CGRect(origin: .zero, size: host.fittingSize),
+                                      styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.alphaValue = 0
+                window.level = NSWindow.Level(rawValue: -1000)
+                window.contentView = host
+                window.order(.below, relativeTo: 0)
+                defer { window.close() }
+                try await Task.sleep(for: .milliseconds(100))
+                host.layoutSubtreeIfNeeded()
+                func scrolls(_ view: NSView) -> [NSScrollView] {
+                    if let scroll = view as? NSScrollView { return [scroll] }
+                    return view.subviews.flatMap(scrolls)
+                }
+                let scroll = try XCTUnwrap(scrolls(host).first)
+                let document = try XCTUnwrap(scroll.documentView)
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                image = try XCTUnwrap(bitmap.cgImage)
+            } else {
+                let renderer = ImageRenderer(content: rendered)
+                renderer.scale = 2
+                image = try XCTUnwrap(renderer.cgImage)
+            }
             if let folder = ProcessInfo.processInfo.environment["GENESIS_WIDGET_RENDER_DIR"] {
                 try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(
                     to: URL(fileURLWithPath: folder).appendingPathComponent(name + ".png"))
@@ -1324,7 +1352,7 @@ final class WidgetVisibilityTests: XCTestCase {
 
         let superseded = try XCTUnwrap(model.cards.first { $0.number == 7 })
         var opened: [String] = []
-        var seen = try read("superseded", WidgetDecisionOutcome(card: superseded) { opened.append($0.id) })
+        var seen = try await read("superseded", WidgetDecisionOutcome(card: superseded) { opened.append($0.id) })
         XCTAssertTrue(seen.contains("Superseded by Decision 8"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Answer recorded by the agent"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Keep the current one"), "the picked option is named: \(seen)")
@@ -1333,7 +1361,7 @@ final class WidgetVisibilityTests: XCTestCase {
         let peek = WidgetInboxItem(id: "decision:d_8_fixture-session", sourceId: "d_8_fixture-session",
             kind: "decision", key: key, at: Date().timeIntervalSince1970 * 1000, needsAnswer: true,
             title: "Pick a parser for DECISION 8", number: 8)
-        seen = try read("peek", WidgetPeekView(model: model, item: peek))
+        seen = try await read("peek", WidgetPeekView(model: model, item: peek))
         XCTAssertTrue(seen.contains("Decision 8"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Pick a parser"), "read: \(seen)")
         // The whole summary is laid out, never cut at a line count: a selectable Text draws its full string while it
@@ -1345,13 +1373,13 @@ final class WidgetVisibilityTests: XCTestCase {
             summary: String(repeating: "The re-run shows an unrelated publish at 4995 rows and a selection at 10 ms. ", count: 7)
                 + "The last word is ZEBRA.",
             options: ["Stop at steps 1 and 2", "Do steps 3 to 8"])
-        seen = try read("peek-long-summary", WidgetPeekView(model: model, item: long))
+        seen = try await read("peek-long-summary", WidgetPeekView(model: model, item: long), nativeScroll: true)
         XCTAssertTrue(seen.contains("ZEBRA"), "the end of a long summary is laid out, not cut at six lines: \(seen)")
         // The card fills a pane taller than itself (the rail sets the panel's height) with one inset on every side.
         let pane = WidgetPeekView(model: model, item: peek).padding(WidgetPeekView.inset)
             .frame(width: 324, height: 270, alignment: .top)
             .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(white: 0.17)))
-        seen = try read("peek-pane", pane)
+        seen = try await read("peek-pane", pane)
         XCTAssertTrue(seen.contains("Answer in its session"), "a decision without options says where it is answered: \(seen)")
         XCTAssertEqual(WidgetPeekView.cornerRadius + WidgetPeekView.inset, 18, "the card's corner runs parallel to the panel's")
 
@@ -2193,8 +2221,11 @@ final class WidgetRosterTests: XCTestCase {
             XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 2,
                 "A reader at the end follows a newly arrived message")
 
+            NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
             scroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
             scroll.reflectScrolledClipView(scroll.contentView)
+            NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: scroll)
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
             try await Task.sleep(for: .milliseconds(100))
             host.layoutSubtreeIfNeeded()
             let readingY = scroll.contentView.bounds.minY

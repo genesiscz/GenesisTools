@@ -252,9 +252,9 @@ public struct LiveWidgetView: View {
                             if model.revealScroll == target { model.revealScroll = nil }
                         }
                         .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
-                            guard section == "Inbox", previous.session == next.session, let id = next.messageID,
+                            guard section == "Inbox", previous.session == next.session, next.messageID != nil,
                                   Self.followsOutgoing(model.outgoing.last) else { return }
-                            ScrollViewPositioning.scroll(reader, to: "outgoing-" + id, anchor: .bottom)
+                            ScrollViewPositioning.scroll(reader, to: "outgoing-end", anchor: .bottom)
                         }
                         // Up and Down move the selection; the list brings the chosen row into view.
                         .onChange(of: model.listKey) { _, _ in
@@ -319,6 +319,7 @@ public struct LiveWidgetView: View {
             ForEach(model.outgoing) { message in
                 outgoing(message).id("outgoing-" + message.id)
             }
+            Color.clear.frame(height: 0).id("outgoing-end")
         }
     }
 
