@@ -1,6 +1,6 @@
-import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
+import { json2md } from "@genesiscz/utils/json2md";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { localTime, type Turn, transcriptMarkdown } from "@genesiscz/utils/transcribe/render";
+import { localTime, type Turn, transcriptBlocks } from "@genesiscz/utils/transcribe/render";
 
 export interface TranscriptDocumentInput {
     record: Pick<MeetingRecord, "id" | "title" | "start" | "project" | "sources">;
@@ -16,28 +16,27 @@ export interface TranscriptDocumentInput {
 /** The `tools meetings transcript` Markdown file: front matter, the title and the turns. */
 export function transcriptDocument(input: TranscriptDocumentInput): string {
     const { record, turns, speakers, unattributed } = input;
-    const parts: string[] = [];
 
-    if (input.frontmatter) {
-        parts.push(
-            renderFrontmatter({
-                title: record.title,
-                meeting: localTime(record.start),
-                ...(record.project ? { project: record.project } : {}),
-                meeting_id: record.id,
-                sources: Object.keys(record.sources),
-                speakers: Object.fromEntries(speakers.map((speaker) => [speaker.name, speaker.lines])),
-                ...(unattributed.length > 0
-                    ? { unattributed: Object.fromEntries(unattributed.map((speaker) => [speaker.name, speaker.lines])) }
-                    : {}),
-            })
-        );
-    }
-
-    parts.push(
-        `# ${record.title || "Untitled meeting"}`,
-        transcriptMarkdown(turns, input.timestamps, { playLink: input.playLink })
-    );
-
-    return `${parts.join("\n\n")}\n`;
+    return json2md(transcriptBlocks(turns, input.timestamps, { playLink: input.playLink }), {
+        title: record.title || "Untitled meeting",
+        ...(input.frontmatter
+            ? {
+                  frontmatter: {
+                      title: record.title,
+                      meeting: localTime(record.start),
+                      ...(record.project ? { project: record.project } : {}),
+                      meeting_id: record.id,
+                      sources: Object.keys(record.sources),
+                      speakers: Object.fromEntries(speakers.map((speaker) => [speaker.name, speaker.lines])),
+                      ...(unattributed.length > 0
+                          ? {
+                                unattributed: Object.fromEntries(
+                                    unattributed.map((speaker) => [speaker.name, speaker.lines])
+                                ),
+                            }
+                          : {}),
+                  },
+              }
+            : {}),
+    });
 }

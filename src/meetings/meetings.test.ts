@@ -2602,7 +2602,7 @@ describe("transcriptDocument", () => {
         );
     });
 
-    test("golden: a meeting with no turns ends in two blank lines after the title", () => {
+    test("golden: a meeting with no turns ends after the title (it used to leave two blank lines)", () => {
         const md = transcriptDocument({
             ...options,
             unattributed: [],
@@ -2627,15 +2627,13 @@ describe("transcriptDocument", () => {
                 "",
                 "# Změny ve wiki: zadání",
                 "",
-                "",
-                "",
             ].join("\n")
         );
     });
 });
 
 describe("showText", () => {
-    test("golden: the facts, context, renames and history of a full record", () => {
+    test("golden: the facts, context, renames and history of a full record (a blank line now follows each heading)", () => {
         const full = meetingRecordSchema.parse({
             ...record,
             project: "shop",
@@ -2685,13 +2683,16 @@ describe("showText", () => {
                 "- recording warning: disk low",
                 "",
                 "## Context",
+                "",
                 "- c1 file: Spec: /tmp/spec.md (the brief)",
                 `- c2 note: ${"x".repeat(79)}…`,
                 "",
                 "## Speaker renames",
+                "",
                 "- Speaker 5 → Carol Example",
                 "",
                 "## History",
+                "",
                 "- 2026-11-02 14:50 set: project shop",
                 "",
             ].join("\n")
