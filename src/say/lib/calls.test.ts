@@ -1,7 +1,11 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type AncestryFrame,
     agentFromAncestry,
@@ -20,6 +24,7 @@ import {
     isAttentionText,
     listCalls,
     NO_OUTCOME_AFTER_MS,
+    openCallsDb,
     recordCall,
     type SayCallOutcome,
     type SayCallRequest,
@@ -544,4 +549,57 @@ describe("characterization: the caller `tools say` records", () => {
         expect(agentFromAncestry(chain)).toBe("codex");
         expect(agentFromAncestry([...chain].reverse())).toBe("claude-code");
     });
+});
+
+test("the on-disk say call row stores caller fields and JSON argv and ancestry", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "say-row-")), "calls.db");
+    const db = openCallsDb(path);
+    const req = request({ id: "call-1", argv: ["hello", "--app", "codex"], text: "hello", app: "codex" });
+    const who = caller({
+        agent: "codex",
+        sessionId: "thread-1",
+        aiAgent: "label",
+        account: "work",
+        ancestry: [{ pid: 10, command: "codex" }],
+    });
+    try {
+        recordCall(db, req, who, "started");
+    } finally {
+        db.close();
+    }
+    const reopened = new Database(path, { readonly: true });
+    try {
+        const row = reopened.query("SELECT * FROM calls WHERE id = ?").get("call-1");
+        expect(row).toEqual({
+            id: "call-1",
+            ts: 1000000,
+            text: "hello",
+            argv: SafeJSON.stringify(["hello", "--app", "codex"]),
+            app: "codex",
+            attention: 0,
+            agent: "codex",
+            session_id: "thread-1",
+            ai_agent: "label",
+            account: "work",
+            surface_id: who.surfaceId,
+            workspace_id: who.workspaceId,
+            tab_id: null,
+            tmux_pane: null,
+            term_program: "ghostty",
+            cwd: who.cwd,
+            caller_pid: 7398,
+            ancestry: SafeJSON.stringify([{ pid: 10, command: "codex" }]),
+            pid: 500,
+            speaker_pid: null,
+            status: "started",
+            provider: null,
+            voice: null,
+            cache_hit: null,
+            fallback_from: null,
+            error: null,
+            finished_at: null,
+        });
+    } finally {
+        reopened.close();
+    }
 });

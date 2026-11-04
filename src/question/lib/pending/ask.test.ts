@@ -3,9 +3,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAsCaller } from "@genesiscz/utils/agent/runtime";
+import { postHandoff } from "@app/handoff/executor";
+import { logFilePathForTs } from "@app/handoff/log-store";
+import { freshEnv } from "@app/handoff/test-utils";
+import { agentFromAncestry, captureCallerContext } from "@app/say/lib/caller";
+import { getAgentRuntimeContext, runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { postDecisions } from "../decisions/store";
 import { openReadModel, queryEntries } from "../read-model";
 import type { QaEntry } from "../types";
 import {
@@ -19,7 +25,7 @@ import {
     postAskForm,
     waitForAskForm,
 } from "./ask";
-import { claimForm, PENDING_MIGRATIONS, releaseClaim } from "./store";
+import { claimForm, openPendingStore, PENDING_MIGRATIONS, releaseClaim } from "./store";
 import { ANSWER_CLAIM_TTL_MS, type AskAnswer, MAX_WAIT_BUDGET_MS } from "./types";
 
 let deps: AskDeps;
@@ -831,6 +837,173 @@ test("invalid or newer form provenance cannot block healthy forms or rewrite the
         });
         expect(db.query("SELECT transcript_anchor_json FROM qa_pending WHERE id = ?").get(broken.id)).toEqual({
             transcript_anchor_json: raw,
+        });
+    }
+});
+
+describe("characterization: the same environment across caller records", () => {
+    const cases = [
+        {
+            name: "Claude",
+            vars: { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "c1" },
+            agent: "claude-code",
+            session: "c1",
+            provider: "claude",
+            label: "label",
+        },
+        {
+            name: "Codex",
+            vars: { CODEX_CI: "1", CODEX_THREAD_ID: "x1" },
+            agent: "codex",
+            session: "x1",
+            provider: "codex",
+            label: null,
+        },
+        {
+            name: "Grok",
+            vars: { GROK_SESSION_ID: "g1" },
+            agent: "grok",
+            session: "g1",
+            provider: "grok",
+            label: "label",
+        },
+        {
+            name: "Copilot",
+            vars: { COPILOT_AGENT_SESSION_ID: "p1" },
+            agent: "copilot",
+            session: "p1",
+            provider: "copilot",
+            label: "label",
+        },
+        { name: "none", vars: {}, agent: "unknown", session: null, provider: undefined, label: "label" },
+    ] as const;
+    const cleared = {
+        CLAUDECODE: undefined,
+        CLAUDE_CODE_SESSION_ID: undefined,
+        CODEX_CI: undefined,
+        CODEX_THREAD_ID: undefined,
+        GROK_SESSION_ID: undefined,
+        COPILOT_AGENT_SESSION_ID: undefined,
+        AI_AGENT: "label",
+        TOOLS_CLAUDE_ACCOUNT: undefined,
+        CMUX_SURFACE_ID: undefined,
+        CMUX_WORKSPACE_ID: undefined,
+        CMUX_TAB_ID: undefined,
+        TMUX_PANE: undefined,
+        TERM_PROGRAM: undefined,
+    };
+    const layout = {
+        cwd: process.cwd(),
+        project: "fixture",
+        repoRoot: "/fixture/repo",
+        isWorktree: false,
+        worktreePath: null,
+        branch: "fixture-branch",
+        commitSha: "abc123",
+        commitMessage: null,
+        sessionTitle: null,
+    };
+    for (const row of cases) {
+        test(`${row.name}: say, question, decision and handoff record the same caller environment`, async () => {
+            const vars = { ...cleared, ...row.vars };
+            await env.testing.withOverrides(vars, async () => {
+                const runtime = getAgentRuntimeContext(layout, vars);
+                const say = await captureCallerContext();
+                expect(say).toMatchObject({
+                    agent: row.agent === "unknown" ? agentFromAncestry(say.ancestry) : row.agent,
+                    sessionId: row.session,
+                    aiAgent: "label",
+                    cwd: process.cwd(),
+                });
+                const formPath = join(scratch, `${row.name}-forms.db`);
+                const formDb = openPendingStore(formPath);
+                const form = await postAskForm(
+                    { projectPath: "/fixture/repo", items: [{ promptMarkdown: "Ready?" }] },
+                    { ...deps, db: formDb, ambient: true, env: vars, ctx: layout }
+                );
+                const expectedPoster = {
+                    ...layout,
+                    agent: row.agent,
+                    sessionId: row.session,
+                    isInAgent: row.agent !== "unknown",
+                    aiAgent: row.label,
+                };
+                expect(runtime).toEqual(expectedPoster);
+                expect(form.poster).toEqual(expectedPoster);
+                formDb.close();
+                const reopened = new Database(formPath, { readonly: true });
+                const saved = reopened.query("SELECT poster_json FROM qa_pending WHERE id = ?").get(form.id) as {
+                    poster_json: string;
+                };
+                expect(SafeJSON.parse(saved.poster_json, { strict: true })).toEqual(expectedPoster);
+                reopened.close();
+                const decisionFile = join(scratch, `${row.name}-decisions.jsonl`);
+                const [decision] = await postDecisions(
+                    decisionFile,
+                    join(scratch, `${row.name}-events.jsonl`),
+                    { decisions: [{ prompt: "Ready?", options: ["yes"] }] },
+                    { env: vars, ctx: layout, now: () => "2026-11-04T12:00:00.000Z" }
+                );
+                expect(decision).toMatchObject({
+                    sessionId: row.session ?? "unknown",
+                    cwd: layout.cwd,
+                    repoRoot: layout.repoRoot,
+                    project: layout.project,
+                    branch: layout.branch,
+                    commitSha: layout.commitSha,
+                    isWorktree: false,
+                    worktreePath: null,
+                });
+                expect(decision?.provider).toBe(row.provider);
+                expect(decision?.aiAgent).toBe(row.label ?? undefined);
+                const receivedAt = Date.parse("2026-11-04T12:00:00.000Z");
+                const anchor = row.session
+                    ? { kind: "receipt-time", provider: row.provider, sessionId: row.session, receivedAt }
+                    : { kind: "unanchored", receivedAt };
+                expect(SafeJSON.parse(readFileSync(decisionFile, "utf8"), { strict: true })).toEqual({
+                    id: `d_1_${row.session ?? "unknown"}`,
+                    sessionId: row.session ?? "unknown",
+                    number: 1,
+                    prompt: "Ready?",
+                    options: ["yes"],
+                    ...(row.provider ? { provider: row.provider } : {}),
+                    cwd: layout.cwd,
+                    repoRoot: layout.repoRoot,
+                    branch: layout.branch,
+                    project: layout.project,
+                    commitSha: layout.commitSha,
+                    ...(row.label ? { aiAgent: row.label } : {}),
+                    isWorktree: false,
+                    worktreePath: null,
+                    transcriptAnchor: anchor,
+                    state: "open",
+                    createdTs: "2026-11-04T12:00:00.000Z",
+                    updatedTs: "2026-11-04T12:00:00.000Z",
+                });
+                const handoffEnv = freshEnv();
+                const now = "2026-11-04T12:00:00.000Z";
+                const { handoff } = postHandoff(
+                    { title: "Fixture", tasks: [{ text: "One" }] },
+                    { base: handoffEnv.base, dbPath: handoffEnv.dbPath, ctx: layout, nowIso: () => now }
+                );
+                const expectedBy = {
+                    sessionId: row.session,
+                    sessionTitle: null,
+                    agent: row.agent,
+                    aiAgent: row.label,
+                    branch: layout.branch,
+                    cwd: layout.cwd,
+                    repoRoot: layout.repoRoot,
+                    project: layout.project,
+                    commitSha: layout.commitSha,
+                    isWorktree: false,
+                };
+                expect(handoff.postedByContext).toEqual(expectedBy);
+                const event = SafeJSON.parse(readFileSync(logFilePathForTs(now, handoffEnv.base), "utf8"), {
+                    strict: true,
+                });
+                expect(event.by).toEqual(expectedBy);
+            });
         });
     }
 });

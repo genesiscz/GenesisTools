@@ -2714,3 +2714,35 @@ describe("rm request notice", () => {
         expect(other ? await rmRequestNotice(other, deps) : "missing").toBeNull();
     });
 });
+
+it("classifies Copilot hook spellings and leaves turn and parent agent ids in raw", () => {
+    const cases = [
+        {
+            raw: {
+                hookEventName: "subagentStop",
+                sessionId: "s",
+                agentId: "child",
+                parentAgentId: "parent",
+                turnId: "turn",
+            },
+            harness: "grok",
+        },
+        {
+            raw: {
+                hook_event_name: "SubagentStop",
+                session_id: "s",
+                agent_id: "child",
+                parent_agent_id: "parent",
+                turn_id: "turn",
+            },
+            harness: "claude",
+        },
+    ] as const;
+    for (const { raw, harness } of cases) {
+        const parsed = parseHookPayload(SafeJSON.stringify(raw));
+        expect(detectHarness(raw)).toBe(harness);
+        expect(parsed).toMatchObject({ harness, sessionId: "s", agentId: "child", raw });
+        expect(parsed).not.toHaveProperty("turnId");
+        expect(parsed).not.toHaveProperty("parentAgentId");
+    }
+});

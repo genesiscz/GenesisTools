@@ -2,8 +2,17 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { appendOpenRecord, classifyTarget, type OpenRecord, openArgv, readOpenRecords } from "./opens";
+import {
+    appendOpenRecord,
+    classifyTarget,
+    type OpenRecord,
+    openAndLog,
+    openArgv,
+    openLogPath,
+    readOpenRecords,
+} from "./opens";
 
 const dir = mkdtempSync(join(tmpdir(), "gt-test-open-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -62,4 +71,50 @@ describe("tools open", () => {
         expect(readOpenRecords({}, log).map((one) => one.caller.sessionId)).toEqual(["bbbb-2", "aaaa-1"]);
         expect(readOpenRecords({ sessionId: "aaaa" }, log).map((one) => one.at)).toEqual(["2026-03-01T10:00:00.000Z"]);
     });
+});
+
+it("gathers the caller and writes an openAndLog row without opening a target", async () => {
+    const home = mkdtempSync(join(tmpdir(), "open-caller-"));
+    await env.testing.withOverrides(
+        {
+            GENESIS_TOOLS_HOME: home,
+            CLAUDECODE: undefined,
+            CLAUDE_CODE_SESSION_ID: undefined,
+            CODEX_CI: "1",
+            CODEX_THREAD_ID: "thread-1",
+            GROK_SESSION_ID: undefined,
+            COPILOT_AGENT_SESSION_ID: undefined,
+            AI_AGENT: "label",
+        },
+        async () => {
+            const result = await openAndLog({ targets: [], why: "fixture" });
+            expect(result.argv).toEqual(["open"]);
+            expect(result.targets).toEqual([]);
+            expect(result.caller).toMatchObject({
+                agent: "codex",
+                sessionId: "thread-1",
+                aiAgent: null,
+                isInAgent: true,
+            });
+            expect(Object.keys(result.caller).sort()).toEqual(
+                [
+                    "agent",
+                    "sessionId",
+                    "isInAgent",
+                    "aiAgent",
+                    "sessionTitle",
+                    "project",
+                    "repoRoot",
+                    "cwd",
+                    "isWorktree",
+                    "worktreePath",
+                    "branch",
+                    "commitSha",
+                    "commitMessage",
+                ].sort()
+            );
+            const stored = SafeJSON.parse(readFileSync(openLogPath(), "utf8"), { strict: true });
+            expect(stored).toEqual(result);
+        }
+    );
 });

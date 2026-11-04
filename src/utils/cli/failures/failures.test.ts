@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
@@ -685,6 +685,55 @@ describe("characterization: the caller a failure record names", () => {
     });
 
     describe("failureCaller", () => {
+        it("falls back to AI_AGENT for Codex and omits cwd from the saved caller", () => {
+            const ctx = context({ agent: "codex", aiAgent: null, cwd: "/fixture/repo/sub" });
+            const caller = failureCaller({ context: ctx, processEnv: { AI_AGENT: "label" }, home: scratch() });
+            expect(caller.aiAgent).toBe("label");
+            expect(caller).not.toHaveProperty("cwd");
+            const dir = scratch();
+            const failure: ToolFailure = {
+                v: 1,
+                id: "failure-1",
+                at: "2026-11-04T12:00:00.000Z",
+                kind: "error",
+                tool: "fixture",
+                command: null,
+                argv: [],
+                exitCode: 1,
+                message: "failed",
+                errorName: null,
+                stack: null,
+                stderrTail: null,
+                fatal: false,
+                durationMs: 3,
+                pid: 1,
+                ppid: 2,
+                cwd: ctx.cwd,
+                traceId: null,
+                toolsRoot: "/fixture/tools",
+                caller,
+            };
+            appendFailure(failure, dir);
+            const stored = SafeJSON.parse(
+                readFileSync(failureLogPath(formatLocalDate(new Date(failure.at)), dir), "utf8"),
+                { strict: true }
+            );
+            expect(stored).toEqual(failure);
+            expect(stored.caller).toEqual({
+                agent: "codex",
+                sessionId: ctx.sessionId,
+                sessionTitle: "Fixture session",
+                model: null,
+                effort: null,
+                aiAgent: "label",
+                project: "FixtureProject",
+                repoRoot: "/fixture/FixtureProject",
+                branch: "feat/fixture",
+                commitSha: "abc1234",
+                worktreePath: null,
+            });
+            expect(stored.caller).not.toHaveProperty("cwd");
+        });
         it("reads the model of a Claude session from the newest assistant row of its transcript", () => {
             const config = scratch();
             const ctx = context({});
