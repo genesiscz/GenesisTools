@@ -88,6 +88,7 @@ private struct InspectorView: View {
                 case .style: StyleInspector(model: model)
                 case .audio: AudioInspector(model: model)
                 case .export: ExportInspector(model: model)
+                case .hide: HideInspector(model: model)
                 }
             }
             .padding(18)
@@ -478,6 +479,110 @@ private struct StyleInspector: View {
     private static func swiftColor(_ hex: String) -> Color {
         let color = Looks.color(hex)
         return Color(red: color.red, green: color.green, blue: color.blue)
+    }
+}
+
+/// The parts of the picture to hide: a list, and for the selected one a frame to drag it on, its size, style and time.
+private struct HideInspector: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let list = model.project.redactions ?? []
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Hide parts").font(.system(size: 15, weight: .semibold))
+            Text("Blur, pixelate or black out a part of the picture for a time: an address, a token, a notification. It moves with a zoom.")
+                .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            WideButton(title: "Hide a Part at the Playhead", systemImage: "eye.slash") { model.addRedaction() }
+                .accessibilityIdentifier("recorder.hide.add")
+            ForEach(list) { redaction in
+                let selected = model.selectedRedaction == redaction.id
+                Button { model.selectedRedaction = selected ? nil : redaction.id } label: {
+                    HStack {
+                        Image(systemName: selected ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                        Text(verbatim: "\(formatClock(redaction.startUs, tenths: true)) – \(formatClock(redaction.endUs, tenths: true))")
+                            .font(.system(size: 12.5).monospacedDigit())
+                        Spacer()
+                        Text(redaction.style.rawValue.capitalized).font(.system(size: 12)).foregroundStyle(RecorderPalette.dim)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverRow())
+                .accessibilityLabel("Hidden part from \(formatClock(redaction.startUs, tenths: true)), \(redaction.style.rawValue)")
+                if selected { RedactionEditor(model: model, redaction: redaction) }
+            }
+        }
+    }
+}
+
+private struct RedactionEditor: View {
+    @Bindable var model: EditorModel
+    let redaction: EditProject.Redaction
+
+    var body: some View {
+        let id = redaction.id
+        VStack(alignment: .leading, spacing: 8) {
+            RedactionPicker(model: model, redaction: redaction)
+            GenSegmentedTabs("Style", items: EditProject.RedactionStyle.allCases.map { .init($0, $0.rawValue.capitalized) },
+                             selection: Binding(get: { redaction.style }, set: { value in model.updateRedaction(id) { $0.style = value } }),
+                             minSegmentWidth: 70, identifier: "recorder.hide.style")
+            SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
+            Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)
+            SectionLabel(text: "Height", value: "\(Int((redaction.height * 100).rounded()))%")
+            Slider(value: Binding(get: { redaction.height }, set: { value in model.updateRedaction(id) { $0.height = (value * 200).rounded() / 200 } }), in: 0.02...1)
+            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(redaction.endUs - redaction.startUs) / 1_000_000))
+            Slider(value: Binding(get: { Double(redaction.endUs - redaction.startUs) / 1_000_000 }, set: { value in
+                model.updateRedaction(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
+            }), in: 0.2...max(0.3, Double(model.project.source.durationUs - redaction.startUs) / 1_000_000))
+            WideButton(title: "Delete", systemImage: "trash", role: .destructive) { model.deleteRedaction(id) }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
+    }
+}
+
+/// The source frame at the redaction's start with its rectangle on it; dragging moves the rectangle.
+private struct RedactionPicker: View {
+    @Bindable var model: EditorModel
+    let redaction: EditProject.Redaction
+    @State private var grab: CGSize?
+
+    var body: some View {
+        let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
+        GeometryReader { geometry in
+            let size = geometry.size
+            let rect = CGRect(x: redaction.x * size.width, y: redaction.y * size.height,
+                              width: redaction.width * size.width, height: redaction.height * size.height)
+            ZStack(alignment: .topLeading) {
+                if let tile = model.filmstrip.tile(atSource: redaction.startUs) {
+                    Image(decorative: tile.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
+                        .frame(width: size.width, height: size.height).clipped()
+                } else {
+                    Color.black
+                }
+                Rectangle().fill(Color.black.opacity(0.45))
+                    .frame(width: rect.width, height: rect.height)
+                    .overlay(Rectangle().strokeBorder(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3])))
+                    .offset(x: rect.minX, y: rect.minY)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                // The rectangle keeps the offset of the point grabbed; a press outside it centres it there.
+                let offset = grab ?? (rect.contains(value.startLocation)
+                    ? CGSize(width: value.startLocation.x - rect.minX, height: value.startLocation.y - rect.minY)
+                    : CGSize(width: rect.width / 2, height: rect.height / 2))
+                grab = offset
+                model.updateRedaction(redaction.id) {
+                    $0.x = Double((value.location.x - offset.width) / size.width)
+                    $0.y = Double((value.location.y - offset.height) / size.height)
+                }
+            }.onEnded { _ in grab = nil })
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityLabel("Hidden part position")
+        .accessibilityIdentifier("recorder.hide.position")
     }
 }
 

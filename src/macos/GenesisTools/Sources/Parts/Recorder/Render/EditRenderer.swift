@@ -66,6 +66,8 @@ final class ZoomState: @unchecked Sendable {
         var frame: EditProject.Frame?
         var caption: CaptionMark?
         var key: KeyMark?
+        /// The redactions active at the frame's source time.
+        var redactions: [EditProject.Redaction] = []
     }
 
     func look(atOutput outUs: Int64) -> FrameLook {
@@ -93,7 +95,8 @@ final class ZoomState: @unchecked Sendable {
                          key: project.keys.flatMap { settings in
                              guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
-                         })
+                         },
+                         redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs })
     }
 
     /// The cursor, averaged over ±0.7 s and moved into the zoomed view; the centre without a track or a cover fit.
@@ -226,7 +229,7 @@ struct EditRenderer {
             let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded())
             let look = zoom.look(atOutput: outUs)
             let view = look.view
-            var result = image
+            var result = Looks.redact(look.redactions, on: image).cropped(to: extent)
             if let clicks = look.clicks, !look.marks.isEmpty {
                 result = Looks.drawClicks(look.marks, on: result, settings: clicks).cropped(to: extent)
             }

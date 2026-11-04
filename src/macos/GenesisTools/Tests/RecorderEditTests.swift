@@ -209,6 +209,27 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(track.key(atMs: 2700, durationMs: 1200))
     }
 
+    func testARedactionCoversOnlyItsRectangleOfTheSource() throws {
+        let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let redaction = EditProject.Redaction(id: "r", startUs: 0, endUs: 1, x: 0.25, y: 0, width: 0.5, height: 0.5, style: .black)
+        let output = Looks.redact([redaction], on: white)
+        let context = CIContext()
+        func gray(_ x: Int, _ yFromTop: Int) -> UInt8 {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            context.render(output, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: 100 - 1 - yFromTop, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            return pixel[0]
+        }
+        XCTAssertLessThan(gray(100, 10), 30)
+        XCTAssertGreaterThan(gray(20, 10), 240)
+        XCTAssertGreaterThan(gray(100, 80), 240)
+        var project = EditProject(source: .init(video: "/m.mp4", durationUs: 1_000_000, width: 200, height: 100),
+                                  clips: [.init(id: "c", fromUs: 0, toUs: 1_000_000)])
+        project.redactions = [EditProject.Redaction(id: "r1", startUs: 0, endUs: 500_000, x: 0.1, y: 0.1, width: 0.2, height: 0.2, style: .pixelate)]
+        let decoded = try EditProject.decode(JSONEncoder().encode(project))
+        XCTAssertEqual(decoded.redactions, project.redactions)
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))

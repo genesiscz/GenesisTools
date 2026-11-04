@@ -17,13 +17,14 @@ enum EditorSelection: Equatable {
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case zoom, clip, style, audio, export
+    case zoom, clip, hide, style, audio, export
     var id: String { rawValue }
 
     var symbol: String {
         switch self {
         case .zoom: "plus.magnifyingglass"
         case .clip: "scissors"
+        case .hide: "eye.slash"
         case .style: "paintpalette"
         case .audio: "speaker.wave.2"
         case .export: "square.and.arrow.up"
@@ -34,6 +35,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .zoom: "Zoom"
         case .clip: "Clip and speed"
+        case .hide: "Hide parts"
         case .style: "Style"
         case .audio: "Audio"
         case .export: "Export"
@@ -213,6 +215,48 @@ final class EditorModel {
         }
         selection = .zoom(id)
         tab = .zoom
+        apply(next, rebuildMovie: false)
+    }
+
+    /// The redaction the Hide tab edits.
+    var selectedRedaction: String?
+
+    /// Hides the middle of the picture for 3 s from the playhead; the Hide tab then moves and sizes it.
+    func addRedaction() {
+        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
+        let end = min(project.source.durationUs, start + 3_000_000)
+        guard end - start >= 100_000 else {
+            show("The playhead is at the end of the recording; move it back to hide a part.", error: false)
+            return
+        }
+        let id = "r" + UUID().uuidString.prefix(8).lowercased()
+        var next = project
+        next.redactions = (next.redactions ?? []) + [EditProject.Redaction(id: id, startUs: start, endUs: end, x: 0.35, y: 0.42,
+                                                                           width: 0.3, height: 0.16)]
+        selectedRedaction = id
+        tab = .hide
+        apply(next, rebuildMovie: false)
+    }
+
+    func updateRedaction(_ id: String, _ change: (inout EditProject.Redaction) -> Void) {
+        guard var list = project.redactions, let index = list.firstIndex(where: { $0.id == id }) else { return }
+        change(&list[index])
+        let item = list[index]
+        list[index].width = min(max(0.01, item.width), 1)
+        list[index].height = min(max(0.01, item.height), 1)
+        list[index].x = min(max(0, item.x), 1 - list[index].width)
+        list[index].y = min(max(0, item.y), 1 - list[index].height)
+        list[index].endUs = max(list[index].startUs + 100_000, min(project.source.durationUs, list[index].endUs))
+        var next = project
+        next.redactions = list
+        apply(next, rebuildMovie: false)
+    }
+
+    func deleteRedaction(_ id: String) {
+        var next = project
+        next.redactions = (next.redactions ?? []).filter { $0.id != id }
+        if next.redactions?.isEmpty == true { next.redactions = nil }
+        if selectedRedaction == id { selectedRedaction = nil }
         apply(next, rebuildMovie: false)
     }
 

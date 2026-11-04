@@ -24,6 +24,8 @@ struct EditProject: Codable, Equatable {
     var captions: Captions?
     /// The ⌘/⌃ shortcuts the recording kept, drawn as they were pressed; nil is off.
     var keys: Keys?
+    /// Parts of the source picture hidden for a time; nil is none. Optional, so an older file decodes.
+    var redactions: [Redaction]?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -108,6 +110,23 @@ struct EditProject: Codable, Equatable {
         /// The text height, as a fraction of the output's short side.
         var size = 0.038
         var position: CaptionPosition = .bottom
+    }
+
+    enum RedactionStyle: String, Codable, CaseIterable {
+        case blur, pixelate, black
+    }
+
+    /// A rectangle of the SOURCE picture (0...1 from its top left) hidden from `startUs` to `endUs`; it moves with a
+    /// zoom, because it is drawn before it.
+    struct Redaction: Codable, Equatable, Identifiable {
+        var id: String
+        var startUs: Int64
+        var endUs: Int64
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
+        var style: RedactionStyle = .blur
     }
 
     struct Keys: Codable, Equatable {
