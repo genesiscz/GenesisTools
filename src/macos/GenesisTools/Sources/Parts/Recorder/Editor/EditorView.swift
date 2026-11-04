@@ -870,6 +870,12 @@ private struct TextInspector: View {
                     .disabled(model.isMarkingClicks)
                     .instantTooltip("A 1.2 s circle at each of the \(Plural.count(clicks, "recorded click")) (a double click gets one); a click that has one already is left alone, and ⌘Z takes them all back")
                     .accessibilityIdentifier("recorder.shape.markClicks")
+                let circles = model.clickCircles.count
+                if circles > 0 {
+                    GhostButton("Remove \(Plural.count(circles, "Click Circle"))", symbol: "trash",
+                                tooltip: "Takes out the circles at the clicks in one step; your other shapes stay (⌘Z puts them back)",
+                                identifier: "recorder.shape.removeClickCircles") { model.removeClickCircles() }
+                }
             }
             // Texts and shapes in one list in time order; a kind with more than one gets numbers ("Box 2").
             let shapes = model.project.shapes ?? []

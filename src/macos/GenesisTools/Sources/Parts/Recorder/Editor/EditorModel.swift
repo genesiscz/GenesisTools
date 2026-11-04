@@ -1145,6 +1145,26 @@ final class EditorModel {
 
     private(set) var isMarkingClicks = false
 
+    /// The circles Circle Every Click made: a circle that starts within 0.1 s of a recorded click.
+    var clickCircles: [EditProject.Shape] {
+        let clicks = (cursor?.clicks ?? []).map { Int64(($0.ms * 1000).rounded()) }
+        return (project.shapes ?? []).filter { shape in
+            shape.kind == .circle && clicks.contains { abs($0 - shape.startUs) <= 100_000 }
+        }
+    }
+
+    /// Takes every click circle out in one undo step; other shapes stay.
+    func removeClickCircles() {
+        let ids = Set(clickCircles.map(\.id))
+        guard !ids.isEmpty else { return }
+        var next = project
+        let rest = (next.shapes ?? []).filter { !ids.contains($0.id) }
+        next.shapes = rest.isEmpty ? nil : rest
+        if let selected = selectedShape, ids.contains(selected) { selection = .none }
+        apply(next, rebuildMovie: false)
+        show("Removed \(Plural.count(ids.count, "click circle")); ⌘Z puts them back.", error: false)
+    }
+
     /// A circle at every recorded click with `tools recorder apply … annotateClicks` (the REPL's annotateClicks); the
     /// file watcher brings the shapes in, one ⌘Z away.
     func markClicks() {
