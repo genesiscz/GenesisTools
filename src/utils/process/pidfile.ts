@@ -461,6 +461,22 @@ export interface ClaimPidFileOptions {
     retryMs?: number;
 }
 
+/** The `wx` create of this process's record; its folder is made only when it is missing. */
+async function createPidFile(path: string): Promise<void> {
+    const content = serializePidRecord(buildPidRecord());
+
+    try {
+        await writeFile(path, content, { flag: "wx" });
+    } catch (err) {
+        if (errnoCode(err) !== "ENOENT") {
+            throw err;
+        }
+
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, content, { flag: "wx" });
+    }
+}
+
 function reclaimableByDefault(state: PidFileState): boolean {
     return !((state.status === "live" || state.status === "unverified") && state.pid !== process.pid);
 }
@@ -472,11 +488,10 @@ function reclaimableByDefault(state: PidFileState): boolean {
  */
 export async function claimPidFile(path: string, opts: ClaimPidFileOptions = {}): Promise<PidClaim> {
     const reclaimable = opts.reclaimable ?? reclaimableByDefault;
-    await mkdir(dirname(path), { recursive: true });
 
     for (let attempt = 1; attempt <= (opts.attempts ?? 3); attempt++) {
         try {
-            await writeFile(path, serializePidRecord(buildPidRecord()), { flag: "wx" });
+            await createPidFile(path);
             return { status: "claimed", tookOver: false };
         } catch (err) {
             if (errnoCode(err) !== "EEXIST") {
