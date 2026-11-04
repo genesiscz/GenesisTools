@@ -74,6 +74,41 @@ public func focusDisplay(window: CGRect?, mouse: CGPoint?, displays: [DisplayFra
     return displays.first?.id
 }
 
+/// `--follow-focus` across moves: the display the pointer is on and the display of the focused window, each read every
+/// tick. The one that moved last wins, so the recording jumps to a screen when the pointer goes there or when a window
+/// on it takes the focus (⌘Tab, a click), and stays put while neither moves.
+public struct FollowState: Equatable {
+    public private(set) var pointer: CGDirectDisplayID?
+    public private(set) var focus: CGDirectDisplayID?
+    public private(set) var chosen: CGDirectDisplayID?
+
+    public init() {}
+
+    /// The display to record after this tick's reads; the first tick takes the pointer's display, else the focus's.
+    public mutating func next(pointer newPointer: CGDirectDisplayID?, focus newFocus: CGDirectDisplayID?) -> CGDirectDisplayID? {
+        defer {
+            pointer = newPointer
+            focus = newFocus
+        }
+
+        if chosen == nil {
+            chosen = newPointer ?? newFocus
+        } else if let newPointer, newPointer != pointer {
+            chosen = newPointer
+        } else if let newFocus, newFocus != focus {
+            chosen = newFocus
+        }
+
+        return chosen
+    }
+}
+
+/// The display a point is on, or nil when it is on none (global CoreGraphics coordinates).
+public func displayUnder(_ point: CGPoint?, displays: [DisplayFrame]) -> CGDirectDisplayID? {
+    guard let point else { return nil }
+    return displays.first(where: { $0.bounds.contains(point) })?.id
+}
+
 /// Scales `size` down so its longer side is at most `maxLongSide` pixels, keeping the aspect ratio; `even` rounds both
 /// sides down to even numbers, as H.264 needs.
 public func capLongSide(_ size: CGSize, maxLongSide: Int?, even: Bool) -> CGSize {

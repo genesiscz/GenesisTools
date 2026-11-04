@@ -76,7 +76,8 @@ export function segmentCaptureSpec({
         spec = {
             mode: "screen",
             backend: "native",
-            screenIndex: target.screenIndex,
+            // A following recording picks its own start display (the pointer's) and switches live.
+            ...(target.follow ? { followFocus: true } : { screenIndex: target.screenIndex }),
             duration: Number(duration),
             codec: "h264",
             videoOut: output,

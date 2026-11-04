@@ -25,6 +25,8 @@ export const recordingTargetSchema = z.discriminatedUnion("kind", [
         /** NSScreen order, as `ax-tool screens` lists it. */
         screenIndex: z.number().int().nonnegative(),
         name: z.string().optional(),
+        /** Follow the pointer and the focus to other displays while recording (the start is the pointer's display). */
+        follow: z.boolean().optional(),
     }),
 ]);
 

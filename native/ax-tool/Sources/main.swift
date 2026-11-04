@@ -84,7 +84,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
                       keep-NNNN.png frames, contact.png, metadata.json; JSON result in the capture-runner shape
                       screen mode: [--display-id ID] (wins over --screen-index) | [--follow-focus] (switches live to the
-                      display holding the focused window, else the one under the mouse; checked every 250 ms)
+                      display the pointer or the focused window moved to, whichever moved last; checked every 250 ms)
                       [--max-long-side PX] [--quiet-ms MS] [--heartbeat-sec S] [--max-frames N] [--max-mb N]
                       frames carry displayId and motionBoxes [[x,y,w,h]]; an early stop prints the frames with
                       endedEarly display-removed|stream-error|stopped; errors carry code display-missing|no-permission|

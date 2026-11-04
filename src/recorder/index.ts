@@ -128,10 +128,11 @@ async function targetOf(flags: StartFlags): Promise<RecordingTarget> {
         return { kind: "display", screenIndex: bounded(flags.display, "--display", 0, 16) ?? 0 };
     }
 
+    // By default the recording follows the screen in use: the one the pointer or the focused window moved to last.
     const targets = await listRecordingTargets();
     const main = targets.displays.find((display) => display.isPrimary) ?? targets.displays[0];
     return main
-        ? { kind: "display", screenIndex: main.index }
+        ? { kind: "display", screenIndex: main.index, follow: true }
         : (defaultRecordingTarget(targets, new Set()) ?? { kind: "display", screenIndex: 0 });
 }
 
@@ -184,7 +185,10 @@ program
     .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
     .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
     .option("--fps <n>", "frames per second while something moves, 1–120", "60")
-    .option("--display <index>", "record this display (NSScreen order; default the main display)")
+    .option(
+        "--display <index>",
+        "record only this display (NSScreen order); by default the recording follows the pointer and the focus to whichever screen is in use"
+    )
     .option("--window <ids>", "record these windows (CG window ids, comma separated)")
     .option("--app <name>", "record this app's windows (name, bundle id or pid)")
     .option("--title <text>", "the recording's title in the library and the menu")

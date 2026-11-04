@@ -46,7 +46,8 @@ struct RecordOptions {
     let maxFrames: Int
     /// `--display-id`: the CGDirectDisplayID to record in screen mode; wins over `--screen-index`.
     let displayID: CGDirectDisplayID?
-    /// `--follow-focus`: record the display holding the frontmost app's focused window, switching live.
+    /// `--follow-focus`: record the display the pointer moved to or the focused window moved to, whichever moved last,
+    /// switching live.
     let followFocus: Bool
     /// `--max-long-side`: the longer side of a kept frame in pixels, at most.
     let maxLongSide: Int?
@@ -969,7 +970,11 @@ func cmdCaptureScreen() {
     default:
         if let id = options.displayID {
             display = displayForID(id)
-        } else if options.followFocus, let id = currentFocusDisplay() {
+        } else if options.followFocus,
+                  let id = displayUnder(CGEvent(source: nil)?.location,
+                                        displays: activeDisplays().map { DisplayFrame(id: $0.id, bounds: $0.bounds) })
+                      ?? currentFocusDisplay() {
+            // It starts on the screen with the pointer, as the follow rule's first tick does.
             display = displayGeometry(id)
         } else {
             display = displayForScreenIndex(options.screenIndex ?? 0)
@@ -1301,6 +1306,8 @@ private final class ScreenStreamHost {
     }
 
     private var excludedWindowIDs: Set<CGWindowID> { indicator.windowIDs.union(options.selection.excludedWindowIDs) }
+    /// Which display `--follow-focus` records: the pointer's or the focused window's, whichever moved last.
+    private var followState = FollowState()
 
     /// One 250 ms check of a screen recording. False ends the recording.
     func tick() -> Bool {
@@ -1464,7 +1471,10 @@ private final class ScreenStreamHost {
 
     @available(macOS 14.0, *)
     private func follow() {
-        guard !switching, let target = currentFocusDisplay() else { return }
+        guard !switching else { return }
+        let displays = activeDisplays().map { DisplayFrame(id: $0.id, bounds: $0.bounds) }
+        let pointer = displayUnder(CGEvent(source: nil)?.location, displays: displays)
+        guard let target = followState.next(pointer: pointer, focus: currentFocusDisplay()) else { return }
         let lost = displayLost || !displayIsActive(display.id)
         if recorder.failure != nil {
             if lost {
