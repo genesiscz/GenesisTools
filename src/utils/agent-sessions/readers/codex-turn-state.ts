@@ -204,3 +204,17 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         calls,
     });
 }
+
+/**
+ * The Codex reader's `midWork` member, from the turn snapshot of the tail's records: the agent works while its newest
+ * turn has not ended. A turn that ends on a question is not mid-work, unlike Claude's open question tool call, because
+ * a rollout records the question as the turn's end. No records at all counts as working, as Claude's does.
+ */
+export function codexMidWork(records: readonly JsonRecord[]): boolean {
+    if (records.length === 0) {
+        return true;
+    }
+
+    const snapshot = codexTurnState({ records, lastModified: 0, now: 0, stallTimeoutMs: Number.POSITIVE_INFINITY });
+    return !snapshot.turnEnded && !snapshot.interrupted;
+}

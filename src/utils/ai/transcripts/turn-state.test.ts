@@ -802,3 +802,47 @@ describe("permission prompts and the question call", () => {
         expect(readTurnState("grok", other, options)?.asksQuestion).toBe(false);
     });
 });
+
+describe("NativeSessionReader.midWork", () => {
+    const midWork = (provider: "claude" | "codex" | "grok", records: Record<string, unknown>[]) =>
+        resolveHistoryProvider(provider).reader.midWork(records);
+
+    it("Claude: a tool call or a prompt is mid-work, a finished reply and an approved shutdown are not", () => {
+        expect(midWork("claude", [])).toBe(true);
+        expect(midWork("claude", [claudeUser(0)])).toBe(true);
+        expect(midWork("claude", [claudeUser(0), claudeAssistant(1, [{ type: "tool_use", name: "Bash" }], null)])).toBe(
+            true
+        );
+        expect(midWork("claude", [claudeUser(0), claudeAssistant(1, [{ type: "text", text: "ok" }], "end_turn")])).toBe(
+            false
+        );
+        // A progress row after the finished reply does not say where the agent is.
+        expect(
+            midWork("claude", [
+                claudeUser(0),
+                claudeAssistant(1, [{ type: "text", text: "ok" }], "end_turn"),
+                { type: "progress", timestamp: iso(2) },
+            ])
+        ).toBe(false);
+        const shutdown = {
+            type: "tool_use",
+            name: "SendMessage",
+            input: { message: { type: "shutdown_response", approve: true } },
+        };
+        expect(midWork("claude", [claudeUser(0), claudeAssistant(1, [shutdown], "tool_use")])).toBe(false);
+    });
+
+    it("Codex: mid-work until task_complete", () => {
+        const started = codexLine(0, "event_msg", { type: "task_started" });
+        expect(midWork("codex", [started, codexLine(1, "response_item", { type: "reasoning" })])).toBe(true);
+        expect(
+            midWork("codex", [started, codexLine(2, "event_msg", { type: "task_complete", last_agent_message: "x" })])
+        ).toBe(false);
+    });
+
+    it("Grok: mid-work until turn_completed", () => {
+        const prompt = grokLine(0, "user_message_chunk", { content: { type: "text", text: "go" } });
+        expect(midWork("grok", [prompt, grokLine(1, "tool_call")])).toBe(true);
+        expect(midWork("grok", [prompt, grokLine(2, "turn_completed", { stop_reason: "end_turn" })])).toBe(false);
+    });
+});

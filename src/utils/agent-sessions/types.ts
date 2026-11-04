@@ -420,6 +420,14 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * same function is each harness's `HookFacts.currentModel`, so a hook reads it without loading a reader.
      */
     currentModel(transcriptPath: string): string | null;
+    /**
+     * Whether the agent was still working when its transcript was last written, from the parsed records of the
+     * transcript's tail (oldest first). An empty list counts as working: the file holds only a spawn with no answer
+     * yet. Claude reads its last conversation record (`readers/claude-mid-work.ts`; a teammate that approved its
+     * shutdown is done); Codex and Grok ask their turn-state dialect whether the newest turn has ended. The sub-agent
+     * listing asks here and never parses a record itself.
+     */
+    midWork(records: readonly Record<string, unknown>[]): boolean;
     /** Native data for session insights, or null when the provider has no additional data. */
     scanInsights: ((text: string) => { native: NativeScan | null; defaultModel: string | null }) | null;
     /**

@@ -5,6 +5,7 @@ import { createClaudeHistoryOperations } from "./readers/claude";
 import { claudeAnalysis } from "./readers/claude-analysis";
 import { claudeDialog } from "./readers/claude-dialog";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { claudeMidWork } from "./readers/claude-mid-work";
 import { claudeClassifyPath } from "./readers/claude-paths";
 import { readClaudeStatistics } from "./readers/claude-statistics";
 import { createCodexHistoryOperations } from "./readers/codex";
@@ -13,11 +14,13 @@ import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { importNativeCodexSession } from "./readers/codex-import";
 import { codexClassifyPath } from "./readers/codex-locate";
 import { readCodexStatistics } from "./readers/codex-statistics";
+import { codexMidWork } from "./readers/codex-turn-state";
 import { createGrokHistoryOperations } from "./readers/grok";
 import { grokAnalysis } from "./readers/grok-analysis";
 import { grokDialog } from "./readers/grok-dialog";
 import { discoverGrokHistorySources, grokClassifyPath } from "./readers/grok-discovery";
 import { readGrokStatistics } from "./readers/grok-statistics";
+import { grokMidWork } from "./readers/grok-turn-state";
 import type { AgentKind, NativeSessionReader } from "./types";
 
 type CompactHistoryReaderOptions<Kind extends AgentKind> = Omit<NativeSessionReader<Kind>, "read">;
@@ -41,6 +44,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
     classifyPath: claudeClassifyPath,
+    midWork: claudeMidWork,
     readChanges: deferredReadChanges(import.meta, "./readers/claude-changes", "claudeSessionChanges"),
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
     // which comes from an earlier row, never enters the searched text).
@@ -63,6 +67,7 @@ export const codexHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     classifyPath: codexClassifyPath,
+    midWork: codexMidWork,
     readChanges: deferredReadChanges(import.meta, "./readers/codex-changes", "codexSessionChanges"),
     searchMetadata: true,
     // Metadata comes from the first header plus the state sidecars; a record never replays a header.
@@ -80,6 +85,7 @@ export const grokHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,
     classifyPath: grokClassifyPath,
+    midWork: grokMidWork,
     // No Grok transcript parser reads file changes: a Grok session is judged from the change log alone.
     readChanges: () => null,
     searchMetadata: true,

@@ -37,3 +37,8 @@ export const noAnalysis: SessionAnalysisReader = {
     compactions: async () => ({ supported: false, reason: "test reader" }),
     quotaReadings: async () => ({ supported: false, reason: "test reader" }),
 };
+
+/** `midWork` for a test reader whose sessions are never asked whether they still work: always finished. */
+export function noMidWork(): boolean {
+    return false;
+}

@@ -114,62 +114,21 @@ function parseLine(line: string): JsonRecord | null {
     }
 }
 
-/** The first complete record of the head, and the last complete record of the tail. */
-function firstAndLast(head: string, tail: string): { first: JsonRecord | null; last: JsonRecord | null } {
+/** The first complete record of the head, and every complete record of the tail, oldest first. */
+function headAndTail(head: string, tail: string): { first: JsonRecord | null; records: JsonRecord[] } {
     const first = head
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
         .map(parseLine)
         .find((record) => record !== null);
-    const lines = tail.split("\n");
-    for (let index = lines.length - 1; index >= 0; index--) {
-        const line = lines[index].trim();
-        if (!line) {
-            continue;
-        }
-
-        const record = parseLine(line);
-        // Only a conversation record says where the agent is; progress and attachment rows do not.
-        if (record && (record.type === "assistant" || record.type === "user")) {
-            return { first: first ?? null, last: record };
-        }
-    }
-
-    return { first: first ?? null, last: null };
-}
-
-/** Whether the agent was still working when it last wrote. */
-function midWork(last: JsonRecord | null): boolean {
-    if (!last) {
-        return true;
-    }
-
-    if (last.type === "user") {
-        return true;
-    }
-
-    const message = isRecord(last.message) ? last.message : null;
-    const content = Array.isArray(message?.content) ? message.content : [];
-    if (content.some(approvesShutdown)) {
-        return false;
-    }
-
-    if (content.some((part) => isRecord(part) && part.type === "tool_use")) {
-        return true;
-    }
-
-    return message?.stop_reason === null;
-}
-
-/** A teammate's last act before its process exits: `SendMessage` with an approving `shutdown_response`. */
-function approvesShutdown(part: unknown): boolean {
-    if (!isRecord(part) || part.type !== "tool_use" || part.name !== "SendMessage" || !isRecord(part.input)) {
-        return false;
-    }
-
-    const reply = part.input.message;
-    return isRecord(reply) && reply.type === "shutdown_response" && reply.approve === true;
+    const records = tail
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map(parseLine)
+        .filter((record): record is JsonRecord => record !== null);
+    return { first: first ?? null, records };
 }
 
 /** The head, grown until it holds the whole first record (a spawn prompt can outgrow `HEAD_BYTES`). */
@@ -336,9 +295,9 @@ function readAgentFresh(
         const head = readHead(fd, stat.size);
         const tailStart = Math.max(0, stat.size - TAIL_BYTES);
         const tail = readSlice(fd, tailStart, stat.size - tailStart);
-        const { first, last } = firstAndLast(head, tail);
+        const { first, records } = headAndTail(head, tail);
         const meta = readMeta(claudeSubagentFiles(dir, id).meta);
-        const working = midWork(last);
+        const working = resolveHistoryProvider("claude").reader.midWork(records);
         const scanned = scan ? scanClaudeToolCalls(filePath) : null;
         const agent: Omit<SessionSubagent, "state"> = {
             id,

@@ -10,6 +10,7 @@ import { claudeHistoryReader } from "./compact-readers";
 import { initializeCompactHistorySchema } from "./migrations";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { claudeMidWork } from "./readers/claude-mid-work";
 import { claudeClassifyPath } from "./readers/claude-paths";
 import { fallbackTitle, HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
@@ -51,6 +52,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
         scanInsights: () => ({ native: null, defaultModel: null }),
         analysis: noAnalysis,
         classifyPath: claudeClassifyPath,
+        midWork: claudeMidWork,
         readChanges: () => null,
         roots: () => options.roots,
         read: async () => {
