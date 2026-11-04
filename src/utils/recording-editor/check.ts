@@ -113,7 +113,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             issues.push({
                 severity: "fix",
                 item: `${part.style === "spotlight" ? "spotlight" : "hidden part"} ${part.id}`,
-                message: "it follows the cursor, but the movie has no cursor track, so it stays where it was drawn",
+                message: `The ${part.style === "spotlight" ? "spotlight" : "hidden part"} ${part.label ? `"${part.label}"` : `at ${seconds(part.startUs)} s`} follows the cursor, but the movie has no cursor track, so it stays where it was drawn`,
                 at: seconds(part.startUs),
             });
         }
@@ -160,7 +160,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             issues.push({
                 severity: "fix",
                 item: "captions",
-                message: "captions are on, but the movie has no transcript, so none show",
+                message: "Captions are on, but the movie has no transcript, so none show",
                 fix: "await movie.transcript()",
             });
         }
@@ -169,7 +169,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             issues.push({
                 severity: "fix",
                 item: "subtitles",
-                message: `the export asks for a ${project.export.subtitles} subtitle file, but the movie has no transcript, so none is written`,
+                message: `The export asks for a ${project.export.subtitles} subtitle file, but the movie has no transcript, so none is written`,
                 fix: "await movie.transcript()",
             });
         }
@@ -178,7 +178,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             issues.push({
                 severity: "check",
                 item: "music",
-                message: "the music should drop under speech, but without a transcript nothing ducks",
+                message: "The music should drop under speech, but without a transcript nothing ducks",
                 fix: "await movie.transcript()",
             });
         }
