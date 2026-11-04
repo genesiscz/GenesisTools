@@ -394,17 +394,27 @@ private struct StyleInspector: View {
         let frame = model.project.frame
         VStack(alignment: .leading, spacing: 10) {
             Text("Style").font(.system(size: 15, weight: .semibold))
-            SwitchRow("Background", isOn: Binding(get: { frame != nil }, set: { on in
+            // The canvas shape is always here: a vertical Short or a square post must not hide behind a switch.
+            SectionLabel(text: "Canvas")
+            GenSegmentedTabs("Canvas", items: EditProject.CanvasAspect.allCases.map { .init($0, $0 == .source ? "Source" : $0.rawValue) },
+                             selection: Binding(get: { frame?.aspect ?? .source }, set: { value in
+                                 model.setLooks { project in
+                                     if value != .source, project.frame == nil { project.frame = EditProject.Frame() }
+                                     project.frame?.aspect = value == .source ? nil : value
+                                 }
+                             }),
+                             minSegmentWidth: 40, identifier: "recorder.style.canvas", fillsWidth: true)
+                .instantTooltip("The movie's shape; 9:16 for a Short or a Reel, 1:1 for a post. Another shape than Source puts the movie on a frame.")
+            SwitchRow("Frame", isOn: Binding(get: { frame != nil }, set: { on in
                 model.setLooks { $0.frame = on ? ($0.frame ?? EditProject.Frame()) : nil }
             }))
             .accessibilityIdentifier("recorder.style.frame")
+            if frame == nil {
+                Text("A background, padding, rounded corners and a shadow around the movie, as in a product video.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let frame {
-                SectionLabel(text: "Canvas")
-                GenSegmentedTabs("Canvas", items: EditProject.CanvasAspect.allCases.map { .init($0, $0 == .source ? "Source" : $0.rawValue) },
-                                 selection: Binding(get: { frame.aspect ?? .source }, set: { value in
-                                     model.setLooks { $0.frame?.aspect = value == .source ? nil : value }
-                                 }),
-                                 minSegmentWidth: 40, identifier: "recorder.style.canvas", fillsWidth: true)
                 if (frame.aspect ?? .source) != .source {
                     SwitchRow("Crop to fill", isOn: Binding(get: { frame.fit == .cover }, set: { on in
                         model.setLooks { $0.frame?.fit = on ? .cover : nil }
