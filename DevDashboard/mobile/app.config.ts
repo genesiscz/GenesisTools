@@ -68,6 +68,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         plugins: [
             ...(config.plugins ?? []),
             ["expo-camera", { cameraPermission: CAMERA_PERMISSION }],
+            ["expo-audio", { microphonePermission: MICROPHONE_PERMISSION, enableBackgroundRecording: false }],
             ["expo-local-authentication", { faceIDPermission: FACE_ID_PERMISSION }],
             // Background remote notifications: a silent push takes an answered notice off the lock screen.
             ["expo-notifications", { mode: APS_MODE, enableBackgroundRemoteNotifications: true }],
