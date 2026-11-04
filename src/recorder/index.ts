@@ -1,12 +1,9 @@
-import { existsSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } from "@app/control/lib/recording-targets";
-import { meetingEditorSource } from "@app/meetings/lib/editor-project";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { describeProject, EDIT_OP_NAMES, parseEditOps } from "@genesiscz/utils/recording-editor/project";
@@ -27,6 +24,7 @@ import {
     undoEdit,
     writeSubtitles,
 } from "./lib/edit";
+import { keptPlan, prepareFramesMovie } from "./lib/frames-movie";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -40,7 +38,7 @@ import {
     waitForEditorOpen,
 } from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
-import { type DisplayRange, makeProxy, PROXY_DISPLAY_POLICIES, type ProxyDisplay, type ProxyResult } from "./lib/proxy";
+import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
 import { commentOn, commentsOf, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
@@ -99,33 +97,6 @@ function parseDisplaySwitch(raw: string): DisplayRange {
     }
 
     return { fromUs, toUs, displayId: Number(match[3]) };
-}
-
-/**
- * proxy.mp4 for a frames folder; a meeting's folder also gets its recording.json and the transcript as captions with
- * the speakers' names (meetingEditorSource).
- */
-async function prepareFramesMovie(
-    folder: string,
-    options: { display?: ProxyDisplay; windowSec?: number; overrides?: DisplayRange[] }
-): Promise<ProxyResult & { transcript?: string; captions?: number }> {
-    if (!existsSync(join(folder, "meeting.json"))) {
-        return makeProxy(folder, options);
-    }
-
-    const store = new MeetingStore();
-    const record = store.read(basename(folder));
-
-    if (!record) {
-        return makeProxy(folder, options);
-    }
-
-    const prepared = await meetingEditorSource({ store, record, ...options });
-    return {
-        ...prepared.proxy,
-        ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
-        captions: prepared.captions,
-    };
 }
 
 /** A `--from`/`--to` time: seconds or m:ss, with a plain message instead of a zod dump. */
@@ -1110,20 +1081,28 @@ program
         "--switch <from-to=display...>",
         "show this display in this range whatever the policy picks, e.g. 10:00-12:30=4 (repeatable)"
     )
-    .action(async (value: string, flags: { display?: string; window?: string; switch?: string[] }) => {
-        try {
-            const display = flags.display === undefined ? undefined : parseProxyDisplay(flags.display);
-            const result = await prepareFramesMovie(resolveRecording(value), {
-                ...(display !== undefined ? { display } : {}),
-                windowSec: Number(flags.window ?? 10),
-                overrides: (flags.switch ?? []).map(parseDisplaySwitch),
-            });
-            out.result(result);
-        } catch (error) {
-            out.printlnErr(error instanceof Error ? error.message : String(error));
-            process.exitCode = 1;
+    .option(
+        "--keep-plan",
+        "keep the display plan of the last proxy (proxy.json) and lay the --switch ranges over it, as the editor does"
+    )
+    .action(
+        async (value: string, flags: { display?: string; window?: string; switch?: string[]; keepPlan?: boolean }) => {
+            try {
+                const display = flags.display === undefined ? undefined : parseProxyDisplay(flags.display);
+                const folder = resolveRecording(value);
+                const switches = (flags.switch ?? []).map(parseDisplaySwitch);
+                const result = await prepareFramesMovie(folder, {
+                    ...(display !== undefined ? { display } : {}),
+                    windowSec: Number(flags.window ?? 10),
+                    ...(flags.keepPlan ? keptPlan(folder, switches) : { overrides: switches }),
+                });
+                out.result(result);
+            } catch (error) {
+                out.printlnErr(error instanceof Error ? error.message : String(error));
+                process.exitCode = 1;
+            }
         }
-    });
+    );
 
 program
     .command("find-screen")

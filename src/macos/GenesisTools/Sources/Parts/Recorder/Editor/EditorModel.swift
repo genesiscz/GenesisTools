@@ -85,6 +85,10 @@ final class EditorModel {
     private(set) var reviewComments: [ReviewComment] = []
     /// The comment whose popover is open over the marks lane.
     var openComment: String?
+    /// Which display a frames recording's proxy movie shows when (proxy.json); nil for any other movie.
+    var displayPlan: DisplayPlan?
+    /// `tools recorder proxy` makes the movie again for a display switch.
+    var isSwitchingDisplay = false
 
     var selection: EditorSelection = .none
     /// The banners of the last edits written from outside the window (EditorChangeFeed.swift).
@@ -122,6 +126,7 @@ final class EditorModel {
         markers = Self.readMarkers(video: project.source.video)
         commentsStore = ReviewCommentsStore(video: project.source.video)
         reviewComments = commentsStore.comments
+        displayPlan = DisplayPlan.read(video: project.source.video)
         asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         player.actionAtItemEnd = .pause
         let interval = CMTime(value: 1, timescale: 30)
@@ -1221,6 +1226,15 @@ final class EditorModel {
                 self?.show("The preview could not be built: \(error.localizedDescription)", error: true)
             }
         }
+    }
+
+    /// Reads the movie again after something wrote a new one in its place (a display switch makes a new proxy).
+    func reloadMovie() {
+        let video = URL(fileURLWithPath: project.source.video)
+        asset = AVURLAsset(url: video)
+        filmstrip.load(video: video, durationUs: project.source.durationUs)
+        waveform.load(video: video)
+        rebuild()
     }
 
     /// A paused player draws a changed zoom only when asked for the frame again.

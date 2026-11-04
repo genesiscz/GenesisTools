@@ -118,6 +118,28 @@ struct RangeActionsView: View {
                 .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8).padding(.bottom, 4)
+            if let plan = model.displayPlan, plan.displays.count > 1 {
+                HStack(spacing: 9) {
+                    Image(systemName: "display").frame(width: 16)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Show a Display").font(.system(size: 12.5, weight: .medium))
+                        Text("Which screen this range shows").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    MenuButton(items: {
+                        plan.displays.map { display in
+                            .action(display.name, run: { model.switchDisplay(range, to: display.id) })
+                        }
+                    }) {
+                        Label("Display", systemImage: "chevron.down")
+                            .labelStyle(.titleAndIcon)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .instantTooltip("Pick the display this range shows; the movie is made again")
+                    .accessibilityIdentifier("recorder.range.display")
+                }
+                .padding(.horizontal, 8).frame(height: 32)
+            }
             ForEach(RangeAction.allCases) { action in
                 if action == .speed {
                     HStack(spacing: 8) {

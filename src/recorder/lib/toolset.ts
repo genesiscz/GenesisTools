@@ -60,6 +60,7 @@ import {
     undoEdit,
     writeSubtitles,
 } from "./edit";
+import { switchDisplay } from "./frames-movie";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -666,6 +667,14 @@ const movieMethods = [
         resultName: "{ from, to, plays, text }[]",
         doc: "The transcript lines that hold the text (case and accents ignored); cut one with cut(line.from, line.to).",
         effect: "read",
+    }),
+    defineMethod({
+        name: "switchDisplay",
+        params: z.object({ from: timeSchema, to: timeSchema, display: z.number().int().nonnegative() }).strict(),
+        result: z.unknown(),
+        resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
+        doc: 'A frames recording of several displays (a meeting): its proxy movie shows `display` from `from` to `to` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as tools recorder proxy <rec> --keep-plan --switch from-to=display, and the editor\'s display lane.',
+        effect: "reversible",
     }),
     defineMethod({
         name: "findOnScreen",
@@ -1568,6 +1577,21 @@ export class Movie {
 
     async find(text: string): Promise<TranscriptLine[]> {
         return findInTranscript(await this.transcript(), text);
+    }
+
+    async switchDisplay(input: { from: z.infer<typeof timeSchema>; to: z.infer<typeof timeSchema>; display: number }) {
+        const opened = await openProject(this.recording);
+        const folder = recordingFolderOf(opened);
+
+        if (!folder) {
+            throw new Error(`${opened.project.source.video} is a plain movie: it shows one picture, not displays`);
+        }
+
+        return switchDisplay(folder, {
+            fromUs: timeToUs(input.from),
+            toUs: timeToUs(input.to),
+            displayId: input.display,
+        });
     }
 
     async findOnScreen(input: { text: string; limit?: number }): Promise<ScreenHit[]> {

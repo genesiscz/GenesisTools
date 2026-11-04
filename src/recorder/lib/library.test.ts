@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { keptPlan } from "./frames-movie";
 import { editorOpenStatePath, readEditorOpenState, resolveRecording } from "./library";
 import { framesForPlan, overrideRanges, planMostChange, proxyVideoFilter } from "./proxy";
 import { currentGif, isMeetingFolder, meetingOf, shareableMovie, trashRecording } from "./quick-actions";
@@ -107,6 +108,30 @@ describe("which display a proxy of several displays shows", () => {
             ["/f/4-15.jpg", 15],
             ["/f/1-8.jpg", 20],
             ["/f/1-21.jpg", 21],
+        ]);
+    });
+});
+
+describe("a display switch from the editor", () => {
+    it("keeps the saved plan and lays the new switch over it, so every earlier switch stays", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-plan-"));
+        expect(keptPlan(folder, [{ fromUs: 0, toUs: 5, displayId: 2 }])).toEqual({
+            overrides: [{ fromUs: 0, toUs: 5, displayId: 2 }],
+        });
+        const ranges = [
+            { fromUs: 0, toUs: 20_000_000, displayId: 1 },
+            { fromUs: 20_000_000, toUs: 40_000_000, displayId: 4 },
+        ];
+        writeFileSync(
+            join(folder, "proxy.json"),
+            SafeJSON.stringify({ version: 1, policy: "most-change", windowSec: 5, ranges })
+        );
+        const kept = keptPlan(folder, [{ fromUs: 5_000_000, toUs: 25_000_000, displayId: 2 }]);
+        expect(kept.windowSec).toBe(5);
+        expect(overrideRanges(planMostChange([], 1), kept.overrides)).toEqual([
+            { fromUs: 0, toUs: 5_000_000, displayId: 1 },
+            { fromUs: 5_000_000, toUs: 25_000_000, displayId: 2 },
+            { fromUs: 25_000_000, toUs: 40_000_000, displayId: 4 },
         ]);
     });
 });

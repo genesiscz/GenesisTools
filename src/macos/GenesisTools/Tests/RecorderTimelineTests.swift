@@ -226,4 +226,27 @@ final class RecorderTimelineTests: XCTestCase {
             XCTAssertTrue(text.lowercased().contains(word.lowercased()), "\(word) missing from: \(text)")
         }
     }
+
+    func testADisplayPlanReadsItsRangesAndNamesAddsItsLaneAndSwitchesThroughTheCLI() throws {
+        let recording = folder.appendingPathComponent("meeting")
+        try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
+        try Data(#"{"version":1,"policy":"most-change","windowSec":10,"ranges":[{"fromUs":0,"toUs":4000000,"displayId":1},{"fromUs":4000000,"toUs":10000000,"displayId":4}]}"#.utf8)
+            .write(to: recording.appendingPathComponent("proxy.json"))
+        try Data(#"{"displays":[{"id":1,"name":"Built-in Retina Display"},{"id":2,"name":"Side"},{"id":4,"name":"Studio"}]}"#.utf8)
+            .write(to: recording.appendingPathComponent("recording.json"))
+        XCTAssertNil(DisplayPlan.read(video: recording.appendingPathComponent("screen.mp4").path), "only the proxy movie has a plan")
+        let plan = try XCTUnwrap(DisplayPlan.read(video: recording.appendingPathComponent("proxy.mp4").path))
+        XCTAssertEqual(plan.ranges.map(\.displayId), [1, 4])
+        XCTAssertEqual(plan.displays.map(\.name), ["Built-in Retina Display", "Side", "Studio"])
+        XCTAssertEqual(plan.name(of: 9), "Display 9")
+        XCTAssertEqual(DisplayPlan.switchArguments(folder: recording, fromUs: 2_500_000, toUs: 6_000_000, displayId: 2),
+                       ["recorder", "proxy", recording.path, "--keep-plan", "--switch", "2.500-6.000=2"])
+
+        let model = model()
+        let before = TimelineLayout(model: model).clipTop
+        model.displayPlan = plan
+        let layout = TimelineLayout(model: model)
+        XCTAssertTrue(layout.displays)
+        XCTAssertEqual(layout.clipTop, before + TimelineView.displayLaneHeight + 4, "the display lane sits over the frames")
+    }
 }
