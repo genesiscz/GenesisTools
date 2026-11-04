@@ -1403,7 +1403,7 @@ private struct ExportIssues: View {
                             if let at = issue.at, let out = TimelineMap.outputTime(ofSource: Int64(at * 1_000_000), in: model.project) {
                                 GhostButton("Show", symbol: "arrow.right.circle", tooltip: "Move the playhead there",
                                             identifier: "recorder.export.issue.show") { model.seek(out) }
-                            } else if issue.mustFix, issue.selection != nil {
+                            } else if issue.mustFix, issue.selection != nil, issue.action == nil {
                                 GhostButton("Remove", symbol: "trash", tooltip: "Remove it: it never shows (⌘Z brings it back)",
                                             identifier: "recorder.export.issue.remove") { model.remove(issue) }
                             }

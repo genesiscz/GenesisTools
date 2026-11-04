@@ -120,6 +120,14 @@ const movieMethods = [
         doc: 'What to look at before export(): items whose whole time is cut (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); ok is true when there is no "fix" issue. It changes nothing.',
         effect: "read",
     }),
+    defineMethod({
+        name: "fix",
+        params: z.object({}),
+        result: z.unknown(),
+        resultName: "Edit (the fields info() lists) plus fixed: the messages of the issues it fixed",
+        doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them.",
+        effect: "reversible",
+    }),
     edit("split", z.object({ at: timeSchema }), "Splits the clip at a source time.", ["at"]),
     edit("cut", z.object(range), "Removes a source range from the movie.", ["from", "to"]),
     edit("keep", z.object(range), "Keeps only a source range (trims both ends).", ["from", "to"]),
@@ -717,6 +725,19 @@ export class Movie {
         });
         log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
         return { ok: !issues.some((issue) => issue.severity === "fix"), issues };
+    }
+
+    async fix() {
+        const { issues } = await this.check();
+        const fixable = issues.filter((issue) => issue.action);
+
+        if (fixable.length === 0) {
+            return { ...(await this.info()), fixed: [], warnings: ["check() found nothing that fix() can fix"] };
+        }
+
+        log.info({ recording: this.recording, fixes: fixable.length }, "fixing what check found");
+        const edited = await this.change(fixable.flatMap((issue) => issue.action?.ops ?? []));
+        return { ...edited, fixed: fixable.map((issue) => issue.message) };
     }
 
     private async change(ops: EditOp[]) {

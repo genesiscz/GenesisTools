@@ -104,6 +104,10 @@ silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…
 `motion {blur?}`, `captions {show?,size?,position?}`, `keys {show?,size?,position?,durationMs?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `retime {id, at? | by? | from?, to?}` (moves a zoom, hidden part, text or shape to start `at` or `by` seconds with its length kept, or sets its start or end, which changes the length; a zoom may not meet another zoom), `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 
+`movie.check()` (and `tools recorder check`) lists what to look at before an export; an issue with a fix carries it
+as a REPL call (`fix`) and as edit ops (`action.ops`). `movie.fix()` runs every such fix in one save and one undo
+step, and the Export tab's Remove, Lengthen and Move After buttons run the same ops through `tools recorder apply`.
+
 In the editor, texts and shapes are segments on the marks lane (a drag moves one in time, an edge trims it), and
 ⌥← / ⌥→ move the selected zoom, hidden part, text or shape by 0.1 s (⇧ for a second).
 

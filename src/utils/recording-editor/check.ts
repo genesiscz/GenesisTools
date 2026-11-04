@@ -44,7 +44,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     // `said` names it for a person: a text by its words, a part by its label, else its kind and start.
     const item = (
         kind: string,
-        remove: string,
+        remove: "unzoom" | "unredact" | "untext" | "unshape",
         list: NonNullable<EditIssue["target"]>["list"],
         it: { id: string; startUs: number; endUs: number },
         said?: string
@@ -78,6 +78,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 fix: `movie.${entry.remove}("${entry.id}")`,
                 at: seconds(entry.startUs),
                 target,
+                action: { label: "Remove", ops: [{ op: entry.remove, id: entry.id }] },
             });
             continue;
         }
