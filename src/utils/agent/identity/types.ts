@@ -159,8 +159,8 @@ export interface ScopedCaller {
 export interface PeerQuery {
     clientPort: number;
     serverPort: number;
-    /** Claude Code's session registry (`~/.claude/sessions`); tests pass a fixture folder. */
-    claudeSessionsDir?: string;
+    /** Each harness's own session registry folder (Claude's `~/.claude/sessions`), replaced by a fixture in a test. */
+    registryDirs?: Partial<Record<HarnessId, string>>;
 }
 
 /**

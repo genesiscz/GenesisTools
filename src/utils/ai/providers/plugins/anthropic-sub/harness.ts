@@ -1,6 +1,6 @@
 import { isClaude, resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
 import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-turn-state";
-import { deferredLocator } from "@genesiscz/utils/harness/deferred";
+import { deferredLocator, deferredPeerSession } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { claudeApproval } from "./harness-approval";
@@ -62,6 +62,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             detects: isClaude,
             resolve: resolveClaudeContext,
         },
+        peer: deferredPeerSession("claude-peer", "claudePeerSession"),
         process: {
             runsCli: ({ argv0, name, command }) =>
                 name === "claude" ||

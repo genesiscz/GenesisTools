@@ -1,7 +1,7 @@
 import type { SessionChangesRead } from "@genesiscz/utils/agent-sessions/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
-import type { TranscriptLocator } from "./parts";
+import type { PeerProcess, PeerSessionPart, TranscriptLocator } from "./parts";
 
 function isTranscriptLocator(value: unknown): value is TranscriptLocator {
     return (
@@ -115,4 +115,26 @@ export function deferredLocator(module: string, exportName: string): TranscriptL
         rootsOfHome: (home) => impl().rootsOfHome(home),
         callerTranscript: (query) => impl().callerTranscript(query),
     };
+}
+
+type PeerSessionOf = (process: PeerProcess, registryDir?: string) => string | null;
+
+function isPeerSessionOf(value: unknown): value is PeerSessionOf {
+    return typeof value === "function";
+}
+
+/**
+ * A supported `peer` part whose reader loads from the harness's reader files (`src/utils/agent-sessions/readers/
+ * <module>.ts`) on its first call, so a driver import stays cheap on the hook path.
+ */
+export function deferredPeerSession(module: string, exportName: string): PeerSessionPart {
+    const impl = lazyExport(
+        import.meta,
+        `../agent-sessions/readers/${module}`,
+        exportName,
+        isPeerSessionOf,
+        "peer session reader"
+    );
+
+    return { supported: true, sessionOf: (process, registryDir) => impl()(process, registryDir) };
 }

@@ -27,6 +27,7 @@ export const HARNESS_PART_LOADING = {
     hooks: "eager",
     process: "eager",
     host: "eager",
+    peer: "eager",
     worker: "eager",
     transcript: "eager",
     dialog: "eager",

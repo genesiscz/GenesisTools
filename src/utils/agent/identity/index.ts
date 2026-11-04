@@ -23,7 +23,7 @@ import type {
 
 export { hostLabel, resolveEnvHost } from "./env";
 export { clearGitFactsCache, gitCommonRoot } from "./git";
-export { callerSessionReadable, codexThreadIdFromOpenFiles, type PeerCaller, readPeerCaller } from "./peer";
+export { callerSessionReadable, type PeerCaller, readPeerCaller } from "./peer";
 export { CALLER_SOURCES } from "./sources";
 export type * from "./types";
 

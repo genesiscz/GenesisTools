@@ -55,6 +55,10 @@ export const grokHarness: HarnessDriver<"grok"> = {
             detects: isGrok,
             resolve: resolveGrokContext,
         },
+        peer: {
+            supported: false,
+            reason: "a Grok process keeps its session id in the env of the stdio child it starts, and leaves no registry or open file another process can read",
+        },
         process: {
             runsCli: ({ name, command }) =>
                 name === "grok" ||
