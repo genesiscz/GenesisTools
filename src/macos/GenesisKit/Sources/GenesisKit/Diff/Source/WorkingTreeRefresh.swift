@@ -101,8 +101,9 @@ extension ReviewRepositoryLayout {
         guard path.hasPrefix(root.path + "/") else { return nil }
         let relative = String(path.dropFirst(root.path.count + 1))
         let wrapped = "/" + relative + "/"
-        // A linked worktree's `.git` is a file that names its Git directory.
-        guard relative != ".git", !wrapped.contains("/node_modules/"), !wrapped.contains("/.build/") else { return nil }
+        // A linked worktree's `.git` is a file that names its Git directory, and a nested repository's Git files
+        // never show in this one's diff (its `index.lock` came with every git run in it, 2026-11-05).
+        guard !wrapped.contains("/.git/"), !wrapped.contains("/node_modules/"), !wrapped.contains("/.build/") else { return nil }
         if flags & UInt32(kFSEventStreamEventFlagItemIsDir) != 0, flags & Self.folderFlags == 0 { return nil }
         return .path(relative)
     }
