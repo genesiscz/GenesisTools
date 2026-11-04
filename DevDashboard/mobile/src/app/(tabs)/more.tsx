@@ -44,6 +44,7 @@ const MORE_GROUPS: MoreGroup[] = [
         heading: "Configuration",
         links: [
             { title: "Connections", route: "/connections", testID: "more-link-connections", icon: "link" },
+            { title: "Notifications", route: "/notifications", testID: "more-link-notifications", icon: "bell" },
             { title: "Network", route: "/network-status", testID: "more-link-network-status", icon: "activity" },
         ],
     },

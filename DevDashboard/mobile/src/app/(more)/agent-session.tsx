@@ -7,6 +7,7 @@ import { ago } from "@/features/agents/components/SessionCard";
 import { SteerComposer } from "@/features/agents/components/SteerComposer";
 import { useAgentsBoard, useAgentTranscript, useBoardSession, useStopSession } from "@/features/agents/hooks";
 import { idempotencyKey } from "@/features/answer-queue/units";
+import { confirmWithFaceId } from "@/lib/face-id";
 import { Empty } from "@/ui/Empty";
 import { useThemeColors } from "@/theme/colors";
 
@@ -64,7 +65,18 @@ function StopButton({ session }: { session: AgentBoardSession }) {
     const stop = useStopSession(setReceipt);
     const pid = session.pid;
 
-    // Face ID waits for F4 (expo-local-authentication is not a dependency yet); a destructive confirmation stands in.
+    // The destructive confirmation first, then Face ID (F4): a stop ends a process tree and cannot be undone.
+    const stopAfterFaceId = async (stopPid: number) => {
+        const gate = await confirmWithFaceId("Stop this agent session");
+
+        if (!gate.ok) {
+            Alert.alert("Not stopped", gate.reason);
+            return;
+        }
+
+        stop.mutate({ key: session.key, pid: stopPid, idempotencyKey: idempotencyKey() });
+    };
+
     const confirm = () => {
         if (pid === null) {
             return;
@@ -78,7 +90,7 @@ function StopButton({ session }: { session: AgentBoardSession }) {
                 {
                     text: "Stop",
                     style: "destructive",
-                    onPress: () => stop.mutate({ key: session.key, pid, idempotencyKey: idempotencyKey() }),
+                    onPress: () => void stopAfterFaceId(pid),
                 },
             ]
         );
