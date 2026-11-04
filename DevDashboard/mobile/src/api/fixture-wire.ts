@@ -11,6 +11,7 @@ import {
 } from "@dd/contract";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MOCK_BOARD, MOCK_PROMPTS, MOCK_TRANSCRIPT_TURNS, mockPreparedPrompt } from "@/api/fixtures/agents";
+import { MOCK_PR_TRIAGE, mockPrChecks } from "@/api/fixtures/prs";
 import {
     EMPTY_ATTACH,
     MOCK_ATTENTION,
@@ -337,6 +338,36 @@ const ROUTES: FixtureRoute[] = [
         method: ENDPOINTS.gatewayPromptPrepare.method,
         path: ENDPOINTS.gatewayPromptPrepare.path,
         handle: ({ query }) => mockPreparedPrompt(query.get("name") ?? "", query.get("session")),
+    },
+
+    // PR triage (F20): the list, one PR's checks; a fix and a merge are refused, since a fixture has no Mac.
+    { method: ENDPOINTS.gatewayPrs.method, path: ENDPOINTS.gatewayPrs.path, handle: () => MOCK_PR_TRIAGE },
+    {
+        method: ENDPOINTS.gatewayPrChecks.method,
+        path: ENDPOINTS.gatewayPrChecks.path,
+        handle: ({ query }) => mockPrChecks(query.get("url") ?? ""),
+    },
+    {
+        method: ENDPOINTS.prsFix.method,
+        path: ENDPOINTS.prsFix.path,
+        handle: ({ body }) => ({
+            url: text(body.url),
+            kind: body.kind === "check" ? "check" : "threads",
+            sent: false,
+            owner: null,
+            file: null,
+            error: "mock data: no session to hand the PR to",
+        }),
+    },
+    {
+        method: ENDPOINTS.prsMerge.method,
+        path: ENDPOINTS.prsMerge.path,
+        handle: ({ body }) => ({
+            url: text(body.url),
+            method: body.method === "squash" ? "squash" : "rebase",
+            merged: false,
+            detail: "mock data: nothing was merged",
+        }),
     },
 
     // The steer composer and Esc (F10, F19): refused, since a fixture has no session to reach.
