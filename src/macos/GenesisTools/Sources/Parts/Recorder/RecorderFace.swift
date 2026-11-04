@@ -366,6 +366,21 @@ enum EditorKeys {
     }
 }
 
+/// An error with what AVFoundation hides under "The operation could not be completed": the failure reason, the
+/// domain and code, and each underlying error, so a log or an agent can tell a codec refusal from a missing file.
+func explained(_ error: Error) -> String {
+    var parts: [String] = []
+    var next: NSError? = error as NSError
+    while let current = next, parts.count < 4 {
+        var line = current.localizedDescription
+        if let reason = current.localizedFailureReason, !line.contains(reason) { line += " (\(reason))" }
+        line += " [\(current.domain) \(current.code)]"
+        parts.append(line)
+        next = current.userInfo[NSUnderlyingErrorKey] as? NSError
+    }
+    return parts.joined(separator: "; because: ")
+}
+
 // MARK: - Headless export and snapshot
 
 /// One JSON object and a newline; a path or a message with quotes in it stays valid JSON.
@@ -397,7 +412,7 @@ private func runHeadlessStill(source: String, atSeconds: Double, out: String?, f
                                                                "atSeconds": atSeconds]).utf8))
                 exit(0)
             } catch {
-                FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": error.localizedDescription]).utf8))
+                FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": explained(error)]).utf8))
                 exit(1)
             }
         }
@@ -430,7 +445,7 @@ private func runHeadlessSheet(source: String, times: [Double], out: String?) -> 
                                                                "times": times]).utf8))
                 exit(0)
             } catch {
-                FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": error.localizedDescription]).utf8))
+                FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": explained(error)]).utf8))
                 exit(1)
             }
         }
@@ -506,7 +521,8 @@ private func runHeadlessExport(source: String, out: String?, json: Bool) -> Neve
                 FileHandle.standardOutput.write(Data(line.utf8))
                 exit(0)
             } catch {
-                let message = error.localizedDescription
+                let message = explained(error)
+                HubPerf.log("recorder.export failed: \(message)")
                 FileHandle.standardOutput.write(Data((json ? jsonLine(["ok": false, "error": message]) : "error: \(message)\n").utf8))
                 exit(1)
             }
