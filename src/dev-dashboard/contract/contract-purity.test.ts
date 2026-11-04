@@ -22,6 +22,7 @@ const FILES = [
     "live.ts",
     "agents.ts",
     "gates.ts",
+    "push.ts",
     "launch.ts",
 ];
 
@@ -61,7 +62,9 @@ describe("contract purity", () => {
         for (const file of FILES) {
             const src = readFileSync(join(import.meta.dir, file), "utf8");
 
-            for (const match of src.matchAll(/^import\s+(?!type\b)[^;]*from\s+["'](@genesiscz\/utils[^"']*)["']/gm)) {
+            for (const match of src.matchAll(
+                /^(?:import|export)\s+(?!type\b)[^;]*from\s+["'](@genesiscz\/utils[^"']*)["']/gm
+            )) {
                 const specifier = match[1];
 
                 if (!metroConfig.includes(`match: "${specifier}"`)) {
