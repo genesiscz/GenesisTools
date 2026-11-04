@@ -14,20 +14,14 @@ import {
     defaultTransclusionRegistry,
     type TranscludeOptions,
     type TransclusionRegistry,
-    type TransclusionToken,
     transclude,
 } from "@genesiscz/utils/transclude";
 import type { QuestionItemInput } from "./decisions/items";
 import type { DecisionSource, StoredTransclusion } from "./decisions/schema";
 import type { AskChoice } from "./pending/types";
-/** One token of an item, with the field it was written in (`promptMarkdown`, `reasoning`, `choices[1]`). */
-export type FieldTransclusion = TransclusionToken & { field: string };
+import type { FieldTransclusion, ItemTransclusion } from "./transclusion-types";
 
-/** Set on an item whose text changed: the fields as written, and every token. */
-export interface ItemTransclusion {
-    source: { promptMarkdown?: string; reasoning?: string; proposal?: string; choices?: string[] };
-    tokens: FieldTransclusion[];
-}
+export type { FieldTransclusion, ItemTransclusion } from "./transclusion-types";
 
 export interface TranscludedItems {
     items: QuestionItemInput[];
