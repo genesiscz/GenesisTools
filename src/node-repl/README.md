@@ -32,7 +32,8 @@ each save as it lands. The CLI door to the same edits is `tools recorder project
 The registry also includes `meetings` (open, evidence, transcript, items.add; how a meeting finds its project:
 `projects.labels`, `projects.pair`, `projects.unpair`, `projects.people`, `assign.sweep`, and on a meeting
 `assign.proposals`, `assign.ask`, `assign.apply` and `set({ labels })`), `control` (the native control API),
-`browser` (CDP tabs, open, navigate, evaluate), `hub` (prs, pr), and `github` (review threads).
+`browser` (CDP tabs, open, navigate, evaluate), `hub` (prs, pr), `github` (review threads) and `presets` (save, list, show, run and remove named scripts
+with parameters; see "Presets").
 Each lives in one toolset file and has one registry entry. Browser calls take the browser's CDP `port` explicitly.
 
 The `js` description gives one summary line per loaded toolset. Inside a turn, `search("display")` finds methods
@@ -49,6 +50,38 @@ beside each kept frame whose text meets `minChars`.
 `await sleep(ms)` waits inside a turn. The whole recorder and editor flow, live:
 `bun src/node-repl/scripts/recorder-editor-demo.ts --out <folder> [--mic]`.
 For an experiment, an entry may also be `/abs/module.ts#ExportName`, a `ReplToolset` class outside the table.
+
+## Presets: save a script that worked, run it again with other values
+
+The `presets` toolset (and `tools node-repl preset`) keeps REPL scripts under a name with parameters, the way `tools
+scripts` keeps scripts: one folder per preset in `~/.genesis-tools/node-repl/presets/<name>/`, the code in
+`script.js` (edit it there) beside `preset.json` (description, toolsets, params, run count), and a removed preset moved
+to `.trash/`. A script is the body of an async function: it reads `params` and returns its result.
+
+```js
+await presets.save("settings-demo", {
+    description: "a captioned demo of one Settings pane",
+    script: `return await movies.demo({ title: params.title, steps: [
+        { caption: "Open " + params.pane, run: () => computer.launch_app({ bundle_id: "com.apple.systempreferences" }) },
+    ] });`,
+    params: { title: { type: "string", default: "Settings" }, pane: { type: "string" } },
+});
+await presets.list();                                  // [{ name, toolsets: ["movies", "computer"], params, runs }]
+await presets.run("settings-demo", { pane: "Appearance" });
+await presets.remove("settings-demo");                 // { trash }
+```
+
+`params` types are `string`, `number`, `boolean` and `json`; one without a default is required at every run, and an
+unknown name is refused before anything runs. `toolsets` defaults to the toolsets the script names (`movies.`,
+`computer.`); a run in the REPL needs them loaded and says which `--toolset` to start with.
+
+```bash
+tools node-repl preset save settings-demo --file demo.js --params '{"pane":{"type":"string"}}' [--description T]
+tools node-repl preset list [--json]
+tools node-repl preset show settings-demo
+tools node-repl preset run settings-demo --param pane=Appearance [--timeout 600000]   # a fresh REPL with its toolsets
+tools node-repl preset rm settings-demo
+```
 
 ## Tools
 

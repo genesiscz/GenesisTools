@@ -11,6 +11,7 @@ import { ControlToolset } from "./toolsets/control";
 import { GithubToolset } from "./toolsets/github";
 import { HubToolset } from "./toolsets/hub";
 import { MeetingsToolset } from "./toolsets/meetings";
+import { PresetsToolset } from "./toolsets/presets";
 
 /**
  * Every toolset `--toolset` can preload by name. The table lives in the tool, not in `@genesiscz/utils/repl`,
@@ -29,6 +30,8 @@ export const REPL_TOOLSETS = {
     browser: () => new BrowserToolset(),
     hub: () => new HubToolset(),
     github: () => new GithubToolset(),
+    // The store checks a saved preset's toolsets against this table, read when a preset is saved.
+    presets: (): PresetsToolset => new PresetsToolset((): string[] => Object.keys(REPL_TOOLSETS)),
 } satisfies Record<string, ReplToolsetFactory>;
 
 export type ReplToolsetId = keyof typeof REPL_TOOLSETS;

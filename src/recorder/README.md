@@ -7,8 +7,11 @@ All three edit one file, `edit.json`, so each sees the others' changes.
 ## Commands
 
 ```bash
-tools recorder start [--audio system,mic] [--title T] [--max-seconds N] [--display I | --window IDS | --app NAME]
-                     [--fps N] [--system-cursor] [--no-controls] [--no-indicator] [--open] [--json]
+tools recorder start [--audio system,mic] [--title T] [--max-seconds N]
+                     [--display I | --window IDS | --app NAME | --region X,Y,W,H]
+                     [--fps N] [--idle-fps N] [--threshold PCT] [--camera] [--exclude-window-ids IDS]
+                     [--system-cursor] [--no-controls] [--no-indicator] [--open] [--json]
+tools recorder demo <script.json | -> [--no-export]  # a finished demo from a JSON script of steps (below)
 tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
 tools recorder mark <label> [id]                 # a marker at this moment; the editor and movie.markers() show it
 tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
@@ -153,6 +156,80 @@ Hide, Style, Audio, Export), the preview, the transport, and a timeline with the
 playhead's split button. Keys: Space, S (split), [ and ] (trim the clip's start or end to the playhead), ⇧⌫ (delete the I to O part), Z (zoom), T (a text), A (an arrow). A dragged zoom, hidden part or clip edge snaps to the playhead, clip edges,
 markers and other items within 7 pt, with a yellow guide (View → Snap While Dragging, `recorder.timeline.snap`, on).
 Keys also: I and O (the export part), ⌘Z, ⇧⌘Z, ⌘S, ⌘E, Delete, the arrows, Home, End, Esc.
+
+## The capture picker (⌘7)
+
+The recorder's menu bar item and a global shortcut (⌘7 by default) open one panel: what to record (a window, an app, a
+display, or "Select an area…" / ⌘4, a rectangle dragged on any display) and the recording's options in the same
+panel: countdown (on, 3 s), frame rate (60), the rate while still ("Same"), the change needed to leave it (0.5 %),
+system audio, microphone, the drawn cursor, the shortcuts overlay and the camera bubble. A choice runs `tools
+recorder start` with those flags, the one start path the menu uses too. The panel's Shortcuts section rebinds or
+turns off each global shortcut: open the picker (⌘7), start with the picker's options without it (⌥⌘7), stop (⌥⌘8),
+pause or resume (⌥⌘9) and mark (⌥⌘0). Stop, pause and mark hold their keys only while a recording runs, unless "Hold
+stop, pause and mark keys" is on. `GenesisTools --recorder --picker` opens it; with `--snapshot <png>` (and
+`--shortcuts`) it draws the panel over made-up targets.
+
+An area is `--region x,y,width,height` in global screen points from the top-left corner (CoreGraphics), recorded in
+ax-tool's region mode. `--idle-fps` and `--threshold` reach the capture; without them a movie keeps one rate.
+
+## Camera bubble
+
+With "Camera bubble" on, a live preview of the camera floats where the bubble will be (Small, Medium or Large; circle,
+rounded or square); drag it before or while recording. The movie leaves the preview out (`--exclude-window-ids`), and
+the recorder face records the camera through GenesisKit's camera (`CameraFrameSource`) into `camera.mov` beside
+`screen.mp4`, paused when the recording pauses. At the end it writes `camera.json` (`version`, `file`, `startedAt`,
+`screenStartedAt`, `placement: { x, y, size, shape }`), and a new edit takes it as `camera` in `edit.json`:
+
+```json
+"camera": { "file": "camera.mov", "offsetMs": 0, "show": true, "corner": "custom", "x": 0.88, "y": 0.82,
+            "size": 0.24, "shape": "circle", "mirror": true, "margin": 0.035,
+            "hidden": [{ "startUs": 3000000, "endUs": 4000000 }] }
+```
+
+`corner` is `bottomRight`, `bottomLeft`, `topRight`, `topLeft` or `custom` (then `x`, `y` are the centre); `size` is
+the side over the canvas's short side; `hidden` ranges are source times (a plain list until the editor's lanes hold
+them). Ops: `{"op":"camera", corner?, x?, y?, size?, shape?, mirror?, show?, offsetMs?, file?, enabled?}`,
+`{"op":"cameraHide","from":3,"to":4}`, `{"op":"cameraShow","from":3,"to":3.5}`; the REPL has `m.camera({…})`,
+`m.cameraHide(from, to)` and `m.cameraShow(from, to)`. The renderer (preview and export) draws it. `tools recorder
+start --camera` asks for the camera without the picker: then the face records it with no preview on screen, because
+nothing would keep the preview out of the movie.
+
+## Demo mode: one call, a finished demo
+
+An agent writes the steps; the recorder records them, marks each step, cuts the waiting and captions every step:
+
+```js
+const demo = await movies.demo({
+    title: "Dark mode in Settings",
+    record: { fps: 30, controls: false },
+    steps: [
+        { caption: "Open System Settings", run: () => computer.launch_app({ bundle_id: "com.apple.systempreferences" }) },
+        { caption: "Choose Appearance", run: async () => { /* clicks */ }, holdSeconds: 1.5 },
+        { caption: "Pick Dark", run: async () => { /* clicks */ } },
+    ],
+});
+// { movie, folder, steps: [{ caption, startMs, runEndMs, endMs }], failed, ops, sourceSeconds, exported: { path } }
+```
+
+Each step gets a marker at its start, runs, then holds for `holdSeconds` (1) so its result stays on screen. Afterwards
+the edit cuts the still, silent stretches while a step's code ran (idle.ts; the step's first moments and its hold are
+never cut), the time before the first and after the last step, adds a caption per step while it plays, and exports.
+A step that throws is listed in `failed` and the next one runs; the recording always stops. `edit` takes `cutIdle`,
+`idleMinSeconds` (1), `cutWaits`, `minWaitSeconds` (0.8), `keepSeconds` (0.3), `leadSeconds` (0.5), `tailSeconds` (1),
+`captions`, `captionPosition` (`bottom` | `top`), `captionMinSeconds` (1.8) and `markers`. The planner is pure
+(`demoEditOps` in lib/demo.ts), so the result stays an ordinary edit: undo, retime or export it again.
+
+The CLI door takes JSON steps that run a `tools` command, a shell line or a wait:
+
+```json
+{ "title": "Reload check", "record": { "fps": 30, "controls": false },
+  "steps": [{ "caption": "Reload the page", "tools": ["control", "key", "cmd+r"] },
+            { "caption": "Wait for the build", "shell": "sleep 4" },
+            { "caption": "Done", "wait": 1 }] }
+```
+
+Save a demo that worked as a preset and run it again with other values: `presets.save(…)` in the REPL, `tools
+node-repl preset run <name> --param key=value` from a shell (src/node-repl/README.md, "Presets").
 
 ## Agents: the `movies` REPL toolset
 
