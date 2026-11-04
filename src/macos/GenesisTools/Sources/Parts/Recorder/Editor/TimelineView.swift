@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 /// The editor's colours, one dark palette like the reference editor: near-black lanes, the blue of a zoom, the red
@@ -32,6 +33,7 @@ struct TimelineView: View {
     static let zoomLaneHeight: CGFloat = 34
     static let clipLaneHeight: CGFloat = 64
     static let audioLaneHeight: CGFloat = 30
+    static let musicLaneHeight: CGFloat = 14
     static let marksLaneHeight: CGFloat = 16
     /// One row of the hidden-parts lane; overlapping parts take a row each, up to `hiddenRowsShown`.
     static let hiddenRowHeight: CGFloat = 16
@@ -81,6 +83,10 @@ struct TimelineView: View {
                     AudioLaneView(model: model, scale: scale)
                         .offset(y: layout.audioTop)
                 }
+                if layout.music, let music = model.project.audio.music {
+                    MusicLaneView(model: model, music: music, scale: scale)
+                        .offset(y: layout.musicTop)
+                }
                 if let part = model.exportPart {
                     PartBand(model: model, scale: scale, part: part, layout: layout)
                 }
@@ -95,11 +101,12 @@ struct TimelineView: View {
 }
 
 /// Where each lane sits, from what the edit has: a marks lane only with markers, captions, texts or shortcuts to show,
-/// a hidden-parts lane with one row per overlap, and the sound lane only for a movie with sound.
+/// a hidden-parts lane with one row per overlap, the sound lane only for a movie with sound, and a music lane under it.
 struct TimelineLayout: Equatable {
     var marks: Bool
     var hiddenRows: Int
     var audio: Bool
+    var music: Bool
 
     @MainActor
     init(model: EditorModel) {
@@ -111,14 +118,19 @@ struct TimelineLayout: Equatable {
         hiddenRows = (project.redactions ?? []).isEmpty ? 0 : min(TimelineView.hiddenRowsShown, (rows.values.max() ?? 0) + 1)
         // Until the waveform is read, keep the lane, so a movie with sound does not jump once it loads.
         audio = !model.waveform.loaded || model.waveform.hasAudio
+        music = project.audio.music != nil
     }
 
     var marksTop: CGFloat { TimelineView.clipLaneTop + TimelineView.clipLaneHeight + 4 }
     var hiddenTop: CGFloat { marksTop + (marks ? TimelineView.marksLaneHeight + 2 : 0) }
     var hiddenHeight: CGFloat { hiddenRows == 0 ? 0 : CGFloat(hiddenRows) * (TimelineView.hiddenRowHeight + 2) - 2 }
     var audioTop: CGFloat { hiddenTop + (hiddenRows > 0 ? hiddenHeight + 4 : 0) }
+    var musicTop: CGFloat { audio ? audioTop + TimelineView.audioLaneHeight + 4 : audioTop }
     /// The bottom of the last lane shown.
-    var lanesBottom: CGFloat { audio ? audioTop + TimelineView.audioLaneHeight : audioTop - 2 }
+    var lanesBottom: CGFloat {
+        if music { return musicTop + TimelineView.musicLaneHeight }
+        return audio ? audioTop + TimelineView.audioLaneHeight : audioTop - 2
+    }
     var totalHeight: CGFloat { lanesBottom + 16 }
 }
 
@@ -808,6 +820,53 @@ private struct AudioLaneView: View {
         .frame(height: TimelineView.audioLaneHeight)
         .instantTooltip("Sound (the waveform of the kept clips)")
         .accessibilityLabel(waveform.hasAudio ? "Audio waveform" : "No audio")
+    }
+}
+
+/// The music under the movie as its volume over time: where it plays (all of the movie when it loops, else the file's
+/// length from its start), its fades, and the dips under each spoken line, drawn from the same keyframes the export uses.
+private struct MusicLaneView: View {
+    let model: EditorModel
+    let music: EditProject.Music
+    let scale: TimelineScale
+    @State private var fileUs: Int64?
+
+    var body: some View {
+        let missing = !FileManager.default.fileExists(atPath: music.file)
+        let lengthUs = model.durationUs
+        let playedUs = music.loop == false
+            ? min(lengthUs, max(0, (fileUs ?? lengthUs) - Int64(music.startMs ?? 0) * 1000))
+            : lengthUs
+        let speech = MusicMix.speech(lines: model.zoom.captionLines, project: model.project)
+        let frames = MusicMix.keyframes(music: music, speech: speech, lengthUs: playedUs)
+        let tint = missing ? Color.red : Color(red: 0.55, green: 0.6, blue: 1)
+        Canvas { context, size in
+            let x0 = scale.x(0) + 1.5
+            let x1 = scale.x(playedUs) - 1.5
+            guard x1 > x0 else { return }
+            context.fill(Path(roundedRect: CGRect(x: x0, y: 0, width: x1 - x0, height: size.height), cornerRadius: 4),
+                         with: .color(tint.opacity(0.14)))
+            guard !missing, music.volume > 0, let first = frames.first else { return }
+            // Full height is the music's own level, so a dip under speech reads as a notch.
+            let top = { (volume: Double) in size.height - 2 - CGFloat(volume / music.volume) * (size.height - 4) }
+            var path = Path()
+            path.move(to: CGPoint(x: scale.x(first.us), y: size.height))
+            for frame in frames { path.addLine(to: CGPoint(x: scale.x(frame.us), y: top(frame.volume))) }
+            path.addLine(to: CGPoint(x: scale.x(frames.last?.us ?? first.us), y: size.height))
+            path.closeSubpath()
+            context.fill(path, with: .color(tint.opacity(0.55)))
+        }
+        .frame(height: TimelineView.musicLaneHeight)
+        .allowsHitTesting(true)
+        .task(id: "\(music.file)|\(music.loop == false)") {
+            guard music.loop == false, let duration = try? await AVURLAsset(url: URL(fileURLWithPath: music.file)).load(.duration),
+                  duration.seconds.isFinite else { return }
+            fileUs = Int64(duration.seconds * 1_000_000)
+        }
+        .instantTooltip(missing ? "The music file is missing: the export plays without music"
+                        : "Music: \(URL(fileURLWithPath: music.file).lastPathComponent)\(speech.isEmpty ? "" : ", quieter under \(Plural.count(speech.count, "spoken part"))")")
+        .accessibilityElement()
+        .accessibilityLabel(missing ? "Music file missing" : "Music, \(speech.count) dips under speech")
     }
 }
 

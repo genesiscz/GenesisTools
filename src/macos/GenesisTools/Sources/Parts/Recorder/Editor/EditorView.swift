@@ -1113,7 +1113,7 @@ private struct MusicSection: View {
                 }
                 if let fileSeconds, fileSeconds > 1 {
                     let start = Double(music.startMs ?? 0) / 1000
-                    SectionLabel(text: "Starts at", value: formatClock(Int64(start * 1_000_000)) + " of " + formatClock(Int64(fileSeconds * 1_000_000)))
+                    SectionLabel(text: "Starts at", value: formatClock(Int64(start * 1_000_000), tenths: true) + " of " + formatClock(Int64((fileSeconds * 1_000_000).rounded()), tenths: true))
                     Slider(value: Binding(get: { min(start, fileSeconds - 0.5) }, set: { value in
                         model.setMusic { $0.startMs = value < 0.25 ? nil : Int((value * 2).rounded() * 500) }
                     }), in: 0...max(0.5, fileSeconds - 0.5))
