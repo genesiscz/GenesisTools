@@ -1,0 +1,63 @@
+[
+  {
+    "settings": {
+      "fps": 4,
+      "framesPerImage": 4,
+      "minimumDifferencePct": 0
+    },
+    "counts": {
+      "candidates": 12,
+      "kept": 12,
+      "skipped": 0,
+      "images": 3,
+      "lastImageFrames": 4
+    },
+    "frames": [
+      "3ee8ba84db6e85046827eae980e7f93d862d2fbaa77cbb6f7d04cb804e1543e6",
+      "54c5c437ace89e1b33347bd8f6d61b99c6c6a860cf455b2861ce2bdf1ad9a823",
+      "165eea0323c0ab7385b84f1ac9a60546d2697fc2ddd210d8ca98da8038f0b746",
+      "1ca85ed6e3ad7220031f633c2996c055f6bfd38a6132457960c111a25ab657dd",
+      "18c05690c338fc5b7f55de6f9e76e4f730d2c474979766ba4c5c4f291d304cf2",
+      "d348aee43b7bc063b1122ddc63ffe775e07f111ddf1c584f96a7a6699b9c8033",
+      "abe8ed742979cd062e2dea88d2a762b2c80671ca8a645e3c7f3f189d4f579391",
+      "ba444dc5470a11713a31292fa9e75a6981c8dcb04e27394fc13e33334e1ea03d",
+      "104616d732203b86231acc6ccfde1d8496d3255450e86abca03e5dd9842fcb57",
+      "5eebc770e93929456a605dbae9861dc07814ecfa57d1fdffae9c6d6e6a760025",
+      "4fbd240e9da8fdd844ae473fb8c34fede1fe915ad6b026e430d5a84097aa13ea",
+      "2b2982b0429f5070cfc9b032d6bb40b8d089935d514deb95dbe013cb07b8562d"
+    ],
+    "sheets": [
+      "3f8f8a51100c14997b633fe53187b2d0e35ab9e0bdf0ddebce72f37e4a5f5fea",
+      "c6a0b4cf1e977cd7330209983f36879bd5adcbd33638288df9e33c5e0f787ea7",
+      "f67aed8a0c3c2720b3d2535714dc81ac535b7961f24694c4f60ad7ae120e73a0"
+    ]
+  },
+  {
+    "settings": {
+      "fps": 4,
+      "framesPerImage": 4,
+      "minimumDifferencePct": 2,
+      "startUs": 500000,
+      "endUs": 2000000
+    },
+    "counts": {
+      "candidates": 6,
+      "kept": 6,
+      "skipped": 0,
+      "images": 2,
+      "lastImageFrames": 2
+    },
+    "frames": [
+      "165eea0323c0ab7385b84f1ac9a60546d2697fc2ddd210d8ca98da8038f0b746",
+      "1ca85ed6e3ad7220031f633c2996c055f6bfd38a6132457960c111a25ab657dd",
+      "18c05690c338fc5b7f55de6f9e76e4f730d2c474979766ba4c5c4f291d304cf2",
+      "d348aee43b7bc063b1122ddc63ffe775e07f111ddf1c584f96a7a6699b9c8033",
+      "abe8ed742979cd062e2dea88d2a762b2c80671ca8a645e3c7f3f189d4f579391",
+      "ba444dc5470a11713a31292fa9e75a6981c8dcb04e27394fc13e33334e1ea03d"
+    ],
+    "sheets": [
+      "4efd7a3fc34221afb20ed95d27e2f583753264cd38300e4d3e321f9e51d48c81",
+      "6f4e141a3c130e14b0675358a26e12b4384b2f1af17d18b968a23bb785d80467"
+    ]
+  }
+]
