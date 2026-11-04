@@ -32,11 +32,12 @@ mcp__context7-mcp__query-docs with libraryId="/websites/learn_microsoft_en-us_re
 
 ## Local Azure DevOps CLI Documentation
 
-See `src/azure-devops/docs/README.md` for the index of all 15 files (about 130 KB in total, so read only the file you need). The ones used most:
+See `src/azure-devops/docs/README.md` for the index of all 16 files (about 135 KB in total, so read only the file you need). The ones used most:
 - `az-boards-work-item.md` - Work item CRUD
 - `az-boards-iteration.md` - Sprint/iteration management
 - `az-repos-pr.md` - Pull request workflows
 - `az-rest.md` - Raw REST API calls
+- `api-discovery.md` - **How to find an API's exact route, versions and contract** before you code it: `OPTIONS {org}/_apis/` lists every route with its max and released version, the official SDK source (`microsoft/azure-devops-node-api`, `api/<Area>Api.ts` and `api/interfaces/<Area>Interfaces.ts`) gives the contracts
 - `work-item-history-api-reference.md` - **Revisions, updates, comments APIs** (detailed)
 - `wiql-syntax.md`, `wiql-syntax-reference.md`, `work-items-queries.md` - WIQL syntax and verified query patterns
 - `timelog.md` - TimeLog extension API
