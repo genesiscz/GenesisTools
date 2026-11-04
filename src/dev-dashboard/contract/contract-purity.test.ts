@@ -26,6 +26,7 @@ const FILES = [
     "wake.ts",
     "timesheet.ts",
     "vault.ts",
+    "memos.ts",
     "approvals.ts",
     "glance.ts",
     "ping.ts",

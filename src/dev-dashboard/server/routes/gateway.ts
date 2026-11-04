@@ -18,6 +18,7 @@ import { type BoardStopDeps, stopAgentSession } from "@app/hub/lib/board/stop";
 import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
 import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
+import { actOnMemo } from "@app/hub/lib/memos/index";
 import { addPing, removePing } from "@app/hub/lib/ping/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
 import { fillTimesheetWeek, type TimesheetDeps } from "@app/hub/lib/timesheet/index";
@@ -44,6 +45,7 @@ export const GATEWAY_ROWS = {
     watching: ENDPOINTS.gatewayWatching,
     brief: ENDPOINTS.gatewayBrief,
     wake: ENDPOINTS.gatewayWake,
+    memos: ENDPOINTS.gatewayMemos,
     timesheet: ENDPOINTS.gatewayTimesheet,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
@@ -266,6 +268,16 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             }),
             invalid: "expected { date, timesheetId, revision }",
             run: (input) => fillTimesheetWeek(input, deps.timesheet),
+        }),
+        // A keyed write, and each action of a memo runs once (F28).
+        bindEndpoint(ENDPOINTS.memosAct, {
+            input: z.object({
+                id: z.string().min(1),
+                action: z.enum(["reminders", "note", "agent"]),
+                sessionKey: z.string().min(1).optional(),
+            }),
+            invalid: "expected { id, action, sessionKey? }",
+            run: (input) => actOnMemo(input),
         }),
         // Vault writes (F25): keyed, so a replayed clip or append writes once.
         bindEndpoint(ENDPOINTS.vaultClip, {

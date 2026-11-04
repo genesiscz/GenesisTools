@@ -24,6 +24,7 @@ import type { MorningBriefDto } from "@app/dev-dashboard/contract/brief";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { ForecastDto, GlanceDto } from "@app/dev-dashboard/contract/glance";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
+import type { MemoActInput, MemoActReceiptDto, MemosDto } from "@app/dev-dashboard/contract/memos";
 import type { PingWatchesDto, PingWatchInput } from "@app/dev-dashboard/contract/ping";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
 import type {
@@ -435,6 +436,10 @@ export const ENDPOINTS = {
     vaultClip: row<VaultClipInput, VaultClipReceiptDto>("POST", "/api/vault/clip", "keyed-write", "slow"),
     /** Appends text to a vault note, the inbox note of the day by default (F25, F28). */
     vaultAppend: row<VaultAppendInput, VaultAppendReceiptDto>("POST", "/api/vault/append", "keyed-write"),
+    /** Voice Memos turned into todos, a note and an agent task (F28). */
+    gatewayMemos: row<GatewayInput, MemosDto>("GET", "/api/gateway/memos", "read"),
+    /** Runs one action of a memo once: Reminders, the vault note, or a session (F28). */
+    memosAct: row<MemoActInput, MemoActReceiptDto>("POST", "/api/memos/act", "keyed-write", "slow"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;

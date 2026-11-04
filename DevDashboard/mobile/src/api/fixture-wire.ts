@@ -50,6 +50,7 @@ import { MOCK_BRIEF } from "@/api/fixtures/brief";
 import { MOCK_GATES } from "@/api/fixtures/gates";
 import { MOCK_FORECAST, MOCK_GLANCE } from "@/api/fixtures/glance";
 import { MOCK_LAUNCH } from "@/api/fixtures/launch";
+import { MOCK_MEMOS } from "@/api/fixtures/memos";
 import { MOCK_TIMESHEET } from "@/api/fixtures/timesheet";
 import { MOCK_HEALTH, MOCK_WAKE } from "@/api/fixtures/wake";
 import { MOCK_WATCHING } from "@/api/fixtures/watching";
@@ -301,6 +302,14 @@ const ROUTES: FixtureRoute[] = [
         method: ENDPOINTS.timesheetFill.method,
         path: ENDPOINTS.timesheetFill.path,
         handle: () => ({ filled: false, written: 0, failed: 0, skipped: 0, error: "mock data: no Clarity to fill" }),
+    },
+
+    // Memo to action (F28); an action is refused, since a fixture has no Reminders, vault or session.
+    { method: ENDPOINTS.gatewayMemos.method, path: ENDPOINTS.gatewayMemos.path, handle: () => MOCK_MEMOS },
+    {
+        method: ENDPOINTS.memosAct.method,
+        path: ENDPOINTS.memosAct.path,
+        handle: ({ body }) => ({ id: text(body.id), action: text(body.action), ok: false, detail: "mock data: nothing to write" }),
     },
 
     // Send to my vault (F25): a clip and an append answer where they would have written, writing nothing.

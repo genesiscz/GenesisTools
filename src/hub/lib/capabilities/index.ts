@@ -328,6 +328,18 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<{ date: string }>,
 
+    /** `hub memos --json`: Voice Memos turned into actions (the phone's Memos screen, F28). Read only. */
+    memos: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { listMemoActions } = await import("../memos/index");
+            return listMemoActions();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `hub wake --json`: the wakeup relay this Mac is registered with (F26), login included. Read only. */
     wake: {
         policy: "read",
