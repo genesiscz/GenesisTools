@@ -79,13 +79,24 @@ enum Looks {
 
     /// The picture fitted inside the canvas less the padding, centred, masked to a rounded rectangle, over a shadow
     /// and the background. Sizes are fractions of the canvas's short side; the output is `canvas`.
-    static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, picture: CGSize, canvas size: CGSize) -> CIImage {
+    /// With `fit: .cover` the picture is first cropped to the shape of the room inside the padding, centred on
+    /// `focus` (0...1 from the top left) as far as the picture's edges allow.
+    static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, picture: CGSize, canvas size: CGSize,
+                           focus: CGPoint = CGPoint(x: 0.5, y: 0.5)) -> CIImage {
         let unit = min(size.width, size.height)
         let padding = frame.padding * unit
-        let scale = max(0.05, min((size.width - 2 * padding) / picture.width, (size.height - 2 * padding) / picture.height))
-        let inner = CGRect(x: (size.width - picture.width * scale) / 2, y: (size.height - picture.height * scale) / 2,
-                           width: picture.width * scale, height: picture.height * scale)
-        let placed = image
+        let room = CGSize(width: max(2, size.width - 2 * padding), height: max(2, size.height - 2 * padding))
+        var source = image
+        var shown = picture
+        if frame.fit == .cover {
+            let crop = coverCrop(picture: picture, room: room, focus: focus)
+            source = image.cropped(to: crop).transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+            shown = crop.size
+        }
+        let scale = max(0.05, min(room.width / shown.width, room.height / shown.height))
+        let inner = CGRect(x: (size.width - shown.width * scale) / 2, y: (size.height - shown.height * scale) / 2,
+                           width: shown.width * scale, height: shown.height * scale)
+        let placed = source
             .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             .transformed(by: CGAffineTransform(translationX: inner.minX, y: inner.minY))
         let radius = frame.cornerRadius * unit
@@ -103,6 +114,18 @@ enum Looks {
             canvas = shadow.composited(over: canvas)
         }
         return clipped.composited(over: canvas).cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    /// The part of the picture (Core Image coordinates, y up) with the room's shape, as large as fits, centred on
+    /// `focus` (y from the top) and kept inside the picture.
+    static func coverCrop(picture: CGSize, room: CGSize, focus: CGPoint) -> CGRect {
+        let aspect = room.width / room.height
+        let size = picture.width / picture.height > aspect
+            ? CGSize(width: picture.height * aspect, height: picture.height)
+            : CGSize(width: picture.width, height: picture.width / aspect)
+        let centerX = min(max(focus.x * picture.width, size.width / 2), picture.width - size.width / 2)
+        let centerY = min(max((1 - focus.y) * picture.height, size.height / 2), picture.height - size.height / 2)
+        return CGRect(x: centerX - size.width / 2, y: centerY - size.height / 2, width: size.width, height: size.height)
     }
 
     static func background(_ background: EditProject.Background, size: CGSize) -> CIImage {

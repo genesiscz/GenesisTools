@@ -62,6 +62,8 @@ export const CANVAS_ASPECTS = ["source", "16:9", "4:3", "1:1", "9:16"] as const;
 /** The movie on a background, scaled in by `padding`, with rounded corners and a shadow. Absent is the plain movie. */
 export const frameSchema = z.object({
     aspect: z.enum(CANVAS_ASPECTS).optional(),
+    /** On a canvas of another shape: `contain` shows the whole movie, `cover` crops it to fill, following the cursor. */
+    fit: z.enum(["contain", "cover"]).optional(),
     background: z
         .object({
             kind: z.enum(["none", "color", "gradient"]).default("gradient"),
@@ -480,6 +482,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
             /** false removes the frame: the plain movie again. */
             enabled: z.boolean().optional(),
             aspect: z.enum(CANVAS_ASPECTS).optional(),
+            fit: z.enum(["contain", "cover"]).optional(),
             background: z
                 .object({
                     kind: z.enum(["none", "color", "gradient"]).optional(),
@@ -636,6 +639,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                 frame: frameSchema.parse({
                     ...current,
                     ...(op.aspect === undefined ? {} : { aspect: op.aspect }),
+                    ...(op.fit === undefined ? {} : { fit: op.fit }),
                     ...(op.padding === undefined ? {} : { padding: op.padding }),
                     ...(op.cornerRadius === undefined ? {} : { cornerRadius: op.cornerRadius }),
                     ...(op.shadow === undefined ? {} : { shadow: op.shadow }),

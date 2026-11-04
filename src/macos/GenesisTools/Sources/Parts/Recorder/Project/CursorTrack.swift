@@ -119,6 +119,12 @@ final class CursorTrack: @unchecked Sendable {
     func drawnPoint(atMs ms: Double, smoothing: Double) -> (x: Double, y: Double)? {
         var half = max(0, min(1, smoothing)) * 120
         if let nearest = nearestClickDistance(ms) { half = min(half, nearest * 0.8) }
+        return averagedPoint(atMs: ms, halfMs: half)
+    }
+
+    /// The path averaged with Gaussian weights over ±`halfMs`: what a crop that follows the cursor centres on, wide
+    /// enough that it glides instead of chasing every move.
+    func averagedPoint(atMs ms: Double, halfMs half: Double) -> (x: Double, y: Double)? {
         guard half > 1 else { return point(atMs: ms) }
         let sigma = half / 2
         var sumX = 0.0, sumY = 0.0, sumW = 0.0

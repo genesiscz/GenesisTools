@@ -312,6 +312,13 @@ private struct StyleInspector: View {
                                      model.setLooks { $0.frame?.aspect = value == .source ? nil : value }
                                  }),
                                  minSegmentWidth: 40, identifier: "recorder.style.canvas")
+                if (frame.aspect ?? .source) != .source {
+                    SwitchRow("Fill the canvas", isOn: Binding(get: { frame.fit == .cover }, set: { on in
+                        model.setLooks { $0.frame?.fit = on ? .cover : nil }
+                    }))
+                    .instantTooltip("Crops the movie to the canvas's shape; the crop follows the cursor")
+                    .accessibilityIdentifier("recorder.style.fill")
+                }
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(38), spacing: 8), count: 6), spacing: 8) {
                     ForEach(Self.backgrounds, id: \.name) { preset in
                         let selected = frame.background.colors == preset.colors

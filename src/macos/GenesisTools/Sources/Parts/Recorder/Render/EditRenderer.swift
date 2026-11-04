@@ -27,6 +27,8 @@ final class ZoomState: @unchecked Sendable {
         var marks: [Looks.ClickMark]
         var clicks: EditProject.Clicks?
         var cursor: Looks.CursorMark?
+        /// Where a `cover` crop centres, 0...1 of the picture after the zoom.
+        var coverFocus: CGPoint
         var frame: EditProject.Frame?
     }
 
@@ -40,11 +42,21 @@ final class ZoomState: @unchecked Sendable {
         if let clicks = project.clicks, clicks.highlight, let cursor {
             marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs)
         }
-        return FrameLook(view: ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor),
+        let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
+        return FrameLook(view: view,
                          marks: marks, clicks: project.clicks,
                          cursor: Self.cursorMark(atSourceUs: sourceUs, track: cursor, settings: project.cursor ?? .init(),
                                                  videoWidth: Double(project.source.width)),
+                         coverFocus: Self.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view),
                          frame: project.frame)
+    }
+
+    /// The cursor, averaged over ±0.7 s and moved into the zoomed view; the centre without a track or a cover fit.
+    static func coverFocus(atSourceUs us: Int64, project: EditProject, track: CursorTrack?, view: ZoomCurve.View) -> CGPoint {
+        guard project.frame?.fit == .cover, let track,
+              let point = track.averagedPoint(atMs: Double(us) / 1000, halfMs: 700) else { return CGPoint(x: 0.5, y: 0.5) }
+        let rect = view.rect
+        return CGPoint(x: (point.x - rect.minX) / rect.width, y: (point.y - rect.minY) / rect.height)
     }
 
     static func cursorMark(atSourceUs us: Int64, track: CursorTrack?, settings: EditProject.Cursor, videoWidth: Double) -> Looks.CursorMark? {
@@ -190,7 +202,7 @@ struct EditRenderer {
             }
             result = result.cropped(to: CGRect(origin: .zero, size: picture))
             if let frame = look.frame {
-                result = Looks.applyFrame(frame, to: result, picture: picture, canvas: size)
+                result = Looks.applyFrame(frame, to: result, picture: picture, canvas: size, focus: look.coverFocus)
             }
             request.finish(with: result, context: nil)
         }

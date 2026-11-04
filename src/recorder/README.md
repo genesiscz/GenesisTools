@@ -41,7 +41,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `clicks` (optional): a disc that grows and fades on each recorded click.
 - `frame` (optional): the movie on a background (`none`, `color`, `gradient`), with `padding`, `cornerRadius` and a
   `shadow`, on a canvas of its own `aspect` (`16:9`, `4:3`, `1:1`, `9:16`; absent is the movie's shape). The canvas's
-  short side is the movie's height; sizes are fractions of it.
+  short side is the movie's height; sizes are fractions of it. `fit: "cover"` crops the movie to fill the canvas, the
+  crop following the cursor (averaged over ±0.7 s); `contain` (absent) shows all of it.
 - `cursor` (optional, a movie without the system cursor): `show`, `size` 0.5 to 3, `smoothing` 0 to 1 (the path
   averaged over up to ±120 ms, narrower near a click so the cursor sits on it), `hideAfterMs` (fade out after
   standing still this long; 0 never). Absent is shown, 1, 0.5, 0.

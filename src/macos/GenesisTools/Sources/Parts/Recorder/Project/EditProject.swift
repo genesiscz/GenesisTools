@@ -126,9 +126,19 @@ struct EditProject: Codable, Equatable {
         }
     }
 
+    enum CanvasFit: String, Codable, CaseIterable {
+        /// The whole movie, with the background around it.
+        case contain
+        /// The canvas filled: the movie cropped to its shape, the crop following the cursor (the centre without a
+        /// cursor track).
+        case cover
+    }
+
     struct Frame: Codable, Equatable {
         /// The canvas around the movie; nil is the movie's own shape. Optional, so an older file decodes.
         var aspect: CanvasAspect?
+        /// How the movie fills a canvas of another shape; nil is `.contain`.
+        var fit: CanvasFit?
         var background = Background()
         /// The margin on every side, as a fraction of the output height.
         var padding = 0.06

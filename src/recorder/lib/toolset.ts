@@ -134,6 +134,7 @@ const movieMethods = [
             .object({
                 enabled: z.boolean().optional(),
                 aspect: z.enum(CANVAS_ASPECTS).optional(),
+                fit: z.enum(["contain", "cover"]).optional(),
                 background: z
                     .object({
                         kind: z.enum(["none", "color", "gradient"]).optional(),
@@ -146,7 +147,7 @@ const movieMethods = [
                 shadow: z.boolean().optional(),
             })
             .strict(),
-        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
+        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill, following the cursor), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
     ),
     edit(
         "removeIdle",

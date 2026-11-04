@@ -165,6 +165,18 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(fitted.picture.height, fitted.canvas.width, accuracy: 2)
     }
 
+    func testACoverCropHasTheRoomsShapeFollowsTheFocusAndStaysInsideThePicture() {
+        let picture = CGSize(width: 1728, height: 1080)
+        let room = CGSize(width: 900, height: 1600)
+        let centred = Looks.coverCrop(picture: picture, room: room, focus: CGPoint(x: 0.5, y: 0.5))
+        XCTAssertEqual(centred.height, 1080)
+        XCTAssertEqual(centred.width / centred.height, 900.0 / 1600, accuracy: 0.001)
+        XCTAssertEqual(centred.midX, 864, accuracy: 0.5)
+        let right = Looks.coverCrop(picture: picture, room: room, focus: CGPoint(x: 0.99, y: 0.2))
+        XCTAssertEqual(right.maxX, 1728, accuracy: 0.5)
+        XCTAssertEqual(right.minY, 0, accuracy: 0.5)
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))
