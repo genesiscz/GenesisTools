@@ -34,6 +34,13 @@ final class ZoomState: @unchecked Sendable {
         return track != nil
     }
 
+    /// The cached transcript's lines, for the timeline's marks lane.
+    var captionLines: [CaptionTrack.Line] {
+        lock.lock()
+        defer { lock.unlock() }
+        return captions?.lines ?? []
+    }
+
     var hasCaptions: Bool {
         lock.lock()
         defer { lock.unlock() }

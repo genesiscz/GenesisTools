@@ -10,6 +10,18 @@ enum TimelineMap {
         var outEndUs: Int64 { outStartUs + clip.outputDurationUs }
     }
 
+    /// The output stretches that play the source range [fromUs, toUs): one per kept clip it overlaps, at the clip's
+    /// speed. A range that was cut away plays nowhere.
+    static func outputSpans(fromUs: Int64, toUs: Int64, in project: EditProject) -> [(fromUs: Int64, toUs: Int64)] {
+        placed(project).compactMap { placed in
+            let start = max(fromUs, placed.clip.fromUs)
+            let end = min(toUs, placed.clip.toUs)
+            guard end > start else { return nil }
+            let out = { (source: Int64) in placed.outStartUs + Int64(Double(source - placed.clip.fromUs) / placed.clip.speed) }
+            return (out(start), out(end))
+        }
+    }
+
     static func placed(_ project: EditProject) -> [Placed] {
         var start: Int64 = 0
         return project.clips.enumerated().map { index, clip in

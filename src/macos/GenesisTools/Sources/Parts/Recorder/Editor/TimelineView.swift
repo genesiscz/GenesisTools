@@ -32,9 +32,12 @@ struct TimelineView: View {
     static let zoomLaneHeight: CGFloat = 34
     static let clipLaneHeight: CGFloat = 64
     static let audioLaneHeight: CGFloat = 30
+    static let marksLaneHeight: CGFloat = 16
     static let laneGap: CGFloat = 8
     static var clipLaneTop: CGFloat { rulerHeight + 10 + zoomLaneHeight + laneGap }
-    static var totalHeight: CGFloat { clipLaneTop + clipLaneHeight + laneGap + audioLaneHeight + 40 }
+    static var marksLaneTop: CGFloat { clipLaneTop + clipLaneHeight + 4 }
+    static var audioLaneTop: CGFloat { marksLaneTop + marksLaneHeight + 4 }
+    static var totalHeight: CGFloat { audioLaneTop + audioLaneHeight + 40 }
 
     private var scale: TimelineScale {
         let fit = Double(max(200, viewportWidth - 32)) / max(0.5, Double(model.durationUs) / 1_000_000)
@@ -54,8 +57,10 @@ struct TimelineView: View {
                     .offset(y: Self.rulerHeight + 10)
                 ClipLaneView(model: model, scale: scale)
                     .offset(y: Self.clipLaneTop)
+                MarksLaneView(model: model, scale: scale)
+                    .offset(y: Self.marksLaneTop)
                 AudioLaneView(model: model, scale: scale)
-                    .offset(y: Self.clipLaneTop + Self.clipLaneHeight + Self.laneGap)
+                    .offset(y: Self.audioLaneTop)
                 PlayheadView(clock: model.clock, scale: scale, model: model)
             }
             .frame(width: contentWidth, height: Self.totalHeight, alignment: .topLeading)
@@ -349,6 +354,45 @@ private struct FilmstripCanvas: View {
 }
 
 // MARK: - Audio lane
+
+/// What the looks put on the edit, where it plays: spoken lines (blue), hidden parts (orange) and a tick with its
+/// label for each kept shortcut (white). Everything is mapped through the cuts and speeds; a cut mark is gone.
+private struct MarksLaneView: View {
+    @Bindable var model: EditorModel
+    let scale: TimelineScale
+
+    var body: some View {
+        let project = model.project
+        let captions = project.captions?.show == true ? model.zoom.captionLines : []
+        let keys = project.keys?.show == true ? (model.cursor?.keys ?? []) : []
+        let redactions = project.redactions ?? []
+        Canvas { context, size in
+            func bar(_ context: inout GraphicsContext, _ from: Int64, _ to: Int64, row: CGFloat, color: Color) {
+                for span in TimelineMap.outputSpans(fromUs: from, toUs: to, in: project) {
+                    let rect = CGRect(x: scale.x(span.fromUs), y: row, width: max(2, scale.width(span.toUs - span.fromUs)), height: 5)
+                    context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
+                }
+            }
+            for line in captions { bar(&context, line.fromUs, line.toUs, row: 1, color: Color(red: 0.36, green: 0.62, blue: 1).opacity(0.8)) }
+            for redaction in redactions {
+                bar(&context, redaction.startUs, redaction.endUs, row: 9, color: Color(red: 1, green: 0.62, blue: 0.2).opacity(0.85))
+            }
+            for key in keys {
+                let sourceUs = Int64(key.ms * 1000)
+                guard let outUs = TimelineMap.outputTime(ofSource: sourceUs, in: project) else { continue }
+                let x = scale.x(outUs)
+                context.fill(Path(CGRect(x: x - 0.75, y: 0, width: 1.5, height: size.height)), with: .color(.white.opacity(0.85)))
+                if let label = key.key {
+                    context.draw(Text(label).font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.85)),
+                                 at: CGPoint(x: x + 3, y: size.height / 2), anchor: .leading)
+                }
+            }
+        }
+        .frame(height: TimelineView.marksLaneHeight)
+        .accessibilityElement()
+        .accessibilityLabel("Marks: \(Plural.count(captions.count, "caption line")), \(Plural.count(redactions.count, "hidden part")), \(Plural.count(keys.count, "shortcut"))")
+    }
+}
 
 private struct AudioLaneView: View {
     @Bindable var model: EditorModel
