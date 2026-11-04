@@ -29,7 +29,7 @@ import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
-import { decideItems } from "../lib/decide";
+import { decideItems, reopenItems } from "../lib/decide";
 import { transcriptMarkdown } from "../lib/export";
 import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
@@ -406,6 +406,34 @@ async function decide(
     }
 }
 
+async function reopen(ref: string, ids: string[], opts: { json?: boolean }): Promise<void> {
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
+
+    if (!record) {
+        return;
+    }
+
+    try {
+        const result = await reopenItems({ store, record, ids });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        for (const skip of result.skipped) {
+            ui.warn(`${skip.id}: ${skip.reason}`);
+        }
+
+        if (result.reopened.length > 0) {
+            ui.ok(`suggested again: ${result.reopened.join(" ")} in ${record.id}`);
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 async function speakersStats(ref: string, opts: { gap?: string; attendance?: string; json?: boolean }): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -631,6 +659,14 @@ export function registerItemCommands(program: Command): void {
                     decide(status, ref, ids, opts)
             );
     }
+
+    program
+        .command("reopen")
+        .argument("<meeting>", MEETING_REF)
+        .argument("<items...>", "item ids: i1 i2 …")
+        .description("Put confirmed or rejected items back to suggested: the Undo of confirm and reject")
+        .option("--json", "print { reopened, skipped } as JSON")
+        .action(reopen);
 
     const speakers = program.command("speakers").description("The meeting's speakers: statistics, hints and renames");
 

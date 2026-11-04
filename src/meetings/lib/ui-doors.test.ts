@@ -9,6 +9,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import type { z } from "zod";
 import { captureCost } from "./capture-cost";
 import { configValueAt, parseConfigPath, setConfigValue, unsetConfigValue } from "./config-edit";
+import { decideItems, reopenItems } from "./decide";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
@@ -267,5 +268,68 @@ describe("capture cost", () => {
         expect(cost.displays.map((choice) => choice.maxCpuSecPerMin)).toEqual([32.2, 16.1, 16.1]);
         expect(cost.activeFps.map((choice) => choice.maxCpuSecPerMin)).toEqual([16.1, 32.2, 64.5]);
         expect(cost.thresholdNote).toContain("not measured");
+    });
+});
+
+describe("reopen", () => {
+    test("puts a confirmed or rejected item back to suggested, and leaves a question and an open item alone", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            {
+                title: "Review",
+                start: "2026-11-05T08:00:00.000Z",
+                createdBy: "new",
+                items: [
+                    {
+                        kind: "term",
+                        id: "i1",
+                        status: "suggested",
+                        heard: "Viky",
+                        proposed: "wiki",
+                        rules: [],
+                        suggestedAt,
+                    },
+                    {
+                        kind: "term",
+                        id: "i2",
+                        status: "suggested",
+                        heard: "MOO",
+                        proposed: "MOP",
+                        rules: [],
+                        suggestedAt,
+                    },
+                    {
+                        kind: "question",
+                        id: "i3",
+                        status: "confirmed",
+                        about: "term",
+                        fromSec: 1,
+                        toSec: 2,
+                        question: "Which word?",
+                        choices: [],
+                        decides: [],
+                        rules: [],
+                        suggestedAt,
+                    },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        await decideItems({ store: meetings, record: created, status: "confirmed", ids: ["i1"] });
+        await decideItems({ store: meetings, record: created, status: "rejected", ids: ["i2"] });
+
+        const result = await reopenItems({ store: meetings, record: created, ids: ["i1", "i2", "i3"] });
+        const saved = meetings.read(created.id);
+
+        expect(result.reopened).toEqual(["i1", "i2"]);
+        expect(result.skipped.map((skip) => skip.id)).toEqual(["i3"]);
+        expect(saved?.items.map((item) => [item.id, item.status, item.decidedAt])).toEqual([
+            ["i1", "suggested", undefined],
+            ["i2", "suggested", undefined],
+            ["i3", "confirmed", undefined],
+        ]);
+        expect((await reopenItems({ store: meetings, record: saved ?? created, ids: ["i1"] })).skipped).toEqual([
+            { id: "i1", reason: "it is not decided" },
+        ]);
     });
 });

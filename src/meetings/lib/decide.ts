@@ -117,3 +117,45 @@ export async function decideItems(options: {
     appendCorrections(ledger);
     return { decided: deciding.map((item) => item.id), skipped };
 }
+
+/**
+ * Puts decided items back to suggested: the Undo of a confirm or a reject. A question is never reopened here, because
+ * its answer also decided other items; `listen` reopens its own answers. The corrections ledger is append-only, so a
+ * confirm's ledger line stays; it counts as one confirmation for `dictionary suggest`.
+ */
+export async function reopenItems(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    ids: string[];
+}): Promise<{ reopened: string[]; skipped: Array<{ id: string; reason: string }> }> {
+    const { store } = options;
+    // The saved record decides: the one passed in may be older than a confirm made since.
+    const record = store.read(options.record.id) ?? options.record;
+    const picked = pickItems(record, options.ids);
+    const skipped = picked.flatMap((item) => {
+        if (item.kind === "question") {
+            return [
+                {
+                    id: item.id,
+                    reason: `${questionLabel(record, item.id)} is a question; its answer is undone in listen`,
+                },
+            ];
+        }
+
+        return item.status === "suggested" ? [{ id: item.id, reason: "it is not decided" }] : [];
+    });
+    const reopening = picked.filter((item) => !skipped.some((skip) => skip.id === item.id)).map((item) => item.id);
+
+    if (reopening.length > 0) {
+        await store.update(record.id, { command: "reopen", change: reopening.join(" ") }, (current) => {
+            for (const item of current.items) {
+                if (reopening.includes(item.id)) {
+                    item.status = "suggested";
+                    delete item.decidedAt;
+                }
+            }
+        });
+    }
+
+    return { reopened: reopening, skipped };
+}
