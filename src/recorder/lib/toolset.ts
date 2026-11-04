@@ -13,6 +13,7 @@ import {
     editOpSchema,
     findInTranscript,
     hexColor,
+    outputDurationUs,
     type TranscriptLine,
     transcriptLines,
     writeProject,
@@ -124,7 +125,7 @@ const movieMethods = [
                 hideAfterMs: z.number().int().min(0).max(30_000).optional(),
             })
             .strict(),
-        "The cursor the editor draws (a movie recorded without the system cursor; describe() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5), hideAfterMs (fade out after standing still this long, 0 never). It still sits on every click."
+        "The cursor the editor draws (a movie recorded without the system cursor; info() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5), hideAfterMs (fade out after standing still this long, 0 never). It still sits on every click."
     ),
     edit(
         "frame",
@@ -433,9 +434,18 @@ export class Movie {
             writeProject(opened.path, opened.project);
         }
 
+        const atUs = timeToUs(at);
+        const lengthUs = outputDurationUs(opened.project);
+
+        if (atUs > lengthUs) {
+            throw new Error(
+                `at (${atUs / 1_000_000} s) is after the end of the edit (${Math.round(lengthUs / 1000) / 1000} s); still() takes OUTPUT seconds, 0 to the edit's length`
+            );
+        }
+
         await ensureRecorderPart();
         const out = join(this.ctx?.scratchDir ?? tmpdir(), `still-${Date.now()}.png`);
-        const answer = await stillOfEdit({ path: opened.path, atSeconds: timeToUs(at) / 1_000_000, out });
+        const answer = await stillOfEdit({ path: opened.path, atSeconds: atUs / 1_000_000, out });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the still failed without a reason");

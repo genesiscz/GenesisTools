@@ -10,6 +10,13 @@ describe("rewriteTurn", () => {
         expect(out).toContain("return (z + 1)");
     });
 
+    it("takes a top-level return as the result, with or without an await before it", () => {
+        expect(rewriteTurn("const s = 1;\nreturn s;")).toContain("return s");
+        const awaited = rewriteTurn("const s = await work(1);\nreturn s;");
+        expect(awaited).toContain("s = await work(1)");
+        expect(awaited).toContain("return s");
+    });
+
     it("returns the last expression of each branch when the turn ends in try, if or a block", () => {
         const tried = rewriteTurn("try { await work(); 'ok' } catch (error) { error.message }");
         expect(tried).toContain('return ("ok")');

@@ -59,8 +59,21 @@ function returnLast(node: Node | null | undefined, code: string, edits: Edit[]):
 
 // Dead-code elimination stays off: the transpiler would drop a side-effect-free last
 // expression such as `typeof marker`, and that expression is the turn's result.
+// A turn runs inside an async function, so a top-level `return` is its result. The transpiler refuses one only
+// when the turn also awaits (it then reads it as a module), so such a turn is stripped inside a function and
+// unwrapped again.
 function stripTypes(source: string): string {
-    return new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false }).transformSync(source);
+    const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false });
+    try {
+        return transpiler.transformSync(source);
+    } catch (error) {
+        if (!String(error).includes("Top-level return")) {
+            throw error;
+        }
+
+        const wrapped = transpiler.transformSync(`async function __turn__() {\n${source}\n}`);
+        return wrapped.slice(wrapped.indexOf("{") + 1, wrapped.lastIndexOf("}"));
+    }
 }
 
 export function rewriteTurn(source: string): string {
