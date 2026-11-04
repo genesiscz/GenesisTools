@@ -55,7 +55,8 @@ final class RecorderTimelineTests: XCTestCase {
     /// A click at a point measured from the window's top left, as the timeline lays itself out.
     private func click(_ window: NSWindow, x: CGFloat, y: CGFloat) {
         let point = NSPoint(x: x, y: window.frame.height - y)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+        // A real pointer arrives before it clicks, so a row that turns live under it is live before the press.
+        for type in [NSEvent.EventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
             let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
             window.sendEvent(try! XCTUnwrap(event))
@@ -171,7 +172,8 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.project.redactions?.first?.lane, lane.id)
         XCTAssertEqual(model.effectLanes[1].items.map(\.kind), [.hide])
         pump(0.2)
-        // A click on the hidden part, where its lane draws it, selects it. Twice, because a segment that changed between live and resting once lost every second click.
+        // A click on the hidden part, where its lane draws it, selects it; twice, as the segment turns live under the
+        // pointer after the first.
         for _ in 0..<2 {
             model.selection = .none
             click(window, x: scale.x(3_000_000), y: laneY(1, in: model))

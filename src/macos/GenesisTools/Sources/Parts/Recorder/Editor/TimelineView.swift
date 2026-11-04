@@ -606,13 +606,15 @@ private struct CommentMarker: View {
             .contentShape(Rectangle())
             .onTapGesture { model.goToComment(comment) }
             .instantTooltip(comment.text.isEmpty ? "A comment" : comment.text)
-            .popover(isPresented: presented, arrowEdge: .bottom) {
-                CommentPopover(model: model, comment: comment)
-            }
             .accessibilityElement()
             .accessibilityLabel("Comment at \(formatClock(out, tenths: true)): \(comment.text)\(comment.isResolved ? ", resolved" : "")")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { model.goToComment(comment) }
+            .liveRow(selected: model.openComment == comment.id)
+            // After `.liveRow`, so the popover's buttons never take the marker's resting environment.
+            .popover(isPresented: presented, arrowEdge: .bottom) {
+                CommentPopover(model: model, comment: comment)
+            }
             .offset(x: scale.x(out) - 7)
         }
     }
@@ -630,7 +632,9 @@ private struct CommentPopover: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 if let author = comment.author { Text(verbatim: author) }
-                Text(verbatim: editRange(model.project, fromUs: comment.atUs, toUs: comment.toUs ?? comment.atUs + 1).edit)
+                Text(verbatim: comment.toUs.map { editRange(model.project, fromUs: comment.atUs, toUs: $0).edit }
+                    ?? TimelineMap.outputTime(ofSource: comment.atUs, in: model.project).map { formatClock($0, tenths: true) }
+                    ?? "Cut from the edit")
                     .monospacedDigit()
             }
             .font(.system(size: 11)).foregroundStyle(.secondary)

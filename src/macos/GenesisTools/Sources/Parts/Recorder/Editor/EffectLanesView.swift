@@ -150,6 +150,8 @@ struct EffectLaneView: View {
             }
         }
         .frame(width: width, height: height, alignment: .topLeading)
+        // A lane is a row: its gutter menu and tooltips are controls only under the pointer.
+        .liveRow()
     }
 
     private var emptyHint: String {
@@ -351,8 +353,7 @@ struct EffectSegment: View {
                 // A tap gesture alone gives the element no AXPress, so VoiceOver and agents could not select it.
                 .accessibilityAction { model.selectEffect(item) }
                 .accessibilityAction(named: "Delete") { model.deleteEffect(item) }
-                // No `.liveRow`: a segment that flipped between live and resting lost every second click
-                // (RecorderTimelineTests), and a lane holds a few segments, not a dense list.
+                .liveRow(selected: selected)
                 // Last: the segment and its hit area move together (see EffectLaneView).
                 .offset(x: scale.x(first.fromUs))
         }
