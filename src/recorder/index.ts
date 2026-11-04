@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } from "@app/control/lib/recording-targets";
 import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -21,6 +22,7 @@ import {
 } from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
 import { makeProxy } from "./lib/proxy";
+import { Movie } from "./lib/toolset";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
@@ -312,6 +314,32 @@ program
             }
 
             out.result(markersOf(opened));
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("sheet")
+    .description("Several frames of the edit as it exports on one PNG, in rows of three, each labelled with its time")
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .option("--count <n>", "frames spread over the range (default 6, at most 12)")
+    .option("--from <time>", "the range's start in OUTPUT seconds or m:ss (default 0)")
+    .option("--to <time>", "the range's end (default the end of the edit)")
+    .option("--at <times>", "these OUTPUT times instead, comma-separated (2,5.5,0:12)")
+    .option("--out <png>", "where the picture goes (default a temporary file)")
+    .action(async (value: string, flags: { count?: string; from?: string; to?: string; at?: string; out?: string }) => {
+        try {
+            await ensureRecorderPart((line) => out.printlnErr(line));
+            const answer = await new Movie(value).sheet({
+                count: flags.count === undefined ? undefined : Number(flags.count),
+                from: flags.from === undefined ? undefined : parseTime(flags.from, "--from"),
+                to: flags.to === undefined ? undefined : parseTime(flags.to, "--to"),
+                at: flags.at?.split(",").map((time) => parseTime(time.trim(), "--at")),
+                out: flags.out === undefined ? undefined : resolve(flags.out),
+            });
+            out.result(answer);
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

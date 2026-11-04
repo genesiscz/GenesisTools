@@ -61,7 +61,7 @@ enum Looks {
         let dx = -(view.centerX - previous.centerX) / width * extent.width
         let dy = (view.centerY - previous.centerY) / width * extent.height
         var result = image
-        // Each smear is a length in pixels; the filters' own units were measured against a lit dot (RecorderEditTests):
+        // Each smear is a length in pixels; the filters' own units were measured against a lit 2 px dot (2026-11-04):
         // CIMotionBlur spreads about 5.6 px per unit of radius, CIZoomBlur about 0.0226 px per unit of amount and pixel
         // of distance from its centre.
         let pan = min(maxMotionBlur, (dx * dx + dy * dy).squareRoot() * amount)

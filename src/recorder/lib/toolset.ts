@@ -319,11 +319,12 @@ const movieMethods = [
                 to: timeSchema.optional(),
                 count: z.number().int().min(1).max(12).optional(),
                 at: z.array(timeSchema).min(1).max(12).optional(),
+                out: z.string().optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName: "{ path, width, height, times }",
-        doc: "One picture of several frames of the edit as it exports, in rows of three, each labelled with its OUTPUT time: count (6) frames spread over from…to (the whole edit), or the times in at. One call to check a whole edit after a change, instead of a still() per moment.",
+        doc: "One picture of several frames of the edit as it exports, in rows of three, each labelled with its OUTPUT time: count (6) frames spread over from…to (the whole edit), or the times in at. One call to check a whole edit after a change, instead of a still() per moment. out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
         effect: "read",
     }),
     defineMethod({
@@ -775,6 +776,7 @@ export class Movie {
             to?: z.infer<typeof timeSchema>;
             count?: number;
             at?: z.infer<typeof timeSchema>[];
+            out?: string;
         } = {}
     ) {
         const opened = await openProject(this.recording);
@@ -800,7 +802,7 @@ export class Movie {
         }
 
         await ensureRecorderPart();
-        const out = join(this.ctx?.scratchDir ?? tmpdir(), `sheet-${Date.now()}.png`);
+        const out = options.out ?? join(this.ctx?.scratchDir ?? tmpdir(), `sheet-${Date.now()}.png`);
         const answer = await sheetOfEdit({ path: opened.path, times: times.map((us) => us / 1_000_000), out });
 
         if (!answer.ok || !answer.path) {

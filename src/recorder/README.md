@@ -15,6 +15,7 @@ tools recorder markers <recording> [--chapters]  # its markers as JSON with wher
 tools recorder rename <recording> <title>        # a new title for the library, the editor window and movies.list()
 tools recorder undo <recording>                  # back one step of apply or the REPL (30 steps in <edit>.undo.json)
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
+tools recorder sheet <recording> [--count N] [--from T] [--to T] [--at T,T] [--out PNG]  # frames on one labelled PNG
 tools recorder list [--live] [--limit N] [--json]
 tools recorder edit <recording> [--no-focus] [--at T] [--tab NAME]  # the editor window; --at puts the playhead at an
                                                  # OUTPUT time, --tab opens an inspector tab (zoom, clip, hide, text,
