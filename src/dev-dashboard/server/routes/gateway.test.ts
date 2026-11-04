@@ -261,6 +261,62 @@ describe("the act scope", () => {
         ).toBe("deny");
     });
 
+    it("raises a waiting gate behind the full login, once per Idempotency-Key, and never answers it", async () => {
+        const opened: string[] = [];
+        const activated: number[] = [];
+        const wait = { title: "t", who: null, askedAt: "2026-11-04T11:00:00.000Z" };
+        const routes = gatewayRoutes({
+            gates: {
+                ledger: () => ({
+                    recent: [],
+                    pending: [
+                        {
+                            ...wait,
+                            id: "rm:abc",
+                            gate: "rm",
+                            window: null,
+                            request: { id: "abc", reason: null, paths: [], expiresAt: "2026-11-05T11:00:00.000Z" },
+                        },
+                        {
+                            ...wait,
+                            id: "vault:77",
+                            gate: "vault",
+                            window: { pid: 77, openedAt: wait.askedAt, deadline: "2026-11-04T11:02:50.000Z" },
+                            request: null,
+                        },
+                    ],
+                }),
+                openRmWindow: (id) => opened.push(id),
+                activate: async (pid) => {
+                    activated.push(pid);
+                    return "refused";
+                },
+            },
+        });
+        const raise = route(routes, "POST", "/api/gates/raise");
+        const call = (body: unknown, key: string) =>
+            json(
+                raise.handler(
+                    ctx({ method: "POST", pathname: "/api/gates/raise", headers: { "idempotency-key": key }, body })
+                )
+            );
+
+        expect((await call({ id: "rm:abc" }, "r1")).body).toMatchObject({ outcome: "opened" });
+        expect((await call({ id: "rm:abc" }, "r1")).body).toMatchObject({ outcome: "opened" });
+        expect((await call({ id: "vault:77" }, "r2")).body).toMatchObject({ outcome: "asked" });
+        expect((await call({ id: "vault:1" }, "r3")).body).toMatchObject({ outcome: "gone" });
+        expect(opened).toEqual(["abc"]);
+        expect(activated).toEqual([77]);
+        expect(
+            decideApiAuth({
+                method: "POST",
+                pathname: "/api/gates/raise",
+                headers: { "x-gt-act-token": TOKEN },
+                provision,
+            }).decision
+        ).toBe("deny");
+    });
+
     it("lets an act token reach the act row only, without the dashboard login", () => {
         expect(isActScopedRequest("POST", "/api/act", TOKEN)).toBe(true);
         expect(isActScopedRequest("POST", "/api/act", "short")).toBe(false);

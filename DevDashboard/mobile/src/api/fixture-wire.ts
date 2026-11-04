@@ -44,6 +44,7 @@ import {
     mockTodosResult,
     mockWeather,
 } from "@/api/fixtures/data";
+import { MOCK_GATES } from "@/api/fixtures/gates";
 import { fixtureAnswerForm, fixtureDraft, fixtureQueue, fixtureSendDrafts } from "@/api/fixtures/queue";
 
 /**
@@ -239,6 +240,14 @@ const ROUTES: FixtureRoute[] = [
     { method: "GET", path: paths.containers(), handle: () => MOCK_CONTAINERS },
     { method: "GET", path: paths.diskUsage(), handle: () => MOCK_DISK_USAGE },
     { method: "GET", path: "/api/timeline", handle: () => MOCK_TIMELINE },
+
+    // The Touch ID waiting card (F22); a raise answers "asked", since a fixture has no window to raise.
+    { method: ENDPOINTS.gatewayGates.method, path: ENDPOINTS.gatewayGates.path, handle: () => MOCK_GATES },
+    {
+        method: ENDPOINTS.gatesRaise.method,
+        path: ENDPOINTS.gatesRaise.path,
+        handle: ({ body }) => ({ id: text(body.id), outcome: "asked", detail: "mock data: no window on a Mac" }),
+    },
 
     // The agents board (F9) and its session view; a stop is refused, since a fixture has no process to end.
     { method: ENDPOINTS.gatewayBoard.method, path: ENDPOINTS.gatewayBoard.path, handle: () => MOCK_BOARD },
