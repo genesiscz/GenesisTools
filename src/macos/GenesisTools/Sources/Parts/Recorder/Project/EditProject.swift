@@ -86,6 +86,18 @@ struct EditProject: Codable, Equatable {
         var volume = 1.0
         /// Muted source audio tracks by index (0 is the first audio track of the movie).
         var mutedTracks: [Int] = []
+        /// A sound file under the movie; nil is none. Optional, so an older file decodes.
+        var music: Music?
+    }
+
+    /// Music looped under the movie, fading in and out, and quieter (`duck`) while a transcript line plays.
+    struct Music: Codable, Equatable {
+        var file: String
+        /// 0 to 1.
+        var volume = 0.25
+        /// How much quieter under speech: 0.6 drops it to 40 %.
+        var duck = 0.6
+        var fadeMs = 1500
     }
 
     struct Clicks: Codable, Equatable {

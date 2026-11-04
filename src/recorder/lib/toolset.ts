@@ -184,6 +184,19 @@ const movieMethods = [
         'Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps). The result names the ops it took back (undone: ["text"]) and stepsLeft. Refused when the editor window changed it since: undo that with ⌘Z there.'
     ),
     edit(
+        "music",
+        z
+            .object({
+                file: z.string().optional(),
+                volume: z.number().min(0).max(1).optional(),
+                duck: z.number().min(0).max(1).optional(),
+                fadeMs: z.number().int().min(0).max(10_000).optional(),
+                enabled: z.boolean().optional(),
+            })
+            .strict(),
+        "Music under the movie: file (an mp3, m4a, wav… path; needed the first time), looped to the movie's length, volume 0 to 1 (0.25), fading in and out over fadeMs (1500). While a transcript line plays it drops by duck (0.6 = to 40 %), so speech stays clear; without transcript() nothing ducks. enabled: false removes it."
+    ),
+    edit(
         "spotlight",
         z
             .object({
@@ -758,6 +771,10 @@ export class Movie {
     }
 
     /** A redaction with the spotlight style: the rectangle stays sharp and the rest of the picture dims. */
+    async music(options: Omit<Extract<EditOp, { op: "music" }>, "op"> = {}) {
+        return this.change([{ op: "music", ...options }]);
+    }
+
     async spotlight(options: Omit<Extract<EditOp, { op: "redact" }>, "op" | "style">) {
         return this.change([{ op: "redact", ...options, style: "spotlight" }]);
     }

@@ -182,6 +182,91 @@ final class ZoomState: @unchecked Sendable {
     }
 }
 
+/// Music under the movie: looped to its length, faded in and out, ducked under the transcript's lines.
+enum MusicMix {
+    /// How long the music takes to dip under a line and come back.
+    static let rampUs: Int64 = 300_000
+
+    /// The spoken parts in output time, from the cached transcript; lines closer than two ramps merge.
+    static func speech(lines: [CaptionTrack.Line], project: EditProject) -> [(fromUs: Int64, toUs: Int64)] {
+        let spans = lines.compactMap { line -> (fromUs: Int64, toUs: Int64)? in
+            guard let from = TimelineMap.outputTime(ofSource: line.fromUs, in: project),
+                  let to = TimelineMap.outputTime(ofSource: line.toUs, in: project), to > from else { return nil }
+            return (from, to)
+        }.sorted { $0.fromUs < $1.fromUs }
+        var merged: [(fromUs: Int64, toUs: Int64)] = []
+        for span in spans {
+            if let last = merged.last, span.fromUs - last.toUs < rampUs * 2 {
+                merged[merged.count - 1].toUs = max(last.toUs, span.toUs)
+            } else {
+                merged.append(span)
+            }
+        }
+        return merged
+    }
+
+    /// The music's volume at `us`: its level, times the fades at both ends, times the duck under a spoken part.
+    static func gain(atUs us: Int64, music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64) -> Double {
+        let fadeUs = Double(max(1, Int64(music.fadeMs) * 1000))
+        let fade = music.fadeMs == 0 ? 1 : max(0, min(1, Double(us) / fadeUs, Double(lengthUs - us) / fadeUs))
+        var level = 1.0
+        for span in speech {
+            let into: Double
+            if us >= span.fromUs && us <= span.toUs {
+                into = 1
+            } else if us < span.fromUs && us > span.fromUs - rampUs {
+                into = 1 - Double(span.fromUs - us) / Double(rampUs)
+            } else if us > span.toUs && us < span.toUs + rampUs {
+                into = 1 - Double(us - span.toUs) / Double(rampUs)
+            } else {
+                into = 0
+            }
+            level = min(level, 1 - music.duck * into)
+        }
+        return music.volume * fade * level
+    }
+
+    /// The times where the volume changes its slope, with the volume there; a ramp runs between each pair.
+    static func keyframes(music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64) -> [(us: Int64, volume: Double)] {
+        let fadeUs = Int64(music.fadeMs) * 1000
+        var times: Set<Int64> = [0, lengthUs, min(lengthUs, fadeUs), max(0, lengthUs - fadeUs)]
+        for span in speech {
+            times.formUnion([span.fromUs - rampUs, span.fromUs, span.toUs, span.toUs + rampUs])
+        }
+        return times.filter { $0 >= 0 && $0 <= lengthUs }.sorted()
+            .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: lengthUs)) }
+    }
+
+    /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
+    static func add(_ music: EditProject.Music, to composition: AVMutableComposition, lengthUs: Int64,
+                    project: EditProject) async throws -> AVMutableAudioMixInputParameters? {
+        let asset = AVURLAsset(url: URL(fileURLWithPath: music.file))
+        guard let source = try? await asset.loadTracks(withMediaType: .audio).first,
+              let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            HubPerf.log("recorder.music: no sound in \(music.file); the movie plays without it")
+            return nil
+        }
+        let available = try await source.load(.timeRange)
+        guard available.duration > .zero else { return nil }
+        let length = EditRenderer.us(lengthUs)
+        var at = CMTime.zero
+        while at < length {
+            let piece = CMTimeMinimum(available.duration, length - at)
+            try out.insertTimeRange(CMTimeRange(start: available.start, duration: piece), of: source, at: at)
+            at = at + piece
+        }
+        let speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
+        let frames = keyframes(music: music, speech: speech, lengthUs: lengthUs)
+        let parameters = AVMutableAudioMixInputParameters(track: out)
+        for (start, end) in zip(frames, frames.dropFirst()) where end.us > start.us {
+            parameters.setVolumeRamp(fromStartVolume: Float(start.volume), toEndVolume: Float(end.volume),
+                                     timeRange: CMTimeRange(start: EditRenderer.us(start.us), duration: EditRenderer.us(end.us - start.us)))
+        }
+        HubPerf.log("recorder.music: \(URL(fileURLWithPath: music.file).lastPathComponent) under \(speech.count) spoken parts, \(frames.count) keyframes")
+        return parameters
+    }
+}
+
 /// The movie a project plays: the kept clips in order with their speeds, the zoom filter, and the audio levels.
 /// The preview's player item and the export are built from the same `Rendered`, so what plays is what exports.
 struct EditRenderer {
@@ -350,15 +435,19 @@ struct EditRenderer {
         // sped-up clip packs its frames closer (2× gave 74 fps). Without a timing track `frameDuration` decides.
         videoComposition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
 
+        var inputs: [AVMutableAudioMixInputParameters] = audioOut.enumerated().map { index, track in
+            let parameters = AVMutableAudioMixInputParameters(track: track)
+            let muted = project.audio.mutedTracks.contains(index)
+            parameters.setVolume(muted ? 0 : Float(project.audio.volume), at: .zero)
+            return parameters
+        }
+        if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()), project: project) {
+            inputs.append(parameters)
+        }
         var audioMix: AVAudioMix?
-        if !audioOut.isEmpty {
+        if !inputs.isEmpty {
             let mix = AVMutableAudioMix()
-            mix.inputParameters = audioOut.enumerated().map { index, track in
-                let parameters = AVMutableAudioMixInputParameters(track: track)
-                let muted = project.audio.mutedTracks.contains(index)
-                parameters.setVolume(muted ? 0 : Float(project.audio.volume), at: .zero)
-                return parameters
-            }
+            mix.inputParameters = inputs
             audioMix = mix
         }
         return Rendered(composition: composition, videoComposition: videoComposition, audioMix: audioMix, renderSize: size)

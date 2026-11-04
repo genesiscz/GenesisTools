@@ -184,6 +184,17 @@ export function transcriptCachePath(video: string): string {
     return join(dirname(video), `${basename(video, extname(video))}.transcript.json`);
 }
 
+/**
+ * Music under the movie: `file` loops to the movie's length and fades in and out over `fadeMs`; while a transcript
+ * line plays it drops by `duck` (0.6 = to 40 %), so speech stays clear. Without a transcript nothing ducks.
+ */
+export const musicSchema = z.object({
+    file: z.string().min(1),
+    volume: z.number().min(0).max(1).default(0.25),
+    duck: z.number().min(0).max(1).default(0.6),
+    fadeMs: z.number().int().min(0).max(10_000).default(1500),
+});
+
 /** The look of the zoom's moves: `blur` 0 (sharp) to 1 smears the picture along a pan or a zoom, 0.5 by default. */
 export const motionSchema = z.object({
     blur: z.number().min(0).max(1).default(0.5),
@@ -206,6 +217,8 @@ export const editProjectSchema = z.object({
             include: z.boolean().default(true),
             volume: z.number().min(0).max(2).default(1),
             mutedTracks: z.array(z.number().int().nonnegative()).default([]),
+            /** A sound file under the movie (looped to its length); absent is none. */
+            music: musicSchema.optional(),
         })
         .default({ include: true, volume: 1, mutedTracks: [] }),
     export: z
@@ -692,6 +705,18 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("audio"), include: z.boolean() }).strict(),
     z
         .object({
+            op: z.literal("music"),
+            /** A sound file (mp3, m4a, wav, aiff…); the first music op needs it. */
+            file: z.string().optional(),
+            volume: z.number().min(0).max(1).optional(),
+            duck: z.number().min(0).max(1).optional(),
+            fadeMs: z.number().int().min(0).max(10_000).optional(),
+            /** false removes the music. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("exportSettings"),
             codec: z.enum(["h264", "hevc"]).optional(),
             maxHeight: z.number().int().nonnegative().optional(),
@@ -991,6 +1016,27 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
         }
         case "audio":
             return { ...project, audio: { ...project.audio, include: op.include } };
+        case "music": {
+            if (op.enabled === false) {
+                const { music: _music, ...audio } = project.audio;
+                return { ...project, audio };
+            }
+
+            const { op: _op, enabled: _enabled, ...change } = op;
+            const merged = { ...project.audio.music, ...change };
+
+            if (!merged.file) {
+                throw new Error("music needs a file the first time: a sound file such as an mp3, m4a or wav");
+            }
+
+            const file = resolve(merged.file);
+
+            if (!existsSync(file)) {
+                throw new Error(`the music file ${file} does not exist`);
+            }
+
+            return { ...project, audio: { ...project.audio, music: musicSchema.parse({ ...merged, file }) } };
+        }
         case "exportSettings":
             return {
                 ...project,

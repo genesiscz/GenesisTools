@@ -681,6 +681,28 @@ final class EditorModel {
         setBackgroundImage(url)
     }
 
+    /// A sound file under the movie, looped to its length.
+    func chooseMusic() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.canChooseDirectories = false
+        panel.message = "Music to play under the movie"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        setAudio { audio in
+            var music = audio.music ?? EditProject.Music(file: url.path)
+            music.file = url.path
+            audio.music = music
+        }
+    }
+
+    func setMusic(_ change: (inout EditProject.Music) -> Void) {
+        setAudio { audio in
+            guard var music = audio.music else { return }
+            change(&music)
+            audio.music = music
+        }
+    }
+
     func chooseBackgroundImage() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]

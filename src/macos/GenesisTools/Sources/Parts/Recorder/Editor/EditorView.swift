@@ -952,6 +952,7 @@ private struct AudioInspector: View {
                 Text("Audio").font(.system(size: 15, weight: .semibold))
                 EmptyState(symbol: "speaker.slash", text: "This recording has no sound",
                            detail: "Record with the microphone or the system audio on to get a sound track.")
+                MusicSection(model: model)
             }
         } else {
         VStack(alignment: .leading, spacing: 10) {
@@ -1001,7 +1002,45 @@ private struct AudioInspector: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            MusicSection(model: model)
         }
+        }
+    }
+}
+
+/// Music under the movie: a file, its level and how far it dips under speech.
+private struct MusicSection: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "Music")
+            if let music = model.project.audio.music {
+                HStack(spacing: 8) {
+                    Image(systemName: "music.note").foregroundStyle(RecorderPalette.dim)
+                    Text(verbatim: URL(fileURLWithPath: music.file).lastPathComponent)
+                        .lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    IconButton(systemName: "trash", tooltip: "Remove the music") { model.setAudio { $0.music = nil } }
+                        .accessibilityIdentifier("recorder.audio.music.remove")
+                }
+                SectionLabel(text: "Music volume", value: "\(Int((music.volume * 100).rounded()))%")
+                Slider(value: Binding(get: { music.volume }, set: { value in model.setMusic { $0.volume = (value * 20).rounded() / 20 } }), in: 0...1)
+                    .accessibilityLabel("Music volume")
+                SectionLabel(text: "Quieter under speech", value: music.duck == 0 ? "Off" : "\(Int((music.duck * 100).rounded()))%")
+                Slider(value: Binding(get: { music.duck }, set: { value in model.setMusic { $0.duck = (value * 20).rounded() / 20 } }), in: 0...1)
+                    .accessibilityLabel("Music quieter under speech")
+                    .instantTooltip("While a transcript line plays the music drops by this much, so speech stays clear")
+                if model.zoom.captionLines.isEmpty && music.duck > 0 {
+                    Text("Nothing ducks yet: the movie has no transcript (Captions tab → Transcribe).")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            WideButton(title: model.project.audio.music == nil ? "Add Music…" : "Choose Other Music…", systemImage: "music.note.list") {
+                model.chooseMusic()
+            }
+            .accessibilityIdentifier("recorder.audio.music.choose")
         }
     }
 }

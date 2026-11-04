@@ -53,6 +53,31 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(corner.y, 0, accuracy: 0.001)
     }
 
+    func testMusicFadesAtBothEndsAndDucksUnderSpeech() {
+        let music = EditProject.Music(file: "/m.mp3", volume: 0.5, duck: 0.6, fadeMs: 1000)
+        let speech: [(fromUs: Int64, toUs: Int64)] = [(4_000_000, 6_000_000)]
+        let length: Int64 = 10_000_000
+        XCTAssertEqual(MusicMix.gain(atUs: 0, music: music, speech: speech, lengthUs: length), 0, accuracy: 0.001)
+        XCTAssertEqual(MusicMix.gain(atUs: 500_000, music: music, speech: speech, lengthUs: length), 0.25, accuracy: 0.001, "half way into the fade")
+        XCTAssertEqual(MusicMix.gain(atUs: 2_000_000, music: music, speech: speech, lengthUs: length), 0.5, accuracy: 0.001)
+        XCTAssertEqual(MusicMix.gain(atUs: 5_000_000, music: music, speech: speech, lengthUs: length), 0.2, accuracy: 0.001, "40 % under speech")
+        XCTAssertEqual(MusicMix.gain(atUs: 6_150_000, music: music, speech: speech, lengthUs: length), 0.35, accuracy: 0.001, "half way back up")
+        XCTAssertEqual(MusicMix.gain(atUs: length, music: music, speech: speech, lengthUs: length), 0, accuracy: 0.001)
+        let frames = MusicMix.keyframes(music: music, speech: speech, lengthUs: length)
+        XCTAssertEqual(frames.map(\.us), [0, 1_000_000, 3_700_000, 4_000_000, 6_000_000, 6_300_000, 9_000_000, 10_000_000])
+    }
+
+    func testSpokenPartsFollowCutsAndMergeWhenClose() {
+        let edit = project([.init(id: "a", fromUs: 0, toUs: 3_000_000), .init(id: "b", fromUs: 5_000_000, toUs: 10_000_000)])
+        let lines = [CaptionTrack.Line(fromUs: 1_000_000, toUs: 2_000_000, text: "one"),
+                     CaptionTrack.Line(fromUs: 2_100_000, toUs: 2_900_000, text: "two"),
+                     CaptionTrack.Line(fromUs: 3_500_000, toUs: 4_500_000, text: "cut"),
+                     CaptionTrack.Line(fromUs: 6_000_000, toUs: 7_000_000, text: "after")]
+        let speech = MusicMix.speech(lines: lines, project: edit)
+        XCTAssertEqual(speech.map(\.fromUs), [1_000_000, 4_000_000])
+        XCTAssertEqual(speech.map(\.toUs), [2_900_000, 5_000_000])
+    }
+
     func testSnapPicksTheNearestTargetInsideTheTolerance() {
         XCTAssertEqual(TimelineMap.snap(1_040_000, to: [0, 1_000_000, 1_100_000], toleranceUs: 70_000), 1_000_000)
         XCTAssertEqual(TimelineMap.snap(1_060_000, to: [1_000_000, 1_100_000], toleranceUs: 70_000), 1_100_000)

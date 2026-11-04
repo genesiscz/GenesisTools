@@ -517,6 +517,14 @@ describe("edit project (edit.json)", () => {
         ).toThrow("leaves the picture");
         expect(applyOp(hidden, { op: "unredact", id: redaction?.id ?? "" }).redactions).toEqual([]);
         expect(() => applyOp(hidden, { op: "unredact", id: "nope" })).toThrow(`redactions: ${redaction?.id}`);
+        // Music: a file once, then changes merge; a missing file is refused; enabled: false removes it.
+        const song = join(mkdtempSync(join(tmpdir(), "gt-music-")), "song.m4a");
+        writeFileSync(song, "");
+        expect(() => applyOp(project, { op: "music", volume: 0.5 })).toThrow("needs a file");
+        expect(() => applyOp(project, { op: "music", file: `${song}.gone` })).toThrow("does not exist");
+        const scored = applyOp(applyOp(project, { op: "music", file: song }), { op: "music", duck: 0 });
+        expect(scored.audio.music).toEqual({ file: song, volume: 0.25, duck: 0, fadeMs: 1500 });
+        expect(applyOp(scored, { op: "music", enabled: false }).audio.music).toBeUndefined();
         // follow is kept only when asked for.
         const following = applyOp(project, {
             op: "redact",
