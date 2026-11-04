@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -64,6 +65,25 @@ final class RecorderTimelineTests: XCTestCase {
     }
 
     /// The middle of the first effect lane (the zoom lane), and of the lane `index` lanes below it.
+    /// A press, three drag steps and a release, from one x to another at one y.
+    private func drag(_ window: NSWindow, fromX: CGFloat, toX: CGFloat, y: CGFloat) {
+        let flip = window.frame.height - y
+        let steps = [fromX] + (1...3).map { fromX + (toX - fromX) * CGFloat($0) / 3 }
+        for (index, x) in steps.enumerated() {
+            let type: NSEvent.EventType = index == 0 ? .leftMouseDown : .leftMouseDragged
+            let event = NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: flip), modifierFlags: [],
+                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                           context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            window.sendEvent(try! XCTUnwrap(event))
+            pump(0.03)
+        }
+        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: toX, y: flip), modifierFlags: [],
+                                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        window.sendEvent(try! XCTUnwrap(up))
+        pump(0.2)
+    }
+
     private var zoomLaneY: CGFloat { laneY(0, in: nil) }
 
     private func laneY(_ index: Int, in model: EditorModel?) -> CGFloat {
@@ -147,7 +167,7 @@ final class RecorderTimelineTests: XCTestCase {
         let window = host(model, width: width)
         let scale = scale(model, width: width)
         // Two kinds: a click asks which with a menu, so pick through the model the way the menu does.
-        model.addEffect(.hide, atOutput: scale.us(scale.x(2_000_000)), durationUs: nil, lane: lane.id)
+        model.addEffect(.hide, fromOut: 2_000_000, toOut: nil, lane: lane.id)
         XCTAssertEqual(model.project.redactions?.first?.lane, lane.id)
         XCTAssertEqual(model.effectLanes[1].items.map(\.kind), [.hide])
         pump(0.2)
@@ -160,5 +180,47 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.tab, .hide)
         model.undo()
         XCTAssertNil(model.project.redactions, "one undo takes the add back, lane and all")
+    }
+
+    func testADragOnTheFramesLaneSelectsTheRangeUnderThePointerAndItsActionsEditThere() {
+        let model = model()
+        let width: CGFloat = 1000
+        let window = host(model, width: width)
+        let scale = scale(model, width: width)
+        drag(window, fromX: scale.x(2_000_000), toX: scale.x(5_000_000), y: clipLaneY(model))
+        let range = try? XCTUnwrap(model.timelineRange)
+        XCTAssertEqual(Double(range?.fromUs ?? 0), 2_000_000, accuracy: 20_000)
+        XCTAssertEqual(Double(range?.toUs ?? 0), 5_000_000, accuracy: 20_000)
+        XCTAssertEqual(model.selection, .none, "a drag selects a range, not the clip it started on")
+
+        let exact = TimelineRange(fromUs: 2_000_000, toUs: 5_000_000)
+        model.applyRange(.speed, exact, speed: 2)
+        XCTAssertNil(model.timelineRange, "an action clears the range")
+        XCTAssertEqual(model.project.outputDurationUs, 8_500_000)
+        // The zoom over what now plays from 2 s to 3.5 s covers the whole sped-up source part, 2 s to 5 s.
+        model.applyRange(.zoom, TimelineRange(fromUs: 2_000_000, toUs: 3_500_000))
+        XCTAssertEqual(model.project.zooms.map { [$0.startUs, $0.endUs] }, [[2_000_000, 5_000_000]])
+        model.applyRange(.cut, TimelineRange(fromUs: 0, toUs: 1_000_000))
+        XCTAssertEqual(model.project.outputDurationUs, 7_500_000)
+        model.applyRange(.text, TimelineRange(fromUs: 0, toUs: 500_000))
+        XCTAssertEqual(model.project.texts?.first.map { [$0.startUs, $0.endUs] }, [1_000_000, 1_500_000])
+    }
+
+    func testTheRangePopoverListsEveryActionWithTheRangesTimes() throws {
+        let view = RangeActionsView(model: model(), range: TimelineRange(fromUs: 1_500_000, toUs: 4_000_000))
+            .background(Color(white: 0.15)).environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+        try png?.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("recorder-range-popover.png"))
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+        for word in ["00:01.5", "00:04.0", "2.5 s", "Cut", "Speed", "Zoom", "Hide a Part", "Spotlight", "Text", "Export This Part"] {
+            XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
+        }
     }
 }

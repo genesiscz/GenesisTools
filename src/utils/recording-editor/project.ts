@@ -12,6 +12,7 @@ import {
     addLane,
     EFFECT_KINDS,
     effectLaneSchema,
+    laneItems,
     moveLane,
     moveToLane,
     removeLane,
@@ -848,6 +849,15 @@ const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0)
 const rangeFields = { from: timeSchema, to: timeSchema };
 
 /** One edit an agent or the CLI asks for; times are SOURCE times, seconds or "mm:ss". */
+/** The range popover's actions that edit (its "Export This Part" is export({ from, to })). */
+export const RANGE_ACTIONS = ["cut", "speed", "zoom", "hide", "spotlight", "text"] as const;
+
+/** The middle of the picture a range's hidden part or spotlight starts with (the window's defaults). */
+const RANGE_RECTS = {
+    hide: { x: 0.35, y: 0.42, width: 0.3, height: 0.16 },
+    spotlight: { x: 0.4, y: 0.4, width: 0.2, height: 0.2 },
+} as const;
+
 export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("split"), at: timeSchema }).strict(),
     z.object({ op: z.literal("cut"), ...rangeFields }).strict(),
@@ -1141,6 +1151,23 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("moveLane"), id: z.string(), to: z.number().int().min(0) }).strict(),
     /** Puts a zoom, hidden part, spotlight, text or shape (by id) on a lane that holds its kind. */
     z.object({ op: z.literal("moveToLane"), id: z.string(), lane: z.string() }).strict(),
+    /**
+     * What the editor's range popover does to a range dragged on the frames lane, over OUTPUT times (what plays, as
+     * the ruler shows them): cut it, play it at `factor` (2), zoom over it (`scale`), hide or spotlight the middle of
+     * the picture, or put `text` ("Title") over it. Export a part with export({ from, to }).
+     */
+    z
+        .object({
+            op: z.literal("range"),
+            from: timeSchema,
+            to: timeSchema,
+            action: z.enum(RANGE_ACTIONS),
+            factor: z.number().min(0.25).max(16).optional(),
+            scale: z.number().min(1).max(4).optional(),
+            text: z.string().trim().min(1).max(200).optional(),
+            lane: z.string().optional(),
+        })
+        .strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -1333,7 +1360,20 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             throw new Error(`no lane ${op.lane}; lanes: ${lanes.join(", ")}`);
         }
 
-        return withLane(next, addedItemIds(project, next), op.lane);
+        const added = addedItemIds(project, next);
+        const placed = withLane(next, added, op.lane);
+        const lane = resolveLanes(placed).find((entry) => entry.lane.id === op.lane);
+        const misplaced = laneItems(placed).filter(
+            (item) => added.has(item.id) && !lane?.items.some((entry) => entry.id === item.id)
+        );
+
+        if (misplaced.length > 0) {
+            throw new Error(
+                `lane ${op.lane} holds ${lane?.lane.kinds?.join(", ") ?? "any kind"}, not ${misplaced[0].kind}`
+            );
+        }
+
+        return placed;
     }
 
     return next;
@@ -1351,6 +1391,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return moveLane(project, op.id, op.to);
         case "moveToLane":
             return moveToLane(project, op.id, op.lane);
+        case "range":
+            return applyRange(project, op);
         case "removeIdle": {
             if (!facts.idleUs) {
                 throw new Error("removeIdle needs the movie's idle stretches; run it through editProject or the CLI");
@@ -1765,6 +1807,35 @@ export function describeProject(project: EditProject, path: string) {
             items: items.map((item) => item.id),
         })),
     };
+}
+
+/** The `range` op: the OUTPUT range mapped to the source, then the op that does the action there. */
+function applyRange(project: EditProject, op: Extract<EditOp, { op: "range" }>): EditProject {
+    const fromOut = timeToUs(op.from);
+    const toOut = timeToUs(op.to);
+
+    if (!(toOut > fromOut)) {
+        throw new RangeError(`the range ends (${toOut / 1e6} s) before it starts (${fromOut / 1e6} s)`);
+    }
+
+    const fromUs = sourceTimeOf(project, fromOut);
+    const toUs = sourceTimeOf(project, Math.min(toOut, outputDurationUs(project)));
+    const seconds = { from: fromUs / 1e6, to: toUs / 1e6 };
+
+    switch (op.action) {
+        case "cut":
+            return cutRange(project, fromUs, toUs);
+        case "speed":
+            return speedRange(project, fromUs, toUs, op.factor ?? 2);
+        case "zoom":
+            return addZoom(project, fromUs, toUs, { scale: op.scale }).project;
+        case "hide":
+            return addRedaction(project, { fromUs, toUs, rect: RANGE_RECTS.hide, style: "blur" });
+        case "spotlight":
+            return addRedaction(project, { fromUs, toUs, rect: RANGE_RECTS.spotlight, style: "spotlight" });
+        case "text":
+            return applyOpItself(project, { op: "text", ...seconds, text: op.text ?? "Title" }, {});
+    }
 }
 
 /** One spoken line of the movie: its source times, where it plays in the edit now, and its words. */

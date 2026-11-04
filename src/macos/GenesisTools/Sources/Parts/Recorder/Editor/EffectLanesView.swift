@@ -183,13 +183,13 @@ struct EffectLaneView: View {
                 let end = value.location.x + scale.inset
                 let click = abs(end - start) < 4
                 let fromUs = scale.us(min(start, end))
-                let lengthUs: Int64? = click ? nil : max(500_000, scale.us(max(start, end)) - fromUs)
+                let toUs: Int64? = click ? nil : min(model.durationUs, max(fromUs + 500_000, scale.us(max(start, end))))
                 let choices = click ? addable.filter { $0 != .speed } : addable
                 if choices.count == 1, let kind = choices.first {
-                    model.addEffect(kind, atOutput: fromUs, durationUs: lengthUs, lane: lane.id)
+                    model.addEffect(kind, fromOut: fromUs, toOut: toUs, lane: lane.id)
                 } else if !choices.isEmpty {
                     MenuButtonPresenter.pop(choices.map { kind in
-                        .action("Add \(kind.title)", run: { model.addEffect(kind, atOutput: fromUs, durationUs: lengthUs, lane: lane.id) })
+                        .action("Add \(kind.title)", run: { model.addEffect(kind, fromOut: fromUs, toOut: toUs, lane: lane.id) })
                     })
                 }
             }
@@ -198,7 +198,7 @@ struct EffectLaneView: View {
     @ViewBuilder
     private func laneMenu() -> some View {
         ForEach(kinds.filter { $0 != .speed }) { kind in
-            Button("Add \(kind.title) at Playhead") { model.addEffect(kind, atOutput: model.clock.outUs, durationUs: nil, lane: lane.id) }
+            Button("Add \(kind.title) at Playhead") { model.addEffect(kind, fromOut: model.clock.outUs, toOut: nil, lane: lane.id) }
         }
         Divider()
         laneEditButtons()
@@ -217,7 +217,7 @@ struct EffectLaneView: View {
         let index = lanes.firstIndex { $0.id == lane.id } ?? 0
         var items: [MenuButtonItem] = [.note(lane.lane.title)]
         items += kinds.filter { $0 != .speed }.map { kind in
-            .action("Add \(kind.title) at Playhead", run: { model.addEffect(kind, atOutput: model.clock.outUs, durationUs: nil, lane: lane.id) })
+            .action("Add \(kind.title) at Playhead", run: { model.addEffect(kind, fromOut: model.clock.outUs, toOut: nil, lane: lane.id) })
         }
         items += [
             .divider,

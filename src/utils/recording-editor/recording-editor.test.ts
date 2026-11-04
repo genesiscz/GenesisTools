@@ -417,6 +417,30 @@ describe("edit project (edit.json)", () => {
         expect(editProjectSchema.parse(SafeJSON.parse(SafeJSON.stringify(project))).lanes).toEqual(project.lanes);
     });
 
+    test("range actions read OUTPUT times: after a cut and a speed-up they edit what plays there", () => {
+        let project = applyOp(wholeProject(source), { op: "range", from: 0, to: 1, action: "cut" });
+        expect(outputDurationUs(project)).toBe(9_000_000);
+        // Output 1..3 is source 2..4 now; played at 2 it takes 1 s.
+        project = applyOp(project, { op: "range", from: 1, to: 3, action: "speed" });
+        expect(project.clips.map((clip) => [clip.fromUs, clip.toUs, clip.speed])).toEqual([
+            [1_000_000, 2_000_000, 1],
+            [2_000_000, 4_000_000, 2],
+            [4_000_000, 10_000_000, 1],
+        ]);
+        project = applyOp(project, { op: "range", from: 1, to: 2, action: "zoom", scale: 2 });
+        expect(project.zooms.map((zoom) => [zoom.startUs, zoom.endUs, zoom.scale])).toEqual([
+            [2_000_000, 4_000_000, 2],
+        ]);
+        project = applyOp(project, { op: "range", from: 2, to: 3, action: "text", text: "Next" });
+        expect(project.texts?.map((note) => [note.startUs, note.endUs, note.text])).toEqual([
+            [4_000_000, 5_000_000, "Next"],
+        ]);
+        expect(() => applyOp(project, { op: "range", from: 0, to: 1, action: "spotlight", lane: "zooms" })).toThrow(
+            "not spotlight"
+        );
+        expect(() => applyOp(project, { op: "range", from: 3, to: 2, action: "cut" })).toThrow("before it starts");
+    });
+
     test("refuses a cut of everything and an overlapping zoom, naming why", () => {
         const project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 3 });
         expect(() => applyOp(project, { op: "cut", from: 0, to: 10 })).toThrow("whole movie");

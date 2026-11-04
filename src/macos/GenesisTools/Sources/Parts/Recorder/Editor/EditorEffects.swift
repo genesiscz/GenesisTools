@@ -70,16 +70,18 @@ extension EditorModel {
         }
     }
 
-    /// Adds an item of `kind` at an output time on a lane: a 2 s zoom, or a 3 s hidden part, spotlight, text or box
-    /// unless `durationUs` gives the length. A speed plays the range twice as fast (2 s from the time on a click).
-    func addEffect(_ kind: EffectKind, atOutput outUs: Int64, durationUs: Int64?, lane: String?) {
+    /// Adds an item of `kind` from an output time on a lane: a 2 s zoom, or a 3 s hidden part, spotlight, text or box
+    /// unless `toOut` ends it (through a speed change the source length is what plays there). A speed plays the range
+    /// twice as fast (2 s from the time on a click).
+    func addEffect(_ kind: EffectKind, fromOut: Int64, toOut: Int64?, lane: String?) {
+        let length = toOut.map { TimelineMap.sourceTime(atOutput: $0, in: project) - TimelineMap.sourceTime(atOutput: fromOut, in: project) }
         switch kind {
-        case .zoom: addZoom(atOutput: outUs, durationUs: durationUs ?? 2_000_000, lane: lane)
-        case .hide: addRedaction(atOutput: outUs, durationUs: durationUs ?? 3_000_000, lane: lane)
-        case .spotlight: addSpotlight(atOutput: outUs, durationUs: durationUs ?? 3_000_000, lane: lane)
-        case .text: addText(atOutput: outUs, durationUs: durationUs ?? 3_000_000, lane: lane)
-        case .shape: addShape(.box, atOutput: outUs, durationUs: durationUs ?? 3_000_000, lane: lane)
-        case .speed: speedRange(fromOut: outUs, toOut: outUs + (durationUs ?? 2_000_000), speed: 2)
+        case .zoom: addZoom(atOutput: fromOut, durationUs: max(500_000, length ?? 2_000_000), lane: lane)
+        case .hide: addRedaction(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
+        case .spotlight: addSpotlight(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
+        case .text: addText(atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
+        case .shape: addShape(.box, atOutput: fromOut, durationUs: max(100_000, length ?? 3_000_000), lane: lane)
+        case .speed: speedRange(fromOut: fromOut, toOut: toOut ?? fromOut + 2_000_000, speed: 2)
         }
     }
 

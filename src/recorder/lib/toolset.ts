@@ -20,6 +20,7 @@ import {
     hexColor,
     outputDurationUs,
     outputTimeOf,
+    RANGE_ACTIONS,
     REDACTION_STYLES,
     replaceWordsInLines,
     SHAPE_APPEARS,
@@ -410,6 +411,21 @@ const movieMethods = [
         z.object({ id: z.string(), lane: z.string() }).strict(),
         "Puts a zoom, hidden part, spotlight, text or shape (by its id) on another effect lane that holds its kind.",
         ["id", "lane"]
+    ),
+    edit(
+        "range",
+        z
+            .object({
+                from: timeSchema,
+                to: timeSchema,
+                action: z.enum(RANGE_ACTIONS),
+                factor: z.number().min(0.25).max(16).optional(),
+                scale: z.number().min(1).max(4).optional(),
+                text: z.string().trim().min(1).max(200).optional(),
+                lane: z.string().optional(),
+            })
+            .strict(),
+        'Does what the editor\'s range popover does over `from`..`to` in OUTPUT seconds or "m:ss" (what plays, as the ruler shows it, so after cuts and speed changes): action "cut", "speed" (factor, 2), "zoom" (scale), "hide" or "spotlight" (the middle of the picture; redact and spotlight take a rect), or "text" (text, "Title"). lane puts the new item on an effect lane. Export such a part with export({ from, to }).'
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
@@ -1204,6 +1220,10 @@ export class Movie {
 
     async unshape(id: string) {
         return this.change([{ op: "unshape", id }]);
+    }
+
+    async range(options: Omit<Extract<EditOp, { op: "range" }>, "op">) {
+        return this.change([{ op: "range", ...options }]);
     }
 
     async addLane(options: Omit<Extract<EditOp, { op: "addLane" }>, "op"> = {}) {

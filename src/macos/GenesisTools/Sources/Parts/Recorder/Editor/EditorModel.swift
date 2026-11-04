@@ -556,11 +556,11 @@ final class EditorModel {
     func addZoom(atOutput outUs: Int64? = nil, durationUs: Int64 = 2_000_000, lane: String? = nil) {
         let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
         let scale = project.zooms.last?.scale ?? 1.5
-        guard var (next, id) = TimelineMap.addZoom(project, startUs: start, endUs: start + durationUs, scale: scale) else {
+        guard let (added, id) = TimelineMap.addZoom(project, startUs: start, endUs: start + durationUs, scale: scale) else {
             show("No room for a zoom here; zooms cannot overlap.", error: false)
             return
         }
-        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
+        let next = lane.map { EffectLanes.withLane(EffectLanes.pinned(added), ids: [id], lane: $0) } ?? added
         selection = .zoom(id)
         tab = .zoom
         apply(next, rebuildMovie: false)
@@ -813,6 +813,8 @@ final class EditorModel {
     /// The part to export, in output microseconds (I and O at the playhead); not saved, so the edit stays whole.
     var partInUs: Int64?
     var partOutUs: Int64?
+    /// The range dragged on the frames lane (output microseconds); its popover offers what to do with it.
+    var timelineRange: TimelineRange?
 
     /// The marked part, the missing end being the edit's start or end; nil when no mark is set or it is empty.
     var exportPart: (fromUs: Int64, toUs: Int64)? {

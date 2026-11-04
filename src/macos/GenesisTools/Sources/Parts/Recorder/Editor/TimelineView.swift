@@ -203,17 +203,68 @@ func editRange(_ project: EditProject, fromUs: Int64, toUs: Int64) -> (edit: Str
 
 // MARK: - Clip lane
 
+/// The clips; a drag across them selects a range (a band over the lane), and on release a popover asks what to do
+/// with it (RangeActions.swift). A click still selects a clip, and a selected clip's edges still trim it.
 private struct ClipLaneView: View {
     @Bindable var model: EditorModel
     let scale: TimelineScale
+    @State private var dragFrom: CGFloat?
+    @State private var dragTo: CGFloat?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(TimelineMap.placed(model.project), id: \.clip.id) { placed in
                 ClipView(model: model, placed: placed, scale: scale)
             }
+            if let band = bandRange {
+                RangeBand(model: model, range: band, scale: scale, live: dragFrom != nil)
+            }
         }
         .frame(height: TimelineView.clipLaneHeight, alignment: .topLeading)
+        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
+            .onChanged { value in
+                // The lane's own points are the timeline's: it sits at the strip's left edge.
+                dragFrom = value.startLocation.x
+                dragTo = value.location.x
+                model.timelineRange = nil
+            }
+            .onEnded { value in
+                defer { dragFrom = nil; dragTo = nil }
+                let from = scale.us(min(value.startLocation.x, value.location.x))
+                let to = scale.us(max(value.startLocation.x, value.location.x))
+                model.selectRange(TimelineRange(fromUs: from, toUs: to))
+            })
+    }
+
+    /// The band while dragging, else the selected range.
+    private var bandRange: TimelineRange? {
+        if let dragFrom, let dragTo {
+            return TimelineRange(fromUs: scale.us(min(dragFrom, dragTo)), toUs: scale.us(max(dragFrom, dragTo)))
+        }
+        return model.timelineRange
+    }
+}
+
+/// The dragged range over the frames lane; once the drag ends its popover lists the range actions.
+private struct RangeBand: View {
+    @Bindable var model: EditorModel
+    let range: TimelineRange
+    let scale: TimelineScale
+    let live: Bool
+
+    var body: some View {
+        let presented = Binding(get: { !live && model.timelineRange != nil },
+                                set: { if !$0 { model.timelineRange = nil } })
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.accentColor.opacity(0.22))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.accentColor, lineWidth: 2))
+            .frame(width: max(2, scale.width(range.lengthUs)), height: TimelineView.clipLaneHeight)
+            .allowsHitTesting(false)
+            .popover(isPresented: presented, arrowEdge: .top) {
+                RangeActionsView(model: model, range: range)
+            }
+            .accessibilityLabel("Selected range from \(formatClock(range.fromUs, tenths: true)) to \(formatClock(range.toUs, tenths: true))")
+            .offset(x: scale.x(range.fromUs))
     }
 }
 

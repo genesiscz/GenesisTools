@@ -27,7 +27,7 @@ enum EditorMenu {
         EditorCommand(title: "Undo", key: "z", modifiers: .command, label: "⌘Z") { $0.undo() },
         EditorCommand(title: "Redo", key: "z", modifiers: [.command, .shift], label: "⇧⌘Z") { $0.redo() },
         EditorCommand(title: "Delete Selection", key: "\u{8}", label: "⌫") { $0.deleteSelection() },
-        EditorCommand(title: "Deselect", key: "\u{1b}", label: "Esc") { $0.selection = .none },
+        EditorCommand(title: "Deselect", key: "\u{1b}", label: "Esc") { $0.selection = .none; $0.timelineRange = nil },
         EditorCommand(title: "Duplicate", key: "d", modifiers: .command, label: "⌘D") { $0.duplicateSelection() },
     ]
 
@@ -146,6 +146,9 @@ enum EditorMenu {
         let snap = view.addItem(withTitle: "Snap While Dragging", action: #selector(EditorMenuTarget.toggleSnap(_:)), keyEquivalent: "")
         snap.target = EditorMenuTarget.shared
         snap.toolTip = "Hold ⌘ while dragging to place an edge freely"
+        let range = view.addItem(withTitle: "Ask What to Do With a Dragged Range", action: #selector(EditorMenuTarget.toggleRangePopover(_:)), keyEquivalent: "")
+        range.target = EditorMenuTarget.shared
+        range.toolTip = "A drag on the frames lane opens a popover (cut, speed, zoom, hide, text, export); off, the drag marks the export part"
         let tap = view.addItem(withTitle: "Tap When Snapping", action: #selector(EditorMenuTarget.toggleSnapHaptic(_:)), keyEquivalent: "")
         tap.target = EditorMenuTarget.shared
         let single = view.addItem(withTitle: "Single-Key Shortcuts", action: #selector(EditorMenuTarget.toggleSingleKeys(_:)), keyEquivalent: "")
@@ -331,6 +334,10 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         UserDefaults.standard.set(seconds, forKey: EditorModel.agentEditSecondsKey)
     }
 
+    @objc func toggleRangePopover(_ sender: Any?) {
+        UserDefaults.standard.set(!EditorModel.rangePopover, forKey: EditorModel.rangePopoverKey)
+    }
+
     @objc func addLane(_ sender: NSMenuItem) {
         guard EditorModel.laneChoices.indices.contains(sender.tag), let model = EditorWindows.shared.frontModel() else { return }
         model.addLane(kinds: EditorModel.laneChoices[sender.tag].kinds)
@@ -355,6 +362,10 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         }
         if item.action == #selector(setAgentEditSeconds(_:)), let seconds = item.representedObject as? Double {
             item.state = seconds == EditorModel.agentEditSeconds ? .on : .off
+            return true
+        }
+        if item.action == #selector(toggleRangePopover(_:)) {
+            item.state = EditorModel.rangePopover ? .on : .off
             return true
         }
         if item.action == #selector(setLanesShown(_:)) {
@@ -394,7 +405,8 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         case "Redo":
             item.title = model.redoName.map { "Redo \($0)" } ?? "Redo"
             return model.canRedo
-        case "Delete Selection", "Deselect": return model.selection != .none
+        case "Delete Selection": return model.selection != .none
+        case "Deselect": return model.selection != .none || model.timelineRange != nil
         case "Duplicate": return model.selection != .none
         case "Clear Part", "Delete In to Out", "Keep Only In to Out": return model.exportPart != nil
         default: return true
