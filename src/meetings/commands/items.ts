@@ -30,8 +30,8 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { decideItems } from "../lib/decide";
+import { transcriptMarkdown } from "../lib/export";
 import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
-import { playLinksFor } from "../lib/link";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionLabel, questionWarnings } from "../lib/questions";
@@ -40,7 +40,6 @@ import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { checkAnchors, correctTranscript, outcomeText } from "../lib/transcript-corrections";
-import { transcriptDocument } from "../lib/transcript-document";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -501,11 +500,34 @@ async function transcript(
     try {
         const meeting = await loadTranscript(store, record);
         const config = await new MeetingsConfigStore().read();
-        const applied = correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
+        const markdown =
+            format === "md"
+                ? transcriptMarkdown({
+                      record,
+                      transcript: meeting.transcript,
+                      config,
+                      ...(opts.withSuggested !== undefined ? { withSuggested: opts.withSuggested } : {}),
+                      ...(opts.dictionary !== undefined ? { dictionary: opts.dictionary } : {}),
+                      frontmatter: opts.frontmatter !== false,
+                      timestamps: opts.timestamps === true,
+                      playLinks: opts.playLinks === true,
+                  })
+                : undefined;
+        const applied =
+            markdown?.applied ?? correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
         reportOutcomes(applied.outcomes);
         ui.dim(
             `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
         );
+
+        if (markdown) {
+            if (markdown.warning) {
+                ui.warn(markdown.warning);
+            }
+
+            out.print(markdown.markdown);
+            return;
+        }
 
         if (format === "json") {
             out.result(SafeJSON.stringify({ meeting: record.id, entries: applied.entries }, null, 2));
@@ -517,32 +539,8 @@ async function transcript(
             return;
         }
 
-        const turns = groupTurns(applied.entries);
-
-        if (format === "txt") {
-            out.print(
-                `${[record.title, localTime(record.start), "", ...transcriptTextLines(turns, opts.timestamps === true)].join("\n").trimEnd()}\n`
-            );
-            return;
-        }
-
-        // The links are written even while the router preset is off; the warning says how to make them open.
-        const links = opts.playLinks ? playLinksFor(record.id) : undefined;
-
-        if (links?.warning) {
-            ui.warn(links.warning);
-        }
-
         out.print(
-            transcriptDocument({
-                record,
-                turns,
-                speakers: applied.speakers,
-                unattributed: applied.unattributed,
-                frontmatter: opts.frontmatter !== false,
-                timestamps: opts.timestamps === true || opts.playLinks === true,
-                playLink: links?.link,
-            })
+            `${[record.title, localTime(record.start), "", ...transcriptTextLines(groupTurns(applied.entries), opts.timestamps === true)].join("\n").trimEnd()}\n`
         );
     } catch (err) {
         fail(errorText(err));

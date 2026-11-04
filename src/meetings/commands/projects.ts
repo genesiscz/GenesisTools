@@ -4,9 +4,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, sourceFolders } from "@genesiscz/utils/meetings/config";
 import type { PersonRef } from "@genesiscz/utils/meetings/people";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { matchDraftSchema, matchPreview } from "../lib/match-preview";
 import { errorText, fail } from "../lib/shared";
 
 function matchSummary(config: MeetingsConfig, name: string): string {
@@ -167,6 +169,38 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
     }
 }
 
+async function preview(opts: { draft?: string; limit?: string; json?: boolean }): Promise<void> {
+    try {
+        const draft = opts.draft ? matchDraftSchema.parse(SafeJSON.parse(opts.draft, { strict: true })) : undefined;
+        const rows = matchPreview({
+            records: new MeetingStore().list(),
+            config: await new MeetingsConfigStore().read(),
+            ...(draft ? { draft } : {}),
+            limit: Number(opts.limit ?? "20"),
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(rows, null, 2));
+            return;
+        }
+
+        const table = createBoxTable(["MEETING", "HAS", "MATCHES NOW", ...(draft ? ["WITH THE DRAFT"] : [])]);
+
+        for (const row of rows) {
+            table.push([
+                row.title,
+                row.project ?? pc.dim("—"),
+                row.now.join(", ") || pc.dim("—"),
+                ...(draft ? [(row.changed ? pc.yellow : pc.dim)(row.draft.join(", ") || "—")] : []),
+            ]);
+        }
+
+        out.println(table.toString());
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 export function registerProjectsCommand(program: Command): void {
     const projects = program.command("projects").description("The known projects a meeting can belong to");
 
@@ -208,4 +242,14 @@ export function registerProjectsCommand(program: Command): void {
         .description("The people paired with each project and where each pairing came from")
         .option("--json", "print JSON")
         .action(people);
+    projects
+        .command("preview")
+        .description("Which project each recent meeting matches by the rules, and with a draft of them; reads only")
+        .option(
+            "--draft <json>",
+            '{"<project>":{"folders":{"wisprflow":["…"]},"calendars":["…"],"titleWords":["…"]}}: these rules instead of the saved ones'
+        )
+        .option("--limit <n>", "the newest meetings to check", "20")
+        .option("--json", "print JSON")
+        .action(preview);
 }

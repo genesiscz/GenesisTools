@@ -59,6 +59,13 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `dictionary suggest [--project <name>] [--apply 1,3\|all]` | Entries proposed from the source's own dictionary (Wispr Flow) and from corrections confirmed twice |
 | `dictionary expansion every\|first\|off [--project <name>]` | How abbreviations expand |
 | `dictionary remove <value> [--project <name>]` | Remove an entry |
+| `dictionary test "<phrase>" [--project <name>] [--json]` | The phrase after the dictionary, with each entry that fired and the words close to a term; reads only |
+| `overview [--days 14] [--json]` | The recent meetings by day with their badges (no project, open questions, unclear speakers, recording only, transcript only, suggestions at or above `global.suggest.applyAbove`) and the meetings that wait for you; the Meetings window reads it |
+| `projects preview [--draft <json>] [--limit 20] [--json]` | Which project each recent meeting matches by the saved rules, and with a draft (`{"work":{"titleWords":["sync"],"calendars":[],"folders":{"wisprflow":[]}}}`); reads only |
+| `screen <meeting> --timeline [--all] [--json]` | Every frame in time order with the OCR lines that changed since the display's earlier frame, in frame pixels |
+| `record cost [--json]` | The CPU each capture choice costs: 268.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate |
+| `export <meeting> [--to <folder>] [--dry-run] [--json]` | The polished transcript (md, play links, dictionary, confirmed items) as `<folder>/<meeting id>.md`; the folder is `projects.<p>.export.folder` unless `--to` names one; the same meeting again replaces its file |
+| `config show [path] [--json]`, `config set <path> <json>`, `config unset <path>` | Read and write one setting; the path is dotted (`global.capture.activeFps`) or a JSON array of keys (`["projects","a.b","labels"]`); a write that would make the config invalid writes nothing |
 
 ## The meeting record
 
@@ -343,6 +350,7 @@ that varies by recorder, source or language sits under that axis:
         "work": {
             "dictionary": { "entries": [{ "type": "abbr", "value": "MOP", "substitution": "MOP (Obchodní partner podnikatel)" }] },
             "labels": ["Checkout 2.0"],
+            "export": { "folder": "/path/to/the/vault/folder" },
             "match": {
                 "calendar": { "calendars": ["Work"] },
                 "title": { "words": ["Wiki"] },

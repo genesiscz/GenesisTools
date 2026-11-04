@@ -54,6 +54,8 @@ const projectSchema = z.object({
     match: projectMatchSchema.optional(),
     /** Labels a meeting of this project can carry, to group meetings finer than a project (shop: "Checkout 2.0"). */
     labels: strings,
+    /** Where `meetings export` writes this project's polished meeting notes (a vault folder). Unset: it asks. */
+    export: z.object({ folder: z.string().trim().min(1) }).optional(),
 });
 
 export const DISPLAY_POLICIES = ["all", "follow-focus", "main"] as const;

@@ -24,6 +24,7 @@ import {
 import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
+import { captureCost } from "../lib/capture-cost";
 import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
@@ -31,6 +32,7 @@ import { resolveProject } from "../lib/project";
 import { runRecorder, stateDisplays } from "../lib/recorder";
 import { framesOnDisk, meetingLiveId, readRecorderState, recorderFiles } from "../lib/recorder-shared";
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
+import { screenTimeline } from "../lib/screen-timeline";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { askProjectAtEnd } from "./watch";
 
@@ -504,6 +506,8 @@ async function runCommand(id: string, opts: { display?: string; audio?: string }
 }
 
 interface ScreenOptions {
+    timeline?: boolean;
+    all?: boolean;
     at?: string;
     window?: string;
     json?: boolean;
@@ -514,12 +518,72 @@ interface ScreenOptions {
     limit?: string;
 }
 
+async function timeline(store: MeetingStore, record: MeetingRecord, opts: ScreenOptions): Promise<void> {
+    try {
+        const view = await screenTimeline({ store, record, all: opts.all === true });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(view, null, 2));
+            return;
+        }
+
+        for (const frame of view.frames) {
+            out.println(`${formatClock(frame.meetingSec)}  d${frame.displayId ?? "?"}  ${frame.file}`);
+
+            for (const line of frame.changed) {
+                out.println(`    ${line.text}`);
+            }
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
+async function cost(opts: { json?: boolean }): Promise<void> {
+    try {
+        const store = new MeetingStore();
+        const view = captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(view, null, 2));
+            return;
+        }
+
+        ui.info(`one kept frame: ${view.keptFrameCpuMs} ms CPU (${view.source})`);
+
+        if (view.observed) {
+            ui.info(
+                `last recording ${view.observed.meeting}: ${view.observed.framesPerMin} frames/min on ${view.observed.displays} displays, about ${view.observed.cpuSecPerMin} s CPU per minute`
+            );
+        }
+
+        for (const choice of view.activeFps) {
+            ui.dim(`  ${choice.value} fps while changing: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
+        }
+
+        for (const choice of view.displays) {
+            ui.dim(`  displays ${choice.value}: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
+        }
+
+        if (view.thresholdNote) {
+            ui.dim(`  threshold: ${view.thresholdNote}`);
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 async function screen(ref: string, opts: ScreenOptions): Promise<void> {
     const store = new MeetingStore();
     const record = store.resolve(ref);
 
     if (!record) {
         fail(`No meeting "${ref}". List them: ${TOOL} list`);
+        return;
+    }
+
+    if (opts.timeline) {
+        await timeline(store, record, opts);
         return;
     }
 
@@ -719,6 +783,11 @@ export function registerRecordCommands(program: Command): void {
         .action(displayMode);
     record.command("status").description("What is being recorded").option("--json", "print JSON").action(status);
     record
+        .command("cost")
+        .description("What each capture choice costs in CPU: the bench's cost per kept frame and the last recording")
+        .option("--json", "print JSON")
+        .action(cost);
+    record
         .command("run", { hidden: true })
         .argument("<meeting>", "the meeting id")
         .option("--display <which>", "all, follow-focus, main or a screen index")
@@ -737,6 +806,11 @@ export function registerRecordCommands(program: Command): void {
         .option("--boxes", "draw the matching or changed OCR boxes on each frame and write a crop of each")
         .option("--level [level]", `box size: ${OCR_BOX_LEVELS.join(" or ")} (default block)`)
         .option("--out <dir>", "where --boxes writes the drawn frames and crops")
+        .option(
+            "--timeline",
+            "every frame in time order with the OCR lines that changed since the display's earlier one"
+        )
+        .option("--all", "with --timeline: every line of each frame too")
         .option("--json", "print JSON")
         .action(screen);
 }

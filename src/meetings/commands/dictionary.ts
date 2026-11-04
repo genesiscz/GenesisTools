@@ -10,6 +10,7 @@ import { ABBR_EXPANSIONS, type DictionaryEntry, dictionaryEntrySchema } from "@g
 import type { Command } from "commander";
 import pc from "picocolors";
 import { suggestDictionary } from "../lib/dictionary-suggest";
+import { testPhrase } from "../lib/dictionary-test";
 import { errorText, fail, resolveEnum } from "../lib/shared";
 import { isMeetingSourceId, meetingSource } from "../lib/sources";
 
@@ -251,6 +252,32 @@ function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
+async function test(phrase: string, opts: { project?: string; json?: boolean }): Promise<void> {
+    try {
+        const result = testPhrase(await new MeetingsConfigStore().read(), {
+            phrase,
+            ...(opts.project ? { project: opts.project } : {}),
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        out.println(result.text);
+
+        for (const entry of result.fired) {
+            ui.dim(`  ${entry.type} ${entry.value}${"substitution" in entry ? ` → ${entry.substitution}` : ""}`);
+        }
+
+        for (const suggestion of result.suggestions) {
+            ui.dim(`  close to ${suggestion.value}: "${suggestion.heard}" (${suggestion.score})`);
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 export function registerDictionaryCommand(program: Command): void {
     const dictionary = program
         .command("dictionary")
@@ -304,4 +331,12 @@ export function registerDictionaryCommand(program: Command): void {
         .description("Remove an entry")
         .option("--project <name>", "the project's dictionary instead of the global one")
         .action(remove);
+
+    dictionary
+        .command("test")
+        .argument("<phrase>", "a sentence as a transcript would have it")
+        .description("The phrase after the dictionary, with each entry that fired; reads only")
+        .option("--project <name>", "the global dictionary and this project's")
+        .option("--json", "print JSON")
+        .action(test);
 }

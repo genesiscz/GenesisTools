@@ -1,7 +1,12 @@
+import { captureCost } from "@app/meetings/lib/capture-cost";
+import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems } from "@app/meetings/lib/decide";
+import { testPhrase } from "@app/meetings/lib/dictionary-test";
 import { findingItems, findingProblems, findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
+import { matchDraftSchema, matchPreview } from "@app/meetings/lib/match-preview";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
+import { meetingsOverview } from "@app/meetings/lib/overview";
 import { resolveProject } from "@app/meetings/lib/project";
 import { questionLabel } from "@app/meetings/lib/questions";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
@@ -251,6 +256,72 @@ const assignApply = defineMethod({
     doc: "Apply an answer without the inbox: the project (null: none), labels, the overlapping calendar entry whose attendees get paired with the project, and whether to pair the source folder the meeting is in.",
 });
 
+const overview = defineMethod({
+    name: "overview",
+    params: z.object({ days: z.number().positive().optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ meetings: { id, title, day, project, badges }[], projects, needsYou }",
+    effect: "read",
+    doc: "The meetings of the last days (default 14) by day, each with its badges (no project, open questions, unclear speakers, recording only, transcript only, suggestions ready to confirm), and the meetings that wait for a person.",
+});
+const projectsPreview = defineMethod({
+    name: "projects.preview",
+    params: z.object({ draft: matchDraftSchema.optional(), limit: z.number().int().positive().optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ id, title, project?, now: string[], draft: string[], changed }[]",
+    effect: "read",
+    doc: 'Which project each recent meeting matches by the saved rules, and with draft rules: { draft: { work: { titleWords: ["sync"], calendars: [], folders: { wisprflow: [] } } } }.',
+});
+const dictionaryTest = defineMethod({
+    name: "dictionary.test",
+    params: z.object({ phrase: z.string().min(1), project: z.string().min(1).optional() }).strict(),
+    positional: ["phrase"],
+    result: z.unknown(),
+    resultName: "{ text, fired: DictionaryEntry[], suggestions, counts }",
+    effect: "read",
+    doc: "What the dictionary (global, then the project) does to one phrase, and which entries fired.",
+});
+const configGet = defineMethod({
+    name: "config.get",
+    params: z.object({ path: z.string().min(1).optional() }).strict(),
+    positional: ["path"],
+    result: z.unknown(),
+    effect: "read",
+    doc: 'The meetings settings with their defaults, or the value at one path ("global.capture.activeFps", or a JSON array of keys).',
+});
+const configSet = defineMethod({
+    name: "config.set",
+    params: z.object({ path: z.string().min(1), value: z.unknown() }).strict(),
+    positional: ["path", "value"],
+    result: z.unknown(),
+    effect: "reversible",
+    doc: "Write one meetings setting; the whole config is validated first and nothing is written when it fails.",
+});
+const captureCostMethod = defineMethod({
+    name: "captureCost",
+    params: z.object({}).strict(),
+    result: z.unknown(),
+    resultName: "{ keptFrameCpuMs, observed?, displays, activeFps, idleFps, threshold }",
+    effect: "read",
+    doc: "The CPU each capture choice costs: the bench's cost per kept frame and the newest real recording's frame rate.",
+});
+const screenTimelineMethod = defineMethod({
+    name: "screenTimeline",
+    params: z.object({ all: z.boolean().optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ displays, frames: { file, path, meetingSec, displayId, changed: OcrBox[] }[] }",
+    effect: "read",
+    doc: "Every frame of the screen recording in time order with the OCR lines that changed since the display's earlier frame (all: every line too).",
+});
+const exportMethod = defineMethod({
+    name: "export",
+    params: z.object({ to: z.string().min(1).optional(), dryRun: z.boolean().optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ path, folder, bytes, replaced, written }",
+    effect: "reversible",
+    doc: "Write the polished transcript (play links, dictionary, confirmed items) into the project's export folder, or `to`.",
+});
+
 const recordingSettings = defineMethod({
     name: "settings",
     params: z.object({}),
@@ -360,7 +431,21 @@ export class MeetingsToolset extends ReplToolset {
         title: "Meetings",
         summary:
             "List and open meetings; read their corrected transcript, evidence and items; suggest, confirm and reject items; name speakers.",
-        methods: [list, open, projectsLabels, projectsPair, projectsUnpair, projectsPeople, assignSweepMethod],
+        methods: [
+            list,
+            open,
+            overview,
+            projectsLabels,
+            projectsPair,
+            projectsUnpair,
+            projectsPeople,
+            projectsPreview,
+            dictionaryTest,
+            configGet,
+            configSet,
+            captureCostMethod,
+            assignSweepMethod,
+        ],
         handles: [
             {
                 name: "Meeting",
@@ -383,6 +468,8 @@ export class MeetingsToolset extends ReplToolset {
                     recordingMark,
                     screen,
                     editorProject,
+                    screenTimelineMethod,
+                    exportMethod,
                     assignProposals,
                     assignAsk,
                     assignApply,
@@ -410,7 +497,45 @@ export class MeetingsToolset extends ReplToolset {
                         }));
                 },
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
+                overview: async (input: z.input<typeof overview.params> = {}) => {
+                    const { days } = overview.params.parse(input);
+                    return meetingsOverview({
+                        records: store.list(),
+                        config: await new MeetingsConfigStore().read(),
+                        now: new Date(),
+                        days: days ?? 14,
+                    });
+                },
+                dictionary: {
+                    test: async (phrase: string, input: { project?: string } = {}) => {
+                        const parsed = dictionaryTest.params.parse({ phrase, ...input });
+                        return testPhrase(await new MeetingsConfigStore().read(), parsed);
+                    },
+                },
+                config: {
+                    get: async (path?: string) => {
+                        const parsed = configGet.params.parse(path === undefined ? {} : { path });
+                        const config = await new MeetingsConfigStore().read();
+                        return parsed.path ? configValueAt(config, parseConfigPath(parsed.path)) : config;
+                    },
+                    set: async (path: string, value: unknown) => {
+                        const parsed = configSet.params.parse({ path, value });
+                        const config = await setConfigValue(new MeetingsConfigStore(), parsed.path, parsed.value);
+                        return configValueAt(config, parseConfigPath(parsed.path));
+                    },
+                },
+                captureCost: async () =>
+                    captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() }),
                 projects: {
+                    preview: async (input: z.input<typeof projectsPreview.params> = {}) => {
+                        const parsed = projectsPreview.params.parse(input);
+                        return matchPreview({
+                            records: store.list(),
+                            config: await new MeetingsConfigStore().read(),
+                            ...(parsed.draft ? { draft: parsed.draft } : {}),
+                            limit: parsed.limit ?? 20,
+                        });
+                    },
                     labels: async (input: z.input<typeof projectsLabels.params>) => {
                         const parsed = projectsLabels.params.parse(input);
                         const config = new MeetingsConfigStore();
@@ -709,6 +834,24 @@ export class MeetingsToolset extends ReplToolset {
                               })),
                           }
                         : {}),
+                });
+            },
+            screenTimeline: async (input: z.input<typeof screenTimelineMethod.params> = {}) => {
+                const { all } = screenTimelineMethod.params.parse(input);
+                // lazy, like meetingScreen: the timeline reads frame sizes and OCR boxes only on use
+                const { screenTimeline } = await import("@app/meetings/lib/screen-timeline");
+                return screenTimeline({ store, record: current(), all: all === true });
+            },
+            export: async (input: z.input<typeof exportMethod.params> = {}) => {
+                const parsed = exportMethod.params.parse(input);
+                // lazy: the transcript renderer loads only for an export
+                const { exportMeeting } = await import("@app/meetings/lib/export");
+                return exportMeeting({
+                    store,
+                    record: current(),
+                    config: await new MeetingsConfigStore().read(),
+                    ...(parsed.to ? { to: parsed.to } : {}),
+                    dryRun: parsed.dryRun === true,
                 });
             },
             screen: async (input: z.input<typeof screen.params>) => {
