@@ -221,21 +221,22 @@ private struct ZoomLaneView: View {
 
     var body: some View {
         ZStack(alignment: .leading) {
+            // The offset comes last: `.offset` moves the drawing but not the frame the modifiers after it see, so a
+            // gesture after it hit-tested the lane one inset to the left and read the pointer in unshifted points.
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(RecorderPalette.lane.opacity(0.7))
                 .frame(width: scale.width(model.durationUs), height: TimelineView.zoomLaneHeight)
-                .offset(x: scale.inset)
                 .overlay(alignment: .center) {
                     if model.project.zooms.isEmpty && dragStart == nil {
                         Label("Click or drag to add zoom", systemImage: "plus")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(RecorderPalette.dim)
-                            .offset(x: scale.inset / 2)
                             .allowsHitTesting(false)
                     }
                 }
                 .contentShape(Rectangle())
                 .gesture(addGesture)
+                .offset(x: scale.inset)
             if let dragStart, let dragNow {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(RecorderPalette.zoom.opacity(0.45))
