@@ -235,6 +235,21 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /**
+     * `hub launch --json`: the harnesses, their accounts ranked by headroom and the repos the phone's New agent sheet
+     * offers (F21). Cached usage readings only: no account is fetched, so no refresh token is spent.
+     */
+    launch: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { launchOptions } = await import("../launch/index");
+            return launchOptions();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `ai sessions tail <q> --json [--limit N] [--offset N] [--provider P]`: one page of a session's transcript. */
     transcript: {
         policy: "read",

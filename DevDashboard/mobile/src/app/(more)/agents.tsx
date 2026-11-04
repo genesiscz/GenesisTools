@@ -1,7 +1,7 @@
 import type { AgentBoardSession } from "@dd/contract";
 import { router, Stack } from "expo-router";
 import { useCallback } from "react";
-import { ActivityIndicator, FlatList, RefreshControl, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { SessionCard } from "@/features/agents/components/SessionCard";
 import { useAgentsBoard } from "@/features/agents/hooks";
 import { useLiveChannel } from "@/live/provider";
@@ -34,7 +34,22 @@ export default function AgentsScreen() {
 
     return (
         <>
-            <Stack.Screen options={{ title: "Agents" }} />
+            <Stack.Screen
+                options={{
+                    title: "Agents",
+                    headerRight: () => (
+                        <Pressable
+                            testID="agents-new"
+                            accessibilityRole="button"
+                            accessibilityLabel="Start a new agent"
+                            hitSlop={12}
+                            onPress={() => router.push("/agent-new")}
+                        >
+                            <Text style={{ color: c.accent, fontSize: 16 }}>New</Text>
+                        </Pressable>
+                    ),
+                }}
+            />
             <View testID="screen-agents" accessibilityLabel="screen-agents" className="flex-1 bg-dd-bg-base">
                 {board.isPending ? (
                     <View testID="agents-loading" className="flex-1 items-center justify-center gap-2">

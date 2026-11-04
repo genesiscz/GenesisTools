@@ -212,6 +212,14 @@ function expandHome(value: string, home: string): string {
     return value;
 }
 
+/** The project folder names `--repo <name>` resolves: git checkouts under `<home>/Tresors/Projects`. */
+export function listSessionRepos(home: string, fs: RepoFs): string[] {
+    const projects = join(home, "Tresors", "Projects");
+    return (fs.list(projects) ?? []).filter(
+        (name) => !name.startsWith(".") && fs.isDirectory(join(projects, name, ".git"))
+    );
+}
+
 /** Absolute directory, or `<home>/Tresors/Projects/<name>`. */
 export function resolveSessionRepo(repo: string, home: string, cwd: string, fs: RepoFs): string {
     const trimmed = repo.trim();

@@ -8,6 +8,7 @@ import type {
     AgentsBoardDto,
 } from "@app/dev-dashboard/contract/agents";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
+import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 
 /**
  * The endpoint table: one row per non-board endpoint the phone and the web reach. The server binds a row
@@ -334,6 +335,10 @@ export const ENDPOINTS = {
     gatewayGates: row<GatewayInput, GateLedgerDto>("GET", "/api/gateway/gates", "read"),
     /** Brings one waiting gate to the Mac's front, or opens the window of an rm request that has none (F22). */
     gatesRaise: row<{ id: string }, GateRaiseReceiptDto>("POST", "/api/gates/raise", "keyed-write"),
+    /** The New agent sheet (F21): harnesses, accounts ranked by headroom from cached readings, and repos. */
+    gatewayLaunch: row<GatewayInput, LaunchOptionsDto>("GET", "/api/gateway/launch", "read"),
+    /** Starts an agent in a background cmux workspace (`tools cmux agents new`, F21). */
+    agentsNew: row<AgentNewInput, AgentNewReceiptDto>("POST", "/api/agents/new", "keyed-write", "slow"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;
