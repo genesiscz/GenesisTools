@@ -174,6 +174,7 @@ final class WorkingTreeRefreshTests: XCTestCase {
         XCTAssertEqual(layout.classify("/repo/wt/src/moved", flags: dir | created), .path("src/moved"))
         XCTAssertNil(layout.classify("/repo/wt/node_modules/pkg/index.js", flags: file | modified))
         XCTAssertNil(layout.classify("/repo/wt/.git", flags: file | modified))
+        XCTAssertNil(layout.classify("/repo/wt/vendor/lib/.git/index.lock", flags: file | created), "a nested repository's Git files")
         XCTAssertEqual(layout.classify("/repo/main/.git/worktrees/wt/index", flags: file | modified), .index)
         XCTAssertNil(layout.classify("/repo/main/.git/index", flags: file | modified), "the main checkout's index")
         XCTAssertNil(layout.classify("/repo/main/.git/worktrees/wt/index.lock", flags: file | created))
