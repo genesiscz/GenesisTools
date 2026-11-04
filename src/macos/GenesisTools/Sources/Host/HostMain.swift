@@ -73,7 +73,10 @@ package func runHost() -> Never {
         FaceLifecycle.install(arguments: arguments)
         // Quitting the hub with "Quit All" quits the widget too: the next hub or settings window starts it again while
         // "Show the widget" is on (WidgetLaunch.swift).
-        if !NativePreview.enabled, windowFace, firstArgument != "--widget" { WidgetLaunch.ensureRunningIfShown() }
+        if !NativePreview.enabled, windowFace, firstArgument != "--widget" {
+            WidgetLaunch.ensureRunningIfShown()
+            WidgetLaunch.bootOnActivation()
+        }
         // Another face's "Quit All" (⌘Q) reaches this face through its own terminate path (PartQuit/QuitFlow.swift).
         if PartQuit.face(ofArguments: arguments) != nil { FaceQuitSignal.listen() }
     }

@@ -251,11 +251,14 @@ package enum FaceLifecycle {
     }
 
     /// The closed window's class, title and identifier. Nil for AppKit's own short-lived windows (menus, tooltips,
-    /// popovers), which close many times a minute and say nothing about how a face ends.
+    /// popovers, the text input windows `TUINSWindow`), which close many times a minute and say nothing about how a
+    /// face ends.
     @MainActor
     static func windowDetail(_ window: NSWindow) -> String? {
         let kind = String(describing: type(of: window))
-        if kind.hasPrefix("_NS") || kind.contains("Menu") || kind.contains("ToolTip") || kind.contains("Popover") {
+        if kind.hasPrefix("_NS") || kind.hasPrefix("TUI") || kind.contains("Menu") || kind.contains("ToolTip")
+            || kind.contains("Popover")
+        {
             return nil
         }
         let identifier = window.identifier?.rawValue ?? "-"

@@ -76,6 +76,18 @@ final class FaceLifecycleTests: XCTestCase {
         XCTAssertFalse(WidgetLaunch.showWidget(stateFile: scratch.appendingPathComponent("missing.json").path))
     }
 
+    func testTheWidgetCountsAsRunningOnlyWhileSomethingHoldsItsInstanceLock() throws {
+        XCTAssertFalse(WidgetLaunch.isRunning(in: scratch))
+
+        let holder = openWidgetInstanceLock(in: scratch)
+        XCTAssertGreaterThanOrEqual(holder, 0)
+        XCTAssertEqual(flock(holder, LOCK_EX | LOCK_NB), 0)
+        XCTAssertTrue(WidgetLaunch.isRunning(in: scratch))
+
+        close(holder)
+        XCTAssertFalse(WidgetLaunch.isRunning(in: scratch))
+    }
+
     func testTheWidgetStateFileFollowsGenesisToolsHome() {
         XCTAssertEqual(
             WidgetLaunch.stateFile(environment: ["GENESIS_TOOLS_HOME": "/tmp/sandbox-home"]),
