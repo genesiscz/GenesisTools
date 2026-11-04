@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDashboardClient } from "@/api/client-provider";
 import { type KillPortInput, killPort, portKillerKeys, portsQuery } from "@/features/port-killer/queries";
+import { useLiveRefetchInterval } from "@/live/provider";
 
 /**
  * Component-facing port-killer hooks (D32). Screens import THESE — never raw `useQuery`/`useMutation`.
@@ -8,8 +9,10 @@ import { type KillPortInput, killPort, portKillerKeys, portsQuery } from "@/feat
  * success so a reclaimed port disappears without a manual refetch. Mirrors the terminals feature.
  */
 
+/** The port list. The live `ports` channel writes it (scan plus classify) while the stream is up; else it polls. */
 export function usePorts() {
-    return useQuery(portsQuery(useDashboardClient()));
+    const refetchInterval = useLiveRefetchInterval("ports");
+    return useQuery({ ...portsQuery(useDashboardClient()), refetchInterval });
 }
 
 export function useKillPort() {

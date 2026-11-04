@@ -12,6 +12,7 @@ import {
     stagePick,
 } from "@/features/answer-queue/queries";
 import { type KeptEdits, keptEdits, keptOr, type Receipt } from "@/features/answer-queue/units";
+import { useLiveRefetchInterval } from "@/live/provider";
 
 /**
  * Component-facing answer-queue hooks (D32). Every write invalidates the queue, so a staged pick shows as staged and
@@ -20,13 +21,16 @@ import { type KeptEdits, keptEdits, keptOr, type Receipt } from "@/features/answ
  */
 
 /**
- * The queue polls only while its screen is focused: each poll is a full inbox gather on the Mac (and a sealed relay
- * round trip on the managed tier), and a tab screen stays mounted after the user leaves it.
+ * The waiting set is refetched by the live `decisions` and `pending` channels while both are up. It polls only while
+ * one of them is down and its screen is focused: each poll is a full inbox gather on the Mac (and a sealed relay round
+ * trip on the managed tier), and a tab screen stays mounted after the user leaves it.
  */
 export function useAnswerQueue() {
     const focused = useIsFocused();
-    const options = answerQueueQuery(useDashboardClient());
-    return useQuery({ ...options, refetchInterval: focused ? options.refetchInterval : false });
+    const decisions = useLiveRefetchInterval("decisions");
+    const pending = useLiveRefetchInterval("pending");
+    const poll = decisions === false && pending === false ? false : (decisions || pending);
+    return useQuery({ ...answerQueueQuery(useDashboardClient()), refetchInterval: focused ? poll : false });
 }
 
 /**
