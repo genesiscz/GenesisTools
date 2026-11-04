@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { AudioSource } from "./control";
+import type { AudioSource, RecorderSettings, RecorderSettingsPatch } from "./control";
 import type { PieceTarget } from "./targets";
 import type { CapturedFrame, CaptureHooks, CaptureRequest, CaptureResult, LiveCapture } from "./types";
 
@@ -181,4 +181,135 @@ export class PieceCaptures {
             capture.controller.abort();
         }
     }
+
+    /** Pauses in place when every running capture has a live channel; otherwise ends the running piece. */
+    pause(): "live" | "aborted" {
+        const captures = [...this.running.values()];
+
+        if (captures.length > 0 && captures.every((one) => one.live)) {
+            for (const one of captures) {
+                one.live?.pause();
+            }
+
+            return "live";
+        }
+
+        this.abortAll();
+        return "aborted";
+    }
+
+    resume(): void {
+        for (const one of this.running.values()) {
+            one.live?.resume();
+        }
+    }
+
+    /** Sends a settings change to the running captures (`SettingsScope`); a capture that cannot take it restarts. */
+    async applySettings(options: {
+        change: SettingsChange;
+        settings: RecorderSettings;
+        scope: SettingsScope;
+    }): Promise<"live" | "restart" | "next-piece"> {
+        const { change, settings } = options;
+        const captures = [...this.running.values()];
+
+        if (options.scope === "all") {
+            if (!captures.every((one) => takesLive(one.live, change))) {
+                this.abortAll();
+                return "restart";
+            }
+
+            await Promise.all(
+                captures.map(async (one) => {
+                    // One command after the other on each capture, as the recorder answers them in order.
+                    if (change.rates) {
+                        await one.live?.setRates?.(settings.activeFps, settings.idleFps);
+                    }
+
+                    if (change.threshold) {
+                        await one.live?.setThreshold?.(settings.threshold);
+                    }
+
+                    if (change.longSide) {
+                        await one.live?.setMaxLongSide?.(settings.maxLongSide);
+                    }
+                })
+            );
+            return "live";
+        }
+
+        const wanted = change.rates || change.threshold || change.longSide || change.restart;
+
+        if (captures.length === 0 || !wanted) {
+            return "next-piece";
+        }
+
+        let restarted = false;
+
+        for (const one of captures) {
+            if (!takesLive(one.live, change)) {
+                one.controller.abort();
+                restarted = true;
+                continue;
+            }
+
+            await Promise.all(sendLive(one.live, change, settings));
+        }
+
+        return restarted ? "restart" : "live";
+    }
+}
+
+/** The live commands a settings change needs; `restart`: a change no running capture takes live (the heartbeat). */
+export interface SettingsChange {
+    rates: boolean;
+    threshold: boolean;
+    longSide: boolean;
+    restart: boolean;
+}
+
+/** The change between two settings, by value: a key set to the value it had changes nothing. */
+export function settingsChange(before: RecorderSettings, after: RecorderSettings): SettingsChange {
+    return {
+        rates: after.activeFps !== before.activeFps || after.idleFps !== before.idleFps,
+        threshold: after.threshold !== before.threshold,
+        longSide: after.maxLongSide !== before.maxLongSide,
+        restart: after.heartbeatSec !== before.heartbeatSec,
+    };
+}
+
+/** The change a patch asks for, by the keys it gives (a key given its old value still sends its command). */
+export function patchChange(patch: RecorderSettingsPatch): SettingsChange {
+    return {
+        rates: patch.activeFps !== undefined || patch.idleFps !== undefined,
+        threshold: patch.threshold !== undefined,
+        longSide: patch.maxLongSide !== undefined,
+        restart: patch.heartbeatSec !== undefined,
+    };
+}
+
+/**
+ * How a settings change reaches the running captures. `each`: every capture takes it live when it has the commands,
+ * and a capture that lacks one restarts on its own (no capture or nothing to send: the next piece takes it). `all`:
+ * live only when every capture has every command, else every capture restarts.
+ */
+export const SETTINGS_SCOPES = ["each", "all"] as const;
+export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
+
+function takesLive(live: LiveCapture | undefined, change: SettingsChange): live is LiveCapture {
+    return Boolean(
+        live &&
+            !change.restart &&
+            (!change.rates || live.setRates) &&
+            (!change.threshold || live.setThreshold) &&
+            (!change.longSide || live.setMaxLongSide)
+    );
+}
+
+function sendLive(live: LiveCapture, change: SettingsChange, settings: RecorderSettings): Array<Promise<void>> {
+    return [
+        ...(change.rates && live.setRates ? [live.setRates(settings.activeFps, settings.idleFps)] : []),
+        ...(change.threshold && live.setThreshold ? [live.setThreshold(settings.threshold)] : []),
+        ...(change.longSide && live.setMaxLongSide ? [live.setMaxLongSide(settings.maxLongSide)] : []),
+    ];
 }

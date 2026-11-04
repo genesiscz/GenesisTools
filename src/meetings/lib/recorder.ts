@@ -70,7 +70,7 @@ import {
 } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
-import { PieceCaptures, type PieceCapturesOptions } from "@genesiscz/utils/screen-recorder/session";
+import { PieceCaptures, type PieceCapturesOptions, settingsChange } from "@genesiscz/utils/screen-recorder/session";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
 import { displayTarget, type PieceTarget, pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
@@ -78,7 +78,6 @@ import {
     type CaptureResult,
     type DisplayInfo,
     type FrameRecorder,
-    type LiveCapture,
 } from "@genesiscz/utils/screen-recorder/types";
 import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { localTime } from "@genesiscz/utils/transcribe/render";
@@ -445,36 +444,6 @@ export async function runRecorder(options: {
             return answer("restart");
         };
         const currentIds = () => chosen ?? state.displays?.map((one) => one.id) ?? [];
-        /**
-         * Applies changed settings to every running capture: each change through its live command, or, when a capture
-         * lacks one, a restart of that capture with the new settings. No capture running: the next piece takes them.
-         */
-        const applyLive = async (
-            changes: Array<((capture: LiveCapture) => Promise<void> | undefined) | undefined>
-        ): Promise<"live" | "restart" | "next-piece"> => {
-            const wanted = changes.filter((change) => change !== undefined);
-
-            if (running.size === 0 || wanted.length === 0) {
-                return "next-piece";
-            }
-
-            let restarted = false;
-
-            for (const capture of running.values()) {
-                const channel = capture.live;
-                const results = channel ? wanted.map((change) => change(channel)) : [undefined];
-
-                if (results.some((result) => result === undefined)) {
-                    capture.controller.abort();
-                    restarted = true;
-                    continue;
-                }
-
-                await Promise.all(results);
-            }
-
-            return restarted ? "restart" : "live";
-        };
         const finishJobId = `finish-${meetingId}-${Date.now()}`;
         const stopped = Promise.withResolvers<StopAnswer>();
         const jobs = new JobRegistry((event) => live.emit("progress", { ...event }));
@@ -519,19 +488,13 @@ export async function runRecorder(options: {
                             ...patch,
                             ocr: { ...settings.ocr, ...patch.ocr },
                         });
-                        const applied = await applyLive([
-                            settings.activeFps !== before.activeFps || settings.idleFps !== before.idleFps
-                                ? (one) => one.setRates?.(settings.activeFps, settings.idleFps)
-                                : undefined,
-                            settings.threshold !== before.threshold
-                                ? (one) => one.setThreshold?.(settings.threshold)
-                                : undefined,
-                            settings.maxLongSide !== before.maxLongSide
-                                ? (one) => one.setMaxLongSide?.(settings.maxLongSide)
-                                : undefined,
-                            // ax-tool has no live heartbeat command, so a change of it restarts the capture.
-                            settings.heartbeatSec !== before.heartbeatSec ? () => undefined : undefined,
-                        ]);
+                        // Each capture takes the change live or restarts on its own; ax-tool has no live heartbeat
+                        // command, so a change of it restarts the capture. No capture running: the next piece takes it.
+                        const applied = await captures.applySettings({
+                            change: settingsChange(before, settings),
+                            settings,
+                            scope: "each",
+                        });
                         log.info({ settings, applied }, "recorder settings changed over the socket");
                         return { settings, audio, applied };
                     },
@@ -601,16 +564,8 @@ export async function runRecorder(options: {
 
                         paused = true;
                         pausedAt = new Date().toISOString();
-                        const captures = [...running.values()];
-
                         // A capture with a live channel pauses in place; any other ends its piece.
-                        if (captures.length > 0 && captures.every((one) => one.live)) {
-                            for (const one of captures) {
-                                one.live?.pause();
-                            }
-                        } else {
-                            abortAll();
-                        }
+                        captures.pause();
 
                         markPaused();
                         return { state: "paused" };
@@ -621,10 +576,7 @@ export async function runRecorder(options: {
                         }
 
                         paused = false;
-
-                        for (const one of running.values()) {
-                            one.live?.resume();
-                        }
+                        captures.resume();
 
                         markResumed();
                         wake?.();

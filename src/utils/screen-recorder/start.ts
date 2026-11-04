@@ -32,7 +32,7 @@ import {
 } from "./frame-output";
 import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from "./library";
 import { LiveRecordingServer, liveRecordingId } from "./live";
-import { PieceCaptures, type SessionCapture } from "./session";
+import { PieceCaptures, patchChange, type SessionCapture } from "./session";
 import { displayTarget, type PieceTarget, pickDisplayIds } from "./targets";
 import {
     type AudioTrack,
@@ -447,15 +447,7 @@ export class LibraryRecording extends RecorderControl {
         }
 
         this.state = "paused";
-        const captures = [...this.running.values()];
-
-        if (captures.length > 0 && captures.every((one) => one.live)) {
-            for (const one of captures) {
-                one.live?.pause();
-            }
-        } else {
-            this.restartCaptures();
-        }
+        this.captures.pause();
 
         this.server?.update({ state: "paused" });
         return { state: "paused" };
@@ -467,10 +459,7 @@ export class LibraryRecording extends RecorderControl {
         }
 
         this.state = "recording";
-
-        for (const one of this.running.values()) {
-            one.live?.resume();
-        }
+        this.captures.resume();
 
         this.wake?.();
         this.server?.update({ state: "recording" });
@@ -710,43 +699,13 @@ export class LibraryRecording extends RecorderControl {
     override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
         const before = this.settings;
         this.settings = { ...before, ...patch, ocr: { ...before.ocr, ...patch.ocr } };
-        const captures = [...this.running.values()];
-        const needs = {
-            rates: patch.activeFps !== undefined || patch.idleFps !== undefined,
-            threshold: patch.threshold !== undefined,
-            longSide: patch.maxLongSide !== undefined,
-            restart: patch.heartbeatSec !== undefined,
-        };
-        const live =
-            !needs.restart &&
-            captures.every(
-                (one) =>
-                    (!needs.rates || one.live?.setRates) &&
-                    (!needs.threshold || one.live?.setThreshold) &&
-                    (!needs.longSide || one.live?.setMaxLongSide)
-            );
-
-        if (!live) {
-            this.restartCaptures();
-            return { settings: this.settings, audio: this.audio, applied: "restart" };
-        }
-
-        await Promise.all(
-            captures.map(async (one) => {
-                if (needs.rates) {
-                    await one.live?.setRates?.(this.settings.activeFps, this.settings.idleFps);
-                }
-
-                if (needs.threshold) {
-                    await one.live?.setThreshold?.(this.settings.threshold);
-                }
-
-                if (needs.longSide) {
-                    await one.live?.setMaxLongSide?.(this.settings.maxLongSide);
-                }
-            })
-        );
-        return { settings: this.settings, audio: this.audio, applied: "live" };
+        // Live only when every capture takes every change; otherwise every capture restarts with the new settings.
+        const applied = await this.captures.applySettings({
+            change: patchChange(patch),
+            settings: this.settings,
+            scope: "all",
+        });
+        return { settings: this.settings, audio: this.audio, applied };
     }
 }
 
