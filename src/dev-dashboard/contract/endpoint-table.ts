@@ -24,6 +24,7 @@ import type { MorningBriefDto } from "@app/dev-dashboard/contract/brief";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { ForecastDto, GlanceDto } from "@app/dev-dashboard/contract/glance";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
+import type { PingWatchesDto, PingWatchInput } from "@app/dev-dashboard/contract/ping";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
 import type {
     TimesheetFillInput,
@@ -392,6 +393,12 @@ export const ENDPOINTS = {
      * read by the icon badge, the Lock Screen widgets and the fleet Live Activity. Read only.
      */
     gatewayGlance: row<GatewayInput, GlanceDto>("GET", "/api/gateway/glance", "read", "slow"),
+    /** The sessions the Mac watches for "ping me when done" (F15). */
+    gatewayPings: row<GatewayInput, PingWatchesDto>("GET", "/api/gateway/pings", "read"),
+    /** Watch one live session by its board key; the Mac pushes once when its turn ends (F15). */
+    pingWatch: row<PingWatchInput, PingWatchesDto>("POST", "/api/ping/watch", "keyed-write"),
+    /** Stop watching one session (F15). */
+    pingUnwatch: row<{ key: string }, PingWatchesDto>("POST", "/api/ping/unwatch", "keyed-write"),
     approvalsAnswer: row<ApprovalAnswerInput, ApprovalReceiptDto>(
         "POST",
         "/api/approvals/answer",
