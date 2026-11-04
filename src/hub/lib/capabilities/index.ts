@@ -224,6 +224,18 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /** `hub ping --json`: the sessions the Mac watches for "ping me when done" (F15). Read only. */
+    pings: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { listPings } = await import("../ping/index");
+            return listPings();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /**
      * `hub glance --json`: the phone's glance (F13, F16, F17, F18), its badge, widgets and Live Activity numbers. Read
      * only: it mints no act token and fetches no account.

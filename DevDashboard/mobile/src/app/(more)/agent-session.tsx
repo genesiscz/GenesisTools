@@ -3,6 +3,7 @@ import { Stack, useLocalSearchParams } from "expo-router";
 import { memo, useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, Text, View } from "react-native";
 import { PhaseBadge } from "@/features/agents/components/PhaseBadge";
+import { PingButton } from "@/features/agents/components/PingButton";
 import { ago } from "@/features/agents/components/SessionCard";
 import { SteerComposer } from "@/features/agents/components/SteerComposer";
 import { useAgentsBoard, useAgentTranscript, useBoardSession, useStopSession } from "@/features/agents/hooks";
@@ -148,6 +149,7 @@ function SessionHeader({ session }: { session: AgentBoardSession }) {
                     {`Stuck (${session.stuck.kind}): ${session.stuck.detail}`}
                 </Text>
             ) : null}
+            <PingButton session={session} />
             <StopButton session={session} />
         </View>
     );
