@@ -14,6 +14,7 @@ export const QUESTION_REGISTRARS: LazyRegistrar[] = [
         names: ["list", "update", "chat-answers", "repair", "draft", "send", "stale"],
         load: async () => (await import("./commands/decisions")).registerDecisionCommands,
     },
+    { names: ["act"], load: async () => (await import("./commands/act")).registerActCommand },
     { names: ["show"], load: async () => (await import("./commands/show")).registerShowCommand },
     { names: ["tokens"], load: async () => (await import("./commands/tokens")).registerTokensCommand },
     { names: ["inbox"], load: async () => (await import("./commands/inbox")).registerInboxCommand },

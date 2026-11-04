@@ -4,10 +4,9 @@ import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { DialogWatcher, type WatchedSession } from "@genesiscz/utils/agents/dialogs/watcher";
 import { logger } from "@genesiscz/utils/logger";
-import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { clipOneLine } from "@genesiscz/utils/string";
-import { decisionNotificationId } from "../decisions/banners";
 import { hubItemClickCommand } from "../hub-link";
+import { NOTICE_IDS, noticeItem, postNotice } from "../notices/notices";
 
 const { log } = logger.scoped("question-inbox");
 
@@ -106,17 +105,20 @@ export async function notifyOpenQuestions(
     const row = rows.find((candidate) => candidate.sessionId === first.sessionId);
 
     try {
-        const delivered = await dispatchNotification({
-            app: "question",
-            title:
-                questions.length === 1
-                    ? `${first.provider} ${LABELS[first.kind]}`
-                    : `${questions.length} agents wait for you`,
-            subtitle: row?.project ?? row?.title ?? first.sessionId,
-            message: clipOneLine(first.question || LABELS[first.kind], MESSAGE_MAX),
-            id: decisionNotificationId({ id }),
-            execute: click,
-            actions: [{ id: "open-hub", title: "Open in hub", execute: click }],
+        const delivered = await postNotice({
+            items: questions.map((question) => noticeItem("dialog", openQuestionKey(question))),
+            event: {
+                app: "question",
+                title:
+                    questions.length === 1
+                        ? `${first.provider} ${LABELS[first.kind]}`
+                        : `${questions.length} agents wait for you`,
+                subtitle: row?.project ?? row?.title ?? first.sessionId,
+                message: clipOneLine(first.question || LABELS[first.kind], MESSAGE_MAX),
+                id: NOTICE_IDS.dialog(id),
+                execute: click,
+                actions: [{ id: "open-hub", title: "Open in hub", execute: click }],
+            },
         });
         if (delivered) {
             log.info({ ids: questions.map(openQuestionKey) }, "question banner sent");

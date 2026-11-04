@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { TELEGRAM_CLOSED_ELSEWHERE } from "@genesiscz/utils/notifications/channels/telegram";
 import { createApi } from "@genesiscz/utils/telegram-bot/lib/api";
 import { loadTelegramBotConfig, telegramChatFor } from "@genesiscz/utils/telegram-bot/lib/config";
 import {
@@ -8,9 +9,8 @@ import {
     type TelegramMessagesApi,
 } from "@genesiscz/utils/telegram-bot/lib/messages";
 import type { TelegramBotConfig, TelegramDecisionProject } from "@genesiscz/utils/telegram-bot/lib/types";
-import { isTestProcess } from "@genesiscz/utils/test-process";
 import { type ActTokenStore, issueActTokens } from "../act/tokens";
-import { decisionNotificationId } from "./banners";
+import { NOTICE_IDS, noticeItem, recordNotice } from "../notices/notices";
 import { needsHuman } from "./notify";
 import { shownDecisionText } from "./option-labels";
 import { type DecisionRecord, kindOf } from "./store";
@@ -130,8 +130,14 @@ export async function postDecisionsToTelegram(
                     chatId,
                     text: decisionTelegramText(row, project),
                     buttons: keyboard(letters, row.recommended),
-                    noticeId: decisionNotificationId(row),
+                    noticeId: NOTICE_IDS.decision(row.id),
                     ...(deps.now === undefined ? {} : { now: deps.now }),
+                });
+                // Remembered with its decision, so the write that closes it edits the message (`closeNoticeItems`).
+                await recordNotice({
+                    id: NOTICE_IDS.decision(row.id),
+                    channels: ["telegram"],
+                    items: [noticeItem("decision", row.id)],
                 });
                 posted++;
             } catch (err) {
@@ -147,16 +153,8 @@ export async function postDecisionsToTelegram(
     }
 }
 
-type RetractTelegram = (ids: readonly string[]) => Promise<unknown>;
-
-let retractor: RetractTelegram | undefined;
-
-/** A test passes a spy here; a test process never edits a Telegram message otherwise. */
-export function setDecisionTelegramRetractor(retract: RetractTelegram | undefined): void {
-    retractor = retract;
-}
-
-export const CLOSED_ELSEWHERE = "Closed in another place (the hub, the chat or the phone).";
+/** The line a closed decision's message gets; the same one the channel table's Telegram retraction writes. */
+export const CLOSED_ELSEWHERE = TELEGRAM_CLOSED_ELSEWHERE;
 
 /** Edits the Telegram messages of decisions that stopped waiting: the buttons go, and one line says why. */
 export async function retractDecisionTelegramMessages(
@@ -175,7 +173,7 @@ export async function retractDecisionTelegramMessages(
     for (const id of ids) {
         const done = await retractTelegramNotice({
             api,
-            noticeId: decisionNotificationId({ id }),
+            noticeId: NOTICE_IDS.decision(id),
             edit: (original) => `${original ?? id}\n\n${CLOSED_ELSEWHERE}`,
             ...(deps.now === undefined ? {} : { now: deps.now }),
         });
@@ -183,19 +181,4 @@ export async function retractDecisionTelegramMessages(
     }
 
     return edited;
-}
-
-/** Best effort and never awaited by a write, like the banner retraction beside it. */
-export function retractDecisionTelegram(ids: readonly string[]): void {
-    if (ids.length === 0) {
-        return;
-    }
-
-    const retract = retractor ?? (isTestProcess() ? undefined : retractDecisionTelegramMessages);
-
-    if (!retract) {
-        return;
-    }
-
-    void retract(ids).catch((error) => log.debug({ error, ids }, "could not retract decision Telegram messages"));
 }
