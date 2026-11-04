@@ -77,6 +77,8 @@ final class ZoomState: @unchecked Sendable {
         var redactions: [EditProject.Redaction] = []
         /// The texts showing at the frame's source time, each with its fade.
         var texts: [(note: EditProject.TextNote, opacity: Double)] = []
+        /// The shapes showing at the frame's source time: how far each has drawn itself on (0...1) and its fade.
+        var shapes: [(shape: EditProject.Shape, drawn: Double, opacity: Double)] = []
         /// The zoom one output frame earlier, for the motion blur; nil at the start and across a cut.
         var previousView: ZoomCurve.View?
         var motionBlur = 0.0
@@ -134,7 +136,19 @@ final class ZoomState: @unchecked Sendable {
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
         look.motionBlur = motionBlur
+        look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
         return look
+    }
+
+    /// The shapes showing at a source time: each draws itself on over 0.3 s and fades out over 0.2 s.
+    static func shapes(atSourceUs us: Int64, project: EditProject) -> [(shape: EditProject.Shape, drawn: Double, opacity: Double)] {
+        (project.shapes ?? []).compactMap { shape in
+            guard us >= shape.startUs, us < shape.endUs else { return nil }
+            let length = Double(shape.endUs - shape.startUs)
+            let drawn = min(1, Double(us - shape.startUs) / min(300_000, length / 2))
+            let opacity = min(1, Double(shape.endUs - us) / min(200_000, length / 3))
+            return (shape, max(0.02, drawn), max(0, opacity))
+        }
     }
 
     /// One output frame at 60 fps.
@@ -377,6 +391,9 @@ struct EditRenderer {
             let look = zoom.look(atOutput: outUs)
             let view = look.view
             var result = Looks.redact(look.redactions, on: image).cropped(to: extent)
+            for drawn in look.shapes {
+                result = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: result).cropped(to: extent)
+            }
             if let clicks = look.clicks, !look.marks.isEmpty {
                 result = Looks.drawClicks(look.marks, on: result, settings: clicks).cropped(to: extent)
             }

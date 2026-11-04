@@ -525,6 +525,30 @@ describe("edit project (edit.json)", () => {
         const scored = applyOp(applyOp(project, { op: "music", file: song }), { op: "music", duck: 0 });
         expect(scored.audio.music).toEqual({ file: song, volume: 0.25, duck: 0, fadeMs: 1500 });
         expect(applyOp(scored, { op: "music", enabled: false }).audio.music).toBeUndefined();
+        // Shapes: an arrow in source space with its defaults, a point-sized one refused, unshape removes it.
+        const pointed = applyOp(project, {
+            op: "shape",
+            from: 1,
+            to: 3,
+            kind: "arrow",
+            start: { x: 0.2, y: 0.2 },
+            end: { x: 0.6, y: 0.4 },
+            color: "#00ff00",
+        });
+        const [arrow] = pointed.shapes ?? [];
+        expect(arrow).toMatchObject({ kind: "arrow", x1: 0.2, y2: 0.4, color: "#00FF00", width: 0.006 });
+        expect(describeProject(pointed, "/p/edit.json").shapes[0]).toMatchObject({ from: 1, end: { x: 0.6, y: 0.4 } });
+        expect(() =>
+            applyOp(project, {
+                op: "shape",
+                from: 1,
+                to: 3,
+                kind: "box",
+                start: { x: 0.5, y: 0.5 },
+                end: { x: 0.5, y: 0.5 },
+            })
+        ).toThrow("same point");
+        expect(applyOp(pointed, { op: "unshape", id: arrow?.id ?? "" }).shapes).toBeUndefined();
         // follow is kept only when asked for.
         const following = applyOp(project, {
             op: "redact",

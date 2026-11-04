@@ -104,7 +104,7 @@ struct TimelineLayout: Equatable {
     @MainActor
     init(model: EditorModel) {
         let project = model.project
-        marks = !model.markers.isEmpty || !(project.texts ?? []).isEmpty
+        marks = !model.markers.isEmpty || !(project.texts ?? []).isEmpty || !(project.shapes ?? []).isEmpty
             || (project.captions?.show == true && !model.zoom.captionLines.isEmpty)
             || (project.keys?.show == true && !(model.cursor?.keys ?? []).isEmpty)
         let rows = HiddenLaneView.rows(project.redactions ?? [])
@@ -521,6 +521,9 @@ private struct MarksLaneView: View {
             for note in project.texts ?? [] {
                 bar(&context, note.startUs, note.endUs, row: 9, color: Color(red: 0.3, green: 0.85, blue: 0.5).opacity(0.85))
             }
+            for shape in project.shapes ?? [] {
+                bar(&context, shape.startUs, shape.endUs, row: 9, color: Color(red: 1, green: 0.45, blue: 0.35).opacity(0.85))
+            }
             for marker in markers {
                 guard let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project) else { continue }
                 let x = scale.x(outUs)
@@ -548,7 +551,7 @@ private struct MarksLaneView: View {
             }
         }
         .frame(height: TimelineView.marksLaneHeight)
-        .instantTooltip("Markers (purple flags), caption lines (blue), texts (green) and shortcuts (white lines)")
+        .instantTooltip("Markers (purple flags), caption lines (blue), texts (green), arrows and boxes (red) and shortcuts (white lines)")
         .accessibilityElement()
         .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
     }

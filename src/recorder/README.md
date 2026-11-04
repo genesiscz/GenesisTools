@@ -61,6 +61,10 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   `x`/`y` its centre as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by default), `size` 0.02 to
   0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over 0.2 s. Ops `text` and
   `untext`; the editor's Text tab.
+- `shapes` (optional): an `arrow` from (`x1`, `y1`) to its head at (`x2`, `y2`), or a `box` or `circle` between those
+  corners, over the SOURCE picture (it moves with a zoom) from `startUs` to `endUs`, `color` (#FF3B30) and `width`
+  (0.006 of the short side). It draws itself on over 0.3 s and fades out over 0.2 s. Ops `shape {from, to, kind,
+  start, end, color?, width?}` and `unshape {id}`; `movie.arrow({ from, to, at })` points at `at`; the Text tab.
 - `zooms`: `startUs`, `endUs`, `scale` 1 to 4, `mode` `manual` (a `focusX`/`focusY` point) or `follow` (the cursor),
   `easeInMs`/`easeOutMs` on a (0.16, 1, 0.3, 1) curve.
 - `motion` (optional): `blur` 0 to 1 (0.5 when absent) smears the picture along a zoom's pan or change of scale, as a

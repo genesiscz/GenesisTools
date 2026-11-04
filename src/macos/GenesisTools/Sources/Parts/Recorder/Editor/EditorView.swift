@@ -704,12 +704,26 @@ private struct TextInspector: View {
         let list = model.project.texts ?? []
         VStack(alignment: .leading, spacing: 10) {
             Text("Text").font(.system(size: 15, weight: .semibold))
-            Text("A title or a step's name over the picture for a time. It stays in place through a zoom and fades in and out.")
+            Text("A title or a step's name over the picture for a time. It stays in place through a zoom and fades in and out. An arrow, box or circle points at something and moves with a zoom.")
                 .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                 .fixedSize(horizontal: false, vertical: true)
             WideButton(title: "Add Text at Playhead", systemImage: "textformat") { model.addText() }
                 .instantTooltip("A 3 s text at the top middle, from the playhead")
                 .accessibilityIdentifier("recorder.text.add")
+            HStack(spacing: 8) {
+                WideButton(title: "Arrow", systemImage: "arrow.up.right") { model.addShape(.arrow) }
+                    .instantTooltip("A 3 s arrow from the playhead; drag its two dots on the preview to point it")
+                    .accessibilityIdentifier("recorder.shape.arrow")
+                WideButton(title: "Box", systemImage: "rectangle") { model.addShape(.box) }
+                    .instantTooltip("A 3 s box from the playhead; drag its corners on the preview")
+                    .accessibilityIdentifier("recorder.shape.box")
+                WideButton(title: "Circle", systemImage: "circle") { model.addShape(.circle) }
+                    .instantTooltip("A 3 s circle from the playhead; drag its corners on the preview")
+                    .accessibilityIdentifier("recorder.shape.circle")
+            }
+            ForEach(model.project.shapes ?? []) { shape in
+                ShapeRow(model: model, shape: shape)
+            }
             ForEach(list) { note in
                 let selected = model.selectedText == note.id
                 HStack(spacing: 4) {
@@ -1190,7 +1204,10 @@ private struct PreviewView: View {
                 if model.tab == .hide && !model.isPlaying {
                     HiddenPartHandles(model: model, clock: model.clock)
                 } else if model.tab == .text && !model.isPlaying {
-                    TextHandles(model: model, clock: model.clock)
+                    ZStack {
+                        TextHandles(model: model, clock: model.clock)
+                        ShapeHandles(model: model, clock: model.clock)
+                    }
                 }
             }
             .shadow(color: .black.opacity(0.5), radius: 18, y: 6)
@@ -1354,6 +1371,110 @@ private struct TextHandles: View {
                         }.onEnded { _ in grabbed = nil })
                         .instantTooltip("\(note.text): drag to move")
                         .accessibilityLabel("Text \(note.text)")
+                }
+            }
+        }
+    }
+}
+
+/// One arrow, box or circle in the Text tab: select it (the playhead goes to it), its colour, line and length, delete.
+private struct ShapeRow: View {
+    @Bindable var model: EditorModel
+    let shape: EditProject.Shape
+    private static let colors = ["#FF3B30", "#FFCC00", "#34C759", "#0A84FF", "#FFFFFF"]
+
+    var body: some View {
+        let selected = model.selectedShape == shape.id
+        let name = shape.kind.rawValue.capitalized
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Button {
+                    model.selectedShape = selected ? nil : shape.id
+                    if !selected, let at = TimelineMap.outputTime(ofSource: shape.startUs, in: model.project) { model.seek(at) }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: shape.kind == .arrow ? "arrow.up.right" : (shape.kind == .box ? "rectangle" : "circle"))
+                            .foregroundStyle(swiftColor(shape.color))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: name).font(.system(size: 12.5, weight: .medium))
+                            Text(verbatim: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
+                                .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                        }
+                        Spacer(minLength: 4)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverRow())
+                .accessibilityLabel("\(name), \(editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)")
+                IconButton(systemName: "trash", tooltip: "Delete this \(shape.kind.rawValue)", size: 12) { model.deleteShape(shape.id) }
+            }
+            if selected {
+                HStack(spacing: 8) {
+                    ForEach(Self.colors, id: \.self) { hex in
+                        Button { model.updateShape(shape.id) { $0.color = hex } } label: {
+                            Circle().fill(swiftColor(hex)).frame(width: 18, height: 18)
+                                .overlay(Circle().strokeBorder(Color.white.opacity(shape.color == hex ? 0.95 : 0.2), lineWidth: shape.color == hex ? 2 : 1))
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip(hex)
+                        .accessibilityLabel("Colour \(hex)")
+                    }
+                }
+                SectionLabel(text: "Line", value: String(format: "%.1f%%", shape.width * 100))
+                Slider(value: Binding(get: { shape.width }, set: { value in model.updateShape(shape.id) { $0.width = (value * 2000).rounded() / 2000 } }), in: 0.002...0.03)
+                    .accessibilityLabel("\(name) line width")
+                SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(shape.endUs - shape.startUs) / 1_000_000))
+                Slider(value: Binding(get: { Double(shape.endUs - shape.startUs) / 1_000_000 }, set: { value in
+                    model.updateShape(shape.id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
+                }), in: 0.5...15)
+                    .accessibilityLabel("\(name) length in seconds")
+            }
+        }
+    }
+}
+
+/// The two points of each arrow, box or circle showing at the playhead, on the preview: drag a dot to move that end,
+/// drag the line between to move the whole shape. Points live in the source picture, mapped through the zoom.
+private struct ShapeHandles: View {
+    @Bindable var model: EditorModel
+    let clock: PlayheadClock
+    @State private var grabbed: (x1: Double, y1: Double, x2: Double, y2: Double)?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let map = model.sourceToCanvas(atOutput: clock.outUs)
+            let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
+            let showing = (model.project.shapes ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+            let toView = { (p: CGPoint) in CGPoint(x: map.point(p).x * size.width, y: map.point(p).y * size.height) }
+            ZStack(alignment: .topLeading) {
+                Color.clear.allowsHitTesting(false)
+                ForEach(showing) { shape in
+                    let selected = model.selectedShape == shape.id
+                    let a = toView(CGPoint(x: shape.x1, y: shape.y1))
+                    let b = toView(CGPoint(x: shape.x2, y: shape.y2))
+                    ForEach([true, false], id: \.self) { first in
+                        let point = first ? a : b
+                        Circle()
+                            .fill(selected ? RecorderPalette.zoom : Color.white.opacity(0.9))
+                            .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
+                            .frame(width: 16, height: 16)
+                            .contentShape(Circle().inset(by: -6))
+                            .offset(x: point.x - 8, y: point.y - 8)
+                            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                model.selectedShape = shape.id
+                                let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
+                                grabbed = start
+                                let moved = map.sourcePoint(ofCanvas: CGPoint(x: (first ? a : b).x / max(1, size.width) + value.translation.width / max(1, size.width),
+                                                                             y: (first ? a : b).y / max(1, size.height) + value.translation.height / max(1, size.height)))
+                                model.updateShape(shape.id) {
+                                    if first { $0.x1 = moved.x; $0.y1 = moved.y } else { $0.x2 = moved.x; $0.y2 = moved.y }
+                                }
+                            }.onEnded { _ in grabbed = nil })
+                            .instantTooltip(shape.kind == .arrow ? (first ? "The arrow's tail: drag it" : "Where the arrow points: drag it") : "A corner: drag it")
+                            .accessibilityLabel("\(shape.kind.rawValue.capitalized) \(first ? "start" : "end")")
+                    }
                 }
             }
         }

@@ -47,6 +47,82 @@ enum Looks {
         return result
     }
 
+    /// The fully drawn shapes, kept so a still part of a shape costs one composite a frame instead of a new drawing.
+    private static let shapeCache = NSCache<NSString, CGImage>()
+
+    /// An arrow, box or circle in its colour with a soft shadow, drawn into its own small picture and laid over the
+    /// source. `drawn` (0...1) grows an arrow from its tail and strokes a box or circle around; `opacity` fades it.
+    static func drawShape(_ shape: EditProject.Shape, drawn: Double, opacity: Double, on image: CIImage) -> CIImage {
+        let extent = image.extent
+        let line = max(2, shape.width * min(extent.width, extent.height))
+        // Core Graphics counts y from the bottom; the shape counts it from the top.
+        let tail = CGPoint(x: shape.x1 * extent.width, y: (1 - shape.y1) * extent.height)
+        let head = CGPoint(x: shape.x2 * extent.width, y: (1 - shape.y2) * extent.height)
+        let pad = line * 6
+        let box = CGRect(x: min(tail.x, head.x), y: min(tail.y, head.y), width: abs(head.x - tail.x), height: abs(head.y - tail.y))
+            .insetBy(dx: -pad, dy: -pad).integral
+            .intersection(CGRect(origin: .zero, size: extent.size))
+        guard box.width >= 2, box.height >= 2, opacity > 0.001 else { return image }
+        let key = "\(shape.id) \(shape.kind) \(shape.x1) \(shape.y1) \(shape.x2) \(shape.y2) \(shape.color) \(shape.width) \(extent.size)" as NSString
+        let complete = drawn >= 0.999
+        var picture = complete ? shapeCache.object(forKey: key) : nil
+        if picture == nil {
+            picture = renderShape(shape, drawn: drawn, line: line, tail: tail, head: head, box: box)
+            if complete, let picture { shapeCache.setObject(picture, forKey: key) }
+        }
+        guard let picture else { return image }
+        var layer = CIImage(cgImage: picture).transformed(by: CGAffineTransform(translationX: extent.minX + box.minX, y: extent.minY + box.minY))
+        if opacity < 0.999 {
+            layer = layer.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))])
+        }
+        return layer.composited(over: image)
+    }
+
+    private static func renderShape(_ shape: EditProject.Shape, drawn: Double, line: CGFloat, tail: CGPoint, head: CGPoint, box: CGRect) -> CGImage? {
+        guard let context = CGContext(data: nil, width: Int(box.width), height: Int(box.height), bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.translateBy(x: -box.minX, y: -box.minY)
+        let rgb = color(shape.color)
+        let color = CGColor(red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+        context.setShadow(offset: CGSize(width: 0, height: -line * 0.35), blur: line * 1.6, color: CGColor(gray: 0, alpha: 0.4))
+        context.setStrokeColor(color)
+        context.setFillColor(color)
+        context.setLineWidth(line)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        switch shape.kind {
+        case .arrow:
+            let length = hypot(head.x - tail.x, head.y - tail.y)
+            guard length > 1 else { return nil }
+            let direction = CGPoint(x: (head.x - tail.x) / length, y: (head.y - tail.y) / length)
+            let tip = CGPoint(x: tail.x + direction.x * length * drawn, y: tail.y + direction.y * length * drawn)
+            let headLength = min(line * 4.2, length * 0.45)
+            let base = CGPoint(x: tip.x - direction.x * headLength * 0.8, y: tip.y - direction.y * headLength * 0.8)
+            context.move(to: tail)
+            context.addLine(to: base)
+            context.strokePath()
+            let side = CGPoint(x: -direction.y, y: direction.x)
+            let back = CGPoint(x: tip.x - direction.x * headLength, y: tip.y - direction.y * headLength)
+            context.move(to: tip)
+            context.addLine(to: CGPoint(x: back.x + side.x * headLength * 0.55, y: back.y + side.y * headLength * 0.55))
+            context.addLine(to: CGPoint(x: back.x - side.x * headLength * 0.55, y: back.y - side.y * headLength * 0.55))
+            context.closePath()
+            context.fillPath()
+        case .box, .circle:
+            let rect = CGRect(x: min(tail.x, head.x), y: min(tail.y, head.y), width: abs(head.x - tail.x), height: abs(head.y - tail.y))
+            let path = shape.kind == .box
+                ? CGPath(roundedRect: rect, cornerWidth: min(line * 2, rect.width / 2), cornerHeight: min(line * 2, rect.height / 2), transform: nil)
+                : CGPath(ellipseIn: rect, transform: nil)
+            // Stroked around from the start: a dash as long as the drawn share of the outline.
+            let outline = shape.kind == .box ? 2 * (rect.width + rect.height) : .pi * (rect.width + rect.height) / 2
+            if drawn < 0.999 { context.setLineDash(phase: 0, lengths: [outline * drawn, outline * 2]) }
+            context.addPath(path)
+            context.strokePath()
+        }
+        return context.makeImage()
+    }
+
+    /// The longest smear a motion blur draws, in output pixels; a faster move is clamped, so a jump stays readable.
     /// The longest smear a motion blur draws, in output pixels; a faster move is clamped, so a jump stays readable.
     static let maxMotionBlur = 24.0
 

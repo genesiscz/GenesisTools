@@ -17,6 +17,7 @@ import {
     hexColor,
     outputDurationUs,
     REDACTION_STYLES,
+    SHAPE_KINDS,
     shortcutsOf,
     TEXT_STYLES,
     type TranscriptLine,
@@ -191,6 +192,44 @@ const movieMethods = [
         z.object({}),
         'Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps). The result names the ops it took back (undone: ["text"]) and stepsLeft. Refused when the editor window changed it since: undo that with ⌘Z there.'
     ),
+    edit(
+        "shape",
+        z
+            .object({
+                from: timeSchema,
+                to: timeSchema,
+                kind: z.enum(SHAPE_KINDS),
+                start: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+                end: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+                color: z
+                    .string()
+                    .regex(/^#[0-9a-fA-F]{6}$/)
+                    .optional(),
+                width: z.number().min(0.002).max(0.03).optional(),
+            })
+            .strict(),
+        'Draws an "arrow", a "box" or a "circle" over the SOURCE picture from `from` to `to` (source seconds), so it moves with a zoom: an arrow from start { x, y } to its head at end (where it points), a box or circle between the two corners; 0...1 of the picture from its top left. color "#RRGGBB" (red #FF3B30), width 0.002 to 0.03 of the short side (0.006). It draws itself on and fades out. unshape(id) removes it.'
+    ),
+    edit(
+        "arrow",
+        z
+            .object({
+                from: timeSchema,
+                to: timeSchema,
+                at: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+                tail: z
+                    .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                    .strict()
+                    .optional(),
+                color: z
+                    .string()
+                    .regex(/^#[0-9a-fA-F]{6}$/)
+                    .optional(),
+            })
+            .strict(),
+        'An arrow pointing at `at` (0...1 of the source picture, e.g. a button you found in a still) from `from` to `to`; its tail is `tail`, or 12 % of the picture away towards the centre. The same as shape with kind "arrow".'
+    ),
+    edit("unshape", z.object({ id: z.string() }).strict(), "Removes the arrow, box or circle with this id.", ["id"]),
     edit(
         "music",
         z
@@ -531,6 +570,14 @@ export const moviesApi = defineApi({
     ],
 });
 
+/** Where an arrow starts when only its head is given: 12 % of the picture away, towards the centre and down-left. */
+function arrowTail(at: { x: number; y: number }): { x: number; y: number } {
+    const dx = at.x > 0.5 ? -1 : 1;
+    const dy = at.y > 0.5 ? -1 : 1;
+    const clamp = (value: number) => Math.min(1, Math.max(0, value));
+    return { x: clamp(at.x + dx * 0.085), y: clamp(at.y + dy * 0.085) };
+}
+
 /** One line a reader takes in at a glance: the length and what the edit holds. */
 function summarize(project: EditProject, title: string | undefined): string {
     const seconds = (us: number) => `${Math.round(us / 100_000) / 10} s`;
@@ -787,11 +834,39 @@ export class Movie {
         };
     }
 
-    /** A redaction with the spotlight style: the rectangle stays sharp and the rest of the picture dims. */
+    async shape(options: Omit<Extract<EditOp, { op: "shape" }>, "op">) {
+        return this.change([{ op: "shape", ...options }]);
+    }
+
+    async arrow(options: {
+        from: z.infer<typeof timeSchema>;
+        to: z.infer<typeof timeSchema>;
+        at: { x: number; y: number };
+        tail?: { x: number; y: number };
+        color?: string;
+    }) {
+        return this.change([
+            {
+                op: "shape",
+                kind: "arrow",
+                from: options.from,
+                to: options.to,
+                start: options.tail ?? arrowTail(options.at),
+                end: options.at,
+                ...(options.color ? { color: options.color } : {}),
+            },
+        ]);
+    }
+
+    async unshape(id: string) {
+        return this.change([{ op: "unshape", id }]);
+    }
+
     async music(options: Omit<Extract<EditOp, { op: "music" }>, "op"> = {}) {
         return this.change([{ op: "music", ...options }]);
     }
 
+    /** A redaction with the spotlight style: the rectangle stays sharp and the rest of the picture dims. */
     async spotlight(options: Omit<Extract<EditOp, { op: "spotlight" }>, "op">) {
         return this.change([{ op: "spotlight", ...options }]);
     }

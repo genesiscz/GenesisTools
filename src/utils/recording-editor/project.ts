@@ -155,6 +155,31 @@ export const textNoteSchema = z.object({
 });
 export type EditTextNote = z.infer<typeof textNoteSchema>;
 
+export const SHAPE_KINDS = ["arrow", "box", "circle"] as const;
+
+/**
+ * An arrow, a box or a circle over the SOURCE picture (so it moves with a zoom, like a hidden part) from `startUs` to
+ * `endUs`. An arrow runs from (x1, y1) to its head at (x2, y2); a box or circle fills the rectangle between the two
+ * points. `width` is the line's thickness as a fraction of the picture's short side. It draws itself on over 0.3 s
+ * and fades out over 0.2 s.
+ */
+export const shapeSchema = z.object({
+    id: z.string(),
+    startUs: z.number().int().nonnegative(),
+    endUs: z.number().int().positive(),
+    kind: z.enum(SHAPE_KINDS),
+    x1: z.number().min(0).max(1),
+    y1: z.number().min(0).max(1),
+    x2: z.number().min(0).max(1),
+    y2: z.number().min(0).max(1),
+    color: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .default("#FF3B30"),
+    width: z.number().min(0.002).max(0.03).default(0.006),
+});
+export type EditShape = z.infer<typeof shapeSchema>;
+
 const rectSchema = z
     .object({
         x: z.number().min(0).max(1),
@@ -243,6 +268,8 @@ export const editProjectSchema = z.object({
     redactions: z.array(redactionSchema).optional(),
     /** Absent is none; written only once a text exists. */
     texts: z.array(textNoteSchema).optional(),
+    /** Arrows, boxes and circles over the picture; absent is none. */
+    shapes: z.array(shapeSchema).optional(),
     /** Absent is no corrections. */
     transcript: transcriptSettingsSchema.optional(),
     /** How the picture moves through a zoom; absent is the defaults (motionSchema). */
@@ -255,7 +282,7 @@ export type EditProject = z.infer<typeof editProjectSchema>;
 export type EditClip = EditProject["clips"][number];
 export type EditZoom = EditProject["zooms"][number];
 
-export function newId(prefix: "c" | "z" | "r" | "t"): string {
+export function newId(prefix: "c" | "z" | "r" | "t" | "s"): string {
     return `${prefix}${randomUUID().slice(0, 8)}`;
 }
 
@@ -704,6 +731,24 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
     z
         .object({
+            op: z.literal("shape"),
+            from: timeSchema,
+            to: timeSchema,
+            kind: z.enum(SHAPE_KINDS),
+            /** An arrow's tail, or a box's or circle's corner, 0...1 of the source picture from its top left. */
+            start: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+            /** An arrow's head (where it points), or the opposite corner. */
+            end: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+            color: z
+                .string()
+                .regex(/^#[0-9a-fA-F]{6}$/)
+                .optional(),
+            width: z.number().min(0.002).max(0.03).optional(),
+        })
+        .strict(),
+    z.object({ op: z.literal("unshape"), id: z.string() }).strict(),
+    z
+        .object({
             op: z.literal("fixLine"),
             /** The line's `from` as transcript() gives it (source seconds). */
             from: timeSchema,
@@ -1001,6 +1046,40 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             });
             return { ...project, texts: [...(project.texts ?? []), note] };
         }
+        case "shape": {
+            const fromUs = timeToUs(op.from);
+            const toUs = timeToUs(op.to);
+            checkRange(project, fromUs, toUs);
+
+            if (Math.hypot(op.end.x - op.start.x, op.end.y - op.start.y) < 0.01) {
+                throw new RangeError("the shape's start and end are the same point; move end away from start");
+            }
+
+            const shape = shapeSchema.parse({
+                id: newId("s"),
+                startUs: fromUs,
+                endUs: Math.min(project.source.durationUs, toUs),
+                kind: op.kind,
+                x1: op.start.x,
+                y1: op.start.y,
+                x2: op.end.x,
+                y2: op.end.y,
+                ...(op.color === undefined ? {} : { color: op.color.toUpperCase() }),
+                ...(op.width === undefined ? {} : { width: op.width }),
+            });
+            return { ...project, shapes: [...(project.shapes ?? []), shape] };
+        }
+        case "unshape": {
+            const list = project.shapes ?? [];
+
+            if (!list.some((shape) => shape.id === op.id)) {
+                throw new Error(`no shape ${op.id}; shapes: ${list.map((shape) => shape.id).join(", ") || "none"}`);
+            }
+
+            const rest = list.filter((shape) => shape.id !== op.id);
+            const { shapes: _shapes, ...without } = project;
+            return rest.length ? { ...project, shapes: rest } : without;
+        }
         case "fixLine": {
             const key = String(Math.round(timeToUs(op.from) / 1000));
             const fixes = { ...(project.transcript?.fixes ?? {}), [key]: op.text.trim() };
@@ -1209,6 +1288,15 @@ export function describeProject(project: EditProject, path: string) {
         keys: project.keys ?? null,
         transcriptFixes: Object.keys(project.transcript?.fixes ?? {}).length,
         motion: motionSchema.parse(project.motion ?? {}),
+        shapes: (project.shapes ?? []).map((shape) => ({
+            id: shape.id,
+            kind: shape.kind,
+            from: seconds(shape.startUs),
+            to: seconds(shape.endUs),
+            start: { x: shape.x1, y: shape.y1 },
+            end: { x: shape.x2, y: shape.y2 },
+            color: shape.color,
+        })),
         texts: (project.texts ?? []).map((note) => ({
             id: note.id,
             from: seconds(note.startUs),

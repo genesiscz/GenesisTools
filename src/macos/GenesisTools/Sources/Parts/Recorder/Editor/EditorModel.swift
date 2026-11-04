@@ -18,6 +18,7 @@ enum EditorSelection: Equatable {
     case zoom(String)
     case redaction(String)
     case text(String)
+    case shape(String)
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
@@ -293,6 +294,8 @@ final class EditorModel {
             deleteRedaction(id)
         case let .text(id):
             deleteText(id)
+        case let .shape(id):
+            deleteShape(id)
         case .none:
             break
         }
@@ -360,6 +363,14 @@ final class EditorModel {
             copy.endUs = min(project.source.durationUs, copy.startUs + length)
             next.texts = (next.texts ?? []) + [copy]
             selection = .text(copy.id)
+        case let .shape(id):
+            guard var copy = project.shapes?.first(where: { $0.id == id }) else { return }
+            let length = copy.endUs - copy.startUs
+            copy.id = "s" + UUID().uuidString.prefix(8).lowercased()
+            copy.startUs = min(copy.endUs, project.source.durationUs - 100_000)
+            copy.endUs = min(project.source.durationUs, copy.startUs + length)
+            next.shapes = (next.shapes ?? []) + [copy]
+            selection = .shape(copy.id)
         case .clip, .none:
             show("Select a zoom, a hidden part or a text to duplicate it.", error: false)
             return
@@ -404,6 +415,54 @@ final class EditorModel {
         next.texts = (next.texts ?? []) + [EditProject.TextNote(id: id, startUs: start, endUs: end, text: text)]
         selectedText = id
         tab = .text
+        apply(next, rebuildMovie: false)
+    }
+
+    var selectedShape: String? {
+        get { if case let .shape(id) = selection { id } else { nil } }
+        set {
+            if let newValue {
+                selection = .shape(newValue)
+            } else if selectedShape != nil {
+                selection = .none
+            }
+        }
+    }
+
+    /// A 3 s arrow, box or circle from the playhead in the middle of the picture; the preview's handles place it.
+    func addShape(_ kind: EditProject.ShapeKind) {
+        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
+        let end = min(project.source.durationUs, start + 3_000_000)
+        guard end - start >= 100_000 else {
+            show("The playhead is at the end of the recording; move it back to add a shape.", error: false)
+            return
+        }
+        let id = "s" + UUID().uuidString.prefix(8).lowercased()
+        let corners = kind == .arrow ? (0.38, 0.62, 0.5, 0.5) : (0.4, 0.4, 0.6, 0.6)
+        var next = project
+        next.shapes = (next.shapes ?? []) + [EditProject.Shape(id: id, startUs: start, endUs: end, kind: kind,
+                                                                x1: corners.0, y1: corners.1, x2: corners.2, y2: corners.3)]
+        selectedShape = id
+        tab = .text
+        apply(next, rebuildMovie: false)
+    }
+
+    func updateShape(_ id: String, _ change: (inout EditProject.Shape) -> Void) {
+        guard var list = project.shapes, let index = list.firstIndex(where: { $0.id == id }) else { return }
+        change(&list[index])
+        for key in [\EditProject.Shape.x1, \.y1, \.x2, \.y2] { list[index][keyPath: key] = min(max(0, list[index][keyPath: key]), 1) }
+        list[index].width = min(max(0.002, list[index].width), 0.03)
+        list[index].endUs = max(list[index].startUs + 100_000, min(project.source.durationUs, list[index].endUs))
+        var next = project
+        next.shapes = list
+        apply(next, rebuildMovie: false)
+    }
+
+    func deleteShape(_ id: String) {
+        var next = project
+        next.shapes = (next.shapes ?? []).filter { $0.id != id }
+        if next.shapes?.isEmpty == true { next.shapes = nil }
+        if selectedShape == id { selectedShape = nil }
         apply(next, rebuildMovie: false)
     }
 
@@ -587,6 +646,7 @@ final class EditorModel {
         targets += project.zooms.filter { $0.id != id }.flatMap { [$0.startUs, $0.endUs] }
         targets += (project.redactions ?? []).filter { $0.id != id }.flatMap { [$0.startUs, $0.endUs] }
         targets += (project.texts ?? []).filter { $0.id != id }.flatMap { [$0.startUs, $0.endUs] }
+        targets += (project.shapes ?? []).filter { $0.id != id }.flatMap { [$0.startUs, $0.endUs] }
         return targets
     }
 

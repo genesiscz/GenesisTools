@@ -28,6 +28,8 @@ struct EditProject: Codable, Equatable {
     var redactions: [Redaction]?
     /// Lines of text over the picture for a time (titles, step names); nil is none.
     var texts: [TextNote]?
+    /// Arrows, boxes and circles over the source picture for a time; nil is none.
+    var shapes: [Shape]?
     /// Corrections to the cached transcript; nil is none.
     var transcript: TranscriptSettings?
     /// How the picture moves through a zoom; nil is `Motion()`.
@@ -187,6 +189,26 @@ struct EditProject: Codable, Equatable {
         var y = 0.12
         var size = 0.055
         var style: TextStyle = .plate
+    }
+
+    enum ShapeKind: String, Codable, CaseIterable {
+        case arrow, box, circle
+    }
+
+    /// An arrow from (x1, y1) to its head at (x2, y2), or a box or circle between those corners, over the SOURCE
+    /// picture (0...1 from its top left), so it moves with a zoom. `width` is the line as a fraction of the short side.
+    struct Shape: Codable, Equatable, Identifiable {
+        var id: String
+        var startUs: Int64
+        var endUs: Int64
+        var kind: ShapeKind
+        var x1: Double
+        var y1: Double
+        var x2: Double
+        var y2: Double
+        /// #RRGGBB.
+        var color = "#FF3B30"
+        var width = 0.006
     }
 
     struct Keys: Codable, Equatable {
