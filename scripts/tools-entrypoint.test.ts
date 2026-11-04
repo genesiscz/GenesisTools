@@ -58,11 +58,11 @@ describe("tools dispatcher", () => {
     });
 
     it("says a source folder without an entry file has no entry point, instead of 'Tool not found'", () => {
-        const { status, output } = runTools("e2e");
+        const { status, output } = runTools("log-viewer");
 
         expect(output).toContain("No entry point");
-        expect(output).toContain("src/e2e/");
-        expect(output).toContain("tools e2e/<file>");
+        expect(output).toContain("src/log-viewer/");
+        expect(output).toContain("tools log-viewer/<file>");
         expect(output).not.toContain("Tool not found");
         expect(status).toBe(1);
     });
