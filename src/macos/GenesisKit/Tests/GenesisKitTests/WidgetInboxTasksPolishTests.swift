@@ -2107,6 +2107,33 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertTrue(model.stagedLeavePrompt, "the leave question asks about the pick made a moment ago")
     }
 
+    /// A decision whose send runs is on its way: the leave question does not call it staged, and Esc closes.
+    func testLeavingWhileASendRunsDoesNotCallItStaged() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let started = expectation(description: "send started")
+        var held: CheckedContinuation<WidgetJSON, Error>?
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, case .string(let action) = fields["action"],
+                  action == DecisionAnswering.SendAction.sendStaged.rawValue else { return ["ok": true] }
+            return try await withCheckedThrowingContinuation { continuation in
+                held = continuation
+                started.fulfill()
+            }
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"], "a staged pick before its send")
+        model.sendStaged([card.sourceId])
+        await fulfillment(of: [started], timeout: 1)
+        XCTAssertTrue(model.stagedForLeave.isEmpty, "a decision on its way is not staged")
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertFalse(model.stagedLeavePrompt, "leaving while the send runs asks nothing")
+        try XCTUnwrap(held).resume(returning: ["ok": true])
+    }
+
     /// Decision audit F11: ⇧ adds a letter or takes it out, a plain click picks one alone, as in the hub.
     func testThePickRuleKeepsSeveralLetters() {
         XCTAssertEqual(DecisionAnswering.nextPick("ac", "b", adding: true), "abc")
