@@ -562,6 +562,36 @@ Add `--split all --calibrate` to collect each case/mode once and replay four con
 
 The default capture backend uses ScreenCaptureKit and the independent ComputerUse API for timed input. Build/start failures stop without changing backend. Native preflight, focus, crop lookups and action dispatch do not call Peekaboo or AppleScript. URL scripting, raw osascript and media-key rewrites are rejected before recording starts. Native input requires an explicit app and an unambiguous window/target. The old behavior remains available only through an explicitly selected `capture.backend: "peekaboo"`.
 
+Native-only `capture` options (plan field, then the `ax-tool capture` flag):
+
+| Field | Flag | Meaning |
+|---|---|---|
+| `displayId` | `--display-id <id>` | Screen mode: record the display with this CGDirectDisplayID (`ax-tool screens` prints `displayID`). Wins over `screenIndex`. An unknown id fails with code `display-missing`. |
+| `followFocus` | `--follow-focus` | Screen mode: record the display that holds the frontmost app's focused window, else the display under the mouse. Checked every 250 ms; a change switches the stream live. Not with `displayId`. |
+| `maxLongSide` | `--max-long-side <px>` | The longer side of a kept frame is at most this many pixels; the aspect ratio stays. Not in isolated mode. |
+| `quietMs` | `--quiet-ms <ms>` | Calm time before the idle frame rate. Default: eight frames at the active rate. |
+| `heartbeatSec` | `--heartbeat-sec <s>` | Keep a frame (reason `heartbeat`) at least every s seconds while nothing changes. 0 is off. |
+| `maxMb` | `--max-mb <n>` | Stop keeping frames after n MB were written. Sampling and motion continue, as with `maxFrames`. |
+| `audio` | `--audio system,mic` | Record system audio (`excludesCurrentProcessAudio`) and/or the microphone (macOS 15+, else code `unsupported`), each its own AAC track in `videoOut` (system 2 channels, mic 1, 48 kHz). Needs `videoOut` or `audioSidecar`; not in isolated mode. |
+| `micDevice` | `--mic-device <uid>` | The input `ax-tool audio-devices` lists as `id`; an unknown one fails with code `device-missing`. Default: the system input. |
+| `audioSidecar` | `--audio-sidecar` | Also write `audio-system.m4a` / `audio-mic.m4a` next to the frames. |
+
+Each frame carries `displayId` and `motionBoxes` (`[x, y, width, height]` in output pixels, at most 8, merged from the changed 4×4 sample blocks; empty for first, heartbeat and display-switch frames). A recording that ends early still prints every frame with `endedEarly`: `display-removed` (the recorded display was disconnected; with `followFocus` the recording moves to the display that now holds focus instead), `stream-error` or `stopped` (SIGINT/SIGTERM). Errors print `{"ok": false, "error", "code"}` with code `display-missing`, `no-permission`, `invalid-argument`, `unsupported`, `device-missing` or `failed`. A display records at its backing pixel size (a 2x display at 2x) unless `outputScale`, `outputSize` or `maxLongSide` limits it.
+
+For a supervisor, `ax-tool capture --control-stdin` (screen, window and region mode) reads one JSON command per stdin line: `{"cmd":"switch","displayId":N}` (screen mode without follow-focus; the next frame has reason `display-switch`), `{"cmd":"pause"}` (no frames are kept and the movie gets none), `{"cmd":"resume"}`, `{"cmd":"status"}` and `{"cmd":"stop"}` (the same as SIGINT). The end of stdin also stops. Events go to stderr as JSON lines: `{"event":"frame","index","displayId","timestampMs","file","path","reason"}`, `{"event":"state","state":"recording"|"paused"}` (status adds frames, capturedFrames, bytesWritten, displayId, elapsedMs), `{"event":"display-switch","from","to"}` and `{"event":"error","code","message"}`; an unknown display answers an error and the recording goes on. The result JSON stays on stdout.
+
+The same channel changes a running recording: `{"cmd":"mute","source":"mic"|"system"}` and `unmute` (a muted source writes silence, so the timeline keeps its length; the result lists the spans in `mutedSpans`), `{"cmd":"set-mic","deviceId"}`, `{"cmd":"set-fps","active","idle"}`, `{"cmd":"set-threshold","percent"}` and `{"cmd":"set-max-long-side","px"}` (0 removes the cap; only without `videoOut`, the next frame has reason `resize`). Mute answers with a `state` event carrying `muted`, the others with a `settings` event (`activeFps`, `idleFps`, `threshold`, `maxLongSide`, `muted`, `micDevice`). `pause` also stops the audio. With `audio`, the result has `tracks`: `[{source, channels, sampleRate, startMs, durationMs, peakDbfs, mutedSpans, inMovie, file, path}]`, times from the first video frame. `ax-tool audio-devices` prints `{inputs, outputs}` with `id`, `name`, `channels` and `default`.
+
+### Live recordings
+
+`tools control capture session` registers its recording as a live recording while it runs (kind `control-session`,
+`<genesis-tools root>/recordings/live/<id>.json` with a JSON-RPC socket beside it; `src/utils/screen-recorder/live.ts`).
+The socket serves the session as a `RecorderControl` (`src/control/lib/recording-session-control.ts`): `status`,
+`pause`, `resume`, `stop {wait}` (the segment join runs as a job with `progress`), `discard`, `restart`,
+`target.switch {target}`, `displays.list`, `displays.switch {displayId}` and `jobs.list`. The stdin JSONL commands go
+through the same adapter, so stdin and the socket behave alike. Both files go when the session ends. The menu bar
+and `tools meetings record` read the same folder.
+
 ### Native visual grounding
 
 `tools control see --app APP --window-id ID --perception ocr` adds local macOS Vision OCR. `--perception-crop x,y,w,h` and `--perception-width 400` crop/resize only the OCR input; rectangles map back onto the original screenshot. Known AX text inputs are excluded from OCR candidates. No Python, icon model, download or external vision API is involved.
