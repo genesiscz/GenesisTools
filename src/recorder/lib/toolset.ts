@@ -421,7 +421,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds, subtitles? }",
-        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. subtitles "srt" | "vtt" also writes the transcript beside it in the movie\'s time (default: the edit\'s export.subtitles). An MP4 gets the recording\'s markers as chapters (chapters: the count) unless exportSettings { chapters: false }. Throws when the file exists (it never overwrites).',
+        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. subtitles "srt" | "vtt" also writes the transcript beside it in the movie\'s time (default: the edit\'s export.subtitles). An MP4 gets the recording\'s markers as chapters (chapters: the count) unless exportSettings { chapters: false }. warnings also carries what check() says must be fixed (an item whose time is cut, missing music). Throws when the file exists (it never overwrites).',
         effect: "reversible",
     }),
     defineMethod({
@@ -969,6 +969,14 @@ export class Movie {
         }
 
         const info = await probeVideo({ input: answer.path });
+        // What check() would say must be fixed rides along, so an export never hides it.
+        const { issues } = await this.check();
+        const warnings = [
+            ...(answer.warnings ?? []),
+            ...issues
+                .filter((issue) => issue.severity === "fix")
+                .map((issue) => `${issue.message}${issue.fix ? ` (${issue.fix})` : ""}`),
+        ];
         return {
             path: answer.path,
             bytes: answer.bytes,
@@ -978,7 +986,7 @@ export class Movie {
             renderSeconds: answer.seconds,
             ...(answer.subtitles ? { subtitles: answer.subtitles } : {}),
             ...(answer.chapters ? { chapters: answer.chapters } : {}),
-            ...(answer.warnings ? { warnings: answer.warnings } : {}),
+            ...(warnings.length ? { warnings } : {}),
         };
     }
 
