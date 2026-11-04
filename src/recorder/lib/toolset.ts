@@ -96,8 +96,11 @@ const recordSchema = z
 const movieDoc =
     "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys, transcriptFixes, motion, shapes, texts, warnings? }";
 
+/** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
+const editResult = "Edit (the fields info() lists, plus warnings?)";
+
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
-    defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
+    defineMethod({ name, params, positional, result: z.unknown(), resultName: editResult, doc, effect: "reversible" });
 
 const movieMethods = [
     defineMethod({
