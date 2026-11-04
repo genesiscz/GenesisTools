@@ -565,7 +565,13 @@ extension WidgetModel {
     /// The staged decisions as the user sees them: the snapshot's, without picks cleared here, plus picks staged here
     /// that no snapshot listed yet. The leave question and a popup's end read this: a pick made less than a second
     /// before Esc was only in `pendingStage`, and the panel closed without asking (decision audit F16).
+    /// A decision whose send runs is on its way, not staged: on 2026-11-04 two sends waited 100 s for a slow hub, the
+    /// leave question called them staged, and their Send now read as a button that only staged.
     public var stagedForLeave: [WidgetInboxItem] {
+        stagedOrPending.filter { !sendingDecisionIDs.contains($0.sourceId) }
+    }
+
+    private var stagedOrPending: [WidgetInboxItem] {
         let listed = Set(stagedItems.map(\.sourceId))
         let pending = pendingStage.compactMap { id, option -> WidgetInboxItem? in
             guard (!option.isEmpty || pendingStageNotes[id]?.isEmpty == false), !listed.contains(id),
