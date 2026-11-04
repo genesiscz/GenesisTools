@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { DASHBOARD_ACTOR, executeHandoffActions, getHandoff, launchCwd, listHandoffs, postHandoff } from "./executor";
 import { appendHandoffEvents } from "./log-store";
 import { openHandoffModel, rebuildHandoffModel } from "./read-model";
@@ -913,5 +914,74 @@ describe("handoff project (a handoff names the project it is for)", () => {
         expect(typo.results[0].ok).toBe(false);
         expect(typo.results[0].error).toContain("is not a folder");
         expect(typo.handoff.project).toBe("acme-tools");
+    });
+});
+
+// Characterization tests (2026-11-04): the poster a handoff records when no actor is injected, before the
+// agent-context gatherers are unified. `buildBy` is private; it runs inside `postHandoff`.
+describe("characterization: the poster stamp (buildBy)", () => {
+    const ctx = {
+        agent: "codex" as const,
+        sessionId: "codex-thread-1",
+        sessionTitle: "Fixture poster title",
+        aiAgent: null,
+        branch: "feat/fixture",
+        cwd: "/fixture/repo/sub",
+        repoRoot: "/fixture/repo",
+        project: "FixtureRepo",
+        commitSha: "abc1234",
+        isWorktree: false,
+    };
+
+    function depsWith(extra: Record<string, unknown>) {
+        const env = freshEnv();
+        return { base: env.base, dbPath: env.dbPath, ...extra };
+    }
+
+    test("stamps the agent, session, title, checkout and cwd of the resolved context", () => {
+        const { handoff } = postHandoff({ title: "T", tasks: [{ text: "one" }] }, depsWith({ ctx }));
+
+        expect(handoff.postedByContext).toEqual({
+            sessionId: "codex-thread-1",
+            sessionTitle: "Fixture poster title",
+            agent: "codex",
+            aiAgent: null,
+            branch: "feat/fixture",
+            cwd: "/fixture/repo/sub",
+            repoRoot: "/fixture/repo",
+            project: "FixtureRepo",
+            commitSha: "abc1234",
+            isWorktree: false,
+        });
+    });
+
+    test("an injected actor replaces the stamp whole, and the context is not consulted", () => {
+        const { handoff } = postHandoff({ title: "T", tasks: [{ text: "one" }] }, depsWith({ by: A, ctx }));
+
+        expect(handoff.postedByContext).toEqual(A);
+    });
+
+    test("with no context given, a caller scope names the agent, the session and the cwd", () => {
+        const env = freshEnv();
+        const { handoff } = runAsCaller({ agent: "grok", sessionId: "grok-session-1", cwd: env.base }, () =>
+            postHandoff({ title: "T", tasks: [{ text: "one" }] }, { base: env.base, dbPath: env.dbPath })
+        );
+
+        expect(handoff.postedByContext).toMatchObject({
+            agent: "grok",
+            sessionId: "grok-session-1",
+            cwd: env.base,
+            aiAgent: null,
+            isWorktree: false,
+        });
+    });
+
+    test("a caller scope with no session stamps a null session", () => {
+        const env = freshEnv();
+        const { handoff } = runAsCaller({ agent: "codex", sessionId: null, cwd: env.base }, () =>
+            postHandoff({ title: "T", tasks: [{ text: "one" }] }, { base: env.base, dbPath: env.dbPath })
+        );
+
+        expect(handoff.postedByContext).toMatchObject({ agent: "codex", sessionId: null, cwd: env.base });
     });
 });

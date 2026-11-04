@@ -742,6 +742,64 @@ test("a multiplexed caller's explicit project path supplies missing source cwd",
     expect(form.poster?.project).toBe("gt-ask-fixture");
 });
 
+// Characterization tests (2026-11-04): the context a posted question carries today, before the agent-context
+// gatherers are unified. `isTestProcess()` is true here, so the branch where a live harness session wins over a
+// typed `sessionHint` is not reachable from a test: only the branch that keeps the typed hint is pinned below.
+describe("characterization: the caller context of a posted question", () => {
+    const ambient = { ambient: true as const };
+
+    test("a caller with no session and no project path is filed under the caller's own cwd", async () => {
+        const form = await runAsCaller({ agent: "codex", sessionId: null, cwd: "/fixture/callers-cwd" }, () =>
+            postAskForm({ items: [{ promptMarkdown: "Ready?" }] }, { ...deps, ...ambient, env: {} })
+        );
+
+        expect(form.projectPath).toBe("/fixture/callers-cwd");
+        expect(form.poster?.cwd).toBe("/fixture/callers-cwd");
+        expect(form.poster?.agent).toBe("codex");
+    });
+
+    test("a caller WITH a session keeps its own cwd on the poster; the typed project path only names the project", async () => {
+        const form = await runAsCaller(
+            { agent: "codex", sessionId: "caller-thread", cwd: "/fixture/callers-cwd" },
+            () =>
+                postAskForm(
+                    { projectPath: PROJECT, items: [{ promptMarkdown: "Ready?" }] },
+                    { ...deps, ...ambient, env: {} }
+                )
+        );
+
+        expect(form.projectPath).toBe(PROJECT);
+        expect(form.poster?.cwd).toBe("/fixture/callers-cwd");
+        expect(form.poster?.sessionId).toBe("caller-thread");
+        expect(form.sessionHint).toBe("caller-thread");
+    });
+
+    test("in a test process a typed session hint outranks the caller's session", async () => {
+        const form = await runAsCaller(
+            { agent: "codex", sessionId: "caller-thread", cwd: "/fixture/callers-cwd" },
+            () =>
+                postAskForm(
+                    { projectPath: PROJECT, sessionHint: "typed-hint", items: [{ promptMarkdown: "Ready?" }] },
+                    { ...deps, ...ambient, env: {} }
+                )
+        );
+
+        expect(form.sessionHint).toBe("typed-hint");
+        expect(form.poster?.sessionId).toBe("typed-hint");
+    });
+
+    test("with no harness and no hint the form has no session, and the poster says unknown", async () => {
+        const form = await postAskForm(
+            { projectPath: PROJECT, items: [{ promptMarkdown: "Ready?" }] },
+            { ...deps, ...ambient, env: {} }
+        );
+
+        expect(form.sessionHint).toBeUndefined();
+        expect(form.poster?.agent).toBe("unknown");
+        expect(form.poster?.sessionId).toBeNull();
+    });
+});
+
 test("invalid or newer form provenance cannot block healthy forms or rewrite the stored metadata", async () => {
     const context = { ...deps, ambient: true, env: {}, ctx: { agent: "codex" as const, sessionId: "poster-session" } };
     const broken = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "First?" }] }, context);

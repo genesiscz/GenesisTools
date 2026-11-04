@@ -1,11 +1,13 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
+import { env } from "@genesiscz/utils/env";
 import {
     type AncestryFrame,
     agentFromAncestry,
     type CallerContext,
     captureAncestry,
+    captureCallerContext,
     describeAncestry,
     parsePidCommands,
     parsePidParents,
@@ -430,5 +432,116 @@ describe("view helpers", () => {
         expect(agentLabel("claude-code")).toBe("claude");
         expect(agentLabel("grok")).toBe("grok");
         expect(agentLabel("unknown")).toBe("—");
+    });
+});
+
+// Characterization tests (2026-11-04): what `tools say` records about its caller today, before the agent-context
+// gatherers are unified. `captureCallerContext` reads the live process env and the live process chain, so each
+// case clears every variable it reads and sets only its own.
+const CALLER_ENV_KEYS = [
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDECODE",
+    "CODEX_CI",
+    "CODEX_THREAD_ID",
+    "GROK_SESSION_ID",
+    "COPILOT_AGENT_SESSION_ID",
+    "AI_AGENT",
+    "TOOLS_CLAUDE_ACCOUNT",
+    "CMUX_SURFACE_ID",
+    "CMUX_WORKSPACE_ID",
+    "CMUX_TAB_ID",
+    "TMUX_PANE",
+    "TERM_PROGRAM",
+] as const;
+
+async function captureWith(vars: Partial<Record<(typeof CALLER_ENV_KEYS)[number], string>>) {
+    const cleared = Object.fromEntries(CALLER_ENV_KEYS.map((key) => [key, undefined]));
+    let caller: CallerContext | undefined;
+    await env.testing.withOverrides({ ...cleared, ...vars }, async () => {
+        caller = await captureCallerContext();
+    });
+
+    if (!caller) {
+        throw new Error("captureCallerContext did not run");
+    }
+
+    return caller;
+}
+
+describe("characterization: the caller `tools say` records", () => {
+    test("the env host wins over the process chain", async () => {
+        const caller = await captureWith({ GROK_SESSION_ID: "grok-session-1" });
+        expect(caller.agent).toBe("grok");
+        expect(caller.sessionId).toBe("grok-session-1");
+    });
+
+    test("the outer host of two in the env wins, with its session id", async () => {
+        const caller = await captureWith({
+            CLAUDE_CODE_SESSION_ID: "claude-session-1",
+            CLAUDECODE: "1",
+            CODEX_THREAD_ID: "codex-thread-1",
+        });
+        expect(caller.agent).toBe("claude-code");
+        expect(caller.sessionId).toBe("claude-session-1");
+    });
+
+    test("with no host in the env the agent is whatever the process chain names, and the session is null", async () => {
+        const caller = await captureWith({});
+        expect(caller.agent).toBe(agentFromAncestry(caller.ancestry));
+        expect(caller.sessionId).toBeNull();
+        expect(caller.callerPid).toBe(process.ppid);
+        expect(caller.cwd).toBe(process.cwd());
+    });
+
+    test("the terminal ids come from the cmux, tmux and terminal variables", async () => {
+        const caller = await captureWith({
+            CMUX_SURFACE_ID: "surface-1",
+            CMUX_WORKSPACE_ID: "workspace-1",
+            CMUX_TAB_ID: "tab-1",
+            TMUX_PANE: "%3",
+            TERM_PROGRAM: "ghostty",
+        });
+        expect(caller).toMatchObject({
+            surfaceId: "surface-1",
+            workspaceId: "workspace-1",
+            tabId: "tab-1",
+            tmuxPane: "%3",
+            termProgram: "ghostty",
+        });
+    });
+
+    test("a terminal variable that is not set is null", async () => {
+        const caller = await captureWith({});
+        expect(caller).toMatchObject({
+            surfaceId: null,
+            workspaceId: null,
+            tabId: null,
+            tmuxPane: null,
+            termProgram: null,
+            account: null,
+        });
+    });
+
+    test("the account is TOOLS_CLAUDE_ACCOUNT whatever the host is", async () => {
+        expect((await captureWith({ TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBe("work");
+        expect((await captureWith({ GROK_SESSION_ID: "g1", TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBe("work");
+    });
+
+    test("aiAgent is the host's label: AI_AGENT for Claude, Grok and no host, null for Codex", async () => {
+        expect((await captureWith({ CLAUDECODE: "1", AI_AGENT: "label" })).aiAgent).toBe("label");
+        expect((await captureWith({ GROK_SESSION_ID: "g1", AI_AGENT: "label" })).aiAgent).toBe("label");
+        expect((await captureWith({ AI_AGENT: "label" })).aiAgent).toBe("label");
+        expect((await captureWith({ CODEX_CI: "1", AI_AGENT: "label" })).aiAgent).toBe("label");
+    });
+
+    test("the agent comes from the ancestry binary name only when the env names none", () => {
+        const chain: AncestryFrame[] = [
+            { pid: 30, command: "/bin/zsh -c tools say hi" },
+            { pid: 20, command: "/opt/homebrew/bin/codex exec" },
+            { pid: 10, command: "/Users/x/.bun/bin/claude --resume" },
+        ];
+        // The nearest agent binary wins, so Codex running inside Claude reads as Codex here.
+        expect(agentFromAncestry(chain)).toBe("codex");
+        expect(agentFromAncestry([...chain].reverse())).toBe("claude-code");
     });
 });

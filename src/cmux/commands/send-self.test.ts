@@ -51,4 +51,23 @@ describe("resolveSelfTarget", () => {
         });
         expect(resolveSelfTarget(CMUX_ENV, "tmux")).toBeNull();
     });
+
+    // Characterization (2026-11-04): TMUX_PANE is read first, and an empty one does not count.
+    it("reads TMUX_PANE before CMUX_SURFACE_ID, and an empty TMUX_PANE falls through to cmux", () => {
+        expect(resolveSelfTarget({ TMUX_PANE: "%2", CMUX_SURFACE_ID: "F89A4C33" } as NodeJS.ProcessEnv)).toEqual({
+            kind: "tmux",
+            pane: "%2",
+        });
+        expect(resolveSelfTarget({ TMUX_PANE: "", CMUX_SURFACE_ID: "F89A4C33" } as NodeJS.ProcessEnv)).toEqual({
+            kind: "cmux",
+            workspaceId: undefined,
+            surfaceId: "F89A4C33",
+        });
+    });
+
+    it("tmux alone resolves without any cmux id, and forcing cmux on a tmux-only env is null", () => {
+        const tmuxOnly = { TMUX_PANE: "%2" } as NodeJS.ProcessEnv;
+        expect(resolveSelfTarget(tmuxOnly)).toEqual({ kind: "tmux", pane: "%2" });
+        expect(resolveSelfTarget(tmuxOnly, "cmux")).toBeNull();
+    });
 });
