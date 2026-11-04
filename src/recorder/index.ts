@@ -4,7 +4,7 @@ import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
-import { describeProject, parseEditOps } from "@genesiscz/utils/recording-editor/project";
+import { describeProject, EDIT_OP_NAMES, parseEditOps } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
@@ -548,7 +548,7 @@ program
 program
     .command("apply")
     .description(
-        'Change a recording\'s edit with JSON ops, in order, saved once (the open editor window reloads it). Ops: {"op":"cut","from":4,"to":"0:09"}, split {at}, keep {from,to}, speed {from,to,factor}, zoom {from,to,scale?,focus?:{x,y},follow?}, unzoom {id}, autoZoom {scale?}, volume {volume 0–2}, mute {track,muted?}, audio {include}, exportSettings {codec?,maxHeight?,output?}, removeIdle {minSeconds? 2, keepSeconds? 0.3} (cuts still and silent stretches), reset. Times are source seconds or "mm:ss"'
+        `Change a recording's edit with JSON ops, in order, saved once (the open editor window reloads it), e.g. {"op":"cut","from":4,"to":"0:09"}. Ops: ${EDIT_OP_NAMES.join(", ")}; a wrong or missing field names the right ones, and the REPL's help("movies") documents each. Times are source seconds or "mm:ss"`
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .argument("<ops>", "one op or an array of ops as JSON, or - to read them from stdin")
