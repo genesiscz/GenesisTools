@@ -5,6 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    bubbleFromSidecar,
+    bubbleRect,
+    bubbleShowsAt,
+    CAMERA_SIDECAR,
+    readCameraSidecar,
+} from "@genesiscz/utils/recording-editor/camera";
 import { checkProject, fixOps } from "@genesiscz/utils/recording-editor/check";
 import {
     addComment,
@@ -1105,5 +1112,94 @@ describe("cutting by the transcript", () => {
         expect(Math.abs(removed - (461_538 + 666_667))).toBeLessThanOrEqual(1);
         expect(outputDurationUs(cut)).toBe(40_000_000 - removed);
         expect(() => applyOp(project, { op: "cutFillers" })).toThrow("needs the transcript");
+    });
+});
+
+describe("camera bubble", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+    test("a camera op places the bubble; x or y makes the corner custom; enabled false removes it", () => {
+        let project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
+        expect(project.camera).toMatchObject({
+            file: "camera.mov",
+            corner: "bottomRight",
+            shape: "circle",
+            show: true,
+        });
+        project = applyOp(project, { op: "camera", x: 0.2, y: 0.3, size: 0.3, shape: "rounded" });
+        expect(project.camera).toMatchObject({ corner: "custom", x: 0.2, y: 0.3, size: 0.3, shape: "rounded" });
+        expect(editProjectSchema.parse(SafeJSON.parse(SafeJSON.stringify(project))).camera).toEqual(project.camera);
+        expect(applyOp(project, { op: "camera", enabled: false }).camera).toBeUndefined();
+        expect(() => applyOp(wholeProject(source), { op: "camera", show: false })).toThrow("has no camera yet");
+    });
+
+    test("hidden ranges join, split on a show, and decide where the bubble draws", () => {
+        let project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
+        project = applyOp(project, { op: "cameraHide", from: 1, to: 3 });
+        project = applyOp(project, { op: "cameraHide", from: 2, to: 5 });
+        expect(project.camera?.hidden).toEqual([{ startUs: 1_000_000, endUs: 5_000_000 }]);
+        project = applyOp(project, { op: "cameraShow", from: 2, to: 3 });
+        expect(project.camera?.hidden).toEqual([
+            { startUs: 1_000_000, endUs: 2_000_000 },
+            { startUs: 3_000_000, endUs: 5_000_000 },
+        ]);
+        const camera = project.camera;
+
+        if (!camera) {
+            throw new Error("no camera");
+        }
+
+        expect(bubbleShowsAt(camera, 1_500_000)).toBe(false);
+        expect(bubbleShowsAt(camera, 2_500_000)).toBe(true);
+        expect(bubbleShowsAt({ ...camera, show: false }, 2_500_000)).toBe(false);
+        expect(() => applyOp(wholeProject(source), { op: "cameraHide", from: 1, to: 2 })).toThrow("needs a camera");
+    });
+
+    test("a corner keeps the margin from two edges; a custom centre stays inside the canvas", () => {
+        const camera = applyOp(wholeProject(source), { op: "camera", file: "camera.mov", size: 0.2 }).camera;
+
+        if (!camera) {
+            throw new Error("no camera");
+        }
+
+        const canvas = { width: 1920, height: 1080 };
+        const corner = bubbleRect(camera, canvas);
+        expect(corner.side).toBeCloseTo(216);
+        expect(corner.x).toBeCloseTo(1920 - 0.035 * 1080 - 108);
+        expect(corner.y).toBeCloseTo(1080 - 0.035 * 1080 - 108);
+        const custom = bubbleRect({ ...camera, corner: "custom", x: 1, y: 0 }, canvas);
+        expect([custom.x, custom.y]).toEqual([1920 - 108, 108]);
+    });
+
+    test("a new edit takes the camera from camera.json: its place and the start difference", () => {
+        const folder = mkdtempSync(join(tmpdir(), "camera-sidecar-"));
+        const video = join(folder, "screen.mp4");
+        writeFileSync(
+            join(folder, CAMERA_SIDECAR),
+            SafeJSON.stringify({
+                version: 1,
+                file: "camera.mov",
+                startedAt: "2026-11-05T10:00:01.250Z",
+                screenStartedAt: "2026-11-05T10:00:01.000Z",
+                placement: { x: 0.1, y: 0.9, size: 0.3, shape: "square" },
+            })
+        );
+        const sidecar = readCameraSidecar(video);
+        expect(sidecar?.file).toBe("camera.mov");
+
+        if (!sidecar) {
+            throw new Error("no sidecar");
+        }
+
+        expect(bubbleFromSidecar(sidecar)).toMatchObject({
+            offsetMs: 250,
+            corner: "custom",
+            x: 0.1,
+            y: 0.9,
+            size: 0.3,
+            shape: "square",
+        });
+        writeFileSync(join(folder, CAMERA_SIDECAR), '{ "version": 2 }');
+        expect(readCameraSidecar(video)).toBeUndefined();
     });
 });

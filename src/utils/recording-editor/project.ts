@@ -6,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
+import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import {
     addedItemIds,
@@ -349,6 +350,8 @@ export const editProjectSchema = z.object({
     motion: motionSchema.optional(),
     /** The timeline's effect lanes in order (lanes.ts); absent is the default lanes. */
     lanes: z.array(effectLaneSchema).optional(),
+    /** The camera recorded beside the screen, drawn as a bubble; absent is none (camera.ts). */
+    camera: cameraBubbleSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -848,6 +851,26 @@ export function annotateClicks(
 const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
 const rangeFields = { from: timeSchema, to: timeSchema };
 
+/** Places or changes the camera bubble (camera.ts); the Movie handle's camera() takes the same fields. */
+export const cameraOpSchema = z
+    .object({
+        op: z.literal("camera"),
+        /** The camera's movie; the first camera op of an edit without one needs it (or camera.json beside). */
+        file: z.string().min(1).optional(),
+        show: z.boolean().optional(),
+        corner: z.enum(CAMERA_CORNERS).optional(),
+        /** The centre as fractions of the canvas; setting either makes the corner custom. */
+        x: z.number().min(0).max(1).optional(),
+        y: z.number().min(0).max(1).optional(),
+        size: z.number().min(0.08).max(0.6).optional(),
+        shape: z.enum(CAMERA_SHAPES).optional(),
+        mirror: z.boolean().optional(),
+        offsetMs: z.number().int().min(-600_000).max(600_000).optional(),
+        /** false removes the bubble from the edit (the camera movie stays). */
+        enabled: z.boolean().optional(),
+    })
+    .strict();
+
 /** One edit an agent or the CLI asks for; times are SOURCE times, seconds or "mm:ss". */
 /** The range popover's actions that edit (its "Export This Part" is export({ from, to })). */
 export const RANGE_ACTIONS = ["cut", "speed", "zoom", "hide", "spotlight", "text"] as const;
@@ -1084,6 +1107,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             shadow: z.boolean().optional(),
         })
         .strict(),
+    cameraOpSchema,
+    z.object({ op: z.literal("cameraHide"), ...rangeFields }).strict(),
+    z.object({ op: z.literal("cameraShow"), ...rangeFields }).strict(),
     z
         .object({
             op: z.literal("removeIdle"),
@@ -1677,6 +1703,40 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             const { op: _op, ...change } = op;
             return { ...project, captions: captionsSchema.parse({ ...project.captions, ...change }) };
         }
+        case "camera": {
+            const { op: _op, enabled, ...change } = op;
+
+            if (enabled === false) {
+                const { camera: _camera, ...rest } = project;
+                return rest;
+            }
+
+            const file = change.file ?? project.camera?.file;
+
+            if (!file) {
+                throw new Error(
+                    'this edit has no camera yet; give the camera movie with { op: "camera", file: "camera.mov" }'
+                );
+            }
+
+            const custom = change.x !== undefined || change.y !== undefined ? { corner: "custom" as const } : {};
+            return { ...project, camera: cameraBubbleSchema.parse({ ...project.camera, ...change, ...custom, file }) };
+        }
+        case "cameraHide":
+        case "cameraShow": {
+            if (!project.camera) {
+                throw new Error(`${op.op} needs a camera bubble; this edit has none`);
+            }
+
+            const fromUs = timeToUs(op.from);
+            const toUs = Math.min(project.source.durationUs, timeToUs(op.to));
+            checkRange(project, fromUs, toUs);
+            const camera =
+                op.op === "cameraHide"
+                    ? hideCamera(project.camera, fromUs, toUs)
+                    : showCamera(project.camera, fromUs, toUs);
+            return { ...project, camera };
+        }
         case "motion": {
             const { op: _op, ...change } = op;
             return { ...project, motion: motionSchema.parse({ ...project.motion, ...change }) };
@@ -1784,6 +1844,7 @@ export function describeProject(project: EditProject, path: string) {
         keys: project.keys ?? null,
         transcriptFixes: Object.keys(project.transcript?.fixes ?? {}).length,
         motion: motionSchema.parse(project.motion ?? {}),
+        camera: project.camera ?? null,
         shapes: (project.shapes ?? []).map((shape) => ({
             id: shape.id,
             kind: shape.kind,

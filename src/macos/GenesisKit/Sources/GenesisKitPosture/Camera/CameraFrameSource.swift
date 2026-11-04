@@ -127,10 +127,17 @@ public final class CameraFrameSource: NSObject, CameraModeControlling, @unchecke
     /// Restarts in a row, without a delivered frame between them, before the source gives up.
     public static let maximumRestarts = 3
 
+    /// The longest side of a delivered frame by default: what pose analysis needs (see `AVCameraSessionDriver`).
+    public static let analysisMaxSide = AVCameraSessionDriver.analysisMaxSide
+
+    /// `outputMaxSide` caps the delivered frame's longest side (640 for analysis, the default); nil delivers the
+    /// camera's own size, for a host that records the camera.
     public convenience init(selection: CameraSelection = .systemDefault, preset: AVCaptureSession.Preset = .vga640x480,
-                            deliveryQueue: DispatchQueue? = nil, warmup: CameraWarmup = CameraWarmup()) {
+                            deliveryQueue: DispatchQueue? = nil, warmup: CameraWarmup = CameraWarmup(),
+                            outputMaxSide: Int? = CameraFrameSource.analysisMaxSide) {
         self.init(selection: selection, deliveryQueue: deliveryQueue, warmup: warmup,
-                  authorization: { CameraAuthorization.status }, driver: AVCameraSessionDriver(preset: preset))
+                  authorization: { CameraAuthorization.status },
+                  driver: AVCameraSessionDriver(preset: preset, outputMaxSide: outputMaxSide))
     }
 
     init(selection: CameraSelection, deliveryQueue: DispatchQueue?, warmup: CameraWarmup,

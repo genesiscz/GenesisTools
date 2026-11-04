@@ -525,6 +525,7 @@ struct EditRenderer {
         let (picture, size) = outputSizes(source: natural, maxHeight: maxHeight, aspect: project.frame?.aspect,
                                           h264Fps: project.export.codec == .h264 ? fps : nil)
         let outputScale = picture.height / natural.height
+        let cameraFeed = await CameraFeed.make(project: project)
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
             let image = request.sourceImage
             let extent = image.extent
@@ -580,6 +581,10 @@ struct EditRenderer {
             }
             for text in look.texts {
                 result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size)
+                    .cropped(to: CGRect(origin: .zero, size: size))
+            }
+            if let cameraFeed {
+                result = cameraFeed.draw(atSourceUs: TimelineMap.sourceTime(atOutput: outUs, in: project), on: result, canvas: size)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             if let cursor {

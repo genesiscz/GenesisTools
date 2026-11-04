@@ -1,16 +1,369 @@
 import AppKit
+import GenesisKitPosture
+import SwiftUI
 
-/// The camera bubble beside a recording (item 2 of the capture work fills this in): its preview window ids, which the
-/// movie leaves out, and the hooks the picker and the live recordings call.
+/// The camera bubble beside a recording. With "Camera bubble" on in the capture picker, a round live preview floats
+/// where the bubble will sit; it can be dragged before and while recording, and the movie leaves it out by its window
+/// id. A recording that asked for the camera (`settings.camera.requested` in its recording.json, from `--camera`)
+/// gets `camera.mov` beside `screen.mp4`, and at its end `camera.json` with where the bubble was, which a new edit
+/// takes as its camera bubble. A recording started with `--camera` outside the picker records the camera without a
+/// preview on screen, because nothing would keep the preview out of its movie.
 @MainActor
 final class CameraBubble {
     static let shared = CameraBubble()
 
-    var windowIDs: [Int] { [] }
+    enum Key {
+        static let size = "recorder.camera.bubbleSize"
+        static let shape = "recorder.camera.shape"
+        static let center = "recorder.camera.bubbleCenter"
+    }
 
-    func optionChanged(_ on: Bool) {}
+    static let sizes: [Int] = [140, 200, 260]
 
-    func pickerClosed(started: Bool) {}
+    /// The preview's side in points; 200 by default.
+    static var bubbleSide: Int {
+        let stored = UserDefaults.standard.integer(forKey: Key.size)
+        return sizes.contains(stored) ? stored : 200
+    }
 
-    func liveRecordingsChanged(_ recordings: [LiveRecording]) {}
+    static var shape: EditProject.CameraShape {
+        UserDefaults.standard.string(forKey: Key.shape).flatMap(EditProject.CameraShape.init(rawValue:)) ?? .circle
+    }
+
+    private var source: CameraFrameSource?
+    private var panel: CameraBubblePanel?
+    private var writer: CameraMovieWriter?
+    private var recording: (id: String, folder: URL, target: [String: Any]?)?
+    private var screenStartedAt: Date?
+    /// The picker started a camera recording at this time: the next one that asks for the camera shows the preview.
+    private var awaitingSince: Date?
+    /// Live recordings already looked at, by id: whether each asked for the camera.
+    private var asked: [String: Bool] = [:]
+
+    /// The preview's window, for `--exclude-window-ids`; empty while it is not on screen.
+    var windowIDs: [Int] {
+        guard let panel, panel.isVisible else { return [] }
+        return [panel.windowNumber]
+    }
+
+    func optionChanged(_ on: Bool) {
+        if on {
+            showPreview()
+        } else if recording == nil {
+            hidePreview()
+        }
+    }
+
+    func pickerClosed(started: Bool) {
+        if started {
+            awaitingSince = Date()
+        } else if recording == nil {
+            hidePreview()
+        }
+    }
+
+    func appearanceChanged() {
+        panel?.apply(side: CGFloat(Self.bubbleSide), shape: Self.shape)
+    }
+
+    func liveRecordingsChanged(_ recordings: [LiveRecording]) {
+        if let current = recording {
+            guard let entry = recordings.first(where: { $0.id == current.id }), !entry.isStopping else {
+                finish()
+                return
+            }
+            if entry.isPaused { writer?.pause() } else if entry.isRecording { writer?.resume() }
+            return
+        }
+        for entry in recordings where entry.isRecording && asked[entry.id] == nil {
+            guard let folder = entry.folder.map({ URL(fileURLWithPath: $0, isDirectory: true) }) else { continue }
+            let manifest = Self.manifestSettings(folder)
+            let wants = (manifest?["camera"] as? [String: Any])?["requested"] as? Bool == true
+            asked[entry.id] = wants
+            if wants {
+                begin(entry: entry, folder: folder, target: manifest?["target"] as? [String: Any])
+                return
+            }
+        }
+    }
+
+    // MARK: Preview
+
+    private func showPreview() {
+        Task {
+            guard await ensureCameraAccess() else { return }
+            startCamera()
+            let panel = panel ?? CameraBubblePanel(source: source!)
+            self.panel = panel
+            panel.apply(side: CGFloat(Self.bubbleSide), shape: Self.shape)
+            panel.place(center: Self.savedCenter() ?? Self.defaultCenter(side: CGFloat(Self.bubbleSide)))
+            panel.onMoved = { center in
+                UserDefaults.standard.set("\(Int(center.x)),\(Int(center.y))", forKey: Key.center)
+            }
+            panel.orderFrontRegardless()
+        }
+    }
+
+    private func hidePreview() {
+        panel?.orderOut(nil)
+        if writer == nil { source?.stop() }
+    }
+
+    private func startCamera() {
+        if source == nil {
+            // 720p is plenty for a bubble at most 60% of a 1080p canvas's height, and keeps the encoder light.
+            source = CameraFrameSource(preset: .hd1280x720, outputMaxSide: nil)
+        }
+        source?.setMode(.continuous(fps: 30))
+    }
+
+    private func ensureCameraAccess() async -> Bool {
+        switch CameraAuthorization.status {
+        case .authorized:
+            return true
+        case .notDetermined:
+            NSApp.activate(ignoringOtherApps: true)
+            if await CameraAuthorization.request() { return true }
+        default:
+            break
+        }
+        HubPerf.log("recorder: camera access is \(CameraAuthorization.status.rawValue); no camera bubble")
+        let alert = NSAlert()
+        alert.messageText = "The camera is off for GenesisTools"
+        alert.informativeText = "The camera bubble needs Camera access. Turn it on in System Settings → Privacy & Security → Camera, then turn the bubble on again."
+        alert.addButton(withTitle: "Open Camera Settings")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(CameraAuthorization.settingsURL) }
+        return false
+    }
+
+    // MARK: Recording
+
+    private func begin(entry: LiveRecording, folder: URL, target: [String: Any]?) {
+        let fromPicker = awaitingSince.map { Date().timeIntervalSince($0) < 120 } ?? false
+        awaitingSince = nil
+        recording = (entry.id, folder, target)
+        screenStartedAt = Date()
+        if !fromPicker { panel?.orderOut(nil) }
+        Task {
+            guard await ensureCameraAccess() else {
+                recording = nil
+                return
+            }
+            startCamera()
+            let writer = CameraMovieWriter(url: folder.appendingPathComponent("camera.mov"))
+            self.writer = writer
+            source?.onFrame = { frame in writer.append(frame) }
+            HubPerf.log("recorder: camera recording for \(entry.id) (preview \(fromPicker ? "on screen" : "off"))")
+        }
+    }
+
+    private func finish() {
+        guard let current = recording else { return }
+        recording = nil
+        source?.onFrame = nil
+        let placement = panel.flatMap { $0.isVisible ? Self.placement(bubble: $0.frame, target: current.target) : nil }
+        let screenStarted = screenStartedAt
+        panel?.orderOut(nil)
+        guard let writer else {
+            source?.stop()
+            return
+        }
+        self.writer = nil
+        writer.finish { [weak self] startedAt, frames in
+            MainActor.assumeIsolated {
+                self?.source?.stop()
+                guard let startedAt else {
+                    HubPerf.log("recorder: camera movie for \(current.id) has no frames")
+                    return
+                }
+                Self.writeSidecar(folder: current.folder, startedAt: startedAt, screenStartedAt: screenStarted,
+                                  placement: placement)
+                HubPerf.log("recorder: camera movie for \(current.id): \(frames) frames")
+            }
+        }
+    }
+
+    // MARK: Files and geometry
+
+    private static func manifestSettings(_ folder: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("recording.json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return root["settings"] as? [String: Any]
+    }
+
+    /// `camera.json` beside the recording (src/utils/recording-editor/camera.ts `cameraSidecarSchema`).
+    static func writeSidecar(folder: URL, startedAt: Date, screenStartedAt: Date?, placement: [String: Any]?) {
+        var object: [String: Any] = [
+            "version": 1, "file": "camera.mov", "startedAt": ISO8601DateFormatter.withFraction.string(from: startedAt),
+        ]
+        if let screenStartedAt { object["screenStartedAt"] = ISO8601DateFormatter.withFraction.string(from: screenStartedAt) }
+        if let placement { object["placement"] = placement }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: folder.appendingPathComponent("camera.json"), options: .atomic)
+    }
+
+    /// Where the bubble sat in what was recorded, as camera.ts's fractions: the centre from the top left and the side
+    /// over the short side. Nil when the recorded rectangle is not known (an app's windows).
+    static func placement(bubble: CGRect, target: [String: Any]?) -> [String: Any]? {
+        let screens = NSScreen.screens
+        let primaryHeight = screens.first?.frame.height ?? 0
+        let recorded: CGRect?
+        switch target?["kind"] as? String {
+        case "display" where target?["follow"] as? Bool != true:
+            let index = (target?["screenIndex"] as? NSNumber)?.intValue ?? 0
+            recorded = screens.indices.contains(index) ? screens[index].frame : nil
+        case "region":
+            let n = { (key: String) in CGFloat((target?[key] as? NSNumber)?.doubleValue ?? 0) }
+            recorded = CGRect(x: n("x"), y: primaryHeight - n("y") - n("height"), width: n("width"), height: n("height"))
+        case "window":
+            recorded = ((target?["windowIds"] as? [NSNumber])?.first).flatMap { windowFrame(CGWindowID($0.uint32Value), primaryHeight: primaryHeight) }
+        case "app":
+            recorded = nil
+        default:
+            recorded = screens.first { $0.frame.contains(CGPoint(x: bubble.midX, y: bubble.midY)) }?.frame
+        }
+        guard let recorded else { return nil }
+        return placement(bubble: bubble, recorded: recorded, shape: shape)
+    }
+
+    /// Pure, for tests: both rects in Cocoa points (bottom-left origin).
+    nonisolated static func placement(bubble: CGRect, recorded: CGRect, shape: EditProject.CameraShape) -> [String: Any]? {
+        guard recorded.width > 0, recorded.height > 0 else { return nil }
+        let clamp = { (value: CGFloat, low: CGFloat, high: CGFloat) in Double(min(high, max(low, value))) }
+        return [
+            "x": clamp((bubble.midX - recorded.minX) / recorded.width, 0, 1),
+            "y": clamp((recorded.maxY - bubble.midY) / recorded.height, 0, 1),
+            "size": clamp(bubble.width / min(recorded.width, recorded.height), 0.08, 0.6),
+            "shape": shape.rawValue,
+        ]
+    }
+
+    private static func windowFrame(_ id: CGWindowID, primaryHeight: CGFloat) -> CGRect? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
+              let bounds = list.first?[kCGWindowBounds as String] as? [String: CGFloat],
+              let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"] else { return nil }
+        return CGRect(x: x, y: primaryHeight - y - height, width: width, height: height)
+    }
+
+    private static func savedCenter() -> CGPoint? {
+        guard let parts = UserDefaults.standard.string(forKey: Key.center)?.split(separator: ",").compactMap({ Double($0) }),
+              parts.count == 2 else { return nil }
+        let point = CGPoint(x: parts[0], y: parts[1])
+        return NSScreen.screens.contains { $0.frame.contains(point) } ? point : nil
+    }
+
+    /// The bottom-right corner of the pointer's screen, 40 pt in.
+    private static func defaultCenter(side: CGFloat) -> CGPoint {
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        return CGPoint(x: visible.maxX - 40 - side / 2, y: visible.minY + 40 + side / 2)
+    }
+}
+
+/// The preview's window: borderless, over every app and Space, never the keyboard; a drag anywhere on it moves it.
+final class CameraBubblePanel: NSPanel {
+    var onMoved: ((CGPoint) -> Void)?
+    private let host: CameraBubbleDragView
+
+    init(source: CameraFrameSource) {
+        host = CameraBubbleDragView(source: source)
+        super.init(contentRect: CGRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered, defer: false)
+        title = "Camera bubble"
+        identifier = NSUserInterfaceItemIdentifier("recorder.camera.bubble")
+        isFloatingPanel = true
+        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = true
+        sharingType = .none
+        contentView = host
+        host.onMoved = { [weak self] in
+            guard let self else { return }
+            onMoved?(CGPoint(x: frame.midX, y: frame.midY))
+        }
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    func apply(side: CGFloat, shape: EditProject.CameraShape) {
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        setFrame(CGRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side), display: true)
+        host.apply(cornerRadius: CameraFeed.cornerRadius(shape, side: side))
+        invalidateShadow()
+    }
+
+    func place(center: CGPoint) {
+        let size = frame.size
+        setFrameOrigin(CGPoint(x: (center.x - size.width / 2).rounded(), y: (center.y - size.height / 2).rounded()))
+    }
+}
+
+/// Holds the live preview and moves its window from each drag event's own location (a `performDrag` moved it only on
+/// the first drag of a show); saves the place on mouse-up.
+final class CameraBubbleDragView: NSView {
+    var onMoved: (() -> Void)?
+    private let hosting: NSHostingView<CameraBubblePreview>
+    private var grab: CGPoint?
+
+    init(source: CameraFrameSource) {
+        hosting = NSHostingView(rootView: CameraBubblePreview(source: source, cornerRadius: 100))
+        super.init(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        hosting.frame = bounds
+        hosting.autoresizingMask = [.width, .height]
+        addSubview(hosting)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Camera bubble preview. Drag to place it.")
+        // The drag view takes every hit, so the hint lives here rather than on the SwiftUI preview.
+        toolTip = "Drag to place the camera bubble; the editor draws it here in the movie"
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func apply(cornerRadius: CGFloat) {
+        hosting.rootView = CameraBubblePreview(source: hosting.rootView.source, cornerRadius: cornerRadius)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let pointer = NSEvent.mouseLocation
+        grab = CGPoint(x: pointer.x - window.frame.minX, y: pointer.y - window.frame.minY)
+        NSCursor.closedHand.push()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window, let grab else { return }
+        let pointer = NSEvent.mouseLocation
+        window.setFrameOrigin(CGPoint(x: (pointer.x - grab.x).rounded(), y: (pointer.y - grab.y).rounded()))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard grab != nil else { return }
+        grab = nil
+        NSCursor.pop()
+        onMoved?()
+    }
+}
+
+/// The live camera picture in the bubble's shape, mirrored as the person sees themselves, with a thin ring.
+struct CameraBubblePreview: View {
+    let source: CameraFrameSource
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        CameraPreviewView(source: source, mirrored: true, cornerRadius: cornerRadius)
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(.white.opacity(0.35), lineWidth: 1.5))
+    }
 }

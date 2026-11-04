@@ -216,6 +216,22 @@ final class CapturePickerModel: ObservableObject {
         }
     }
 
+    @Published var cameraSize = CameraBubble.bubbleSide {
+        didSet {
+            guard persist, cameraSize != oldValue else { return }
+            UserDefaults.standard.set(cameraSize, forKey: CameraBubble.Key.size)
+            CameraBubble.shared.appearanceChanged()
+        }
+    }
+
+    @Published var cameraShape = CameraBubble.shape {
+        didSet {
+            guard persist, cameraShape != oldValue else { return }
+            UserDefaults.standard.set(cameraShape.rawValue, forKey: CameraBubble.Key.shape)
+            CameraBubble.shared.appearanceChanged()
+        }
+    }
+
     @Published var bindings: [RecorderShortcutAction: RecorderShortcutBinding] = CapturePickerModel.loadBindings()
     @Published var shortcutsOpen = false
     @Published var alwaysHeld = RecorderShortcuts.alwaysHeld {
@@ -307,6 +323,27 @@ struct CaptureOptionsView: View {
             }
             row("Camera bubble", detail: "Records the camera beside the screen; drag the bubble to place it") {
                 toggle($model.options.camera, "recorder.capture.camera")
+            }
+            if model.options.camera {
+                row("Bubble", detail: "The preview's size and shape; the editor can change both later") {
+                    HStack(spacing: 6) {
+                        menu($model.cameraSize, CameraBubble.sizes, "recorder.capture.cameraSize") {
+                            switch $0 {
+                            case 140: return "Small"
+                            case 260: return "Large"
+                            default: return "Medium"
+                            }
+                        }
+                        menu($model.cameraShape, EditProject.CameraShape.allCases, "recorder.capture.cameraShape") {
+                            switch $0 {
+                            case .circle: return "Circle"
+                            case .rounded: return "Rounded"
+                            case .square: return "Square"
+                            }
+                        }
+                    }
+                }
+                .transition(.genReveal)
             }
 
             GenDisclosure(isExpanded: $model.shortcutsOpen, identifier: "recorder.capture.shortcutsDisclosure",

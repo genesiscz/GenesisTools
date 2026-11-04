@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { checkProject } from "@genesiscz/utils/recording-editor/check";
 import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
@@ -103,19 +104,17 @@ export async function openProject(value: string): Promise<OpenedProject> {
     const folder = dirname(video);
     const manifest = readRecordingManifest(folder);
     const cursor = join(folder, "cursor.jsonl");
-    log.debug({ video, path, durationUs: info.durationUs }, "new edit of a whole movie");
-    return {
-        path,
-        project: wholeProject({
-            video,
-            durationUs: info.durationUs,
-            width: info.displayWidth || info.width,
-            height: info.displayHeight || info.height,
-            ...(existsSync(cursor) ? { cursor } : {}),
-            ...(manifest ? { recording: manifest.id } : {}),
-        }),
-        fresh: true,
-    };
+    const camera = readCameraSidecar(video);
+    log.debug({ video, path, durationUs: info.durationUs, camera: camera?.file }, "new edit of a whole movie");
+    const project = wholeProject({
+        video,
+        durationUs: info.durationUs,
+        width: info.displayWidth || info.width,
+        height: info.displayHeight || info.height,
+        ...(existsSync(cursor) ? { cursor } : {}),
+        ...(manifest ? { recording: manifest.id } : {}),
+    });
+    return { path, project: camera ? { ...project, camera: bubbleFromSidecar(camera) } : project, fresh: true };
 }
 
 /**

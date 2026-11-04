@@ -47,6 +47,8 @@ final class AVCameraSessionDriver: CameraSessionDriving, @unchecked Sendable {
 
     private let output = AVCaptureVideoDataOutput()
     private let preset: AVCaptureSession.Preset
+    /// The longest side of a delivered frame; nil keeps the camera's own size (a recording wants every pixel).
+    private let outputMaxSide: Int?
     private let lock = NSLock()
     private var eventHandler: ((CameraDriverEvent) -> Void)?
     private var device: AVCaptureDevice?
@@ -58,8 +60,9 @@ final class AVCameraSessionDriver: CameraSessionDriving, @unchecked Sendable {
     private var stopsAsked = 0
     private var observers: [NSObjectProtocol] = []
 
-    init(preset: AVCaptureSession.Preset) {
+    init(preset: AVCaptureSession.Preset, outputMaxSide: Int? = AVCameraSessionDriver.analysisMaxSide) {
         self.preset = preset
+        self.outputMaxSide = outputMaxSide
         output.alwaysDiscardsLateVideoFrames = true
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         let center = NotificationCenter.default
@@ -123,7 +126,8 @@ final class AVCameraSessionDriver: CameraSessionDriving, @unchecked Sendable {
             // ran on 6.75 times the pixels, 22% of a core at Balanced (2026-10-14). The output scales down instead.
             let full = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
             var settings: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-            if let size = Self.analysisSize(width: Int(full.width), height: Int(full.height)) {
+            if let maxSide = outputMaxSide,
+               let size = Self.analysisSize(width: Int(full.width), height: Int(full.height), maxSide: maxSide) {
                 settings[kCVPixelBufferWidthKey as String] = size.width
                 settings[kCVPixelBufferHeightKey as String] = size.height
             }

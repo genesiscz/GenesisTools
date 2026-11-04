@@ -12,6 +12,7 @@ import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording
 import {
     BACKGROUND_KINDS,
     CANVAS_ASPECTS,
+    cameraOpSchema,
     describeProject,
     type EditOp,
     type EditProject,
@@ -112,7 +113,7 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys, transcriptFixes, motion, shapes, texts, lanes, warnings? }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, warnings? }";
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
 const editResult = "Edit (the fields info() lists, plus warnings?)";
@@ -483,6 +484,23 @@ const movieMethods = [
         "motion",
         z.object({ blur: z.number().min(0).max(1).optional() }).strict(),
         "How the picture moves through a zoom: blur 0 (every frame sharp) to 1 smears it along a pan or a change of scale, as a camera shutter would; 0.5 when never set. A still zoom is never blurred."
+    ),
+    edit(
+        "camera",
+        cameraOpSchema.omit({ op: true }),
+        'The camera bubble (a recording made with the camera on has one from its camera.json; info() shows camera): corner "bottomRight" | "bottomLeft" | "topRight" | "topLeft", or x and y (the centre, 0–1, makes it "custom"); size (its side over the short side, 0.08–0.6, 0.24); shape "circle" | "rounded" | "square"; mirror; show; offsetMs (camera time = source time - offsetMs); file for an edit without one; enabled: false removes it.'
+    ),
+    edit(
+        "cameraHide",
+        z.object(range).strict(),
+        "Hides the camera bubble from `from` to `to` (SOURCE seconds, so it moves with a cut); hidden parts that touch are joined.",
+        ["from", "to"]
+    ),
+    edit(
+        "cameraShow",
+        z.object(range).strict(),
+        "Shows the camera bubble again from `from` to `to`: hidden parts lose that stretch.",
+        ["from", "to"]
     ),
     edit(
         "frame",
@@ -1163,6 +1181,18 @@ export class Movie {
 
     async motion(options: Omit<Extract<EditOp, { op: "motion" }>, "op"> = {}) {
         return this.change([{ op: "motion", ...options }]);
+    }
+
+    async camera(options: Omit<Extract<EditOp, { op: "camera" }>, "op"> = {}) {
+        return this.change([{ op: "camera", ...options }]);
+    }
+
+    async cameraHide(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+        return this.change([{ op: "cameraHide", from, to }]);
+    }
+
+    async cameraShow(from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+        return this.change([{ op: "cameraShow", from, to }]);
     }
 
     async frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {

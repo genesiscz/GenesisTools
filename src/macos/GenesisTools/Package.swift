@@ -32,7 +32,8 @@ let allParts: [AppPart] = [
     AppPart(id: "clicky", target: "GenesisToolsClicky", path: "Sources/Parts/Clicky", requires: ["features"]),
     AppPart(id: "markdown", target: "GenesisToolsMarkdown", path: "Sources/Parts/Markdown"),
     // The recorder (`--recorder`): its menu bar item, the live recordings' controls and the editor windows.
-    AppPart(id: "recorder", target: "GenesisToolsRecorder", path: "Sources/Parts/Recorder"),
+    // GenesisKitPosture: the camera (CameraFrameSource, CameraPreviewView) for the camera bubble.
+    AppPart(id: "recorder", target: "GenesisToolsRecorder", path: "Sources/Parts/Recorder", kits: ["GenesisKitPosture"]),
 ]
 
 func part(_ id: String) -> AppPart? {

@@ -36,6 +36,8 @@ struct EditProject: Codable, Equatable {
     var motion: Motion?
     /// The timeline's effect lanes in order; nil is `EffectLanes.defaults` (src/utils/recording-editor/lanes.ts).
     var lanes: [EffectLane]?
+    /// The camera recorded beside the screen, drawn as a bubble; nil is none (Render/CameraLayer.swift).
+    var camera: Camera?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
