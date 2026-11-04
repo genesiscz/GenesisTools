@@ -223,6 +223,18 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /** `hub gates --json`: what waits on the Mac's Touch ID (the phone's waiting card, F22). Read only. */
+    gates: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { gateLedger } = await import("../gates/index");
+            return gateLedger();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `ai sessions tail <q> --json [--limit N] [--offset N] [--provider P]`: one page of a session's transcript. */
     transcript: {
         policy: "read",

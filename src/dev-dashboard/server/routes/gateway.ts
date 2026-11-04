@@ -13,6 +13,7 @@ import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { type BoardStopDeps, stopAgentSession } from "@app/hub/lib/board/stop";
 import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
+import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
 import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -24,6 +25,7 @@ import { z } from "zod";
 export const GATEWAY_ROWS = {
     agents: ENDPOINTS.gatewayAgents,
     board: ENDPOINTS.gatewayBoard,
+    gates: ENDPOINTS.gatewayGates,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
     stuck: ENDPOINTS.gatewayStuck,
@@ -59,6 +61,8 @@ export interface GatewayDeps {
     run?: typeof runCapability;
     /** The stop route's fleet and signals; tests pass a fake process tree, so no real process is signalled. */
     stop?: BoardStopDeps;
+    /** The raise route's ledger and window openers; tests pass fakes, so no window opens. */
+    gates?: GateRaiseDeps;
 }
 
 /**
@@ -103,6 +107,12 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             input: z.object({ key: z.string().min(1), pid: z.number().int().positive() }),
             invalid: "expected { key, pid }",
             run: (input) => stopAgentSession(input, deps.stop),
+        }),
+        // A keyed write: a raise opens a window on the Mac, so a replay must not open a second one.
+        bindEndpoint(ENDPOINTS.gatesRaise, {
+            input: z.object({ id: z.string().min(1) }),
+            invalid: "expected { id }",
+            run: (input) => raiseGate(input.id, deps.gates),
         }),
         bindEndpoint(ENDPOINTS.gatewayUpload, {
             input: z.object({}),

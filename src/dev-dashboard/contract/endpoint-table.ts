@@ -1,4 +1,5 @@
 import type { AgentStopInput, AgentStopReceiptDto, AgentsBoardDto } from "@app/dev-dashboard/contract/agents";
+import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 
 /**
  * The endpoint table: one row per non-board endpoint the phone and the web reach. The server binds a row
@@ -314,6 +315,10 @@ export const ENDPOINTS = {
      * alone answers one decision letter, and ending a process needs more than that (`src/hub/lib/board/stop.ts`).
      */
     agentsStop: row<AgentStopInput, AgentStopReceiptDto>("POST", "/api/agents/stop", "keyed-write"),
+    /** What waits on the Mac's Touch ID (F22): vault and AI account windows, rm requests, and the latest decisions. */
+    gatewayGates: row<GatewayInput, GateLedgerDto>("GET", "/api/gateway/gates", "read"),
+    /** Brings one waiting gate to the Mac's front, or opens the window of an rm request that has none (F22). */
+    gatesRaise: row<{ id: string }, GateRaiseReceiptDto>("POST", "/api/gates/raise", "keyed-write"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;
