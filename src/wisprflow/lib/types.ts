@@ -1,3 +1,4 @@
+import type { CalendarPerson } from "@genesiscz/utils/meetings/calendar-entry";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 
 export type SourceName = "local" | "mcp";
@@ -59,4 +60,6 @@ export interface CalendarEvent {
     end: string;
     conferenceUrl?: string;
     attendees: string[];
+    /** The attendees with their emails where the calendar gives them. */
+    people?: CalendarPerson[];
 }

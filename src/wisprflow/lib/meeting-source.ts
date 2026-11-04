@@ -7,8 +7,10 @@ import { readEvidence } from "./evidence";
 import {
     dictionaryCandidates,
     listLocalCalendar,
+    listLocalFolders,
     liveLocalMeeting,
     localAvailable,
+    localMeetingFolders,
     localSelfName,
     WISPR_DIR,
 } from "./local";
@@ -136,5 +138,45 @@ export const wisprflowSource: TranscriptSource = {
             startedAt: live.start,
             liveChangedAt: new Date(changedMs).toISOString(),
         };
+    },
+
+    async calendarEntries(range) {
+        // The app's local copy has the attendees' emails; reading it needs no grant and no network.
+        if (!localAvailable()) {
+            return { ok: false, from: "wisprflow", reason: "Wispr Flow's app data is not on this Mac" };
+        }
+
+        const events = listLocalCalendar({ since: range.from.getTime(), until: range.to.getTime() });
+        return {
+            ok: true,
+            from: "wisprflow",
+            entries: events.map((event) => ({
+                from: "wisprflow",
+                entryId: event.id,
+                title: event.title,
+                start: event.start,
+                end: event.end,
+                people: event.people ?? event.attendees.map((name) => ({ name })),
+                ...(event.conferenceUrl ? { conferenceUrl: event.conferenceUrl } : {}),
+            })),
+        };
+    },
+
+    async folders() {
+        return localAvailable() ? listLocalFolders() : null;
+    },
+
+    async meetingFolders(sourceMeetingId) {
+        return localAvailable() ? localMeetingFolders(sourceMeetingId) : null;
+    },
+
+    // Checked 2026-11-04 on Wispr Flow's own surfaces: its MCP server lists 16 tools and all of them read
+    // (list_folders, list_folder_meetings, ... none adds a meeting to a folder); its wispr-flow:// scheme routes only
+    // open/<page>, start-hands-free, stop-hands-free, switch-mic and the auth, billing and LinkedIn callbacks. The
+    // database belongs to the running app and is never written from here.
+    folderWrite: {
+        supported: false,
+        reason: "Wispr Flow offers no folder write: its MCP tools only read, and its URL scheme only opens pages",
+        manualStep: "In Wispr Flow open Notes (wispr-flow://open/notetaker), open the meeting and add it to the folder",
     },
 };

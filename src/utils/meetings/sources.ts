@@ -1,5 +1,6 @@
 import type { EvidenceSegment, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import type { CalendarLookup } from "./calendar-entry";
 import type { MeetingCalendar, MeetingParticipant } from "./record";
 
 /** The sources a meeting's transcript can come from. A new source is one entry here and one implementation. */
@@ -83,4 +84,25 @@ export interface TranscriptSource {
     evidence(sourceMeetingId: string): Promise<MeetingEvidence | null>;
     /** A recording running now, for the autostart; null when none is. */
     liveRecording(): Promise<LiveRecording | null>;
+    /**
+     * The calendar the source keeps beside its meetings (Wispr Flow syncs the owner's calendars, with emails), for
+     * entries that start in the range. A source that cannot read one answers `ok: false` with the reason.
+     */
+    calendarEntries(range: { from: Date; to: Date }): Promise<CalendarLookup>;
+    /** Every folder the source has; null when the source keeps no folders on this Mac. */
+    folders(): Promise<string[] | null>;
+    /** The folders one meeting is in now; null when the source cannot tell. */
+    meetingFolders(sourceMeetingId: string): Promise<string[] | null>;
+    /**
+     * Whether this code can put a meeting into a folder. No source can yet, so it says why and what the owner does by
+     * hand. A source that can will add `supported: true` and a write member here.
+     */
+    readonly folderWrite: FolderWriteSupport;
+}
+
+/** A source's folder write capability: none yet, with the evidence and the step the owner takes instead. */
+export interface FolderWriteSupport {
+    supported: false;
+    reason: string;
+    manualStep: string;
 }

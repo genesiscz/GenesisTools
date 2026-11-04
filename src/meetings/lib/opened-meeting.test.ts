@@ -46,6 +46,10 @@ function fakeSource(options: { evidence?: MeetingEvidence | null; clock?: string
                   }
                 : options.evidence,
         liveRecording: async () => null,
+        calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
+        folders: async () => [],
+        meetingFolders: async () => [],
+        folderWrite: { supported: false, reason: "fake", manualStep: "none" },
     };
 }
 

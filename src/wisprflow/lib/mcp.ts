@@ -277,6 +277,10 @@ function toEvent(raw: RawEvent): CalendarEvent {
         end: raw.end,
         conferenceUrl: raw.conference_url,
         attendees: (raw.attendees ?? []).map((a) => a.name ?? a.email ?? "?"),
+        people: (raw.attendees ?? []).flatMap((a) => {
+            const name = a.name ?? a.email;
+            return name ? [{ name, ...(a.email ? { email: a.email } : {}) }] : [];
+        }),
     };
 }
 

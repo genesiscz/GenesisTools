@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { CalendarPerson } from "@genesiscz/utils/meetings/calendar-entry";
 import { speakerLabel } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { completeTranscript, type LiveLine, parseLive } from "./live";
@@ -386,10 +387,11 @@ export function listLocalCalendar(filter: { since: number; until: number; query?
                     endAtUtc: number;
                     conferenceUrl: string | null;
                     participantNames: string | null;
+                    participants: string | null;
                 },
                 [number, number, string]
             >(
-                "SELECT externalId, title, startAtUtc, endAtUtc, conferenceUrl, participantNames FROM CalendarEvents WHERE startAtUtc >= ? AND startAtUtc < ? AND title LIKE ? AND status != 'cancelled' ORDER BY startAtUtc"
+                "SELECT externalId, title, startAtUtc, endAtUtc, conferenceUrl, participantNames, participants FROM CalendarEvents WHERE startAtUtc >= ? AND startAtUtc < ? AND title LIKE ? AND status != 'cancelled' ORDER BY startAtUtc"
             )
             .all(filter.since, filter.until, `%${filter.query ?? ""}%`);
 
@@ -400,6 +402,43 @@ export function listLocalCalendar(filter: { since: number; until: number; query?
             end: new Date(row.endAtUtc).toISOString(),
             conferenceUrl: row.conferenceUrl ?? undefined,
             attendees: row.participantNames ? (SafeJSON.parse(row.participantNames, { strict: true }) as string[]) : [],
+            people: calendarPeople(row.participants),
         }));
     });
+}
+
+/** The `participants` column: `[{ name, email, isSelf }]`. A row the app wrote in another shape gives no people. */
+function calendarPeople(raw: string | null): CalendarPerson[] {
+    if (!raw) {
+        return [];
+    }
+
+    const parsed: unknown = SafeJSON.parse(raw, { strict: true });
+
+    if (!Array.isArray(parsed)) {
+        log.debug({ raw: raw.slice(0, 80) }, "calendar participants are not a list");
+        return [];
+    }
+
+    return parsed.flatMap((item: unknown) => {
+        if (!item || typeof item !== "object" || !("name" in item) || typeof item.name !== "string" || !item.name) {
+            return [];
+        }
+
+        const email = "email" in item && typeof item.email === "string" && item.email ? item.email : undefined;
+        const self = "isSelf" in item && item.isSelf === true;
+        return [{ name: item.name, ...(email ? { email } : {}), ...(self ? { self: true } : {}) }];
+    });
+}
+
+/** Every Wispr Flow folder's name, the owner's and the shared ones. */
+export function listLocalFolders(): string[] {
+    return withDb((db) => db.query<{ name: string }, []>("SELECT name FROM Folders ORDER BY name").all()).map(
+        (row) => row.name
+    );
+}
+
+/** The folders one meeting is in now. */
+export function localMeetingFolders(meetingId: string): string[] {
+    return withDb((db) => foldersFor(db, meetingId)).map((folder) => folder.name);
 }

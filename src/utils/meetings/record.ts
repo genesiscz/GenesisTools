@@ -197,7 +197,7 @@ export type RecordingBlock = z.infer<typeof recordingBlockSchema>;
 const historySchema = z.object({ at: isoTime, command: z.string(), change: z.string() });
 
 /** The states of one question in the decision inbox. */
-export const ASK_OUTCOMES = ["pending", "applied", "cancelled", "timeout", "superseded"] as const;
+export const ASK_OUTCOMES = ["pending", "applied", "cancelled", "timeout", "failed"] as const;
 
 /**
  * How the meeting got its project: the one question asked for it in the decision inbox, with what it offered, and the
@@ -210,6 +210,8 @@ const assignSchema = z.object({
             askedAt: isoTime,
             outcome: z.enum(ASK_OUTCOMES).default("pending"),
             answeredAt: isoTime.optional(),
+            /** Why posting failed; the next sweep after ten minutes asks again. */
+            error: z.string().optional(),
             /** The ranked proposals the question listed, each with its reasons as text. */
             proposals: z.array(z.object({ project: z.string(), score: z.number(), reasons: z.array(z.string()) })),
             /** The calendar entries that overlapped the meeting; the answer picks one by its place here. */
