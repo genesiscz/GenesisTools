@@ -99,7 +99,9 @@ export async function runOperation(command: Command, name: string, input: Record
 export async function runAccountOperation(
     command: Command,
     name: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    /** Prints this instead of the markdown or the JSON (an `--items` output). */
+    print?: (result: OperationResult) => string
 ): Promise<OperationResult | undefined> {
     const storefront = await resolveStorefront(command);
     if (!storefront) {
@@ -111,7 +113,9 @@ export async function runAccountOperation(
     const ctx = openAccountContext({ storefront });
     try {
         const result = await op.run(ctx, input);
-        if (json) {
+        if (print) {
+            out.print(print(result));
+        } else if (json) {
             out.result(result.data);
         } else {
             out.println(result.markdown);

@@ -1,4 +1,4 @@
-import { type CheckRecord, isMuted, type WatcherSummary } from "@app/monitor/lib/types";
+import { type CheckRecord, carriesItems, isMuted, type WatcherSummary } from "@app/monitor/lib/types";
 import {
     useChecks,
     useDeleteWatcher,
@@ -298,7 +298,7 @@ function WatcherPageBody({ id }: { id: number }) {
                 <IncidentsTable incidents={incidents.data ?? []} showWatcher={false} />
             </section>
 
-            {data.kind === "rss" && <FeedItemsSection watcherId={data.id} />}
+            {carriesItems(data) && <FeedItemsSection watcherId={data.id} />}
 
             <section className="space-y-3">
                 <h2 className="font-mono text-[0.7rem] first-letter:uppercase text-secondary">Recent checks</h2>

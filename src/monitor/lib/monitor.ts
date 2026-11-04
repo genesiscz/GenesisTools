@@ -32,7 +32,7 @@ export interface RunOutcome {
     watcher: Watcher;
     check: CheckRecord;
     transition: { from: WatcherStatus; to: WatcherStatus; incident: Incident | null } | null;
-    /** rss: items first seen by this check (empty for other kinds). */
+    /** Items first seen by this check (a feed's, or a command watcher's with `items`); empty otherwise. */
     newItems: FeedItem[];
 }
 
@@ -63,12 +63,6 @@ export function isWorthNotifying({
     }
 
     return to === "up" && (isOutage(from) || open !== null);
-}
-
-function feedItemsFromMeta(meta: Record<string, unknown> | undefined): ParsedFeedItem[] {
-    const items = meta?.items;
-
-    return Array.isArray(items) ? (items as ParsedFeedItem[]) : [];
 }
 
 /**
@@ -355,12 +349,9 @@ export class Monitor {
 
     private async executeCheck(watcher: Watcher): Promise<RunOutcome | null> {
         const result = await this.safeRunCheck(watcher);
-        // Feed items live in their own table; the check row keeps only the count.
-        const { meta, ...rest } = result;
-        const storedMeta =
-            watcher.kind === "rss" && meta
-                ? { feedTitle: meta.feedTitle, itemCount: feedItemsFromMeta(meta).length }
-                : meta;
+        // Items live in their own table; the check row keeps only the count.
+        const { meta, items, ...rest } = result;
+        const storedMeta = items ? { ...meta, itemCount: items.length } : meta;
         const check = await this.db.recordCheck(watcher.id, { ...rest, meta: storedMeta });
         const updated = (await this.db.getWatcher(watcher.id)) ?? { ...watcher, lastStatus: result.status };
         logger.debug(
@@ -370,7 +361,7 @@ export class Monitor {
         this.emit({ type: "watcher:checked", watcher: updated, check });
 
         const transition = await this.applyTransition(updated, watcher.lastStatus, check);
-        const newItems = watcher.kind === "rss" ? await this.deliverFeedItems(updated, feedItemsFromMeta(meta)) : [];
+        const newItems = items ? await this.deliverFeedItems(updated, items) : [];
 
         return { watcher: updated, check, transition, newItems };
     }

@@ -28,6 +28,7 @@ import { AlzaApi } from "./api";
 import { AlzaAuth, isExpiring, jwtExpiryMs, NotSignedInError, parseRedirect, pkceChallenge } from "./auth";
 import { splitSetCookie, statePath, VisitorSession } from "./state";
 import { STOREFRONTS } from "./storefront";
+import { watchdogItems, watchdogsOf } from "./watchdog-items";
 
 /** Answers every request from `answer` and records it; never touches the network or the curl worker. */
 class CannedHttp extends ImpersonatedHttpClient {
@@ -577,5 +578,29 @@ describe("MCP account tools", () => {
         const result = await cartAdd?.call({ product: "AUPR65708" });
         expect(result?.isError).toBe(true);
         expect(VisitorSession.load(join(dir, "visitor.json")).header()).toBe("IDOX=fresh");
+    });
+});
+
+describe("watchdogItems", () => {
+    test("lists only the watchdogs that fire now, keyed by the state that fired", () => {
+        const items = watchdogItems([
+            { productId: 1, name: "Phone", url: "https://shop.example/1", currentPrice: 900, maxPrice: 1000 },
+            {
+                productId: 2,
+                name: "Laptop",
+                currentPrice: 1500,
+                maxPrice: 1000,
+                trackingStock: true,
+                availability: "Skladem > 5 ks",
+            },
+            { productId: 3, name: "Cable", trackingStock: true, availability: "Na objednávku" },
+        ]);
+
+        expect(items.map((item) => [item.guid, item.title])).toEqual([
+            ["1:price:900", "Phone costs 900 (watching below 1000)"],
+            ["2:stock", "Laptop is in stock"],
+        ]);
+        expect(watchdogsOf({ items: [{ productId: 4 }], hasMore: false })).toHaveLength(1);
+        expect(watchdogsOf("nope")).toEqual([]);
     });
 });

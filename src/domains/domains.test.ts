@@ -18,7 +18,7 @@ import { blend, dropVowels, shortForms } from "./lib/suggest/basic";
 import { findHacks, hackSources } from "./lib/suggest/hacks";
 import { brainstormPlan } from "./lib/suggest/online";
 import { findVibeHits } from "./lib/vibe";
-import { applyObservations, changeReasons, type WatchChange } from "./lib/watch";
+import { applyObservations, changeFacts, changeReasons, type WatchChange, watchItems } from "./lib/watch";
 
 describe("parseDomain", () => {
     it("splits label and TLD, folding case, scheme, path and www", () => {
@@ -267,6 +267,20 @@ describe("WHOIS parsing", () => {
 });
 
 describe("watch changeReasons", () => {
+    it("keys an expiry item by its date, so a countdown is one Monitor item, not one a day", () => {
+        const entry = { domain: "x.com", addedAt: "", lastStatus: "taken" as const, expiresAt: "2026-11-01T12:00:00Z" };
+        const result = { domain: "x.com", provider: "rdap", verdicts: [], status: "taken" as const, checkedAt: "" };
+        const items = (day: string) => {
+            const facts = changeFacts({ entry, result, now: new Date(day), expiryWarnDays: 45 });
+            return watchItems([{ entry, result, previous: "taken", reasons: facts.map((fact) => fact.text), facts }]);
+        };
+
+        expect(items("2026-10-17T12:00:00Z").map((item) => [item.guid, item.title])).toEqual([
+            ["x.com:expires:2026-11-01", "x.com expires in 15 days"],
+        ]);
+        expect(items("2026-10-18T12:00:00Z")[0].guid).toBe("x.com:expires:2026-11-01");
+    });
+
     const now = new Date("2026-10-17T12:00:00Z");
     const base = { domain: "x.com", provider: "rdap", verdicts: [], checkedAt: now.toISOString() };
 
@@ -507,6 +521,7 @@ describe("watch applyObservations", () => {
         entry: { domain: "x.com", addedAt },
         result: result(status, checkedAt),
         reasons: [],
+        facts: [],
     });
 
     it("keeps the newer refresh when an older one finishes last", () => {

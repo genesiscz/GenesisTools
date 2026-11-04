@@ -1,6 +1,8 @@
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { parseItemLines } from "@genesiscz/utils/watch/items";
 import type { CheckResult, Watcher } from "../types";
+import { filterItems } from "./rss";
 
 const MAX_OUTPUT = 4_000;
 
@@ -16,7 +18,9 @@ function lastLine(text: string): string {
 
 /**
  * Runs a shell command; exit 0 is up, anything else is down. The last output
- * line lands in the detail, so a script can explain its own verdict.
+ * line lands in the detail, so a script can explain its own verdict. With
+ * `config.items` its stdout is JSON lines of items (`@genesiscz/utils/watch/items`),
+ * carried on a run that exited 0, so the core delivers each new one as a feed's.
  */
 export async function checkCommand(watcher: Pick<Watcher, "target" | "config" | "timeoutMs">): Promise<CheckResult> {
     const started = performance.now();
@@ -63,14 +67,27 @@ export async function checkCommand(watcher: Pick<Watcher, "target" | "config" | 
         };
     }
 
+    const itemized = watcher.config.items ? parseItemLines(result.stdout) : null;
+    const items = itemized ? filterItems(itemized.items, watcher.config.itemFilter) : undefined;
+
+    if (itemized) {
+        logger.debug(
+            { target: watcher.target, items: itemized.items.length, skipped: itemized.skipped },
+            "monitor: command printed items"
+        );
+    }
+
+    // An item command's last line is an item, not an explanation; its count reads better.
+    const said = itemized ? `${itemized.items.length} item${itemized.items.length === 1 ? "" : "s"}` : tail;
     const threshold = watcher.config.degradedAboveMs;
     if (threshold !== undefined && latencyMs > threshold) {
         return {
             status: "degraded",
             latencyMs,
             httpStatus: null,
-            detail: `exit 0 · ${latencyMs} ms (slower than ${threshold} ms)${tail ? ` · ${tail}` : ""}`,
+            detail: `exit 0 · ${latencyMs} ms (slower than ${threshold} ms)${said ? ` · ${said}` : ""}`,
             meta,
+            ...(items ? { items } : {}),
         };
     }
 
@@ -78,7 +95,8 @@ export async function checkCommand(watcher: Pick<Watcher, "target" | "config" | 
         status: "up",
         latencyMs,
         httpStatus: null,
-        detail: `exit 0 · ${latencyMs} ms${tail ? ` · ${tail}` : ""}`,
+        detail: `exit 0 · ${latencyMs} ms${said ? ` · ${said}` : ""}`,
         meta,
+        ...(items ? { items } : {}),
     };
 }
