@@ -30,6 +30,8 @@ export interface ThemeColors {
     textSecondary: string;
     textMuted: string;
     danger: string;
+    /** Amber: something waits for the user (a question, an interrupted turn). */
+    warning: string;
 }
 
 const DD_COLORS: ThemeColors = {
@@ -47,6 +49,7 @@ const DD_COLORS: ThemeColors = {
     textSecondary: "#8b96a0",
     textMuted: "#5b6670",
     danger: "#f87171",
+    warning: "#fbbf24",
 };
 
 /** Concrete `--dd-*` color values for Skia/inline-style consumers. Dark-only (see file header). */

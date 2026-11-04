@@ -25,6 +25,7 @@ module.exports = {
                     "text-secondary": "#8b96a0",
                     "text-muted": "#5b6670",
                     danger: "#f87171",
+                    warning: "#fbbf24",
                 },
             },
         },
