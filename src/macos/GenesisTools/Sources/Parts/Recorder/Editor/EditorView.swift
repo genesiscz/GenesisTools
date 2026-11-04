@@ -1407,10 +1407,10 @@ private struct ExportIssues: View {
                                 GhostButton("Remove", symbol: "trash", tooltip: "Remove it: it never shows (⌘Z brings it back)",
                                             identifier: "recorder.export.issue.remove") { model.remove(issue) }
                             }
-                            if !issue.mustFix, model.canLengthen(issue) {
-                                GhostButton("Lengthen", symbol: "arrow.left.and.right",
-                                            tooltip: "Make it last 1.5 s, long enough to read (⌘Z undoes it)",
-                                            identifier: "recorder.export.issue.lengthen") { model.lengthen(issue) }
+                            if let action = issue.action, issue.actionOps != nil {
+                                GhostButton(action.label, symbol: "wand.and.stars",
+                                            tooltip: "\(issue.fix.map { "Runs \($0)" } ?? action.label) (⌘Z undoes it)",
+                                            identifier: "recorder.export.issue.action") { model.runAction(issue) }
                             }
                         }
                     }

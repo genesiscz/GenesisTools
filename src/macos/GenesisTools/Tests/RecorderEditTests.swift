@@ -515,6 +515,17 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc), bytes)
     }
 
+    func testACheckIssueKeepsItsFixOpsForApply() throws {
+        let answer = #"{"ok":false,"issues":[{"severity":"check","item":"text t2","message":"overlap","fix":"movie.retime({ id: \"t2\", at: 5 })","at":4,"target":{"list":"texts","id":"t2"},"action":{"label":"Move After","ops":[{"op":"retime","id":"t2","at":5}]}},{"severity":"fix","item":"music","message":"missing"}]}"#
+        let issues = try XCTUnwrap(EditorModel.issues(fromCheck: Data(answer.utf8)))
+        XCTAssertEqual(issues.count, 2)
+        XCTAssertEqual(issues[0].action?.label, "Move After")
+        XCTAssertEqual(issues[0].actionOps, #"[{"at":5,"id":"t2","op":"retime"}]"#)
+        XCTAssertEqual(issues[0].selection, .text("t2"))
+        XCTAssertNil(issues[1].actionOps)
+        XCTAssertNil(EditorModel.issues(fromCheck: Data("not json".utf8)))
+    }
+
     func testMovingASelectionInTimeKeepsItsLengthInsideTheRecording() {
         XCTAssertEqual(EditorModel.shifted(start: 1_000_000, end: 3_000_000, by: 500_000, durationUs: 10_000_000).start, 1_500_000)
         let atStart = EditorModel.shifted(start: 200_000, end: 1_200_000, by: -1_000_000, durationUs: 10_000_000)

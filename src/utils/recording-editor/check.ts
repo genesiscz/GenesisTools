@@ -1,4 +1,4 @@
-import type { EditProject } from "./project";
+import type { EditOp, EditProject } from "./project";
 
 /** "fix": the export will be wrong or something never shows; "check": it works but may not be what was meant. */
 export type EditIssueSeverity = "fix" | "check";
@@ -14,6 +14,8 @@ export interface EditIssue {
     at?: number;
     /** The item it is about, when it is one item: its id and list, so a window can select or remove it. */
     target?: { list: "zooms" | "redactions" | "texts" | "shapes"; id: string };
+    /** The fix as edit ops, for a window's button: `tools recorder apply <edit> <ops>` does what `fix` does. */
+    action?: { label: string; ops: EditOp[] };
 }
 
 /** What the check cannot read from the edit itself; the caller looks at the disk. */
@@ -91,6 +93,16 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 fix: `movie.retime({ id: "${entry.id}", to: ${seconds(Math.min(project.source.durationUs, entry.startUs + 1_500_000))} })`,
                 at: seconds(entry.startUs),
                 target,
+                action: {
+                    label: "Lengthen",
+                    ops: [
+                        {
+                            op: "retime",
+                            id: entry.id,
+                            to: seconds(Math.min(project.source.durationUs, entry.startUs + 1_500_000)),
+                        },
+                    ],
+                },
             });
         }
     }
@@ -121,7 +133,11 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 severity: "check",
                 item: `text ${note.id}`,
                 message: `"${note.text}" and "${over.text}" show at the same time in the same place (${span(over.startUs, Math.min(note.endUs, over.endUs))})`,
+                // The later one moves to start where the earlier one ends, its length kept.
+                fix: `movie.retime({ id: "${over.id}", at: ${seconds(note.endUs)} })`,
                 at: seconds(over.startUs),
+                target: { list: "texts", id: over.id },
+                action: { label: "Move After", ops: [{ op: "retime", id: over.id, at: seconds(note.endUs) }] },
             });
         }
     }

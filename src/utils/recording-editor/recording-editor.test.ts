@@ -416,6 +416,13 @@ describe("edit project (edit.json)", () => {
         expect(issues[0]?.target).toEqual({ list: "zooms", id: zoomId });
         expect(issues.map((issue) => issue.severity)).toEqual(["fix", "check", "check"]);
         expect(issues[1]?.message).toContain('"Step one" and "Step two"');
+        const stepTwo = project.texts?.find((note) => note.text === "Step two");
+        expect(issues[1]?.action).toEqual({
+            label: "Move After",
+            ops: [{ op: "retime", id: stepTwo?.id ?? "", at: 5 }],
+        });
+        const apart = (issues[1]?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+        expect(checkProject(apart, facts).some((issue) => issue.message.includes("same time"))).toBe(false);
         expect(issues[2]?.message).toContain("too short to read");
         const spotId = project.redactions?.[0]?.id;
         expect(issues[2]?.fix).toBe(`movie.retime({ id: "${spotId}", to: 8.5 })`);

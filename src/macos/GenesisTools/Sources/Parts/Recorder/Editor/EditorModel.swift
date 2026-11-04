@@ -1382,8 +1382,19 @@ final class EditorModel {
         /// Source seconds.
         let at: Double?
         let target: Target?
+        let action: Action?
+        /// The action's ops as JSON for `tools recorder apply`, kept from the check's answer as it came.
+        var actionOps: String?
         var id: String { item + message }
         var mustFix: Bool { severity == "fix" }
+
+        enum CodingKeys: String, CodingKey {
+            case severity, item, message, fix, at, target, action
+        }
+
+        struct Action: Decodable, Equatable {
+            let label: String
+        }
 
         struct Target: Decodable, Equatable {
             let list: String
@@ -1404,37 +1415,24 @@ final class EditorModel {
     }
 
     /// Removes the item an issue names (one undo step), as its fix does in the REPL.
-    /// How long a lengthened item lasts, as check()'s retime fix: long enough to read.
-    static let readableUs: Int64 = 1_500_000
-
-    /// The start and end of the zoom, hidden part, text or shape a selection names.
-    func span(of selection: EditorSelection) -> (start: Int64, end: Int64)? {
-        switch selection {
-        case let .zoom(id): return project.zooms.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case let .redaction(id): return project.redactions?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case let .text(id): return project.texts?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case let .shape(id): return project.shapes?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case .clip, .none: return nil
-        }
-    }
-
-    /// True when the item an issue names lasts less than `readableUs` and the movie has room to lengthen it.
-    func canLengthen(_ issue: EditIssue) -> Bool {
-        guard let selection = issue.selection, let span = span(of: selection) else { return false }
-        return span.end - span.start < Self.readableUs && span.end < project.source.durationUs
-    }
-
-    /// Makes the item an issue names last `readableUs` from its start (one undo step), as check()'s fix does.
-    func lengthen(_ issue: EditIssue) {
-        guard let selection = issue.selection, let span = span(of: selection) else { return }
-        let end = min(project.source.durationUs, span.start + Self.readableUs)
-        self.selection = selection
-        switch selection {
-        case let .zoom(id): moveZoom(id, startUs: span.start, endUs: end)
-        case let .redaction(id): updateRedaction(id) { $0.endUs = end }
-        case let .text(id): updateText(id) { $0.endUs = end }
-        case let .shape(id): updateShape(id) { $0.endUs = end }
-        case .clip, .none: return
+    /// Runs the edit ops the check gave an issue (`tools recorder apply`, the REPL's fix), then takes the saved edit,
+    /// so ⌘Z undoes it as one step.
+    func runAction(_ issue: EditIssue) {
+        guard let ops = issue.actionOps, let label = issue.action?.label else { return }
+        saveTask?.cancel()
+        saveNow()
+        ToolsRunner.run(["recorder", "apply", store.url.path, ops]) { [weak self] status, _, stderr in
+            guard let self else { return }
+            guard status == 0 else {
+                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                self.show("\(label) did not work: \(reason)", error: true)
+                return
+            }
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
+                self.adoptExternal(next)
+            }
+            if let selection = issue.selection { self.selection = selection }
+            self.show("\(label): done. ⌘Z undoes it.", error: false)
         }
     }
 
@@ -1444,7 +1442,7 @@ final class EditorModel {
         deleteSelection()
     }
 
-    private struct CheckAnswer: Decodable {
+    nonisolated private struct CheckAnswer: Decodable {
         let ok: Bool
         let issues: [EditIssue]
     }
@@ -1463,13 +1461,29 @@ final class EditorModel {
         ToolsRunner.run(["recorder", "check", store.url.path]) { [weak self] status, stdout, stderr in
             guard let self, self.project.revision == revision else { return }
             guard status == 0, let line = stdout.split(separator: "\n").last, let data = line.data(using: .utf8),
-                  let answer = try? JSONDecoder().decode(CheckAnswer.self, from: data) else {
+                  let issues = Self.issues(fromCheck: data) else {
                 HubPerf.log("recorder.check failed: exit \(status) \(stderr.split(separator: "\n").last.map(String.init) ?? "")")
                 self.checkedRevision = nil
                 return
             }
-            self.issues = answer.issues
+            self.issues = issues
             self.issuesRevision = revision
+        }
+    }
+
+    /// The issues of a `tools recorder check` answer. Each action's ops go back to `tools recorder apply` as they
+    /// came, so they are kept as raw JSON beside the decoded issue.
+    nonisolated static func issues(fromCheck data: Data) -> [EditIssue]? {
+        guard let answer = try? JSONDecoder().decode(CheckAnswer.self, from: data) else { return nil }
+        let raw = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["issues"] as? [[String: Any]]
+        return answer.issues.enumerated().map { index, issue in
+            var issue = issue
+            let entry = raw.flatMap { index < $0.count ? $0[index] : nil }
+            if let ops = (entry?["action"] as? [String: Any])?["ops"],
+               let opsData = try? JSONSerialization.data(withJSONObject: ops, options: [.sortedKeys]) {
+                issue.actionOps = String(data: opsData, encoding: .utf8)
+            }
+            return issue
         }
     }
 
