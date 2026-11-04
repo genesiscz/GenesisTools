@@ -9,7 +9,16 @@
 import type { AgentBoardPhaseRow } from "@app/dev-dashboard/contract/agents";
 import type { AiUsageResult } from "@app/dev-dashboard/contract/ai-accounts";
 import type { EnrichedQaEntry, PortInfo, PortsResult, PulseSnapshot } from "@app/dev-dashboard/contract/dto";
-import type { AskForm, PendingEventKind } from "@app/question/lib/pending/types";
+import type { AskFormFields, PendingEventKind } from "@app/question/lib/pending/form-types";
+
+/**
+ * A pending ask form as the stream carries it. `poster` and `transcriptAnchor` stay opaque here: their types live in
+ * the agent and harness modules, which the phone's type check must not walk into.
+ */
+export interface LiveAskForm extends AskFormFields {
+    poster?: unknown;
+    transcriptAnchor?: unknown;
+}
 
 /** One line of the decision event log (`~/.genesis-tools/question/decisions/events.jsonl`), as the stream forwards it. */
 export interface LiveDecisionEvent {
@@ -30,7 +39,7 @@ export interface LivePendingEvent {
     id: string;
     ev: PendingEventKind;
     ts: number;
-    form: AskForm;
+    form: LiveAskForm;
 }
 
 /** A handoff changed. The stream names it; a reader fetches the handoff itself. */
@@ -52,7 +61,7 @@ export interface LiveChannelFrames {
     "ai-usage": { snapshot: AiUsageResult };
     qa: { entry: EnrichedQaEntry };
     decisions: { event: LiveDecisionEvent };
-    pending: { snapshot: { forms: AskForm[] }; event: LivePendingEvent };
+    pending: { snapshot: { forms: LiveAskForm[] }; event: LivePendingEvent };
     handoffs: { event: LiveHandoffEvent };
     /**
      * The live agent sessions (F3, from the fleet view). `snapshot` is the whole set, sent on join and whenever a
