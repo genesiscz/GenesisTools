@@ -226,7 +226,6 @@ const LOAD_SENSITIVE_FILES = [
     "src/utils/process/processes.test.ts",
     // Native background QoS and Chrome shutdown stall under parallel process pressure.
     "src/daemon/lib/runner.test.ts",
-    "src/chrome-devtools/lib/headless.test.ts",
     "src/utils/fs/disk-usage.test.ts",
     "src/utils/fs/watcher.test.ts",
     // CI's parallel workers timed out seven real-child cases in these suites.
@@ -321,7 +320,11 @@ const LOAD_SENSITIVE_FILES = [
  * @napi-rs/canvas `loadImage` (src/utils/image/attachments.ts) and imports `createCanvas`.
  * That theory is NOT proven; this entry contains the damage whatever the cause turns out to be.
  */
-const OWN_PROCESS_FILES = ["src/question/lib/record.test.ts"];
+const OWN_PROCESS_FILES = [
+    "src/question/lib/record.test.ts",
+    // Browser exit observation failed in the shared serial process but passed in a fresh process.
+    "src/chrome-devtools/lib/headless.test.ts",
+];
 
 /**
  * DevDashboard is a sub-project carrying three test runners of its own: bun for
