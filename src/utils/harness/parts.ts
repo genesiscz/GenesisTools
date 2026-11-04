@@ -1,5 +1,6 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
+import type { ApprovalKeyMap } from "@genesiscz/utils/agents/approvals/keys";
 import type { DialogKeyMap } from "@genesiscz/utils/agents/dialogs/keys";
 import type {
     FolderReads,
@@ -267,6 +268,11 @@ export interface EagerPartContracts {
      * `supported: false` with the reason a harness has none yet; its answers then go as typed text.
      */
     dialog: DialogKeyMap;
+    /**
+     * The keys that allow or deny a waiting tool call in the harness's permission and plan dialogs (M9 pending
+     * approvals), or `supported: false` with the reason, so the phone shows such a call read only.
+     */
+    approval: ApprovalKeyMap;
     /**
      * C: synchronous, because `resolveTranscriptsWith` is; a driver holds a `deferredLocator` (`deferred.ts`) that loads
      * its finders on the first call, so the finders cost the hook path nothing.

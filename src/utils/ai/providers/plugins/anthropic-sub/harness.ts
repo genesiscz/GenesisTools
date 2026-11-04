@@ -3,6 +3,7 @@ import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-
 import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
+import { claudeApproval } from "./harness-approval";
 import { claudeDialog } from "./harness-dialog";
 import { claudeHooks } from "./harness-hooks";
 import { claudeLaunch } from "./harness-launch";
@@ -71,5 +72,6 @@ export const claudeHarness: HarnessDriver<"claude"> = {
         },
         worker: claudeWorker,
         dialog: claudeDialog,
+        approval: claudeApproval,
     },
 };

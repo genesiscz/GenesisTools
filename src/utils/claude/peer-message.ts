@@ -39,6 +39,11 @@ export interface ClaudeLiveSession {
     updatedAt?: number;
     /** Set when the conversation moved to a background job under a new id: the socket answers, nothing reads it. */
     parkedJobId?: string;
+    /**
+     * What a `waiting` session waits on, as Claude Code writes it: `permission prompt` for a permission or plan dialog
+     * (measured on 2.1.314, 2026-11-04), `input needed` for a question dialog (2.1.312, 2026-10-30).
+     */
+    waitingFor?: string;
 }
 
 /** Claude Code's live-session registry, `<claude home>/sessions` (CLAUDE_CONFIG_DIR moves it). */
@@ -110,6 +115,7 @@ export function parseRegistryEntry(raw: string, file: string): ClaudeLiveSession
     }
 
     const parkedJobId = text(entry.parkedJobId);
+    const waitingFor = text(entry.waitingFor);
 
     return {
         pid,
@@ -122,6 +128,7 @@ export function parseRegistryEntry(raw: string, file: string): ClaudeLiveSession
         file,
         ...(typeof entry.updatedAt === "number" ? { updatedAt: entry.updatedAt } : {}),
         ...(parkedJobId ? { parkedJobId } : {}),
+        ...(waitingFor ? { waitingFor } : {}),
     };
 }
 

@@ -22,6 +22,7 @@ const FILES = [
     "live.ts",
     "agents.ts",
     "gates.ts",
+    "approvals.ts",
     "push.ts",
     "launch.ts",
     "watching.ts",

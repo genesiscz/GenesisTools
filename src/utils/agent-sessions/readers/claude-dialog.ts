@@ -1,6 +1,7 @@
 import { basename, dirname, join } from "node:path";
 import { liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import type { NativeSessionReader } from "../types";
+import { claudePendingCall } from "./claude-pending-call";
 
 export function claudeRegistryDirectory(transcriptPath: string): string | null {
     const projects = dirname(dirname(transcriptPath));
@@ -27,4 +28,5 @@ export const claudeDialog: NativeSessionReader<"claude">["dialog"] = {
     openPermission: () => null,
     sessionAlive: claudeNativeSessionAlive,
     registryDirectory: claudeRegistryDirectory,
+    pendingCall: claudePendingCall,
 };

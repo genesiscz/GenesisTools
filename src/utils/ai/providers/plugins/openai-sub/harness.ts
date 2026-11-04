@@ -67,5 +67,15 @@ export const codexHarness: HarnessDriver<"codex"> = {
             supported: false,
             reason: "the keys of the Codex request_user_input dialog were not measured live yet; answer it in the terminal",
         },
+        approval: {
+            permission: {
+                supported: false,
+                reason: "the Codex TUI drew no approval dialog in a tmux pane when measured on 2026-11-04 (Codex 0.166.0), so its keys are not known; answer it in the terminal. A tools codex worker is answered through its control channel instead",
+            },
+            plan: {
+                supported: false,
+                reason: "the Codex TUI drew no approval dialog in a tmux pane when measured on 2026-11-04 (Codex 0.166.0), so its keys are not known; answer it in the terminal. A tools codex worker is answered through its control channel instead",
+            },
+        },
     },
 };
