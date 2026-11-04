@@ -758,15 +758,23 @@ final class EditorModel {
     }
 
     /// Sets the volume so the export reaches -16 LUFS, measured by `tools recorder apply {"op":"normalize"}`.
+    /// The loudness `normalize` measured at volume 1, in LUFS; nil until it ran in this window.
+    private(set) var measuredLufs: Double?
+
     func normalizeLoudness() {
         guard !isNormalizing else { return }
         saveTask?.cancel()
         saveNow()
         isNormalizing = true
         show("Measuring the loudness…", error: false)
-        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"normalize"}"#]) { [weak self] status, _, stderr in
+        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"normalize"}"#]) { [weak self] status, stdout, stderr in
             guard let self else { return }
             self.isNormalizing = false
+            let answer = (stdout.split(separator: "\n").last.flatMap { $0.data(using: .utf8) })
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            if let measured = (answer?["loudness"] as? [String: Any])?["measuredLufs"] as? NSNumber {
+                self.measuredLufs = measured.doubleValue
+            }
             guard status == 0 else {
                 let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
                 self.show("The volume is unchanged: \(reason)", error: true)

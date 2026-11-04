@@ -409,7 +409,11 @@ program
             const raw = text === "-" ? await Bun.stdin.text() : text;
             const ops = parseEditOps(SafeJSON.parse(raw, { strict: true }));
             const edited = await editProject(value, ops);
-            out.result(describeProject(edited.project, edited.path));
+            // A normalize op also answers the loudness it measured, which the editor shows beside its button.
+            out.result({
+                ...describeProject(edited.project, edited.path),
+                ...(edited.loudness ? { loudness: edited.loudness } : {}),
+            });
         } catch (error) {
             log.debug({ error }, "recorder apply failed");
             out.printlnErr(error instanceof Error ? error.message : String(error));

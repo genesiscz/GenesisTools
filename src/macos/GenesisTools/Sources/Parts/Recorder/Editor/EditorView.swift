@@ -377,8 +377,17 @@ private struct StyleInspector: View {
                                 identifier: "recorder.style.chooseImage") { model.chooseBackgroundImage() }
                 }
                 if frame.background.kind == .image {
+                    // The picture in use, as a selected tile, so the swatches above read as "not chosen".
                     if let image = frame.background.image {
-                        PathLabel(path: image)
+                        HStack(spacing: 8) {
+                            BackgroundPictureTile(path: image)
+                            Text(verbatim: URL(fileURLWithPath: image).lastPathComponent)
+                                .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            IconButton(systemName: "folder", tooltip: "Show the picture in Finder", size: 11) {
+                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: image)])
+                            }
+                        }
                     }
                     SectionLabel(text: "Picture blur", value: "\(Int(((frame.background.blur ?? 0) * 100).rounded()))%")
                     Slider(value: Binding(get: { frame.background.blur ?? 0 }, set: { value in
@@ -614,6 +623,36 @@ private struct CaptionLinesList: View {
             }
         }
         .padding(.top, 4)
+    }
+}
+
+/// A small thumbnail of the background picture with the selected ring, read once off the main thread.
+private struct BackgroundPictureTile: View {
+    let path: String
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "photo").font(.system(size: 12)).foregroundStyle(RecorderPalette.dim)
+            }
+        }
+        .frame(width: 46, height: 30)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(0.95), lineWidth: 2))
+        .task(id: path) {
+            let url = URL(fileURLWithPath: path)
+            image = await Task.detached(priority: .utility) {
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                          kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 120,
+                      ] as CFDictionary) else { return nil }
+                return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+            }.value
+        }
+        .accessibilityLabel("Background picture")
     }
 }
 
@@ -930,6 +969,11 @@ private struct AudioInspector: View {
                 .disabled(model.isNormalizing)
                 .instantTooltip("Sets the volume so the export reaches -16 LUFS, the level of speech on the web")
                 .accessibilityIdentifier("recorder.audio.normalize")
+                if let lufs = model.measuredLufs {
+                    Text(verbatim: String(format: "The movie measured %.1f LUFS at 100%%; -16 LUFS is the target.", lufs))
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         }
