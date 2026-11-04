@@ -59,7 +59,6 @@ import {
     type SettingsAnswer,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
-import { mainDisplay } from "@genesiscz/utils/screen-recorder/displays";
 import {
     FrameOutput,
     type JpegConverter,
@@ -72,11 +71,11 @@ import {
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
+import { displayTarget, type PieceTarget, pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
     CaptureError,
     type CaptureHooks,
     type CaptureResult,
-    type CaptureTarget,
     type DisplayInfo,
     type FrameRecorder,
     type LiveCapture,
@@ -162,97 +161,8 @@ export function framesOnDisk(framesDir: string): { frames: number; bytes: number
     };
 }
 
-/** A capture that runs this piece: what it records, and the display its frames belong to when the frame says none. */
-interface PieceTarget {
-    target: CaptureTarget;
-    displayId: number;
-    label: string;
-}
-
-/**
- * What to record right now: the displays chosen over the socket (`displays.add|remove|switch`) when there are any,
- * else the policy. `fallback` says why the main display stands in for the asked one.
- */
-export function pieceTargets(options: {
-    policy: DisplayPolicy;
-    displays: DisplayInfo[];
-    followFocus: boolean;
-    chosen?: number[];
-    /** False: the recorder records one display at a time, so only the first (the main one when it is asked) stays. */
-    parallel?: boolean;
-}): {
-    targets: PieceTarget[];
-    fallback?: string;
-} {
-    const picked = pickTargets(options);
-
-    if (options.parallel !== false || picked.targets.length <= 1) {
-        return picked;
-    }
-
-    const main = picked.targets.find((target) => target.displayId === mainDisplay(options.displays)?.id);
-    return {
-        targets: [main ?? picked.targets[0]!],
-        fallback: "this recorder records one display at a time; only one display was recorded",
-    };
-}
-
-function pickTargets(options: {
-    policy: DisplayPolicy;
-    displays: DisplayInfo[];
-    followFocus: boolean;
-    chosen?: number[];
-}): {
-    targets: PieceTarget[];
-    fallback?: string;
-} {
-    const { policy, displays } = options;
-    const main = mainDisplay(displays);
-    const one = (display: DisplayInfo): PieceTarget => ({
-        target: { kind: "display", displayId: display.id },
-        displayId: display.id,
-        label: `${display.name} (${display.id})`,
-    });
-
-    if (!main) {
-        return { targets: [] };
-    }
-
-    if (options.chosen) {
-        const chosen = displays.filter((display) => options.chosen?.includes(display.id));
-        return chosen.length > 0
-            ? { targets: chosen.map(one) }
-            : {
-                  targets: [one(main)],
-                  fallback: `displays ${options.chosen.join(", ")} were not connected; the main display was recorded while they were missing`,
-              };
-    }
-
-    if (policy === "all") {
-        return { targets: displays.map(one) };
-    }
-
-    if (policy === "main") {
-        return { targets: [one(main)] };
-    }
-
-    if (policy === "follow-focus") {
-        return options.followFocus
-            ? { targets: [{ target: { kind: "follow-focus" }, displayId: main.id, label: "the focused display" }] }
-            : {
-                  targets: [one(main)],
-                  fallback: "this recorder cannot follow the focused display; the main display was recorded",
-              };
-    }
-
-    const asked = displays.find((display) => display.index === policy);
-    return asked
-        ? { targets: [one(asked)] }
-        : {
-              targets: [one(main)],
-              fallback: `display ${policy} was not connected; the main display was recorded while it was missing`,
-          };
-}
+/** The displays of a piece: moved to the shared capture session (`@genesiscz/utils/screen-recorder/targets`). */
+export { pieceTargets };
 
 interface RunningCapture {
     target: PieceTarget;
@@ -864,11 +774,7 @@ export async function runRecorder(options: {
                 recording.spans = spans;
             }).catch((err: unknown) => log.warn({ err }, "resume not written to the record"));
         };
-        const targetOf = (display: DisplayInfo): PieceTarget => ({
-            target: { kind: "display", displayId: display.id },
-            displayId: display.id,
-            label: `${display.name} (${display.id})`,
-        });
+        const targetOf = displayTarget;
         const liveFrames = () => state.frames + [...running.values()].reduce((sum, one) => sum + one.streamed, 0);
         let lastDisplayIds = "";
         /** The recorded displays follow the running captures. */

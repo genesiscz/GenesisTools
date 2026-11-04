@@ -22,7 +22,6 @@ import {
     type SettingsAnswer,
     type StopAnswer,
 } from "./control";
-import { mainDisplay } from "./displays";
 import {
     type FrameNaming,
     FrameOutput,
@@ -33,6 +32,7 @@ import {
 } from "./frame-output";
 import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from "./library";
 import { LiveRecordingServer, liveRecordingId } from "./live";
+import { pickDisplayIds } from "./targets";
 import {
     type AudioTrack,
     type CapturedFrame,
@@ -272,27 +272,7 @@ export class LibraryRecording extends RecorderControl {
     }
 
     private pick(mode: "all" | "main" | number[] | DisplayMode): number[] {
-        if (mode === "all" || mode === "follow-focus") {
-            return this.known.map((display) => display.id);
-        }
-
-        if (mode === "main") {
-            const main = mainDisplay(this.known);
-            return main ? [main.id] : [];
-        }
-
-        if (typeof mode === "number") {
-            const display = this.known.find((one) => one.index === mode);
-            return display ? [display.id] : [];
-        }
-
-        const unknown = mode.filter((id) => !this.known.some((display) => display.id === id));
-
-        if (unknown.length > 0) {
-            throw new RpcError(RPC_ERRORS.unknownDisplay, `no display ${unknown.join(", ")}`);
-        }
-
-        return [...new Set(mode)];
+        return pickDisplayIds(mode, this.known);
     }
 
     private recordedDisplays(): Array<{ id: number; name: string }> {
