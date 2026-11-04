@@ -47,10 +47,26 @@ enum EditorMenu {
         EditorCommand(title: "Clear Part", key: "", label: "") { $0.clearPart() },
         EditorCommand(title: "Delete In to Out", key: "\u{8}", modifiers: .shift, label: "⇧⌫") { $0.cutPart() },
         EditorCommand(title: "Keep Only In to Out", key: "", label: "") { $0.keepPart() },
-        EditorCommand(title: "Back One Frame", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), label: "←") { $0.step(frames: -1) },
-        EditorCommand(title: "Forward One Frame", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), label: "→") { $0.step(frames: 1) },
-        EditorCommand(title: "Back One Second", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), modifiers: .shift, label: "⇧←") { $0.step(frames: -60) },
-        EditorCommand(title: "Forward One Second", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), modifiers: .shift, label: "⇧→") { $0.step(frames: 60) },
+        EditorCommand(title: "Back One Frame (Shape: Nudge Left)", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), label: "←") {
+            $0.arrowKey(dx: -1, dy: 0, shift: false)
+        },
+        EditorCommand(title: "Forward One Frame (Shape: Nudge Right)", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), label: "→") {
+            $0.arrowKey(dx: 1, dy: 0, shift: false)
+        },
+        EditorCommand(title: "Back One Second (Shape: Nudge More)", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), modifiers: .shift, label: "⇧←") {
+            $0.arrowKey(dx: -1, dy: 0, shift: true)
+        },
+        EditorCommand(title: "Forward One Second (Shape: Nudge More)", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), modifiers: .shift, label: "⇧→") {
+            $0.arrowKey(dx: 1, dy: 0, shift: true)
+        },
+        EditorCommand(title: "Nudge Shape Up", key: String(UnicodeScalar(NSUpArrowFunctionKey)!), label: "↑") { $0.arrowKey(dx: 0, dy: -1, shift: false) },
+        EditorCommand(title: "Nudge Shape Down", key: String(UnicodeScalar(NSDownArrowFunctionKey)!), label: "↓") { $0.arrowKey(dx: 0, dy: 1, shift: false) },
+        EditorCommand(title: "Nudge Shape Up More", key: String(UnicodeScalar(NSUpArrowFunctionKey)!), modifiers: .shift, label: "⇧↑") {
+            $0.arrowKey(dx: 0, dy: -1, shift: true)
+        },
+        EditorCommand(title: "Nudge Shape Down More", key: String(UnicodeScalar(NSDownArrowFunctionKey)!), modifiers: .shift, label: "⇧↓") {
+            $0.arrowKey(dx: 0, dy: 1, shift: true)
+        },
         EditorCommand(title: "To the Start", key: String(UnicodeScalar(NSHomeFunctionKey)!), label: "Home") { $0.seek(0) },
         EditorCommand(title: "To the End", key: String(UnicodeScalar(NSEndFunctionKey)!), label: "End") { $0.seek($0.durationUs) },
         EditorCommand(title: "Zoom Timeline In", key: "=", modifiers: .command, label: "⌘=") { $0.zoomTimeline(by: 1.4) },

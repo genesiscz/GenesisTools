@@ -210,6 +210,31 @@ final class EditorModel {
         seek(clock.outUs + Int64(frames) * 16_667)
     }
 
+    /// The arrow keys: with a shape selected they nudge it by 0.2 % of the picture (⇧: 2 %); otherwise ← and → step
+    /// a frame (⇧: a second) and ↑ ↓ do nothing. Esc deselects, which gives the keys back to the frame steps.
+    func arrowKey(dx: Int, dy: Int, shift: Bool) {
+        if let id = selectedShape {
+            let amount = shift ? 0.02 : 0.002
+            nudgeShape(id, dx: Double(dx) * amount, dy: Double(dy) * amount)
+            return
+        }
+
+        if dx != 0 { step(frames: dx * (shift ? 60 : 1)) }
+    }
+
+    /// Moves a whole shape, or only its start (`point: 1`) or end (`point: 2`), held inside the picture.
+    func nudgeShape(_ id: String, dx: Double, dy: Double, point: Int? = nil) {
+        guard let shape = project.shapes?.first(where: { $0.id == id }) else { return }
+        let xs = point == 1 ? [shape.x1] : point == 2 ? [shape.x2] : [shape.x1, shape.x2]
+        let ys = point == 1 ? [shape.y1] : point == 2 ? [shape.y2] : [shape.y1, shape.y2]
+        let mx = min(max(dx, -(xs.min() ?? 0)), 1 - (xs.max() ?? 1))
+        let my = min(max(dy, -(ys.min() ?? 0)), 1 - (ys.max() ?? 1))
+        updateShape(id) {
+            if point != 2 { $0.x1 += mx; $0.y1 += my }
+            if point != 1 { $0.x2 += mx; $0.y2 += my }
+        }
+    }
+
     // MARK: - Edits
 
     /// Every change goes through here: one undo step, the zoom filter told, the movie rebuilt when clips or

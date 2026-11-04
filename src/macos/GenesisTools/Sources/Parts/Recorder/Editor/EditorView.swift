@@ -1568,6 +1568,11 @@ private struct ShapeHandles: View {
     let clock: PlayheadClock
     @State private var grabbed: (x1: Double, y1: Double, x2: Double, y2: Double)?
 
+    /// A handle's place for VoiceOver: "x 52%, y 40%" of the picture from its top left.
+    static func spoken(_ x: Double, _ y: Double) -> String {
+        "x \(Int((x * 100).rounded()))%, y \(Int((y * 100).rounded()))%"
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let size = geometry.size
@@ -1616,6 +1621,12 @@ private struct ShapeHandles: View {
                             }.onEnded { _ in grabbed = nil })
                             .instantTooltip(shape.kind == .arrow ? (first ? "The arrow's tail: drag it" : "Where the arrow points: drag it") : "A corner: drag it")
                             .accessibilityLabel("\(shape.kind.rawValue.capitalized) \(first ? "start" : "end")")
+                            .accessibilityValue(Self.spoken(first ? shape.x1 : shape.x2, first ? shape.y1 : shape.y2))
+                            .accessibilityAdjustableAction { direction in
+                                model.nudgeShape(shape.id, dx: direction == .increment ? 0.01 : -0.01, dy: 0, point: first ? 1 : 2)
+                            }
+                            .accessibilityAction(named: "Move Up") { model.nudgeShape(shape.id, dx: 0, dy: -0.01, point: first ? 1 : 2) }
+                            .accessibilityAction(named: "Move Down") { model.nudgeShape(shape.id, dx: 0, dy: 0.01, point: first ? 1 : 2) }
                     }
                     // The middle: drags the whole shape, both points by the same amount, kept inside the picture.
                     let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
@@ -1642,6 +1653,12 @@ private struct ShapeHandles: View {
                         }.onEnded { _ in grabbed = nil })
                         .instantTooltip("Drag to move the whole \(shape.kind.rawValue)")
                         .accessibilityLabel("Move \(shape.kind.rawValue)")
+                        .accessibilityValue(Self.spoken((shape.x1 + shape.x2) / 2, (shape.y1 + shape.y2) / 2))
+                        .accessibilityAdjustableAction { direction in
+                            model.nudgeShape(shape.id, dx: direction == .increment ? 0.01 : -0.01, dy: 0)
+                        }
+                        .accessibilityAction(named: "Move Up") { model.nudgeShape(shape.id, dx: 0, dy: -0.01) }
+                        .accessibilityAction(named: "Move Down") { model.nudgeShape(shape.id, dx: 0, dy: 0.01) }
                 }
             }
         }
