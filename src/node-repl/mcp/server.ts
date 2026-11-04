@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { serveStdio, TURN_ENDED_TOOL } from "@genesiscz/utils/mcp/stdio";
 import {
     type CallToolResult,
     type ListToolsResult,
@@ -8,16 +9,31 @@ import {
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { ReplEngine, resultMessage } from "../lib/engine";
+import { createToolsets, parseToolsetList } from "../lib/toolsets";
 
 // stdio MCP server: stdout carries JSON-RPC frames, so every diagnostic goes through the
 // logger (file plus the gated stderr stream), never console.log.
 const log = logger.scoped("node-repl").log;
 
+const JS_DESCRIPTION =
+    "Execute JavaScript or TypeScript in a persistent REPL with top-level await. Top-level let, const, class and function bindings survive across calls and can be redeclared, until js_reset. Use nodeRepl.write(value) for output, and await show(image | path | Buffer) to return an image to the model; help() lists the loaded toolsets and help(name) prints one's API. nodeRepl.cwd, nodeRepl.homeDir and nodeRepl.tmpDir are available. Use dynamic import(); node: builtins, absolute paths and the server's own dependencies resolve, plus any directory added with js_add_node_module_dir. The default timeout is 30000 ms; a turn that overruns is killed with every binding.";
+
+/** The `js` description: the fixed text, then one line per preloaded toolset. */
+export function jsDescription(toolsetLines: readonly string[]): string {
+    if (toolsetLines.length === 0) {
+        return JS_DESCRIPTION;
+    }
+
+    const lines = toolsetLines.map((line) => `- ${line}`).join("\n");
+    return `${JS_DESCRIPTION} Preloaded globals, built once per worker (help(name) for the full API):\n${lines}`;
+}
+
 /**
  * Same four tool names as Codex's node_repl, so a prompt or skill that already says "use js"
  * keeps working against this server. `turn_ended` is the host-bookkeeping no-op it is there too.
  */
-export function createServer(engine: ReplEngine): Server {
+export function createServer(engine: ReplEngine, options: { toolsetLines?: readonly string[] } = {}): Server {
+    const description = jsDescription(options.toolsetLines ?? []);
     const server = new Server({ name: "genesis-node-repl", version: "1.0.0" }, { capabilities: { tools: {} } });
 
     server.setRequestHandler(
@@ -26,8 +42,7 @@ export function createServer(engine: ReplEngine): Server {
             tools: [
                 {
                     name: "js",
-                    description:
-                        "Execute JavaScript or TypeScript in a persistent REPL with top-level await. Top-level let, const, class and function bindings survive across calls and can be redeclared, until js_reset. Use nodeRepl.write(value) for output and await nodeRepl.emitImage({ bytes, mimeType }) for images; nodeRepl.cwd, nodeRepl.homeDir and nodeRepl.tmpDir are available. Use dynamic import(); node: builtins, absolute paths and the server's own dependencies resolve, plus any directory added with js_add_node_module_dir. The default timeout is 30000 ms; a turn that overruns is killed with every binding.",
+                    description,
                     inputSchema: {
                         type: "object",
                         properties: {
@@ -67,24 +82,10 @@ export function createServer(engine: ReplEngine): Server {
                 {
                     name: "js_reset",
                     description:
-                        "Kill the REPL worker and start a fresh one: every binding is gone, registered module directories stay.",
+                        "Reset the REPL without waiting for a running turn deadline. Toolsets get up to 10 seconds to dispose before the worker is killed. Every binding is gone, queued turns are cancelled, and registered module directories stay.",
                     inputSchema: { type: "object", properties: {}, additionalProperties: false },
                 },
-                {
-                    name: "turn_ended",
-                    description:
-                        "Notify the REPL that an agent turn ended. A no-op kept for compatibility with hosts that send it.",
-                    inputSchema: {
-                        type: "object",
-                        properties: {
-                            hook_event_name: { type: "string" },
-                            session_id: { type: "string" },
-                            turn_id: { type: "string" },
-                        },
-                        additionalProperties: true,
-                    },
-                    annotations: { idempotentHint: true },
-                },
+                TURN_ENDED_TOOL,
             ],
         })
     );
@@ -139,7 +140,7 @@ export function createServer(engine: ReplEngine): Server {
                 return { content: [{ type: "text", text: resultMessage(result) }], isError: !result.ok };
             }
             case "js_reset":
-                engine.reset();
+                await engine.reset();
                 return { content: [{ type: "text", text: "REPL reset; bindings cleared" }] };
             case "turn_ended":
                 return { content: [] };
@@ -154,20 +155,16 @@ export function createServer(engine: ReplEngine): Server {
     return server;
 }
 
-export async function startMcpServer(): Promise<void> {
-    const engine = new ReplEngine();
-    const server = createServer(engine);
-    const transport = new StdioServerTransport();
-    // The worker child would keep this process alive after the host closes stdin, and the
-    // stdio transport does not turn an ended stdin into onclose, so both are wired.
-    const stop = (reason: string): void => {
-        log.info({ reason }, "node-repl MCP server stopping");
-        engine.dispose();
-        process.exit(0);
-    };
-    server.onclose = () => stop("transport closed");
-    process.stdin.once("end", () => stop("stdin ended"));
-    await server.connect(transport);
-    log.info("node-repl MCP server listening on stdio");
-    process.on("exit", () => engine.dispose());
+export async function startMcpServer(options: { toolsets?: readonly string[]; name?: string } = {}): Promise<void> {
+    const toolsets = parseToolsetList(options.toolsets ?? []);
+    const engine = new ReplEngine({ toolsets });
+    const toolsetLines = (await createToolsets(toolsets)).map((toolset) => toolset.oneLine());
+    await serveStdio({
+        name: options.name ?? "node-repl",
+        server: createServer(engine, { toolsetLines }),
+        transport: new StdioServerTransport(),
+        shutdown: () => engine.shutdown(),
+        shutdownTimeoutMs: 15_000,
+        onExit: () => engine.dispose(),
+    });
 }
