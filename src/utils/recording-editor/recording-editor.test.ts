@@ -5,6 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    applyOp,
+    autoZoom,
+    editProjectSchema,
+    outputDurationUs,
+    outputTimeOf,
+    parseEditOps,
+    readProject,
+    wholeProject,
+    writeProject,
+} from "@genesiscz/utils/recording-editor/project";
 import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
 import { skip } from "@genesiscz/utils/test/skip";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
@@ -318,4 +329,68 @@ describe.skipIf(skip.integration)("the editor on a video, and the frame review o
             }).done
         ).rejects.toThrow(OverwriteInputError);
     }, 60_000);
+});
+
+describe("edit project (edit.json)", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+
+    test("a cut, a speed change and a zoom keep source times and shorten the output", () => {
+        let project = wholeProject(source);
+        project = applyOp(project, { op: "cut", from: 1, to: 2 });
+        project = applyOp(project, { op: "speed", from: 4, to: 8, factor: 2 });
+        project = applyOp(project, { op: "zoom", from: "0:03", to: 5, scale: 2, focus: { x: 0.3, y: 0.3 } });
+
+        expect(project.clips.map((clip) => [clip.fromUs, clip.toUs, clip.speed])).toEqual([
+            [0, 1_000_000, 1],
+            [2_000_000, 4_000_000, 1],
+            [4_000_000, 8_000_000, 2],
+            [8_000_000, 10_000_000, 1],
+        ]);
+        expect(outputDurationUs(project)).toBe(7_000_000);
+        expect(outputTimeOf(project, 1_500_000)).toBeUndefined();
+        expect(outputTimeOf(project, 6_000_000)).toBe(4_000_000);
+        expect(project.zooms[0]).toMatchObject({ startUs: 3_000_000, endUs: 5_000_000, scale: 2, focusX: 0.3 });
+    });
+
+    test("refuses a cut of everything and an overlapping zoom, naming why", () => {
+        const project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 3 });
+        expect(() => applyOp(project, { op: "cut", from: 0, to: 10 })).toThrow("whole movie");
+        expect(() => applyOp(project, { op: "zoom", from: 2, to: 4 })).toThrow("overlaps zoom");
+    });
+
+    test("parses ops with one readable line per problem", () => {
+        expect(parseEditOps({ op: "split", at: 2 })).toEqual([{ op: "split", at: 2 }]);
+        expect(() => parseEditOps([{ op: "bogus" }, { op: "cut", from: 1 }])).toThrow(
+            /op 1: "op" must be one of split[\s\S]*op 2 \(cut\) to: is required/
+        );
+    });
+
+    test("auto zoom groups clicks under 3 s apart and follows the cursor", () => {
+        const samples = [
+            { ms: 1000, x: 0.2, y: 0.2, click: "left" },
+            { ms: 2000, x: 0.4, y: 0.4, click: "left" },
+            { ms: 7000, x: 0.8, y: 0.8, click: "left" },
+        ];
+        const zooms = autoZoom(wholeProject(source), samples).zooms;
+        expect(zooms.map((zoom) => [zoom.startUs, zoom.endUs, zoom.mode])).toEqual([
+            [400_000, 3_600_000, "follow"],
+            [6_400_000, 8_600_000, "follow"],
+        ]);
+        expect(zooms[0].focusX).toBeCloseTo(0.3);
+    });
+
+    test("writes every field the Swift decoder needs and refuses a newer version", () => {
+        const dir = mkdtempSync(join(tmpdir(), "edit-project-"));
+        const path = join(dir, "edit.json");
+        const saved = writeProject(path, wholeProject(source));
+        const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+
+        expect(saved.revision).toBe(1);
+        expect(Object.keys(editProjectSchema.parse(raw)).sort()).toEqual(
+            ["audio", "clips", "export", "revision", "source", "updatedBy", "version", "zooms"].sort()
+        );
+        expect(raw).toMatchObject({ audio: { include: true, volume: 1, mutedTracks: [] }, export: { codec: "h264" } });
+        writeFileSync(path, SafeJSON.stringify({ ...saved, version: 9 }));
+        expect(() => readProject(path)).toThrow("version 9");
+    });
 });

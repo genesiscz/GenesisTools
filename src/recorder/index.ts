@@ -2,9 +2,12 @@ import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } fr
 import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { describeProject, parseEditOps } from "@genesiscz/utils/recording-editor/project";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
+
+import { editProject, openProject } from "./lib/edit";
 import { ensureRecorderPart, exportEdit, listLibrary, movieOf, openEditor, resolveRecording } from "./lib/library";
 import { makeProxy } from "./lib/proxy";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
@@ -261,6 +264,40 @@ program
             await ensureRecorderPart((line) => out.printlnErr(line));
             openEditor(path, { focus: flags.focus !== false });
         } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("project")
+    .description("Print a recording's edit: its clips, zooms, audio and export settings (times in source seconds)")
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .action(async (value: string) => {
+        try {
+            const opened = await openProject(value);
+            out.result({ ...describeProject(opened.project, opened.path), saved: !opened.fresh });
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("apply")
+    .description(
+        'Change a recording\'s edit with JSON ops, in order, saved once (the open editor window reloads it). Ops: {"op":"cut","from":4,"to":"0:09"}, split {at}, keep {from,to}, speed {from,to,factor}, zoom {from,to,scale?,focus?:{x,y},follow?}, unzoom {id}, autoZoom {scale?}, volume {volume 0–2}, mute {track,muted?}, audio {include}, exportSettings {codec?,maxHeight?,output?}, reset. Times are source seconds or "mm:ss"'
+    )
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .argument("<ops>", "one op or an array of ops as JSON, or - to read them from stdin")
+    .action(async (value: string, text: string) => {
+        try {
+            const raw = text === "-" ? await Bun.stdin.text() : text;
+            const ops = parseEditOps(SafeJSON.parse(raw, { strict: true }));
+            const edited = await editProject(value, ops);
+            out.result(describeProject(edited.project, edited.path));
+        } catch (error) {
+            log.debug({ error }, "recorder apply failed");
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
         }

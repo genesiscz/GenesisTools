@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import { ComputerToolset } from "@app/control/lib/computer-use/toolset";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
+import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { ReplToolset, type ReplToolsetFactory } from "@genesiscz/utils/repl/toolset";
 import { EditorToolset } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecorderToolset } from "@genesiscz/utils/repl/toolsets/recorder";
@@ -22,6 +23,7 @@ export const REPL_TOOLSETS = {
             FRAME_RECORDERS.native({ axTool: async (options) => [await ensureBinaryAsync(options)] })
         ),
     editor: () => new EditorToolset(),
+    movies: () => new MoviesToolset(),
     meetings: () => new MeetingsToolset(),
     control: () => new ControlToolset(),
     browser: () => new BrowserToolset(),

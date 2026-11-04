@@ -298,9 +298,17 @@ private struct ExportInspector: View {
             GenSegmentedTabs("Size", items: heights.map { .init($0, $0 == 0 ? "Source" : "\($0)p") },
                              selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
                              minSegmentWidth: 44, identifier: "recorder.export.size")
-            let size = EditRenderer.renderSize(source: CGSize(width: model.project.source.width, height: model.project.source.height),
-                                               maxHeight: settings.maxHeight)
+            let source = CGSize(width: model.project.source.width, height: model.project.source.height)
+            // A screen recording exports at 60 fps; the label uses the same size rule as the export.
+            let size = EditRenderer.renderSize(source: source, maxHeight: settings.maxHeight, h264Fps: settings.codec == .h264 ? 60 : nil)
+            let capped = size.height < EditRenderer.renderSize(source: source, maxHeight: settings.maxHeight).height
             SectionLabel(text: "Output", value: "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(model.durationUs, tenths: true))")
+            if capped {
+                Text("H.264 keeps 60 fps up to 2560 × 1600. Pick HEVC for the full size.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             PathLabel(path: EditExporter.outputURL(for: model.project).path)
             if let progress = model.exportProgress {
                 ProgressView(value: progress).progressViewStyle(.linear)

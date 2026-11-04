@@ -54,11 +54,30 @@ struct EditRenderer {
 
     static func us(_ value: Int64) -> CMTime { CMTime(value: value, timescale: 1_000_000) }
 
-    /// `maxHeight` 0 keeps the source size. The size is rounded to even pixels, which H.264 needs.
-    static func renderSize(source: CGSize, maxHeight: Int) -> CGSize {
-        let scale = maxHeight > 0 && source.height > CGFloat(maxHeight) ? CGFloat(maxHeight) / source.height : 1
+    /// The pixels a second the H.264 export preset keeps at full rate: 2560×1600 at 60 fps. Measured 2026-11-04 on a
+    /// 60 fps recording: 2560×1600 kept 60 fps, 2880×1798 and 3456×2160 came out at 30, 3724×2326 at 15. HEVC kept
+    /// 4112×2570 at 60.
+    static let h264PixelRate: CGFloat = 2560 * 1600 * 60
+
+    /// `maxHeight` 0 keeps the source size. The size is rounded to even pixels, which H.264 needs. With `h264Fps` the
+    /// size also fits `h264PixelRate`, so the export keeps its frame rate instead of the encoder halving it.
+    static func renderSize(source: CGSize, maxHeight: Int, h264Fps: Double? = nil) -> CGSize {
+        var scale = maxHeight > 0 && source.height > CGFloat(maxHeight) ? CGFloat(maxHeight) / source.height : 1
+        if let h264Fps, h264Fps > 0 {
+            let pixels = source.width * scale * source.height * scale
+            let limit = h264PixelRate / CGFloat(h264Fps)
+            if pixels > limit { scale *= (limit / pixels).squareRoot() }
+        }
         func even(_ value: CGFloat) -> CGFloat { max(2, (value * scale / 2).rounded(.down) * 2) }
         return CGSize(width: even(source.width), height: even(source.height))
+    }
+
+    /// The output's constant frame rate. A screen recording writes frames only while something moves, so its average
+    /// (nominal) rate sits below the rate of its motion (45 for a 60 fps recording); above film rates it exports at
+    /// 60. A film rate (24, 25, 30) is kept. `minFrameDuration` is no help: it read 1/15 on such a movie.
+    static func exportFps(nominal: Double) -> Double {
+        guard nominal > 0 else { return 30 }
+        return nominal > 31 ? 60 : nominal.rounded()
     }
 
     static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int) async throws -> Rendered {
@@ -95,7 +114,8 @@ struct EditRenderer {
         }
         guard cursor > .zero else { throw RenderError.emptyEdit }
 
-        let size = renderSize(source: natural, maxHeight: maxHeight)
+        let fps = Self.exportFps(nominal: Double(nominalFps))
+        let size = renderSize(source: natural, maxHeight: maxHeight, h264Fps: project.export.codec == .h264 ? fps : nil)
         let outputScale = size.height / natural.height
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
             let image = request.sourceImage
@@ -118,8 +138,10 @@ struct EditRenderer {
             request.finish(with: result.cropped(to: CGRect(origin: .zero, size: size)), context: nil)
         }
         videoComposition.renderSize = size
-        let fps = nominalFps > 0 ? min(Double(nominalFps), 60) : 30
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
+        // The CI-filter initializer times frames by the source track; a screen recording has a variable rate, and a
+        // sped-up clip packs its frames closer (2× gave 74 fps). Without a timing track `frameDuration` decides.
+        videoComposition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
 
         var audioMix: AVAudioMix?
         if !audioOut.isEmpty {

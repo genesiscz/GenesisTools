@@ -24,6 +24,11 @@ request that has its own budget (120 s), not the turn's; after a timeout kill or
 preloads them again, and reset, exit and the end of a `run` dispose them. Each worker gets a private scratch
 folder for its toolsets, removed when the worker stops.
 
+`movies` (`src/recorder/lib/toolset.ts`) records the screen as a movie (`record` returns a handle with status, pause,
+resume and stop) and edits a recording's `edit.json`: `open(id)` returns a Movie with split, cut, keep, speed, zoom,
+autoZoom, volume, mute, apply, undo, export and show. Its times are source seconds, and the open recorder window takes
+each save as it lands. The CLI door to the same edits is `tools recorder project` and `tools recorder apply`.
+
 The registry also includes `meetings` (open, evidence, transcript, items.add), `control` (the native control API),
 `browser` (CDP tabs, open, navigate, evaluate), `hub` (prs, pr), and `github` (review threads).
 Each lives in one toolset file and has one registry entry. Browser calls take the browser's CDP `port` explicitly.

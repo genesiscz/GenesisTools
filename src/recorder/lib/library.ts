@@ -116,7 +116,7 @@ export function openEditor(path: string, { focus = true }: { focus?: boolean } =
         args.push("--no-focus");
     }
 
-    log.info({ args }, "recorder: open the editor");
+    log.debug({ args }, "recorder: open the editor");
     const result = spawnSync("open", args, { encoding: "utf8" });
 
     if (result.status !== 0) {
@@ -139,7 +139,7 @@ export interface ExportAnswer {
 export async function exportEdit(path: string, out?: string): Promise<ExportAnswer> {
     const binary = join(genesisAppBundlePath(), "Contents/MacOS/GenesisTools");
     const argv = ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])];
-    log.info({ binary, argv }, "recorder: headless export");
+    log.debug({ binary, argv }, "recorder: headless export");
     const child = spawn(binary, argv, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
@@ -154,7 +154,7 @@ export async function exportEdit(path: string, out?: string): Promise<ExportAnsw
 
     try {
         const answer = SafeJSON.parse(line, { strict: true }) as ExportAnswer;
-        log.info({ code, answer }, "recorder: export finished");
+        log.debug({ code, answer }, "recorder: export finished");
         return answer;
     } catch (error) {
         log.warn({ error, code, stdout, stderr }, "recorder: export printed no answer");

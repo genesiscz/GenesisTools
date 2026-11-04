@@ -91,6 +91,21 @@ final class RecorderEditTests: XCTestCase {
         }
     }
 
+    func testExportFpsKeepsFilmRatesAndLiftsScreenRecordings() {
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 45.26), 60)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 120), 60)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 29.97), 30)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 23.976), 24)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 0), 30)
+    }
+
+    func testH264SizeFitsLevelLimitsAtTheExportRate() {
+        let size = EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 0, h264Fps: 60)
+        XCTAssertLessThanOrEqual(size.width * size.height * 60, EditRenderer.h264PixelRate)
+        XCTAssertGreaterThan(size.width, 2500)
+        XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1920, height: 1080), maxHeight: 0, h264Fps: 60), CGSize(width: 1920, height: 1080))
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))
