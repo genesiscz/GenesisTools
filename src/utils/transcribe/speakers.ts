@@ -84,6 +84,13 @@ const CLOSING_GREETING = wholeWords("(?:tak |zatím )?(?:čau|ahoj|čaute)");
 /** Rule R13: another label answers a departure with one of these within `FAREWELL_REPLY_WITHIN_SEC`. */
 const FAREWELL_REPLY = wholeWords("čau|ahoj|čaute|měj(?:te)? se|maj(?:te)? sa|nic se neděje|díky|dík|bye|see you");
 const FAREWELL_REPLY_WITHIN_SEC = 15;
+/**
+ * A bare greeting is a goodbye only from a label that already talked: "Čau." from a label with fewer words before it
+ * is a hello, as when everyone greets at the start ("Čau." at 00:15, answered "Čau." and "Ahoj.").
+ */
+const GREETING_GOODBYE_MIN_WORDS_BEFORE = 20;
+/** A bare greeting is a goodbye only when its label is silent this long after it: who speaks on 4 s later stayed. */
+const GREETING_GOODBYE_SILENCE_SEC = 30;
 /** Rule R14: "taky" in a leave phrase right after another label's leave phrase is a second person leaving. */
 const ECHO = wholeWords("taky|také|i já|já taky|tiež|aj ja|me too");
 const ECHO_WITHIN_SEC = 15;
@@ -395,7 +402,18 @@ export function speakerStats(
                 isLeavePhrase(other.text)
         );
         const greetingGoodbye =
-            runEnds.has(index) && CLOSING_GREETING.test(entry.text) && reply !== undefined && !answers;
+            runEnds.has(index) &&
+            CLOSING_GREETING.test(entry.text) &&
+            reply !== undefined &&
+            !answers &&
+            stat.words - wordCount(entry.text) >= GREETING_GOODBYE_MIN_WORDS_BEFORE &&
+            !lines.some(
+                (other, otherIndex) =>
+                    otherIndex > index &&
+                    other.speaker === entry.speaker &&
+                    other.startSec !== undefined &&
+                    other.startSec - leftAt < GREETING_GOODBYE_SILENCE_SEC
+            );
 
         if (!isLeavePhrase(entry.text) && !greetingGoodbye) {
             return;

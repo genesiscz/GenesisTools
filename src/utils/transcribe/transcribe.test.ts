@@ -108,6 +108,36 @@ describe("speakerStats", () => {
         );
     });
 
+    test("R13: a bare 'Čau.' greeting at the start is a hello, and the same word after a long talk a goodbye", () => {
+        const talk =
+            "Tak to máme probrané, ještě projdu ten seznam úkolů a pak to shrnu, aby bylo jasné, kdo co dělá dál.";
+        const stats = speakerStats([
+            line("Alice Example", 15, "Čau.", 1),
+            line("Bob Example", 16, "Čau.", 2),
+            line("Alice Example", 60, talk, 1),
+            line("Alice Example", 300, "Čau.", 1),
+            line("Bob Example", 302, "Čau.", 2),
+            line("Alice Example", 400, "Ještě jedna věc.", 1),
+        ]);
+        const alice = stats.speakers.find((s) => s.label === "Alice Example")!;
+
+        expect(alice.leaves.map((leave) => leave.atSec)).toEqual([300]);
+    });
+
+    test("R13: a bare 'Čau.' its label follows within seconds is a hello, however much the label said before", () => {
+        const talk =
+            "Tak to máme probrané, ještě projdu ten seznam úkolů a pak to shrnu, aby bylo jasné, kdo co dělá dál.";
+        const stats = speakerStats([
+            line("Alice Example", 1, talk, 1),
+            line("Alice Example", 15, "Čau.", 1),
+            line("Bob Example", 16, "Čau.", 2),
+            line("Alice Example", 19, "Čau. Zbytek přijde později.", 1),
+            line("Alice Example", 120, "Ještě jedna věc.", 1),
+        ]);
+
+        expect(stats.speakers.find((s) => s.label === "Alice Example")!.leaves).toEqual([]);
+    });
+
     test("R14: a 'taky' goodbye right after another label's goodbye names that label as someone else", () => {
         const stats = speakerStats([
             line("Alice Example", 0, "Já už musím jít.", 1),
