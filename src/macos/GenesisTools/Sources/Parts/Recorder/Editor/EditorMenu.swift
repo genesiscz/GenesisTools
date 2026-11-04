@@ -61,6 +61,18 @@ enum EditorMenu {
         EditorCommand(title: "Forward One Second (Shape: Nudge More)", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), modifiers: .shift, label: "⇧→") {
             $0.arrowKey(dx: 1, dy: 0, shift: true)
         },
+        EditorCommand(title: "Move Selection Earlier", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), modifiers: .option, label: "⌥←") {
+            $0.moveSelectionInTime(byUs: -100_000)
+        },
+        EditorCommand(title: "Move Selection Later", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), modifiers: .option, label: "⌥→") {
+            $0.moveSelectionInTime(byUs: 100_000)
+        },
+        EditorCommand(title: "Move Selection a Second Earlier", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), modifiers: [.option, .shift], label: "⌥⇧←") {
+            $0.moveSelectionInTime(byUs: -1_000_000)
+        },
+        EditorCommand(title: "Move Selection a Second Later", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), modifiers: [.option, .shift], label: "⌥⇧→") {
+            $0.moveSelectionInTime(byUs: 1_000_000)
+        },
         EditorCommand(title: "Nudge Shape Up", key: String(UnicodeScalar(NSUpArrowFunctionKey)!), label: "↑") { $0.arrowKey(dx: 0, dy: -1, shift: false) },
         EditorCommand(title: "Nudge Shape Down", key: String(UnicodeScalar(NSDownArrowFunctionKey)!), label: "↓") { $0.arrowKey(dx: 0, dy: 1, shift: false) },
         EditorCommand(title: "Nudge Shape Up More", key: String(UnicodeScalar(NSUpArrowFunctionKey)!), modifiers: .shift, label: "⇧↑") {

@@ -230,6 +230,39 @@ final class EditorModel {
         if dx != 0 { step(frames: dx * (shift ? 60 : 1)) }
     }
 
+    /// ⌥← and ⌥→: the selected zoom, hidden part, text or shape starts `byUs` earlier or later (its length kept, held
+    /// inside the recording). A zoom keeps clear of the other zooms. A clip or no selection says what to select.
+    func moveSelectionInTime(byUs delta: Int64) {
+        let duration = project.source.durationUs
+        switch selection {
+        case let .zoom(id):
+            guard let zoom = project.zooms.first(where: { $0.id == id }) else { return }
+            let moved = Self.shifted(start: zoom.startUs, end: zoom.endUs, by: delta, durationUs: duration)
+            moveZoom(id, startUs: moved.start, endUs: moved.end)
+        case let .redaction(id):
+            guard let part = project.redactions?.first(where: { $0.id == id }) else { return }
+            let moved = Self.shifted(start: part.startUs, end: part.endUs, by: delta, durationUs: duration)
+            updateRedaction(id) { $0.startUs = moved.start; $0.endUs = moved.end }
+        case let .text(id):
+            guard let note = project.texts?.first(where: { $0.id == id }) else { return }
+            let moved = Self.shifted(start: note.startUs, end: note.endUs, by: delta, durationUs: duration)
+            updateText(id) { $0.startUs = moved.start; $0.endUs = moved.end }
+        case let .shape(id):
+            guard let shape = project.shapes?.first(where: { $0.id == id }) else { return }
+            let moved = Self.shifted(start: shape.startUs, end: shape.endUs, by: delta, durationUs: duration)
+            updateShape(id) { $0.startUs = moved.start; $0.endUs = moved.end }
+        case .clip, .none:
+            show("Select a zoom, hidden part, text or shape to move it in time.", error: false)
+        }
+    }
+
+    /// A span moved by `delta` with its length kept, held inside `0…durationUs`.
+    nonisolated static func shifted(start: Int64, end: Int64, by delta: Int64, durationUs: Int64) -> (start: Int64, end: Int64) {
+        let length = end - start
+        let moved = min(max(0, start + delta), max(0, durationUs - length))
+        return (moved, moved + length)
+    }
+
     /// Moves a whole shape, or only its start (`point: 1`) or end (`point: 2`), held inside the picture.
     func nudgeShape(_ id: String, dx: Double, dy: Double, point: Int? = nil) {
         guard let shape = project.shapes?.first(where: { $0.id == id }) else { return }

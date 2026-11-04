@@ -515,6 +515,16 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc), bytes)
     }
 
+    func testMovingASelectionInTimeKeepsItsLengthInsideTheRecording() {
+        XCTAssertEqual(EditorModel.shifted(start: 1_000_000, end: 3_000_000, by: 500_000, durationUs: 10_000_000).start, 1_500_000)
+        let atStart = EditorModel.shifted(start: 200_000, end: 1_200_000, by: -1_000_000, durationUs: 10_000_000)
+        XCTAssertEqual(atStart.start, 0)
+        XCTAssertEqual(atStart.end, 1_000_000)
+        let atEnd = EditorModel.shifted(start: 8_000_000, end: 9_500_000, by: 1_000_000, durationUs: 10_000_000)
+        XCTAssertEqual(atEnd.start, 8_500_000)
+        XCTAssertEqual(atEnd.end, 10_000_000)
+    }
+
     func testClickTicksPlayAtTheirOutputTimesOneTickApart() {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
         project.clips = [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 6_000_000, toUs: 10_000_000)]
