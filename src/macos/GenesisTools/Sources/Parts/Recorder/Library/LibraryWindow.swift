@@ -16,7 +16,19 @@ final class LibraryModel {
     static let hoverScrubKey = "recorder.library.hoverScrub"
     static let scrubFrameCount = 12
     private(set) var loaded = false
-    var filter = ""
+    var filter = "" {
+        didSet { searchSpoken() }
+    }
+    /// What was said or marked that matches the filter, the first hit per recording, from `tools recorder search`
+    /// (cached transcripts with their fixes, and marker labels).
+    private(set) var spoken: [URL: SpokenHit] = [:]
+    @ObservationIgnored private var spokenSearch: DispatchWorkItem?
+
+    struct SpokenHit: Equatable {
+        var at: Double
+        var text: String
+        var marker: Bool
+    }
     /// The card the keyboard is on (arrows move it, Return opens it, ⌘⌫ moves it to the Trash).
     var selected: URL?
     @ObservationIgnored private var watch: DispatchSourceFileSystemObject?
@@ -26,7 +38,44 @@ final class LibraryModel {
 
     var visible: [RecorderMenu.Recent] {
         let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        return query.isEmpty ? items : items.filter { $0.title.lowercased().contains(query) || $0.folder.lastPathComponent.contains(query) }
+        return query.isEmpty ? items : items.filter {
+            $0.title.lowercased().contains(query) || $0.folder.lastPathComponent.contains(query) || spoken[$0.folder] != nil
+        }
+    }
+
+    /// From three letters on, 300 ms after the last key: one `tools recorder search` for the whole library.
+    private func searchSpoken() {
+        spokenSearch?.cancel()
+        let query = filter.trimmingCharacters(in: .whitespaces)
+        guard query.count >= 3 else {
+            if !spoken.isEmpty { spoken = [:] }
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            let span = HubPerf.begin("recorder.library.search", query)
+            ToolsRunner.run(["recorder", "search", query, "--json"]) { status, stdout, stderr in
+                span.end()
+                guard let self, self.filter.trimmingCharacters(in: .whitespaces) == query else { return }
+                guard status == 0, let data = stdout.data(using: .utf8),
+                      let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    HubPerf.log("recorder.library.search failed: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")")
+                    return
+                }
+                var hits: [URL: SpokenHit] = [:]
+                for row in rows {
+                    guard let kind = row["kind"] as? String, kind != "title", let folder = row["folder"] as? String,
+                          let text = row["text"] as? String else { continue }
+                    let url = URL(fileURLWithPath: folder)
+                    if hits[url] == nil {
+                        hits[url] = SpokenHit(at: (row["at"] as? NSNumber)?.doubleValue ?? 0, text: text, marker: kind == "marker")
+                    }
+                }
+                HubPerf.log("recorder.library.search \"\(query)\": \(hits.count) recordings by what was said or marked")
+                self.spoken = hits
+            }
+        }
+        spokenSearch = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     func load() {
@@ -160,7 +209,8 @@ final class LibraryModel {
 struct LibraryView: View {
     @Bindable var model: LibraryModel
     @AppStorage(LibraryModel.hoverScrubKey) private var hoverScrub = true
-    private let columns = [GridItem(.adaptive(minimum: 248, maximum: 320), spacing: 18)]
+    // Top-aligned, so a card with a search hit under its title keeps its picture in line with the others.
+    private let columns = [GridItem(.adaptive(minimum: 248, maximum: 320), spacing: 18, alignment: .top)]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -170,7 +220,7 @@ struct LibraryView: View {
                 Spacer()
                 GhostButton("Record", symbol: "record.circle", tooltip: "Record the screen (the recorder's menu has more ways)",
                             identifier: "recorder.library.record") { RecorderMenu.shared.startRecording(audio: false) }
-                TextField("Filter by title", text: $model.filter)
+                TextField("Search titles and what was said", text: $model.filter)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 220)
                     .accessibilityIdentifier("recorder.library.filter")
@@ -197,7 +247,7 @@ struct LibraryView: View {
                         ForEach(model.sections, id: \.title) { section in
                             Section {
                                 ForEach(section.items, id: \.folder) { item in
-                                    LibraryCard(item: item, thumbnail: item.thumbnail.flatMap { model.thumbnails[$0] },
+                                    LibraryCard(item: item, spoken: model.spoken[item.folder], thumbnail: item.thumbnail.flatMap { model.thumbnails[$0] },
                                                 frames: hoverScrub ? item.thumbnail.flatMap { model.scrubFrames[$0] } : nil,
                                                 wantFrames: hoverScrub ? { model.loadScrub(item) } : nil,
                                                 selected: model.selected == item.folder) {
@@ -251,6 +301,8 @@ struct LibraryView: View {
 
 private struct LibraryCard: View {
     let item: RecorderMenu.Recent
+    /// What matched the search in what was said or marked, shown under the title.
+    let spoken: LibraryModel.SpokenHit?
     let thumbnail: NSImage?
     /// The hover scrub's frames (nil until read, or with the setting off) and the call that reads them.
     let frames: [NSImage]?
@@ -321,6 +373,14 @@ private struct LibraryCard: View {
                     }
                 }
                 Text(item.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                if let spoken {
+                    HStack(spacing: 4) {
+                        Image(systemName: spoken.marker ? "flag.fill" : "quote.bubble")
+                        Text(verbatim: "\(formatClock(Int64(spoken.at * 1_000_000))) \(spoken.text)").lineLimit(2)
+                    }
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .accessibilityLabel("\(spoken.marker ? "Marker" : "Said") at \(formatClock(Int64(spoken.at * 1_000_000))): \(spoken.text)")
+                }
                 HStack(spacing: 6) {
                     LiveAgo(date: item.started, style: .brief)
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)

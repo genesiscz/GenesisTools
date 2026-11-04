@@ -37,6 +37,8 @@ struct RecorderRequest {
     var part: (from: Double, to: Double)?
     /// `--library`: the recordings library window (with `--snapshot`, a picture of it).
     var library = false
+    /// `--filter <text>` with `--library --snapshot`: the search field's text, so a snapshot shows its hits.
+    var filter: String?
     /// `--still <edit> --at <s> --out <png>`: one frame of the edit, printed as JSON.
     var still: String?
     /// `--sheet <edit> --times <s,s,…> --out <png>`: those frames of the edit on one picture, each with its time.
@@ -69,6 +71,7 @@ struct RecorderRequest {
                 let ends = (value() ?? "").split(separator: "-").compactMap { Double($0) }
                 if ends.count == 2 { request.part = (ends[0], ends[1]) }
             case "--library": request.library = true
+            case "--filter": request.filter = value()
             case "--still": request.still = value().map(absolute)
             case "--sheet": request.sheet = value().map(absolute)
             case "--times": request.times = (value() ?? "").split(separator: ",").compactMap { Double($0) }
@@ -509,6 +512,13 @@ private func snapshotLibrary(_ request: RecorderRequest, to path: String) async 
     model.load()
     for _ in 0..<100 where !model.loaded {
         try await Task.sleep(for: .milliseconds(100))
+    }
+    if let filter = request.filter {
+        model.filter = filter
+        // The spoken search waits 300 ms after the last key, then runs `tools recorder search` (about 0.4 s).
+        for _ in 0..<40 where model.spoken.isEmpty {
+            try await Task.sleep(for: .milliseconds(100))
+        }
     }
     let window = LibraryWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
     window.orderInForSnapshot()
