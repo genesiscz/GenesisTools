@@ -9,6 +9,7 @@ import { Command } from "commander";
 import { MOBILE_APPS, mobileApp } from "./apps";
 import { registerDevice } from "./commands/device";
 import { registerE2e } from "./commands/e2e";
+import { registerRelease } from "./commands/release";
 import { registerScreens } from "./commands/screens";
 import { registerUp } from "./commands/up";
 import { buildAndInstall } from "./lib/build";
@@ -209,6 +210,7 @@ program
     );
 
 registerUp(program);
+registerRelease(program);
 registerScreens(program);
 registerDevice(program);
 registerE2e(program);
