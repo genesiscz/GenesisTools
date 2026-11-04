@@ -708,6 +708,8 @@ private struct HiddenSegment: View {
     @State private var moveFrom: (Int64, Int64)?
 
     private static let color = Color(red: 1, green: 0.62, blue: 0.2)
+    /// A spotlight lights, it does not hide: a pale yellow segment, not the blur's orange.
+    private static let spotlightColor = Color(red: 1, green: 0.88, blue: 0.45)
 
     var body: some View {
         let spans = TimelineMap.outputSpans(fromUs: redaction.startUs, toUs: redaction.endUs, in: model.project)
@@ -715,7 +717,7 @@ private struct HiddenSegment: View {
             let selected = model.selectedRedaction == redaction.id
             let width = max(8, scale.x(last.toUs) - scale.x(first.fromUs))
             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Self.color.opacity(selected ? 0.95 : 0.7))
+                .fill((redaction.style == .spotlight ? Self.spotlightColor : Self.color).opacity(selected ? 0.95 : 0.7))
                 .overlay {
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .strokeBorder(Color.white.opacity(selected ? 0.9 : 0), lineWidth: 1.5)
@@ -747,7 +749,7 @@ private struct HiddenSegment: View {
                 }.onEnded { _ in moveFrom = nil; model.endSnap() })
                 .instantTooltip("\(redaction.label.map { "\($0) (\(redaction.style.rawValue))" } ?? redaction.style.rawValue.capitalized): drag to move, drag an edge to trim")
                 .accessibilityElement()
-                .accessibilityLabel("Hidden part, \(redaction.style.rawValue), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit)")
+                .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part, \(redaction.style.rawValue)"), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit)")
                 .accessibilityAddTraits(.isButton)
                 .accessibilityIdentifier("recorder.hidden.\(redaction.id)")
                 .accessibilityAction { select() }

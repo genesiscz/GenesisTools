@@ -293,14 +293,36 @@ private struct FocusPicker: View {
                 model.updateZoom(zoom.id) {
                     $0.focusX = Double(value.location.x / size.width)
                     $0.focusY = Double(value.location.y / size.height)
-                    if $0.mode == .follow, model.cursor != nil { $0.mode = .manual }
+                    if $0.mode == .follow, model.cursor != nil {
+                        $0.mode = .manual
+                        model.show("Set to Manual: the zoom holds the place you picked.", error: false)
+                    }
                 }
             })
         }
         .aspectRatio(aspect, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement()
         .accessibilityLabel("Zoom focus")
+        .accessibilityValue("x \(Int((zoom.focusX * 100).rounded()))%, y \(Int((zoom.focusY * 100).rounded()))%")
+        .accessibilityAdjustableAction { direction in nudgeFocus(dx: direction == .increment ? 0.02 : -0.02, dy: 0) }
+        .accessibilityAction(named: "Move Up") { nudgeFocus(dx: 0, dy: -0.02) }
+        .accessibilityAction(named: "Move Down") { nudgeFocus(dx: 0, dy: 0.02) }
+        .focusable()
+        .onKeyPress(.leftArrow) { nudgeFocus(dx: -0.02, dy: 0); return .handled }
+        .onKeyPress(.rightArrow) { nudgeFocus(dx: 0.02, dy: 0); return .handled }
+        .onKeyPress(.upArrow) { nudgeFocus(dx: 0, dy: -0.02); return .handled }
+        .onKeyPress(.downArrow) { nudgeFocus(dx: 0, dy: 0.02); return .handled }
         .accessibilityIdentifier("recorder.zoom.focus")
+    }
+
+    /// The keyboard and VoiceOver path to aim the zoom: 2 % of the picture per step, kept inside it.
+    private func nudgeFocus(dx: Double, dy: Double) {
+        model.updateZoom(zoom.id) {
+            $0.focusX = min(max(0, $0.focusX + dx), 1)
+            $0.focusY = min(max(0, $0.focusY + dy), 1)
+            if $0.mode == .follow { $0.mode = .manual }
+        }
     }
 }
 
@@ -378,7 +400,7 @@ private struct StyleInspector: View {
             .accessibilityIdentifier("recorder.style.frame")
             if let frame {
                 SectionLabel(text: "Canvas")
-                GenSegmentedTabs("Canvas", items: EditProject.CanvasAspect.allCases.map { .init($0, $0 == .source ? "Original" : $0.rawValue) },
+                GenSegmentedTabs("Canvas", items: EditProject.CanvasAspect.allCases.map { .init($0, $0 == .source ? "Source" : $0.rawValue) },
                                  selection: Binding(get: { frame.aspect ?? .source }, set: { value in
                                      model.setLooks { $0.frame?.aspect = value == .source ? nil : value }
                                  }),
@@ -949,7 +971,9 @@ private struct HideInspector: View {
                     .buttonStyle(.genHoverRow())
                     .instantTooltip(range.recording.map { "\(range.edit) in the edit; \($0)" } ?? "\(range.edit) in the edit")
                     .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit), \(redaction.style.rawValue)")
-                    IconButton(systemName: "trash", tooltip: "Delete this hidden part", size: 12) { model.deleteRedaction(redaction.id) }
+                    IconButton(systemName: "trash", tooltip: redaction.style == .spotlight ? "Delete this spotlight" : "Delete this hidden part", size: 12) {
+                        model.deleteRedaction(redaction.id)
+                    }
                 }
                 if selected { RedactionEditor(model: model, redaction: redaction) }
             }
@@ -978,7 +1002,12 @@ private struct RedactionEditor: View {
                 RedactionPicker(model: model, redaction: redaction)
             }
             GenSegmentedTabs("Style", items: EditProject.RedactionStyle.allCases.map { .init($0, $0.rawValue.capitalized) },
-                             selection: Binding(get: { redaction.style }, set: { value in model.updateRedaction(id) { $0.style = value } }),
+                             selection: Binding(get: { redaction.style }, set: { value in
+                                 let revealed = redaction.style != .spotlight && value == .spotlight
+                                 model.updateRedaction(id) { $0.style = value }
+                                 // A spotlight lights its rectangle: what the blur hid is readable again.
+                                 if revealed { model.show("This part is a spotlight now: what it hid shows again (⌘Z hides it).", error: true) }
+                             }),
                              minSegmentWidth: 70, identifier: "recorder.hide.style", fillsWidth: true)
             SwitchRow("Follow the cursor", isOn: Binding(get: { redaction.follow == true }, set: { on in
                 model.updateRedaction(id) { $0.follow = on ? true : nil }
