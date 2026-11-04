@@ -288,7 +288,9 @@ export function awaitsDelivery(row: DecisionRecord): boolean {
  * only a send may queue or deliver one. It lands as `acknowledged`, which delivers nothing, with a comment that says
  * so. Other patches pass unchanged.
  */
-function agentPatch(row: DecisionRecord, patch: DecisionPatch): DecisionPatch {
+function agentPatch(row: DecisionRecord, stated: DecisionPatch): DecisionPatch {
+    const patch = keepUsersAnswer(row, stated);
+
     if (kindOf(row) !== "decision" || (patch.state !== "answered" && patch.state !== "sent")) {
         return patch;
     }
@@ -303,6 +305,48 @@ function agentPatch(row: DecisionRecord, patch: DecisionPatch): DecisionPatch {
         ...rest,
         ...(done ? {} : { state: "acknowledged" as const }),
         comment: [patch.comment?.trim(), note].filter(Boolean).join(" "),
+    };
+}
+
+/**
+ * The user's own answer stays theirs. An answer the inbox stored (`answeredVia: "inbox"`) or the Stop hook read from
+ * the chat (`automatic_heuristic`) is the user's words, and an agent's update may not replace it: the agent's different
+ * text goes into a comment. A letter the user picked in the inbox stays too; a letter read from the chat is only a
+ * reading, so the agent may correct it. On 2026-11-04 an acknowledgement replaced a 2,000-character inbox answer with
+ * the agent's 444-character summary, and the widget showed the summary as the user's answer.
+ */
+function keepUsersAnswer(row: DecisionRecord, patch: DecisionPatch): DecisionPatch {
+    if (!row.answeredVia || row.answeredVia === "agent") {
+        return patch;
+    }
+
+    const { answer, option, ...rest } = patch;
+    const notes: string[] = [];
+    const theirs = answer?.trim() ?? "";
+    const replaced = theirs !== "" && theirs !== (row.answer ?? "").trim();
+    const picked = row.answeredVia === "inbox" ? row.option : undefined;
+    const repicked = option !== undefined && picked !== undefined && option !== picked;
+
+    if (replaced) {
+        notes.push(`The agent's reading of the answer: ${theirs}`);
+    }
+
+    if (repicked) {
+        notes.push(`The agent named ${option || "no letter"}; the user's pick ${picked} stays.`);
+    }
+
+    if (notes.length > 0) {
+        logger.info(
+            { id: row.id, answeredVia: row.answeredVia, replaced, repicked },
+            "[decisions] an agent's update kept the user's answer"
+        );
+    }
+
+    // The answer itself never comes from the agent here: the same text changes nothing, and other text is a comment.
+    return {
+        ...rest,
+        ...(option !== undefined && !repicked ? { option } : {}),
+        ...(notes.length > 0 ? { comment: [patch.comment?.trim(), ...notes].filter(Boolean).join(" ") } : {}),
     };
 }
 

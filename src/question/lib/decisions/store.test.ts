@@ -2213,6 +2213,63 @@ describe("chat answers an agent records are never sent again (F2)", () => {
         expect(stagedSendText(readDecisions(file), "abc")).toBe("DECISION 2: a) a");
     });
 
+    test("an agent's acknowledgement keeps the answer the user typed in the inbox; its own text becomes a comment", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [
+                { prompt: "one", options: ["folder", "calendar", "ask"] },
+                { prompt: "two", options: ["a", "b"] },
+                { prompt: "three", options: ["keep", "drop"] },
+            ],
+        });
+        const long = "c) ask each time, but propose a folder first; ".repeat(40).trim();
+        await updateDecisions(file, events, {
+            updates: [
+                { id: "d_1_abc", state: "answered", answer: long },
+                { id: "d_2_abc", state: "answered", option: "a" },
+            ],
+        });
+
+        const [typed, picked] = await updateDecisions(
+            file,
+            events,
+            {
+                updates: [
+                    { id: "d_1_abc", state: "acknowledged", option: "c", answer: "c) ask each time, with proposals." },
+                    { id: "d_2_abc", state: "acknowledged", option: "b", answer: "a) a (relayed from the inbox)" },
+                ],
+            },
+            undefined,
+            { actor: "agent" }
+        );
+
+        expect(typed).toMatchObject({ state: "acknowledged", answer: long, option: "c", answeredVia: "inbox" });
+        expect(typed?.comments?.at(-1)).toContain(
+            "The agent's reading of the answer: c) ask each time, with proposals."
+        );
+        expect(picked).toMatchObject({ state: "acknowledged", option: "a", answeredVia: "inbox" });
+        expect(picked?.answer).toBeUndefined();
+        expect(picked?.comments?.at(-1)).toContain("the user's pick a stays");
+
+        // Negative control: an answer the agent records from the chat is the agent's own, and a later update may change it.
+        await updateDecisions(
+            file,
+            events,
+            { updates: [{ id: "d_3_abc", state: "acknowledged", option: "a", answer: "keep" }] },
+            undefined,
+            { actor: "agent" }
+        );
+        const [own] = await updateDecisions(
+            file,
+            events,
+            { updates: [{ id: "d_3_abc", option: "b", answer: "drop it" }] },
+            undefined,
+            { actor: "agent" }
+        );
+        expect(own).toMatchObject({ option: "b", answer: "drop it", answeredVia: "agent" });
+    });
+
     test("an old-shape chat answer (answered, no answeredVia, no delivery) is left out of every whole-session send", () => {
         const chat: DecisionRecord = { ...foreignRow("abc", 1), state: "answered", option: "a" };
         const inbox: DecisionRecord = { ...foreignRow("abc", 2), state: "answered", option: "a", answeredVia: "inbox" };
