@@ -108,7 +108,9 @@ final class ZoomState: @unchecked Sendable {
                          coverFocus: Self.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view),
                          frame: project.frame,
                          caption: project.captions.flatMap { settings in
-                             guard settings.show, let captions, let line = captions.line(atSourceUs: sourceUs) else { return nil }
+                             guard settings.show, let captions, let raw = captions.line(atSourceUs: sourceUs) else { return nil }
+                             // A fix with no words hides the line.
+                             guard let line = project.transcript.map({ $0.apply(raw) }) ?? raw else { return nil }
                              return CaptionMark(line: line, track: captions, settings: settings)
                          },
                          key: project.keys.flatMap { settings in

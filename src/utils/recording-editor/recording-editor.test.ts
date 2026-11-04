@@ -622,6 +622,18 @@ describe("edit project (edit.json)", () => {
         ]);
         expect(findInTranscript(lines, "VYSTRIHNI").map((line) => line.from)).toEqual([2]);
         expect(() => transcriptLines({ segments: "no" }, edited)).toThrow("no segments");
+
+        // A fix replaces a line's words by its start; "" hides it; unfixLine drops the fix.
+        const fixed = applyOp(applyOp(edited, { op: "fixLine", from: 0, text: " Dobrý večer. " }), {
+            op: "fixLine",
+            from: 5,
+            text: "",
+        });
+        expect(transcriptLines(raw, fixed).map((line) => line.text)).toEqual(["Dobrý večer.", "Tohle vystřihni."]);
+        expect(findInTranscript(transcriptLines(raw, fixed), "vecer").map((line) => line.from)).toEqual([0]);
+        const back = applyOp(fixed, { op: "unfixLine", from: 5 });
+        expect(transcriptLines(raw, back).map((line) => line.text)).toContain("Konec.");
+        expect(() => applyOp(back, { op: "unfixLine", from: 9 })).toThrow("fixed lines start at: 0 s");
     });
 
     test("writes every field the Swift decoder needs and refuses a newer version", () => {

@@ -28,6 +28,8 @@ struct EditProject: Codable, Equatable {
     var redactions: [Redaction]?
     /// Lines of text over the picture for a time (titles, step names); nil is none.
     var texts: [TextNote]?
+    /// Corrections to the cached transcript; nil is none.
+    var transcript: TranscriptSettings?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -131,6 +133,22 @@ struct EditProject: Codable, Equatable {
         var style: RedactionStyle = .blur
         /// What it hides ("API token"), for the lists; absent shows the style.
         var label: String?
+    }
+
+    /// The fixed words of a transcript line by its start in source milliseconds; an empty text hides the line.
+    struct TranscriptSettings: Codable, Equatable {
+        var fixes: [String: String] = [:]
+
+        static func key(_ line: CaptionTrack.Line) -> String { String(Int((Double(line.fromUs) / 1000).rounded())) }
+
+        /// The line as it should read, or nil when its fix hides it.
+        func apply(_ line: CaptionTrack.Line) -> CaptionTrack.Line? {
+            guard let fix = fixes[Self.key(line)] else { return line }
+            guard !fix.isEmpty else { return nil }
+            var fixed = line
+            fixed.text = fix
+            return fixed
+        }
     }
 
     enum TextStyle: String, Codable, CaseIterable {

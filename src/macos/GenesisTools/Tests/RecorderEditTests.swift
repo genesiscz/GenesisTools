@@ -245,6 +245,17 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertLessThan(lum(turn.x + 0.03, turn.y), 50)
     }
 
+    func testATranscriptFixUsesTheSameMillisecondKeyAsTheCLIAndHidesALineWithNoWords() throws {
+        // The CLI keys a fix by Math.round(start * 1000); a line read from 1.8 s holds 1799999 µs after the cast.
+        let settings = try JSONDecoder().decode(EditProject.TranscriptSettings.self,
+                                                from: Data(#"{"fixes":{"1800":"Fixed words","3000":""}}"#.utf8))
+        let line = CaptionTrack.Line(fromUs: Int64(1.8 * 1_000_000), toUs: 2_500_000, text: "Raw words")
+        XCTAssertEqual(EditProject.TranscriptSettings.key(line), "1800")
+        XCTAssertEqual(settings.apply(line)?.text, "Fixed words")
+        XCTAssertNil(settings.apply(CaptionTrack.Line(fromUs: 3_000_000, toUs: 4_000_000, text: "gone")))
+        XCTAssertEqual(settings.apply(CaptionTrack.Line(fromUs: 5_000_000, toUs: 6_000_000, text: "kept"))?.text, "kept")
+    }
+
     func testCaptionsReadTheTranscriptCacheAndFindTheLineSpokenAtASourceTime() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("captions-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

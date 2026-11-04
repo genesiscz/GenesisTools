@@ -2,7 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { type EditProject, outputTimeOf, transcriptCachePath } from "@genesiscz/utils/recording-editor/project";
+import {
+    type EditProject,
+    outputTimeOf,
+    projectPathFor,
+    readProject,
+    transcriptCachePath,
+    transcriptLines,
+} from "@genesiscz/utils/recording-editor/project";
 import { RECORDING_MANIFEST, readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
 import { listLibrary } from "./library";
@@ -138,11 +145,16 @@ export function searchLibrary(text: string) {
 
         try {
             const raw = SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true });
-            const segments = z
-                .object({ segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })) })
-                .safeParse(raw);
+            // Through the edit when there is one, so a corrected line is found by its fixed words.
+            const edit = row.movie ? projectPathFor(row.movie) : undefined;
+            const project = edit && existsSync(edit) ? readProject(edit) : undefined;
+            const lines = project
+                ? transcriptLines(raw, project).map((line) => ({ start: line.from, end: line.to, text: line.text }))
+                : z
+                      .object({ segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })) })
+                      .parse(raw).segments;
 
-            for (const segment of segments.success ? segments.data.segments : []) {
+            for (const segment of lines) {
                 if (folded(segment.text).includes(query)) {
                     hits.push({ ...base, kind: "line", at: segment.start, to: segment.end, text: segment.text.trim() });
                 }

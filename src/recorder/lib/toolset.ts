@@ -136,6 +136,18 @@ const movieMethods = [
     ),
     edit("untext", z.object({ id: z.string() }), "Removes a text by its id.", ["id"]),
     edit(
+        "fixLine",
+        z.object({ from: timeSchema, text: z.string().max(300) }).strict(),
+        'Corrects the transcript line spoken at `from` (any source time inside it, e.g. a line\'s from from transcript() or find()): text is the right words ("" hides the line). Kept in the edit, so captions, transcript(), find() and movies.search() read the fixed words, and a new transcription keeps them.',
+        ["from", "text"]
+    ),
+    edit(
+        "unfixLine",
+        z.object({ from: timeSchema }).strict(),
+        "Drops the correction of the line that starts at `from`.",
+        ["from"]
+    ),
+    edit(
         "autoZoom",
         z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
         "One zoom per group of recorded clicks, following the cursor; replaces earlier auto zooms, keeps manual ones, and throws when there are no clicks."
@@ -491,6 +503,36 @@ export class Movie {
 
     async untext(id: string) {
         return this.change([{ op: "untext", id }]);
+    }
+
+    /** Fixes the line spoken at `at` (any time inside it, so a time from find() or a still works). */
+    async fixLine(at: number | string, text: string) {
+        const opened = await openProject(this.recording);
+        const cache = transcriptCachePath(opened.project.source.video);
+
+        if (!existsSync(cache)) {
+            throw new Error("this movie has no transcript yet; call transcript() first, then fix its lines");
+        }
+
+        const raw = z
+            .object({ segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })) })
+            .parse(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }));
+        const seconds = timeToUs(at) / 1_000_000;
+        const line = raw.segments.find((segment) => segment.start <= seconds + 0.0005 && seconds < segment.end);
+
+        if (!line) {
+            const near = raw.segments
+                .map((segment) => segment.start)
+                .sort((a, b) => Math.abs(a - seconds) - Math.abs(b - seconds))
+                .slice(0, 3);
+            throw new Error(`no line is spoken at ${seconds} s; the nearest lines start at ${near.join(", ")} s`);
+        }
+
+        return this.change([{ op: "fixLine", from: line.start, text }]);
+    }
+
+    async unfixLine(from: number | string) {
+        return this.change([{ op: "unfixLine", from }]);
     }
 
     async autoZoom(options: { scale?: number } = {}) {

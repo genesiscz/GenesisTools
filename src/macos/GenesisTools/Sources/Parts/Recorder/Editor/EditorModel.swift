@@ -297,6 +297,20 @@ final class EditorModel {
         apply(next, rebuildMovie: false)
     }
 
+    /// Corrects a caption line's words (nil drops the fix, "" hides the line), as the `fixLine` op does.
+    func fixCaption(_ line: CaptionTrack.Line, text: String?) {
+        var next = project
+        var settings = next.transcript ?? EditProject.TranscriptSettings()
+        let key = EditProject.TranscriptSettings.key(line)
+        if let text {
+            settings.fixes[key] = String(text.prefix(300)).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            settings.fixes[key] = nil
+        }
+        next.transcript = settings.fixes.isEmpty ? nil : settings
+        apply(next, rebuildMovie: false)
+    }
+
     /// A copy of the selected zoom, hidden part or text right after the original, selected (⌘D).
     func duplicateSelection() {
         var next = project

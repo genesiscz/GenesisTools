@@ -544,6 +544,7 @@ private struct CaptionsInspector: View {
                         .accessibilityLabel("Caption text size")
                         .accessibilityIdentifier("recorder.style.captionsSize")
                 }
+                CaptionLinesList(model: model)
             } else {
                 HStack {
                     Text("Captions").font(.system(size: 13))
@@ -563,6 +564,57 @@ private struct CaptionsInspector: View {
 private func swiftColor(_ hex: String) -> Color {
     let color = Looks.color(hex)
     return Color(red: color.red, green: color.green, blue: color.blue)
+}
+
+/// The transcript's lines, each editable: a click on the time seeks to it, the words can be corrected (kept in the
+/// edit as a fix, so a new transcription keeps them), and the eye hides a line from the captions.
+private struct CaptionLinesList: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let lines = model.zoom.captionLines
+        let fixes = model.project.transcript?.fixes ?? [:]
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Lines").font(.system(size: 12.5, weight: .medium))
+                Spacer()
+                Text(verbatim: fixes.isEmpty ? Plural.count(lines.count, "line") : "\(Plural.count(fixes.count, "fix", "fixes")) of \(lines.count)")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+            }
+            LazyVStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    let key = EditProject.TranscriptSettings.key(line)
+                    let hidden = fixes[key] == ""
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Button {
+                            if let at = TimelineMap.outputTime(ofSource: line.fromUs, in: model.project) { model.seek(at) }
+                        } label: {
+                            Text(verbatim: TimelineMap.outputTime(ofSource: line.fromUs, in: model.project).map { formatClock($0) } ?? "cut")
+                                .font(.system(size: 11).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                                .frame(width: 38, alignment: .leading)
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip("Go to this line")
+                        TextField("", text: Binding(get: { hidden ? line.text : (fixes[key] ?? line.text) }, set: { value in
+                            model.fixCaption(line, text: value == line.text ? nil : value)
+                        }), axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundStyle(hidden ? RecorderPalette.dim : RecorderPalette.text)
+                        .strikethrough(hidden)
+                        .lineLimit(1...4)
+                        .accessibilityLabel("Caption line at \(formatClock(line.fromUs))")
+                        IconButton(systemName: hidden ? "eye.slash" : "eye", tooltip: hidden ? "Show this line again" : "Hide this line from the captions",
+                                   size: 10) {
+                            model.fixCaption(line, text: hidden ? nil : "")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
 }
 
 /// Where the export goes: the file's name in full, its folder dim under it, Reveal, and Change… (a save panel).

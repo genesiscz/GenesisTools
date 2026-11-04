@@ -123,6 +123,15 @@ export const redactionSchema = z.object({
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
+/**
+ * Corrections to the cached transcript, kept in the edit so a new transcription does not lose them: the fixed text
+ * of a line by its start in source milliseconds; an empty text hides the line. Captions, `transcript()`, `find()`
+ * and the library search read the fixed words.
+ */
+export const transcriptSettingsSchema = z.object({
+    fixes: z.record(z.string().regex(/^\d+$/), z.string().max(300)).default({}),
+});
+
 export const TEXT_STYLES = ["plate", "plain"] as const;
 
 /**
@@ -209,6 +218,8 @@ export const editProjectSchema = z.object({
     redactions: z.array(redactionSchema).optional(),
     /** Absent is none; written only once a text exists. */
     texts: z.array(textNoteSchema).optional(),
+    /** Absent is no corrections. */
+    transcript: transcriptSettingsSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -649,6 +660,16 @@ export const editOpSchema = z.discriminatedUnion("op", [
         })
         .strict(),
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
+    z
+        .object({
+            op: z.literal("fixLine"),
+            /** The line's `from` as transcript() gives it (source seconds). */
+            from: timeSchema,
+            /** The corrected words; "" hides the line. */
+            text: z.string().max(300),
+        })
+        .strict(),
+    z.object({ op: z.literal("unfixLine"), from: timeSchema }).strict(),
     z.object({ op: z.literal("autoZoom"), scale: z.number().min(1).max(4).optional() }).strict(),
     z.object({ op: z.literal("volume"), volume: z.number().min(0).max(2) }).strict(),
     z.object({ op: z.literal("mute"), track: z.number().int().nonnegative(), muted: z.boolean().optional() }).strict(),
@@ -877,6 +898,24 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             });
             return { ...project, texts: [...(project.texts ?? []), note] };
         }
+        case "fixLine": {
+            const key = String(Math.round(timeToUs(op.from) / 1000));
+            const fixes = { ...(project.transcript?.fixes ?? {}), [key]: op.text.trim() };
+            return { ...project, transcript: { fixes } };
+        }
+        case "unfixLine": {
+            const key = String(Math.round(timeToUs(op.from) / 1000));
+            const { [key]: removed, ...rest } = project.transcript?.fixes ?? {};
+
+            if (removed === undefined) {
+                const known = Object.keys(project.transcript?.fixes ?? {}).map((ms) => Number(ms) / 1000);
+                throw new Error(
+                    `no fix for the line at ${key} ms; fixed lines start at: ${known.join(", ") || "none"} s`
+                );
+            }
+
+            return { ...project, transcript: Object.keys(rest).length ? { fixes: rest } : undefined };
+        }
         case "untext": {
             const list = project.texts ?? [];
 
@@ -1022,6 +1061,7 @@ export function describeProject(project: EditProject, path: string) {
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
         captions: project.captions ?? null,
         keys: project.keys ?? null,
+        transcriptFixes: Object.keys(project.transcript?.fixes ?? {}).length,
         texts: (project.texts ?? []).map((note) => ({
             id: note.id,
             from: seconds(note.startUs),
@@ -1060,7 +1100,12 @@ export function transcriptLines(raw: unknown, project: EditProject): TranscriptL
     }
 
     const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+    const fixes = project.transcript?.fixes ?? {};
     return parsed.data.segments
+        .map((segment) => {
+            const fix = fixes[String(Math.round(segment.start * 1000))];
+            return fix === undefined ? segment : { ...segment, text: fix };
+        })
         .filter((segment) => segment.text.trim())
         .map((segment) => {
             // A line whose middle was cut is cut: its start alone sat on the edge of the clip before the cut.
