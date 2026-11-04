@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createLiveHub } from "./hub";
-import type { LiveFrame } from "./types";
+import { type LiveProducer, type LiveProducerTable, startLiveProducers } from "./producers";
+import type { LiveChannel, LiveDataFrame, LiveFrame } from "./types";
 
 function mockEmit() {
     const frames: LiveFrame[] = [];
@@ -96,5 +97,91 @@ describe("LiveHub", () => {
         hub.publish(frame);
         expect(serializations).toBe(1);
         expect(clients.every((client) => client.frames.some((candidate) => candidate.channel === "ports"))).toBe(true);
+    });
+});
+
+const PORTS_SNAPSHOT: LiveDataFrame = {
+    v: 1,
+    channel: "ports",
+    type: "snapshot",
+    payload: { lsofAvailable: true, ports: [], scannedAt: 7 },
+};
+
+/** A producer per channel that records its starts and stops; `ports` answers joiners with a snapshot. */
+function fakeTable() {
+    const log: string[] = [];
+    const make = (channel: LiveChannel, snapshot?: () => Promise<LiveDataFrame[]>) => (): LiveProducer => ({
+        start: () => log.push(`start ${channel}`),
+        stop: () => log.push(`stop ${channel}`),
+        ...(snapshot ? { snapshot } : {}),
+    });
+    const table: LiveProducerTable = {
+        ports: make("ports", async () => [PORTS_SNAPSHOT]),
+        pulse: make("pulse"),
+        "ai-usage": make("ai-usage"),
+        qa: make("qa"),
+        decisions: make("decisions"),
+        pending: make("pending"),
+        handoffs: make("handoffs"),
+    };
+
+    return { log, table };
+}
+
+describe("live producers", () => {
+    test("a producer starts on the first subscriber and stops on the last", () => {
+        const hub = createLiveHub();
+        const { log, table } = fakeTable();
+        const runner = startLiveProducers(hub, table);
+
+        const a = hub.open(mockEmit().emit, ["qa"]);
+        const b = hub.open(mockEmit().emit, ["qa", "decisions"]);
+        expect(log).toEqual(["start qa", "start decisions"]);
+
+        a.close();
+        expect(log).toEqual(["start qa", "start decisions"]);
+
+        hub.setChannels(b.connId, ["decisions"]);
+        expect(log.at(-1)).toBe("stop qa");
+
+        b.close();
+        expect(log.at(-1)).toBe("stop decisions");
+        expect(hub.subscriberCount("decisions")).toBe(0);
+
+        runner.stop();
+        hub._reset();
+    });
+
+    test("a connection that joins a running producer gets the snapshot, and only that connection", async () => {
+        const hub = createLiveHub();
+        const { log, table } = fakeTable();
+        startLiveProducers(hub, table);
+
+        const first = mockEmit();
+        hub.open(first.emit, ["ports"]);
+        const second = mockEmit();
+        const { connId } = hub.open(second.emit, ["ports"]);
+        await Bun.sleep(0);
+
+        expect(log).toEqual(["start ports"]);
+        expect(second.frames[0]).toMatchObject({ channel: "system", type: "hello", payload: { connId } });
+        expect(second.frames[1]).toEqual(PORTS_SNAPSHOT);
+        expect(first.frames.filter((f) => f.channel === "ports")).toEqual([]);
+        hub._reset();
+    });
+
+    test("a snapshot is not sent to a connection that dropped the channel before it resolved", async () => {
+        const hub = createLiveHub();
+        const { table } = fakeTable();
+        startLiveProducers(hub, table);
+
+        hub.open(mockEmit().emit, ["ports"]);
+        const late = mockEmit();
+        const { connId } = hub.open(late.emit, ["ports"]);
+        hub.setChannels(connId, ["pulse"]);
+        await Bun.sleep(0);
+
+        expect(late.frames.filter((f) => f.channel === "ports")).toEqual([]);
+        hub._reset();
     });
 });

@@ -13,20 +13,26 @@ export interface LiveHub {
     open(emit: SseEmitter, initial: LiveChannel[]): { connId: string; close: () => void };
     setChannels(connId: string, channels: LiveChannel[]): LiveChannel[] | null;
     publish(frame: LiveFrame): void;
-    /** Deliver a system frame to one connection only. */
+    /** Deliver a frame to one connection only: a system frame, or a data frame of a channel it subscribes to. */
     publishTo(connId: string, frame: LiveFrame): void;
-    subscriberCount(prefixOrChannel: string): number;
-    onDemandChange(cb: (channel: LiveChannel, delta: 1 | -1) => void): () => void;
+    subscriberCount(channel: LiveChannel): number;
+    /**
+     * Demand moved by one: `delta` 1 when connection `connId` added `channel`, -1 when it dropped it or closed. The
+     * connection id lets a producer send its current value to the connection that just joined.
+     */
+    onDemandChange(cb: DemandListener): () => void;
     _reset(): void;
 }
 
+export type DemandListener = (channel: LiveChannel, delta: 1 | -1, connId: string) => void;
+
 export function createLiveHub(options: { serialize?: (frame: LiveFrame) => string } = {}): LiveHub {
     const conns = new Map<string, Conn>();
-    const demand = new Map<string, number>();
-    const demandListeners = new Set<(c: LiveChannel, d: 1 | -1) => void>();
+    const demand = new Map<LiveChannel, number>();
+    const demandListeners = new Set<DemandListener>();
     const serialize = options.serialize ?? ((frame: LiveFrame) => SafeJSON.stringify(frame));
 
-    function bump(ch: LiveChannel, delta: 1 | -1): void {
+    function bump(ch: LiveChannel, delta: 1 | -1, connId: string): void {
         const n = (demand.get(ch) ?? 0) + delta;
         if (n <= 0) {
             demand.delete(ch);
@@ -35,26 +41,27 @@ export function createLiveHub(options: { serialize?: (frame: LiveFrame) => strin
         }
 
         for (const fn of demandListeners) {
-            fn(ch, delta);
+            fn(ch, delta, connId);
         }
     }
 
+    /** The set changes before the listeners run, so a snapshot sent from a +1 callback passes `publishTo`'s check. */
     function applyChannels(conn: Conn, next: LiveChannel[]): void {
+        const prev = conn.channels;
         const nextSet = new Set(next);
+        conn.channels = nextSet;
 
-        for (const ch of conn.channels) {
+        for (const ch of prev) {
             if (!nextSet.has(ch)) {
-                bump(ch, -1);
+                bump(ch, -1, conn.id);
             }
         }
 
         for (const ch of nextSet) {
-            if (!conn.channels.has(ch)) {
-                bump(ch, 1);
+            if (!prev.has(ch)) {
+                bump(ch, 1, conn.id);
             }
         }
-
-        conn.channels = nextSet;
     }
 
     function send(conn: Conn, frame: LiveFrame): void {
@@ -66,13 +73,15 @@ export function createLiveHub(options: { serialize?: (frame: LiveFrame) => strin
             const id = randomUUID();
             const conn: Conn = { id, emit, channels: new Set() };
             conns.set(id, conn);
-            applyChannels(conn, initial);
+            // Hello goes first: a producer answers a new subscriber with its snapshot from the demand callback, and
+            // the client must know its connection id before any data frame arrives.
             send(conn, {
                 v: 1,
                 channel: "system",
                 type: "hello",
-                payload: { connId: id, channels: [...initial] },
+                payload: { connId: id, channels: [...new Set(initial)] },
             });
+            applyChannels(conn, initial);
 
             return {
                 connId: id,
@@ -89,25 +98,21 @@ export function createLiveHub(options: { serialize?: (frame: LiveFrame) => strin
                 return null;
             }
 
-            applyChannels(conn, channels);
-            send(conn, {
-                v: 1,
-                channel: "system",
-                type: "subscribed",
-                payload: { channels: [...channels] },
-            });
-            return [...channels];
+            const next = [...new Set(channels)];
+            send(conn, { v: 1, channel: "system", type: "subscribed", payload: { channels: next } });
+            applyChannels(conn, next);
+            return next;
         },
 
         publish(frame) {
             let payload: string | undefined;
 
-            for (const conn of conns.values()) {
-                if (frame.channel === "system") {
-                    continue;
-                }
+            if (frame.channel === "system") {
+                return;
+            }
 
-                if (conn.channels.has(frame.channel as LiveChannel)) {
+            for (const conn of conns.values()) {
+                if (conn.channels.has(frame.channel)) {
                     payload ??= serialize(frame);
                     conn.emit.data(payload);
                 }
@@ -116,20 +121,20 @@ export function createLiveHub(options: { serialize?: (frame: LiveFrame) => strin
 
         publishTo(connId, frame) {
             const conn = conns.get(connId);
-            if (conn) {
-                send(conn, frame);
+            if (!conn) {
+                return;
             }
+
+            // A snapshot can land after its connection dropped the channel again.
+            if (frame.channel !== "system" && !conn.channels.has(frame.channel)) {
+                return;
+            }
+
+            send(conn, frame);
         },
 
-        subscriberCount(prefixOrChannel) {
-            let n = 0;
-            for (const [ch, c] of demand) {
-                if (ch === prefixOrChannel || ch.startsWith(`${prefixOrChannel}:`)) {
-                    n += c;
-                }
-            }
-
-            return n;
+        subscriberCount(channel) {
+            return demand.get(channel) ?? 0;
         },
 
         onDemandChange(cb) {

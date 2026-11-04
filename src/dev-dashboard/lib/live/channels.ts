@@ -1,32 +1,18 @@
+import { isLiveChannel } from "@app/dev-dashboard/lib/live/producers";
 import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
 
-const STATIC = new Set(["ports", "pulse", "qa", "ai-usage"]);
+export { isLiveChannel };
 
-export function isLiveChannel(s: string): s is LiveChannel {
-    if (STATIC.has(s)) {
-        return true;
-    }
-
-    if (s.startsWith("boards:") && s.length > "boards:".length) {
-        return true;
-    }
-
-    if (s.startsWith("daemon:") && s.length > "daemon:".length) {
-        return true;
-    }
-
-    return false;
-}
-
-export function parseChannelsQuery(raw: string | null): LiveChannel[] {
-    if (!raw?.trim()) {
-        return [];
-    }
-
+/** The channels of `?channels=a,b`: known names only, each once, in the order given. */
+export function parseChannels(raw: Iterable<unknown>): LiveChannel[] {
     const out: LiveChannel[] = [];
     const seen = new Set<string>();
 
-    for (const part of raw.split(",")) {
+    for (const part of raw) {
+        if (typeof part !== "string") {
+            continue;
+        }
+
         const t = part.trim();
         if (!t || seen.has(t) || !isLiveChannel(t)) {
             continue;
@@ -37,4 +23,12 @@ export function parseChannelsQuery(raw: string | null): LiveChannel[] {
     }
 
     return out;
+}
+
+export function parseChannelsQuery(raw: string | null): LiveChannel[] {
+    if (!raw?.trim()) {
+        return [];
+    }
+
+    return parseChannels(raw.split(","));
 }
