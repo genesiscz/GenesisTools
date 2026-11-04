@@ -1,10 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
-import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
+import {
+    agentsByTty as agentsOnEachTty,
+    liveSessionReads,
+    locateLiveSurfaces,
+    readTmuxJoin,
+} from "@genesiscz/utils/ai/live-sessions/locate";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
-import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
+import { liveTree } from "@genesiscz/utils/cmux/live-layout";
 import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,14 +21,11 @@ import { classifyPid } from "@genesiscz/utils/process-identity";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { killTmuxSessionExact, listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
-import { type CmuxTreeView, liveTree } from "./live-layout";
 import {
-    joinTmuxPanes,
     type LiveAgentSurface,
     liveAgentSurfaces,
     type ProcessQuery,
     pickAdoptable,
-    type TmuxPaneSurface,
     tmuxPaneStillShown,
     ttyProcessesShowAgent,
     ttyRunsAgent,
@@ -41,6 +43,7 @@ import {
     tmuxExitTarget,
 } from "./session-close";
 import type { SessionCreatedRecord, SessionStore } from "./session-store";
+import { titleMatchKeys } from "./title-match";
 
 const { log } = logger.scoped("cmux-session");
 
@@ -122,24 +125,6 @@ function isAlive(pid: number): boolean {
     return true;
 }
 
-/**
- * Which cmux surface shows each tmux pane, for discovery (messaging, list, adoption). The listings are bounded;
- * when tmux does not answer, no tmux-only session is found, which is the safe side for a read-only lookup.
- */
-async function liveTmuxJoin(tree: CmuxTreeView): Promise<Map<string, TmuxPaneSurface>> {
-    const [panes, clients] = await Promise.all([listTmuxPanes(), listTmuxClients()]);
-
-    if (!panes.ok || !clients.ok) {
-        log.debug(
-            { panes: panes.ok ? null : panes.reason, clients: clients.ok ? null : clients.reason },
-            "tmux did not answer; --via-tmux sessions are not discoverable this time"
-        );
-        return new Map();
-    }
-
-    return joinTmuxPanes({ panes: panes.items, clients: clients.items, tree });
-}
-
 /** The child dies at this deadline even if this process is killed first (child-deadline.ts). */
 const CHILD_DEADLINE_MS = 8_000;
 /** The parent stops waiting a little later, in case the watchdog itself is stuck. */
@@ -200,49 +185,23 @@ export function agentsOnTtyNow(tty: string): Set<SessionAgentId> {
 
 /** The agents this user runs on each tty now (`ttys012`, no `/dev/`), from one process-table read. */
 export function agentsByTty(): Map<string, Set<SessionAgentId>> {
-    const agents = new Map<string, Set<SessionAgentId>>();
-
-    for (const process of listProcesses()) {
-        if (!process.tty || !process.command || process.zombie || process.uid !== globalThis.process.getuid?.()) {
-            continue;
-        }
-
-        for (const agent of SESSION_AGENT_IDS) {
-            if (ttyRunsAgent(process.command, agent)) {
-                const tty = process.tty.replace(/^\/dev\//, "");
-                const found = agents.get(tty) ?? new Set<SessionAgentId>();
-                found.add(agent);
-                agents.set(tty, found);
-            }
-        }
-    }
-
-    return agents;
+    return agentsOnEachTty(listProcesses(), globalThis.process.getuid?.());
 }
 
-/** Discover running native sessions by joining background cmux state, journals, tmux clients and current processes. */
+/**
+ * Discover running native sessions: the surface rows of the live-session locator (`@genesiscz/utils/ai/live-sessions`),
+ * with this tool's harness-aware tab-title keys. One read each of the tree, tmux, the journal, the pins and `ps`.
+ */
 export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
-    const tree = await liveTree();
-    const pins = await loadPins({ readOnly: true });
-    const agents = agentsByTty();
-
-    return liveAgentSurfaces({
-        refs: loadAllSessionCmuxRefs().values(),
-        tree,
-        tmux: await liveTmuxJoin(tree),
-        providerOf: (entry) => resolveRefsProvider(entry, pins.get(entry.sessionId)),
-        agentOnTty: (tty) => {
-            const found = agents.get(tty.replace(/^\/dev\//, ""));
-            return found?.size === 1 ? [...found][0] : undefined;
-        },
-        titles: (query, provider) => findSessionsByTitle(query, { provider }),
-    });
+    // A cmux that does not answer is an error here, as before the locator: the messaging and resume callers report it.
+    const reads = { ...liveSessionReads(), tree: liveTree };
+    return locateLiveSurfaces(reads, reads.processes(), titleMatchKeys);
 }
 
 /** Every live agent session in cmux that `close` could adopt (newest session per surface, caller excluded). */
 export async function liveAdoptableSessions(): Promise<AdoptedSession[]> {
     const tree = await liveTree();
-    const tmux = await liveTmuxJoin(tree);
+    const tmux = await readTmuxJoin(tree);
     const refs = [...loadAllSessionCmuxRefs().values()];
     const providerOf = (entry: SessionCmuxRefs) => resolveRefsProvider(entry, undefined);
     const found: AdoptedSession[] = [];
@@ -295,7 +254,7 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                 query,
                 refs: loadAllSessionCmuxRefs().values(),
                 tree,
-                tmux: await liveTmuxJoin(tree),
+                tmux: await readTmuxJoin(tree),
                 providerOf: (entry) => resolveRefsProvider(entry, undefined),
             });
             log.debug({ query, adopted: adopted?.sessionId ?? null, surface: adopted?.surface ?? null }, "adopt");

@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 
 import { windowList } from "@genesiscz/utils/cmux/lib/socket";
+import { parseCmuxTree } from "@genesiscz/utils/cmux/live-layout";
 import { focusedPlace } from "@genesiscz/utils/cmux/open-command";
 import {
     buildWorkspaceCreateArgs,
@@ -16,7 +17,6 @@ import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { createTmuxSession, killTmuxSession, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
-import { parseCmuxTree } from "./live-layout";
 import { agentRunCommand, type SessionAgentId, withPidNote } from "./session-agents";
 
 const { log } = logger.scoped("cmux-session");
