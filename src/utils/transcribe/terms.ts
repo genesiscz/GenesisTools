@@ -615,6 +615,39 @@ export function findSuspectTerms(options: {
         .sort((a, b) => b.candidates[0]!.confidence - a.candidates[0]!.confidence || b.occurrences - a.occurrences);
 }
 
+function foldWord(word: string): string {
+    return word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/**
+ * The heard words stay as said, so the term is no replacement for them: a code name from the meeting's documents
+ * (`employeesOnly` for "employee only", `DocumentListItemDto`), whose meaning the document rules add after the words,
+ * or another case of the same Czech word ("referenci" and "Reference", "sekcí" and "Sekce"). A glossary name with an
+ * inner capital (`JavaScript`), a cut word ("katal" for "Katalog") and a casing fix ("jdz" for "JDZ") still replace.
+ */
+export function keepsHeardWords(heard: string, candidate: { term: string; source: string }): boolean {
+    if (candidate.source === "context" && /\p{Ll}\p{Lu}|[._/]/u.test(candidate.term)) {
+        return true;
+    }
+
+    const term = candidate.term;
+
+    const [said, known] = [foldWord(heard), foldWord(term)];
+
+    if (said.includes(" ") || known.includes(" ") || said === known) {
+        return false;
+    }
+
+    let common = 0;
+
+    while (common < said.length && said[common] === known[common]) {
+        common += 1;
+    }
+
+    const shorter = Math.min(said.length, known.length);
+    return common < shorter && common >= Math.max(4, shorter - 2) && Math.abs(said.length - known.length) <= 2;
+}
+
 /** Every distinct word of a transcript, without a sentence dot: what a word check should check in one batch. */
 export function transcriptWords(entries: TranscriptEntry[]): Set<string> {
     return new Set(entries.flatMap((entry) => words(entry.text).map(bareWord)));

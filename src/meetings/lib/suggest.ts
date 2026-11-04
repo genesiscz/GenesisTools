@@ -27,6 +27,7 @@ import {
     DEV_GLOSSARY,
     findSuspectTerms,
     findUnknownWords,
+    keepsHeardWords,
     type RawTermEvidence,
     rawTermEvidence,
     termsFromText,
@@ -425,7 +426,8 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
         ...documentItems(options),
         ...fuzzyItems,
         ...suspects.flatMap((suspect) => {
-            const best = suspect.candidates[0];
+            // A code name or another case of the same word keeps the heard words: no replacement to suggest.
+            const best = suspect.candidates.find((candidate) => !keepsHeardWords(suspect.heard, candidate));
 
             if (!best) {
                 return [];
