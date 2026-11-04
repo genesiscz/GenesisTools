@@ -52,13 +52,15 @@ export interface LiveChannelFrames {
 
 export type LiveChannel = keyof LiveChannelFrames;
 
-/** The frames of one channel, discriminated by `type`. */
-export type LiveFrameOf<C extends LiveChannel> = {
-    [T in keyof LiveChannelFrames[C] & string]: { v: 1; channel: C; type: T; payload: LiveChannelFrames[C][T] };
-}[keyof LiveChannelFrames[C] & string];
+/** The frames of one channel, discriminated by `type`. Distributes over a union of channels. */
+export type LiveFrameOf<C extends LiveChannel> = C extends LiveChannel
+    ? {
+          [T in keyof LiveChannelFrames[C] & string]: { v: 1; channel: C; type: T; payload: LiveChannelFrames[C][T] };
+      }[keyof LiveChannelFrames[C] & string]
+    : never;
 
 /** A frame of any data channel. */
-export type LiveDataFrame = { [C in LiveChannel]: LiveFrameOf<C> }[LiveChannel];
+export type LiveDataFrame = LiveFrameOf<LiveChannel>;
 
 /** The stream's own frames: the connection id on open, the channel set after a change, a server error. */
 export type LiveSystemFrame =

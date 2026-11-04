@@ -119,6 +119,11 @@ const ROUTES: FixtureRoute[] = [
     // System and network.
     { method: "GET", path: paths.pulse(), handle: () => mockPulse() },
     {
+        method: "POST",
+        path: paths.liveSubscribe(),
+        handle: ({ body }) => ({ ok: true, channels: Array.isArray(body.channels) ? body.channels : [] }),
+    },
+    {
         method: "GET",
         path: "/api/system/pulse/history",
         handle: ({ query }) => mockHistory(query.get("metric") ?? "cpu", numberOf(query.get("minutes") ?? 60)),
@@ -369,6 +374,17 @@ export function fixtureEventSource(url: string): EventSourceLike {
         return replay([
             { delayMs: 400, data: { type: "pending", id: "ask_fixture" } },
             { delayMs: 800, data: { type: "qa", ...MOCK_QA[0] } },
+        ]);
+    }
+
+    if (pathname === paths.live()) {
+        // The live stream says hello like the Mac's, then sends the pulse fixture when pulse is asked for.
+        const channels = (new URL(url).searchParams.get("channels") ?? "").split(",").filter(Boolean);
+        return replay([
+            { delayMs: 0, data: { v: 1, channel: "system", type: "hello", payload: { connId: "fixture", channels } } },
+            ...(channels.includes("pulse")
+                ? [{ delayMs: 50, data: { v: 1, channel: "pulse", type: "snapshot", payload: mockPulse() } }]
+                : []),
         ]);
     }
 
