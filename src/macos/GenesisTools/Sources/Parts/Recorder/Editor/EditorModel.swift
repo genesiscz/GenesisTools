@@ -576,14 +576,16 @@ final class EditorModel {
         }
     }
 
-    func removeIdle() {
+    /// Cuts the still, silent parts, or with `speed` plays them that much faster (so time is seen to pass).
+    func removeIdle(speed: Int? = nil) {
         guard !isRemovingIdle else { return }
         saveTask?.cancel()
         saveNow()
         isRemovingIdle = true
         show("Looking for parts where nothing moves and nothing is heard…", error: false)
         let before = durationUs
-        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"removeIdle"}"#]) { [weak self] status, _, stderr in
+        let op = speed.map { #"{"op":"removeIdle","speed":\#($0)}"# } ?? #"{"op":"removeIdle"}"#
+        ToolsRunner.run(["recorder", "apply", store.url.path, op]) { [weak self] status, _, stderr in
             guard let self else { return }
             self.isRemovingIdle = false
             guard status == 0 else {
@@ -594,7 +596,8 @@ final class EditorModel {
             // The watcher may not have delivered the file yet; read it now so the message has the new length.
             if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data) { self.adoptExternal(next) }
             let saved = before - self.durationUs
-            self.show(saved > 0 ? "Removed \(formatClock(saved, tenths: true)) of still, silent parts; ⌘Z brings them back."
+            let verb = speed.map { "Sped up the still, silent parts \($0)×, saving" } ?? "Removed"
+            self.show(saved > 0 ? "\(verb) \(formatClock(saved, tenths: true)) of still, silent parts; ⌘Z brings them back."
                                 : "No still, silent part of 2 s or more was found.", error: false)
         }
     }

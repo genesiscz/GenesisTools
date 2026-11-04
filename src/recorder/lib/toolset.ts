@@ -205,9 +205,10 @@ const movieMethods = [
             .object({
                 minSeconds: z.number().min(0.5).max(600).optional(),
                 keepSeconds: z.number().min(0).max(5).optional(),
+                speed: z.number().min(2).max(16).optional(),
             })
             .strict(),
-        "Cuts every stretch where the picture does not change AND nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end; a still picture under speech stays. The result adds removed: [[from, to], …] in source seconds."
+        "Cuts every stretch where the picture does not change AND nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end; a still picture under speech stays. speed (2–16) plays those stretches that much faster instead of cutting them. The result adds removed: [[from, to], …] in source seconds."
     ),
     defineMethod({
         name: "polish",
@@ -528,9 +529,14 @@ export class Movie {
         return { ...describeProject(opened.project, opened.path), steps };
     }
 
-    async removeIdle(options: { minSeconds?: number; keepSeconds?: number } = {}) {
+    async removeIdle(options: { minSeconds?: number; keepSeconds?: number; speed?: number } = {}) {
         return this.change([
-            { op: "removeIdle", minSeconds: options.minSeconds ?? 2, keepSeconds: options.keepSeconds ?? 0.3 },
+            {
+                op: "removeIdle",
+                minSeconds: options.minSeconds ?? 2,
+                keepSeconds: options.keepSeconds ?? 0.3,
+                ...(options.speed ? { speed: options.speed } : {}),
+            },
         ]);
     }
 

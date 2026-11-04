@@ -278,6 +278,10 @@ private struct ClipInspector: View {
                 }
                 .disabled(model.isRemovingIdle)
                 .instantTooltip("Cuts every stretch of 2 s or more where the picture does not change and nothing is heard")
+                WideButton(title: "Speed Up Still Parts (8×)", systemImage: "forward.fill") { model.removeIdle(speed: 8) }
+                    .disabled(model.isRemovingIdle)
+                    .instantTooltip("Plays those stretches 8× faster instead of cutting them, so the viewer sees time pass")
+                    .accessibilityIdentifier("recorder.clip.speedIdle")
             }
         }
     }

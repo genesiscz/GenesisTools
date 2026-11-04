@@ -679,6 +679,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             minSeconds: z.number().min(0.5).max(600).default(2),
             /** Kept at each end of a cut, so the change before and after it still plays. */
             keepSeconds: z.number().min(0).max(5).default(0.3),
+            /** Plays the still parts this many times faster instead of cutting them, so time is seen to pass. */
+            speed: z.number().min(2).max(16).optional(),
         })
         .strict(),
     z
@@ -757,7 +759,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
 
             for (const [from, to] of facts.idleUs) {
                 if (to - from >= MINIMUM_CLIP_US) {
-                    next = cutRange(next, from, to);
+                    next = op.speed ? speedRange(next, from, to, op.speed) : cutRange(next, from, to);
                 }
             }
 
