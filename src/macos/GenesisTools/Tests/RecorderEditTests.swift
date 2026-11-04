@@ -35,6 +35,20 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(TimelineMap.split(edit, atOutput: 0))
     }
 
+    func testTrimToPlayheadCutsOneSideAndKeepsTheFrame() throws {
+        let edit = project([.init(id: "a", fromUs: 0, toUs: 2_000_000), .init(id: "b", fromUs: 4_000_000, toUs: 8_000_000, speed: 2)])
+        let (start, startPlayhead) = try XCTUnwrap(TimelineMap.trimToPlayhead(edit, atOutput: 3_000_000, side: .start))
+
+        XCTAssertEqual(start.clips[1].fromUs, 6_000_000)
+        XCTAssertEqual(startPlayhead, 2_000_000, "the frame under the playhead now plays where the clip starts")
+        XCTAssertEqual(TimelineMap.sourceTime(atOutput: startPlayhead, in: start), 6_000_000)
+        let (end, endPlayhead) = try XCTUnwrap(TimelineMap.trimToPlayhead(edit, atOutput: 1_000_000, side: .end))
+        XCTAssertEqual(end.clips[0].toUs, 1_000_000)
+        XCTAssertEqual(endPlayhead, 1_000_000)
+        XCTAssertEqual(end.clips[1], edit.clips[1], "the other clip stays")
+        XCTAssertNil(TimelineMap.trimToPlayhead(edit, atOutput: 2_000_000, side: .start), "a clip's edge trims nothing")
+    }
+
     func testDeleteKeepsTheLastClipAndTrimStaysInsideTheSource() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 3_000_000), .init(id: "b", fromUs: 3_000_000, toUs: 10_000_000)])
         let deleted = try XCTUnwrap(TimelineMap.delete(edit, clip: "a"))

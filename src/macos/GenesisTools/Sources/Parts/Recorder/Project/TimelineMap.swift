@@ -105,6 +105,26 @@ enum TimelineMap {
         return next
     }
 
+    /// Which side of the playhead a trim keeps: `[` keeps what follows it, `]` what came before.
+    enum TrimSide { case start, end }
+
+    /// Trims the clip under `outUs` so it starts (`.start`) or ends (`.end`) at the playhead, and the output time
+    /// the playhead's frame then plays at; nil at a clip's edge.
+    static func trimToPlayhead(_ project: EditProject, atOutput outUs: Int64, side: TrimSide) -> (EditProject, Int64)? {
+        guard let placed = clip(atOutput: outUs, in: project) else { return nil }
+        let sourceUs = sourceTime(atOutput: outUs, in: project)
+        guard sourceUs - placed.clip.fromUs >= minimumClipUs, placed.clip.toUs - sourceUs >= minimumClipUs else { return nil }
+        var next = project
+        switch side {
+        case .start:
+            next.clips[placed.index].fromUs = sourceUs
+            return (next, placed.outStartUs)
+        case .end:
+            next.clips[placed.index].toUs = sourceUs
+            return (next, outUs)
+        }
+    }
+
     static func setSpeed(_ project: EditProject, clip id: String, speed: Double) -> EditProject? {
         guard let index = project.clips.firstIndex(where: { $0.id == id }) else { return nil }
         var next = project

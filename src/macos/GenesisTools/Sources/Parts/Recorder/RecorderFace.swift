@@ -317,6 +317,8 @@ enum EditorKeys {
             switch (event.charactersIgnoringModifiers?.lowercased() ?? "", command) {
             case (" ", false): model.togglePlay()
             case ("s", false): model.splitAtPlayhead()
+            case ("[", false): model.trimToPlayhead(.start)
+            case ("]", false): model.trimToPlayhead(.end)
             case ("z", false): model.addZoom()
             case ("z", true): shift ? model.redo() : model.undo()
             case ("s", true): model.saveNow()

@@ -265,6 +265,16 @@ final class EditorModel {
         apply(next, rebuildMovie: true)
     }
 
+    /// `[` / `]`: cuts the clip under the playhead from its start to here, or from here to its end.
+    func trimToPlayhead(_ side: TimelineMap.TrimSide) {
+        guard let (next, playhead) = TimelineMap.trimToPlayhead(project, atOutput: clock.outUs, side: side) else {
+            show("Nothing to trim here: the playhead is at the edge of a clip.", error: false)
+            return
+        }
+        clock.outUs = playhead
+        apply(next, rebuildMovie: true)
+    }
+
     func deleteSelection() {
         switch selection {
         case let .clip(id):

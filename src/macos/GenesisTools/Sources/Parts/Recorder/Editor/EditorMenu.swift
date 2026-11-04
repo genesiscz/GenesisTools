@@ -36,6 +36,8 @@ enum EditorMenu {
         EditorCommand(title: "Pause", key: "k", label: "K") { $0.shuttle("k") },
         EditorCommand(title: "Play (Again: Faster)", key: "l", label: "L") { $0.shuttle("l") },
         EditorCommand(title: "Split at Playhead", key: "s", label: "S") { $0.splitAtPlayhead() },
+        EditorCommand(title: "Trim Start to Playhead", key: "[", label: "[") { $0.trimToPlayhead(.start) },
+        EditorCommand(title: "Trim End to Playhead", key: "]", label: "]") { $0.trimToPlayhead(.end) },
         EditorCommand(title: "Add Zoom at Playhead", key: "z", label: "Z") { $0.addZoom() },
         EditorCommand(title: "Set Part In", key: "i", label: "I") { $0.markIn() },
         EditorCommand(title: "Set Part Out", key: "o", label: "O") { $0.markOut() },
