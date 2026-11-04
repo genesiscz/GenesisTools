@@ -27,7 +27,10 @@ final class Filmstrip {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: video))
             generator.maximumSize = CGSize(width: 240, height: 150)
             generator.appliesPreferredTrackTransform = true
-            let tolerance = CMTime(value: spacing / 2, timescale: 1_000_000)
+            // A strip needs a frame near each time, not that frame: snapping to a keyframe skips the decode from the
+            // keyframe to the time. With x264's 4 s keyframe interval and half a tile of tolerance, a 60 s 4K movie
+            // showed no strip after 8 s.
+            let tolerance = CMTime(value: max(spacing, 2_000_000), timescale: 1_000_000)
             generator.requestedTimeToleranceBefore = tolerance
             generator.requestedTimeToleranceAfter = tolerance
             let times = stride(from: Int64(0), to: durationUs, by: Int(spacing)).map { CMTime(value: $0, timescale: 1_000_000) }
@@ -38,6 +41,11 @@ final class Filmstrip {
                 guard let image = try? result.image else { continue }
                 let requested = Int64((result.requestedTime.seconds * 1_000_000).rounded())
                 made.append(Tile(id: Int(requested / spacing), sourceUs: requested, image: image))
+                // The strip fills in as tiles arrive instead of all at the end.
+                if made.count % 12 == 0 {
+                    let partial = made.sorted { $0.sourceUs < $1.sourceUs }
+                    await MainActor.run { self?.tiles = partial }
+                }
             }
             made.sort { $0.sourceUs < $1.sourceUs }
             span.end()
@@ -46,11 +54,11 @@ final class Filmstrip {
         }
     }
 
-    /// The tile nearest a source time.
+    /// The tile at or before a source time, by its slot: the list can lack slots (a frame that did not decode, or a
+    /// strip still loading), so a position in the array is not the slot.
     func tile(atSource us: Int64) -> Tile? {
-        guard !tiles.isEmpty else { return nil }
-        let index = Int((Double(us) / Double(spacingUs)).rounded(.down))
-        return tiles[min(max(0, index), tiles.count - 1)]
+        let slot = Int((Double(us) / Double(spacingUs)).rounded(.down))
+        return tiles.last(where: { $0.id <= slot }) ?? tiles.first
     }
 }
 
