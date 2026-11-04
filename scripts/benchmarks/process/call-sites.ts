@@ -500,9 +500,9 @@ export const CALL_SITES: CallSite[] = [
     {
         id: "say-caller-ancestry",
         file: "src/say/lib/caller.ts",
-        spawn: "ps -o pid=,ppid= / -o pid=,command= over the ancestry",
+        spawn: "ps -o pid=,ppid= / -o pid=,command= over the ancestry (the identity's process facet)",
         frequency: "per-command",
-        run: async () => (await import("@app/say/lib/caller")).captureAncestry(process.pid),
+        run: async () => (await import("@app/say/lib/caller")).captureCallerContext(),
     },
     {
         id: "ai-active-agents",
