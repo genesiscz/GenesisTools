@@ -33,6 +33,7 @@ export const GATEWAY_ROWS = {
     agents: ENDPOINTS.gatewayAgents,
     board: ENDPOINTS.gatewayBoard,
     gates: ENDPOINTS.gatewayGates,
+    glance: ENDPOINTS.gatewayGlance,
     approvals: ENDPOINTS.gatewayApprovals,
     launch: ENDPOINTS.gatewayLaunch,
     watching: ENDPOINTS.gatewayWatching,

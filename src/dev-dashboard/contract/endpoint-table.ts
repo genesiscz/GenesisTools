@@ -16,6 +16,7 @@ import type {
 } from "@app/dev-dashboard/contract/approvals";
 import type { MorningBriefDto } from "@app/dev-dashboard/contract/brief";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
+import type { GlanceDto } from "@app/dev-dashboard/contract/glance";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
 import type { HealthDto, WakeRelayDto } from "@app/dev-dashboard/contract/wake";
@@ -365,6 +366,11 @@ export const ENDPOINTS = {
      * Allows or denies one waiting tool call (F8). A keyed write behind the full login, not the act scope: an act token
      * answers one decision letter, and an allow runs a command on the Mac. The phone asks for Face ID before an allow.
      */
+    /**
+     * The phone's glance (F13, F16, F17, F18): the waiting count, the fleet, the newest decisions and the closest limit,
+     * read by the icon badge, the Lock Screen widgets and the fleet Live Activity. Read only.
+     */
+    gatewayGlance: row<GatewayInput, GlanceDto>("GET", "/api/gateway/glance", "read", "slow"),
     approvalsAnswer: row<ApprovalAnswerInput, ApprovalReceiptDto>(
         "POST",
         "/api/approvals/answer",
