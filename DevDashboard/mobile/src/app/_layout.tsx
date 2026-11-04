@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ClientProvider } from "@/api/client-provider";
 import { wireAppStateFocus } from "@/lib/query";
+import { LiveCacheProvider } from "@/live/provider";
 import { createConnectionQueryClient } from "@/lib/query-client";
 import { useConnectionStore } from "@/state/connection-store";
 import { ErrorBoundary } from "@/ui/ErrorBoundary";
@@ -74,7 +75,9 @@ function ConnectionSession({ children }: { children: ReactNode }) {
 
     return (
         <QueryClientProvider client={queryClient}>
-            <ClientProvider>{children}</ClientProvider>
+            <ClientProvider>
+                <LiveCacheProvider>{children}</LiveCacheProvider>
+            </ClientProvider>
         </QueryClientProvider>
     );
 }

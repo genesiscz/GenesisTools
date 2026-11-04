@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useDashboardClient } from "@/api/client-provider";
 import { pulseHistoryQuery, pulseQuery, weatherQuery } from "@/features/pulse/queries";
+import { useLiveRefetchInterval } from "@/live/provider";
 
 /**
  * Component-facing Pulse hooks (D32). Components import THESE — never raw `useQuery`. Each hook is
@@ -12,8 +13,10 @@ import { pulseHistoryQuery, pulseQuery, weatherQuery } from "@/features/pulse/qu
  *     export const useX = () => useQuery(xQuery(useDashboardClient()));
  */
 
+/** The pulse snapshot. The live `pulse` channel writes it while the stream is up; it polls only while it is not. */
 export function usePulse() {
-    return useQuery(pulseQuery(useDashboardClient()));
+    const refetchInterval = useLiveRefetchInterval("pulse");
+    return useQuery({ ...pulseQuery(useDashboardClient()), refetchInterval });
 }
 
 export function usePulseHistory(metric: string, minutes: number) {
