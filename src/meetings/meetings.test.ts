@@ -11,7 +11,7 @@ import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { writePidFile } from "@genesiscz/utils/process/pidfile";
+import { buildPidRecord, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { callRecorder, listLiveRecordings, RecorderClient, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
 import {
     CaptureError,
@@ -2863,6 +2863,28 @@ test("characterization (stage 5): a live recorder's claim is refused and left as
     ).rejects.toThrow();
     expect(readFileSync(files.pid, "utf8")).toBe(before);
     expect(existsSync(files.state)).toBe(false);
+});
+
+test("characterization (pid claim): a recycled pid's claim is taken over, an unreadable one is refused and kept", async () => {
+    const store = new MeetingStore(new Storage("recorder-claim-kinds"));
+    const record = await store.create(
+        { title: "Claim fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const files = recorderFiles(store);
+    const capture = meetingsConfigSchema.parse({}).global.capture;
+    // Our pid under another program's command line reads as a recycled pid.
+    writeFileSync(files.pid, serializePidRecord({ ...buildPidRecord(), command: "/usr/bin/another-program" }));
+    // A file where the frames directory goes ends the start after the claim, which then releases it.
+    writeFileSync(join(store.folder(record.id), "frames"), "blocks the frames directory");
+
+    await expect(runRecorder({ store, meetingId: record.id, capture })).rejects.toThrow();
+    expect(existsSync(files.pid)).toBe(false);
+
+    writeFileSync(files.pid, "not a pid");
+
+    await expect(runRecorder({ store, meetingId: record.id, capture })).rejects.toThrow();
+    expect(readFileSync(files.pid, "utf8")).toBe("not a pid");
 });
 
 test("a stale recorder claim is recovered and an initialization failure releases it", async () => {

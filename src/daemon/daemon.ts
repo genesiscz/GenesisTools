@@ -43,7 +43,7 @@ export { attemptStaleTakeover };
  * will shortly be) the live owner, so we re-check and exit cleanly with a
  * distinct code instead of retrying forever.
  */
-async function claimPidfile(pidFile: string): Promise<void> {
+export async function claimPidfile(pidFile: string): Promise<void> {
     for (let attempt = 1; attempt <= STALE_TAKEOVER_MAX_ATTEMPTS; attempt++) {
         // Fresh create first — also the recovery path when a previous racer's
         // takeover left the slot momentarily empty.

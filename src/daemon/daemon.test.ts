@@ -1,10 +1,17 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { readPidRecord } from "@genesiscz/utils/process/pidfile";
-import { attemptStaleTakeover, getDaemonPid, isDaemonCommand, verifyPidfileOwnership } from "./daemon";
+import { readPidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
+import {
+    attemptStaleTakeover,
+    claimPidfile,
+    EXIT_ALREADY_RUNNING,
+    getDaemonPid,
+    isDaemonCommand,
+    verifyPidfileOwnership,
+} from "./daemon";
 
 /**
  * Waits for `marker` to appear in `stream`, reading incrementally so callers don't have to
@@ -195,5 +202,77 @@ describe("daemon pidfile atomic takeover", () => {
 
         rmSync(pidFile);
         expect(verifyPidfileOwnership(pidFile)).toBe(false);
+    });
+});
+
+describe("characterization: the daemon's pid claim", () => {
+    let dir: string;
+    let pidFile: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "daemon-claim-test-"));
+        pidFile = join(dir, "daemon.pid");
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** The claim's outcome: "claimed", or the exit code it would leave with. */
+    async function claim(): Promise<"claimed" | number> {
+        const exit = spyOn(process, "exit").mockImplementation((code) => {
+            throw Object.assign(new Error("exit"), { exitCode: code });
+        });
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_DAEMON_DIR: dir }, () => claimPidfile(pidFile));
+            return "claimed";
+        } catch (error) {
+            const code = (error as { exitCode?: number }).exitCode;
+
+            if (code === undefined) {
+                throw error;
+            }
+
+            return code;
+        } finally {
+            exit.mockRestore();
+        }
+    }
+
+    test("no pidfile, a dead owner, an unreadable file and our own pid are claimed", async () => {
+        expect(await claim()).toBe("claimed");
+        expect(readPidRecord(pidFile)?.pid).toBe(process.pid);
+
+        const dead = Bun.spawnSync([process.execPath, "-e", ""], { env: process.env }).pid;
+        rmSync(pidFile);
+        writePidFile(pidFile, { pid: dead });
+        expect(await claim()).toBe("claimed");
+        expect(readPidRecord(pidFile)?.pid).toBe(process.pid);
+
+        writeFileSync(pidFile, "not a pid");
+        expect(await claim()).toBe("claimed");
+        expect(readPidRecord(pidFile)?.pid).toBe(process.pid);
+
+        rmSync(pidFile);
+        writePidFile(pidFile);
+        expect(await claim()).toBe("claimed");
+        expect(readPidRecord(pidFile)?.pid).toBe(process.pid);
+        expect(readdirSync(dir)).toEqual(["daemon.pid"]);
+    });
+
+    test("a live owner keeps its pidfile and the claim exits as already running", async () => {
+        const owner = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+
+        try {
+            writePidFile(pidFile, { pid: owner.pid });
+            const before = readFileSync(pidFile, "utf-8");
+
+            expect(await claim()).toBe(EXIT_ALREADY_RUNNING);
+            expect(readFileSync(pidFile, "utf-8")).toBe(before);
+        } finally {
+            owner.kill();
+            await owner.exited;
+        }
     });
 });
