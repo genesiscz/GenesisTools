@@ -86,6 +86,11 @@ export default function PairScreen() {
     );
 
     useEffect(() => {
+        // A second link can land while this screen is still mounted: drop what the last link left first.
+        setError(null);
+        setAsking(false);
+        setConfirming(false);
+
         if (!pairing) {
             setError("That is not a DevDashboard pairing link.");
             return;
