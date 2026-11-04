@@ -168,6 +168,28 @@ private struct RulerView: View {
 }
 
 /// "01:05", or "01:05.4" when tenths matter.
+/// While a segment is dragged: where it starts in the movie and how long it lasts, over the segment, so a move to a
+/// time is exact without the inspector.
+struct DragTimeTag: View {
+    let project: EditProject
+    let startUs: Int64
+    let endUs: Int64
+
+    var body: some View {
+        let start = TimelineMap.outputTime(ofSource: startUs, in: project) ?? startUs
+        Text(verbatim: "\(formatClock(start, tenths: true)) · \(String(format: "%.1f", Double(endUs - startUs) / 1_000_000)) s")
+            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .frame(height: 15)
+            .background(Capsule().fill(Color.black.opacity(0.8)))
+            .fixedSize()
+            .offset(y: -18)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 func formatClock(_ us: Int64, tenths: Bool = false) -> String {
     let total = max(0, Double(us) / 1_000_000)
     let minutes = Int(total) / 60
@@ -659,6 +681,9 @@ private struct MarkSegment: View {
                     move(moved, moved + length)
                 }.onEnded { _ in moveFrom = nil; model.endSnap() })
                 .instantTooltip("\(name): drag to move, drag an edge to trim")
+                .overlay(alignment: .topLeading) {
+                    if moveFrom != nil { DragTimeTag(project: model.project, startUs: startUs, endUs: endUs) }
+                }
                 .offset(x: scale.x(first.fromUs), y: Self.top)
                 .accessibilityHidden(true)
                 .liveRow(selected: selected)
@@ -834,6 +859,9 @@ private struct HiddenSegment: View {
                 .overlay(alignment: .leading) { edgeHandle(leading: true, width: min(7, width / 3)) }
                 .overlay(alignment: .trailing) { edgeHandle(leading: false, width: min(7, width / 3)) }
                 .frame(width: width, height: height)
+                .overlay(alignment: .topLeading) {
+                    if moveFrom != nil { DragTimeTag(project: model.project, startUs: redaction.startUs, endUs: redaction.endUs) }
+                }
                 .offset(x: scale.x(first.fromUs))
                 .contentShape(Rectangle())
                 .onTapGesture { select() }

@@ -1,4 +1,6 @@
 import AVFoundation
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -513,6 +515,26 @@ final class RecorderEditTests: XCTestCase {
         let bytes = EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .h264)
         XCTAssertEqual(Double(bytes), 10_300_000, accuracy: 600_000, "the export measured at 10.3 MB")
         XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc), bytes)
+    }
+
+    /// The tag over a dragged segment names its start in the movie (after the cut) and its length.
+    @MainActor
+    func testTheDragTagShowsTheOutputStartAndTheLength() throws {
+        let cut = project([EditProject.Clip(id: "a", fromUs: 0, toUs: 2_000_000), EditProject.Clip(id: "b", fromUs: 4_000_000, toUs: 10_000_000)])
+        let view = DragTimeTag(project: cut, startUs: 5_000_000, endUs: 6_500_000)
+            .padding(.top, 24).padding(8)
+            .background(Color.gray)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        XCTAssertTrue(text.contains("00:03.0"), text)
+        // OCR reads a small "s" as "S" at this size.
+        XCTAssertTrue(text.lowercased().contains("1.5 s"), text)
     }
 
     func testACheckIssueKeepsItsFixOpsForApply() throws {
