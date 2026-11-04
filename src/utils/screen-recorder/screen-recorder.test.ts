@@ -1,8 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 import {
@@ -15,7 +16,7 @@ import {
     type StopAnswer,
 } from "./control";
 import { outputScaleFor, parseDisplayList } from "./displays";
-import { renameRecording } from "./library";
+import { readRecordingManifest, renameRecording } from "./library";
 import {
     type LiveNotification,
     LiveRecordingServer,
@@ -28,7 +29,16 @@ import {
 } from "./live";
 import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, NativeLiveCapture, nativeArgv } from "./native";
 import { peekabooCaptureError } from "./peekaboo";
-import { CaptureError, type CaptureRequest, type LiveCapture } from "./types";
+import { startRecording } from "./start";
+import {
+    CaptureError,
+    type CaptureRequest,
+    type CaptureResult,
+    type DisplayInfo,
+    FrameRecorder,
+    type FrameRecorderSupport,
+    type LiveCapture,
+} from "./types";
 
 test("an unreadable live entry does not break the inventory", () => {
     const dir = mkdtempSync(join(tmpdir(), "unreadable-live-"));
@@ -501,5 +511,80 @@ describe("live recordings", () => {
 
         expect(Buffer.byteLength(path)).toBeLessThanOrEqual(103);
         expect(path).toMatch(/[0-9a-f]{16}\.sock$/);
+    });
+});
+
+describe("library recording frames", () => {
+    /** Two frames per piece, then waits out the piece (or the stop). */
+    class PieceRecorder extends FrameRecorder {
+        readonly id = "native" as const;
+        readonly supports: FrameRecorderSupport = {
+            followFocus: false,
+            displayId: true,
+            motionBoxes: false,
+            heartbeat: false,
+            liveControl: false,
+            parallelCaptures: true,
+            audio: false,
+        };
+        readonly framesSeenAtCapture: number[] = [];
+        folder = "";
+
+        async available(): Promise<{ ok: true }> {
+            return { ok: true };
+        }
+
+        async displays(): Promise<DisplayInfo[]> {
+            return [{ id: 1, index: 0, name: "left", main: true, widthPt: 64, heightPt: 40, scale: 1 }];
+        }
+
+        async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+            const startedAtMs = Date.now();
+            this.framesSeenAtCapture.push(readdirSync(join(this.folder, "frames")).length);
+            mkdirSync(request.outDir, { recursive: true });
+            const frames: CaptureResult["frames"] = [];
+
+            for (const atMs of [0, 10]) {
+                const path = join(request.outDir, `keep-${atMs}.png`);
+                writeFileSync(path, "png");
+                frames.push({ path, atMs, displayId: 1, changePercent: 12.5, reason: atMs === 0 ? "first" : "change" });
+            }
+
+            await new Promise<void>((resolve) => {
+                const timer = setTimeout(resolve, request.durationSec * 1000);
+                signal?.addEventListener("abort", () => {
+                    clearTimeout(timer);
+                    resolve();
+                });
+            });
+            return { startedAtMs, frames };
+        }
+    }
+
+    test("frames stay in the pieces until the stop, then move to frames/ as elapsed-ms names in the manifest", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-frames-"));
+        const recorder = new PieceRecorder();
+        recorder.folder = join(root, "rec");
+        const recording = await startRecording({
+            recorder,
+            folder: recorder.folder,
+            liveDir: join(root, "live"),
+            maxDurationSec: 0.5,
+            pieceSec: 0.2,
+        });
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 3_000 })).toBe(true);
+        const answer = await recording.stop();
+        const files = readdirSync(join(recording.folder, "frames")).sort();
+        const manifest = readRecordingManifest(recording.folder)!;
+
+        expect(answer).toMatchObject({ state: "stopped", outcome: "done", frames: files.length });
+        expect(recorder.framesSeenAtCapture.every((count) => count === 0)).toBe(true);
+        expect(files.length).toBeGreaterThanOrEqual(2);
+        expect(files.every((name) => /^\d{8}-d1\.png$/.test(name))).toBe(true);
+        expect(manifest.frames.map((frame) => frame.file)).toEqual(files.map((name) => `frames/${name}`));
+        expect(manifest.frames[0]).toMatchObject({ displayId: 1, changePercent: 12.5, reason: "first" });
+        expect(manifest.frames.map((frame) => frame.atMs)).toEqual(files.map((name) => Number(name.slice(0, 8))));
+        expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
+        expect(files.some((name) => name.endsWith(".ocr.json"))).toBe(false);
     });
 });

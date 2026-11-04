@@ -2018,6 +2018,7 @@ describe("the meetings recorder loop", () => {
         steps: Step[];
         failOnJpeg?: boolean;
         beforeJpeg?: (png: string) => Promise<void>;
+        ocrBlocks?: Array<{ text: string; confidence: number; bounds: unknown }>;
         liveControl?: boolean;
         liveSettings?: boolean;
         audio?: boolean;
@@ -2025,7 +2026,7 @@ describe("the meetings recorder loop", () => {
         actions?: Array<
             (
                 call: (method: string, params?: unknown) => Promise<unknown>,
-                live: { id: string; dir: string }
+                live: { id: string; dir: string; folder: string }
             ) => Promise<unknown>
         >;
     }) {
@@ -2056,9 +2057,11 @@ describe("the meetings recorder loop", () => {
                 const index = answers.length;
                 answers.push(undefined);
                 const next = options.actions?.shift() ?? ((send) => send("stop"));
-                void next(call, { id: meetingLiveId(created.id), dir: liveDir }).then((answer) => {
-                    answers[index] = answer;
-                });
+                void next(call, { id: meetingLiveId(created.id), dir: liveDir, folder: store.folder(created.id) }).then(
+                    (answer) => {
+                        answers[index] = answer;
+                    }
+                );
             }
         );
         const state = await runRecorder({
@@ -2076,7 +2079,10 @@ describe("the meetings recorder loop", () => {
 
                     await Bun.write(jpg, "jpeg");
                 },
-                ocr: async () => ({ text: "Quarterly planning board with several readable lines", blocks: [] }),
+                ocr: async () => ({
+                    text: "Quarterly planning board with several readable lines",
+                    blocks: options.ocrBlocks ?? [],
+                }),
                 notify: async (note) => {
                     notes.push(note);
                 },
@@ -2127,6 +2133,51 @@ describe("the meetings recorder loop", () => {
         expect(run.seenLive).toEqual(["meeting recording"]);
         expect(listLiveRecordings(run.liveDir)).toEqual([]);
         expect(recordingSummary(run.saved!).join("\n")).toContain("Built-in (1) 2, External (4) 1");
+    });
+
+    test("each piece's frames land as wall-clock JPEG names with one ocr.jsonl row each before the recording stops", async () => {
+        const blocks = [{ text: "Quarterly", confidence: 0.9, bounds: { x: 0.1, y: 0.8, width: 0.3, height: 0.05 } }];
+        let midway: { frames: string[]; rows: number } | undefined;
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["frames", "hang"],
+            ocrBlocks: blocks,
+            actions: [
+                async (send, live) => {
+                    midway = {
+                        frames: readdirSync(join(live.folder, "frames")),
+                        rows: readFileSync(join(live.folder, "ocr.jsonl"), "utf8").trim().split("\n").length,
+                    };
+                    return send("stop");
+                },
+            ],
+        });
+        const frames = readdirSync(join(run.folder, "frames"));
+        const rows = readFileSync(join(run.folder, "ocr.jsonl"), "utf8")
+            .trim()
+            .split("\n")
+            .map((row) => SafeJSON.parse(row, { strict: true }));
+
+        expect(midway).toEqual({ frames, rows: 1 });
+        expect(frames).toHaveLength(1);
+        expect(frames[0]).toMatch(/^\d{2}-\d{2}-\d{2}-\d{3}-d1\.jpg$/);
+        expect(rows).toEqual([
+            {
+                file: `frames/${frames[0]}`,
+                at: expect.any(String),
+                displayId: 1,
+                changePercent: 10,
+                reason: "first",
+                text: "Quarterly planning board with several readable lines",
+                blocks,
+            },
+        ]);
+        const at = new Date(rows[0].at);
+        const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+        expect(frames[0]).toBe(
+            `${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}-${pad(at.getMilliseconds(), 3)}-d1.jpg`
+        );
+        expect(run.state.frames).toBe(1);
     });
 
     test("captures that fail three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
