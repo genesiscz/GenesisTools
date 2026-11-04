@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -439,4 +439,76 @@ export async function attemptStaleTakeover(
         attemptStaleTakeoverUnlocked(path, expectedContent, opts)
     );
     return arbitration.acquired ? arbitration.value : false;
+}
+
+/** How a claim went: ours (`tookOver` when it replaced a stale claim), kept by its owner, or lost to a racer. */
+export type PidClaim =
+    | { status: "claimed"; tookOver: boolean }
+    | { status: "held"; state: PidFileState }
+    | { status: "lost" };
+
+export interface ClaimPidFileOptions {
+    /** The owner's command for a record that names none (a legacy bare-number file). */
+    expected?: PidExpectation;
+    /**
+     * Which existing claims may be taken over. Default: all but a live (or unverified) other process, so a dead
+     * owner, a recycled pid, an unreadable file and a record of this process (a spawner's pre-write) are taken over.
+     */
+    reclaimable?: (state: PidFileState) => boolean;
+    /** Takeover rounds before the claim is lost (default 3). */
+    attempts?: number;
+    /** The pause after a lost round (default none). */
+    retryMs?: number;
+}
+
+function reclaimableByDefault(state: PidFileState): boolean {
+    return !((state.status === "live" || state.status === "unverified") && state.pid !== process.pid);
+}
+
+/**
+ * Claim a pidfile as this process's: an atomic `wx` create, and when the file exists and the caller may take it
+ * over, the content-verified {@link attemptStaleTakeover}. Async on purpose, like the takeover (Bun's sync fs calls
+ * reenter under concurrent load). Only EEXIST enters the takeover; any other write error is thrown.
+ */
+export async function claimPidFile(path: string, opts: ClaimPidFileOptions = {}): Promise<PidClaim> {
+    const reclaimable = opts.reclaimable ?? reclaimableByDefault;
+    await mkdir(dirname(path), { recursive: true });
+
+    for (let attempt = 1; attempt <= (opts.attempts ?? 3); attempt++) {
+        try {
+            await writeFile(path, serializePidRecord(buildPidRecord()), { flag: "wx" });
+            return { status: "claimed", tookOver: false };
+        } catch (err) {
+            if (errnoCode(err) !== "EEXIST") {
+                throw err;
+            }
+        }
+
+        const state = inspectPidFile(path, { expected: opts.expected });
+
+        if (!reclaimable(state)) {
+            return { status: "held", state };
+        }
+
+        let staleContent: string;
+
+        try {
+            staleContent = await readFile(path, "utf-8");
+        } catch (err) {
+            logger.debug({ err, path }, "[pidfile] claimed file vanished; creating it again");
+            continue;
+        }
+
+        if (await attemptStaleTakeover(path, staleContent)) {
+            return { status: "claimed", tookOver: true };
+        }
+
+        logger.debug({ attempt, path }, "[pidfile] lost a takeover round; checking again");
+
+        if (opts.retryMs) {
+            await new Promise((resolve) => setTimeout(resolve, opts.retryMs));
+        }
+    }
+
+    return { status: "lost" };
 }

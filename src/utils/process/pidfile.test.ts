@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -8,6 +8,7 @@ import * as identity from "@genesiscz/utils/process-identity";
 import {
     attemptStaleTakeover,
     buildPidRecord,
+    claimPidFile,
     classifyPidRecord,
     clearPidFile,
     inspectPidFile,
@@ -305,5 +306,81 @@ describe("pidfile", () => {
         expect(clearPidFile(path, { force: true })).toBe(true);
         expect(existsSync(path)).toBe(false);
         expect(clearPidFile(path)).toBe(false);
+    });
+
+    test("claimPidFile creates a missing file and its folder, and takes over a dead, recycled, unreadable or own claim", async () => {
+        const nested = join(dir, "deeper", "test.pid");
+        expect(await claimPidFile(nested)).toEqual({ status: "claimed", tookOver: false });
+        expect(readPidRecord(nested)?.pid).toBe(process.pid);
+
+        const stale = [
+            SafeJSON.stringify({ pid: DEAD_PID, command: "gone", writtenAt: 1 }),
+            SafeJSON.stringify({ ...buildPidRecord(), command: "/usr/bin/another-program" }),
+            "not a pid",
+            SafeJSON.stringify(buildPidRecord()),
+        ];
+
+        for (const content of stale) {
+            writeFileSync(path, content);
+            expect(await claimPidFile(path)).toEqual({ status: "claimed", tookOver: true });
+            expect(readPidRecord(path)?.pid).toBe(process.pid);
+        }
+
+        expect(readdirSync(dir).sort()).toEqual(["deeper", "test.pid"]);
+    });
+
+    test("claimPidFile leaves a live owner's claim, and a caller's rule can keep any other claim", async () => {
+        const owner = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+
+        try {
+            writePidFile(path, { pid: owner.pid });
+            const before = readFileSync(path, "utf8");
+
+            expect(await claimPidFile(path)).toMatchObject({
+                status: "held",
+                state: { status: "live", pid: owner.pid },
+            });
+            expect(readFileSync(path, "utf8")).toBe(before);
+        } finally {
+            owner.kill();
+            await owner.exited;
+        }
+
+        writeFileSync(path, "not a pid");
+        const onlyStale = (state: { status: string }) => state.status === "dead" || state.status === "foreign";
+
+        expect(await claimPidFile(path, { reclaimable: onlyStale })).toEqual({
+            status: "held",
+            state: { status: "none" },
+        });
+        expect(readFileSync(path, "utf8")).toBe("not a pid");
+    });
+
+    test("claimPidFile is lost when every takeover round loses, and throws a write error that is not EEXIST", async () => {
+        writeFileSync(path, "not a pid");
+        let release: () => void = () => {};
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let ready: () => void = () => {};
+        const started = new Promise<void>((resolve) => {
+            ready = resolve;
+        });
+        // Another claimer holds the path's arbiter, so each takeover round loses.
+        const other = tryWithPathArbitration(path, async () => {
+            ready();
+            await held;
+        });
+        await started;
+
+        expect(await claimPidFile(path, { attempts: 2, retryMs: 1 })).toEqual({ status: "lost" });
+        expect(readFileSync(path, "utf8")).toBe("not a pid");
+        release();
+        await other;
+
+        const notAFolder = join(dir, "file-not-folder");
+        writeFileSync(notAFolder, "x");
+
+        await expect(claimPidFile(join(notAFolder, "test.pid"))).rejects.toThrow();
     });
 });
