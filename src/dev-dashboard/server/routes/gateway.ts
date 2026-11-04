@@ -21,6 +21,7 @@ import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
 import { fillTimesheetWeek, type TimesheetDeps } from "@app/hub/lib/timesheet/index";
 import { fixPr, type MergeRunner, mergePr } from "@app/hub/lib/triage/index";
+import { appendToVault, clipToVault } from "@app/hub/lib/vault/index";
 import { transcribeVoiceClip, VoiceClipError, type VoiceDeps } from "@app/hub/lib/voice/index";
 import { muteWatch, WATCH_SOURCE_IDS, WATCH_SOURCES } from "@app/hub/lib/watching/index";
 import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
@@ -247,6 +248,24 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             }),
             invalid: "expected { date, timesheetId, revision }",
             run: (input) => fillTimesheetWeek(input, deps.timesheet),
+        }),
+        // Vault writes (F25): keyed, so a replayed clip or append writes once.
+        bindEndpoint(ENDPOINTS.vaultClip, {
+            input: z.object({ url: z.string().min(1).max(4096), note: z.string().max(4000).optional() }),
+            invalid: "expected { url, note? }",
+            run: (input) => clipToVault(input),
+        }),
+        bindEndpoint(ENDPOINTS.vaultAppend, {
+            input: z.object({
+                text: z
+                    .string()
+                    .min(1)
+                    .max(256 * 1024),
+                folder: z.string().max(400).optional(),
+                name: z.string().max(200).optional(),
+            }),
+            invalid: "expected { text, folder?, name? }",
+            run: (input) => appendToVault(input),
         }),
         bindEndpoint(ENDPOINTS.watchingMute, {
             input: z.object({
