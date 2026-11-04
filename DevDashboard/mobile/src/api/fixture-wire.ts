@@ -261,6 +261,15 @@ const ROUTES: FixtureRoute[] = [
     { method: ENDPOINTS.gatewayGlance.method, path: ENDPOINTS.gatewayGlance.path, handle: () => MOCK_GLANCE },
     { method: ENDPOINTS.gatewayForecast.method, path: ENDPOINTS.gatewayForecast.path, handle: () => MOCK_FORECAST },
 
+    // Ping me when done (F15): the fixture keeps no watch.
+    { method: ENDPOINTS.gatewayPings.method, path: ENDPOINTS.gatewayPings.path, handle: () => ({ watches: [] }) },
+    {
+        method: ENDPOINTS.pingWatch.method,
+        path: ENDPOINTS.pingWatch.path,
+        handle: ({ body }) => ({ watches: [{ key: text(body.key), label: null, since: "2026-11-04T15:00:00.000Z" }] }),
+    },
+    { method: ENDPOINTS.pingUnwatch.method, path: ENDPOINTS.pingUnwatch.path, handle: () => ({ watches: [] }) },
+
     // Approvals (F8); an answer is refused, since a fixture has no dialog to press keys in.
     { method: ENDPOINTS.gatewayApprovals.method, path: ENDPOINTS.gatewayApprovals.path, handle: () => MOCK_APPROVALS },
     {
@@ -292,6 +301,18 @@ const ROUTES: FixtureRoute[] = [
         method: ENDPOINTS.timesheetFill.method,
         path: ENDPOINTS.timesheetFill.path,
         handle: () => ({ filled: false, written: 0, failed: 0, skipped: 0, error: "mock data: no Clarity to fill" }),
+    },
+
+    // Send to my vault (F25): a clip and an append answer where they would have written, writing nothing.
+    {
+        method: ENDPOINTS.vaultClip.method,
+        path: ENDPOINTS.vaultClip.path,
+        handle: () => ({ kind: "page", note: "Inbox/2026-10-01 Phone inbox.md", title: "A page", error: null }),
+    },
+    {
+        method: ENDPOINTS.vaultAppend.method,
+        path: ENDPOINTS.vaultAppend.path,
+        handle: () => ({ note: "Inbox/2026-10-01 Phone inbox.md" }),
     },
 
     // Wake my Mac (F26): the relay the phone keeps, and the health probe that answers once the Mac is awake.

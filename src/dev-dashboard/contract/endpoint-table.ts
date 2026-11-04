@@ -30,6 +30,12 @@ import type {
     TimesheetFillReceiptDto,
     TimesheetWeekDto,
 } from "@app/dev-dashboard/contract/timesheet";
+import type {
+    VaultAppendInput,
+    VaultAppendReceiptDto,
+    VaultClipInput,
+    VaultClipReceiptDto,
+} from "@app/dev-dashboard/contract/vault";
 import type { HealthDto, WakeRelayDto } from "@app/dev-dashboard/contract/wake";
 import type { WatchingDto, WatchMuteInput, WatchMuteReceiptDto } from "@app/dev-dashboard/contract/watching";
 
@@ -418,6 +424,10 @@ export const ENDPOINTS = {
         "keyed-write",
         "slow"
     ),
+    /** Clips a link into the vault inbox: a page as Markdown, a video queued for transcription (F25). */
+    vaultClip: row<VaultClipInput, VaultClipReceiptDto>("POST", "/api/vault/clip", "keyed-write", "slow"),
+    /** Appends text to a vault note, the inbox note of the day by default (F25, F28). */
+    vaultAppend: row<VaultAppendInput, VaultAppendReceiptDto>("POST", "/api/vault/append", "keyed-write"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;
