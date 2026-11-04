@@ -21,6 +21,7 @@ import {
 } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
+import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
@@ -41,8 +42,10 @@ import {
 import { rawMeeting } from "./lib/raw";
 import { meetingLiveId, pieceTargets, type RecorderNote, recorderFiles, runRecorder } from "./lib/recorder";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
+import { showText } from "./lib/show-text";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
+import { transcriptDocument } from "./lib/transcript-document";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
@@ -2507,4 +2510,206 @@ test("a stale recorder claim is recovered and an initialization failure releases
         runRecorder({ store, meetingId: record.id, capture: meetingsConfigSchema.parse({}).global.capture })
     ).rejects.toThrow();
     expect(existsSync(files.pid)).toBe(false);
+});
+
+describe("transcriptDocument", () => {
+    const stamped = meetingRecordSchema.parse({
+        ...record,
+        title: "Změny ve wiki: zadání",
+        project: "shop",
+        sources: { wisprflow: { id: "x" }, teams: {} },
+    });
+    const turns = groupTurns([
+        line("Alice Example", 0, "Ahoj, začneme."),
+        line("Alice Example", 40, "Druhý odstavec <sup>(`/{type}`)</sup>."),
+        line("Bob Example", 100, "Tak čtu:\n\n> Kap. 2. <sup>(čte z Notes, ř. 4)</sup>\n\n, [nejasné: kdo?] konec."),
+    ]);
+    const options = {
+        speakers: [
+            { name: "Alice Example", lines: 2 },
+            { name: "Bob Example", lines: 1 },
+        ],
+        unattributed: [{ name: "Speaker 5", lines: 1 }],
+        frontmatter: true,
+        timestamps: true,
+    };
+
+    test("golden: front matter, the title, and the turns with clocks, play links, meanings, quotes and marks", () => {
+        const md = transcriptDocument({
+            ...options,
+            record: stamped,
+            turns,
+            playLink: (sec) => `https://example.com/p?at=${sec}`,
+        });
+
+        expect(md).toBe(
+            [
+                "---",
+                'title: "Změny ve wiki: zadání"',
+                "meeting: 2026-11-02 14:00",
+                "project: shop",
+                "meeting_id: 2026-11-02_15-00-planning",
+                "sources:",
+                "  - wisprflow",
+                "  - teams",
+                "speakers:",
+                "  Alice Example: 2",
+                "  Bob Example: 1",
+                "unattributed:",
+                "  Speaker 5: 1",
+                "---",
+                "",
+                "# Změny ve wiki: zadání",
+                "",
+                "**Alice Example:** `00:00`<sup>[play](https://example.com/p?at=0)</sup> Ahoj, začneme.",
+                "",
+                "`00:40`<sup>[play](https://example.com/p?at=40)</sup> Druhý odstavec <sup>(`/{type}`)</sup>.",
+                "",
+                "**Bob Example:** `01:40`<sup>[play](https://example.com/p?at=100)</sup> Tak čtu:",
+                "",
+                "> Kap. 2. <sup>(čte z Notes, ř. 4)</sup>",
+                "",
+                ", [nejasné: kdo?] konec.",
+                "",
+            ].join("\n")
+        );
+    });
+
+    test("golden: no front matter, no clocks, and an untitled meeting", () => {
+        const md = transcriptDocument({
+            ...options,
+            record: { ...stamped, title: "" },
+            turns,
+            frontmatter: false,
+            timestamps: false,
+        });
+
+        expect(md).toBe(
+            [
+                "# Untitled meeting",
+                "",
+                "**Alice Example:** Ahoj, začneme.",
+                "",
+                "Druhý odstavec <sup>(`/{type}`)</sup>.",
+                "",
+                "**Bob Example:** Tak čtu:",
+                "",
+                "> Kap. 2. <sup>(čte z Notes, ř. 4)</sup>",
+                "",
+                ", [nejasné: kdo?] konec.",
+                "",
+            ].join("\n")
+        );
+    });
+
+    test("golden: a meeting with no turns ends in two blank lines after the title", () => {
+        const md = transcriptDocument({
+            ...options,
+            unattributed: [],
+            record: { ...stamped, project: undefined },
+            turns: [],
+            timestamps: false,
+        });
+
+        expect(md).toBe(
+            [
+                "---",
+                'title: "Změny ve wiki: zadání"',
+                "meeting: 2026-11-02 14:00",
+                "meeting_id: 2026-11-02_15-00-planning",
+                "sources:",
+                "  - wisprflow",
+                "  - teams",
+                "speakers:",
+                "  Alice Example: 2",
+                "  Bob Example: 1",
+                "---",
+                "",
+                "# Změny ve wiki: zadání",
+                "",
+                "",
+                "",
+            ].join("\n")
+        );
+    });
+});
+
+describe("showText", () => {
+    test("golden: the facts, context, renames and history of a full record", () => {
+        const full = meetingRecordSchema.parse({
+            ...record,
+            project: "shop",
+            end: "2026-11-02T14:45:00.000Z",
+            sources: { wisprflow: { id: "w1" } },
+            calendar: { from: "apple-calendar", title: "Plánování", attendees: ["Alice", "Bob"] },
+            participants: [
+                { name: "Alice Example", self: true, from: [] },
+                { name: "Bob Example", from: [] },
+            ],
+            context: [
+                {
+                    id: "c1",
+                    kind: "file",
+                    ref: "/tmp/spec.md",
+                    title: "Spec",
+                    note: "the brief",
+                    addedAt: "2026-11-02T14:00:00.000Z",
+                    addedBy: "user",
+                },
+                { id: "c2", kind: "note", ref: "x".repeat(100), addedAt: "2026-11-02T14:00:00.000Z", addedBy: "user" },
+            ],
+            speakers: { labels: { "Speaker 5": "Carol Example" } },
+            recording: {
+                status: "stopped",
+                frames: 12,
+                bytes: 2048,
+                backend: "sck",
+                displays: [{ id: 1, name: "Built-in", frames: 12 }],
+                warning: "disk low",
+            },
+            history: [{ at: "2026-11-02T14:50:00.000Z", command: "set", change: "project shop" }],
+        });
+
+        expect(showText(full)).toBe(
+            [
+                "# Planning",
+                "",
+                "- id: 2026-11-02_15-00-planning",
+                "- when: 2026-11-02 14:00–14:45",
+                "- project: shop",
+                '- wisprflow: {"id":"w1"}',
+                "- calendar (apple-calendar): Plánování, 2 invited",
+                "- people: Alice Example (you), Bob Example",
+                "- recording: stopped, 12 frames, 2.0 KB, sck",
+                "- displays: Built-in (1) 12",
+                "- recording warning: disk low",
+                "",
+                "## Context",
+                "- c1 file: Spec: /tmp/spec.md (the brief)",
+                `- c2 note: ${"x".repeat(79)}…`,
+                "",
+                "## Speaker renames",
+                "- Speaker 5 → Carol Example",
+                "",
+                "## History",
+                "- 2026-11-02 14:50 set: project shop",
+                "",
+            ].join("\n")
+        );
+    });
+
+    test("golden: a bare record names the command that sets its project, and has an empty history", () => {
+        expect(showText(record)).toBe(
+            [
+                "# Planning",
+                "",
+                "- id: 2026-11-02_15-00-planning",
+                "- when: 2026-11-02 14:00",
+                "- project: none (set it: tools meetings set 2026-11-02_15-00-planning --project <name>)",
+                "",
+                "## History",
+                "",
+            ].join("\n")
+        );
+    });
 });

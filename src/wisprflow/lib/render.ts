@@ -1,4 +1,5 @@
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
+import type { MeetingCalendar } from "@genesiscz/utils/meetings/record";
 import {
     entriesToSrt,
     entriesToVtt,
@@ -100,4 +101,51 @@ export function renderSrt(meeting: Meeting, options: RenderOptions): string {
 
 export function renderVtt(meeting: Meeting, options: RenderOptions): string {
     return entriesToVtt(meeting.transcript, options.firstNames);
+}
+
+/** What `tools wisprflow meetings show` prints: the front matter, the title, participants, invitees, summary and notes. */
+export function showMarkdown(meeting: Meeting, source: SourceName, invited: MeetingCalendar | undefined): string {
+    const parts = [
+        renderFrontmatter(
+            meetingFrontmatter(meeting, {
+                source,
+                frontmatter: true,
+                summary: true,
+                timestamps: false,
+                firstNames: false,
+            })
+        ),
+        `# ${meeting.title || "Untitled meeting"}`,
+    ];
+    // Who named each label matters: a platform name is evidence, a language model's name is a guess.
+    const people = meeting.participants.map((p) => {
+        const speaker = p.speakerId === undefined ? "" : `speaker ${p.speakerId}`;
+        const origin = p.origin ? `named by ${p.origin}` : "";
+        const notes = [speaker, origin].filter(Boolean).join(", ");
+        return `- ${p.name}${p.isSelf ? " (you)" : ""}${notes ? ` (${notes})` : ""}`;
+    });
+
+    if (people.length > 0) {
+        parts.push("## Participants", people.join("\n"));
+    }
+
+    if (invited && invited.attendees.length > 0) {
+        parts.push(
+            "## Invited",
+            [
+                ...invited.attendees.map((name) => `- ${name}`),
+                ...(invited.conferenceUrl ? [``, `Call: ${invited.conferenceUrl}`] : []),
+            ].join("\n")
+        );
+    }
+
+    if (meeting.summary.trim()) {
+        parts.push("## Summary", meeting.summary.trim());
+    }
+
+    if (meeting.notes.trim()) {
+        parts.push("## Notes", meeting.notes.trim());
+    }
+
+    return `${parts.join("\n\n")}\n`;
 }

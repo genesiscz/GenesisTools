@@ -4,7 +4,6 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isMeetingPlatformId } from "@genesiscz/utils/meetings/platform";
@@ -24,7 +23,6 @@ import {
     groupTurns,
     localTime,
     TRANSCRIPT_FORMATS,
-    transcriptMarkdown,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
@@ -42,6 +40,7 @@ import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { checkAnchors, correctTranscript, outcomeText } from "../lib/transcript-corrections";
+import { transcriptDocument } from "../lib/transcript-document";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -527,42 +526,24 @@ async function transcript(
             return;
         }
 
-        const parts: string[] = [];
-
-        if (opts.frontmatter !== false) {
-            parts.push(
-                renderFrontmatter({
-                    title: record.title,
-                    meeting: localTime(record.start),
-                    ...(record.project ? { project: record.project } : {}),
-                    meeting_id: record.id,
-                    sources: Object.keys(record.sources),
-                    // The people after the corrections, with their line counts; an open speaker mark is not a speaker.
-                    speakers: Object.fromEntries(applied.speakers.map((speaker) => [speaker.name, speaker.lines])),
-                    ...(applied.unattributed.length > 0
-                        ? {
-                              unattributed: Object.fromEntries(
-                                  applied.unattributed.map((speaker) => [speaker.name, speaker.lines])
-                              ),
-                          }
-                        : {}),
-                })
-            );
-        }
-
         // The links are written even while the router preset is off; the warning says how to make them open.
         const links = opts.playLinks ? playLinksFor(record.id) : undefined;
-        const playLink = links?.link;
 
         if (links?.warning) {
             ui.warn(links.warning);
         }
 
-        parts.push(
-            `# ${record.title || "Untitled meeting"}`,
-            transcriptMarkdown(turns, opts.timestamps === true || opts.playLinks === true, { playLink })
+        out.print(
+            transcriptDocument({
+                record,
+                turns,
+                speakers: applied.speakers,
+                unattributed: applied.unattributed,
+                frontmatter: opts.frontmatter !== false,
+                timestamps: opts.timestamps === true || opts.playLinks === true,
+                playLink: links?.link,
+            })
         );
-        out.print(`${parts.join("\n\n")}\n`);
     } catch (err) {
         fail(errorText(err));
     }
