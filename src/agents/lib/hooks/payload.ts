@@ -102,6 +102,9 @@ function eventName(raw: Record<string, unknown>): string {
     return str(raw.hookEventName) ?? str(raw.hook_event_name) ?? "";
 }
 
+/** Lower camelCase (`subagentStop`, `postToolUse`): a lower-case word, then a capital. Grok's `session_start` is not. */
+const LOWER_CAMEL_EVENT = /^[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*$/;
+
 /**
  * Copilot by its own marks (its `HostPayloadMarkers`): a parent agent id, an event named in lower camelCase, or an
  * epoch-millisecond timestamp. Its camelCase payloads used to read as Grok and its snake_case ones as Claude.
@@ -111,7 +114,7 @@ function isCopilotPayload(raw: Record<string, unknown>): boolean {
 
     return (
         marks.markerFields.some((field) => raw[field] !== undefined) ||
-        (marks.lowerCamelEvents && /^[a-z]/.test(eventName(raw))) ||
+        (marks.lowerCamelEvents && LOWER_CAMEL_EVENT.test(eventName(raw))) ||
         (marks.numericTimestamp && typeof raw.timestamp === "number")
     );
 }

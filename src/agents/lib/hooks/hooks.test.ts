@@ -188,6 +188,24 @@ describe("parseHookPayload", () => {
         }
     });
 
+    it("a Grok event in snake_case (session_start, post_tool_use) stays Grok's, with its prompt id as the turn", () => {
+        for (const event of ["session_start", "post_tool_use", "session_end"]) {
+            const raw = {
+                hookEventName: event,
+                sessionId: "g1",
+                promptId: "p-1",
+                transcriptPath: "/fixture/updates.jsonl",
+            };
+            const payload = parseHookPayload(SafeJSON.stringify(raw));
+
+            expect(detectHookCaller(raw)).toBe("grok");
+            expect(payload).toMatchObject({ harness: "grok", caller: "grok", turnId: "p-1" });
+        }
+
+        // Copilot's own lower camelCase events still name Copilot.
+        expect(detectHookCaller({ hookEventName: "postToolUse", sessionId: "c1" })).toBe("copilot");
+    });
+
     it("reads the snake_case wire shape Claude sends", () => {
         const payload = parseHookPayload(
             SafeJSON.stringify({
