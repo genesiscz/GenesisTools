@@ -493,10 +493,20 @@ private struct LibraryCard: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityAction(named: "Open in Editor", open)
         .simultaneousGesture(TapGesture(count: 2).onEnded { open() })
+        // Drag the movie into a chat, a mail or an issue: the newest export, else the recording itself.
+        .onDrag {
+            guard let movie = Self.shareableMovie(in: item.folder) else { return NSItemProvider() }
+            return NSItemProvider(contentsOf: movie) ?? NSItemProvider()
+        }
         .contextMenu {
             Button("Open in Editor", action: open)
             Button("Rename…", action: rename)
             Divider()
+            Button("Copy Movie") {
+                guard let movie = Self.shareableMovie(in: item.folder) else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([movie as NSURL])
+            }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }
             Button("Copy Folder Path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.folder.path, forType: .string) }
             Divider()
@@ -504,6 +514,18 @@ private struct LibraryCard: View {
         }
         .contentShape(Rectangle())
         .liveRow()
+    }
+
+    /// The file a drag or Copy Movie hands out: the newest export (an MP4, GIF or WebM beside the recording), else
+    /// the recording's own movie. Read when the drag or the menu starts, never in a body.
+    static func shareableMovie(in folder: URL) -> URL? {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        let raw: Set<String> = ["screen.mp4", "screen.mov", "proxy.mp4"]
+        let exports = files.filter { ["mp4", "gif", "webm", "mov"].contains($0.pathExtension.lowercased()) }
+            .filter { !raw.contains($0.lastPathComponent) && !$0.lastPathComponent.contains(".partial.") }
+        let modified = { (url: URL) in (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
+        if let newest = exports.max(by: { modified($0) < modified($1) }) { return newest }
+        return ["screen.mp4", "screen.mov"].map { folder.appendingPathComponent($0) }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 }
 
