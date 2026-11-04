@@ -4,6 +4,7 @@ import { itemWhat } from "@app/meetings/lib/item-text";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { resolveProject } from "@app/meetings/lib/project";
 import { questionLabel } from "@app/meetings/lib/questions";
+import { meetingLiveId } from "@app/meetings/lib/recorder";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
@@ -13,6 +14,13 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
+import {
+    RECORDER_SET_SETTINGS_DOC,
+    RECORDER_SETTINGS_DOC,
+    recorderSetSchema,
+    settingsPatchOf,
+} from "@genesiscz/utils/repl/toolsets/recorder";
+import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 
@@ -144,6 +152,23 @@ const set = defineMethod({
     doc: "Change the meeting's title and/or project (a new project name is added to the known projects).",
 });
 
+const recordingSettings = defineMethod({
+    name: "settings",
+    params: z.object({}),
+    result: z.unknown(),
+    resultName: "{ settings, audio }",
+    effect: "read",
+    doc: `${RECORDER_SETTINGS_DOC} Only while this meeting is being recorded.`,
+});
+const setRecordingSettings = defineMethod({
+    name: "setSettings",
+    params: recorderSetSchema,
+    result: z.unknown(),
+    resultName: "{ settings, audio, applied }",
+    effect: "reversible",
+    doc: `${RECORDER_SET_SETTINGS_DOC} Only while this meeting is being recorded.`,
+});
+
 /** The meeting as an agent reads it: the record's facts, the item counts and a one-line summary. */
 function describe(record: MeetingRecord) {
     const count = (status: MeetingItem["status"]) => record.items.filter((item) => item.status === status).length;
@@ -198,6 +223,8 @@ export class MeetingsToolset extends ReplToolset {
                     speakers,
                     rename,
                     set,
+                    recordingSettings,
+                    setRecordingSettings,
                 ],
             },
         ],
@@ -245,6 +272,14 @@ export class MeetingsToolset extends ReplToolset {
             return record;
         };
         const opened = () => OpenedMeeting.of(store, current());
+        const liveId = meetingLiveId(id);
+        const callLive = (method: "settings.get" | "settings.set", params?: unknown) => {
+            if (!readLiveRecording(liveId)) {
+                throw new Error(`The meeting ${id} is not being recorded now (no live recording ${liveId})`);
+            }
+
+            return callRecorder({ id: liveId, method, params });
+        };
         const decideWith = (status: "confirmed" | "rejected") => async (input: z.input<typeof decide.params>) => {
             const options = decide.params.parse(input);
             const result = await decideItems({ store, record: current(), status, ids: options.ids ?? [], ...options });
@@ -348,6 +383,9 @@ export class MeetingsToolset extends ReplToolset {
                     return describe(record);
                 },
             },
+            settings: async () => callLive("settings.get"),
+            setSettings: async (input: z.input<typeof recorderSetSchema>) =>
+                callLive("settings.set", settingsPatchOf(input)),
             set: async (input: z.input<typeof set.params>) => {
                 const { title, project } = set.params.parse(input);
 

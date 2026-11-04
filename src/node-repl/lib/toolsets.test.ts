@@ -2,7 +2,9 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { meetingLiveId } from "@app/meetings/lib/recorder";
 import { ReplEngine } from "@app/node-repl/lib/engine";
+import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
 import { collapseUndo, defaultExportName, editProject, inItsFolder, undoDepth, undoEdit } from "@app/recorder/lib/edit";
 import { chapterMetadata, chaptersOf, chaptersOfPart, recordingFolderOf, spreadTimes } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
@@ -11,12 +13,28 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecordingHandle, recorderApi } from "@genesiscz/utils/repl/toolsets/recorder";
+import {
+    RecorderControl,
+    type RecorderMethod,
+    type RecorderSettings,
+    type RecorderSettingsPatch,
+    type RecorderStatus,
+    recorderSettingsSchema,
+    type SettingsAnswer,
+    type StopAnswer,
+} from "@genesiscz/utils/screen-recorder/control";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
-import { liveRecordingsDir, RecorderClient, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
+import {
+    LiveRecordingServer,
+    liveRecordingsDir,
+    RecorderClient,
+    readLiveRecording,
+} from "@genesiscz/utils/screen-recorder/live";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
 import {
     type CaptureRequest,
@@ -666,4 +684,128 @@ describe("recorder and editor toolsets", () => {
         expect(events.some((line) => line.includes("frames"))).toBe(true);
         handle.close();
     }, 30_000);
+});
+
+/** A live recording that serves `settings.get` and `settings.set` and keeps the settings it was given. */
+class SettingsControl extends RecorderControl {
+    readonly kind = "meeting";
+    readonly methods: readonly RecorderMethod[] = ["status", "stop", "settings.get", "settings.set"];
+    settings: RecorderSettings = recorderSettingsSchema.parse({
+        activeFps: 2,
+        idleFps: 0.5,
+        threshold: 3,
+        maxLongSide: 1600,
+        heartbeatSec: 30,
+        ocr: { enabled: true, languages: ["en-US"], minChars: 4 },
+    });
+    readonly patches: RecorderSettingsPatch[] = [];
+
+    async status(): Promise<RecorderStatus> {
+        return { kind: this.kind, title: "Planning", state: "recording", displays: [], frames: 0 };
+    }
+
+    async pause(): Promise<{ state: "paused" }> {
+        return { state: "paused" };
+    }
+
+    async resume(): Promise<{ state: "recording" }> {
+        return { state: "recording" };
+    }
+
+    async stop(): Promise<StopAnswer> {
+        return { state: "stopped" };
+    }
+
+    override async getSettings(): Promise<SettingsAnswer> {
+        return { settings: this.settings, audio: { sources: ["mic"], muted: { mic: false, system: false } } };
+    }
+
+    override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+        this.patches.push(patch);
+        const { ocr: ocrPatch, ...rest } = patch;
+        this.settings = recorderSettingsSchema.parse({
+            ...this.settings,
+            ...rest,
+            ocr: { ...this.settings.ocr, ...ocrPatch },
+        });
+        return { ...(await this.getSettings()), applied: "live" };
+    }
+}
+
+describe("live recording settings from the movies and meetings toolsets", () => {
+    test("movies: a MovieRecording reads and changes the live threshold and OCR, and the docs list both methods", async () => {
+        const { MovieRecording } = await import("@app/recorder/lib/toolset");
+        const { moviesApi } = await import("@app/recorder/lib/toolset");
+        const control = new SettingsControl();
+        const server = new LiveRecordingServer({
+            id: `movie-settings-${process.pid}`,
+            kind: "movie",
+            title: "Settings",
+            control,
+        });
+
+        try {
+            const recording = new MovieRecording(server.current);
+            expect(await recording.settings()).toMatchObject({ settings: { threshold: 3, ocr: { enabled: true } } });
+            const changed = await recording.setSettings({ threshold: 7.5, fps: 6, ocr: { enabled: false } });
+            expect(changed).toMatchObject({
+                applied: "live",
+                settings: { activeFps: 6, threshold: 7.5, ocr: { enabled: false, minChars: 4 } },
+            });
+            expect(control.patches).toEqual([{ threshold: 7.5, activeFps: 6, ocr: { enabled: false } }]);
+            await expect(recording.setSettings({ threshold: 120 })).rejects.toThrow();
+            await expect(
+                Reflect.apply(recording.setSettings, recording, [{ nonsense: 1 }]) as Promise<unknown>
+            ).rejects.toThrow();
+            expect(control.patches).toHaveLength(1);
+        } finally {
+            server.close();
+        }
+
+        const docs = moviesApi.handles?.find((handle) => handle.name === "MovieRecording")?.methods ?? [];
+        const doc = (name: string) => docs.find((method) => method.name === name)?.doc;
+        expect(doc("settings")).toBe("The live settings and the audio state.");
+        expect(doc("setSettings")).toBe(
+            "Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records."
+        );
+    });
+
+    test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Planning", start: "2026-11-02T15:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: {
+                open(ref: string): {
+                    settings(): Promise<SettingsAnswer>;
+                    setSettings(patch: unknown): Promise<SettingsAnswer>;
+                };
+            };
+        };
+        const meeting = meetings.open(record.id);
+        await expect(meeting.settings()).rejects.toThrow("not being recorded");
+
+        const control = new SettingsControl();
+        const server = new LiveRecordingServer({
+            id: meetingLiveId(record.id),
+            kind: "meeting",
+            title: "Planning",
+            control,
+        });
+
+        try {
+            expect((await meeting.settings()).settings.threshold).toBe(3);
+            const changed = await meeting.setSettings({ threshold: 9, ocr: { enabled: false } });
+            expect(changed).toMatchObject({ applied: "live", settings: { threshold: 9, ocr: { enabled: false } } });
+            expect(control.patches).toEqual([{ threshold: 9, ocr: { enabled: false } }]);
+            await expect(meeting.setSettings({ threshold: -1 })).rejects.toThrow();
+        } finally {
+            server.close();
+        }
+
+        const docs = new MeetingsToolset().api.handles?.find((handle) => handle.name === "Meeting")?.methods ?? [];
+        expect(docs.map((method) => method.name)).toEqual(expect.arrayContaining(["settings", "setSettings"]));
+    });
 });

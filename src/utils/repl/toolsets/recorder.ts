@@ -6,6 +6,7 @@ import {
     type AudioSource,
     displayModeSchema,
     type RecorderMethod,
+    type RecorderSettingsPatch,
     type RecorderStatus,
     RPC_ERRORS,
     RpcError,
@@ -45,9 +46,20 @@ export const recorderStartSchema = z
     .strict();
 
 /** `set` takes `fps` for the active rate, as `start` does. */
-const setSchema = recorderSettingsPatchSchema
+export const recorderSetSchema = recorderSettingsPatchSchema
     .omit({ activeFps: true })
     .extend({ fps: z.number().min(0.5).max(120).optional() });
+
+/** What every toolset that controls a live recording says about reading and changing its settings. */
+export const RECORDER_SETTINGS_DOC = "The live settings and the audio state.";
+export const RECORDER_SET_SETTINGS_DOC =
+    "Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records.";
+
+/** The patch the live socket takes (`settings.set`) from what a REPL caller gave (`fps` is the active rate). */
+export function settingsPatchOf(input: z.input<typeof recorderSetSchema>): RecorderSettingsPatch {
+    const { fps, ...rest } = recorderSetSchema.parse(input);
+    return { ...rest, ...(fps !== undefined ? { activeFps: fps } : {}) };
+}
 const EVENTS = ["state", "frame", "displays", "warning", "progress", "ended"] as const;
 const statusSchema = z.custom<RecorderStatus>();
 
@@ -95,15 +107,15 @@ const recordingMethods = [
         params: z.object({}),
         result: z.unknown(),
         resultName: "{ settings, audio }",
-        doc: "The live settings and the audio state.",
+        doc: RECORDER_SETTINGS_DOC,
         effect: "read",
     }),
     defineMethod({
         name: "set",
-        params: setSchema,
+        params: recorderSetSchema,
         result: z.unknown(),
         resultName: "{ settings, audio, applied }",
-        doc: "Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records.",
+        doc: RECORDER_SET_SETTINGS_DOC,
         effect: "reversible",
     }),
     defineMethod({
@@ -347,11 +359,9 @@ export class RecordingHandle {
         return this.check("settings.get", () => this.client.getSettings());
     }
 
-    set(patch: z.input<typeof setSchema>) {
-        const { fps, ...rest } = setSchema.parse(patch);
-        return this.check("settings.set", () =>
-            this.client.setSettings({ ...rest, ...(fps !== undefined ? { activeFps: fps } : {}) })
-        );
+    set(patch: z.input<typeof recorderSetSchema>) {
+        const parsed = settingsPatchOf(patch);
+        return this.check("settings.set", () => this.client.setSettings(parsed));
     }
 
     jobs(): Promise<JobInfo[]> {

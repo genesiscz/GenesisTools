@@ -34,6 +34,12 @@ import {
 } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
+import {
+    RECORDER_SET_SETTINGS_DOC,
+    RECORDER_SETTINGS_DOC,
+    recorderSetSchema,
+    settingsPatchOf,
+} from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { probeVideo } from "@genesiscz/utils/video/probe";
@@ -620,6 +626,22 @@ const recordingMethods = [
         result: z.unknown(),
         resultName: "{ atMs, label }",
         doc: 'Marks this moment with a label ("login done"); after stop(), movie.markers() lists it at its movie time, so you can cut or zoom by what you did.',
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "settings",
+        params: z.object({}),
+        result: z.unknown(),
+        resultName: "{ settings, audio }",
+        doc: RECORDER_SETTINGS_DOC,
+        effect: "read",
+    }),
+    defineMethod({
+        name: "setSettings",
+        params: recorderSetSchema,
+        result: z.unknown(),
+        resultName: "{ settings, audio, applied }",
+        doc: RECORDER_SET_SETTINGS_DOC,
         effect: "reversible",
     }),
     defineMethod({
@@ -1439,6 +1461,14 @@ export class MovieRecording {
 
     mark(label: string) {
         return callRecorder({ id: this.id, method: "marker.add", params: { label } });
+    }
+
+    settings() {
+        return callRecorder({ id: this.id, method: "settings.get" });
+    }
+
+    async setSettings(patch: z.input<typeof recorderSetSchema>) {
+        return await callRecorder({ id: this.id, method: "settings.set", params: settingsPatchOf(patch) });
     }
 
     /** Stops, then waits until the recorder wrote the final manifest, so the movie is complete. */
