@@ -126,6 +126,8 @@ await m.sheet({ count: 6 });                // six frames over the whole edit on
 await m.show({ at: 2.5, tab: "text" });     // opens the editor window there, behind the front window
 await m.export({ format: "gif" });
 await m.polish();                           // removeIdle, autoZoom, normalize, a frame; steps: [{ step, done, note }]
+await m.spotlight({ from: 2, to: 6, rect: { x: 0.5, y: 0, width: 0.5, height: 0.5 } });  // dims all but the rect
+await m.undo();                             // { undone: ["redact"], stepsLeft, … }
 const r = await movies.record({ maxSeconds: 30, audio: ["system"] }); /* … */ const movie = await r.stop();
 ```
 

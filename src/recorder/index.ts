@@ -277,7 +277,7 @@ program
     .action(async (value: string) => {
         try {
             const undone = await undoEdit(value);
-            out.result(describeProject(undone.project, undone.path));
+            out.result({ undone: undone.undone ?? [], ...describeProject(undone.project, undone.path) });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
@@ -486,6 +486,7 @@ program
             out.result({
                 ...describeProject(edited.project, edited.path),
                 ...(edited.loudness ? { loudness: edited.loudness } : {}),
+                ...(edited.warnings ? { warnings: edited.warnings } : {}),
             });
         } catch (error) {
             log.debug({ error }, "recorder apply failed");

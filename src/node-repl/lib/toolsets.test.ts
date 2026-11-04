@@ -199,9 +199,15 @@ describe("movie chapters", () => {
         );
 
         await editProject(path, [{ op: "text", from: 1, to: 2, text: "Title" }]);
-        await editProject(path, [{ op: "redact", from: 0, to: 1, rect: { x: 0, y: 0, width: 0.1, height: 0.1 } }]);
+        const late = await editProject(path, [
+            { op: "redact", from: 0, to: 12, rect: { x: 0, y: 0, width: 0.1, height: 0.1 } },
+        ]);
+        expect(late.warnings).toEqual([
+            "redact: to 12 s is past the end of the source (10 s), so it was clamped to the end",
+        ]);
         expect(undoDepth(path)).toBe(2);
         const once = await undoEdit(path);
+        expect(once.undone).toEqual(["redact"]);
         expect(once.project.redactions ?? []).toEqual([]);
         expect(once.project.texts?.length).toBe(1);
         expect((await undoEdit(path)).project.texts).toBeUndefined();
@@ -212,9 +218,12 @@ describe("movie chapters", () => {
         await editProject(path, [{ op: "text", from: 2, to: 3, text: "B" }]);
         collapseUndo(path, depth);
         expect(undoDepth(path)).toBe(depth + 1);
+        const collapsed = await undoEdit(path);
+        expect(collapsed.undone).toEqual(["text", "text"]);
+        await editProject(path, [{ op: "text", from: 1, to: 2, text: "A" }]);
 
         // The editor window saving in between: the undo refuses rather than drop its change.
-        writeProject(path, { ...(await undoEdit(path)).project }, "window");
+        writeProject(path, readProject(path), "window");
         await editProject(path, [{ op: "text", from: 1, to: 2, text: "C" }]);
         writeProject(path, readProject(path), "window");
         await expect(undoEdit(path)).rejects.toThrow("by window");

@@ -15,6 +15,7 @@ import {
     type ExportFormat,
     editProjectSchema,
     type OpFacts,
+    opTimeWarnings,
     partOf,
     projectPathFor,
     readProject,
@@ -39,6 +40,10 @@ export interface OpenedProject {
     removedIdleUs?: Array<[number, number]>;
     /** A normalize op: the loudness it measured at volume 1 (null: no audio) and the volume it set. */
     loudness?: { measuredLufs: number | null; volume: number };
+    /** What an edit changed that its caller may not expect: a time past the end clamped to it. */
+    warnings?: string[];
+    /** An undo: the ops of the change it took back, in the order they ran. */
+    undone?: string[];
 }
 
 /** The movie a recording argument names: the folder's movie, or the movie an edit file points at. */
@@ -98,6 +103,7 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
     let next = opened.project;
     const removedIdleUs: Array<[number, number]> = [];
     let loudness: { measuredLufs: number | null; volume: number } | undefined;
+    const warnings = ops.flatMap((op) => opTimeWarnings(op, opened.project.source.durationUs));
 
     for (const [index, op] of ops.entries()) {
         try {
@@ -117,14 +123,20 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
     }
 
     const saved = writeProject(opened.path, next);
-    pushUndo(opened.path, opened.project, saved.revision);
-    log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit applied");
+    pushUndo({
+        editPath: opened.path,
+        before: opened.project,
+        afterRevision: saved.revision,
+        ops: ops.map((op) => op.op),
+    });
+    log.debug({ path: opened.path, ops: ops.map((op) => op.op), warnings }, "edit applied");
     return {
         path: opened.path,
         project: saved,
         fresh: false,
         ...(removedIdleUs.length ? { removedIdleUs } : {}),
         ...(loudness ? { loudness } : {}),
+        ...(warnings.length ? { warnings } : {}),
     };
 }
 
@@ -153,7 +165,16 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
 const UNDO_STEPS = 30;
 
 const undoFileSchema = z.object({
-    steps: z.array(z.object({ before: editProjectSchema, afterRevision: z.number().int().nonnegative() })).default([]),
+    steps: z
+        .array(
+            z.object({
+                before: editProjectSchema,
+                afterRevision: z.number().int().nonnegative(),
+                /** The ops of the change; absent in a file from before it was kept. */
+                ops: z.array(z.string()).optional(),
+            })
+        )
+        .default([]),
 });
 
 /** `<edit>.undo.json` beside the edit: the agent's and the CLI's undo steps, so an undo outlives one process. */
@@ -177,8 +198,18 @@ function readUndo(editPath: string): z.infer<typeof undoFileSchema>["steps"] {
 }
 
 /** Remembers the edit as it was before a change that saved `afterRevision`. */
-export function pushUndo(editPath: string, before: EditProject, afterRevision: number): void {
-    const steps = [...readUndo(editPath), { before, afterRevision }].slice(-UNDO_STEPS);
+export function pushUndo({
+    editPath,
+    before,
+    afterRevision,
+    ops,
+}: {
+    editPath: string;
+    before: EditProject;
+    afterRevision: number;
+    ops: string[];
+}): void {
+    const steps = [...readUndo(editPath), { before, afterRevision, ops }].slice(-UNDO_STEPS);
     atomicWriteFileSync(undoPath(editPath), SafeJSON.stringify({ steps }));
 }
 
@@ -201,7 +232,14 @@ export function collapseUndo(editPath: string, depth: number): void {
     atomicWriteFileSync(
         undoPath(editPath),
         SafeJSON.stringify({
-            steps: [...steps.slice(0, depth), { before: first.before, afterRevision: last.afterRevision }],
+            steps: [
+                ...steps.slice(0, depth),
+                {
+                    before: first.before,
+                    afterRevision: last.afterRevision,
+                    ops: added.flatMap((step) => step.ops ?? []),
+                },
+            ],
         })
     );
 }
@@ -238,8 +276,8 @@ export async function undoEdit(value: string): Promise<OpenedProject> {
     }
 
     atomicWriteFileSync(undoPath(opened.path), SafeJSON.stringify({ steps: rest }));
-    log.debug({ path: opened.path, revision: saved.revision, left: rest.length }, "edit undone");
-    return { path: opened.path, project: saved, fresh: false };
+    log.debug({ path: opened.path, revision: saved.revision, left: rest.length, ops: last.ops }, "edit undone");
+    return { path: opened.path, project: saved, fresh: false, undone: last.ops ?? [] };
 }
 
 export { EXPORT_FORMATS, type ExportFormat };

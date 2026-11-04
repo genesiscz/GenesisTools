@@ -11,6 +11,7 @@ import {
     CANVAS_ASPECTS,
     describeProject,
     type EditOp,
+    type EditProject,
     editOpSchema,
     findInTranscript,
     hexColor,
@@ -177,7 +178,26 @@ const movieMethods = [
     edit(
         "undo",
         z.object({}),
-        "Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps). Refused when the editor window changed it since: undo that with ⌘Z there."
+        'Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps). The result names the ops it took back (undone: ["text"]) and stepsLeft. Refused when the editor window changed it since: undo that with ⌘Z there.'
+    ),
+    edit(
+        "spotlight",
+        z
+            .object({
+                from: timeSchema,
+                to: timeSchema,
+                rect: z
+                    .object({
+                        x: z.number().min(0).max(1),
+                        y: z.number().min(0).max(1),
+                        width: z.number().min(0.005).max(1),
+                        height: z.number().min(0.005).max(1),
+                    })
+                    .strict(),
+                label: z.string().max(60).optional(),
+            })
+            .strict(),
+        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims. The same as redact with style "spotlight"; unredact(id) removes it.'
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
@@ -477,6 +497,25 @@ export const moviesApi = defineApi({
     ],
 });
 
+/** One line a reader takes in at a glance: the length and what the edit holds. */
+function summarize(project: EditProject, title: string | undefined): string {
+    const seconds = (us: number) => `${Math.round(us / 100_000) / 10} s`;
+    const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+    const redactions = project.redactions ?? [];
+    const spotlights = redactions.filter((redaction) => redaction.style === "spotlight").length;
+    const parts = [
+        `${seconds(outputDurationUs(project))} long (source ${seconds(project.source.durationUs)})`,
+        count(project.clips.length, "clip"),
+        count(project.zooms.length, "zoom"),
+        count(redactions.length - spotlights, "hidden part"),
+        count(spotlights, "spotlight"),
+        count((project.texts ?? []).length, "text"),
+        `captions ${project.captions?.show ? "on" : "off"}`,
+        `frame ${project.frame ? (project.frame.aspect ?? "on") : "off"}`,
+    ];
+    return `${title ? `"${title}": ` : ""}${parts.join(", ")}`;
+}
+
 export class Movie {
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
@@ -489,6 +528,7 @@ export class Movie {
         const folder = recordingFolderOf(opened);
         const manifest = folder ? readRecordingManifest(folder) : undefined;
         return {
+            summary: summarize(opened.project, manifest?.title),
             ...describeProject(opened.project, opened.path),
             title: manifest?.title ?? null,
             folder: folder ?? null,
@@ -505,6 +545,7 @@ export class Movie {
                 ? { removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
                 : {}),
             ...(edited.loudness ? { loudness: edited.loudness } : {}),
+            ...(edited.warnings ? { warnings: edited.warnings } : {}),
         };
     }
 
@@ -696,7 +737,16 @@ export class Movie {
 
     async undo() {
         const undone = await undoEdit(this.recording);
-        return describeProject(undone.project, undone.path);
+        return {
+            undone: undone.undone ?? [],
+            stepsLeft: undoDepth(undone.path),
+            ...describeProject(undone.project, undone.path),
+        };
+    }
+
+    /** A redaction with the spotlight style: the rectangle stays sharp and the rest of the picture dims. */
+    async spotlight(options: Omit<Extract<EditOp, { op: "redact" }>, "op" | "style">) {
+        return this.change([{ op: "redact", ...options, style: "spotlight" }]);
     }
 
     async export(

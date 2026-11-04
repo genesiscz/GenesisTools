@@ -830,6 +830,34 @@ export interface OpFacts {
 /** The loudest a volume may lift: 200 %, +6 dB. */
 const MAX_VOLUME = 2;
 
+/**
+ * The times of an op (`from`, `to`, `at`, source seconds) that lie past the end of the source movie, as sentences a
+ * caller can return: such a time is clamped to the end, which a reader of the result would otherwise not notice.
+ */
+export function opTimeWarnings(op: EditOp, sourceDurationUs: number): string[] {
+    const warnings: string[] = [];
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+
+    for (const key of ["from", "to", "at"] as const) {
+        const value = Object.entries(op).find(([name]) => name === key)?.[1];
+        const parsed = timeSchema.safeParse(value);
+
+        if (value === undefined || !parsed.success) {
+            continue;
+        }
+
+        const us = timeToUs(parsed.data);
+
+        if (us > sourceDurationUs) {
+            warnings.push(
+                `${op.op}: ${key} ${seconds(us)} s is past the end of the source (${seconds(sourceDurationUs)} s), so it was clamped to the end`
+            );
+        }
+    }
+
+    return warnings;
+}
+
 /** Applies one op; throws a RangeError a caller can show as it is. */
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
     switch (op.op) {
