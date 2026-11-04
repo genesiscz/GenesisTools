@@ -276,8 +276,11 @@ export const ENDPOINTS = {
         },
         DecisionSendDto
     >("POST", "/api/qa/decisions/send-drafts", "keyed-write"),
-    /** Answers one decision letter from a stored act token (the Telegram button, a banner, the phone). */
-    act: row<Record<string, never>, ActReceiptDto>("POST", "/api/act", "act"),
+    /**
+     * Answers one decision letter from a stored act token (the Telegram button, a banner, the phone). A reply token
+     * (the lock screen's Reply field) answers with `text`.
+     */
+    act: row<{ text?: string }, ActReceiptDto>("POST", "/api/act", "act"),
 
     // Pending ask forms.
     qaPending: row<Record<string, never>, unknown>("GET", "/api/qa/pending", "read"),

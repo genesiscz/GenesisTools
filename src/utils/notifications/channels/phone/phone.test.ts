@@ -7,6 +7,7 @@ import {
     letterOfAction,
     PUSH_DATA_KEY,
     type PushNoticeData,
+    REPLY_ACTION_ID,
 } from "../../phone-wire";
 import type { NotificationEvent } from "../../types";
 import { memoryPhoneDeviceStore, type PhoneDevice, type PhoneRoute, registerPhoneDevice } from "./devices";
@@ -205,6 +206,7 @@ describe("phone wire", () => {
         expect(ids).toContain("gt-answer-3-c");
         expect(answerCategoryId(2, "z")).toBe("gt-answer-2");
         expect(letterOfAction("answer:b")).toBe("b");
+        expect(letterOfAction(REPLY_ACTION_ID)).toBeNull();
         expect(letterOfAction("com.apple.UNNotificationDefaultActionIdentifier")).toBeNull();
     });
 });

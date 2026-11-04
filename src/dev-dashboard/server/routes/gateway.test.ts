@@ -12,7 +12,7 @@ import type { RouteContext, RouteDef, RouteResult, RouteServices } from "@app/de
 import { CapabilityRefusedError, HUB_CAPABILITIES } from "@app/hub/lib/capabilities/index";
 import { realProcsSources } from "@app/hub/lib/procs/sources";
 import { realSignalOps } from "@app/hub/lib/procs/stop";
-import { issueActTokens, memoryActTokenStore } from "@app/question/lib/act/tokens";
+import { issueActTokens, issueReplyToken, memoryActTokenStore } from "@app/question/lib/act/tokens";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import { GATEWAY_ROWS, gatewayRoutes } from "./gateway";
 
@@ -147,6 +147,47 @@ describe("the Mac gateway", () => {
         expect(first.body).toMatchObject({ key: "http:r1", outcome: { kind: "queued" }, decision: { option: "b" } });
         expect(retry).toEqual(first);
         expect(answers).toBe(1);
+    });
+
+    it("passes a reply token's text to the answer, and refuses a reply without text", async () => {
+        const store = memoryActTokenStore();
+        const row: DecisionRecord = {
+            id: "d_4_s-gw",
+            sessionId: "s-gw",
+            number: 4,
+            prompt: "Which?",
+            options: ["one", "two"],
+            state: "open",
+            updatedTs: "2026-11-03T09:00:00Z",
+        };
+        const token = await issueReplyToken({ row, surface: "phone", store });
+        const texts: (string | undefined)[] = [];
+        const routes = gatewayRoutes({
+            act: async () => ({
+                store,
+                rows: () => [row],
+                answer: async (input) => {
+                    texts.push(input.text);
+                    return { session: "s-gw", text: input.text ?? "", channel: "queued", delivered: false };
+                },
+            }),
+        });
+        const actRoute = route(routes, "POST", "/api/act");
+        const call = (key: string, body: unknown) =>
+            json(
+                actRoute.handler(
+                    ctx({
+                        method: "POST",
+                        pathname: "/api/act",
+                        headers: { "x-gt-act-token": token, "idempotency-key": key },
+                        body,
+                    })
+                )
+            );
+
+        expect((await call("r-empty", {})).body).toMatchObject({ outcome: { kind: "refused", code: "invalid" } });
+        expect((await call("r-text", { text: "keep the cache" })).body).toMatchObject({ outcome: { kind: "queued" } });
+        expect(texts).toEqual(["keep the cache"]);
     });
 
     it("stores an upload by content under the upload folder, and refuses an unknown type", async () => {

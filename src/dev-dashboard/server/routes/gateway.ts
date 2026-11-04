@@ -105,9 +105,9 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
     return [
         ...capabilityRoutes,
         bindEndpoint(ENDPOINTS.act, {
-            input: z.object({}),
-            invalid: "expected an empty JSON body",
-            run: async (_input, ctx: RouteContext) => {
+            input: z.object({ text: z.string().max(4000).optional() }),
+            invalid: "expected an empty JSON body, or { text } for a reply token",
+            run: async (input, ctx: RouteContext) => {
                 const token = ctx.headers[ACT_TOKEN_HEADER];
                 const key = ctx.headers[IDEMPOTENCY_HEADER];
 
@@ -119,7 +119,12 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
                     return { kind: "json", status: 400, body: { error: `${IDEMPOTENCY_HEADER} required` } };
                 }
 
-                return act({ token, key: `http:${key}`, deps: await (deps.act ?? realActDeps)() });
+                return act({
+                    token,
+                    key: `http:${key}`,
+                    deps: await (deps.act ?? realActDeps)(),
+                    ...(input.text ? { text: input.text } : {}),
+                });
             },
         }),
         // Behind the full login and an idempotency key (a keyed-write row), so a replayed stop answers once.
