@@ -201,3 +201,90 @@ export interface AgentVoiceReceiptDto {
     provider: string;
     model: string;
 }
+
+// PR triage (F20). It sits beside the agents board because its actions hand a PR to an agent session.
+
+/** The hub's readiness verdict for a PR (`src/hub/lib/pr-readiness.ts`). */
+export type PrTriageVerdict = "ready" | "waiting" | "blocked" | "closed";
+
+/** One open PR with its readiness, as the triage list shows it. */
+export interface PrTriageRowDto {
+    url: string;
+    provider: "github" | "gitlab";
+    number: number;
+    title: string;
+    /** The project folder's name. */
+    repo: string;
+    /** The checkout a fix runs in: the PR's local worktree, else the project's main checkout. */
+    checkout: string | null;
+    author: string | null;
+    isMine: boolean | null;
+    draft: boolean;
+    headBranch: string;
+    ci: "success" | "failed" | "running" | "pending" | null;
+    /** Null when the readiness read failed (`readinessError`). */
+    verdict: PrTriageVerdict | null;
+    summary: string | null;
+    reasons: string[];
+    unresolved: number;
+    mergeable: "mergeable" | "conflicting" | "unknown" | null;
+    readinessError: string | null;
+    updatedAt: string;
+}
+
+/** `GET /api/gateway/prs?mine=&limit=`: the open PRs of the configured projects, ready ones first. */
+export interface PrTriageDto {
+    generatedAt: string;
+    prs: PrTriageRowDto[];
+    /** Projects or PRs that could not be read, with why. */
+    skipped: { what: string; reason: string }[];
+}
+
+/** One check of a PR, with the tail of its log when it failed. */
+export interface PrCheckDto {
+    name: string;
+    status: string | null;
+    url: string | null;
+}
+
+/** `GET /api/gateway/pr-checks?url=`: a PR's checks and the failing step's log tail (the first failed check). */
+export interface PrChecksDto {
+    url: string;
+    checks: PrCheckDto[];
+    failing: { name: string; url: string | null; lines: string[]; error: string | null } | null;
+}
+
+/** `POST /api/prs/fix`: hand the PR's unresolved threads, or one failed check, to the session that owns the PR. */
+export interface PrFixInput {
+    url: string;
+    checkout: string;
+    kind: "threads" | "check";
+    checkUrl?: string;
+    checkName?: string;
+}
+
+export interface PrFixReceiptDto {
+    url: string;
+    kind: "threads" | "check";
+    sent: boolean;
+    /** The session the pointer line went to. */
+    owner: string | null;
+    /** The task file the agent reads. */
+    file: string | null;
+    /** Why nothing was sent. */
+    error: string | null;
+}
+
+/** `POST /api/prs/merge`: `tools github merge <url> --rebase|--squash` (stack safe). GitHub only for now. */
+export interface PrMergeInput {
+    url: string;
+    method: "rebase" | "squash";
+}
+
+export interface PrMergeReceiptDto {
+    url: string;
+    method: "rebase" | "squash";
+    merged: boolean;
+    /** The merge tool's last lines, or why nothing ran. */
+    detail: string;
+}

@@ -412,6 +412,46 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<{ name: string; session?: string; vars: Record<string, string> }>,
 
+    /** `hub triage --json [--mine] [--limit n]`: the open PRs of the configured projects with readiness (F20). */
+    prs: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input): { mine: boolean; limit: number } {
+            const limit = wholeNumber(input, "limit", 30) as number;
+
+            if (limit < 1 || limit > 100) {
+                throw new CapabilityRefusedError("bad-input", "limit must be between 1 and 100");
+            }
+
+            return { mine: text(input, "mine") === "1" || input.mine === true, limit };
+        },
+        async run(input, { signal }) {
+            signal.throwIfAborted();
+            const { prTriage } = await import("../triage/index");
+            return prTriage(input);
+        },
+    } satisfies HubCapability<{ mine: boolean; limit: number }>,
+
+    /** A PR's checks and the failing step's log tail (F20). */
+    prChecks: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input): { url: string } {
+            const url = text(input, "url");
+
+            if (!url) {
+                throw new CapabilityRefusedError("bad-input", "url: the PR's web URL");
+            }
+
+            return { url };
+        },
+        async run(input, { signal }) {
+            signal.throwIfAborted();
+            const { prChecks } = await import("../triage/index");
+            return prChecks(input);
+        },
+    } satisfies HubCapability<{ url: string }>,
+
     /** `hub widget snapshot --json [--selected key]`: what the notch widget shows, read once. */
     widgetSnapshot: {
         policy: "read",

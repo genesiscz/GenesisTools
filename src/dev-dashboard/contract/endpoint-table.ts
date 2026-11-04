@@ -7,7 +7,13 @@ import type {
     AgentStopReceiptDto,
     AgentsBoardDto,
     AgentVoiceReceiptDto,
+    PrChecksDto,
     PreparedPromptDto,
+    PrFixInput,
+    PrFixReceiptDto,
+    PrMergeInput,
+    PrMergeReceiptDto,
+    PrTriageDto,
 } from "@app/dev-dashboard/contract/agents";
 import type {
     ApprovalAnswerInput,
@@ -327,6 +333,13 @@ export const ENDPOINTS = {
     gatewayStuck: row<GatewayInput, unknown>("GET", "/api/gateway/stuck", "read"),
     gatewayForecast: row<GatewayInput, unknown>("GET", "/api/gateway/forecast", "read"),
     gatewayPrompts: row<GatewayInput, unknown>("GET", "/api/gateway/prompts", "read"),
+    /** PR triage (F20): the open PRs with readiness, and one PR's checks with the failing step's log tail. */
+    gatewayPrs: row<GatewayInput, PrTriageDto>("GET", "/api/gateway/prs", "read", "slow"),
+    gatewayPrChecks: row<GatewayInput, PrChecksDto>("GET", "/api/gateway/pr-checks", "read", "slow"),
+    /** Hands a PR's threads or one failed check to the session that owns the PR (F20). */
+    prsFix: row<PrFixInput, PrFixReceiptDto>("POST", "/api/prs/fix", "keyed-write", "slow"),
+    /** Merges a PR (`tools github merge --rebase|--squash`); the phone asks for Face ID first (F20). */
+    prsMerge: row<PrMergeInput, PrMergeReceiptDto>("POST", "/api/prs/merge", "keyed-write", "slow"),
     /** One saved prompt rendered for one session, each variable with its value and source (F23). */
     gatewayPromptPrepare: row<GatewayInput, PreparedPromptDto>("GET", "/api/gateway/prompt-prepare", "read", "slow"),
     gatewayWidgetSnapshot: row<GatewayInput, unknown>("GET", "/api/gateway/widget-snapshot", "read", "slow"),

@@ -19,6 +19,7 @@ import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
 import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
+import { fixPr, type MergeRunner, mergePr } from "@app/hub/lib/triage/index";
 import { transcribeVoiceClip, VoiceClipError, type VoiceDeps } from "@app/hub/lib/voice/index";
 import { muteWatch, WATCH_SOURCE_IDS, WATCH_SOURCES } from "@app/hub/lib/watching/index";
 import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
@@ -45,6 +46,8 @@ export const GATEWAY_ROWS = {
     forecast: ENDPOINTS.gatewayForecast,
     prompts: ENDPOINTS.gatewayPrompts,
     promptPrepare: ENDPOINTS.gatewayPromptPrepare,
+    prs: ENDPOINTS.gatewayPrs,
+    prChecks: ENDPOINTS.gatewayPrChecks,
     widgetSnapshot: ENDPOINTS.gatewayWidgetSnapshot,
 } as const satisfies Record<HubCapabilityName, Endpoint>;
 
@@ -82,6 +85,8 @@ export interface GatewayDeps {
     send?: BoardSendDeps;
     /** The voice route's clip folder and transcriber; tests pass fakes, so no model is called. */
     voice?: VoiceDeps;
+    /** The merge route's runner; tests pass a fake, so no PR is merged. */
+    merge?: MergeRunner;
     /** The raise route's ledger and window openers; tests pass fakes, so no window opens. */
     gates?: GateRaiseDeps;
     /** The approval answer route's sources; tests pass fakes, so no key is pressed and no worker is answered. */
@@ -174,6 +179,23 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
                     throw err;
                 }
             },
+        }),
+        // Keyed writes: a replayed fix types one pointer line, a replayed merge merges once.
+        bindEndpoint(ENDPOINTS.prsFix, {
+            input: z.object({
+                url: z.string().min(1),
+                checkout: z.string().min(1),
+                kind: z.enum(["threads", "check"]),
+                checkUrl: z.string().min(1).optional(),
+                checkName: z.string().min(1).optional(),
+            }),
+            invalid: "expected { url, checkout, kind, checkUrl?, checkName? }",
+            run: (input) => fixPr(input),
+        }),
+        bindEndpoint(ENDPOINTS.prsMerge, {
+            input: z.object({ url: z.string().min(1), method: z.enum(["rebase", "squash"]) }),
+            invalid: "expected { url, method }",
+            run: (input) => mergePr(input, deps.merge),
         }),
         bindEndpoint(ENDPOINTS.agentsInterrupt, {
             input: z.object({ key: z.string().min(1) }),
