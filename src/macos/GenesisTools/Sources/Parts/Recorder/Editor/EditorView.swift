@@ -1393,16 +1393,26 @@ private struct ExportIssues: View {
                     Image(systemName: issue.mustFix ? "exclamationmark.triangle.fill" : "info.circle")
                         .foregroundStyle(issue.mustFix ? Color.red : RecorderPalette.dim)
                         .font(.system(size: 11.5))
-                    Text(verbatim: issue.message)
-                        .font(.system(size: 12))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let at = issue.at, let out = TimelineMap.outputTime(ofSource: Int64(at * 1_000_000), in: model.project) {
-                        GhostButton("Show", symbol: "arrow.right.circle", tooltip: "Move the playhead there",
-                                    identifier: "recorder.export.issue.show") { model.seek(out) }
-                    } else if issue.mustFix, issue.selection != nil {
-                        GhostButton("Remove", symbol: "trash", tooltip: "Remove it: it never shows (⌘Z brings it back)",
-                                    identifier: "recorder.export.issue.remove") { model.remove(issue) }
+                    // The message gets the whole width; its actions sit on a row under it, so two never squeeze it.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(verbatim: issue.message)
+                            .font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(spacing: 6) {
+                            if let at = issue.at, let out = TimelineMap.outputTime(ofSource: Int64(at * 1_000_000), in: model.project) {
+                                GhostButton("Show", symbol: "arrow.right.circle", tooltip: "Move the playhead there",
+                                            identifier: "recorder.export.issue.show") { model.seek(out) }
+                            } else if issue.mustFix, issue.selection != nil {
+                                GhostButton("Remove", symbol: "trash", tooltip: "Remove it: it never shows (⌘Z brings it back)",
+                                            identifier: "recorder.export.issue.remove") { model.remove(issue) }
+                            }
+                            if !issue.mustFix, model.canLengthen(issue) {
+                                GhostButton("Lengthen", symbol: "arrow.left.and.right",
+                                            tooltip: "Make it last 1.5 s, long enough to read (⌘Z undoes it)",
+                                            identifier: "recorder.export.issue.lengthen") { model.lengthen(issue) }
+                            }
+                        }
                     }
                 }
                 .accessibilityElement(children: .combine)

@@ -1404,6 +1404,40 @@ final class EditorModel {
     }
 
     /// Removes the item an issue names (one undo step), as its fix does in the REPL.
+    /// How long a lengthened item lasts, as check()'s retime fix: long enough to read.
+    static let readableUs: Int64 = 1_500_000
+
+    /// The start and end of the zoom, hidden part, text or shape a selection names.
+    func span(of selection: EditorSelection) -> (start: Int64, end: Int64)? {
+        switch selection {
+        case let .zoom(id): return project.zooms.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .redaction(id): return project.redactions?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .text(id): return project.texts?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .shape(id): return project.shapes?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case .clip, .none: return nil
+        }
+    }
+
+    /// True when the item an issue names lasts less than `readableUs` and the movie has room to lengthen it.
+    func canLengthen(_ issue: EditIssue) -> Bool {
+        guard let selection = issue.selection, let span = span(of: selection) else { return false }
+        return span.end - span.start < Self.readableUs && span.end < project.source.durationUs
+    }
+
+    /// Makes the item an issue names last `readableUs` from its start (one undo step), as check()'s fix does.
+    func lengthen(_ issue: EditIssue) {
+        guard let selection = issue.selection, let span = span(of: selection) else { return }
+        let end = min(project.source.durationUs, span.start + Self.readableUs)
+        self.selection = selection
+        switch selection {
+        case let .zoom(id): moveZoom(id, startUs: span.start, endUs: end)
+        case let .redaction(id): updateRedaction(id) { $0.endUs = end }
+        case let .text(id): updateText(id) { $0.endUs = end }
+        case let .shape(id): updateShape(id) { $0.endUs = end }
+        case .clip, .none: return
+        }
+    }
+
     func remove(_ issue: EditIssue) {
         guard let selection = issue.selection else { return }
         self.selection = selection
