@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { collapseUndo, defaultExportName, editProject, undoDepth, undoEdit } from "@app/recorder/lib/edit";
-import { chaptersOf, recordingFolderOf, spreadTimes } from "@app/recorder/lib/moments";
+import { chapterMetadata, chaptersOf, chaptersOfPart, recordingFolderOf, spreadTimes } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -158,6 +158,31 @@ describe("toolset method names", () => {
         // A bad argument of an async method rejects, so `.catch()` sees it, with one line per problem.
         const clicks = Reflect.get(movie, "clicks") as (options: unknown) => Promise<unknown>;
         await expect(clicks({ color: "red" })).rejects.toThrow("  - color: a color is #RRGGBB");
+    });
+});
+
+describe("movie chapters in a movie file", () => {
+    test("a part keeps the chapter it starts in at 0 and moves the ones inside it", () => {
+        const chapters = [
+            { at: 0, label: "Intro" },
+            { at: 6, label: "Settings" },
+            { at: 30, label: "Wrap up" },
+        ];
+        expect(chaptersOfPart(chapters, { from: 5, to: 20 })).toEqual([
+            { at: 0, label: "Intro" },
+            { at: 1, label: "Settings" },
+        ]);
+        expect(
+            chapterMetadata(
+                [
+                    { at: 0, label: "A=b; #1" },
+                    { at: 1.5, label: "Next" },
+                ],
+                4
+            )
+        ).toBe(
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1500\ntitle=A\\=b\\; \\#1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1500\nEND=4000\ntitle=Next\n"
+        );
     });
 });
 

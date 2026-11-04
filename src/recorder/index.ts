@@ -16,6 +16,7 @@ import {
     type ExportFormat,
     editProject,
     exportAs,
+    finishExport,
     openProject,
     undoEdit,
     writeSubtitles,
@@ -561,7 +562,7 @@ program
                 } else {
                     out.println(
                         answer.ok
-                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s)${answer.subtitles ? `\n${answer.subtitles}` : ""}`
+                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s${answer.chapters ? `, ${answer.chapters} chapters` : ""})${answer.subtitles ? `\n${answer.subtitles}` : ""}`
                             : `error: ${answer.error}`
                     );
 
@@ -579,6 +580,37 @@ program
             }
         }
     );
+
+program
+    .command("finish")
+    .description(
+        "After an export: write the subtitle file and put the markers into an MP4 as chapters, by the edit's settings"
+    )
+    .argument("<recording>", "the edit the movie was exported from")
+    .argument("<movie>", "the exported movie")
+    .option("--from <time>", "the movie holds only the part from this OUTPUT time (seconds or m:ss)")
+    .option("--to <time>", "the movie holds only the part up to this OUTPUT time")
+    .action(async (value: string, movie: string, flags: { from?: string; to?: string }) => {
+        try {
+            const part =
+                flags.from === undefined && flags.to === undefined
+                    ? undefined
+                    : {
+                          fromUs: flags.from === undefined ? 0 : timeToUs(parseTime(flags.from, "--from")),
+                          toUs:
+                              flags.to === undefined ? Number.MAX_SAFE_INTEGER : timeToUs(parseTime(flags.to, "--to")),
+                      };
+            const answer = await finishExport({ value, answer: { ok: true, path: resolve(movie) }, part });
+            out.result(answer);
+
+            for (const warning of answer.warnings ?? []) {
+                out.printlnErr(warning);
+            }
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
 
 program
     .command("subtitles")

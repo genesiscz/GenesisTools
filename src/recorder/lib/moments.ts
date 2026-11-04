@@ -59,6 +59,14 @@ export function chaptersOf(
     markers: ReadonlyArray<{ plays: number | null; label: string }>,
     options: { intro?: string; minSeconds?: number } = {}
 ): string[] {
+    return chapterPoints(markers, options).map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
+}
+
+/** The chapters as output seconds and labels, by the rules of chaptersOf. */
+export function chapterPoints(
+    markers: ReadonlyArray<{ plays: number | null; label: string }>,
+    options: { intro?: string; minSeconds?: number } = {}
+): Array<{ at: number; label: string }> {
     const minSeconds = options.minSeconds ?? 10;
     const kept = markers
         .flatMap((marker) => (marker.plays === null ? [] : [{ at: marker.plays, label: marker.label }]))
@@ -87,7 +95,41 @@ export function chaptersOf(
         chapters.push(marker);
     }
 
-    return chapters.map((chapter) => `${clock(chapter.at)} ${chapter.label}`);
+    return chapters;
+}
+
+/**
+ * The chapters of an exported part (output seconds of the whole edit): the chapter the part starts in begins at 0,
+ * the ones inside it move with it, and the ones after it go.
+ */
+export function chaptersOfPart(
+    chapters: ReadonlyArray<{ at: number; label: string }>,
+    part: { from: number; to: number }
+): Array<{ at: number; label: string }> {
+    const current = chapters.filter((chapter) => chapter.at <= part.from).at(-1);
+    const inside = chapters
+        .filter((chapter) => chapter.at > part.from && chapter.at < part.to)
+        .map((chapter) => ({ at: chapter.at - part.from, label: chapter.label }));
+    return [...(current ? [{ at: 0, label: current.label }] : []), ...inside];
+}
+
+/** The ffmpeg metadata file that puts chapters into a movie, each running to the next one or the end. */
+export function chapterMetadata(
+    chapters: ReadonlyArray<{ at: number; label: string }>,
+    durationSeconds: number
+): string {
+    const escaped = (text: string) => text.replace(/[=;#\\\n]/g, (char) => `\\${char}`);
+    const blocks = chapters.map((chapter, index) => {
+        const end = chapters[index + 1]?.at ?? durationSeconds;
+        return [
+            "[CHAPTER]",
+            "TIMEBASE=1/1000",
+            `START=${Math.round(chapter.at * 1000)}`,
+            `END=${Math.round(end * 1000)}`,
+            `title=${escaped(chapter.label)}`,
+        ].join("\n");
+    });
+    return `;FFMETADATA1\n${blocks.join("\n")}\n`;
 }
 
 /** 75.4 → "1:15", 3725 → "1:02:05". */

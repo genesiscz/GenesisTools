@@ -952,7 +952,7 @@ final class EditorModel {
                 self?.exportProgress = nil
                 HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
                 self?.show("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).", error: false)
-                self?.writeSubtitles(beside: result.url, part: part)
+                self?.finishExport(result.url, part: part)
                 self?.reveal(result.url)
             } catch {
                 self?.exportProgress = nil
@@ -962,23 +962,20 @@ final class EditorModel {
         }
     }
 
-    /// The edit's subtitle file beside a movie the window exported, made by `tools recorder subtitles` (the same
-    /// cues as the CLI's and the REPL's); a GIF or WebM gets it from `tools recorder export` itself.
-    private func writeSubtitles(beside movie: URL, part: (fromUs: Int64, toUs: Int64)?) {
-        guard let format = project.export.subtitles else { return }
-        let out = movie.deletingPathExtension().appendingPathExtension(format.rawValue)
-        var argv = ["recorder", "subtitles", store.url.path, "--format", format.rawValue, "--out", out.path]
+    /// After the window's export: the subtitle file and the markers as chapters, by `tools recorder finish` (the same
+    /// step the CLI and the REPL run); a GIF or WebM gets it from `tools recorder export` itself.
+    private func finishExport(_ movie: URL, part: (fromUs: Int64, toUs: Int64)?) {
+        guard project.export.subtitles != nil || (project.export.chapters != false && !markers.isEmpty) else { return }
+        var argv = ["recorder", "finish", store.url.path, movie.path]
         if let part {
             argv += ["--from", String(format: "%.3f", Double(part.fromUs) / 1_000_000), "--to", String(format: "%.3f", Double(part.toUs) / 1_000_000)]
         }
-        ToolsRunner.run(argv) { [weak self] status, _, stderr in
-            guard status != 0 else {
-                HubPerf.log("recorder.export: subtitles \(out.lastPathComponent)")
-                return
+        ToolsRunner.run(argv) { [weak self] status, stdout, stderr in
+            let warning = stderr.split(separator: "\n").last.map(String.init)
+            HubPerf.log("recorder.export: finish exit \(status) \(stdout.split(separator: "\n").last.map(String.init) ?? "")")
+            if status != 0 || warning != nil {
+                self?.show("Exported, but: \(warning ?? "exit \(status)")", error: true)
             }
-            let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-            HubPerf.log("recorder.export: no subtitles: \(reason)")
-            self?.show("Exported, but without subtitles: \(reason)", error: true)
         }
     }
 

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -31,6 +31,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { type ExportAnswer, exportEdit, movieOf, resolveRecording } from "./library";
+import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf } from "./moments";
 
 const { log } = logger.scoped("recorder-edit");
 
@@ -364,24 +365,119 @@ export async function writeSubtitles({
     return { path, cues: cues.length, format };
 }
 
-/** The subtitle file an export asked for, beside the movie it wrote; a missing transcript is a warning, not a failure. */
-async function subtitlesBeside(
-    value: string,
-    answer: ExportAnswer,
-    format: SubtitleFormat | undefined
-): Promise<ExportAnswer & { subtitles?: string; warnings?: string[] }> {
-    if (!format || !answer.ok || !answer.path) {
+/**
+ * Puts the recording's markers into an MP4 as chapters (players list them; QuickTime under View → Chapters): a
+ * stream copy through ffmpeg into a file beside it, then moved over it. Answers how many it wrote; 0 leaves the movie.
+ */
+export async function embedChapters({
+    value,
+    movie,
+    part,
+}: {
+    value: string;
+    movie: string;
+    part?: { fromUs: number; toUs: number };
+}): Promise<number> {
+    const opened = await openProject(value);
+    const whole = chapterPoints(markersOf(opened), { minSeconds: 1 });
+    const chapters = part ? chaptersOfPart(whole, { from: part.fromUs / 1_000_000, to: part.toUs / 1_000_000 }) : whole;
+
+    if (chapters.length === 0) {
+        return 0;
+    }
+
+    const info = await probeVideo({ input: movie });
+    const scratch = await mkdtemp(join(tmpdir(), "recorder-chapters-"));
+
+    try {
+        const metadata = join(scratch, "chapters.txt");
+        const withChapters = join(dirname(movie), `.${basename(movie)}.chapters${extname(movie)}`);
+        atomicWriteFileSync(metadata, chapterMetadata(chapters, info.durationUs / 1_000_000));
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                movie,
+                "-f",
+                "ffmetadata",
+                "-i",
+                metadata,
+                "-map",
+                "0",
+                "-map_metadata",
+                "1",
+                "-map_chapters",
+                "1",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                withChapters,
+            ],
+            timeoutMs: 10 * 60_000,
+        });
+        await rename(withChapters, movie);
+        log.debug({ movie, chapters: chapters.length, part }, "chapters put into the movie");
+        return chapters.length;
+    } finally {
+        await rm(scratch, { recursive: true, force: true });
+    }
+}
+
+/**
+ * What an export does after the movie is written, by the edit's settings: the subtitle file beside it and the
+ * markers as chapters in an MP4. A missing transcript or a failed chapter step is a warning, never a failed export.
+ * `part`: the movie holds only that part of the edit (the window's I and O).
+ */
+export async function finishExport({
+    value,
+    answer,
+    subtitles,
+    part,
+}: {
+    value: string;
+    answer: ExportAnswer;
+    subtitles?: SubtitleFormat;
+    part?: { fromUs: number; toUs: number };
+}): Promise<ExportAnswer & { subtitles?: string; chapters?: number; warnings?: string[] }> {
+    if (!answer.ok || !answer.path) {
         return answer;
     }
 
-    const out = join(dirname(answer.path), `${basename(answer.path, extname(answer.path))}.${format}`);
+    const movie = answer.path;
+    const { project } = await openProject(value);
+    const format = subtitles ?? project.export.subtitles;
+    const warnings: string[] = [];
+    const extras: { subtitles?: string; chapters?: number } = {};
 
-    try {
-        return { ...answer, subtitles: (await writeSubtitles({ value, format, out })).path };
-    } catch (error) {
-        log.debug({ error, value }, "no subtitles beside the export");
-        return { ...answer, warnings: [`no subtitles: ${error instanceof Error ? error.message : String(error)}`] };
+    if (format) {
+        const out = join(dirname(movie), `${basename(movie, extname(movie))}.${format}`);
+
+        try {
+            extras.subtitles = (await writeSubtitles({ value, format, out, part })).path;
+        } catch (error) {
+            log.debug({ error, value }, "no subtitles beside the export");
+            warnings.push(`no subtitles: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
+
+    if (extname(movie).toLowerCase() === ".mp4" && project.export.chapters !== false) {
+        try {
+            const count = await embedChapters({ value, movie, part });
+
+            if (count) {
+                extras.chapters = count;
+            }
+        } catch (error) {
+            log.warn({ error, movie }, "the chapters could not be put into the movie");
+            warnings.push(`no chapters: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    return { ...answer, ...extras, ...(warnings.length ? { warnings } : {}) };
 }
 
 export async function exportAs(
@@ -393,7 +489,7 @@ export async function exportAs(
         /** A subtitle file beside the export; absent is the edit's export.subtitles. */
         subtitles?: SubtitleFormat;
     } = {}
-): Promise<ExportAnswer & { subtitles?: string; warnings?: string[] }> {
+): Promise<ExportAnswer & { subtitles?: string; chapters?: number; warnings?: string[] }> {
     if (options.part) {
         // A part is a trimmed copy of the edit in a scratch folder; the edit on disk stays as it is.
         const whole = await openProject(value);
@@ -426,7 +522,7 @@ export async function exportAs(
     const subtitles = options.subtitles ?? opened.project.export.subtitles;
 
     if (asked === "mp4") {
-        return subtitlesBeside(value, await exportEdit(resolveRecording(value), options.out), subtitles);
+        return finishExport({ value, answer: await exportEdit(resolveRecording(value), options.out), subtitles });
     }
 
     const format = asked;
@@ -463,11 +559,11 @@ export async function exportAs(
         });
         const bytes = (await stat(output)).size;
         log.debug({ output, format, bytes }, "converted the export");
-        return subtitlesBeside(
+        return finishExport({
             value,
-            { ok: true, path: output, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 },
-            subtitles
-        );
+            answer: { ok: true, path: output, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 },
+            subtitles,
+        });
     } finally {
         await rm(scratch, { recursive: true, force: true });
     }

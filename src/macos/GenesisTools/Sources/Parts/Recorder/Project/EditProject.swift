@@ -268,6 +268,8 @@ struct EditProject: Codable, Equatable {
         var format: ExportFormat?
         /// A subtitle file written beside every export from the cached transcript; nil is none.
         var subtitles: SubtitleFormat?
+        /// The recording's markers as chapters inside an MP4; nil is on.
+        var chapters: Bool?
     }
 
     enum SubtitleFormat: String, Codable, CaseIterable {

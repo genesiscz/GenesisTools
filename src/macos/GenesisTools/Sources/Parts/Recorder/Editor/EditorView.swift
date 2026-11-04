@@ -1092,6 +1092,13 @@ private struct ExportInspector: View {
                              selection: Binding(get: { settings.subtitles }, set: { format in model.setExport { $0.subtitles = format } }),
                              minSegmentWidth: 60, identifier: "recorder.export.subtitles", fillsWidth: true)
                 .instantTooltip("A subtitle file beside the movie, from the transcript with your fixes, in the movie's time")
+            if !model.markers.isEmpty {
+                SwitchRow("Chapters from the markers", isOn: Binding(get: { settings.chapters != false }, set: { on in
+                    model.setExport { $0.chapters = on ? nil : false }
+                }))
+                .accessibilityIdentifier("recorder.export.chapters")
+                .instantTooltip("An MP4 lists the recording's \(Plural.count(model.markers.count, "marker")) as chapters (QuickTime: View → Chapters)")
+            }
             if settings.subtitles != nil, model.zoom.captionLines.isEmpty {
                 Text("This movie has no transcript yet: Transcribe on the Captions tab, or the export writes no subtitles.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
