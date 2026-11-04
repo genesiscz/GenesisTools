@@ -962,6 +962,17 @@ private struct AudioInspector: View {
                 }
             }
             .disabled(!audio.include)
+            if model.audioTrackCount > 1 {
+                VStack(alignment: .leading, spacing: 6) {
+                    SectionLabel(text: "Tracks")
+                    ForEach(0..<model.audioTrackCount, id: \.self) { index in
+                        SwitchRow("Track \(index + 1)",
+                                  isOn: Binding(get: { !audio.mutedTracks.contains(index) }, set: { on in model.setTrackMuted(index, !on) }))
+                            .accessibilityIdentifier("recorder.audio.track\(index)")
+                    }
+                }
+                .disabled(!audio.include)
+            }
             if model.waveform.hasAudio {
                 WideButton(title: model.isNormalizing ? "Measuring the Loudness…" : "Normalize Loudness", systemImage: "waveform.badge.magnifyingglass") {
                     model.normalizeLoudness()
@@ -1107,6 +1118,8 @@ private struct PreviewView: View {
             .overlay {
                 if model.tab == .hide && !model.isPlaying {
                     HiddenPartHandles(model: model, clock: model.clock)
+                } else if model.tab == .text && !model.isPlaying {
+                    TextHandles(model: model, clock: model.clock)
                 }
             }
             .shadow(color: .black.opacity(0.5), radius: 18, y: 6)
@@ -1229,6 +1242,48 @@ private struct HiddenPartHandles: View {
         case .bottomRight: maxX += delta.width; maxY += delta.height
         }
         return CGRect(x: min(minX, maxX - 4), y: min(minY, maxY - 4), width: max(4, abs(maxX - minX)), height: max(4, abs(maxY - minY)))
+    }
+}
+
+/// The Text tab on the preview: a grip at the centre of every text showing at the playhead; a drag moves it (in the
+/// canvas, where a text lives), a click selects it.
+private struct TextHandles: View {
+    @Bindable var model: EditorModel
+    let clock: PlayheadClock
+    @State private var grabbed: CGPoint?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
+            let showing = (model.project.texts ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+            ZStack(alignment: .topLeading) {
+                Color.clear.allowsHitTesting(false)
+                ForEach(showing) { note in
+                    let selected = model.selectedText == note.id
+                    let center = CGPoint(x: note.x * size.width, y: note.y * size.height)
+                    Circle()
+                        .fill(selected ? RecorderPalette.zoom : Color.white.opacity(0.85))
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
+                        .overlay(Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(selected ? Color.white : Color.black.opacity(0.7)))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Circle().inset(by: -6))
+                        .offset(x: center.x - 11, y: center.y - 11)
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            model.selectedText = note.id
+                            let start = grabbed ?? CGPoint(x: note.x, y: note.y)
+                            grabbed = start
+                            model.updateText(note.id) {
+                                $0.x = start.x + value.translation.width / max(1, size.width)
+                                $0.y = start.y + value.translation.height / max(1, size.height)
+                            }
+                        }.onEnded { _ in grabbed = nil })
+                        .instantTooltip("\(note.text): drag to move")
+                        .accessibilityLabel("Text \(note.text)")
+                }
+            }
+        }
     }
 }
 

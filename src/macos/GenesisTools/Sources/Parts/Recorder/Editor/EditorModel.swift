@@ -114,6 +114,10 @@ final class EditorModel {
         let video = URL(fileURLWithPath: project.source.video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
+        Task { [weak self] in
+            let count = (try? await AVURLAsset(url: video).loadTracks(withMediaType: .audio).count) ?? 0
+            self?.audioTrackCount = count
+        }
         rebuild()
     }
 
@@ -538,6 +542,17 @@ final class EditorModel {
     func setSpeed(_ id: String, _ speed: Double) {
         guard let next = TimelineMap.setSpeed(project, clip: id, speed: speed) else { return }
         apply(next, rebuildMovie: true)
+    }
+
+    /// The movie's sound tracks (a recording with the system sound and the microphone has two).
+    private(set) var audioTrackCount = 0
+
+    func setTrackMuted(_ index: Int, _ muted: Bool) {
+        setAudio { audio in
+            audio.mutedTracks.removeAll { $0 == index }
+            if muted { audio.mutedTracks.append(index) }
+            audio.mutedTracks.sort()
+        }
     }
 
     func setAudio(_ change: (inout EditProject.AudioSettings) -> Void) {
