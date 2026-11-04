@@ -688,6 +688,100 @@ export function autoZoom(project: EditProject, samples: readonly CursorSample[],
     return { ...project, zooms: [...manual, ...free].sort((a, b) => a.startUs - b.startUs) };
 }
 
+/**
+ * Marks every recorded click from `fromUs` to `toUs` (source) with a shape for `seconds`: a circle round the point
+ * (default), a box, or an arrow pointing at it from towards the middle. A double click is one mark (clicks under
+ * 0.4 s apart and 2 % of the picture apart). A click that already has a shape of that kind starting within 0.1 s is
+ * left alone, so a second run adds nothing. No clicks in the range is an error.
+ */
+export function annotateClicks(
+    project: EditProject,
+    samples: readonly CursorSample[],
+    options: {
+        fromUs?: number;
+        toUs?: number;
+        kind?: (typeof SHAPE_KINDS)[number];
+        seconds?: number;
+        color?: string;
+        appear?: (typeof SHAPE_APPEARS)[number];
+    } = {}
+): { project: EditProject; added: number; skipped: number } {
+    if (!samples.length) {
+        throw new Error("the recording has no cursor track, so there are no clicks to mark");
+    }
+
+    const fromUs = options.fromUs ?? 0;
+    const toUs = Math.min(options.toUs ?? project.source.durationUs, project.source.durationUs);
+    const kind = options.kind ?? "circle";
+    const lengthUs = Math.round((options.seconds ?? 1.2) * 1_000_000);
+    const clicks: CursorSample[] = [];
+
+    for (const sample of samples) {
+        const us = sample.ms * 1000;
+
+        if (!sample.click || us < fromUs || us > toUs) {
+            continue;
+        }
+
+        const last = clicks.at(-1);
+
+        if (last && sample.ms - last.ms < 400 && Math.hypot(sample.x - last.x, sample.y - last.y) < 0.02) {
+            continue;
+        }
+
+        clicks.push(sample);
+    }
+
+    if (!clicks.length) {
+        throw new RangeError(
+            `no clicks between ${fromUs / 1_000_000} s and ${toUs / 1_000_000} s; the cursor track has no click there (autoZoom uses the same clicks)`
+        );
+    }
+
+    const clamp = (value: number) => Math.min(1, Math.max(0, value));
+    const existing = (project.shapes ?? []).filter((shape) => shape.kind === kind);
+    const shapes = [...(project.shapes ?? [])];
+    let skipped = 0;
+
+    for (const click of clicks) {
+        const startUs = Math.round(click.ms * 1000);
+
+        if (existing.some((shape) => Math.abs(shape.startUs - startUs) <= 100_000)) {
+            skipped += 1;
+            continue;
+        }
+
+        const toward = { x: click.x > 0.5 ? -1 : 1, y: click.y > 0.5 ? -1 : 1 };
+        const corners =
+            kind === "arrow"
+                ? {
+                      x1: clamp(click.x + toward.x * 0.085),
+                      y1: clamp(click.y + toward.y * 0.085),
+                      x2: click.x,
+                      y2: click.y,
+                  }
+                : {
+                      x1: clamp(click.x - 0.03),
+                      y1: clamp(click.y - 0.045),
+                      x2: clamp(click.x + 0.03),
+                      y2: clamp(click.y + 0.045),
+                  };
+        shapes.push(
+            shapeSchema.parse({
+                id: newId("s"),
+                startUs,
+                endUs: Math.min(project.source.durationUs, startUs + lengthUs),
+                kind,
+                ...corners,
+                ...(options.color ? { color: options.color.toUpperCase() } : {}),
+                ...(options.appear && options.appear !== "draw" ? { appear: options.appear } : {}),
+            })
+        );
+    }
+
+    return { project: { ...project, shapes }, added: clicks.length - skipped, skipped };
+}
+
 const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
 const rangeFields = { from: timeSchema, to: timeSchema };
 
@@ -784,6 +878,22 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     z.object({ op: z.literal("unfixLine"), from: timeSchema }).strict(),
     z.object({ op: z.literal("autoZoom"), scale: z.number().min(1).max(4).optional() }).strict(),
+    z
+        .object({
+            op: z.literal("annotateClicks"),
+            /** Source seconds; the whole recording by default. */
+            from: timeSchema.optional(),
+            to: timeSchema.optional(),
+            kind: z.enum(SHAPE_KINDS).optional(),
+            /** How long each mark shows (1.2). */
+            seconds: z.number().min(0.3).max(10).optional(),
+            color: z
+                .string()
+                .regex(/^#[0-9a-fA-F]{6}$/)
+                .optional(),
+            appear: z.enum(SHAPE_APPEARS).optional(),
+        })
+        .strict(),
     z.object({ op: z.literal("volume"), volume: z.number().min(0).max(2) }).strict(),
     z.object({ op: z.literal("mute"), track: z.number().int().nonnegative(), muted: z.boolean().optional() }).strict(),
     z.object({ op: z.literal("audio"), include: z.boolean() }).strict(),
@@ -1143,6 +1253,15 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
         }
         case "autoZoom":
             return autoZoom(project, readCursorTrack(project.source.cursor), op.scale);
+        case "annotateClicks":
+            return annotateClicks(project, readCursorTrack(project.source.cursor), {
+                fromUs: op.from === undefined ? undefined : timeToUs(op.from),
+                toUs: op.to === undefined ? undefined : timeToUs(op.to),
+                kind: op.kind,
+                seconds: op.seconds,
+                color: op.color,
+                appear: op.appear,
+            }).project;
         case "volume":
             return { ...project, audio: { ...project.audio, volume: op.volume } };
         case "mute": {

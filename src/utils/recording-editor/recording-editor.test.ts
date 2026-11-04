@@ -7,6 +7,7 @@ import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
 import {
+    annotateClicks,
     applyOp,
     autoZoom,
     describeProject,
@@ -392,6 +393,27 @@ describe("edit project (edit.json)", () => {
         expect(kept.map((zoom) => zoom.mode)).toEqual(["follow", "manual"]);
         expect(() => autoZoom(manual, [])).toThrow("no cursor track");
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
+    });
+
+    test("annotate clicks marks each click once, a double click once, and a second run adds nothing", () => {
+        const samples = [
+            { ms: 1000, x: 0.2, y: 0.2, click: "left" },
+            { ms: 1200, x: 0.201, y: 0.2, click: "left" },
+            { ms: 4000, x: 0.8, y: 0.7, click: "right" },
+            { ms: 5000, x: 0.5, y: 0.5 },
+        ];
+        const first = annotateClicks(wholeProject(source), samples);
+        expect(first).toMatchObject({ added: 2, skipped: 0 });
+        expect(first.project.shapes?.map((shape) => [shape.kind, shape.startUs, shape.endUs])).toEqual([
+            ["circle", 1_000_000, 2_200_000],
+            ["circle", 4_000_000, 5_200_000],
+        ]);
+        expect(annotateClicks(first.project, samples)).toMatchObject({ added: 0, skipped: 2 });
+        const arrows = annotateClicks(wholeProject(source), samples, { kind: "arrow", fromUs: 3_000_000 });
+        expect(arrows.project.shapes?.[0]).toMatchObject({ kind: "arrow", x2: 0.8, y2: 0.7 });
+        expect(arrows.project.shapes?.[0]?.x1).toBeLessThan(0.8);
+        expect(() => annotateClicks(wholeProject(source), samples, { fromUs: 6_000_000 })).toThrow("no clicks between");
+        expect(() => annotateClicks(wholeProject(source), [])).toThrow("no cursor track");
     });
 
     test("idle stretches are still and silent at once, shortened at both ends", () => {

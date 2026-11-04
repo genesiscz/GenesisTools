@@ -187,6 +187,23 @@ const movieMethods = [
         z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
         "One zoom per group of recorded clicks, following the cursor; replaces earlier auto zooms, keeps manual ones, and throws when there are no clicks."
     ),
+    edit(
+        "annotateClicks",
+        z
+            .object({
+                from: timeSchema.optional(),
+                to: timeSchema.optional(),
+                kind: z.enum(SHAPE_KINDS).optional(),
+                seconds: z.number().min(0.3).max(10).optional(),
+                color: z
+                    .string()
+                    .regex(/^#[0-9a-fA-F]{6}$/)
+                    .optional(),
+                appear: z.enum(SHAPE_APPEARS).optional(),
+            })
+            .strict(),
+        'Marks every recorded click from `from` to `to` (source seconds; the whole recording by default) with a shape for `seconds` (1.2): kind "circle" (default) round the point, "box", or "arrow" pointing at it. A double click is one mark; a click that already has a mark of that kind is left alone, so running it again adds nothing. One undo takes them all back. Throws when the range has no clicks.'
+    ),
     edit("volume", z.object({ volume: z.number().min(0).max(2) }), "Sets the volume, 0 to 2.", ["volume"]),
     edit("mute", z.object({ track: z.number().int().nonnegative() }), "Mutes an audio track (0 is the first).", [
         "track",
@@ -731,6 +748,10 @@ export class Movie {
 
     async autoZoom(options: { scale?: number } = {}) {
         return this.change([{ op: "autoZoom", ...options }]);
+    }
+
+    async annotateClicks(options: Omit<Extract<EditOp, { op: "annotateClicks" }>, "op"> = {}) {
+        return this.change([{ op: "annotateClicks", ...options }]);
     }
 
     async volume(volume: number) {
