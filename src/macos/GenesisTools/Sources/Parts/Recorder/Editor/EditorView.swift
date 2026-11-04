@@ -418,6 +418,29 @@ private struct StyleInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        if let track = model.cursor, !track.keys.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                let keys = model.project.keys
+                SwitchRow("Show shortcuts", isOn: Binding(get: { keys?.show == true }, set: { on in
+                    model.setLooks { project in
+                        var next = project.keys ?? EditProject.Keys()
+                        next.show = on
+                        project.keys = next
+                    }
+                }))
+                .instantTooltip("Draws the ⌘ and ⌃ shortcuts pressed while recording (\(Plural.count(track.keys.count, "press")))")
+                .accessibilityIdentifier("recorder.style.keys")
+                if let keys, keys.show {
+                    GenSegmentedTabs("Shortcuts position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
+                                     selection: Binding(get: { keys.position }, set: { value in model.setLooks { $0.keys?.position = value } }),
+                                     minSegmentWidth: 60, identifier: "recorder.style.keysPosition")
+                    SectionLabel(text: "Shortcut size", value: String(format: "%.1f%%", keys.size * 100))
+                    Slider(value: Binding(get: { keys.size }, set: { value in model.setLooks { $0.keys?.size = (value * 1000).rounded() / 1000 } }),
+                           in: 0.03...0.1)
+                        .accessibilityIdentifier("recorder.style.keysSize")
+                }
+            }
+        }
         VStack(alignment: .leading, spacing: 10) {
             let captions = model.project.captions
             if model.hasTranscript {

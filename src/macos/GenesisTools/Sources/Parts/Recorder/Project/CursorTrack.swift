@@ -15,6 +15,8 @@ final class CursorTrack: @unchecked Sendable {
         var y: Double
         var click: String?
         var shape: String?
+        /// A ⌘/⌃ shortcut pressed at this sample ("⌘⇧4").
+        var key: String?
     }
 
     /// One cursor image: twice its point size, with the hotspot in points from its top left.
@@ -35,6 +37,9 @@ final class CursorTrack: @unchecked Sendable {
     /// The recorded rectangle's width in points, so a movie pixel can be measured in cursor points.
     let pointWidth: Double?
 
+    /// The shortcuts pressed, in time order.
+    let keys: [Sample]
+
     /// The times the pointer moved or clicked: what keeps a cursor that hides when idle on screen.
     let moveTimes: [Double]
 
@@ -45,6 +50,7 @@ final class CursorTrack: @unchecked Sendable {
         self.samples = samples.sorted { $0.ms < $1.ms }
         clicks = self.samples.filter { $0.click != nil }
         shapeChanges = self.samples.filter { $0.shape != nil }
+        keys = self.samples.filter { $0.key != nil }
         var moves: [Double] = []
         var previous: Sample?
         for sample in self.samples {
@@ -67,7 +73,8 @@ final class CursorTrack: @unchecked Sendable {
             guard let data = line.data(using: .utf8),
                   let row = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let ms = row["t"] as? Double, let x = row["x"] as? Double, let y = row["y"] as? Double else { continue }
-            samples.append(Sample(ms: ms, x: x, y: y, click: row["click"] as? String, shape: row["shape"] as? String))
+            samples.append(Sample(ms: ms, x: x, y: y, click: row["click"] as? String, shape: row["shape"] as? String,
+                                  key: row["key"] as? String))
             if let width = row["pw"] as? Double, width > 0 { pointWidth = width }
         }
         guard !samples.isEmpty else { return nil }
@@ -152,6 +159,21 @@ final class CursorTrack: @unchecked Sendable {
         guard low > 0 else { return 1 }
         let still = ms - moveTimes[low - 1] - Double(hideAfterMs)
         return max(0, min(1, 1 - still / 300))
+    }
+
+    /// The shortcut showing at the time: the last press within `durationMs`, with its opacity (out over the last
+    /// 250 ms). A newer press replaces an older one at once.
+    func key(atMs ms: Double, durationMs: Int) -> (label: String, opacity: Double)? {
+        var low = 0, high = keys.count
+        while low < high {
+            let mid = (low + high) / 2
+            if keys[mid].ms <= ms { low = mid + 1 } else { high = mid }
+        }
+        guard low > 0, let label = keys[low - 1].key else { return nil }
+        let age = ms - keys[low - 1].ms
+        let duration = Double(max(300, durationMs))
+        guard age < duration else { return nil }
+        return (label, min(1, (duration - age) / 250))
     }
 
     private func nearestClickDistance(_ ms: Double) -> Double? {

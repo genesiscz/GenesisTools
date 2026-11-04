@@ -27,6 +27,7 @@ interface StartFlags {
     maxSeconds?: string;
     indicator?: boolean;
     systemCursor?: boolean;
+    shortcuts?: boolean;
     controls?: boolean;
     open?: boolean;
     json?: boolean;
@@ -140,6 +141,10 @@ program
     .option("--max-seconds <n>", `stop after this long, 1–${VIDEO_RECORDING_MAX_SECONDS}`)
     .option("--no-indicator", "no red border around what is recorded (never in the movie either way)")
     .option(
+        "--no-shortcuts",
+        "do not keep the ⌘/⌃ shortcuts pressed (by default they go into the cursor track for the keys overlay; plain typing never does)"
+    )
+    .option(
         "--system-cursor",
         "keep the system cursor in the movie (by default it stays out and the editor draws it: smoothed, any size)"
     )
@@ -158,6 +163,7 @@ program
                 maxSeconds: bounded(flags.maxSeconds, "--max-seconds", 1, VIDEO_RECORDING_MAX_SECONDS),
                 indicator: flags.indicator,
                 systemCursor: flags.systemCursor,
+                shortcuts: flags.shortcuts,
                 panel: flags.controls !== false,
                 emit: (event) => {
                     if (flags.json) {

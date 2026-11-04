@@ -13,8 +13,7 @@ final class CaptionTrack: @unchecked Sendable {
     }
 
     let lines: [Line]
-    private let lock = NSLock()
-    private var images: [String: CIImage] = [:]
+    private let plates = TextPlates()
 
     init(lines: [Line]) {
         self.lines = lines.sorted { $0.fromUs < $1.fromUs }
@@ -49,28 +48,38 @@ final class CaptionTrack: @unchecked Sendable {
         return lines[low - 1]
     }
 
-    /// The line as a white text block on a dark rounded plate, wrapped to `maxWidth` pixels; made once per line and
-    /// size, because every frame of the line draws it.
+    /// The line as a white text block on a dark rounded plate, wrapped to `maxWidth` pixels.
     func image(for line: Line, fontSize: CGFloat, maxWidth: CGFloat) -> CIImage? {
-        let key = "\(line.fromUs)|\(Int(fontSize))|\(Int(maxWidth))"
+        plates.plate(line.text, fontSize: fontSize, maxWidth: maxWidth)
+    }
+}
+
+/// White text on a dark rounded plate, made once per text and size because every frame that shows it draws it.
+/// Captions and the keys overlay use it; the render runs on Core Image's threads, so the cache has a lock.
+final class TextPlates: @unchecked Sendable {
+    private let lock = NSLock()
+    private var images: [String: CIImage] = [:]
+
+    func plate(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold) -> CIImage? {
+        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)"
         lock.lock()
         if let cached = images[key] {
             lock.unlock()
             return cached
         }
         lock.unlock()
-        guard let image = Self.render(line.text, fontSize: fontSize, maxWidth: maxWidth) else { return nil }
+        guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight) else { return nil }
         lock.lock()
         images[key] = image
         lock.unlock()
         return image
     }
 
-    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat) -> CIImage? {
+    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight) -> CIImage? {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         let attributed = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: fontSize, weight: weight),
             .foregroundColor: NSColor.white,
             .paragraphStyle: paragraph,
         ])
@@ -95,13 +104,30 @@ final class CaptionTrack: @unchecked Sendable {
 }
 
 extension Looks {
-    /// The caption plate centred near the bottom (or the top) of the output, sized from its short side.
+    /// The caption plate centred near the bottom (or the top) of the output, sized from its short side. Returns the
+    /// picture and the height the plate takes from its edge, so the keys overlay can sit beside it.
     static func drawCaption(_ line: CaptionTrack.Line, track: CaptionTrack, settings: EditProject.Captions, on image: CIImage,
-                            size: CGSize) -> CIImage {
+                            size: CGSize) -> (image: CIImage, used: CGFloat) {
         let unit = min(size.width, size.height)
         let fontSize = max(8, (settings.size * unit).rounded())
-        guard let plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86) else { return image }
+        guard let plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86) else { return (image, 0) }
         let margin = unit * 0.05
+        let x = ((size.width - plate.extent.width) / 2).rounded()
+        let y = settings.position == .top ? size.height - margin - plate.extent.height : margin
+        let drawn = plate.transformed(by: CGAffineTransform(translationX: x, y: y.rounded())).composited(over: image)
+        return (drawn, margin + plate.extent.height)
+    }
+
+    /// The shortcut pressed last, centred near its edge (above a caption on the same edge), fading out at its end.
+    static func drawKey(_ label: String, opacity: Double, plates: TextPlates, settings: EditProject.Keys, on image: CIImage,
+                        size: CGSize, below: CGFloat) -> CIImage {
+        let unit = min(size.width, size.height)
+        let fontSize = max(8, (settings.size * unit).rounded())
+        guard var plate = plates.plate(label, fontSize: fontSize, maxWidth: size.width * 0.6, weight: .medium) else { return image }
+        if opacity < 0.999 {
+            plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))])
+        }
+        let margin = unit * 0.05 + below + (below > 0 ? unit * 0.015 : 0)
         let x = ((size.width - plate.extent.width) / 2).rounded()
         let y = settings.position == .top ? size.height - margin - plate.extent.height : margin
         return plate.transformed(by: CGAffineTransform(translationX: x, y: y.rounded())).composited(over: image)

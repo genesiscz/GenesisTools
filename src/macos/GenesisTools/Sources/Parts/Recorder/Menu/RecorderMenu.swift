@@ -66,6 +66,10 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         drawn.state = Self.drawsCursor ? .on : .off
         drawn.toolTip = "Records without the system cursor; the editor draws it from the cursor track, smoothed and at any size. Off keeps the system cursor in the movie."
         menu.addItem(drawn)
+        let keys = row("Record ⌘/⌃ Shortcuts", symbol: nil, action: #selector(toggleShortcuts), key: "")
+        keys.state = Self.recordsShortcuts ? .on : .off
+        keys.toolTip = "Keeps the shortcuts pressed with ⌘ or ⌃ for the editor's shortcut overlay. Plain typing is never kept."
+        menu.addItem(keys)
         menu.addItem(.separator())
         menu.addItem(row("Open Recording…", symbol: "film", action: #selector(openRecording), key: "o"))
         menu.addItem(row("Recordings Library…", symbol: "square.grid.2x2", action: #selector(openLibrary), key: "l"))
@@ -177,6 +181,14 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         UserDefaults.standard.set(!Self.drawsCursor, forKey: Self.drawCursorKey)
     }
 
+    /// On (the default): a recording keeps the ⌘/⌃ shortcuts (`--no-shortcuts` when off).
+    static let recordShortcutsKey = "recorder.record.shortcuts"
+    static var recordsShortcuts: Bool { UserDefaults.standard.object(forKey: recordShortcutsKey) as? Bool ?? true }
+
+    @objc private func toggleShortcuts() {
+        UserDefaults.standard.set(!Self.recordsShortcuts, forKey: Self.recordShortcutsKey)
+    }
+
     @objc private func recordScreen() { startRecording(audio: false) }
     @objc private func recordScreenWithAudio() { startRecording(audio: true) }
 
@@ -186,6 +198,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         var args = ["recorder", "start"]
         if audio { args += ["--audio", "system,mic"] }
         if !Self.drawsCursor { args.append("--system-cursor") }
+        if !Self.recordsShortcuts { args.append("--no-shortcuts") }
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
             try ToolsRunner.detached(args) { status, tail in

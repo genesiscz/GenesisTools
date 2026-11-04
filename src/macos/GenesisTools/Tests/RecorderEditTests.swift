@@ -196,6 +196,19 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertLessThan(plate.extent.width, 800)
     }
 
+    func testAShortcutShowsForItsDurationFadesAndGivesWayToTheNextPress() {
+        let track = CursorTrack(samples: [
+            CursorTrack.Sample(ms: 0, x: 0.5, y: 0.5),
+            CursorTrack.Sample(ms: 1000, x: 0.5, y: 0.5, key: "⌘C"),
+            CursorTrack.Sample(ms: 1500, x: 0.5, y: 0.5, key: "⌘V"),
+        ])
+        XCTAssertNil(track.key(atMs: 900, durationMs: 1200))
+        XCTAssertEqual(track.key(atMs: 1200, durationMs: 1200)?.label, "⌘C")
+        XCTAssertEqual(track.key(atMs: 1600, durationMs: 1200)?.label, "⌘V")
+        XCTAssertEqual(track.key(atMs: 2575, durationMs: 1200)?.opacity ?? 0, 0.5, accuracy: 0.001)
+        XCTAssertNil(track.key(atMs: 2700, durationMs: 1200))
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))

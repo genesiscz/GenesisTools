@@ -29,6 +29,8 @@ export interface VideoRecordingOptions {
     micDevice?: string;
     /** Keep the system cursor in the movie; by default it stays out and the editor draws it from the track. */
     systemCursor?: boolean;
+    /** False keeps the shortcuts out of the cursor track; by default the ⌘/⌃ presses are kept for the keys overlay. */
+    shortcuts?: boolean;
     maxSeconds?: number;
     /** The red border around what is recorded (never in the movie). */
     indicator?: boolean;
@@ -90,6 +92,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
             fps: options.fps ?? 60,
             audio: { sources: options.audio ?? [], micDevice: options.micDevice },
             cursor: options.systemCursor ? "system" : "drawn",
+            shortcuts: options.shortcuts !== false,
         },
         frames: [],
         warnings: [],
@@ -140,6 +143,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
             micDevice: options.micDevice,
             cursorTrack: true,
             cursorShapes: options.systemCursor ? undefined : join(folder, "cursor-shapes"),
+            shortcuts: options.shortcuts !== false,
         }),
         join: ffmpegSegmentJoiner,
         emit,

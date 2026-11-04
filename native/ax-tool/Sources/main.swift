@@ -96,6 +96,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--cursor-track FILE]  the pointer as JSON lines (t ms, x/y 0-1 of the recorded area, clicks)
                       [--hide-cursor] [--cursor-shapes DIR]  no system cursor in the movie; each cursor image goes
                       to DIR/<hash>.png (2x) + .json (hotspot), and the track row where it changes names it ("shape")
+                      [--shortcuts]  track rows also carry "key": "⌘C" for presses with ⌘ or ⌃ (never plain typing)
                       [--audio system,mic] [--mic-device UID] [--audio-sidecar]  audio tracks in the movie and/or
                       audio-<source>.m4a; the result lists tracks with durationMs, peakDbfs and mutedSpans
       ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution

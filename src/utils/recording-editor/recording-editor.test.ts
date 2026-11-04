@@ -462,6 +462,21 @@ describe("edit project (edit.json)", () => {
         expect(() => applyOp(project, { op: "normalize", targetLufs: -16 })).toThrow("needs the movie's loudness");
     });
 
+    test("the keys overlay needs a track that kept shortcuts", () => {
+        const dir = workspace();
+        const plain = join(dir, "plain.jsonl");
+        const keyed = join(dir, "keyed.jsonl");
+        writeFileSync(plain, '{"t":0.1,"x":0.5,"y":0.5}\n');
+        writeFileSync(keyed, '{"t":0.1,"x":0.5,"y":0.5}\n{"t":801.8,"x":0.5,"y":0.5,"key":"⌃F13"}\n');
+        expect(() => applyOp(wholeProject({ ...source, cursor: plain }), { op: "keys" })).toThrow("kept no shortcuts");
+        expect(applyOp(wholeProject({ ...source, cursor: keyed }), { op: "keys", position: "top" }).keys).toEqual({
+            show: true,
+            size: 0.05,
+            position: "top",
+            durationMs: 1200,
+        });
+    });
+
     test("captions need the movie's cached transcript and merge on change", () => {
         const dir = workspace();
         const video = join(dir, "screen.mp4");

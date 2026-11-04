@@ -1082,6 +1082,7 @@ func cmdCaptureScreen() {
     var cursorTrack: CursorTrackWriter?
     if let path = argValue("--cursor-track") {
         cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedRect.value }
+        if CommandLine.arguments.contains("--shortcuts") { cursorTrack?.watchShortcuts() }
         if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
     }
     let started = Date()
@@ -1194,7 +1195,7 @@ func cmdCaptureScreen() {
     }
     if let cursorTrack {
         data["cursorTrack"] = ["path": cursorTrack.path, "samples": cursorTrack.samples, "clicks": cursorTrack.clicks,
-                               "shapes": cursorTrack.shapeCount]
+                               "shapes": cursorTrack.shapeCount, "shortcuts": cursorTrack.shortcuts]
     }
     if let windowTarget {
         data["window"] = ["id": windowTarget.id, "x": windowTarget.bounds.minX, "y": windowTarget.bounds.minY,

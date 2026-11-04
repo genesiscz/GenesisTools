@@ -24,7 +24,9 @@ A recording is a folder in `~/.genesis-tools/recordings/library/video-<time>/`: 
 per source), `cursor.jsonl` (`{"t": ms, "x": 0..1, "y": 0..1, "click"?: "left"}` at 60 Hz) and `recording.json`.
 The system cursor stays out of the movie: each cursor image goes to `cursor-shapes/<hash>.png` (2x) with its hotspot,
 the track row where it changes names it, and the editor draws the cursor again (smoothed, at any size, or hidden).
-`--system-cursor` (or the menu's "Draw the Cursor in the Editor" off) keeps it in the picture instead.
+`--system-cursor` (or the menu's "Draw the Cursor in the Editor" off) keeps it in the picture instead. A shortcut
+pressed with ⌘ or ⌃ becomes a `"key": "⌘C"` row for the editor's shortcut overlay; plain typing and ⌥ alone never do,
+and macOS sends no key while a password field has secure input on. `--no-shortcuts` (or the menu toggle) keeps none.
 Pausing ends a segment, so the paused time is not in the movie; segments of the same shape join by stream copy.
 While it runs, the menu bar item and the floating controls (hidden from the capture) control it, and so do
 `tools recorder stop` and the REPL.
@@ -43,6 +45,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   `shadow`, on a canvas of its own `aspect` (`16:9`, `4:3`, `1:1`, `9:16`; absent is the movie's shape). The canvas's
   short side is the movie's height; sizes are fractions of it. `fit: "cover"` crops the movie to fill the canvas, the
   crop following the cursor (averaged over ±0.7 s); `contain` (absent) shows all of it.
+- `keys` (optional): the kept shortcuts on a plate as they were pressed, `show`, `size` 0.05, `position`, `durationMs`
+  1200; above a caption on the same edge.
 - `captions` (optional): the spoken lines from `<movie>.transcript.json` (made by `movie.transcript()` or the Style
   tab's Transcribe) on a dark plate, `show`, `size` (text height, 0.038 of the short side), `position` bottom or top.
   Their times are source times, so they follow every cut.
@@ -60,7 +64,7 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
 silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
 `normalize {targetLufs? -16}` (measures the unmuted tracks' EBU R128 loudness and sets the volume, at most 200 %),
-`captions {show?,size?,position?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
+`captions {show?,size?,position?}`, `keys {show?,size?,position?,durationMs?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 
 ## Export

@@ -9,6 +9,8 @@ final class ZoomState: @unchecked Sendable {
     private var project: EditProject
     private var cursor: CursorTrack?
     private var captions: CaptionTrack?
+    /// The keys overlay's plates, one per shortcut label and size.
+    let keyPlates = TextPlates()
 
     init(project: EditProject, cursor: CursorTrack?) {
         self.project = project
@@ -45,6 +47,13 @@ final class ZoomState: @unchecked Sendable {
         var settings: EditProject.Captions
     }
 
+    /// The shortcut to draw over the output.
+    struct KeyMark {
+        var label: String
+        var opacity: Double
+        var settings: EditProject.Keys
+    }
+
 
     /// Everything one frame draws: the zoom, the clicks animating at its source time, and the frame style.
     struct FrameLook {
@@ -56,6 +65,7 @@ final class ZoomState: @unchecked Sendable {
         var coverFocus: CGPoint
         var frame: EditProject.Frame?
         var caption: CaptionMark?
+        var key: KeyMark?
     }
 
     func look(atOutput outUs: Int64) -> FrameLook {
@@ -79,6 +89,10 @@ final class ZoomState: @unchecked Sendable {
                          caption: project.captions.flatMap { settings in
                              guard settings.show, let captions, let line = captions.line(atSourceUs: sourceUs) else { return nil }
                              return CaptionMark(line: line, track: captions, settings: settings)
+                         },
+                         key: project.keys.flatMap { settings in
+                             guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
+                             return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          })
     }
 
@@ -235,8 +249,16 @@ struct EditRenderer {
             if let frame = look.frame {
                 result = Looks.applyFrame(frame, to: result, picture: picture, canvas: size, focus: look.coverFocus)
             }
+            var captionUsed: CGFloat = 0
             if let caption = look.caption {
-                result = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size)
+                let drawn = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size)
+                result = drawn.image.cropped(to: CGRect(origin: .zero, size: size))
+                captionUsed = drawn.used
+            }
+            if let key = look.key {
+                let sameEdge = look.caption?.settings.position == key.settings.position
+                result = Looks.drawKey(key.label, opacity: key.opacity, plates: zoom.keyPlates, settings: key.settings, on: result,
+                                       size: size, below: sameEdge ? captionUsed - min(size.width, size.height) * 0.05 : 0)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             request.finish(with: result, context: nil)

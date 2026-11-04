@@ -496,6 +496,8 @@ export interface CaptureSpec {
     cursorTrack?: string;
     /** Native, needs cursorTrack: no system cursor in the movie; each cursor image goes into this folder for the editor. */
     cursorShapes?: string;
+    /** Native, needs cursorTrack: track rows carry the ⌘/⌃ shortcuts pressed (never plain typing). */
+    shortcuts?: boolean;
     countdownSec?: number;
     noRemote?: boolean;
     captureEngine?: "cg" | "sc";

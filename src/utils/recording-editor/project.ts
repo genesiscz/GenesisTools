@@ -99,6 +99,21 @@ export const captionsSchema = z.object({
     position: z.enum(["bottom", "top"]).default("bottom"),
 });
 
+/** The ⌘/⌃ shortcuts the recording kept (`"key"` rows of the cursor track), drawn as they were pressed. Absent is off. */
+export const keysSchema = z.object({
+    show: z.boolean().default(true),
+    /** The text height, as a fraction of the output's short side. */
+    size: z.number().min(0.02).max(0.12).default(0.05),
+    position: z.enum(["bottom", "top"]).default("bottom"),
+    /** How long a shortcut stays after its press. */
+    durationMs: z.number().int().min(300).max(5000).default(1200),
+});
+
+/** Whether the cursor track kept any shortcut (`"key"` rows, `tools recorder start` without --no-shortcuts). */
+export function trackHasShortcuts(path: string | undefined): boolean {
+    return Boolean(path && existsSync(path) && readFileSync(path, "utf8").includes('"key":'));
+}
+
 /** `<movie stem>.transcript.json` beside the movie: the raw transcription the REPL and the window share. */
 export function transcriptCachePath(video: string): string {
     return join(dirname(video), `${basename(video, extname(video))}.transcript.json`);
@@ -136,6 +151,7 @@ export const editProjectSchema = z.object({
     frame: frameSchema.optional(),
     cursor: cursorSchema.optional(),
     captions: captionsSchema.optional(),
+    keys: keysSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -483,6 +499,15 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     z
         .object({
+            op: z.literal("keys"),
+            show: z.boolean().optional(),
+            size: z.number().min(0.02).max(0.12).optional(),
+            position: z.enum(["bottom", "top"]).optional(),
+            durationMs: z.number().int().min(300).max(5000).optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("captions"),
             show: z.boolean().optional(),
             size: z.number().min(0.02).max(0.1).optional(),
@@ -664,6 +689,16 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             const { op: _op, ...change } = op;
             return { ...project, clicks: clicksSchema.parse({ ...project.clicks, ...change }) };
         }
+        case "keys": {
+            if (!trackHasShortcuts(project.source.cursor)) {
+                throw new Error(
+                    "this recording kept no shortcuts (none was pressed with ⌘ or ⌃, or it was made with --no-shortcuts or before shortcuts were kept)"
+                );
+            }
+
+            const { op: _op, ...change } = op;
+            return { ...project, keys: keysSchema.parse({ ...project.keys, ...change }) };
+        }
         case "captions": {
             if (!existsSync(transcriptCachePath(project.source.video))) {
                 throw new Error(
@@ -738,6 +773,7 @@ export function describeProject(project: EditProject, path: string) {
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
         captions: project.captions ?? null,
+        keys: project.keys ?? null,
     };
 }
 

@@ -222,6 +222,10 @@ describe("nativeCaptureArgv", () => {
             nativeCaptureArgv({ ...screen, cursorTrack: "/t.jsonl", cursorShapes: "/shapes" }, "/o").slice(-5)
         ).toEqual(["--cursor-track", "/t.jsonl", "--hide-cursor", "--cursor-shapes", "/shapes"]);
         expect(() => validateCaptureOptions({ ...screen, cursorShapes: "/shapes" })).toThrow(/cursorTrack/);
+        expect(nativeCaptureArgv({ ...screen, cursorTrack: "/t.jsonl", shortcuts: true }, "/o")).toContain(
+            "--shortcuts"
+        );
+        expect(() => validateCaptureOptions({ ...screen, shortcuts: true })).toThrow(/cursorTrack/);
         expect(() =>
             validateCaptureOptions({ ...screen, backend: "peekaboo", audio: ["system"], videoOut: "/v.mp4" })
         ).toThrow(/backend native/);

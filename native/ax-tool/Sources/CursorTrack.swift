@@ -16,6 +16,10 @@ import Foundation
 /// `width`, `height` in points), and the next row carries `"shape": "<hash>"`. The first row also carries `"pw"`, the
 /// recorded rectangle's width in points, so a reader knows how many movie pixels one cursor point is. Shape rows exist
 /// only for a movie without the system cursor in it, which is how the editor knows to draw one.
+///
+/// With `--shortcuts` a row also carries `"key": "⌘⇧4"` when a shortcut was pressed, for the editor's keys overlay.
+/// Only presses with ⌘ or ⌃ are kept: plain typing and ⌥ alone (which types characters such as @ on many layouts)
+/// never reach the file, and macOS sends no key to a global monitor while a password field has secure input on.
 final class CursorTrackWriter {
     private let handle: FileHandle
     private let rect: () -> CGRect
@@ -35,6 +39,9 @@ final class CursorTrackWriter {
     private var pendingShape: String?
     private var savedShapes = Set<String>()
     private var wrotePointWidth = false
+    private var pendingKeys: [String] = []
+    private var keyMonitor: Any?
+    private(set) var shortcuts = 0
     var shapeCount: Int { queue.sync { savedShapes.count } }
 
     /// `rect` is the recorded rectangle in global display points (top-left origin), read per sample, so a window
@@ -53,6 +60,37 @@ final class CursorTrackWriter {
         }
     }
 
+    /// Keeps the shortcuts pressed while it records (call on the main thread, whose run loop delivers them).
+    func watchShortcuts() {
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard !event.isARepeat, let label = Self.shortcutLabel(event) else { return }
+            self?.queue.async { self?.pendingKeys.append(label) }
+        }
+    }
+
+    /// "⌃⌥⇧⌘K" in Apple's order, or nil for a press without ⌘ or ⌃.
+    static func shortcutLabel(_ event: NSEvent) -> String? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command) || flags.contains(.control) else { return nil }
+        var label = ""
+        if flags.contains(.control) { label += "⌃" }
+        if flags.contains(.option) { label += "⌥" }
+        if flags.contains(.shift) { label += "⇧" }
+        if flags.contains(.command) { label += "⌘" }
+        let named: [UInt16: String] = [36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "⎋", 117: "⌦", 123: "←", 124: "→",
+                                       125: "↓", 126: "↑", 115: "↖", 119: "↘", 116: "⇞", 121: "⇟", 122: "F1", 120: "F2",
+                                       99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8", 101: "F9", 109: "F10",
+                                       103: "F11", 111: "F12", 105: "F13", 107: "F14", 113: "F15"]
+        if let name = named[event.keyCode] {
+            label += name
+        } else if let characters = event.charactersIgnoringModifiers, !characters.isEmpty {
+            label += characters.uppercased()
+        } else {
+            return nil
+        }
+        return label
+    }
+
     func start(at started: Date) {
         self.started = started
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -63,6 +101,8 @@ final class CursorTrackWriter {
     }
 
     func stop() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
         queue.sync {
             timer?.cancel()
             timer = nil
@@ -90,7 +130,7 @@ final class CursorTrackWriter {
         }
         let moved = last.map { abs($0.x - x) > 0.0005 || abs($0.y - y) > 0.0005 } ?? true
         let stale = last.map { ms - $0.ms >= 500 } ?? true
-        guard moved || stale || click != nil || pendingShape != nil else { return }
+        guard moved || stale || click != nil || pendingShape != nil || !pendingKeys.isEmpty else { return }
         last = (x, y, ms)
         var line = String(format: "{\"t\":%.1f,\"x\":%.5f,\"y\":%.5f", ms, x, y)
         if let click {
@@ -100,6 +140,13 @@ final class CursorTrackWriter {
         if let shape = pendingShape {
             line += ",\"shape\":\"\(shape)\""
             pendingShape = nil
+        }
+        if let key = pendingKeys.last {
+            // Two presses inside one 16 ms sample keep the last; the editor shows one shortcut at a time.
+            let escaped = key.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            line += ",\"key\":\"\(escaped)\""
+            shortcuts += pendingKeys.count
+            pendingKeys.removeAll()
         }
         if shapesDir != nil, !wrotePointWidth {
             line += String(format: ",\"pw\":%.1f", frame.width)

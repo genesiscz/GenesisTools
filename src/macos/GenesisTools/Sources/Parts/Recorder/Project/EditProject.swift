@@ -22,6 +22,8 @@ struct EditProject: Codable, Equatable {
     var cursor: Cursor?
     /// The spoken lines drawn over the picture, from the movie's cached transcript; nil is off.
     var captions: Captions?
+    /// The ⌘/⌃ shortcuts the recording kept, drawn as they were pressed; nil is off.
+    var keys: Keys?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -106,6 +108,15 @@ struct EditProject: Codable, Equatable {
         /// The text height, as a fraction of the output's short side.
         var size = 0.038
         var position: CaptionPosition = .bottom
+    }
+
+    struct Keys: Codable, Equatable {
+        var show = true
+        /// The text height, as a fraction of the output's short side.
+        var size = 0.05
+        var position: CaptionPosition = .bottom
+        /// How long a shortcut stays after its press.
+        var durationMs = 1200
     }
 
     enum BackgroundKind: String, Codable, CaseIterable {

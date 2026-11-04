@@ -45,6 +45,8 @@ export interface NativeRecorderOptions {
     cursorTrack?: boolean;
     /** Needs cursorTrack: the movie records without the system cursor and its images go here, for the editor to draw. */
     cursorShapes?: string;
+    /** Needs cursorTrack: the ⌘/⌃ shortcuts pressed go into the track for the editor's keys overlay. */
+    shortcuts?: boolean;
 }
 
 export { cursorTrackPath };
@@ -109,6 +111,10 @@ export function segmentCaptureSpec({
 
         if (options.cursorShapes) {
             spec.cursorShapes = options.cursorShapes;
+        }
+
+        if (options.shortcuts) {
+            spec.shortcuts = true;
         }
     }
 

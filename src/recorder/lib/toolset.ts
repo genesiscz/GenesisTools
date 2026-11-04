@@ -64,7 +64,7 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame, cursor, captions }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame, cursor, captions, keys }";
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
 
@@ -116,6 +116,18 @@ const movieMethods = [
             })
             .strict(),
         'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450).'
+    ),
+    edit(
+        "keys",
+        z
+            .object({
+                show: z.boolean().optional(),
+                size: z.number().min(0.02).max(0.12).optional(),
+                position: z.enum(["bottom", "top"]).optional(),
+                durationMs: z.number().int().min(300).max(5000).optional(),
+            })
+            .strict(),
+        'Draws the ⌘/⌃ shortcuts the recording kept as they were pressed: show, size (0.05 of the short side), position "bottom" | "top", durationMs (1200). Throws when the recording kept none.'
     ),
     edit(
         "captions",
@@ -366,6 +378,10 @@ export class Movie {
 
     async clicks(options: Omit<Extract<EditOp, { op: "clicks" }>, "op"> = {}) {
         return this.change([{ op: "clicks", ...options }]);
+    }
+
+    async keys(options: Omit<Extract<EditOp, { op: "keys" }>, "op"> = {}) {
+        return this.change([{ op: "keys", ...options }]);
     }
 
     async captions(options: Omit<Extract<EditOp, { op: "captions" }>, "op"> = {}) {
