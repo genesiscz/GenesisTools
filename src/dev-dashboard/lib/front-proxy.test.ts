@@ -239,7 +239,6 @@ describe("isLongLivedProxiedStream", () => {
         expect(isLongLivedProxiedStream("/api/boards/work/wait")).toBe(true);
         expect(isLongLivedProxiedStream("/api/boards/my-board/events")).toBe(true);
         expect(isLongLivedProxiedStream("/api/boards/my-board")).toBe(false);
-        expect(isLongLivedProxiedStream("/api/ports/classify")).toBe(true);
         expect(isLongLivedProxiedStream("/api/live")).toBe(true);
         expect(isLongLivedProxiedStream("/api/ports")).toBe(false);
         // A pending-ask waiter outlives the 15s upstream deadline; its siblings do not.
@@ -273,7 +272,6 @@ describe("upstreamTimeoutMs — four tiers, not two", () => {
     test("a stream has no deadline at all", () => {
         expect(upstreamTimeoutMs("/api/qa/stream")).toBeUndefined();
         expect(upstreamTimeoutMs("/api/live")).toBeUndefined();
-        expect(upstreamTimeoutMs("/api/ports/classify")).toBeUndefined();
     });
 
     test("known-slow APIs keep a deadline, just a reachable one", () => {

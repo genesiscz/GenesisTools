@@ -46,9 +46,3 @@ export interface KillPortResult {
     killed: boolean;
     reason?: string;
 }
-
-/** One SSE frame from `/api/ports/classify`. */
-export type PortsClassifyEvent =
-    | { type: "batch"; ports: PortInfo[] }
-    | { type: "done"; classified: number }
-    | { type: "error"; message: string };
