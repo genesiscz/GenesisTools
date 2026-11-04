@@ -78,6 +78,8 @@ export const cursorSchema = z.object({
     size: z.number().min(0.5).max(3).default(1),
     /** 0 is the raw path; 1 averages it over ±120 ms. The cursor still sits on every click. */
     smoothing: z.number().min(0).max(1).default(0.5),
+    /** Fades the cursor out after it stood still this long; 0 keeps it on screen. */
+    hideAfterMs: z.number().int().min(0).max(30_000).default(0),
 });
 
 export const editProjectSchema = z.object({
@@ -462,6 +464,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
             show: z.boolean().optional(),
             size: z.number().min(0.5).max(3).optional(),
             smoothing: z.number().min(0).max(1).optional(),
+            hideAfterMs: z.number().int().min(0).max(30_000).optional(),
         })
         .strict(),
     z

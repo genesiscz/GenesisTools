@@ -91,6 +91,8 @@ struct EditProject: Codable, Equatable {
         var size = 1.0
         /// 0 (the raw path) to 1 (the path averaged over ±120 ms).
         var smoothing = 0.5
+        /// Fades the cursor out after it stood still this long; nil or 0 keeps it. Optional, so an older file decodes.
+        var hideAfterMs: Int?
     }
 
     enum BackgroundKind: String, Codable, CaseIterable {

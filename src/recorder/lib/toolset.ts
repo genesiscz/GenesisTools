@@ -121,9 +121,10 @@ const movieMethods = [
                 show: z.boolean().optional(),
                 size: z.number().min(0.5).max(3).optional(),
                 smoothing: z.number().min(0).max(1).optional(),
+                hideAfterMs: z.number().int().min(0).max(30_000).optional(),
             })
             .strict(),
-        "The cursor the editor draws (a movie recorded without the system cursor; describe() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5). It still sits on every click."
+        "The cursor the editor draws (a movie recorded without the system cursor; describe() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5), hideAfterMs (fade out after standing still this long, 0 never). It still sits on every click."
     ),
     edit(
         "frame",

@@ -35,6 +35,9 @@ final class CursorTrack: @unchecked Sendable {
     /// The recorded rectangle's width in points, so a movie pixel can be measured in cursor points.
     let pointWidth: Double?
 
+    /// The times the pointer moved or clicked: what keeps a cursor that hides when idle on screen.
+    let moveTimes: [Double]
+
     /// The movie has no system cursor in it, so the editor draws one.
     var drawsCursor: Bool { !shapeChanges.isEmpty && !shapes.isEmpty }
 
@@ -42,6 +45,16 @@ final class CursorTrack: @unchecked Sendable {
         self.samples = samples.sorted { $0.ms < $1.ms }
         clicks = self.samples.filter { $0.click != nil }
         shapeChanges = self.samples.filter { $0.shape != nil }
+        var moves: [Double] = []
+        var previous: Sample?
+        for sample in self.samples {
+            if let previous, sample.click == nil, abs(previous.x - sample.x) < 0.0001, abs(previous.y - sample.y) < 0.0001 {
+                continue
+            }
+            moves.append(sample.ms)
+            previous = sample
+        }
+        moveTimes = moves
         self.shapes = shapes
         self.pointWidth = pointWidth
     }
@@ -118,6 +131,21 @@ final class CursorTrack: @unchecked Sendable {
             sumW += weight
         }
         return sumW > 0 ? (sumX / sumW, sumY / sumW) : point(atMs: ms)
+    }
+
+    /// 1 while the pointer moved within `hideAfterMs`, then down to 0 over 300 ms; back to 1 the moment it moves.
+    func visibility(atMs ms: Double, hideAfterMs: Int) -> Double {
+        guard hideAfterMs > 0, !moveTimes.isEmpty else { return 1 }
+        var low = 0, high = moveTimes.count
+        while low < high {
+            let mid = (low + high) / 2
+            if moveTimes[mid] <= ms { low = mid + 1 } else { high = mid }
+        }
+        // A move row lands one sample after the motion starts; the next one counts from that sample.
+        if low < moveTimes.count, moveTimes[low] - ms <= 16.7 { return 1 }
+        guard low > 0 else { return 1 }
+        let still = ms - moveTimes[low - 1] - Double(hideAfterMs)
+        return max(0, min(1, 1 - still / 300))
     }
 
     private func nearestClickDistance(_ ms: Double) -> Double? {

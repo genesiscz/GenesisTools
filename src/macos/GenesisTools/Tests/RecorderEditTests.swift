@@ -100,6 +100,17 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertFalse(far.drawsCursor)
     }
 
+    func testAnIdleCursorFadesOutAndComesBackWhenItMoves() {
+        // Still from 0 to 3000 ms (the 500 ms keep-alive rows do not count as moves), then it moves.
+        let track = CursorTrack(samples: [0, 500, 1000, 1500, 2000, 2500, 3000].map { CursorTrack.Sample(ms: $0, x: 0.5, y: 0.5) }
+            + [CursorTrack.Sample(ms: 3200, x: 0.6, y: 0.5)])
+        XCTAssertEqual(track.visibility(atMs: 900, hideAfterMs: 1000), 1)
+        XCTAssertEqual(track.visibility(atMs: 1150, hideAfterMs: 1000), 0.5, accuracy: 0.001)
+        XCTAssertEqual(track.visibility(atMs: 2000, hideAfterMs: 1000), 0)
+        XCTAssertEqual(track.visibility(atMs: 3190, hideAfterMs: 1000), 1)
+        XCTAssertEqual(track.visibility(atMs: 2000, hideAfterMs: 0), 1)
+    }
+
     func testTheLoaderRoundTripsAndRefusesANewerVersion() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 10_000_000)])
         XCTAssertEqual(try EditProject.decode(edit.encoded()), edit)

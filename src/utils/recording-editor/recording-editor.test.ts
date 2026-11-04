@@ -463,7 +463,7 @@ describe("edit project (edit.json)", () => {
 
         const withDrawn = wholeProject({ ...source, cursor: drawn });
         const bigger = applyOp(withDrawn, { op: "cursor", size: 2 });
-        expect(bigger.cursor).toEqual({ show: true, size: 2, smoothing: 0.5 });
+        expect(bigger.cursor).toEqual({ show: true, size: 2, smoothing: 0.5, hideAfterMs: 0 });
         expect(applyOp(bigger, { op: "cursor", show: false }).cursor?.size).toBe(2);
         expect(() => parseEditOps({ op: "cursor", size: 9 })).toThrow();
     });

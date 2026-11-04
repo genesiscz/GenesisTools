@@ -387,6 +387,17 @@ private struct StyleInspector: View {
                         model.setCursor { $0.smoothing = (value * 20).rounded() / 20 }
                     }), in: 0...1)
                         .accessibilityIdentifier("recorder.style.cursorSmoothing")
+                    SwitchRow("Hide when still", isOn: Binding(get: { (cursor.hideAfterMs ?? 0) > 0 }, set: { on in
+                        model.setCursor { $0.hideAfterMs = on ? 1500 : 0 }
+                    }))
+                    .accessibilityIdentifier("recorder.style.cursorHide")
+                    if let hide = cursor.hideAfterMs, hide > 0 {
+                        SectionLabel(text: "Hide after", value: String(format: "%.1f s", Double(hide) / 1000))
+                        Slider(value: Binding(get: { Double(hide) }, set: { value in
+                            model.setCursor { $0.hideAfterMs = Int((value / 250).rounded() * 250) }
+                        }), in: 500...5000)
+                            .accessibilityIdentifier("recorder.style.cursorHideAfter")
+                    }
                 }
             } else if model.cursor != nil {
                 Text("This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size.")

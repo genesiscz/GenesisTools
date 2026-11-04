@@ -54,6 +54,8 @@ enum Looks {
         var y: Double
         /// Movie pixels per cursor point, times the edit's size.
         var pixelsPerPoint: Double
+        /// 0 (hidden after standing still) to 1.
+        var opacity = 1.0
     }
 
     /// The cursor's image with its hotspot on the point. The image is twice its point size.
@@ -64,9 +66,14 @@ enum Looks {
         let hotY = extent.minY + (1 - mark.y) * extent.height
         let originX = hotX - mark.shape.hotX * mark.pixelsPerPoint
         let originY = hotY + mark.shape.hotY * mark.pixelsPerPoint - mark.shape.height * mark.pixelsPerPoint
-        let cursor = mark.shape.image
+        var cursor = mark.shape.image
             .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             .transformed(by: CGAffineTransform(translationX: originX, y: originY))
+        if mark.opacity < 0.999 {
+            cursor = cursor.applyingFilter("CIColorMatrix", parameters: [
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(mark.opacity)),
+            ])
+        }
         return cursor.composited(over: image)
     }
 

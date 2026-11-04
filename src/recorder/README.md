@@ -42,7 +42,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `frame` (optional): the movie on a background (`none`, `color`, `gradient`), with `padding`, `cornerRadius` and a
   `shadow`; sizes are fractions of the output height.
 - `cursor` (optional, a movie without the system cursor): `show`, `size` 0.5 to 3, `smoothing` 0 to 1 (the path
-  averaged over up to ±120 ms, narrower near a click so the cursor sits on it). Absent is shown, 1, 0.5.
+  averaged over up to ±120 ms, narrower near a click so the cursor sits on it), `hideAfterMs` (fade out after
+  standing still this long; 0 never). Absent is shown, 1, 0.5, 0.
 
 The loader refuses a newer version instead of reading it wrongly. The window watches the file, takes another
 process's save as it lands, and keeps the previous version one ⌘Z away.
