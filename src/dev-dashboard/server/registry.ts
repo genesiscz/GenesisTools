@@ -27,6 +27,7 @@ import { netRoutes } from "@app/dev-dashboard/server/routes/net";
 import { obsidianRoutes } from "@app/dev-dashboard/server/routes/obsidian";
 import { portsRoutes } from "@app/dev-dashboard/server/routes/ports";
 import { processesRoutes } from "@app/dev-dashboard/server/routes/processes";
+import { pushRoutes } from "@app/dev-dashboard/server/routes/push";
 import { qaRoutes } from "@app/dev-dashboard/server/routes/qa";
 import { qaDecisionRoutes } from "@app/dev-dashboard/server/routes/qa-decisions";
 import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
@@ -58,6 +59,7 @@ export function createDashboardRouter(): Router {
         ...cmuxRoutes(),
         ...commandsRoutes(),
         ...weatherRoutes(),
+        ...pushRoutes(),
         ...withTableIdempotency(aiRoutes()),
         ...claudeRoutes(),
         ...daemonRoutes(),

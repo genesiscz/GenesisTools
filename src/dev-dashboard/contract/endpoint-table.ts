@@ -10,6 +10,7 @@ import type {
 } from "@app/dev-dashboard/contract/agents";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
+import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
 
 /**
  * The endpoint table: one row per non-board endpoint the phone and the web reach. The server binds a row
@@ -327,6 +328,12 @@ export const ENDPOINTS = {
      * alone answers one decision letter, and ending a process needs more than that (`src/hub/lib/board/stop.ts`).
      */
     agentsStop: row<AgentStopInput, AgentStopReceiptDto>("POST", "/api/agents/stop", "keyed-write"),
+
+    // Push to the phone (F2): a device registers its APNs token or simulator id and its box key on every start.
+    pushRegister: row<PushDeviceRegistration, PushDeviceReceipt>("POST", "/api/push/devices", "keyed-write"),
+    pushUnregister: row<{ id: string }, { removed: boolean }>("DELETE", "/api/push/devices/:id", "keyed-write"),
+    /** One test notice to the calling device, with two answer buttons that answer nothing real. */
+    pushTest: row<{ id: string }, { ok: boolean; detail?: string }>("POST", "/api/push/test", "keyed-write"),
     /**
      * One message into a live session at a timing (M5, F10). A keyed write behind the full login: the key is the
      * durable queue's idempotency key, so a replayed send (an offline draft sent twice) is one delivery.
