@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { checkProject } from "@genesiscz/utils/recording-editor/check";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
@@ -158,6 +159,25 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
         }
     }
 
+    // Ops that change nothing (a second annotateClicks, a fix to the same words) save no revision and no undo step.
+    if (!opened.fresh && SafeJSON.stringify(next) === SafeJSON.stringify(opened.project)) {
+        log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit changed nothing, not saved");
+        return {
+            path: opened.path,
+            project: opened.project,
+            fresh: false,
+            warnings: [...warnings, "nothing changed, so nothing was saved"],
+        };
+    }
+
+    // An item whose whole time this edit cut never shows any more: say so now, not only in check().
+    const hiddenBefore = new Set(neverShown(opened.project).map((issue) => issue.item));
+    warnings.push(
+        ...neverShown(next)
+            .filter((issue) => !hiddenBefore.has(issue.item))
+            .map((issue) => `${issue.message}${issue.fix ? `; ${issue.fix} removes it` : ""}`)
+    );
+
     const saved = writeProject(opened.path, next);
     pushUndo({
         editPath: opened.path,
@@ -174,6 +194,13 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
         ...(loudness ? { loudness } : {}),
         ...(warnings.length ? { warnings } : {}),
     };
+}
+
+/** The items of an edit that never show because their whole time is cut (check()'s first kind of issue). */
+function neverShown(project: EditProject) {
+    return checkProject(project, { hasTranscript: true, hasCursorTrack: true, musicFileExists: true }).filter(
+        (issue) => issue.severity === "fix" && issue.target
+    );
 }
 
 /** What an op needs measured on the movie before it applies: idle stretches, or the loudness. */
