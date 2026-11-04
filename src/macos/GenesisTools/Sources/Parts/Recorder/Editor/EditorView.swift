@@ -326,6 +326,36 @@ private struct FocusPicker: View {
     }
 }
 
+/// Still parts (nothing moves, nothing is heard): how long they must be and what happens to them, then one button.
+private struct StillPartsSection: View {
+    @Bindable var model: EditorModel
+    @AppStorage(EditorModel.idleMinKey) private var minSeconds = 2.0
+    /// 0 cuts them; 4, 8 or 16 plays them that much faster.
+    @AppStorage(EditorModel.idleSpeedKey) private var speed = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "Still parts", value: "nothing moves, nothing is heard")
+            Text("Longer than").font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+            GenSegmentedTabs("Longer than", items: [.init(1.0, "1 s"), .init(2.0, "2 s"), .init(5.0, "5 s")], selection: $minSeconds,
+                             minSegmentWidth: 44, identifier: "recorder.clip.idleMin", fillsWidth: true)
+            Text("Then").font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+            GenSegmentedTabs("Then", items: [.init(0, "Cut"), .init(4, "4×"), .init(8, "8×"), .init(16, "16×")], selection: $speed,
+                             minSegmentWidth: 44, identifier: "recorder.clip.idleSpeed", fillsWidth: true)
+            WideButton(title: model.isRemovingIdle ? "Looking for Still Parts…"
+                       : (speed == 0 ? "Cut Still Parts" : "Speed Up Still Parts \(speed)×"),
+                       systemImage: speed == 0 ? "wand.and.stars" : "forward.fill") {
+                model.removeIdle(speed: speed == 0 ? nil : speed)
+            }
+            .disabled(model.isRemovingIdle)
+            .instantTooltip(speed == 0
+                            ? "Cuts every stretch of \(Int(minSeconds)) s or more where the picture does not change and nothing is heard (⌘Z brings them back)"
+                            : "Plays those stretches \(speed)× faster instead of cutting them, so the viewer sees time pass (⌘Z undoes it)")
+            .accessibilityIdentifier("recorder.clip.speedIdle")
+        }
+    }
+}
+
 private struct ClipInspector: View {
     @Bindable var model: EditorModel
     /// 8× is what Speed Up Still Parts sets, so such a clip shows its own segment.
@@ -364,15 +394,7 @@ private struct ClipInspector: View {
                 SectionLabel(text: Plural.count(placed.count, "clip"), value: formatClock(model.durationUs, tenths: true))
                 WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
                     .instantTooltip("Splits the clip under the playhead in two (S)")
-                WideButton(title: model.isRemovingIdle ? "Looking for Still Parts…" : "Remove Still Parts", systemImage: "wand.and.stars") {
-                    model.removeIdle()
-                }
-                .disabled(model.isRemovingIdle)
-                .instantTooltip("Cuts every stretch of 2 s or more where the picture does not change and nothing is heard")
-                WideButton(title: "Speed Up Still Parts (8×)", systemImage: "forward.fill") { model.removeIdle(speed: 8) }
-                    .disabled(model.isRemovingIdle)
-                    .instantTooltip("Plays those stretches 8× faster instead of cutting them, so the viewer sees time pass")
-                    .accessibilityIdentifier("recorder.clip.speedIdle")
+                StillPartsSection(model: model)
             }
         }
     }

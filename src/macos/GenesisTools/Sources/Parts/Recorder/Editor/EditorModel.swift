@@ -1220,6 +1220,11 @@ final class EditorModel {
     }
 
     /// Cuts the still, silent parts, or with `speed` plays them that much faster (so time is seen to pass).
+    /// Opinionated, so settings: how long a still, silent stretch must be (2 s), and what happens to it (cut, or
+    /// played 4×, 8× or 16× faster). The Clip tab sets both.
+    static let idleMinKey = "recorder.idle.minSeconds"
+    static let idleSpeedKey = "recorder.idle.speed"
+
     func removeIdle(speed: Int? = nil) {
         guard !isRemovingIdle else { return }
         saveTask?.cancel()
@@ -1227,7 +1232,9 @@ final class EditorModel {
         isRemovingIdle = true
         show("Looking for parts where nothing moves and nothing is heard…", error: false)
         let before = durationUs
-        let op = speed.map { #"{"op":"removeIdle","speed":\#($0)}"# } ?? #"{"op":"removeIdle"}"#
+        let minSeconds = UserDefaults.standard.object(forKey: Self.idleMinKey) as? Double ?? 2
+        let op = speed.map { #"{"op":"removeIdle","minSeconds":\#(minSeconds),"speed":\#($0)}"# }
+            ?? #"{"op":"removeIdle","minSeconds":\#(minSeconds)}"#
         ToolsRunner.run(["recorder", "apply", store.url.path, op]) { [weak self] status, _, stderr in
             guard let self else { return }
             self.isRemovingIdle = false
@@ -1243,7 +1250,7 @@ final class EditorModel {
             let saved = before - self.durationUs
             let verb = speed.map { "Sped up the still, silent parts \($0)×, saving" } ?? "Removed"
             self.show(saved > 0 ? "\(verb) \(formatClock(saved, tenths: true)) of still, silent parts; ⌘Z brings them back."
-                                : "No still, silent part of 2 s or more was found.", error: false)
+                                : "No still, silent part of \(Int(minSeconds)) s or more was found.", error: false)
         }
     }
 
