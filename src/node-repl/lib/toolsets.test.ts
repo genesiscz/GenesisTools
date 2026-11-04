@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
-import { defaultExportName } from "@app/recorder/lib/edit";
+import { collapseUndo, defaultExportName, editProject, undoDepth, undoEdit } from "@app/recorder/lib/edit";
 import { chaptersOf, recordingFolderOf } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
@@ -11,7 +11,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
-import { wholeProject } from "@genesiscz/utils/recording-editor/project";
+import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecordingHandle, recorderApi } from "@genesiscz/utils/repl/toolsets/recorder";
@@ -181,6 +181,36 @@ describe("movie chapters", () => {
             )
         ).toEqual(["0:00 Start", "0:30 Next"]);
         expect(chaptersOf([])).toEqual([]);
+    });
+
+    test("undo outlives one process: it steps back through the saved steps, collapses, and refuses after another save", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-undo-"));
+        const path = join(root, "talk.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(root, "talk.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+        );
+
+        await editProject(path, [{ op: "text", from: 1, to: 2, text: "Title" }]);
+        await editProject(path, [{ op: "redact", from: 0, to: 1, rect: { x: 0, y: 0, width: 0.1, height: 0.1 } }]);
+        expect(undoDepth(path)).toBe(2);
+        const once = await undoEdit(path);
+        expect(once.project.redactions ?? []).toEqual([]);
+        expect(once.project.texts?.length).toBe(1);
+        expect((await undoEdit(path)).project.texts).toBeUndefined();
+        await expect(undoEdit(path)).rejects.toThrow("nothing to undo");
+
+        const depth = undoDepth(path);
+        await editProject(path, [{ op: "text", from: 1, to: 2, text: "A" }]);
+        await editProject(path, [{ op: "text", from: 2, to: 3, text: "B" }]);
+        collapseUndo(path, depth);
+        expect(undoDepth(path)).toBe(depth + 1);
+
+        // The editor window saving in between: the undo refuses rather than drop its change.
+        writeProject(path, { ...(await undoEdit(path)).project }, "window");
+        await editProject(path, [{ op: "text", from: 1, to: 2, text: "C" }]);
+        writeProject(path, readProject(path), "window");
+        await expect(undoEdit(path)).rejects.toThrow("by window");
     });
 
     test("an export is named after the recording's title, made safe, else after the movie", () => {

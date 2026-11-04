@@ -13,6 +13,7 @@ tools recorder stop|pause|resume|status [id]     # the newest live recording, or
 tools recorder mark <label> [id]                 # a marker at this moment; the editor and movie.markers() show it
 tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
 tools recorder rename <recording> <title>        # a new title for the library, the editor window and movies.list()
+tools recorder undo <recording>                  # back one step of apply or the REPL (30 steps in <edit>.undo.json)
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
 tools recorder list [--live] [--limit N] [--json]
 tools recorder edit <recording> [--no-focus]     # the editor window; --no-focus opens it behind the front window

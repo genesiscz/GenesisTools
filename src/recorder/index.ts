@@ -9,7 +9,7 @@ import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-record
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
 
-import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./lib/edit";
+import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject, undoEdit } from "./lib/edit";
 import { ensureRecorderPart, listLibrary, movieOf, openEditor, resolveRecording } from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
 import { makeProxy } from "./lib/proxy";
@@ -246,6 +246,22 @@ program
     .action(async (label: string, id: string | undefined) => {
         try {
             out.result(await callRecorder({ id: liveId(id), method: "marker.add", params: { label } }));
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("undo")
+    .description(
+        "Put an edit back as it was before its last change made with apply or the REPL (30 steps, across runs)"
+    )
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .action(async (value: string) => {
+        try {
+            const undone = await undoEdit(value);
+            out.result(describeProject(undone.project, undone.path));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

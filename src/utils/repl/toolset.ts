@@ -18,6 +18,21 @@ export interface ToolsetContext {
  * One preloadable REPL API: a global (or several) built once per kernel spawn, documented by its descriptor, and
  * disposed on reset and exit. A new toolset is one subclass and one line in the kernel's `REPL_TOOLSETS` table.
  */
+/**
+ * A method's Promise says so when it is printed as JSON: without `await`, JSON.stringify(movie.info()) wrote `{}`
+ * and read as an empty answer (blind test, 2026-11-04).
+ */
+function markPromise(result: unknown, name: string): unknown {
+    if (result instanceof Promise && !Object.hasOwn(result, "toJSON")) {
+        Object.defineProperty(result, "toJSON", {
+            value: () => `[a Promise: await ${name}(…) to get its value]`,
+            enumerable: false,
+        });
+    }
+
+    return result;
+}
+
 export abstract class ReplToolset {
     abstract readonly api: ApiDescriptor;
 
@@ -104,10 +119,13 @@ export abstract class ReplToolset {
                             method.positional && params !== null && typeof params === "object"
                                 ? method.positional.map((key) => Reflect.get(params, key))
                                 : [params];
-                        return this.bindResult({
-                            result: Reflect.apply(value, object, callArgs),
-                            name: method.resultName,
-                        });
+                        return markPromise(
+                            this.bindResult({
+                                result: Reflect.apply(value, object, callArgs),
+                                name: method.resultName,
+                            }),
+                            `${owner}.${name}`
+                        );
                     };
                 }
                 if (

@@ -11,7 +11,6 @@ import {
     CANVAS_ASPECTS,
     describeProject,
     type EditOp,
-    type EditProject,
     editOpSchema,
     findInTranscript,
     hexColor,
@@ -29,7 +28,16 @@ import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
-import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./edit";
+import {
+    collapseUndo,
+    EXPORT_FORMATS,
+    type ExportFormat,
+    editProject,
+    exportAs,
+    openProject,
+    undoDepth,
+    undoEdit,
+} from "./edit";
 import { ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary } from "./moments";
 
@@ -158,7 +166,11 @@ const movieMethods = [
     ]),
     edit("unmute", z.object({ track: z.number().int().nonnegative() }), "Unmutes an audio track.", ["track"]),
     edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }), "Several ops at once, saved once.", ["ops"]),
-    edit("undo", z.object({}), "Puts back the edit as it was before this handle's last change."),
+    edit(
+        "undo",
+        z.object({}),
+        "Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps). Refused when the editor window changed it since: undo that with ⌘Z there."
+    ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
         "clicks",
@@ -292,7 +304,7 @@ const movieMethods = [
         positional: ["at"],
         result: z.unknown(),
         resultName: "{ path, width, height }",
-        doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. It renders at preview size (the movie at most 1080 high); export() uses the export size.",
+        doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. It renders at preview size (at most 1080 pixels on the short side), so its size can differ from export()'s, which follows the export settings; the picture is the same.",
         effect: "read",
     }),
     defineMethod({
@@ -406,7 +418,7 @@ export const moviesApi = defineApi({
             positional: ["recording"],
             result: z.unknown(),
             resultName: "Movie",
-            doc: 'A library id, "last", a recording folder, a movie or an edit.json.',
+            doc: 'A library id, "last", a recording folder, a movie or an edit.json. Every method of the Movie it returns is async: await each call (an un-awaited one prints as "[a Promise: …]").',
             effect: "read",
         }),
         defineMethod({
@@ -431,8 +443,6 @@ export const moviesApi = defineApi({
 });
 
 export class Movie {
-    private readonly history: EditProject[] = [];
-
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
         readonly recording: string,
@@ -451,9 +461,7 @@ export class Movie {
     }
 
     private async change(ops: EditOp[]) {
-        const before = await openProject(this.recording);
         const edited = await editProject(this.recording, ops);
-        this.history.push(before.project);
         const described = describeProject(edited.project, edited.path);
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
         return {
@@ -585,6 +593,7 @@ export class Movie {
      */
     async polish(options: { removeIdle?: boolean; autoZoom?: boolean; normalize?: boolean; frame?: boolean } = {}) {
         const before = await openProject(this.recording);
+        const depth = undoDepth(before.path);
         const plan: Array<[string, EditOp[]]> = [];
 
         if (options.removeIdle !== false) {
@@ -625,7 +634,8 @@ export class Movie {
             }
         }
 
-        this.history.push(before.project);
+        // Its steps undo as one.
+        collapseUndo(before.path, depth);
         const opened = await openProject(this.recording);
         return { ...describeProject(opened.project, opened.path), steps };
     }
@@ -646,15 +656,8 @@ export class Movie {
     }
 
     async undo() {
-        const previous = this.history.pop();
-
-        if (!previous) {
-            throw new Error("nothing to undo: this handle made no change yet");
-        }
-
-        const opened = await openProject(this.recording);
-        const saved = writeProject(opened.path, { ...previous, revision: opened.project.revision });
-        return describeProject(saved, opened.path);
+        const undone = await undoEdit(this.recording);
+        return describeProject(undone.project, undone.path);
     }
 
     async export(

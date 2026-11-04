@@ -1,7 +1,8 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
@@ -12,6 +13,7 @@ import {
     type EditProject,
     EXPORT_FORMATS,
     type ExportFormat,
+    editProjectSchema,
     type OpFacts,
     partOf,
     projectPathFor,
@@ -20,8 +22,10 @@ import {
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { z } from "zod";
 import { type ExportAnswer, exportEdit, movieOf, resolveRecording } from "./library";
 
 const { log } = logger.scoped("recorder-edit");
@@ -113,6 +117,7 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
     }
 
     const saved = writeProject(opened.path, next);
+    pushUndo(opened.path, opened.project, saved.revision);
     log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit applied");
     return {
         path: opened.path,
@@ -142,6 +147,99 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     }
 
     return {};
+}
+
+/** At most this many steps are kept to undo; the oldest goes first. */
+const UNDO_STEPS = 30;
+
+const undoFileSchema = z.object({
+    steps: z.array(z.object({ before: editProjectSchema, afterRevision: z.number().int().nonnegative() })).default([]),
+});
+
+/** `<edit>.undo.json` beside the edit: the agent's and the CLI's undo steps, so an undo outlives one process. */
+function undoPath(editPath: string): string {
+    return editPath.replace(/\.json$/, ".undo.json");
+}
+
+function readUndo(editPath: string): z.infer<typeof undoFileSchema>["steps"] {
+    const path = undoPath(editPath);
+
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    try {
+        return undoFileSchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true })).steps;
+    } catch (error) {
+        log.debug({ error, path }, "the undo file does not read; it starts again empty");
+        return [];
+    }
+}
+
+/** Remembers the edit as it was before a change that saved `afterRevision`. */
+export function pushUndo(editPath: string, before: EditProject, afterRevision: number): void {
+    const steps = [...readUndo(editPath), { before, afterRevision }].slice(-UNDO_STEPS);
+    atomicWriteFileSync(undoPath(editPath), SafeJSON.stringify({ steps }));
+}
+
+/** How many steps the edit has to undo now. */
+export function undoDepth(editPath: string): number {
+    return readUndo(editPath).length;
+}
+
+/** Makes every step pushed since the undo had `depth` steps into one, so a multi-step change undoes at once. */
+export function collapseUndo(editPath: string, depth: number): void {
+    const steps = readUndo(editPath);
+    const added = steps.slice(depth);
+    const first = added[0];
+    const last = added.at(-1);
+
+    if (!first || !last || added.length < 2) {
+        return;
+    }
+
+    atomicWriteFileSync(
+        undoPath(editPath),
+        SafeJSON.stringify({
+            steps: [...steps.slice(0, depth), { before: first.before, afterRevision: last.afterRevision }],
+        })
+    );
+}
+
+/**
+ * Puts the edit back as it was before its last change made through `apply`, the REPL or this undo's door. Refused
+ * when the edit changed since (the editor window saved it, which has its own ⌘Z), so an undo never throws away
+ * someone else's work.
+ */
+export async function undoEdit(value: string): Promise<OpenedProject> {
+    const opened = await openProject(value);
+    const steps = readUndo(opened.path);
+    const last = steps.at(-1);
+
+    if (!last) {
+        throw new Error(
+            "nothing to undo: no change was made to this edit through apply or the REPL since it was opened"
+        );
+    }
+
+    if (last.afterRevision !== opened.project.revision) {
+        throw new Error(
+            `the edit changed since the last change made here (revision ${opened.project.revision}${opened.project.updatedBy ? ` by ${opened.project.updatedBy}` : ""}, not ${last.afterRevision}); undo it where it was made, for example ⌘Z in the editor window`
+        );
+    }
+
+    const saved = writeProject(opened.path, { ...last.before, revision: opened.project.revision });
+    // The edit now reads as it did after the step before; that step's revision is the one just saved, so a second
+    // undo goes one step further back.
+    const rest = steps.slice(0, -1);
+
+    if (rest.length) {
+        rest[rest.length - 1] = { ...rest[rest.length - 1], afterRevision: saved.revision };
+    }
+
+    atomicWriteFileSync(undoPath(opened.path), SafeJSON.stringify({ steps: rest }));
+    log.debug({ path: opened.path, revision: saved.revision, left: rest.length }, "edit undone");
+    return { path: opened.path, project: saved, fresh: false };
 }
 
 export { EXPORT_FORMATS, type ExportFormat };
