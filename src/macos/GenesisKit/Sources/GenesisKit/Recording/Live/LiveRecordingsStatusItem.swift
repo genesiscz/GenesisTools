@@ -346,7 +346,9 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     /// "Meeting · 12:03 · 340 frames".
     nonisolated static func detail(_ recording: LiveRecording, now: Date) -> String {
         let kind = recording.kind.replacingOccurrences(of: "-", with: " ").capitalizedFirst
-        var parts = [kind, RecordingClock.format(recording.elapsedMs(now: now)), Plural.count(recording.frames, "frame")]
+        var parts = [kind, RecordingClock.format(recording.elapsedMs(now: now))]
+        // Only a recording that keeps frames counts them; a movie would always read "0 frames".
+        if recording.frames > 0 { parts.append(Plural.count(recording.frames, "frame")) }
         if recording.isPaused { parts.append("paused") }
         if recording.isStopping { parts.append("stopping") }
 
