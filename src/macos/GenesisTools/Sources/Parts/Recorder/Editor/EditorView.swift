@@ -199,6 +199,8 @@ private struct ZoomInspector: View {
                     .accessibilityLabel("Zoom out time")
             }
             WideButton(title: "Delete Zoom", systemImage: "trash", role: .destructive) { model.deleteSelection() }
+            Divider().overlay(RecorderPalette.hairline)
+            MotionBlurSection(model: model)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
@@ -221,14 +223,34 @@ private struct ZoomInspector: View {
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                let blur = (model.project.motion ?? .init()).blur
-                SectionLabel(text: "Motion blur", value: blur == 0 ? "Off" : "\(Int((blur * 100).rounded()))%")
-                Slider(value: Binding(get: { blur }, set: { value in
-                    model.setLooks { $0.motion = EditProject.Motion(blur: (value * 20).rounded() / 20) }
-                }), in: 0...1)
-                    .accessibilityLabel("Motion blur")
-                    .accessibilityIdentifier("recorder.zoom.motionBlur")
-                    .instantTooltip("Smears the picture while a zoom moves in, out or along with the cursor, as a camera would. 0 keeps every frame sharp.")
+                Divider().overlay(RecorderPalette.hairline)
+                MotionBlurSection(model: model)
+            }
+        }
+    }
+}
+
+/// One setting for all zooms, shown with a zoom selected too: how much the picture smears while a zoom moves.
+private struct MotionBlurSection: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let blur = (model.project.motion ?? .init()).blur
+        let label = blur == 0 ? "Off" : "\(Int((blur * 100).rounded()))%"
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(text: "Motion blur, all zooms", value: label)
+            Slider(value: Binding(get: { blur }, set: { value in
+                model.setLooks { $0.motion = EditProject.Motion(blur: (value * 20).rounded() / 20) }
+            }), in: 0...1)
+                .disabled(model.project.zooms.isEmpty)
+                .accessibilityLabel("Motion blur for all zooms")
+                .accessibilityValue(label)
+                .accessibilityIdentifier("recorder.zoom.motionBlur")
+                .instantTooltip("Smears the picture while a zoom moves in, out or along with the cursor, as a camera would (50% by default). 0 keeps every frame sharp.")
+            if model.project.zooms.isEmpty {
+                Text("Applies while a zoom moves; this edit has no zoom yet.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -861,17 +883,23 @@ private struct RedactionEditor: View {
             }))
             .textFieldStyle(.roundedBorder)
             .accessibilityIdentifier("recorder.hide.name")
-            RedactionPicker(model: model, redaction: redaction)
+            if redaction.follow == true {
+                Text("Centred on the pointer: only its size below counts.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                RedactionPicker(model: model, redaction: redaction)
+            }
             GenSegmentedTabs("Style", items: EditProject.RedactionStyle.allCases.map { .init($0, $0.rawValue.capitalized) },
                              selection: Binding(get: { redaction.style }, set: { value in model.updateRedaction(id) { $0.style = value } }),
                              minSegmentWidth: 70, identifier: "recorder.hide.style", fillsWidth: true)
-            if model.cursor != nil {
-                SwitchRow("Follow the cursor", isOn: Binding(get: { redaction.follow == true }, set: { on in
-                    model.updateRedaction(id) { $0.follow = on ? true : nil }
-                }))
-                .accessibilityIdentifier("recorder.hide.follow")
-                .instantTooltip("The part keeps its size and moves with the pointer, so a spotlight lights where you point")
-            }
+            SwitchRow("Follow the cursor", isOn: Binding(get: { redaction.follow == true }, set: { on in
+                model.updateRedaction(id) { $0.follow = on ? true : nil }
+            }))
+            .disabled(model.cursor == nil)
+            .accessibilityIdentifier("recorder.hide.follow")
+            .instantTooltip(model.cursor == nil ? "This recording has no cursor track"
+                            : "The part keeps its size and moves with the pointer, so a spotlight lights where you point")
             SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
             Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)
                 .accessibilityLabel("Hidden part width")
@@ -1059,26 +1087,43 @@ private struct MusicSection: View {
     }
 }
 
-/// One click for a common destination: it sets the format, size, codec and subtitles below, which stay editable.
+/// One click for a common destination: it sets every choice below (format, codec, size, subtitle file, chapters),
+/// which stay editable; the preset that matches the current choices shows a check mark.
 private struct ExportPreset {
     let name: String
     let symbol: String
     let detail: String
-    let apply: (inout EditProject.ExportSettings) -> Void
+    let format: EditProject.ExportFormat?
+    let codec: EditProject.Codec
+    let maxHeight: Int
+    /// The subtitle file it asks for when the movie has a transcript.
+    let subtitles: EditProject.SubtitleFormat?
+    let chapters: Bool?
+
+    func set(_ settings: inout EditProject.ExportSettings, transcript: Bool) {
+        settings.format = format
+        settings.codec = codec
+        settings.maxHeight = maxHeight
+        settings.subtitles = transcript ? subtitles : nil
+        settings.chapters = chapters
+    }
+
+    func matches(_ settings: EditProject.ExportSettings, transcript: Bool) -> Bool {
+        var expected = settings
+        set(&expected, transcript: transcript)
+        return expected == settings
+    }
 
     static let all: [ExportPreset] = [
-        ExportPreset(name: "YouTube", symbol: "play.rectangle", detail: "MP4, H.264 at 1080p, with an SRT subtitle file and the markers as chapters") {
-            $0.format = nil; $0.codec = .h264; $0.maxHeight = 1080; $0.subtitles = .srt; $0.chapters = nil
-        },
-        ExportPreset(name: "Chat", symbol: "bubble.left", detail: "A small MP4 for Slack, Teams or a mail: H.264 at 720p, no subtitle file") {
-            $0.format = nil; $0.codec = .h264; $0.maxHeight = 720; $0.subtitles = nil
-        },
-        ExportPreset(name: "README GIF", symbol: "photo.on.rectangle", detail: "A GIF for a README or an issue: 10 fps, at most 960 pixels wide, no sound") {
-            $0.format = .gif; $0.subtitles = nil
-        },
-        ExportPreset(name: "Archive", symbol: "archivebox", detail: "HEVC at the recording's full size: the best picture in the smallest file") {
-            $0.format = nil; $0.codec = .hevc; $0.maxHeight = 0
-        },
+        ExportPreset(name: "YouTube", symbol: "play.rectangle",
+                     detail: "MP4, H.264 at 1080p, the markers as chapters, and an SRT subtitle file when the movie has a transcript",
+                     format: nil, codec: .h264, maxHeight: 1080, subtitles: .srt, chapters: nil),
+        ExportPreset(name: "Chat", symbol: "bubble.left", detail: "A small MP4 for Slack, Teams or a mail: H.264 at 720p, no subtitle file, no chapters",
+                     format: nil, codec: .h264, maxHeight: 720, subtitles: nil, chapters: false),
+        ExportPreset(name: "README GIF", symbol: "photo.on.rectangle", detail: "A GIF for a README or an issue: 10 fps, at most 960 pixels wide, no sound",
+                     format: .gif, codec: .h264, maxHeight: 0, subtitles: nil, chapters: false),
+        ExportPreset(name: "Archive", symbol: "archivebox", detail: "HEVC at the recording's full size with chapters: the best picture in the smallest file",
+                     format: nil, codec: .hevc, maxHeight: 0, subtitles: nil, chapters: nil),
     ]
 }
 
@@ -1102,10 +1147,15 @@ private struct ExportInspector: View {
             Text("Export").font(.system(size: 15, weight: .semibold))
             SectionLabel(text: "Presets")
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                let transcript = !model.zoom.captionLines.isEmpty
                 ForEach(ExportPreset.all, id: \.name) { preset in
-                    WideButton(title: preset.name, systemImage: preset.symbol) { model.setExport { preset.apply(&$0) } }
-                        .instantTooltip(preset.detail)
-                        .accessibilityIdentifier("recorder.export.preset.\(preset.name)")
+                    let active = preset.matches(settings, transcript: transcript)
+                    WideButton(title: preset.name, systemImage: active ? "checkmark" : preset.symbol) {
+                        model.setExport { preset.set(&$0, transcript: transcript) }
+                    }
+                    .instantTooltip(preset.detail + (active ? " (the current settings)" : ""))
+                    .accessibilityLabel("\(preset.name) preset\(active ? ", active" : "")")
+                    .accessibilityIdentifier("recorder.export.preset.\(preset.name)")
                 }
             }
             SectionLabel(text: "Format")
@@ -1132,19 +1182,22 @@ private struct ExportInspector: View {
                                  selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
                                  minSegmentWidth: 36, identifier: "recorder.export.size", fillsWidth: true)
             }
-            SectionLabel(text: "Subtitles")
-            GenSegmentedTabs("Subtitles", items: [.init(Optional<EditProject.SubtitleFormat>.none, "None"), .init(.srt, "SRT"), .init(.vtt, "WebVTT")],
-                             selection: Binding(get: { settings.subtitles }, set: { format in model.setExport { $0.subtitles = format } }),
-                             minSegmentWidth: 60, identifier: "recorder.export.subtitles", fillsWidth: true)
-                .instantTooltip("A subtitle file beside the movie, from the transcript with your fixes, in the movie's time")
-            if !model.markers.isEmpty {
+            // A GIF has no sound and no player for subtitles or chapters; WebM players read WebVTT; only an MP4 carries chapters.
+            if settings.format != .gif {
+                SectionLabel(text: "Subtitle file")
+                GenSegmentedTabs("Subtitle file", items: [.init(Optional<EditProject.SubtitleFormat>.none, "None"), .init(.srt, "SRT"), .init(.vtt, "WebVTT")],
+                                 selection: Binding(get: { settings.subtitles }, set: { format in model.setExport { $0.subtitles = format } }),
+                                 minSegmentWidth: 60, identifier: "recorder.export.subtitles", fillsWidth: true)
+                    .instantTooltip("A subtitle file beside the movie, from the transcript with your fixes, in the movie's time")
+            }
+            if !model.markers.isEmpty && (settings.format ?? .mp4) == .mp4 {
                 SwitchRow("Chapters from the markers", isOn: Binding(get: { settings.chapters != false }, set: { on in
                     model.setExport { $0.chapters = on ? nil : false }
                 }))
                 .accessibilityIdentifier("recorder.export.chapters")
                 .instantTooltip("An MP4 lists the recording's \(Plural.count(model.markers.count, "marker")) as chapters (QuickTime: View → Chapters)")
             }
-            if settings.subtitles != nil, model.zoom.captionLines.isEmpty {
+            if settings.subtitles != nil, settings.format != .gif, model.zoom.captionLines.isEmpty {
                 Text("This movie has no transcript yet: Transcribe on the Captions tab, or the export writes no subtitles.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1412,7 +1465,7 @@ private struct TextHandles: View {
 private struct ShapeRow: View {
     @Bindable var model: EditorModel
     let shape: EditProject.Shape
-    private static let colors = ["#FF3B30", "#FFCC00", "#34C759", "#0A84FF", "#FFFFFF"]
+    private static let colors = [("#FF3B30", "Red"), ("#FFCC00", "Yellow"), ("#34C759", "Green"), ("#0A84FF", "Blue"), ("#FFFFFF", "White")]
 
     var body: some View {
         let selected = model.selectedShape == shape.id
@@ -1442,14 +1495,15 @@ private struct ShapeRow: View {
             }
             if selected {
                 HStack(spacing: 8) {
-                    ForEach(Self.colors, id: \.self) { hex in
+                    ForEach(Self.colors, id: \.0) { hex, name in
                         Button { model.updateShape(shape.id) { $0.color = hex } } label: {
                             Circle().fill(swiftColor(hex)).frame(width: 18, height: 18)
                                 .overlay(Circle().strokeBorder(Color.white.opacity(shape.color == hex ? 0.95 : 0.2), lineWidth: shape.color == hex ? 2 : 1))
                         }
                         .buttonStyle(.genHoverPlain())
-                        .instantTooltip(hex)
-                        .accessibilityLabel("Colour \(hex)")
+                        .instantTooltip(name)
+                        .accessibilityLabel("Color \(name)")
+                        .accessibilityAddTraits(shape.color == hex ? .isSelected : [])
                     }
                 }
                 SectionLabel(text: "Line", value: String(format: "%.1f%%", shape.width * 100))
@@ -1481,8 +1535,21 @@ private struct ShapeHandles: View {
             let toView = { (p: CGPoint) in CGPoint(x: map.point(p).x * size.width, y: map.point(p).y * size.height) }
             ZStack(alignment: .topLeading) {
                 Color.clear.allowsHitTesting(false)
-                ForEach(showing) { shape in
-                    let selected = model.selectedShape == shape.id
+                // Only the selected shape has its handles; another shape shows one small dot at its end that selects it.
+                ForEach(showing.filter { model.selectedShape != $0.id }) { shape in
+                    let b = toView(CGPoint(x: shape.x2, y: shape.y2))
+                    Circle().fill(Color.white.opacity(0.55))
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.4), lineWidth: 1))
+                        .frame(width: 10, height: 10)
+                        .contentShape(Circle().inset(by: -6))
+                        .offset(x: b.x - 5, y: b.y - 5)
+                        .onTapGesture { model.selectedShape = shape.id }
+                        .instantTooltip("Select this \(shape.kind.rawValue)")
+                        .accessibilityLabel("Select \(shape.kind.rawValue)")
+                        .accessibilityAddTraits(.isButton)
+                }
+                ForEach(showing.filter { model.selectedShape == $0.id }) { shape in
+                    let selected = true
                     let a = toView(CGPoint(x: shape.x1, y: shape.y1))
                     let b = toView(CGPoint(x: shape.x2, y: shape.y2))
                     ForEach([true, false], id: \.self) { first in
