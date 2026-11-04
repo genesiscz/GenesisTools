@@ -1,4 +1,4 @@
-import type { AgentsBoardDto, AgentTranscriptTurnDto } from "@dd/contract";
+import type { AgentsBoardDto, AgentTranscriptTurnDto, PreparedPromptDto, PromptVariableDto } from "@dd/contract";
 
 // Invented sessions for the mock agent and the tests: ids, projects, accounts and prompts are made up.
 const NOW = Date.parse("2026-10-01T12:00:00Z");
@@ -116,3 +116,43 @@ export const MOCK_TRANSCRIPT_TURNS: AgentTranscriptTurnDto[] = [
         tools: [{ id: "c1", name: "Bash", inputPreview: "bun run test src/checkout", result: null, isError: false }],
     },
 ];
+
+/** Invented saved prompts, as `GET /api/gateway/prompts` lists them. */
+export const MOCK_PROMPTS = [
+    {
+        name: "fix-review",
+        text: "Read every unresolved review thread on PR {{pr}} ({{branch}}), fix what is right, answer the rest.",
+        description: "Work through a PR's open review threads",
+        variables: ["pr", "branch"],
+        delivery: "inline",
+        uses: 4,
+        lastUsedAt: null,
+        createdAt: new Date(NOW).toISOString(),
+    },
+    {
+        name: "status",
+        text: "In three lines: what is done, what is next, what blocks you.",
+        description: "A short status from the agent",
+        variables: [],
+        delivery: "inline",
+        uses: 9,
+        lastUsedAt: null,
+        createdAt: new Date(NOW).toISOString(),
+    },
+];
+
+/** One mock prompt prepared for a session: `branch` comes from the session, `pr` stays missing. */
+export function mockPreparedPrompt(name: string, session: string | null): PreparedPromptDto {
+    const prompt = MOCK_PROMPTS.find((entry) => entry.name === name) ?? MOCK_PROMPTS[1];
+    const variables = prompt.variables.map<PromptVariableDto>((variable) =>
+        variable === "branch" && session
+            ? { name: variable, value: "feat/cart", source: "session" }
+            : { name: variable, value: null, source: "missing" }
+    );
+    const missing = variables.filter((variable) => variable.value === null).map((variable) => variable.name);
+    const text = variables.reduce(
+        (rendered, variable) => (variable.value ? rendered.replaceAll(`{{${variable.name}}}`, variable.value) : rendered),
+        prompt.text
+    );
+    return { name: prompt.name, description: prompt.description, session, variables, text, missing, mode: "inline" };
+}
