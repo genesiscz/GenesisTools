@@ -47,8 +47,12 @@ enum Looks {
         return result
     }
 
-    /// Hides each rectangle with a blur, big pixels or black. The blur reads the picture clamped at the rectangle's
-    /// edges, so nothing from outside bleeds in and its edge stays sharp.
+    /// How much black a spotlight lays over the picture around its rectangle (in linear light: 0.7 leaves white at
+    /// about 58 % of sRGB white, which reads as clearly dimmed while the picture stays readable).
+    static let spotlightDim = 0.7
+
+    /// Hides each rectangle with a blur, big pixels or black, or dims everything around a spotlight's rectangle. The
+    /// blur reads the picture clamped at the rectangle's edges, so nothing from outside bleeds in and its edge stays sharp.
     static func redact(_ redactions: [EditProject.Redaction], on image: CIImage) -> CIImage {
         guard !redactions.isEmpty else { return image }
         let extent = image.extent
@@ -61,6 +65,10 @@ enum Looks {
             guard rect.width > 1, rect.height > 1 else { continue }
             let patch: CIImage
             switch redaction.style {
+            case .spotlight:
+                let dim = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: spotlightDim)).cropped(to: extent)
+                result = result.cropped(to: rect).composited(over: dim.composited(over: result))
+                continue
             case .blur:
                 patch = image.cropped(to: rect).clampedToExtent().applyingGaussianBlur(sigma: max(6, extent.height * 0.012))
             case .pixelate:

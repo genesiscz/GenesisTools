@@ -105,7 +105,8 @@ export const captionsSchema = z.object({
     position: z.enum(["bottom", "top"]).default("bottom"),
 });
 
-export const REDACTION_STYLES = ["blur", "pixelate", "black"] as const;
+/** How a rectangle is drawn: hidden by a blur, big pixels or black, or shown by a spotlight that dims the rest. */
+export const REDACTION_STYLES = ["blur", "pixelate", "black", "spotlight"] as const;
 
 /** A part of the SOURCE picture hidden for a time: an address, a token, a notification. It moves with a zoom. */
 export const redactionSchema = z.object({

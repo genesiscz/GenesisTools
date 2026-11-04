@@ -117,7 +117,7 @@ struct EditProject: Codable, Equatable {
     }
 
     enum RedactionStyle: String, Codable, CaseIterable {
-        case blur, pixelate, black
+        case blur, pixelate, black, spotlight
     }
 
     /// A rectangle of the SOURCE picture (0...1 from its top left) hidden from `startUs` to `endUs`; it moves with a

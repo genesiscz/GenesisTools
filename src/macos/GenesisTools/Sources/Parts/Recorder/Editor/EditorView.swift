@@ -782,7 +782,7 @@ private struct HideInspector: View {
         let list = model.project.redactions ?? []
         VStack(alignment: .leading, spacing: 10) {
             Text("Hide Parts").font(.system(size: 15, weight: .semibold))
-            Text("Blur, pixelate or black out a part of the picture for a time: an address, a token, a notification. It moves with a zoom.")
+            Text("Blur, pixelate or black out a part of the picture for a time: an address, a token, a notification. A spotlight does the opposite: it dims the rest to point at it. Each moves with a zoom.")
                 .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                 .fixedSize(horizontal: false, vertical: true)
             WideButton(title: "Add Hidden Part", systemImage: "eye.slash") { model.addRedaction() }

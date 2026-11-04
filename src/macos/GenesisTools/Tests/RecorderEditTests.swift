@@ -302,6 +302,23 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(track.key(atMs: 2700, durationMs: 1200))
     }
 
+    func testASpotlightDimsEverythingButItsRectangle() {
+        let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let spot = EditProject.Redaction(id: "s", startUs: 0, endUs: 1, x: 0.25, y: 0, width: 0.5, height: 0.5, style: .spotlight)
+        let output = Looks.redact([spot], on: white)
+        let context = CIContext()
+        func gray(_ x: Int, _ yFromTop: Int) -> UInt8 {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            context.render(output, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: 100 - 1 - yFromTop, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            return pixel[0]
+        }
+        XCTAssertGreaterThan(gray(100, 10), 240, "inside the spotlight stays as it was")
+        XCTAssertLessThan(gray(20, 10), 160, "outside it is dimmed")
+        XCTAssertGreaterThan(gray(20, 10), 60, "dimmed, not black")
+        XCTAssertLessThan(gray(100, 80), 160)
+    }
+
     func testARedactionCoversOnlyItsRectangleOfTheSource() throws {
         let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
         let redaction = EditProject.Redaction(id: "r", startUs: 0, endUs: 1, x: 0.25, y: 0, width: 0.5, height: 0.5, style: .black)

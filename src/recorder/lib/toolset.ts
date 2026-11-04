@@ -124,7 +124,7 @@ const movieMethods = [
                 label: z.string().max(60).optional(),
             })
             .strict(),
-        'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black", label (what it hides, "API token"). It moves with a zoom. The result lists redactions with their ids.'
+        'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"). It moves with a zoom. The result lists redactions with their ids.'
     ),
     edit("unredact", z.object({ id: z.string() }), "Removes a redaction by its id.", ["id"]),
     edit(
