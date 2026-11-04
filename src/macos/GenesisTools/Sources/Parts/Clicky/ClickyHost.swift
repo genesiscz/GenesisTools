@@ -18,6 +18,8 @@ final class ClickyHost: NSObject {
         self.standalone = standalone
         guard item == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Its own visibility key, not the shared "Item-0" (see LiveRecordingsStatusItem.installItem).
+        item.autosaveName = "genesistools.clicky"
         item.button?.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Clicky")
         item.button?.toolTip = "Clicky · off"
         item.button?.target = self

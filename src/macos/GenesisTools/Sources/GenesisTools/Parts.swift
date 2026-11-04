@@ -14,7 +14,7 @@ import GenesisToolsHub
 
 @objc(GenesisKitHostAdapter)
 final class GenesisKitHostAdapter: HubKitAdapter {}
-#elseif GENESIS_PART_FEATURES || GENESIS_PART_WIDGET || GENESIS_PART_CLICKY || GENESIS_PART_MARKDOWN
+#elseif GENESIS_PART_FEATURES || GENESIS_PART_WIDGET || GENESIS_PART_CLICKY || GENESIS_PART_MARKDOWN || GENESIS_PART_RECORDER
 import GenesisKit
 
 @objc(GenesisKitHostAdapter)
@@ -40,6 +40,10 @@ import GenesisToolsClicky
 import GenesisToolsMarkdown
 #endif
 
+#if GENESIS_PART_RECORDER
+import GenesisToolsRecorder
+#endif
+
 func registerLinkedParts() {
     #if GENESIS_PART_FEATURES
     // `--clicky` is the face's old name (relaunch records, scripts).
@@ -56,6 +60,9 @@ func registerLinkedParts() {
     #endif
     #if GENESIS_PART_MARKDOWN
     AppParts.register(part: "markdown", faces: ["--markdown": runMarkdown])
+    #endif
+    #if GENESIS_PART_RECORDER
+    AppParts.register(part: "recorder", faces: ["--recorder": runRecorder])
     #endif
     registerSettingsPlugins()
 }

@@ -38,6 +38,19 @@ describe("windowFaceKind", () => {
         expect(windowFaceKind(["--features", "--page", "general"])).toBe("features");
         // The face's old name, as a face started by an older build carries it.
         expect(windowFaceKind(["--clicky", "--page", "general"])).toBe("features");
+        expect(windowFaceKind(["--recorder", "--edit", "/x/screen.mp4"])).toBe("recorder");
+        expect(windowFaceKind(["--recorder", "--edit", "/x/screen.mp4", "--snapshot", "/tmp/r.png"])).toBeNull();
+    });
+
+    it("brings the recorder back as its menu bar item, behind the front window", () => {
+        const face = {
+            pid: 7,
+            kind: "recorder" as const,
+            argv: ["--recorder", "--edit", "/x/screen.mp4"],
+            lossless: true,
+        };
+        const plan = relaunchPlan([face], null);
+        expect(plan.map((step) => step.argv)).toEqual([["--recorder", "--no-activate"]]);
     });
 
     it("skips short-lived faces, link routers and scripted runs", () => {

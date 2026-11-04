@@ -15,6 +15,7 @@ package enum AppParts {
         // The old name of the settings face, from the time Clicky owned the window: relaunch records and scripts.
         "--clicky": "features",
         "--markdown": "markdown",
+        "--recorder": "recorder",
     ]
 
     nonisolated(unsafe) private static var faces: [String: ([String]) -> Never] = [:]

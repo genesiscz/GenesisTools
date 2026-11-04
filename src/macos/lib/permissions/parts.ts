@@ -58,6 +58,12 @@ export const APP_PARTS: readonly AppPart[] = [
         summary: "Clicky, the keyboard sounds (staging)",
     },
     { id: "markdown", faces: ["--markdown"], bundleSteps: ["markdown-webview"], summary: "the markdown viewer" },
+    {
+        id: "recorder",
+        faces: ["--recorder"],
+        bundleSteps: [],
+        summary: "the screen recorder: its menu bar item, the live recordings' controls and the recording editor",
+    },
 ];
 
 export const ALL_PART_IDS: readonly string[] = APP_PARTS.map((part) => part.id);

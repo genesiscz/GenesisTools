@@ -23,8 +23,15 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     /// What the menu shows: the entries whose socket answers, with what it said.
     private var recordings: [LiveRecording] = []
 
+    /// The lock that makes one process the item's host. The hub and the recorder part both start the item; whichever
+    /// takes `<live folder>/.status-item.lock` first shows it, the other tries again at its next refresh (1 s). The
+    /// kernel drops the lock when the host exits, and the host lets it go once no recording is left.
+    private let ownerLock: URL
+    private var ownerDescriptor: Int32 = -1
+
     public init(store: LiveRecordingStore = .live) {
         watcher = LiveRecordingsWatcher(store: store)
+        ownerLock = store.folder.appendingPathComponent(".status-item.lock")
     }
 
     public func start() {
@@ -87,6 +94,12 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
 
         guard !list.isEmpty else {
             removeItem()
+            releaseOwnership()
+            return
+        }
+
+        guard takeOwnership() else {
+            removeItem()
             return
         }
 
@@ -104,12 +117,40 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
         }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Its own name: macOS saves each item's visibility under it ("NSStatusItem VisibleCC <name>"), and an item
+        // without one is "Item-0", shared with the first item of every other GenesisTools face. This one hides
+        // itself between recordings, which then hid the recorder's and Clicky's items too.
+        item.autosaveName = "genesistools.live-recordings"
+        item.isVisible = true
         item.button?.setAccessibilityIdentifier("live-recordings-status-item")
         let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
         item.menu = menu
         self.item = item
+    }
+
+    /// True while this process is the item's host; takes the lock when it is free.
+    private func takeOwnership() -> Bool {
+        guard ownerDescriptor < 0 else { return true }
+        try? FileManager.default.createDirectory(at: ownerLock.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let descriptor = open(ownerLock.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        // Without a lock file the one-host guarantee cannot hold; showing the item beats losing it.
+        guard descriptor >= 0 else { return true }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return false
+        }
+        ownerDescriptor = descriptor
+        KitHost.log("live recordings: this process (pid \(getpid())) hosts the status item")
+        return true
+    }
+
+    private func releaseOwnership() {
+        guard ownerDescriptor >= 0 else { return }
+        flock(ownerDescriptor, LOCK_UN)
+        close(ownerDescriptor)
+        ownerDescriptor = -1
     }
 
     private func removeItem() {

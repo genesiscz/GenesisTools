@@ -34,6 +34,8 @@ public final class FocusStatusItem {
     public func install(style: String) {
         guard style != "off", item == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Its own visibility key: an unnamed item is "Item-0", shared with every other first item of the app.
+        item.autosaveName = "genesis.focus"
         item.button?.setAccessibilityIdentifier("focus-status-item")
         item.button?.target = self
         item.button?.action = #selector(clicked(_:))

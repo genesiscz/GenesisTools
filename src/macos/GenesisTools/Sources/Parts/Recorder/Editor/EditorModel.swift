@@ -1,0 +1,380 @@
+import AVFoundation
+import AppKit
+import Observation
+
+/// The playhead, kept apart from the model so that only the views that show the time re-render 30 times a second
+/// while a movie plays (the transport's clock and the timeline's red line), never the inspector or the lanes.
+@MainActor
+@Observable
+final class PlayheadClock {
+    var outUs: Int64 = 0
+}
+
+enum EditorSelection: Equatable {
+    case none
+    case clip(String)
+    case zoom(String)
+}
+
+enum InspectorTab: String, CaseIterable, Identifiable {
+    case zoom, clip, audio, export
+    var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .zoom: "plus.magnifyingglass"
+        case .clip: "scissors"
+        case .audio: "speaker.wave.2"
+        case .export: "square.and.arrow.up"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .zoom: "Zoom"
+        case .clip: "Clip and speed"
+        case .audio: "Audio"
+        case .export: "Export"
+        }
+    }
+}
+
+@MainActor
+@Observable
+final class EditorModel {
+    private(set) var project: EditProject
+    let store: ProjectStore
+    let clock = PlayheadClock()
+    let filmstrip = Filmstrip()
+    let waveform = Waveform()
+    @ObservationIgnored let player = AVPlayer()
+    @ObservationIgnored let zoom: ZoomState
+    @ObservationIgnored private var asset: AVURLAsset
+    @ObservationIgnored private var timeObserver: Any?
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var renderTask: Task<Void, Never>?
+    @ObservationIgnored private var undoStack: [EditProject] = []
+    @ObservationIgnored private var redoStack: [EditProject] = []
+    @ObservationIgnored let cursor: CursorTrack?
+
+    var selection: EditorSelection = .none
+    var tab: InspectorTab = .zoom
+    private(set) var isPlaying = false
+    private(set) var canUndo = false
+    private(set) var canRedo = false
+    /// True after a change this window has not saved yet.
+    private(set) var edited = false
+    var exportProgress: Double?
+    var notice: String?
+    var noticeIsError = false
+    /// Pixels of the timeline per second; the transport's slider sets it.
+    var pointsPerSecond: Double = 0
+
+    init(project: EditProject, store: ProjectStore) {
+        self.project = project
+        self.store = store
+        cursor = CursorTrack.load(project.source.cursor)
+        zoom = ZoomState(project: project, cursor: cursor)
+        asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
+        player.actionAtItemEnd = .pause
+        let interval = CMTime(value: 1, timescale: 30)
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.clock.outUs = Int64((time.seconds * 1_000_000).rounded())
+                self.isPlaying = self.player.rate != 0
+            }
+        }
+        store.onExternalChange = { [weak self] next in self?.adoptExternal(next) }
+        store.watch()
+        let video = URL(fileURLWithPath: project.source.video)
+        filmstrip.load(video: video, durationUs: project.source.durationUs)
+        waveform.load(video: video)
+        rebuild()
+    }
+
+    var title: String { URL(fileURLWithPath: project.source.video).lastPathComponent }
+    var durationUs: Int64 { project.outputDurationUs }
+
+    // MARK: - Playback
+
+    func togglePlay() {
+        if player.rate != 0 {
+            player.pause()
+        } else {
+            if clock.outUs >= durationUs - 20_000 { seek(0) }
+            player.play()
+        }
+        isPlaying = player.rate != 0
+    }
+
+    func seek(_ outUs: Int64) {
+        let clamped = min(max(0, outUs), durationUs)
+        clock.outUs = clamped
+        player.seek(to: EditRenderer.us(clamped), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    func step(frames: Int) {
+        player.pause()
+        seek(clock.outUs + Int64(frames) * 16_667)
+    }
+
+    // MARK: - Edits
+
+    /// Every change goes through here: one undo step, the zoom filter told, the movie rebuilt when clips or
+    /// audio changed (zooms need no rebuild), and a save a moment later.
+    func apply(_ next: EditProject, rebuildMovie: Bool) {
+        guard next != project else { return }
+        undoStack.append(project)
+        if undoStack.count > 200 { undoStack.removeFirst() }
+        redoStack.removeAll()
+        commit(next, rebuildMovie: rebuildMovie)
+    }
+
+    private func commit(_ next: EditProject, rebuildMovie: Bool) {
+        project = next
+        zoom.update(next)
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+        edited = true
+        if rebuildMovie {
+            rebuild()
+        } else {
+            refreshFrame()
+        }
+        scheduleSave()
+    }
+
+    func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(project)
+        commit(previous, rebuildMovie: previous.clips != project.clips || previous.audio != project.audio)
+    }
+
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(project)
+        commit(next, rebuildMovie: next.clips != project.clips || next.audio != project.audio)
+    }
+
+    func splitAtPlayhead() {
+        guard let next = TimelineMap.split(project, atOutput: clock.outUs) else {
+            show("Nothing to split here: the playhead is at the edge of a clip.", error: false)
+            return
+        }
+        apply(next, rebuildMovie: true)
+    }
+
+    func deleteSelection() {
+        switch selection {
+        case let .clip(id):
+            guard let next = TimelineMap.delete(project, clip: id) else {
+                show("The last clip cannot be deleted.", error: false)
+                return
+            }
+            selection = .none
+            apply(next, rebuildMovie: true)
+        case let .zoom(id):
+            var next = project
+            next.zooms.removeAll { $0.id == id }
+            selection = .none
+            apply(next, rebuildMovie: false)
+        case .none:
+            break
+        }
+    }
+
+    /// A zoom from the playhead, two seconds long by default, at the last zoom's scale.
+    func addZoom(atOutput outUs: Int64? = nil, durationUs: Int64 = 2_000_000) {
+        let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
+        let scale = project.zooms.last?.scale ?? 1.5
+        guard let (next, id) = TimelineMap.addZoom(project, startUs: start, endUs: start + durationUs, scale: scale) else {
+            show("No room for a zoom here; zooms cannot overlap.", error: false)
+            return
+        }
+        selection = .zoom(id)
+        tab = .zoom
+        apply(next, rebuildMovie: false)
+    }
+
+    func updateZoom(_ id: String, _ change: (inout EditProject.Zoom) -> Void) {
+        guard let index = project.zooms.firstIndex(where: { $0.id == id }) else { return }
+        var next = project
+        change(&next.zooms[index])
+        next.zooms[index].scale = min(4, max(1, next.zooms[index].scale))
+        next.zooms[index].focusX = min(1, max(0, next.zooms[index].focusX))
+        next.zooms[index].focusY = min(1, max(0, next.zooms[index].focusY))
+        apply(next, rebuildMovie: false)
+    }
+
+    func applyScaleToAll(_ scale: Double) {
+        var next = project
+        for index in next.zooms.indices { next.zooms[index].scale = scale }
+        apply(next, rebuildMovie: false)
+    }
+
+    func moveZoom(_ id: String, startUs: Int64, endUs: Int64) {
+        guard let next = TimelineMap.moveZoom(project, zoom: id, startUs: startUs, endUs: endUs) else { return }
+        apply(next, rebuildMovie: false)
+    }
+
+    func trimClip(_ id: String, fromUs: Int64? = nil, toUs: Int64? = nil) {
+        guard let next = TimelineMap.trim(project, clip: id, fromUs: fromUs, toUs: toUs) else { return }
+        apply(next, rebuildMovie: true)
+    }
+
+    func setSpeed(_ id: String, _ speed: Double) {
+        guard let next = TimelineMap.setSpeed(project, clip: id, speed: speed) else { return }
+        apply(next, rebuildMovie: true)
+    }
+
+    func setAudio(_ change: (inout EditProject.AudioSettings) -> Void) {
+        var next = project
+        change(&next.audio)
+        next.audio.volume = min(2, max(0, next.audio.volume))
+        apply(next, rebuildMovie: true)
+    }
+
+    func setExport(_ change: (inout EditProject.ExportSettings) -> Void) {
+        var next = project
+        change(&next.export)
+        apply(next, rebuildMovie: false)
+    }
+
+    /// One zoom on every click of the cursor track: clicks closer than 3 s share a zoom, which starts 0.6 s before
+    /// its first click and holds 1.6 s after its last. Replaces the zooms the recording had.
+    func autoZoom() {
+        guard let cursor, !cursor.clicks.isEmpty else {
+            show("This recording has no clicks to zoom on (no cursor track).", error: false)
+            return
+        }
+        var groups: [[CursorTrack.Sample]] = []
+        for click in cursor.clicks {
+            if let last = groups.last?.last, click.ms - last.ms < 3000 {
+                groups[groups.count - 1].append(click)
+            } else {
+                groups.append([click])
+            }
+        }
+        var next = project
+        next.zooms = groups.map { group in
+            let first = group.first!.ms, last = group.last!.ms
+            return EditProject.Zoom(
+                id: EditProject.newID("z"),
+                startUs: Int64(max(0, first - 600) * 1000),
+                endUs: min(project.source.durationUs, Int64((last + 1600) * 1000)),
+                scale: project.zooms.first?.scale ?? 1.6, mode: .follow,
+                focusX: group.map(\.x).reduce(0, +) / Double(group.count),
+                focusY: group.map(\.y).reduce(0, +) / Double(group.count)
+            )
+        }
+        apply(next, rebuildMovie: false)
+        show("Added \(Plural.count(next.zooms.count, "zoom")) from \(Plural.count(cursor.clicks.count, "click")).", error: false)
+    }
+
+    // MARK: - Movie
+
+    private func rebuild() {
+        renderTask?.cancel()
+        let project = project
+        let asset = asset
+        let zoom = zoom
+        let keep = clock.outUs
+        renderTask = Task { [weak self] in
+            let span = HubPerf.begin("recorder.editor.render", "\(project.clips.count) clips")
+            do {
+                // The preview renders at most 1440 pixels high: a 4K source costs a quarter of the work per frame.
+                let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440)
+                span.end()
+                guard !Task.isCancelled, let self else { return }
+                let item = AVPlayerItem(asset: rendered.composition)
+                item.videoComposition = rendered.videoComposition
+                item.audioMix = rendered.audioMix
+                self.player.replaceCurrentItem(with: item)
+                self.seek(min(keep, self.durationUs))
+            } catch {
+                span.end()
+                self?.show("The preview could not be built: \(error.localizedDescription)", error: true)
+            }
+        }
+    }
+
+    /// A paused player draws a changed zoom only when asked for the frame again.
+    private func refreshFrame() {
+        guard player.rate == 0 else { return }
+        player.seek(to: EditRenderer.us(clock.outUs), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    // MARK: - Saving
+
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.saveNow()
+        }
+    }
+
+    func saveNow() {
+        do {
+            project = try store.save(project)
+            edited = false
+        } catch {
+            show("The edit was not saved: \(error.localizedDescription)", error: true)
+        }
+    }
+
+    /// An agent changed the edit file: its version replaces this one, and this one stays one undo away.
+    private func adoptExternal(_ next: EditProject) {
+        guard next != project else { return }
+        undoStack.append(project)
+        redoStack.removeAll()
+        let rebuildMovie = next.clips != project.clips || next.audio != project.audio
+        project = next
+        zoom.update(next)
+        canUndo = true
+        canRedo = false
+        if rebuildMovie { rebuild() } else { refreshFrame() }
+        show("The edit changed on disk (\(next.updatedBy ?? "another process")); ⌘Z brings this version back.", error: false)
+    }
+
+    // MARK: - Export
+
+    func export() {
+        guard exportProgress == nil else { return }
+        saveNow()
+        let project = project
+        let url = EditExporter.outputURL(for: project)
+        exportProgress = 0
+        Task { [weak self] in
+            do {
+                let result = try await EditExporter.export(project: project, to: url) { progress in
+                    self?.exportProgress = progress
+                }
+                self?.exportProgress = nil
+                HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
+                self?.show("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).", error: false)
+                NSWorkspace.shared.activateFileViewerSelecting([result.url])
+            } catch {
+                self?.exportProgress = nil
+                HubPerf.log("recorder.export failed: \(error.localizedDescription)")
+                self?.show(error.localizedDescription, error: true)
+            }
+        }
+    }
+
+    func show(_ text: String, error: Bool) {
+        notice = text
+        noticeIsError = error
+    }
+
+    func close() {
+        saveTask?.cancel()
+        if edited { saveNow() }
+        store.stopWatching()
+        player.pause()
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+    }
+}

@@ -1244,7 +1244,7 @@ describe("an install is stale only when the code it links changed", () => {
             // Frozen legacy digest: root order, sorted recursive paths, then each path and its file bytes.
             const legacyHash = "c4cdaea45ba34a58";
             expect(sourceHash(app)).toBe(legacyHash);
-            expect(sourceHash(app, ["clicky", "features", "hub", "markdown", "widget"])).toBe(legacyHash);
+            expect(sourceHash(app, ["clicky", "features", "hub", "markdown", "recorder", "widget"])).toBe(legacyHash);
         } finally {
             rmSync(dirname(app), { recursive: true, force: true });
         }

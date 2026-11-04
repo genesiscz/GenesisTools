@@ -20,7 +20,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
  */
 
 /** The settings window, the hub, a review, the edge-panel widget and Clicky (the feature settings host). */
-export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "features";
+export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "features" | "recorder";
 
 export interface WindowFace {
     pid: number;
@@ -80,6 +80,11 @@ export function windowFaceKind(argv: string[]): WindowFaceKind | null {
 
     if (first === "--widget") {
         return "widget";
+    }
+
+    // The recorder hosts its menu bar item and the live recordings' controls, so a rebuild brings it back.
+    if (first === "--recorder") {
+        return "recorder";
     }
 
     // `--clicky` is the old name of the feature settings face: a face started by an older build still carries it.
@@ -286,6 +291,9 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
             argv = [...withoutOneShots(kept, WIDGET_ONE_SHOTS), "--ensure-running"];
         } else if (face.kind === "features") {
             argv = ["--features", ...withoutOneShots(kept.slice(1), FEATURES_ONE_SHOTS)];
+        } else if (face.kind === "recorder") {
+            // Its menu bar item only: an editor window it had reopens from the menu's recent list.
+            argv = ["--recorder"];
         }
 
         if (!activate) {
