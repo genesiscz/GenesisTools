@@ -1,17 +1,15 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { ensureWidgetRunning } from "@app/hub/lib/widget/autostart";
 import { ensureWatcher } from "@app/meetings/commands/watch";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import {
     attemptStaleTakeover,
-    buildPidRecord,
+    claimPidFile,
     clearPidFile,
     ownsPidFile,
     readLivePid,
     readSignalablePid,
-    serializePidRecord,
 } from "@genesiscz/utils/process/pidfile";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
 import { runSchedulerLoop } from "./lib/scheduler";
@@ -26,73 +24,46 @@ export const EXIT_LOST_TAKEOVER_RACE = 2;
 const STALE_TAKEOVER_MAX_ATTEMPTS = 3;
 const STALE_TAKEOVER_RETRY_MS = 50;
 
-function isEexist(err: unknown): boolean {
-    return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST";
-}
-
 // The atomic stale-takeover protocol now lives in the shared pidfile util;
 // re-exported so daemon.test.ts (and older callers) keep their import path.
 export { attemptStaleTakeover };
 
 /**
- * Claim the daemon pidfile as our own.
- *
- * Fresh case: plain `wx` create. If it already exists, either a live daemon
- * owns it (fail fast) or it's stale, in which case we atomically race to
- * take it over. Losing the race means another racer already won and is (or
- * will shortly be) the live owner, so we re-check and exit cleanly with a
- * distinct code instead of retrying forever.
+ * Claim the daemon pidfile as our own through the shared claim: a live daemon's claim exits as already running, a
+ * stale one is taken over (and the takeover is confirmed), and losing every takeover round exits with its own code
+ * instead of retrying forever.
  */
 export async function claimPidfile(pidFile: string): Promise<void> {
-    for (let attempt = 1; attempt <= STALE_TAKEOVER_MAX_ATTEMPTS; attempt++) {
-        // Fresh create first — also the recovery path when a previous racer's
-        // takeover left the slot momentarily empty.
-        try {
-            await writeFile(pidFile, serializePidRecord(buildPidRecord()), { flag: "wx" });
-            return;
-        } catch (err) {
-            if (!isEexist(err)) {
-                throw err;
-            }
-        }
+    const claim = await claimPidFile(pidFile, {
+        expected: isDaemonCommand,
+        attempts: STALE_TAKEOVER_MAX_ATTEMPTS,
+        retryMs: STALE_TAKEOVER_RETRY_MS,
+    });
 
-        const owner = getDaemonPid();
-
-        if (owner !== null && owner !== process.pid) {
-            log.error({ existingPid: owner }, "[daemon] another daemon is already running");
-            process.exit(EXIT_ALREADY_RUNNING);
-        }
-
-        // Read the raw stale content (getDaemonPid returned null, so whatever
-        // pid is in there is dead) — the takeover only steals THIS artifact.
-        let staleContent: string | null = null;
-
-        try {
-            staleContent = readFileSync(pidFile, "utf-8");
-        } catch {
-            staleContent = null; // vanished — loop retries the fresh create
-        }
-
-        if (staleContent !== null && (await attemptStaleTakeover(pidFile, staleContent))) {
-            const confirmedOwner = getDaemonPid();
-
-            if (confirmedOwner !== process.pid) {
-                log.error(
-                    { confirmedOwner },
-                    "[daemon] pidfile takeover succeeded but ownership verification failed; exiting"
-                );
-                process.exit(EXIT_LOST_TAKEOVER_RACE);
-            }
-
-            return;
-        }
-
-        log.debug({ attempt }, "[daemon] lost pidfile takeover race; retrying");
-        await Bun.sleep(STALE_TAKEOVER_RETRY_MS);
+    if (claim.status === "held") {
+        log.error(
+            { existingPid: "pid" in claim.state ? claim.state.pid : undefined },
+            "[daemon] another daemon is already running"
+        );
+        process.exit(EXIT_ALREADY_RUNNING);
     }
 
-    log.error("[daemon] lost pidfile takeover race after retries; another instance now owns the scope");
-    process.exit(EXIT_LOST_TAKEOVER_RACE);
+    if (claim.status === "lost") {
+        log.error("[daemon] lost pidfile takeover race after retries; another instance now owns the scope");
+        process.exit(EXIT_LOST_TAKEOVER_RACE);
+    }
+
+    if (claim.tookOver) {
+        const confirmedOwner = getDaemonPid();
+
+        if (confirmedOwner !== process.pid) {
+            log.error(
+                { confirmedOwner },
+                "[daemon] pidfile takeover succeeded but ownership verification failed; exiting"
+            );
+            process.exit(EXIT_LOST_TAKEOVER_RACE);
+        }
+    }
 }
 
 export async function startDaemon(): Promise<void> {
