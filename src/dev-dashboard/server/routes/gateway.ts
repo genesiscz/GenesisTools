@@ -18,6 +18,7 @@ import { type BoardStopDeps, stopAgentSession } from "@app/hub/lib/board/stop";
 import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
 import { type StartAgentDeps, startAgent } from "@app/hub/lib/launch/index";
+import { addPing, removePing } from "@app/hub/lib/ping/index";
 import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
 import { fillTimesheetWeek, type TimesheetDeps } from "@app/hub/lib/timesheet/index";
 import { fixPr, type MergeRunner, mergePr } from "@app/hub/lib/triage/index";
@@ -37,6 +38,7 @@ export const GATEWAY_ROWS = {
     board: ENDPOINTS.gatewayBoard,
     gates: ENDPOINTS.gatewayGates,
     glance: ENDPOINTS.gatewayGlance,
+    pings: ENDPOINTS.gatewayPings,
     approvals: ENDPOINTS.gatewayApprovals,
     launch: ENDPOINTS.gatewayLaunch,
     watching: ENDPOINTS.gatewayWatching,
@@ -213,6 +215,17 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             run: (input) => interruptBoardSession(input, deps.send),
         }),
         // A keyed write: a replayed allow must not press the keys of the next dialog.
+        // Keyed writes: a replayed watch keeps one watch, a replayed unwatch removes nothing more.
+        bindEndpoint(ENDPOINTS.pingWatch, {
+            input: z.object({ key: z.string().min(1), label: z.string().max(200).optional() }),
+            invalid: "expected { key, label? }",
+            run: (input) => addPing(input),
+        }),
+        bindEndpoint(ENDPOINTS.pingUnwatch, {
+            input: z.object({ key: z.string().min(1) }),
+            invalid: "expected { key }",
+            run: (input) => removePing(input.key),
+        }),
         bindEndpoint(ENDPOINTS.approvalsAnswer, {
             input: z.object({
                 id: z.string().min(1),

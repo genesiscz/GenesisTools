@@ -14,6 +14,7 @@ export * from "@app/dev-dashboard/contract/glance";
 export * from "@app/dev-dashboard/contract/launch";
 export * from "@app/dev-dashboard/contract/live";
 export * from "@app/dev-dashboard/contract/pairing";
+export * from "@app/dev-dashboard/contract/ping";
 export * from "@app/dev-dashboard/contract/push";
 export * from "@app/dev-dashboard/contract/timesheet";
 export * from "@app/dev-dashboard/contract/vault";
