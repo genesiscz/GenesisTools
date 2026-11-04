@@ -585,6 +585,7 @@ private struct MarksLaneView: View {
 private struct HiddenLaneView: View {
     @Bindable var model: EditorModel
     let scale: TimelineScale
+    @State private var listingOverflow = false
 
     var body: some View {
         let rows = Self.rows(model.project.redactions ?? [])
@@ -592,22 +593,74 @@ private struct HiddenLaneView: View {
         // A row per overlap, each tall enough for its label; past the last row shown, parts share that row.
         ZStack(alignment: .topLeading) {
             ForEach(model.project.redactions ?? []) { redaction in
+                // A part past the last row shares that row: it shows only once picked from the +N chip's list, so a
+                // click or a drag never lands on whichever was drawn last and the labels never pile up.
+                let stacked = (rows[redaction.id] ?? 0) >= TimelineView.hiddenRowsShown && model.selectedRedaction != redaction.id
                 HiddenSegment(model: model, redaction: redaction, scale: scale, height: height)
+                    .opacity(stacked ? 0 : 1)
+                    .allowsHitTesting(!stacked)
+                    .accessibilityHidden(stacked)
+                    .zIndex(model.selectedRedaction == redaction.id ? 0.5 : 0)
                     .offset(y: CGFloat(min(rows[redaction.id] ?? 0, TimelineView.hiddenRowsShown - 1)) * (height + 2))
             }
             if let overflow = Self.overflow(model.project.redactions ?? [], rows: rows) {
-                Text(verbatim: "+\(overflow.count)")
-                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 4)
-                    .frame(height: height - 4)
-                    .background(Capsule().fill(Color.black.opacity(0.75)))
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
-                    .instantTooltip("\(Plural.count(overflow.count, "more hidden part")) overlap this row; the Hide tab lists every part")
-                    .accessibilityLabel("\(Plural.count(overflow.count, "more hidden part")) not shown in their own row")
-                    .offset(x: max(0, scale.x(overflow.startUs) - 2), y: CGFloat(TimelineView.hiddenRowsShown - 1) * (height + 2) + 2)
-                    .zIndex(1)
+                Button { listingOverflow = true } label: {
+                    Text(verbatim: "+\(overflow.count)")
+                        .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .frame(height: height - 4)
+                        .background(Capsule().fill(Color.black.opacity(0.75)))
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip("\(Plural.count(overflow.count, "more hidden part")) overlap this row: click to pick one")
+                .accessibilityLabel("\(Plural.count(overflow.count, "more hidden part")) not shown in their own row")
+                .accessibilityHint("Lists them; choose one to select it")
+                .popover(isPresented: $listingOverflow, arrowEdge: .bottom) {
+                    OverflowList(model: model, parts: (model.project.redactions ?? []).filter { (rows[$0.id] ?? 0) >= TimelineView.hiddenRowsShown }) {
+                        listingOverflow = false
+                    }
+                }
+                .offset(x: max(0, scale.x(overflow.startUs) - 2), y: CGFloat(TimelineView.hiddenRowsShown - 1) * (height + 2) + 2)
+                .zIndex(1)
             }
+        }
+    }
+
+    /// The parts under the +N chip, in time order: a click selects one, opens the Hide tab and moves the playhead there.
+    private struct OverflowList: View {
+        let model: EditorModel
+        let parts: [EditProject.Redaction]
+        let done: () -> Void
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: Plural.count(parts.count, "more hidden part"))
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 8).padding(.bottom, 2)
+                ForEach(parts.sorted { $0.startUs < $1.startUs }) { part in
+                    HStack(spacing: 8) {
+                        Image(systemName: part.style == .spotlight ? "light.max" : "eye.slash").frame(width: 14)
+                        Text(verbatim: part.label ?? (part.style == .spotlight ? "Spotlight" : part.style.rawValue.capitalized))
+                            .lineLimit(1)
+                        Spacer(minLength: 12)
+                        Text(verbatim: formatClock(TimelineMap.outputTime(ofSource: part.startUs, in: model.project) ?? part.startUs))
+                            .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 12.5))
+                    .padding(.horizontal, 8).frame(height: 24)
+                    .frame(minWidth: 200)
+                    .rowButton(cornerRadius: 5) {
+                        model.selectedRedaction = part.id
+                        model.tab = .hide
+                        if let out = TimelineMap.outputTime(ofSource: part.startUs, in: model.project) { model.seek(out) }
+                        done()
+                    }
+                }
+            }
+            .padding(8)
         }
     }
 

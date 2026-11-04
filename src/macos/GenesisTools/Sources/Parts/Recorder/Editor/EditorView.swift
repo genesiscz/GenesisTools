@@ -6,6 +6,7 @@ struct EditorView: View {
     @Bindable var model: EditorModel
     /// A `--snapshot` run draws a still frame instead of the player layer, which an off-screen window never paints.
     var stillPreview: CGImage?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
@@ -35,6 +36,8 @@ struct EditorView: View {
                 TimelineView(model: model, viewportWidth: geometry.size.width)
                     .frame(height: TimelineLayout(model: model).totalHeight)
             }
+            // A lane that comes or goes eases the preview to its new size instead of jumping under the pointer.
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: TimelineLayout(model: model).totalHeight)
             .frame(width: geometry.size.width, height: geometry.size.height)
             .background(RecorderPalette.window)
         }
