@@ -655,7 +655,7 @@ private struct CaptionLinesList: View {
             HStack {
                 Text("Lines").font(.system(size: 12.5, weight: .medium))
                 Spacer()
-                Text(verbatim: fixes.isEmpty ? Plural.count(lines.count, "line") : "\(Plural.count(fixes.count, "fix", "fixes")) of \(lines.count)")
+                Text(verbatim: fixes.isEmpty ? Plural.count(lines.count, "line") : "\(fixes.count) of \(Plural.count(lines.count, "line")) edited")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
             }
             LazyVStack(alignment: .leading, spacing: 4) {
@@ -680,7 +680,21 @@ private struct CaptionLinesList: View {
                         .foregroundStyle(hidden ? RecorderPalette.dim : RecorderPalette.text)
                         .strikethrough(hidden)
                         .lineLimit(1...4)
-                        .accessibilityLabel("Caption line at \(formatClock(line.fromUs))")
+                        .accessibilityLabel("Caption line at \(formatClock(line.fromUs))\(fixes[key] == nil ? "" : ", edited")")
+                        .overlay(alignment: .leading) {
+                            // An edited line has a dot; its tooltip and menu give the transcript's words back.
+                            if fixes[key] != nil && !hidden {
+                                Circle().fill(RecorderPalette.zoom).frame(width: 5, height: 5).offset(x: -8)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .instantTooltip(fixes[key] == nil || hidden ? "Click to correct the words" : "Edited; the transcript said: \(line.text)")
+                        .contextMenu {
+                            if fixes[key] != nil {
+                                Button("Back to the Transcript") { model.fixCaption(line, text: nil) }
+                            }
+                        }
+                        .accessibilityAction(named: "Back to the Transcript") { model.fixCaption(line, text: nil) }
                         IconButton(systemName: hidden ? "eye.slash" : "eye", tooltip: hidden ? "Show this line again" : "Hide this line from the captions",
                                    size: 10) {
                             model.fixCaption(line, text: hidden ? nil : "")
@@ -772,13 +786,13 @@ private struct TextInspector: View {
                 .accessibilityIdentifier("recorder.text.add")
             HStack(spacing: 8) {
                 WideButton(title: "Arrow", systemImage: "arrow.up.right") { model.addShape(.arrow) }
-                    .instantTooltip("A 3 s arrow from the playhead; drag its two dots on the preview to point it")
+                    .instantTooltip("A 3 s arrow from the playhead (A); drag its two dots on the preview to point it")
                     .accessibilityIdentifier("recorder.shape.arrow")
                 WideButton(title: "Box", systemImage: "rectangle") { model.addShape(.box) }
-                    .instantTooltip("A 3 s box from the playhead; drag its corners on the preview")
+                    .instantTooltip("A 3 s box from the playhead (B); drag its corners on the preview")
                     .accessibilityIdentifier("recorder.shape.box")
                 WideButton(title: "Circle", systemImage: "circle") { model.addShape(.circle) }
-                    .instantTooltip("A 3 s circle from the playhead; drag its corners on the preview")
+                    .instantTooltip("A 3 s circle from the playhead (C); drag its corners on the preview")
                     .accessibilityIdentifier("recorder.shape.circle")
             }
             if !model.markers.isEmpty {
@@ -1799,7 +1813,10 @@ private struct ShapeHandles: View {
                             .foregroundStyle(Color.black.opacity(0.7)))
                         .frame(width: 20, height: 20)
                         .contentShape(Circle().inset(by: -6))
-                        .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
+                        // Set, never pushed: a handle that goes away under the pointer (its time ends, a deselect)
+                        // gets no exit, and a pushed hand would stay.
+                        .onHover { inside in (inside ? NSCursor.openHand : NSCursor.arrow).set() }
+                        .onDisappear { NSCursor.arrow.set() }
                         .offset(x: middle.x - 10, y: middle.y - 10)
                         .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                             let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)

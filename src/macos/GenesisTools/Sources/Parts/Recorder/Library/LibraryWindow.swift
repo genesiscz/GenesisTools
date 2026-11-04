@@ -278,6 +278,8 @@ struct LibraryView: View {
                         IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the search (Esc)", size: 12) { model.filter = "" }
                     }
                 }
+                // A fixed height, so the clear button or the spinner never grows the header and moves the grid.
+                .frame(height: 18)
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white.opacity(0.12)))
@@ -316,8 +318,12 @@ struct LibraryView: View {
                     EmptyState(symbol: model.searching ? "magnifyingglass" : "film.stack",
                                text: model.items.isEmpty ? "No recordings yet"
                                    : (model.searching ? "Searching what was said…" : "No recording matches “\(model.filter)”"),
-                               detail: model.items.isEmpty ? "Record the screen from the menu bar item, or run tools recorder start." : nil)
+                               detail: model.items.isEmpty ? "A recording shows here as soon as it stops." : nil)
                         .fixedSize(horizontal: false, vertical: true)
+                    if model.items.isEmpty {
+                        GhostButton("Record the Screen", symbol: "record.circle", tooltip: "Start a recording of the screen",
+                                    identifier: "recorder.library.recordEmpty") { RecorderMenu.shared.startRecording(audio: false) }
+                    }
                     if !model.items.isEmpty && !model.searching {
                         GhostButton("Clear Search", symbol: "xmark.circle", tooltip: "Show every recording again",
                                     identifier: "recorder.library.clearSearch") { model.filter = "" }

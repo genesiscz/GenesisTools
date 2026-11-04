@@ -42,6 +42,8 @@ enum EditorMenu {
         EditorCommand(title: "Add Zoom at Playhead", key: "z", label: "Z") { $0.addZoom() },
         EditorCommand(title: "Add Text at Playhead", key: "t", label: "T") { $0.addText() },
         EditorCommand(title: "Add Arrow at Playhead", key: "a", label: "A") { $0.addShape(.arrow) },
+        EditorCommand(title: "Add Box at Playhead", key: "b", label: "B") { $0.addShape(.box) },
+        EditorCommand(title: "Add Circle at Playhead", key: "c", label: "C") { $0.addShape(.circle) },
         EditorCommand(title: "Set Part In", key: "i", label: "I") { $0.markIn() },
         EditorCommand(title: "Set Part Out", key: "o", label: "O") { $0.markOut() },
         EditorCommand(title: "Clear Part", key: "", label: "") { $0.clearPart() },
@@ -119,6 +121,9 @@ enum EditorMenu {
         snap.toolTip = "Hold ⌘ while dragging to place an edge freely"
         let tap = view.addItem(withTitle: "Tap When Snapping", action: #selector(EditorMenuTarget.toggleSnapHaptic(_:)), keyEquivalent: "")
         tap.target = EditorMenuTarget.shared
+        let single = view.addItem(withTitle: "Single-Key Shortcuts", action: #selector(EditorMenuTarget.toggleSingleKeys(_:)), keyEquivalent: "")
+        single.target = EditorMenuTarget.shared
+        single.toolTip = "S, Z, T, A, B, C, I, O, J, K, L and Space without ⌘; off, only the ⌘ keys work"
         bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
 
         let window = NSMenu(title: "Window")
@@ -247,6 +252,14 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         UserDefaults.standard.set(!on, forKey: EditorModel.snapKey)
     }
 
+    /// On by default: the keys without ⌘ (S splits, Z zooms…). Off for a user who presses them by mistake.
+    static let singleKeysKey = "recorder.editor.singleKeys"
+
+    @objc func toggleSingleKeys(_ sender: Any?) {
+        let on = UserDefaults.standard.object(forKey: Self.singleKeysKey) as? Bool ?? true
+        UserDefaults.standard.set(!on, forKey: Self.singleKeysKey)
+    }
+
     @objc func toggleSnapHaptic(_ sender: Any?) {
         let on = UserDefaults.standard.object(forKey: EditorModel.snapHapticKey) as? Bool ?? true
         UserDefaults.standard.set(!on, forKey: EditorModel.snapHapticKey)
@@ -265,6 +278,10 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
             item.state = (UserDefaults.standard.object(forKey: EditorModel.snapKey) as? Bool ?? true) ? .on : .off
             return true
         }
+        if item.action == #selector(toggleSingleKeys(_:)) {
+            item.state = (UserDefaults.standard.object(forKey: Self.singleKeysKey) as? Bool ?? true) ? .on : .off
+            return true
+        }
         if item.action == #selector(toggleSnapHaptic(_:)) {
             item.state = (UserDefaults.standard.object(forKey: EditorModel.snapHapticKey) as? Bool ?? true) ? .on : .off
             return true
@@ -276,6 +293,11 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         guard let box = item.representedObject as? CommandBox else { return true }
         // A key with no ⌘ (Space, S, ←) belongs to a text field while one edits; a disabled item lets it through.
         if box.command.modifiers.isDisjoint(with: [.command, .control]), NSApp.keyWindow?.firstResponder is NSText { return false }
+        // A key with no modifier at all (S, Z, Space) only while Single-Key Shortcuts is on; ⇧← and Esc stay.
+        if box.command.modifiers.isEmpty, box.command.key.count == 1, box.command.key.first?.isLetter == true || box.command.key == " ",
+           !(UserDefaults.standard.object(forKey: Self.singleKeysKey) as? Bool ?? true) {
+            return false
+        }
         guard let model = EditorWindows.shared.frontModel() else { return false }
         switch box.command.title {
         case "Undo":
