@@ -34,6 +34,7 @@ import { RecordingEditor } from "./editor";
 import { atempoChain, concatList } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
 import { locateSource } from "./source";
+import { formatSubtitles, subtitleCues } from "./subtitles";
 
 function workspace(): string {
     return mkdtempSync(join(tmpdir(), "gt-editor-"));
@@ -638,6 +639,25 @@ describe("edit project (edit.json)", () => {
         const back = applyOp(fixed, { op: "unfixLine", from: 5 });
         expect(transcriptLines(raw, back).map((line) => line.text)).toContain("Konec.");
         expect(() => applyOp(back, { op: "unfixLine", from: 9 })).toThrow("fixed lines start at: 0 s");
+
+        // Subtitles: the cut line is left out, the last one moves up by the cut, a part starts at 0.
+        const cues = subtitleCues(lines, edited);
+        expect(cues.map((cue) => [cue.text, cue.fromUs, cue.toUs])).toEqual([
+            ["Dobrý den.", 0, 1_500_000],
+            ["Konec.", 3_600_000, 4_600_000],
+        ]);
+        expect(formatSubtitles(cues, "srt")).toBe(
+            "1\n00:00:00,000 --> 00:00:01,500\nDobrý den.\n\n2\n00:00:03,600 --> 00:00:04,600\nKonec.\n"
+        );
+        expect(formatSubtitles(cues, "vtt").startsWith("WEBVTT\n\n00:00:00.000 --> 00:00:01.500\n")).toBe(true);
+        const part = subtitleCues(lines, edited, { fromUs: 1_000_000, toUs: 4_000_000 });
+        expect(part.map((cue) => [cue.text, cue.fromUs, cue.toUs])).toEqual([
+            ["Dobrý den.", 0, 500_000],
+            ["Konec.", 2_600_000, 3_000_000],
+        ]);
+        // At 2x a line shows for half its spoken time.
+        const fast = applyOp(wholeProject(source), { op: "speed", from: 0, to: 10, factor: 2 });
+        expect(subtitleCues(transcriptLines(raw, fast), fast)[0]).toMatchObject({ fromUs: 0, toUs: 750_000 });
     });
 
     test("writes every field the Swift decoder needs and refuses a newer version", () => {

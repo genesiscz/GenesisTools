@@ -5,12 +5,21 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { describeProject, parseEditOps } from "@genesiscz/utils/recording-editor/project";
+import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
 
-import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject, undoEdit } from "./lib/edit";
+import {
+    EXPORT_FORMATS,
+    type ExportFormat,
+    editProject,
+    exportAs,
+    openProject,
+    undoEdit,
+    writeSubtitles,
+} from "./lib/edit";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -55,6 +64,16 @@ function parseTime(raw: string, flag: string): TimeValue {
     }
 
     return parsed.data;
+}
+
+function parseSubtitleFormat(raw: string): SubtitleFormat {
+    const found = SUBTITLE_FORMATS.find((format) => format === raw);
+
+    if (!found) {
+        throw new Error(`the subtitle format is one of ${SUBTITLE_FORMATS.join(", ")} (got "${raw}")`);
+    }
+
+    return found;
 }
 
 /** A `--tab` value: the tab, or null when it is missing or not one of EDITOR_TABS. */
@@ -511,9 +530,13 @@ program
     )
     .option("--from <time>", "export only the part from this OUTPUT time (seconds or m:ss; what plays)")
     .option("--to <time>", "export only the part up to this OUTPUT time")
+    .option("--subtitles <format>", "also write the transcript beside the movie: srt or vtt")
     .option("--json", "the result as JSON")
     .action(
-        async (value: string, flags: { out?: string; format?: string; from?: string; to?: string; json?: boolean }) => {
+        async (
+            value: string,
+            flags: { out?: string; format?: string; from?: string; to?: string; subtitles?: string; json?: boolean }
+        ) => {
             try {
                 await ensureRecorderPart((line) => out.printlnErr(line));
                 const part =
@@ -530,6 +553,7 @@ program
                     out: flags.out,
                     format: flags.format === undefined ? undefined : parseFormat(flags.format),
                     part,
+                    subtitles: flags.subtitles === undefined ? undefined : parseSubtitleFormat(flags.subtitles),
                 });
 
                 if (flags.json) {
@@ -537,9 +561,13 @@ program
                 } else {
                     out.println(
                         answer.ok
-                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s)`
+                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s)${answer.subtitles ? `\n${answer.subtitles}` : ""}`
                             : `error: ${answer.error}`
                     );
+
+                    for (const warning of answer.warnings ?? []) {
+                        out.printlnErr(warning);
+                    }
                 }
 
                 if (!answer.ok) {
@@ -551,6 +579,40 @@ program
             }
         }
     );
+
+program
+    .command("subtitles")
+    .description(
+        "Write a recording's transcript as a subtitle file in the edit's time (cut lines left out, fixes kept)"
+    )
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .option("--format <format>", "srt (default) or vtt")
+    .option("--out <file>", "the file to write (default beside the movie, named like its export)")
+    .option("--from <time>", "only the part from this OUTPUT time, moved to start at 0 (an exported part)")
+    .option("--to <time>", "only the part up to this OUTPUT time")
+    .action(async (value: string, flags: { format?: string; out?: string; from?: string; to?: string }) => {
+        try {
+            const part =
+                flags.from === undefined && flags.to === undefined
+                    ? undefined
+                    : {
+                          fromUs: flags.from === undefined ? 0 : timeToUs(parseTime(flags.from, "--from")),
+                          toUs:
+                              flags.to === undefined ? Number.MAX_SAFE_INTEGER : timeToUs(parseTime(flags.to, "--to")),
+                      };
+            out.result(
+                await writeSubtitles({
+                    value,
+                    format: flags.format === undefined ? "srt" : parseSubtitleFormat(flags.format),
+                    out: flags.out,
+                    part,
+                })
+            );
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
 
 program
     .command("proxy")

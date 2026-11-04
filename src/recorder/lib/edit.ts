@@ -19,9 +19,12 @@ import {
     partOf,
     projectPathFor,
     readProject,
+    transcriptCachePath,
+    transcriptLines,
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
+import { formatSubtitles, type SubtitleFormat, subtitleCues } from "@genesiscz/utils/recording-editor/subtitles";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo } from "@genesiscz/utils/video/probe";
@@ -327,10 +330,70 @@ function freeOutput(video: string, extension: string): string {
  * Renders the edit with the editor's renderer; a GIF or WebM is made from that movie by ffmpeg (10 fps and at most
  * 960 wide for a GIF). The intermediate movie lives in a temporary folder and is removed.
  */
+/**
+ * Writes the edit's subtitles (the cached transcript with its fixes, in output time) to `out` as SubRip or WebVTT.
+ * `part` keeps the lines of an exported part, moved to start at 0.
+ */
+export async function writeSubtitles({
+    value,
+    format,
+    out,
+    part,
+}: {
+    value: string;
+    format: SubtitleFormat;
+    out?: string;
+    part?: { fromUs: number; toUs: number };
+}): Promise<{ path: string; cues: number; format: SubtitleFormat }> {
+    const opened = await openProject(value);
+    const cache = transcriptCachePath(opened.project.source.video);
+
+    if (!existsSync(cache)) {
+        throw new Error(
+            "this movie has no transcript yet; run movie.transcript() or the Captions tab's Transcribe first"
+        );
+    }
+
+    const lines = transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
+    const cues = subtitleCues(lines, opened.project, part);
+    const path = out
+        ? resolve(out)
+        : join(dirname(opened.project.source.video), `${defaultExportName(opened.project.source.video)}.${format}`);
+    atomicWriteFileSync(path, formatSubtitles(cues, format));
+    log.debug({ path, cues: cues.length, format, part }, "subtitles written");
+    return { path, cues: cues.length, format };
+}
+
+/** The subtitle file an export asked for, beside the movie it wrote; a missing transcript is a warning, not a failure. */
+async function subtitlesBeside(
+    value: string,
+    answer: ExportAnswer,
+    format: SubtitleFormat | undefined
+): Promise<ExportAnswer & { subtitles?: string; warnings?: string[] }> {
+    if (!format || !answer.ok || !answer.path) {
+        return answer;
+    }
+
+    const out = join(dirname(answer.path), `${basename(answer.path, extname(answer.path))}.${format}`);
+
+    try {
+        return { ...answer, subtitles: (await writeSubtitles({ value, format, out })).path };
+    } catch (error) {
+        log.debug({ error, value }, "no subtitles beside the export");
+        return { ...answer, warnings: [`no subtitles: ${error instanceof Error ? error.message : String(error)}`] };
+    }
+}
+
 export async function exportAs(
     value: string,
-    options: { out?: string; format?: ExportFormat; part?: { fromUs: number; toUs: number } } = {}
-): Promise<ExportAnswer> {
+    options: {
+        out?: string;
+        format?: ExportFormat;
+        part?: { fromUs: number; toUs: number };
+        /** A subtitle file beside the export; absent is the edit's export.subtitles. */
+        subtitles?: SubtitleFormat;
+    } = {}
+): Promise<ExportAnswer & { subtitles?: string; warnings?: string[] }> {
     if (options.part) {
         // A part is a trimmed copy of the edit in a scratch folder; the edit on disk stays as it is.
         const whole = await openProject(value);
@@ -341,7 +404,11 @@ export async function exportAs(
             const trimmed = partOf(whole.project, options.part.fromUs, options.part.toUs);
             writeProject(copy, { ...trimmed, export: { ...trimmed.export, output: "" } });
             log.debug({ value, part: options.part, clips: trimmed.clips.length }, "exporting a part of the edit");
-            return await exportAs(copy, { out: options.out, format: options.format ?? whole.project.export.format });
+            return await exportAs(copy, {
+                out: options.out,
+                format: options.format ?? whole.project.export.format,
+                subtitles: options.subtitles ?? whole.project.export.subtitles,
+            });
         } finally {
             await rm(scratch, { recursive: true, force: true });
         }
@@ -356,8 +423,10 @@ export async function exportAs(
         return { ok: false, error: `the format is one of ${EXPORT_FORMATS.join(", ")} (got "${asked}")` };
     }
 
+    const subtitles = options.subtitles ?? opened.project.export.subtitles;
+
     if (asked === "mp4") {
-        return exportEdit(resolveRecording(value), options.out);
+        return subtitlesBeside(value, await exportEdit(resolveRecording(value), options.out), subtitles);
     }
 
     const format = asked;
@@ -394,7 +463,11 @@ export async function exportAs(
         });
         const bytes = (await stat(output)).size;
         log.debug({ output, format, bytes }, "converted the export");
-        return { ok: true, path: output, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 };
+        return subtitlesBeside(
+            value,
+            { ok: true, path: output, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 },
+            subtitles
+        );
     } finally {
         await rm(scratch, { recursive: true, force: true });
     }

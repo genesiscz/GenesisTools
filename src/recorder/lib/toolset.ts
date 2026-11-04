@@ -24,6 +24,7 @@ import {
     transcriptLines,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
+import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
@@ -38,6 +39,7 @@ import {
     openProject,
     undoDepth,
     undoEdit,
+    writeSubtitles,
 } from "./edit";
 import {
     EDITOR_TABS,
@@ -314,11 +316,20 @@ const movieMethods = [
                 format: z.enum(EXPORT_FORMATS).optional(),
                 from: timeSchema.optional(),
                 to: timeSchema.optional(),
+                subtitles: z.enum(SUBTITLE_FORMATS).optional(),
             })
             .strict(),
         result: z.unknown(),
-        resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds }",
-        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. Throws when the file exists (it never overwrites).',
+        resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds, subtitles? }",
+        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. subtitles "srt" | "vtt" also writes the transcript beside it in the movie\'s time (default: the edit\'s export.subtitles). Throws when the file exists (it never overwrites).',
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "subtitles",
+        params: z.object({ format: z.enum(SUBTITLE_FORMATS).optional(), out: z.string().optional() }).strict(),
+        result: z.unknown(),
+        resultName: "{ path, cues, format }",
+        doc: 'Writes the transcript as a subtitle file in OUTPUT time: format "srt" (default) or "vtt", lines that were cut left out, fixed lines as fixed, beside the movie unless out is given. Needs transcript() first.',
         effect: "reversible",
     }),
     defineMethod({
@@ -755,6 +766,7 @@ export class Movie {
             format?: ExportFormat;
             from?: z.infer<typeof timeSchema>;
             to?: z.infer<typeof timeSchema>;
+            subtitles?: SubtitleFormat;
         } = {}
     ) {
         const opened = await openProject(this.recording);
@@ -771,7 +783,12 @@ export class Movie {
                       toUs: options.to === undefined ? outputDurationUs(opened.project) : timeToUs(options.to),
                   };
         await ensureRecorderPart();
-        const answer = await exportAs(opened.path, { out: options.out, format: options.format, part });
+        const answer = await exportAs(opened.path, {
+            out: options.out,
+            format: options.format,
+            part,
+            subtitles: options.subtitles,
+        });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the export failed without a reason");
@@ -785,7 +802,13 @@ export class Movie {
             width: info.width,
             height: info.height,
             renderSeconds: answer.seconds,
+            ...(answer.subtitles ? { subtitles: answer.subtitles } : {}),
+            ...(answer.warnings ? { warnings: answer.warnings } : {}),
         };
+    }
+
+    async subtitles(options: { format?: SubtitleFormat; out?: string } = {}) {
+        return writeSubtitles({ value: this.recording, format: options.format ?? "srt", out: options.out });
     }
 
     /** `<movie>.transcript.json` beside the movie: the raw result, so a later edit maps it again for free. */

@@ -1041,6 +1041,16 @@ private struct ExportInspector: View {
                                  selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
                                  minSegmentWidth: 36, identifier: "recorder.export.size", fillsWidth: true)
             }
+            SectionLabel(text: "Subtitles")
+            GenSegmentedTabs("Subtitles", items: [.init(Optional<EditProject.SubtitleFormat>.none, "None"), .init(.srt, "SRT"), .init(.vtt, "WebVTT")],
+                             selection: Binding(get: { settings.subtitles }, set: { format in model.setExport { $0.subtitles = format } }),
+                             minSegmentWidth: 60, identifier: "recorder.export.subtitles", fillsWidth: true)
+                .instantTooltip("A subtitle file beside the movie, from the transcript with your fixes, in the movie's time")
+            if settings.subtitles != nil, model.zoom.captionLines.isEmpty {
+                Text("This movie has no transcript yet: Transcribe on the Captions tab, or the export writes no subtitles.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             let source = CGSize(width: model.project.source.width, height: model.project.source.height)
             // A screen recording exports at 60 fps; the label uses the same size rule as the export.
             let aspect = model.project.frame?.aspect

@@ -24,6 +24,7 @@ tools recorder project <recording>               # the edit as JSON (source seco
 tools recorder apply <recording> '<op or [ops]>' # change the edit; - reads the ops from stdin
 tools recorder export <recording> [--format mp4|gif|webm] [--from T] [--to T] [--out FILE] [--json]
 tools recorder proxy <recording>                 # proxy.mp4 for a frames-only recording
+tools recorder subtitles <recording> [--format srt|vtt] [--out F] [--from T --to T]  # the transcript as subtitles
 ```
 
 `<recording>` is a library id, `last`, a recording folder, a movie or an `edit.json`.
@@ -62,7 +63,9 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `motion` (optional): `blur` 0 to 1 (0.5 when absent) smears the picture along a zoom's pan or change of scale, as a
   camera shutter would (at most 24 px a frame, so text stays readable through a fast ease); 0 keeps every frame sharp. Op `motion {blur}`; the Zoom tab's slider.
 - `audio`: `include`, `volume` 0 to 2, `mutedTracks`.
-- `export`: `codec` h264 or hevc, `maxHeight` (0 = source), `output`, `format` (absent = mp4).
+- `export`: `codec` h264 or hevc, `maxHeight` (0 = source), `output`, `format` (absent = mp4), `subtitles` (`srt`
+  or `vtt`: a subtitle file beside every export, from the cached transcript with its fixes, in the movie's time;
+  absent is none; `exportSettings {subtitles: "none"}` stops it).
 - `clicks` (optional): a disc that grows and fades on each recorded click.
 - `frame` (optional): the movie on a background (`none`, `color`, `gradient`, or `image` with `image` a picture file
   and `blur` 0 to 1; the Style tab has Desktop Picture and Choose Image…), with `padding`, `cornerRadius` and a

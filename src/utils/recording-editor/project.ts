@@ -213,6 +213,8 @@ export const editProjectSchema = z.object({
             output: z.string().default(""),
             /** Absent is mp4, as before the field existed. */
             format: z.enum(EXPORT_FORMATS).optional(),
+            /** A subtitle file written beside every export from the cached transcript; absent is none. */
+            subtitles: z.enum(["srt", "vtt"]).optional(),
         })
         .default({ codec: "h264", maxHeight: 0, output: "" }),
     clicks: clicksSchema.optional(),
@@ -689,6 +691,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             maxHeight: z.number().int().nonnegative().optional(),
             output: z.string().optional(),
             format: z.enum(EXPORT_FORMATS).optional(),
+            /** A subtitle file beside every export ("srt" or "vtt"); "none" stops it. */
+            subtitles: z.enum(["srt", "vtt", "none"]).optional(),
         })
         .strict(),
     z.object({ op: z.literal("reset") }).strict(),
@@ -988,6 +992,11 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                     maxHeight: op.maxHeight ?? project.export.maxHeight,
                     output: op.output ?? project.export.output,
                     ...((op.format ?? project.export.format) ? { format: op.format ?? project.export.format } : {}),
+                    ...(op.subtitles === "none"
+                        ? {}
+                        : (op.subtitles ?? project.export.subtitles)
+                          ? { subtitles: op.subtitles ?? project.export.subtitles }
+                          : {}),
                 },
             };
         case "reset":

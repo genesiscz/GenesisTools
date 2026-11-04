@@ -252,6 +252,12 @@ struct EditProject: Codable, Equatable {
         var output = ""
         /// nil is mp4 (files from before the field); gif and webm are made by `tools recorder export`.
         var format: ExportFormat?
+        /// A subtitle file written beside every export from the cached transcript; nil is none.
+        var subtitles: SubtitleFormat?
+    }
+
+    enum SubtitleFormat: String, Codable, CaseIterable {
+        case srt, vtt
     }
 
     enum ExportFormat: String, Codable, CaseIterable {
