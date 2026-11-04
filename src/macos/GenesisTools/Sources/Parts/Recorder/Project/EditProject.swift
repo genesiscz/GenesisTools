@@ -141,6 +141,11 @@ struct EditProject: Codable, Equatable {
         case blur, pixelate, black, spotlight
     }
 
+    /// A spotlight's lit shape; nil is rounded.
+    enum SpotlightCutout: String, Codable, CaseIterable {
+        case rounded, rect, circle
+    }
+
     /// A rectangle of the SOURCE picture (0...1 from its top left) hidden from `startUs` to `endUs`; it moves with a
     /// zoom, because it is drawn before it.
     struct Redaction: Codable, Equatable, Identifiable {
@@ -156,6 +161,9 @@ struct EditProject: Codable, Equatable {
         var label: String?
         /// Moves with the drawn cursor, centred on it, keeping its size; nil is still.
         var follow: Bool?
+        /// A spotlight's dim around it (0.2...0.95 black); nil is `Looks.spotlightDim`.
+        var dim: Double?
+        var cutout: SpotlightCutout?
     }
 
     /// The fixed words of a transcript line by its start in source milliseconds; an empty text hides the line.

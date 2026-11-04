@@ -107,6 +107,8 @@ export const captionsSchema = z.object({
 
 /** How a rectangle is drawn: hidden by a blur, big pixels or black, or shown by a spotlight that dims the rest. */
 export const REDACTION_STYLES = ["blur", "pixelate", "black", "spotlight"] as const;
+/** A spotlight's lit shape: "rounded" (absent means this), "rect" or "circle" (an ellipse in its rectangle). */
+export const SPOTLIGHT_CUTOUTS = ["rounded", "rect", "circle"] as const;
 
 /** A part of the SOURCE picture hidden for a time: an address, a token, a notification. It moves with a zoom. */
 export const redactionSchema = z.object({
@@ -123,6 +125,9 @@ export const redactionSchema = z.object({
     label: z.string().max(60).optional(),
     /** The rectangle keeps its size and moves with the drawn cursor (centred on it, inside the picture). */
     follow: z.boolean().optional(),
+    /** A spotlight's dim around it, 0.2 to 0.95 black; absent is 0.7. */
+    dim: z.number().min(0.2).max(0.95).optional(),
+    cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
@@ -518,6 +523,8 @@ export function addRedaction(
         style: EditRedaction["style"];
         label?: string;
         follow?: boolean;
+        dim?: number;
+        cutout?: EditRedaction["cutout"];
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
@@ -540,6 +547,10 @@ export function addRedaction(
         style: options.style,
         ...(options.label?.trim() ? { label: options.label.trim() } : {}),
         ...(options.follow ? { follow: true } : {}),
+        ...(options.style === "spotlight" && options.dim !== undefined ? { dim: options.dim } : {}),
+        ...(options.style === "spotlight" && options.cutout && options.cutout !== "rounded"
+            ? { cutout: options.cutout }
+            : {}),
     };
     return { ...project, redactions: [...(project.redactions ?? []), redaction] };
 }
@@ -704,6 +715,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             label: z.string().max(60).optional(),
             /** Moves with the drawn cursor, centred on it; rect gives its size. */
             follow: z.boolean().optional(),
+            /** Style "spotlight" only: the dim around it (0.7) and its lit shape ("rounded"). */
+            dim: z.number().min(0.2).max(0.95).optional(),
+            cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
         })
         .strict(),
     z
@@ -715,6 +729,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
             rect: rectSchema,
             label: z.string().max(60).optional(),
             follow: z.boolean().optional(),
+            /** How dark the rest gets, 0.2 to 0.95 black (0.7). */
+            dim: z.number().min(0.2).max(0.95).optional(),
+            /** The lit shape: "rounded" (default), "rect" or "circle". */
+            cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
@@ -1021,6 +1039,8 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                 style: "spotlight",
                 label: op.label,
                 follow: op.follow,
+                dim: op.dim,
+                cutout: op.cutout,
             });
         case "unredact": {
             const list = project.redactions ?? [];
@@ -1286,6 +1306,9 @@ export function describeProject(project: EditProject, path: string) {
             style: redaction.style,
             ...(redaction.label ? { label: redaction.label } : {}),
             ...(redaction.follow ? { follow: true } : {}),
+            ...(redaction.style === "spotlight"
+                ? { dim: redaction.dim ?? 0.7, cutout: redaction.cutout ?? "rounded" }
+                : {}),
         })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,

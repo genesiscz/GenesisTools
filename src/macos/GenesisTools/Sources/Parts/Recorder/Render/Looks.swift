@@ -194,16 +194,45 @@ enum Looks {
         }
         // Every spotlight showing together: one dim over the picture, then each lit rectangle put back from the
         // picture before the dim, so two spotlights both stay lit and the rest is dimmed once.
-        let lit = redactions.filter { $0.style == .spotlight }.map(rectOf).filter { $0.width > 1 && $0.height > 1 }
+        // The darkest dim asked for wins; the lit shapes are one mask, so overlapping ones never dim each other.
+        let lit = redactions.filter { $0.style == .spotlight }.map { ($0, rectOf($0)) }.filter { $0.1.width > 1 && $0.1.height > 1 }
         if !lit.isEmpty, spotlightFade > 0 {
-            let clear = result
-            let dim = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: spotlightDim * min(1, spotlightFade))).cropped(to: extent)
-            result = dim.composited(over: result)
-            for rect in lit {
-                result = clear.cropped(to: rect).composited(over: result)
+            let level = lit.map { $0.0.dim ?? spotlightDim }.max() ?? spotlightDim
+            let dim = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: level * min(1, spotlightFade))).cropped(to: extent)
+            let dimmed = dim.composited(over: result)
+            var mask = CIImage(color: .clear).cropped(to: extent)
+            for (spot, rect) in lit {
+                mask = spotlightMask(spot.cutout ?? .rounded, in: rect).composited(over: mask)
             }
+            result = result.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: mask])
+                .cropped(to: extent)
         }
         return result
+    }
+
+    /// The lit shape of one spotlight, white where it lights: a rectangle, a rectangle with corners of 12 % of its
+    /// short side, or the ellipse in it with a 2 px soft edge.
+    static func spotlightMask(_ cutout: EditProject.SpotlightCutout, in rect: CGRect) -> CIImage {
+        switch cutout {
+        case .rect:
+            return CIImage(color: .white).cropped(to: rect)
+        case .rounded:
+            let generator = CIFilter.roundedRectangleGenerator()
+            generator.extent = rect
+            generator.radius = Float(min(rect.width, rect.height) * 0.12)
+            generator.color = .white
+            return generator.outputImage?.cropped(to: rect) ?? CIImage(color: .white).cropped(to: rect)
+        case .circle:
+            let gradient = CIFilter.radialGradient()
+            gradient.center = .zero
+            gradient.radius0 = 98
+            gradient.radius1 = 100
+            gradient.color0 = .white
+            gradient.color1 = .clear
+            let scale = CGAffineTransform(scaleX: rect.width / 200, y: rect.height / 200)
+            return (gradient.outputImage ?? CIImage(color: .white)).transformed(by: scale)
+                .transformed(by: CGAffineTransform(translationX: rect.midX, y: rect.midY)).cropped(to: rect)
+        }
     }
 
     /// One cursor to draw: its image, where its hotspot goes (0...1 from the top left), and its scale.

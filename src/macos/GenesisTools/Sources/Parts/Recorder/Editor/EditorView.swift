@@ -906,6 +906,19 @@ private struct RedactionEditor: View {
             .accessibilityIdentifier("recorder.hide.follow")
             .instantTooltip(model.cursor == nil ? "This recording has no cursor track"
                             : "The part keeps its size and moves with the pointer, so a spotlight lights where you point")
+            if redaction.style == .spotlight {
+                GenSegmentedTabs("Lit shape", items: [.init(EditProject.SpotlightCutout.rounded, "Rounded"), .init(.rect, "Rectangle"), .init(.circle, "Circle")],
+                                 selection: Binding(get: { redaction.cutout ?? .rounded }, set: { value in
+                                     model.updateRedaction(id) { $0.cutout = value == .rounded ? nil : value }
+                                 }),
+                                 minSegmentWidth: 70, identifier: "recorder.hide.cutout", fillsWidth: true)
+                let dim = redaction.dim ?? Looks.spotlightDim
+                SectionLabel(text: "Dim the rest", value: "\(Int((dim * 100).rounded()))%")
+                Slider(value: Binding(get: { dim }, set: { value in
+                    model.updateRedaction(id) { $0.dim = abs(value - Looks.spotlightDim) < 0.005 ? nil : (value * 100).rounded() / 100 }
+                }), in: 0.2...0.95)
+                    .accessibilityLabel("How dark the rest of the picture gets")
+            }
             SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
             Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)
                 .accessibilityLabel("Hidden part width")

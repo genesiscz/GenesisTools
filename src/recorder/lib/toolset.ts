@@ -19,6 +19,7 @@ import {
     REDACTION_STYLES,
     SHAPE_APPEARS,
     SHAPE_KINDS,
+    SPOTLIGHT_CUTOUTS,
     shortcutsOf,
     TEXT_STYLES,
     type TranscriptLine,
@@ -265,9 +266,11 @@ const movieMethods = [
                     .strict(),
                 label: z.string().max(60).optional(),
                 follow: z.boolean().optional(),
+                dim: z.number().min(0.2).max(0.95).optional(),
+                cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
             })
             .strict(),
-        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer). The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
+        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 sets how dark the rest gets (0.7), cutout "rounded" (default), "rect" or "circle" its lit shape. The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(

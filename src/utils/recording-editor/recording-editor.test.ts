@@ -582,6 +582,16 @@ describe("edit project (edit.json)", () => {
             rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
         });
         expect(lit.redactions?.[0]?.style).toBe("spotlight");
+        expect(describeProject(lit, "/p/edit.json").redactions[0]).toMatchObject({ dim: 0.7, cutout: "rounded" });
+        const circle = applyOp(project, {
+            op: "spotlight",
+            from: 1,
+            to: 3,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+            dim: 0.5,
+            cutout: "circle",
+        });
+        expect(circle.redactions?.[0]).toMatchObject({ dim: 0.5, cutout: "circle" });
         expect(redaction).not.toHaveProperty("follow");
         // A cut keeps it in source time.
         expect(applyOp(hidden, { op: "cut", from: 0, to: 0.5 }).redactions?.[0]?.startUs).toBe(1_000_000);

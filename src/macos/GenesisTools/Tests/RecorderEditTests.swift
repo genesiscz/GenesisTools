@@ -448,6 +448,31 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertGreaterThan(gray(fading, 100, 80), gray(one, 100, 80), "half way into its fade it dims less")
     }
 
+    func testEveryCutoutLeavesItsInsideExactlyAsItWas() {
+        let dark = CIImage(color: CIColor(red: 0.1, green: 0.1, blue: 0.1)).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let context = CIContext()
+        func gray(_ image: CIImage, _ x: Int, _ yFromTop: Int) -> Int {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            context.render(image, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: 100 - 1 - yFromTop, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            return Int(pixel[0])
+        }
+        let original = gray(dark, 100, 50)
+        for cutout in EditProject.SpotlightCutout.allCases {
+            let spot = EditProject.Redaction(id: "a", startUs: 0, endUs: 1, x: 0.25, y: 0.2, width: 0.5, height: 0.6, style: .spotlight,
+                                             cutout: cutout)
+            let lit = Looks.redact([spot], on: dark)
+            XCTAssertEqual(gray(lit, 100, 50), original, accuracy: 1, "\(cutout): the middle is untouched")
+            XCTAssertLessThan(gray(lit, 5, 5), original, "\(cutout): outside is dimmed")
+        }
+        let rounded = Looks.redact([EditProject.Redaction(id: "a", startUs: 0, endUs: 1, x: 0.25, y: 0.2, width: 0.5, height: 0.6,
+                                                          style: .spotlight)], on: dark)
+        XCTAssertLessThan(gray(rounded, 51, 21), original, "a rounded cutout's corner is dimmed")
+        let deeper = Looks.redact([EditProject.Redaction(id: "a", startUs: 0, endUs: 1, x: 0.25, y: 0.2, width: 0.5, height: 0.6,
+                                                         style: .spotlight, dim: 0.9)], on: dark)
+        XCTAssertLessThan(gray(deeper, 5, 5), gray(rounded, 5, 5), "a higher dim is darker")
+    }
+
     func testARedactionCoversOnlyItsRectangleOfTheSource() throws {
         let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
         let redaction = EditProject.Redaction(id: "r", startUs: 0, endUs: 1, x: 0.25, y: 0, width: 0.5, height: 0.5, style: .black)
