@@ -14,6 +14,7 @@ import type {
     ApprovalReceiptDto,
     PendingApprovalsDto,
 } from "@app/dev-dashboard/contract/approvals";
+import type { MorningBriefDto } from "@app/dev-dashboard/contract/brief";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
@@ -377,6 +378,8 @@ export const ENDPOINTS = {
     gatewayWatching: row<GatewayInput, WatchingDto>("GET", "/api/gateway/watching", "read", "slow"),
     /** Silences one watch for a while (Monitor watchers; the other sources answer that they have no mute). */
     watchingMute: row<WatchMuteInput, WatchMuteReceiptDto>("POST", "/api/watching/mute", "keyed-write"),
+    /** The stored morning brief (F29); null before the daemon task first built it. Asks Waze nothing. */
+    gatewayBrief: row<GatewayInput, MorningBriefDto | null>("GET", "/api/gateway/brief", "read"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;

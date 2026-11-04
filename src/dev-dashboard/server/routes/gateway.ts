@@ -35,6 +35,7 @@ export const GATEWAY_ROWS = {
     approvals: ENDPOINTS.gatewayApprovals,
     launch: ENDPOINTS.gatewayLaunch,
     watching: ENDPOINTS.gatewayWatching,
+    brief: ENDPOINTS.gatewayBrief,
     transcript: ENDPOINTS.gatewayTranscript,
     procs: ENDPOINTS.gatewayProcs,
     stuck: ENDPOINTS.gatewayStuck,

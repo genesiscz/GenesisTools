@@ -266,6 +266,18 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /** `hub brief --json`: the stored morning brief (F29). Read only: the daemon task builds it, this asks Waze nothing. */
+    brief: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { readBrief } = await import("../brief/index");
+            return readBrief();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `hub watching --json`: every watch on the Mac in one list (the phone's Watching screen, F30). Read only. */
     watching: {
         policy: "read",

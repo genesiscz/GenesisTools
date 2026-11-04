@@ -2,6 +2,7 @@ export * from "@app/dev-dashboard/contract/agents";
 export * from "@app/dev-dashboard/contract/approvals";
 export * from "@app/dev-dashboard/contract/auth-header";
 export * from "@app/dev-dashboard/contract/box-types";
+export * from "@app/dev-dashboard/contract/brief";
 export * from "@app/dev-dashboard/contract/client";
 export * from "@app/dev-dashboard/contract/dto";
 export * from "@app/dev-dashboard/contract/e2e-envelope";
