@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { checkProject } from "@genesiscz/utils/recording-editor/check";
 import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
 import {
     annotateClicks,
@@ -393,6 +394,35 @@ describe("edit project (edit.json)", () => {
         expect(kept.map((zoom) => zoom.mode)).toEqual(["follow", "manual"]);
         expect(() => autoZoom(manual, [])).toThrow("no cursor track");
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
+    });
+
+    test("check finds what never shows, what is missing and what flashes past, fixes first", () => {
+        let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2, scale: 2 });
+        project = applyOp(project, { op: "text", from: 3, to: 5, text: "Step one" });
+        project = applyOp(project, { op: "text", from: 4, to: 6, text: "Step two" });
+        project = applyOp(project, {
+            op: "spotlight",
+            from: 7,
+            to: 7.2,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+        });
+        project = applyOp(project, { op: "cut", from: 0.5, to: 2.5 });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const issues = checkProject(project, facts);
+        const zoomId = project.zooms[0]?.id;
+        expect(issues[0]).toMatchObject({ severity: "fix", fix: `movie.unzoom("${zoomId}")` });
+        expect(issues[0]?.message).toContain("never shows");
+        expect(issues.map((issue) => issue.severity)).toEqual(["fix", "check", "check"]);
+        expect(issues[1]?.message).toContain('"Step one" and "Step two"');
+        expect(issues[2]?.message).toContain("too short to read");
+        const captioned = {
+            ...wholeProject(source),
+            captions: { show: true, size: 0.038, position: "bottom" as const },
+        };
+        expect(checkProject(captioned, { ...facts, hasTranscript: false }).map((issue) => issue.item)).toEqual([
+            "captions",
+        ]);
+        expect(checkProject(wholeProject(source), facts)).toEqual([]);
     });
 
     test("annotate clicks marks each click once, a double click once, and a second run adds nothing", () => {

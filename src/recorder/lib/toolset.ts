@@ -5,6 +5,7 @@ import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { checkProject } from "@genesiscz/utils/recording-editor/check";
 import { timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     BACKGROUND_KINDS,
@@ -104,6 +105,14 @@ const movieMethods = [
         result: z.unknown(),
         resultName: movieDoc.replace(" }", ", title, folder }"),
         doc: "The edit as it is on disk now (the window may have changed it), with the recording's title and folder (null for a plain movie).",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "check",
+        params: z.object({}),
+        result: z.unknown(),
+        resultName: '{ ok, issues: { severity: "fix" | "check", item, message, fix?, at? }[] }',
+        doc: 'What to look at before export(): items whose whole time is cut (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does; ok is true when there is no "fix" issue. It changes nothing.',
         effect: "read",
     }),
     edit("split", z.object({ at: timeSchema }), "Splits the clip at a source time.", ["at"]),
@@ -651,6 +660,17 @@ export class Movie {
             title: manifest?.title ?? null,
             folder: folder ?? null,
         };
+    }
+
+    async check() {
+        const { project } = await openProject(this.recording);
+        const issues = checkProject(project, {
+            hasTranscript: existsSync(transcriptCachePath(project.source.video)),
+            hasCursorTrack: Boolean(project.source.cursor && existsSync(project.source.cursor)),
+            musicFileExists: project.audio.music ? existsSync(project.audio.music.file) : true,
+        });
+        log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
+        return { ok: !issues.some((issue) => issue.severity === "fix"), issues };
     }
 
     private async change(ops: EditOp[]) {
