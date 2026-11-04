@@ -2410,7 +2410,7 @@ describe("the meetings recorder loop", () => {
         expect(readdirSync(join(run.folder, "audio"))).toEqual([expect.stringMatching(/-d1-mic\.m4a$/)]);
         expect(readFileSync(join(run.folder, "audio.jsonl"), "utf8")).toContain('"source":"mic"');
         expect(run.saved?.recording).toMatchObject({ audio: { sources: ["mic"], files: 1 } });
-        expect(progress).toEqual(expect.arrayContaining(["summary 1/1", "collect 2/2"]));
+        expect(progress).toEqual(expect.arrayContaining(["summary 1/1", "collect 3/3"]));
     });
 });
 

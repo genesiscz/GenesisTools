@@ -33,7 +33,14 @@ describe("a meeting's screen recording as a recorder recording", () => {
         writeFileSync(
             join(folder, "ocr.jsonl"),
             [
-                { file: "frames/10-00-05-000-d2.jpg", at: "2026-03-02T09:00:05.000Z", displayId: 2, text: "b" },
+                {
+                    file: "frames/10-00-05-000-d2.jpg",
+                    at: "2026-03-02T09:00:05.000Z",
+                    displayId: 2,
+                    changePercent: 12.5,
+                    reason: "change",
+                    text: "b",
+                },
                 { file: "frames/10-00-01-500-d2.jpg", at: "2026-03-02T09:00:01.500Z", displayId: 2, text: "a" },
             ]
                 .map((row) => SafeJSON.stringify(row))
@@ -49,5 +56,10 @@ describe("a meeting's screen recording as a recorder recording", () => {
             ["frames/10-00-05-000-d2.jpg", 5000, 2],
         ]);
         expect(readFrameFolder(folder).map((frame) => frame.atUs)).toEqual([1_500_000, 5_000_000]);
+        // A row the recorder wrote with its change percent keeps it; an older row without one reads 0.
+        expect(manifest?.frames.map((frame) => [frame.changePercent, frame.reason])).toEqual([
+            [0, "change"],
+            [12.5, "change"],
+        ]);
     });
 });

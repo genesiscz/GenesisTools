@@ -1081,6 +1081,8 @@ export async function runRecorder(options: {
                         file: `frames/${name}`,
                         at: at.toISOString(),
                         displayId,
+                        changePercent: frame.changePercent,
+                        reason: frame.reason,
                         text: ocr.text,
                         blocks: ocr.blocks.map((block) => ({
                             text: block.text,

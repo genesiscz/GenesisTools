@@ -5,11 +5,20 @@ import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { RECORDING_MANIFEST, type RecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
-/** A frame line of `ocr.jsonl`: every frame the recorder kept has one, with its exact time. */
+/** A frame line of `ocr.jsonl`: every frame the recorder kept has one, with its exact time (older rows lack the change). */
 interface OcrLine {
     file?: unknown;
     at?: unknown;
     displayId?: unknown;
+    changePercent?: unknown;
+    reason?: unknown;
+}
+
+interface TimedFrame {
+    at: number;
+    displayId?: number;
+    changePercent: number;
+    reason: string;
 }
 
 /**
@@ -24,7 +33,7 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
         return undefined;
     }
 
-    const timed = new Map<string, { at: number; displayId?: number }>();
+    const timed = new Map<string, TimedFrame>();
     const ocrPath = join(folder, "ocr.jsonl");
 
     if (existsSync(ocrPath)) {
@@ -37,7 +46,12 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
             const at = typeof row.at === "string" ? Date.parse(row.at) : Number.NaN;
 
             if (typeof row.file === "string" && Number.isFinite(at)) {
-                timed.set(row.file, { at, displayId: typeof row.displayId === "number" ? row.displayId : undefined });
+                timed.set(row.file, {
+                    at,
+                    displayId: typeof row.displayId === "number" ? row.displayId : undefined,
+                    changePercent: typeof row.changePercent === "number" ? row.changePercent : 0,
+                    reason: typeof row.reason === "string" ? row.reason : "change",
+                });
             }
         }
     }
@@ -50,6 +64,8 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
             timed.set(file, {
                 at: statSync(join(framesDir, name)).mtimeMs,
                 displayId: display ? Number(display[1]) : undefined,
+                changePercent: 0,
+                reason: "change",
             });
         }
     }
@@ -75,8 +91,8 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
                 file,
                 atMs: Math.max(0, Math.round(frame.at - started)),
                 ...(frame.displayId === undefined ? {} : { displayId: frame.displayId }),
-                changePercent: 0,
-                reason: "change",
+                changePercent: frame.changePercent,
+                reason: frame.reason,
             })),
         warnings: [],
     };
