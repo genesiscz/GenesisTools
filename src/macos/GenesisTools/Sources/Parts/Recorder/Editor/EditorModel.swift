@@ -1063,6 +1063,31 @@ final class EditorModel {
         }
     }
 
+    private(set) var isMarkingClicks = false
+
+    /// A circle at every recorded click with `tools recorder apply … annotateClicks` (the REPL's annotateClicks); the
+    /// file watcher brings the shapes in, one ⌘Z away.
+    func markClicks() {
+        guard !isMarkingClicks else { return }
+        isMarkingClicks = true
+        let before = project.shapes?.count ?? 0
+        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"annotateClicks"}"#]) { [weak self] status, _, stderr in
+            guard let self else { return }
+            self.isMarkingClicks = false
+            guard status == 0 else {
+                self.show(stderr.split(separator: "\n").last.map(String.init) ?? "No click was marked (exit \(status))", error: true)
+                return
+            }
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
+                self.adoptExternal(next)
+            }
+            let added = (self.project.shapes?.count ?? 0) - before
+            self.tab = .text
+            self.show(added > 0 ? "Circled \(Plural.count(added, "click")); ⌘Z takes them back." : "Every click has its circle already.",
+                      error: false)
+        }
+    }
+
     /// Replaces a word or phrase in every caption line with `tools recorder replace-words` (the REPL's replaceWords);
     /// the file watcher brings the result in, one ⌘Z away.
     func replaceWords(find: String, replace: String) {

@@ -763,6 +763,13 @@ private struct TextInspector: View {
                     .instantTooltip("A 3 s circle from the playhead; drag its corners on the preview")
                     .accessibilityIdentifier("recorder.shape.circle")
             }
+            if let clicks = model.cursor?.clicks.count, clicks > 0 {
+                WideButton(title: model.isMarkingClicks ? "Marking the Clicks…" : "Circle Every Click",
+                           systemImage: "cursorarrow.click.2") { model.markClicks() }
+                    .disabled(model.isMarkingClicks)
+                    .instantTooltip("A 1.2 s circle at each of the \(Plural.count(clicks, "recorded click")) (a double click gets one); a click that has one already is left alone, and ⌘Z takes them all back")
+                    .accessibilityIdentifier("recorder.shape.markClicks")
+            }
             ForEach(model.project.shapes ?? []) { shape in
                 ShapeRow(model: model, shape: shape)
             }
