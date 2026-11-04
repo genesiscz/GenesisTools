@@ -44,8 +44,10 @@ import {
     mockTodosResult,
     mockWeather,
 } from "@/api/fixtures/data";
+import { MOCK_APPROVALS } from "@/api/fixtures/approvals";
 import { MOCK_GATES } from "@/api/fixtures/gates";
 import { MOCK_LAUNCH } from "@/api/fixtures/launch";
+import { MOCK_WATCHING } from "@/api/fixtures/watching";
 import { fixtureAnswerForm, fixtureDraft, fixtureQueue, fixtureSendDrafts } from "@/api/fixtures/queue";
 
 /**
@@ -250,12 +252,40 @@ const ROUTES: FixtureRoute[] = [
         handle: ({ body }) => ({ id: text(body.id), outcome: "asked", detail: "mock data: no window on a Mac" }),
     },
 
+    // Approvals (F8); an answer is refused, since a fixture has no dialog to press keys in.
+    { method: ENDPOINTS.gatewayApprovals.method, path: ENDPOINTS.gatewayApprovals.path, handle: () => MOCK_APPROVALS },
+    {
+        method: ENDPOINTS.approvalsAnswer.method,
+        path: ENDPOINTS.approvalsAnswer.path,
+        handle: ({ body }) => ({
+            id: text(body.id),
+            verdict: text(body.verdict),
+            outcome: "refused",
+            route: "none",
+            detail: "mock data: no dialog on a Mac",
+        }),
+    },
+
     // The New agent sheet (F21); a start is refused, since a fixture has no cmux to open a workspace in.
     { method: ENDPOINTS.gatewayLaunch.method, path: ENDPOINTS.gatewayLaunch.path, handle: () => MOCK_LAUNCH },
     {
         method: ENDPOINTS.agentsNew.method,
         path: ENDPOINTS.agentsNew.path,
         handle: () => ({ started: false, name: null, workspace: null, cwd: null, error: "mock data: no Mac to start on" }),
+    },
+
+    // The Watching screen (F30); a mute answers that the fixture has no Monitor to write.
+    { method: ENDPOINTS.gatewayWatching.method, path: ENDPOINTS.gatewayWatching.path, handle: () => MOCK_WATCHING },
+    {
+        method: ENDPOINTS.watchingMute.method,
+        path: ENDPOINTS.watchingMute.path,
+        handle: ({ body }) => ({
+            source: text(body.source),
+            id: text(body.id),
+            muted: false,
+            mutedUntil: null,
+            detail: "mock data: no Monitor to mute",
+        }),
     },
 
     // The agents board (F9) and its session view; a stop is refused, since a fixture has no process to end.

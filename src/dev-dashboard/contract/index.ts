@@ -12,3 +12,4 @@ export * from "@app/dev-dashboard/contract/launch";
 export * from "@app/dev-dashboard/contract/live";
 export * from "@app/dev-dashboard/contract/pairing";
 export * from "@app/dev-dashboard/contract/push";
+export * from "@app/dev-dashboard/contract/watching";

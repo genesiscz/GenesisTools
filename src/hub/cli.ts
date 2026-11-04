@@ -34,6 +34,7 @@ import { registerPromptsCommand } from "./commands/prompts";
 import { registerReadinessCommand } from "./commands/readiness";
 import { registerRulesCommand } from "./commands/rules";
 import { registerSearchCommand } from "./commands/search";
+import { registerWatchingCommand } from "./commands/watching";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
 import { HUB_MODES, HUB_TABS, HUB_USAGE_SECTIONS, hubPrintUrl, openHub } from "./lib/open";
 import {
@@ -1329,6 +1330,7 @@ registerProcsCommand(program);
 registerBoardCommand(program);
 registerGatesCommand(program);
 registerLaunchCommand(program);
+registerWatchingCommand(program);
 registerPromptsCommand(program);
 registerAgentsCommand(program);
 registerServeCommand(program);
