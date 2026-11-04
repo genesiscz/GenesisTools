@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { E2eHookContext, E2eProject } from "@genesiscz/utils/e2e/project";
 import { E2E_ENV } from "@genesiscz/utils/e2e/spec-env";
 import { env } from "@genesiscz/utils/env";
@@ -46,7 +47,7 @@ function runSpec(options: {
             resolve(code);
         });
         child.once("error", (error) => {
-            appendFileSync(fd, `\n[tools e2e] spawn failed: ${error.message}\n`);
+            appendFileSync(fd, `\n[${toolCommand("e2e")}] spawn failed: ${error.message}\n`);
             log.error({ error, command: options.command.join(" ") }, "runner spawn failed");
         });
     });
