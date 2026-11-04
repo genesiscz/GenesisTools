@@ -2313,6 +2313,123 @@ describe("the meetings recorder loop", () => {
         expect(run.notes).toEqual([]);
     });
 
+    /** Subscribes to the recorder's progress: each `running` and `done` of a finish step, in order. */
+    async function finishSteps(live: { id: string; dir: string }, onStep: (step: string) => void = () => undefined) {
+        const steps: string[] = [];
+        const client = await RecorderClient.connect(live.id, { dir: live.dir });
+        await client.subscribe(
+            (event) => {
+                const params = event.params as { job: string; step: string; unit: string; message?: string };
+                const finishStep =
+                    params.job.startsWith("finish-") &&
+                    params.unit === "steps" &&
+                    (params.message === "running" || params.message === "done");
+
+                if (finishStep) {
+                    steps.push(`${params.step} ${params.message}`);
+                    onStep(`${params.step} ${params.message}`);
+                }
+            },
+            ["progress"]
+        );
+        return { steps, client };
+    }
+
+    test("characterization (finish): summary, then manifest, then collect; the stop gets its answer before the socket closes", async () => {
+        let seen: { steps: string[]; manifestAtCollect: boolean } | undefined;
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["frames", "hang"],
+            actions: [
+                async (_call, live) => {
+                    let manifestAtCollect = false;
+                    const { steps, client } = await finishSteps(live, (step) => {
+                        if (step === "collect running") {
+                            manifestAtCollect = existsSync(join(live.folder, "recording.json"));
+                        }
+                    });
+                    const answer = await client.stop();
+                    seen = { steps, manifestAtCollect };
+                    client.close();
+                    return answer;
+                },
+            ],
+        });
+
+        expect(seen?.steps).toEqual([
+            "summary running",
+            "summary done",
+            "manifest running",
+            "manifest done",
+            "collect running",
+            "collect done",
+        ]);
+        expect(seen?.manifestAtCollect).toBe(true);
+        expect(run.answers[0]).toEqual({
+            state: "stopped",
+            outcome: "requested",
+            job: expect.stringMatching(new RegExp(`^finish-${run.state.meetingId}-\\d+$`)),
+            frames: 1,
+            notes: [],
+        });
+        expect(listLiveRecordings(run.liveDir)).toEqual([]);
+        expect(existsSync(join(run.folder, "recorder-last.json"))).toBe(true);
+    });
+
+    test("characterization (finish): a stop without waiting answers the job at once, and a second stop is refused", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang"],
+            actions: [
+                async (call) => {
+                    const early = await call("stop", { wait: false });
+                    const jobs = await call("jobs.list");
+                    return [early, jobs, await call("stop")];
+                },
+            ],
+        });
+        const [early, jobs, again] = run.answers[0] as [
+            { state: string; job: string },
+            Array<{ id: string; kind: string }>,
+            unknown,
+        ];
+
+        expect(early).toEqual({ state: "stopping", job: expect.stringMatching(/^finish-/) });
+        expect(jobs.filter((job) => job.kind === "finish").map((job) => job.id)).toEqual([early.job]);
+        expect(again).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested" });
+    });
+
+    test("characterization (finish): a failed manifest step still answers the stop, without notes, and skips collect", async () => {
+        let seen: string[] = [];
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["frames", "hang"],
+            actions: [
+                async (_call, live) => {
+                    // A folder where the manifest file goes: its write fails.
+                    mkdirSync(join(live.folder, "recording.json", "taken"), { recursive: true });
+                    const { steps, client } = await finishSteps(live);
+                    const answer = await client.stop();
+                    seen = steps;
+                    client.close();
+                    return answer;
+                },
+            ],
+        });
+
+        expect(seen).toEqual(["summary running", "summary done", "manifest running"]);
+        expect(run.answers[0]).toEqual({
+            state: "stopped",
+            outcome: "requested",
+            job: expect.stringMatching(/^finish-/),
+            frames: 1,
+        });
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 1 });
+        expect(listLiveRecordings(run.liveDir)).toEqual([]);
+        expect(existsSync(join(run.folder, "recorder-last.json"))).toBe(true);
+    });
+
     test("captures that fail three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
         const run = await recordWith({ displays: [[builtIn]], steps: ["timeout", "fail", "timeout"] });
         const last = SafeJSON.parse(readFileSync(join(run.folder, "recorder-last.json"), "utf8"), { strict: true });

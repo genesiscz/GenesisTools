@@ -630,6 +630,92 @@ describe("library recording frames", () => {
             files.map((name) => `frames/${name}`)
         );
     });
+
+    /** Each `running` and `done` of a finalize step, as a subscriber of the recording's socket sees them. */
+    async function finalizeSteps(id: string, dir: string) {
+        const steps: string[] = [];
+        const client = await RecorderClient.connect(id, { dir });
+        await client.subscribe(
+            (event) => {
+                const params = event.params as { step: string; unit: string; message?: string };
+
+                if (params.unit === "steps" && (params.message === "running" || params.message === "done")) {
+                    steps.push(`${params.step} ${params.message}`);
+                }
+            },
+            ["progress"]
+        );
+        return { steps, client };
+    }
+
+    test("characterization (finish): captures, then frames, then manifest; a later stop names the same job, or waits for its answer", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-finish-"));
+        const recorder = new PieceRecorder();
+        recorder.folder = join(root, "rec");
+        const liveDir = join(root, "live");
+        const recording = await startRecording({ recorder, folder: recorder.folder, liveDir, pieceSec: 0.2 });
+        expect(await waitForPath(liveSocketPath(liveDir, recording.id), { timeoutMs: 3_000 })).toBe(true);
+        const { steps, client } = await finalizeSteps(recording.id, liveDir);
+        // Over the socket: its answer comes after the progress events, in the same stream.
+        const answer = await client.stop();
+        // Later stops get the same job: without waiting its id, waiting its answer.
+        const early = await recording.stop({ wait: false });
+        const again = await recording.stop();
+        const jobs = await recording.listJobs();
+        client.close();
+
+        expect(early).toEqual({ state: "stopping", job: answer.job });
+        expect(answer).toEqual({
+            state: "stopped",
+            outcome: "done",
+            job: expect.any(String),
+            frames: readdirSync(join(recording.folder, "frames")).length,
+            notes: [],
+        });
+        expect(again).toEqual(answer);
+        expect(jobs).toMatchObject([{ id: early.job, kind: "finalize", state: "done" }]);
+        expect(steps).toEqual([
+            "captures running",
+            "captures done",
+            "frames running",
+            "frames done",
+            "manifest running",
+            "manifest done",
+        ]);
+        expect(listLiveRecordings(liveDir)).toEqual([]);
+    });
+
+    test("characterization (finish): a failed frames step fails the stop, skips the manifest and still closes the socket", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-finish-fail-"));
+        const recorder = new PieceRecorder();
+        recorder.folder = join(root, "rec");
+        const liveDir = join(root, "live");
+        const recording = await startRecording({
+            recorder,
+            folder: recorder.folder,
+            liveDir,
+            pieceSec: 0.2,
+            frames: { format: "jpeg", jpegQuality: 0.6, naming: "elapsed", flush: "finish" },
+            deps: {
+                convert: async () => {
+                    throw new Error("sips failed: disk full");
+                },
+            },
+        });
+        expect(await waitForPath(liveSocketPath(liveDir, recording.id), { timeoutMs: 3_000 })).toBe(true);
+        const { steps, client } = await finalizeSteps(recording.id, liveDir);
+        const failed = await client.stop().catch((error: unknown) => error);
+        const jobs = await recording.listJobs();
+        client.close();
+
+        expect(failed).toBeInstanceOf(Error);
+        expect((failed as Error).message).toContain("disk full");
+        expect(jobs).toMatchObject([
+            { kind: "finalize", state: "failed", error: expect.stringContaining("disk full") },
+        ]);
+        expect(steps).toEqual(["captures running", "captures done", "frames running"]);
+        expect(listLiveRecordings(liveDir)).toEqual([]);
+    });
 });
 
 describe("frame output", () => {
