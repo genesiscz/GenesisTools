@@ -24,9 +24,22 @@ request that has its own budget (120 s), not the turn's; after a timeout kill or
 preloads them again, and reset, exit and the end of a `run` dispose them. Each worker gets a private scratch
 folder for its toolsets, removed when the worker stops.
 
-The `js` description lists every loaded toolset with its one-line API, generated from the descriptor. Inside a
-turn, `help()` lists them and `help("computer")` prints the full API with every signature; `await show(x)` returns
+The registry also includes `meetings` (open, evidence, transcript, items.add), `control` (the native control API),
+`browser` (CDP tabs, open, navigate, evaluate), `hub` (prs, pr), and `github` (review threads).
+Each lives in one toolset file and has one registry entry. Browser calls take the browser's CDP `port` explicitly.
+
+The `js` description gives one summary line per loaded toolset. Inside a turn, `search("display")` finds methods
+by name, description, and parameter schema; `describe("recorder.start")` prints the full method descriptor.
+`describe()` accepts both the qualified handle names from search, such as `recorder.Recording.displays.switch`,
+and the names from help, such as `recording.displays.switch`.
+`help()` lists toolsets and `help("computer")` prints the full API with every signature; `await show(x)` returns
 an image to the model (a path, a Buffer or Uint8Array, `{ path }` or `{ bytes, mimeType }`, or an array of them). The MIME hint is ignored; image bytes must identify a PNG, JPEG, GIF or WebP.
+Recordings started in a turn belong to the parent engine. A turn timeout loses bindings but leaves those
+recordings running: use `await recorder.list()` and `await recorder.attach(id)` in the next turn.
+`js_reset`, normal server shutdown, and the end of `run` stop owned recordings and await their post-processing.
+Library recordings use the same Vision OCR function as meetings when OCR is enabled, writing a JSON sidecar
+beside each kept frame whose text meets `minChars`.
+
 `await sleep(ms)` waits inside a turn. The whole recorder and editor flow, live:
 `bun src/node-repl/scripts/recorder-editor-demo.ts --out <folder> [--mic]`.
 For an experiment, an entry may also be `/abs/module.ts#ExportName`, a `ReplToolset` class outside the table.
