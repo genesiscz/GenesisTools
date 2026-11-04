@@ -525,6 +525,11 @@ describe("edit project (edit.json)", () => {
         const scored = applyOp(applyOp(project, { op: "music", file: song }), { op: "music", duck: 0 });
         expect(scored.audio.music).toEqual({ file: song, volume: 0.25, duck: 0, fadeMs: 1500 });
         expect(applyOp(scored, { op: "music", enabled: false }).audio.music).toBeUndefined();
+        expect(applyOp(scored, { op: "music", startMs: 12_000, loop: false }).audio.music).toMatchObject({
+            startMs: 12_000,
+            loop: false,
+            duck: 0,
+        });
         // Shapes: an arrow in source space with its defaults, a point-sized one refused, unshape removes it.
         const pointed = applyOp(project, {
             op: "shape",

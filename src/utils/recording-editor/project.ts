@@ -226,6 +226,10 @@ export const musicSchema = z.object({
     volume: z.number().min(0).max(1).default(0.25),
     duck: z.number().min(0).max(1).default(0.6),
     fadeMs: z.number().int().min(0).max(10_000).default(1500),
+    /** Where in the file the music starts, in ms; absent is its beginning. */
+    startMs: z.number().int().min(0).optional(),
+    /** false plays the file once (from startMs) and then stops; absent loops it to the movie's length. */
+    loop: z.boolean().optional(),
 });
 
 /** The look of the zoom's moves: `blur` 0 (sharp) to 1 smears the picture along a pan or a zoom, 0.5 by default. */
@@ -791,6 +795,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
             volume: z.number().min(0).max(1).optional(),
             duck: z.number().min(0).max(1).optional(),
             fadeMs: z.number().int().min(0).max(10_000).optional(),
+            /** Where in the file it starts, in ms (0). */
+            startMs: z.number().int().min(0).optional(),
+            /** false plays the file once; true (default) loops it. */
+            loop: z.boolean().optional(),
             /** false removes the music. */
             enabled: z.boolean().optional(),
         })

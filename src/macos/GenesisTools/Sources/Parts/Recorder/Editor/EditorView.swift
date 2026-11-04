@@ -1075,6 +1075,9 @@ private struct AudioInspector: View {
 /// Music under the movie: a file, its level and how far it dips under speech.
 private struct MusicSection: View {
     @Bindable var model: EditorModel
+    /// The chosen file's length in seconds, read once per file, for the "Starts at" slider.
+    @State private var fileSeconds: Double?
+    @State private var preview: AVAudioPlayer?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1089,9 +1092,44 @@ private struct MusicSection: View {
                         .lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .instantTooltip(missing ? "\(music.file) is gone; the export plays without music. Choose the file again below." : music.file)
-                    IconButton(systemName: "trash", tooltip: "Remove the music") { model.setAudio { $0.music = nil } }
-                        .accessibilityIdentifier("recorder.audio.music.remove")
+                    if !missing {
+                        IconButton(systemName: preview?.isPlaying == true ? "stop.fill" : "play.fill",
+                                   tooltip: preview?.isPlaying == true ? "Stop the preview" : "Play the music alone from where it starts") {
+                            togglePreview(music)
+                        }
+                        .accessibilityIdentifier("recorder.audio.music.preview")
+                    }
+                    IconButton(systemName: "trash", tooltip: "Remove the music") {
+                        stopPreview()
+                        model.setAudio { $0.music = nil }
+                    }
+                    .accessibilityIdentifier("recorder.audio.music.remove")
                 }
+                .task(id: music.file) {
+                    fileSeconds = nil
+                    stopPreview()
+                    guard !missing, let duration = try? await AVURLAsset(url: URL(fileURLWithPath: music.file)).load(.duration) else { return }
+                    fileSeconds = duration.seconds.isFinite ? duration.seconds : nil
+                }
+                if let fileSeconds, fileSeconds > 1 {
+                    let start = Double(music.startMs ?? 0) / 1000
+                    SectionLabel(text: "Starts at", value: formatClock(Int64(start * 1_000_000)) + " of " + formatClock(Int64(fileSeconds * 1_000_000)))
+                    Slider(value: Binding(get: { min(start, fileSeconds - 0.5) }, set: { value in
+                        model.setMusic { $0.startMs = value < 0.25 ? nil : Int((value * 2).rounded() * 500) }
+                    }), in: 0...max(0.5, fileSeconds - 0.5))
+                        .accessibilityLabel("Where in the music file it starts")
+                        .instantTooltip("Skip an intro: the movie's music begins this far into the file")
+                }
+                SwitchRow("Loop to the movie's length", isOn: Binding(get: { music.loop != false }, set: { on in
+                    model.setMusic { $0.loop = on ? nil : false }
+                }))
+                .accessibilityIdentifier("recorder.audio.music.loop")
+                .instantTooltip("Off plays the file once, then the movie goes on without music")
+                SectionLabel(text: "Fade in and out")
+                GenSegmentedTabs("Fade", items: [.init(0, "Off"), .init(500, "0.5 s"), .init(1500, "1.5 s"), .init(3000, "3 s")],
+                                 selection: Binding(get: { [0, 500, 1500, 3000].min { abs($0 - music.fadeMs) < abs($1 - music.fadeMs) } ?? 1500 },
+                                                    set: { value in model.setMusic { $0.fadeMs = value } }),
+                                 minSegmentWidth: 50, identifier: "recorder.audio.music.fade", fillsWidth: true)
                 SectionLabel(text: "Music volume", value: "\(Int((music.volume * 100).rounded()))%")
                 Slider(value: Binding(get: { music.volume }, set: { value in model.setMusic { $0.volume = (value * 20).rounded() / 20 } }), in: 0...1)
                     .accessibilityLabel("Music volume")
@@ -1110,6 +1148,32 @@ private struct MusicSection: View {
             }
             .accessibilityIdentifier("recorder.audio.music.choose")
         }
+        .onDisappear { stopPreview() }
+    }
+
+    /// Plays the file alone at the music volume from its start, or stops it.
+    private func togglePreview(_ music: EditProject.Music) {
+        if preview?.isPlaying == true {
+            stopPreview()
+            return
+        }
+
+        do {
+            let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: music.file))
+            player.volume = Float(max(0.2, music.volume))
+            player.currentTime = Double(music.startMs ?? 0) / 1000
+            player.play()
+            preview = player
+        } catch {
+            HubPerf.log("recorder.music.preview failed for \(music.file): \(error.localizedDescription)")
+            model.notice = "The music file could not be played: \(error.localizedDescription)"
+            model.noticeIsError = true
+        }
+    }
+
+    private func stopPreview() {
+        preview?.stop()
+        preview = nil
     }
 }
 

@@ -310,14 +310,22 @@ enum MusicMix {
         let available = try await source.load(.timeRange)
         guard available.duration > .zero else { return nil }
         let length = EditRenderer.us(lengthUs)
+        // The first pass starts at startMs (kept 0.5 s before the file's end); a loop goes on from the beginning.
+        let skip = CMTimeMinimum(EditRenderer.us(Int64(music.startMs ?? 0) * 1000),
+                                 CMTimeMaximum(.zero, available.duration - CMTime(value: 1, timescale: 2)))
+        var range = CMTimeRange(start: available.start + skip, duration: available.duration - skip)
         var at = CMTime.zero
         while at < length {
-            let piece = CMTimeMinimum(available.duration, length - at)
-            try out.insertTimeRange(CMTimeRange(start: available.start, duration: piece), of: source, at: at)
+            let piece = CMTimeMinimum(range.duration, length - at)
+            try out.insertTimeRange(CMTimeRange(start: range.start, duration: piece), of: source, at: at)
             at = at + piece
+            if music.loop == false { break }
+            range = available
         }
+        // Played once, the music fades out at its own end.
+        let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
         let speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
-        let frames = keyframes(music: music, speech: speech, lengthUs: lengthUs)
+        let frames = keyframes(music: music, speech: speech, lengthUs: playedUs)
         let parameters = AVMutableAudioMixInputParameters(track: out)
         for (start, end) in zip(frames, frames.dropFirst()) where end.us > start.us {
             parameters.setVolumeRamp(fromStartVolume: Float(start.volume), toEndVolume: Float(end.volume),

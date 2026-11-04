@@ -100,6 +100,10 @@ struct EditProject: Codable, Equatable {
         /// How much quieter under speech: 0.6 drops it to 40 %.
         var duck = 0.6
         var fadeMs = 1500
+        /// Where in the file it starts; nil is its beginning.
+        var startMs: Int?
+        /// false plays the file once; nil loops it to the movie's length.
+        var loop: Bool?
     }
 
     struct Clicks: Codable, Equatable {
