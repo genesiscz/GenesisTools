@@ -7,6 +7,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
+import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { EFFECT_KINDS } from "@genesiscz/utils/recording-editor/lanes";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
@@ -48,6 +49,7 @@ import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
+import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
 import {
     collapseUndo,
     defaultExportName,
@@ -78,7 +80,12 @@ import { findOnScreen, type ScreenHit } from "./screen-search";
 
 const { log } = logger.scoped("recorder-toolset");
 
-const START_TIMEOUT_MS = 20_000;
+/**
+ * How long record() waits for the recording to run. A fresh checkout compiles ax-tool first (30 to 60 s, measured
+ * 2026-11-05 in a new worktree), as GenesisKit's picker allows for with its own 120 s; a 20 s wait gave up while the
+ * child went on and then recorded with no one to stop it.
+ */
+const START_TIMEOUT_MS = 120_000;
 const FINISH_TIMEOUT_MS = 120_000;
 const POLL_MS = 250;
 
@@ -109,6 +116,30 @@ const recordSchema = z
         controls: z.boolean().optional(),
         /** The red border around what is recorded (never in the movie). */
         indicator: z.boolean().optional(),
+        /** Records the camera beside the screen (camera.mov); the recorder face records it, the edit draws the bubble. */
+        camera: z.boolean().optional(),
+    })
+    .strict();
+
+const demoParamsSchema = z
+    .object({
+        title: z.string().optional(),
+        record: recordSchema.optional(),
+        steps: z
+            .array(
+                z.object({
+                    caption: z.string().trim().min(1).max(200),
+                    run: z
+                        .custom<() => unknown>((value) => typeof value === "function", "run must be a function")
+                        .optional(),
+                    holdSeconds: z.number().min(0).max(60).optional(),
+                })
+            )
+            .min(1),
+        edit: demoEditSchema.partial().optional(),
+        settleSeconds: z.number().min(0).max(30).optional(),
+        holdSeconds: z.number().min(0).max(60).optional(),
+        export: z.boolean().optional(),
     })
     .strict();
 
@@ -906,6 +937,15 @@ export const moviesApi = defineApi({
             result: z.unknown(),
             resultName: "MovieRecording",
             doc: "Starts a movie recording of the main display (or display, app, window) in its own process.",
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "demo",
+            params: demoParamsSchema,
+            result: z.unknown(),
+            resultName:
+                "{ movie: Movie, folder, steps: { caption, startMs, endMs }[], failed, ops, sourceSeconds, exported? }",
+            doc: 'One call gives a finished demo: records the screen (record: the options of record()), runs each step ({ caption, run: async () => …, holdSeconds? }) between a marker at its start and a hold after it (holdSeconds, 1: the result stays on screen and is never cut), stops, cuts the waiting (still, silent stretches while the code of a step runs, and the time before the first and after the last step), adds the caption of each step while it plays, and exports (export: false skips it). A step that throws is listed in failed and the next one runs. edit takes cutIdle (true), idleMinSeconds (1), cutWaits (true), minWaitSeconds (0.8), keepSeconds (0.3), leadSeconds (0.5), tailSeconds (1), captions (true), captionPosition "bottom" | "top", captionMinSeconds (1.8), markers (true). Save a demo that worked with presets.save(name, script) to run it again.',
             effect: "reversible",
         }),
     ],
@@ -1882,6 +1922,10 @@ async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContex
         args.push("--no-indicator");
     }
 
+    if (options.camera) {
+        args.push("--camera");
+    }
+
     log.info({ args }, "movie recording requested");
     spawnToolDetached(args, { reparent: true });
     const deadline = Date.now() + START_TIMEOUT_MS;
@@ -1899,8 +1943,68 @@ async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContex
     }
 
     throw new Error(
-        `the recording did not start within ${START_TIMEOUT_MS / 1000} s; run ${toolCommand("genesis-tools logs failures")} or ${toolCommand("recorder start")} in a terminal to see why`
+        `the recording did not start within ${START_TIMEOUT_MS / 1000} s; if it starts later, end it with ${toolCommand("recorder stop")}; run ${toolCommand("genesis-tools logs failures")} or ${toolCommand("recorder start")} in a terminal to see why`
     );
+}
+
+const markerAnswer = z.object({ atMs: z.number() });
+
+/** The demo driver on a real movie recording: `tools recorder start` in its own process, the edit, the export. */
+export function movieDemoDriver(options: z.infer<typeof recordSchema>, ctx?: ToolsetContext): DemoDriver {
+    return {
+        async start() {
+            const recording = await record(options, ctx);
+            return {
+                mark: async (label: string) => markerAnswer.parse(await recording.mark(label)),
+                stop: async () => {
+                    await recording.stop();
+
+                    if (!recording.folder) {
+                        throw new Error(`the recording ${recording.id} names no folder`);
+                    }
+
+                    return recording.folder;
+                },
+            };
+        },
+        async durationMs(folder) {
+            return (await openProject(folder)).project.source.durationUs / 1000;
+        },
+        async idleMs(folder, minMs) {
+            const { project } = await openProject(folder);
+            const ranges = await findIdle({
+                video: project.source.video,
+                durationUs: project.source.durationUs,
+                minUs: minMs * 1000,
+                keepUs: 0,
+            });
+            return ranges.map(([from, to]): [number, number] => [from / 1000, to / 1000]);
+        },
+        async edit(folder, ops) {
+            await editProject(folder, ops);
+        },
+        async exportMovie(folder) {
+            const answer = await new Movie(folder, ctx).export();
+            return { path: answer.path, outputSeconds: answer.outputSeconds };
+        },
+        sleep: (ms) => Bun.sleep(ms),
+        now: () => Date.now(),
+    };
+}
+
+/** `movies.demo()`: the REPL door of runDemo, with the Movie of the result to keep editing. */
+async function recordDemo(options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }, ctx?: ToolsetContext) {
+    const parsed = demoParamsSchema.parse(options);
+    const recordOptions = { ...parsed.record, ...(parsed.title ? { title: parsed.title } : {}) };
+    const result = await runDemo({
+        steps: options.steps,
+        driver: movieDemoDriver(recordOptions, ctx),
+        edit: parsed.edit,
+        settleSeconds: parsed.settleSeconds,
+        holdSeconds: parsed.holdSeconds,
+        export: parsed.export,
+    });
+    return { movie: new Movie(result.folder, ctx), ...result };
 }
 
 export class MoviesToolset extends ReplToolset {
@@ -1912,6 +2016,7 @@ export class MoviesToolset extends ReplToolset {
                 list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
                 open: (recording: string) => new Movie(recording, ctx),
                 record: (options: z.infer<typeof recordSchema> = {}) => record(options, ctx),
+                demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
                 search: (text: string) => searchLibrary(text),
             },
         };
