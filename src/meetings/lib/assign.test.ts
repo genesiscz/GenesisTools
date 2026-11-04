@@ -10,7 +10,7 @@ import {
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { type AssignDeps, assignSweep, buildQuestion, readAnswer, viewProposals } from "./assign";
+import { type AssignDeps, assignSweep, buildQuestion, markAssignStart, readAnswer, viewProposals } from "./assign";
 import type { AskAnswer, AssignInbox, CreateAskFormInput, InboxAnswer } from "./assign-inbox";
 
 const ALICE = { name: "Alice Novak", email: "alice@example.com" };
@@ -50,9 +50,16 @@ class MemoryInbox implements AssignInbox {
 
 let n = 0;
 
-function setup(options: { folders?: string[]; entries?: CalendarEntry[]; apple?: CalendarLookup } = {}) {
+function setup(
+    options: { folders?: string[]; entries?: CalendarEntry[]; apple?: CalendarLookup; mark?: boolean } = {}
+) {
     n += 1;
     const store = new MeetingStore(new Storage(`meetings-assign-${process.pid}-${n}`));
+
+    if (options.mark !== false) {
+        markAssignStart(store, new Date("2026-11-04T00:00:00.000Z"));
+    }
+
     const config = new MeetingsConfigStore(new Storage(`meetings-assign-config-${process.pid}-${n}`));
     const inbox = new MemoryInbox();
     const state = { folders: options.folders ?? [], now: Date.parse("2026-11-04T18:00:00.000Z") };
@@ -310,6 +317,18 @@ describe("ask each time", () => {
         expect(Object.keys(read.projects)).toEqual(["side"]);
         expect(read.sources.wisprflow.match.side?.folders).toEqual(["Side"]);
         expect(store.read(meeting.id)?.assign?.folder).toBeUndefined();
+    });
+
+    test("the first sweep marks its start and asks only about meetings that end after it", async () => {
+        const { store, inbox, deps, create, state } = setup({ mark: false });
+        await create("Old", "2026-11-04T14:00:00.000Z");
+
+        expect((await assignSweep(store, deps)).asked).toEqual([]);
+        state.now = Date.parse("2026-11-04T19:00:00.000Z");
+        const fresh = await create("Fresh", "2026-11-04T18:20:00.000Z");
+
+        expect((await assignSweep(store, deps)).asked).toEqual([fresh.id]);
+        expect(inbox.posted).toHaveLength(1);
     });
 
     test("readAnswer: no project, a known one picked, labels from choices and text", () => {

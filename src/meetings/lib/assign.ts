@@ -40,13 +40,17 @@ const ENTRY_LOOKBEHIND_MS = 3 * 3_600_000;
 const OPEN_FILE = "assign-open.json";
 
 /**
- * The meetings with an open assign step, so the watcher reads only those records: a question to read back (`ask`), a
- * meeting waiting to show up in a source folder (`folder-wait`), or a folder question (`folder-ask`).
+ * The sweep's own state. `since`: when the first sweep ran; the watcher asks only about meetings that ended after it,
+ * so switching the feature on does not post a question for every older meeting at once (`assign ask` still does).
+ * `open`: the meetings with an open step, so the watcher reads only those records: a question to read back (`ask`),
+ * a meeting waiting to show up in a source folder (`folder-wait`), or a folder question (`folder-ask`).
  */
 const openSchema = z.object({
+    since: z.string().optional(),
     open: z.record(z.string(), z.enum(["ask", "folder-wait", "folder-ask"])).default({}),
 });
-type OpenSteps = z.infer<typeof openSchema>["open"];
+type SweepState = z.infer<typeof openSchema>;
+type OpenSteps = SweepState["open"];
 
 /** What the assign flow reaches outside the meeting store: the inbox, the calendars, the source, the clock. */
 export interface AssignDeps {
@@ -169,7 +173,7 @@ export function buildQuestion(view: AssignView, config: MeetingsConfig): CreateA
                 `${i + 1}. **${proposal.project}** (${proposal.score}): ${proposal.reasons.map(reasonText).join("; ")}`
         ),
         ...view.calendarNotes.map((note) => `> ${note}`),
-        ...folderLines(view, config),
+        ...folderLines(view),
         "",
         "Pick one, or write another known project or a new project's name in the text field.",
     ];
@@ -243,7 +247,7 @@ export function buildQuestion(view: AssignView, config: MeetingsConfig): CreateA
     };
 }
 
-function folderLines(view: AssignView, config: MeetingsConfig): string[] {
+function folderLines(view: AssignView): string[] {
     const advice = view.proposals.folder;
 
     if (advice?.kind !== "move" || !view.folderWrite) {
@@ -253,13 +257,12 @@ function folderLines(view: AssignView, config: MeetingsConfig): string[] {
     const targets = advice.folders.map(({ project, folders }) =>
         folders.length > 0 ? `${project} → "${folders.join('", "')}"` : `${project} → no folder yet (create one)`
     );
-    const all = Object.keys(config.projects).length;
     return [
         "",
         `**${advice.source} folder:** the meeting is in no folder. ${view.folderWrite.reason}, so move it yourself: ` +
             `${view.folderWrite.manualStep}.`,
         ...(targets.length > 0 ? [`Folders of the proposed projects: ${targets.join("; ")}.`] : []),
-        `The next sync sees the folder and asks to pair it with the project (${all} known projects).`,
+        "The next sync sees the meeting in a folder and asks to pair that folder with the project.",
     ];
 }
 
@@ -296,37 +299,50 @@ export function readAnswer(answers: Record<string, AskAnswer>): AssignAnswer {
     };
 }
 
-function readOpen(store: MeetingStore): OpenSteps {
+function readState(store: MeetingStore): SweepState {
     const path = join(store.root, OPEN_FILE);
 
     if (!existsSync(path)) {
-        return {};
+        return { open: {} };
     }
 
     const parsed = openSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8")));
 
     if (!parsed.success) {
         log.warn({ path, issues: parsed.error.issues.length }, "assign-open.json unreadable; starting empty");
-        return {};
+        return { open: {} };
     }
 
-    return parsed.data.open;
+    return parsed.data;
 }
 
-function writeOpen(store: MeetingStore, open: OpenSteps): void {
-    atomicWriteFileSync(join(store.root, OPEN_FILE), SafeJSON.stringify({ open }, null, 2));
+function writeState(store: MeetingStore, state: SweepState): void {
+    atomicWriteFileSync(join(store.root, OPEN_FILE), SafeJSON.stringify(state, null, 2));
 }
 
 function setOpen(store: MeetingStore, meetingId: string, step: OpenSteps[string] | undefined): void {
-    const open = readOpen(store);
+    const state = readState(store);
 
     if (step) {
-        open[meetingId] = step;
+        state.open[meetingId] = step;
     } else {
-        delete open[meetingId];
+        delete state.open[meetingId];
     }
 
-    writeOpen(store, open);
+    writeState(store, state);
+}
+
+/** Sets when "ask each time" started; the watcher asks only about meetings that end after it. Returns the mark. */
+export function markAssignStart(store: MeetingStore, at: Date): string {
+    const state = readState(store);
+    state.since = at.toISOString();
+    writeState(store, state);
+    return state.since;
+}
+
+/** When the meeting ended: its end, the recording's stop, or its start. */
+function endedAt(record: MeetingRecord): number {
+    return Date.parse(record.end ?? record.recording?.stoppedAt ?? record.start);
 }
 
 /** Why a meeting is not asked about now; undefined when it should be. */
@@ -730,13 +746,13 @@ export interface SweepResult {
 
 /**
  * One pass of "ask each time": read back every open question and folder step, then ask about each recent meeting
- * that ended with no project. Runs on each watcher look and as `tools meetings assign sweep`. Never throws for one
+ * that ended with no project after the first sweep ran (`markAssignStart`). Runs on each watcher look and as `tools meetings assign sweep`. Never throws for one
  * meeting: a failure is logged and the next look tries again.
  */
 export async function assignSweep(store: MeetingStore, deps: AssignDeps = defaultAssignDeps()): Promise<SweepResult> {
     const result: SweepResult = { asked: [], advanced: [] };
 
-    for (const [meetingId, step] of Object.entries(readOpen(store))) {
+    for (const [meetingId, step] of Object.entries(readState(store).open)) {
         try {
             const outcome = await advance(store, meetingId, step, deps);
 
@@ -755,11 +771,12 @@ export async function assignSweep(store: MeetingStore, deps: AssignDeps = defaul
     }
 
     const now = deps.now();
+    const since = Date.parse(readState(store).since ?? markAssignStart(store, new Date(now)));
 
     for (const id of recentMeetingIds(store, now - config.global.assign.lookbackHours * 3_600_000)) {
         const record = store.read(id);
 
-        if (!record || skipReason(record, store, now)) {
+        if (!record || endedAt(record) < since || skipReason(record, store, now)) {
             continue;
         }
 
