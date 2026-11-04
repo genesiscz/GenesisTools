@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { MobileProject } from "@genesiscz/utils/mobile/project";
+import { type MobileProject, resolveRoute } from "@genesiscz/utils/mobile/project";
 import { Command } from "commander";
 import { registerUp } from "../commands/up";
 import { builtAppPath } from "./build";
@@ -8,7 +8,7 @@ import { stamp } from "./paths";
 import { chooseDevice, choosePlatform, PLATFORMS } from "./platforms";
 import { mergeAndroidDevices } from "./platforms/android";
 import { clockBuildNumber, releasePlan } from "./release";
-import { resolveRoute, selectRoutes } from "./routes";
+import { selectRoutes } from "./routes";
 import { chooseDeviceType, chooseRuntime, fitsWidth, simulatorNameFor } from "./simulator-fit";
 
 describe("build staleness", () => {

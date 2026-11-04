@@ -149,3 +149,8 @@ export function mobileAppiumStartCommand(udid: string): string {
 export function mobileBuildCommand(): string {
     return toolCommand("mobile build");
 }
+
+/** Lists a mobile project's screens and their deep links. */
+export function mobileRoutesCommand(): string {
+    return toolCommand("mobile routes");
+}

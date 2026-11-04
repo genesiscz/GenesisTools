@@ -3,12 +3,11 @@ import { dirname, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
-import { projectRoutes } from "@genesiscz/utils/mobile/project";
 import type { Command } from "commander";
 import { chooseDevice, choosePlatform, PLATFORM_IDS, PLATFORMS } from "../lib/platforms";
 import type { MobileDevice } from "../lib/platforms/types";
 import { loadOptionalProject, loadProject, type ProjectOptions, withConfig } from "../lib/project";
-import { resolveRoute } from "../lib/routes";
+import { projectRoute } from "../lib/routes";
 
 interface DeviceOptions extends ProjectOptions {
     platform?: string;
@@ -155,7 +154,7 @@ export function registerDevices(program: Command): void {
             .description("Open a route name or a URL with the platform's own link handling (no Appium)")
     ).action(async (link: string, options: DeviceOptions) => {
         const { project, platform, device, app } = await appTarget(options);
-        const route = resolveRoute(projectRoutes(project), link);
+        const route = projectRoute(project, link);
         await platform.openUrl(device, route.url, /^https?:\/\//i.test(link) ? undefined : app);
         ui.ok(`opened ${route.url} on ${device.name}`);
     });
