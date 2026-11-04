@@ -115,6 +115,11 @@ export function notifyAuthorizeCommand(): string {
     return toolCommand("notify authorize");
 }
 
+/** Sets the APNs team id, key id and key file the phone channel signs its pushes with. */
+export function notifyPhoneApnsCommand(): string {
+    return toolCommand("notify phone apns");
+}
+
 /** Writes the repository's git config, where the main PR branch is declared. */
 export function gitConfigInitCommand(): string {
     return toolCommand("git config init");

@@ -19,7 +19,7 @@
  *   bun scripts/benchmarks/meetings-ocr/bench.ts [--runs 3] [--meeting <folder>] [--scratch <dir>] [--baseline] [--compare] [--json]
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { type BaselineMetrics, withSpawnCounter } from "@app/benchmark/lib";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -27,13 +27,14 @@ import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import { captureSync, listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { finishBench, median, parseBenchArgs, summarize } from "../fs/shared";
 
 const BASELINE_NAME = "meetings-ocr";
 const EVERY_NTH = 13;
 const MAX_FRAMES = 40;
-const DEFAULT_MEETING = join(homedir(), ".genesis-tools", "meetings", "2026-11-04_16-32-meeting");
-const DEFAULT_SCRATCH = "/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/w1/ocr-frames";
+const DEFAULT_MEETING = genesisToolsDir("meetings", "2026-11-04_16-32-meeting");
+const DEFAULT_SCRATCH = join(tmpdir(), "meetings-ocr-bench", "frames");
 /** The recorder's default OCR languages (`languageSettings(meetingsConfigSchema.parse({})).ocr`), fixed here so the numbers do not move with a config change. */
 const LANGUAGES = ["en-US"];
 /** A line that only shows a time: a menu bar clock, a call timer, a "16:31" next to a chat row. */

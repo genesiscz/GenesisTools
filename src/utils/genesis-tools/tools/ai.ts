@@ -137,6 +137,11 @@ export function claudeLoginLongCommand(account: string): string {
     return `${toolCommand("claude login-long")} ${account}`;
 }
 
+/** The Codex worker tool itself, for a line that names a worker it runs. */
+export function codexCommand(): string {
+    return toolCommand("codex");
+}
+
 /** Logs a Codex account in with a managed grant. */
 export function codexLoginCommand(account = "<account>"): string {
     return `${toolCommand("codex login")} ${account}`;

@@ -1,6 +1,7 @@
 import { createPrivateKey, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { connect } from "node:http2";
+import { notifyPhoneApnsCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
@@ -64,7 +65,7 @@ export function apnsJwt(
 
 function providerToken(apns: PhoneApnsConfig | undefined, now = Date.now()): string | { missing: string } {
     if (!apns?.teamId || !apns.keyId || !apns.keyPath) {
-        return { missing: "the APNs team id, key id or key file is not set (tools notify phone apns)" };
+        return { missing: `the APNs team id, key id or key file is not set (${notifyPhoneApnsCommand()})` };
     }
 
     const cacheKey = `${apns.teamId}:${apns.keyId}:${apns.keyPath}`;
