@@ -78,4 +78,49 @@ export const devDashboardApp: MobileApp = {
 
         return [...tabRoutes, ...moreRoutes, ...rootRoutes];
     },
+    // An iPhone 17 / 18 Pro: the width the screens are designed at.
+    defaultWidth: 402,
+    metro: { defaultPort: 8081 },
+    buildInputs: {
+        native: [
+            "app.json",
+            "app.config.ts",
+            "package.json",
+            "patches/*.patch",
+            "ios/Podfile",
+            "ios/Podfile.lock",
+            "ios/Podfile.properties.json",
+            "ios/DevDashboard/**/*.{swift,m,mm,h,plist,entitlements}",
+            "ios/DevDashboard.xcodeproj/project.pbxproj",
+        ],
+        js: ["src/**/*.{ts,tsx,js,json}", "assets/**/*", "tailwind.config.js", "babel.config.js", "metro.config.js"],
+    },
+    firstRun: {
+        // The QR scanner asks for the camera, the needs-input alerts for notifications; the LAN discovery's local
+        // network prompt has no grant anywhere and is answered by the alert watcher.
+        privacy: [],
+        idbApprove: ["camera", "notification"],
+        scheme: SCHEME,
+        defaults: [],
+    },
+    e2e: {
+        config: "e2e/wdio.conf.ts",
+        specsDir: "e2e/specs",
+        suites: {
+            flows: ["pairing.flow", "answer-queue.flow", "agents.flow", "terminal.flow"],
+            screens: ["screens.tour"],
+        },
+        resultsFile: "results.jsonl",
+        env: (context) => ({
+            DD_SIM_UDID: context.udid,
+            DD_SIM_DEVICE: context.deviceName,
+            DD_SIM_OS: context.osVersion,
+            DD_APPIUM_PORT: String(context.appiumPort),
+            DD_WDA_PORT: String(context.wdaPort),
+            DD_BUNDLE_ID: context.bundleId,
+            DD_RUN_DIR: context.runDir,
+            DD_TOUR_DIR: join(context.runDir, "tour"),
+            ...(context.agentUrl ? { DD_TEST_AGENT: context.agentUrl } : {}),
+        }),
+    },
 };

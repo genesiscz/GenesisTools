@@ -2,9 +2,19 @@ import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { installApp } from "@genesiscz/utils/mobile/simulator";
-import type { MobileApp } from "./types";
+import { fingerprintBuild, saveFingerprint } from "./fingerprint";
+import type { IosBuild, MobileApp } from "./types";
 
 const log = logger.child({ component: "mobile.build" });
+
+export function defaultDerivedData(appDir: string): string {
+    return join(appDir, "ios", "build");
+}
+
+/** Where xcodebuild leaves the simulator `.app` for one configuration. */
+export function builtAppPath(app: MobileApp, derivedData: string, configuration: IosBuild["configuration"]): string {
+    return join(derivedData, "Build", "Products", `${configuration}-iphonesimulator`, `${app.ios.productName}.app`);
+}
 
 export interface BuildResult {
     appPath: string;
@@ -23,10 +33,16 @@ export async function buildAndInstall(options: {
     udid: string;
     logDir: string;
     install?: boolean;
+    /** The DerivedData folder; default `<app>/ios/build`. Give each session its own, so two builds never share one. */
+    derivedData?: string;
+    /** Overrides the adapter's configuration (`up` builds Debug, which loads its JS from Metro). */
+    configuration?: IosBuild["configuration"];
 }): Promise<BuildResult> {
     const { app, appDir, udid, logDir, install = true } = options;
-    const { ios } = app;
-    const derivedData = join(appDir, "ios", "build");
+    const ios = { ...app.ios, configuration: options.configuration ?? app.ios.configuration };
+    const derivedData = options.derivedData ?? defaultDerivedData(appDir);
+    // Taken before the build: a file saved while xcodebuild runs must make the next `up` build again.
+    const fingerprint = fingerprintBuild(app, appDir, ios.configuration);
     const settings = Object.entries(ios.buildSettings ?? {}).map(([key, value]) => `${key}=${value}`);
     const command = [
         "xcodebuild",
@@ -46,7 +62,7 @@ export async function buildAndInstall(options: {
     ];
 
     mkdirSync(logDir, { recursive: true });
-    const logPath = join(logDir, `xcodebuild-${app.id}.log`);
+    const logPath = join(logDir, `xcodebuild-${app.id}-${ios.configuration}.log`);
     const started = performance.now();
     log.debug({ command: command.join(" "), logPath }, "xcodebuild start");
 
@@ -77,17 +93,13 @@ export async function buildAndInstall(options: {
         throw new Error(`xcodebuild failed after ${seconds} s (log ${logPath}):\n${tail}`);
     }
 
-    const appPath = join(
-        derivedData,
-        "Build",
-        "Products",
-        `${ios.configuration}-iphonesimulator`,
-        `${ios.productName}.app`
-    );
+    const appPath = builtAppPath(app, derivedData, ios.configuration);
 
     if (!existsSync(appPath)) {
         throw new Error(`xcodebuild succeeded but ${appPath} is missing; check productName in the ${app.id} adapter`);
     }
+
+    saveFingerprint({ derivedData, configuration: ios.configuration, fingerprint });
 
     if (install) {
         await installApp(udid, appPath);

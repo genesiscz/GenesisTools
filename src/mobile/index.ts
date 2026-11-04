@@ -7,17 +7,34 @@ import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 import { MOBILE_APPS, mobileApp } from "./apps";
+import { registerDevice } from "./commands/device";
+import { registerE2e } from "./commands/e2e";
+import { registerScreens } from "./commands/screens";
+import { registerUp } from "./commands/up";
 import { buildAndInstall } from "./lib/build";
 import { pickSimulator } from "./lib/device";
 import { mobileDoctor } from "./lib/doctor";
-import { runTour, TOUR_DRIVERS } from "./lib/tour";
+import { stamp } from "./lib/paths";
+import { SCREEN_DRIVERS } from "./lib/screen-driver";
+import { runTour } from "./lib/tour";
+import { IOS_CONFIGURATIONS, type IosBuild } from "./lib/types";
 
 const program = new Command()
     .name("mobile")
     .description("Build, install and screenshot the mobile apps of this repo on an iOS simulator (Xcode 27 aware)");
 
-function stamp(): string {
-    return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+function parseConfiguration(value: string | undefined): IosBuild["configuration"] | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    const match = IOS_CONFIGURATIONS.find((name) => name.toLowerCase() === value.toLowerCase());
+
+    if (!match) {
+        throw new Error(`--configuration must be ${IOS_CONFIGURATIONS.join(" or ")}, not "${value}"`);
+    }
+
+    return match;
 }
 
 program
@@ -98,20 +115,29 @@ program
     .description("Build the app with xcodebuild for one simulator and install it (Expo run:ios fails on DeviceHub)")
     .option("--udid <udid>", "the simulator; default: the only booted one")
     .option("--no-install", "build only")
-    .action(async (id: string, options: { udid?: string; install: boolean }) => {
-        const app = mobileApp(id);
-        const device = await pickSimulator(options.udid);
-        ui.info(`building ${app.title} for ${device.name} (${device.udid}); this takes minutes`);
-        const result = await buildAndInstall({
-            app,
-            appDir: app.locate(),
-            udid: device.udid,
-            logDir: toolDataDir("mobile", "builds"),
-            install: options.install,
-        });
-        ui.ok(`built in ${result.seconds} s: ${result.appPath}${options.install ? " (installed)" : ""}`);
-        ui.dim(`log: ${result.logPath}`);
-    });
+    .option("--derived-data <dir>", "the DerivedData folder; default <app>/ios/build (give each session its own)")
+    .option("--configuration <name>", "Debug (loads JS from Metro) or Release (JS inside the app); default: the app's")
+    .action(
+        async (
+            id: string,
+            options: { udid?: string; install: boolean; derivedData?: string; configuration?: string }
+        ) => {
+            const app = mobileApp(id);
+            const device = await pickSimulator(options.udid, { booted: options.install });
+            ui.info(`building ${app.title} for ${device.name} (${device.udid}); this takes minutes`);
+            const result = await buildAndInstall({
+                app,
+                appDir: app.locate(),
+                udid: device.udid,
+                logDir: toolDataDir("mobile", "builds"),
+                install: options.install,
+                derivedData: options.derivedData,
+                configuration: parseConfiguration(options.configuration),
+            });
+            ui.ok(`built in ${result.seconds} s: ${result.appPath}${options.install ? " (installed)" : ""}`);
+            ui.dim(`log: ${result.logPath}`);
+        }
+    );
 
 program
     .command("tour <app>")
@@ -121,10 +147,13 @@ program
     .option("--settle <ms>", "the pause after each link before the screenshot, in milliseconds", "2500")
     .option(
         "--driver <driver>",
-        `how to open each screen: ${TOUR_DRIVERS.join(" or ")} (simctl shows an "Open in" alert)`,
+        `how to open each screen: ${SCREEN_DRIVERS.join(" or ")} (simctl shows an "Open in" alert)`,
         "appium"
     )
-    .option("--appium-port <port>", "the Appium server for --driver appium", "4723")
+    .option(
+        "--appium-port <port>",
+        "the Appium server for --driver appium (default: the simulator's own, started when missing)"
+    )
     .option("--only <names...>", `only these route names (see: ${toolCommand("mobile routes <app>")})`)
     .option("--json", "print the shots as JSON")
     .action(
@@ -135,15 +164,15 @@ program
                 out?: string;
                 settle: string;
                 driver: string;
-                appiumPort: string;
+                appiumPort?: string;
                 only?: string[];
                 json?: boolean;
             }
         ) => {
-            const driver = TOUR_DRIVERS.find((kind) => kind === options.driver);
+            const driver = SCREEN_DRIVERS.find((kind) => kind === options.driver);
 
             if (!driver) {
-                ui.err(`--driver must be ${TOUR_DRIVERS.join(" or ")}, not "${options.driver}"`);
+                ui.err(`--driver must be ${SCREEN_DRIVERS.join(" or ")}, not "${options.driver}"`);
                 process.exitCode = 1;
                 return;
             }
@@ -158,7 +187,7 @@ program
                 outDir,
                 settleMs: Number(options.settle),
                 driver,
-                appiumPort: Number(options.appiumPort),
+                appiumPort: options.appiumPort ? Number(options.appiumPort) : undefined,
                 only: options.only,
                 onShot: (shot, index, total) => {
                     const label = `${index + 1}/${total} ${shot.route.name}`;
@@ -178,5 +207,10 @@ program
             }
         }
     );
+
+registerUp(program);
+registerScreens(program);
+registerDevice(program);
+registerE2e(program);
 
 await runTool(program, { tool: "mobile" });

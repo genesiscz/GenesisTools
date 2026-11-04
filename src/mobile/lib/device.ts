@@ -4,7 +4,7 @@ import { listSimulators, type SimDevice } from "@genesiscz/utils/mobile/simulato
  * The simulator a command works on. An explicit udid wins; otherwise exactly one booted simulator must exist, because
  * picking one of several would drive (and maybe reboot) a simulator another session is using.
  */
-export async function pickSimulator(udid?: string): Promise<SimDevice> {
+export async function pickSimulator(udid?: string, options: { booted?: boolean } = {}): Promise<SimDevice> {
     const devices = await listSimulators();
 
     if (udid) {
@@ -14,7 +14,7 @@ export async function pickSimulator(udid?: string): Promise<SimDevice> {
             throw new Error(`no simulator with udid ${udid}; list them with: xcrun simctl list devices`);
         }
 
-        if (device.state !== "Booted") {
+        if (options.booted !== false && device.state !== "Booted") {
             throw new Error(
                 `simulator ${device.name} (${udid}) is ${device.state}; boot it: xcrun simctl boot ${udid}`
             );
