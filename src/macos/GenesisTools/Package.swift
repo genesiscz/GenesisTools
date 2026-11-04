@@ -34,6 +34,7 @@ let allParts: [AppPart] = [
     // The recorder (`--recorder`): its menu bar item, the live recordings' controls and the editor windows.
     // GenesisKitPosture: the camera (CameraFrameSource, CameraPreviewView) for the camera bubble.
     AppPart(id: "recorder", target: "GenesisToolsRecorder", path: "Sources/Parts/Recorder", kits: ["GenesisKitPosture"]),
+    AppPart(id: "meetings", target: "GenesisToolsMeetings", path: "Sources/Parts/Meetings", requires: ["features"]),
 ]
 
 func part(_ id: String) -> AppPart? {

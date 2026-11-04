@@ -64,6 +64,13 @@ export const APP_PARTS: readonly AppPart[] = [
         bundleSteps: [],
         summary: "the screen recorder: its menu bar item, the live recordings' controls and the recording editor",
     },
+    {
+        id: "meetings",
+        faces: ["--meetings"],
+        bundleSteps: [],
+        requires: ["features"],
+        summary: "the Meetings window and the Meetings settings pages",
+    },
 ];
 
 export const ALL_PART_IDS: readonly string[] = APP_PARTS.map((part) => part.id);

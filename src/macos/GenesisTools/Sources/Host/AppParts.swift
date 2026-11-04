@@ -16,6 +16,7 @@ package enum AppParts {
         "--clicky": "features",
         "--markdown": "markdown",
         "--recorder": "recorder",
+        "--meetings": "meetings",
     ]
 
     nonisolated(unsafe) private static var faces: [String: ([String]) -> Never] = [:]

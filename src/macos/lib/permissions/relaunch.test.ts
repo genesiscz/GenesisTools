@@ -40,6 +40,15 @@ describe("windowFaceKind", () => {
         expect(windowFaceKind(["--clicky", "--page", "general"])).toBe("features");
         expect(windowFaceKind(["--recorder", "--edit", "/x/screen.mp4"])).toBe("recorder");
         expect(windowFaceKind(["--recorder", "--edit", "/x/screen.mp4", "--snapshot", "/tmp/r.png"])).toBeNull();
+        expect(windowFaceKind(["--meetings", "--meeting", "2026-11-05_10-00-sync"])).toBe("meetings");
+        expect(windowFaceKind(["--meetings", "--snapshot", "/tmp/m.png"])).toBeNull();
+    });
+
+    it("brings the Meetings window back on the meeting it showed, behind the front window", () => {
+        const face = { pid: 8, kind: "meetings" as const, argv: ["--meetings", "--meeting", "m1"], lossless: true };
+        expect(relaunchPlan([face], null).map((step) => step.argv)).toEqual([
+            ["--meetings", "--meeting", "m1", "--no-activate"],
+        ]);
     });
 
     it("brings the recorder back as its menu bar item, behind the front window", () => {

@@ -63,10 +63,11 @@ package enum PartQuit {
         "--hub": "Hub",
         "--review": "Review",
         "--markdown": "Markdown viewer",
+        "--meetings": "Meetings",
         "--window": "Permissions",
     ]
     /// The order the question lists the faces in.
-    static let faceOrder = ["--widget", "--features", "--hub", "--review", "--markdown", "--window"]
+    static let faceOrder = ["--widget", "--features", "--hub", "--review", "--markdown", "--meetings", "--window"]
 
     /// A part a face shows only while it is up (PartPresence). A face with rows here is named by its rows that are up,
     /// in this order ("Clicky and Settings"), because its quit ends all of them. With none up it is a background

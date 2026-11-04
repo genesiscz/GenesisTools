@@ -19,8 +19,8 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
  * record falls back to the `ps` line, with the words after a flag joined back into one value.
  */
 
-/** The settings window, the hub, a review, the edge-panel widget and Clicky (the feature settings host). */
-export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "features" | "recorder";
+/** The settings window, the hub, a review, the edge-panel widget, Clicky (the feature settings host), the recorder and the Meetings window. */
+export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "features" | "recorder" | "meetings";
 
 export interface WindowFace {
     pid: number;
@@ -85,6 +85,10 @@ export function windowFaceKind(argv: string[]): WindowFaceKind | null {
     // The recorder hosts its menu bar item and the live recordings' controls, so a rebuild brings it back.
     if (first === "--recorder") {
         return "recorder";
+    }
+
+    if (first === "--meetings") {
+        return "meetings";
     }
 
     // `--clicky` is the old name of the feature settings face: a face started by an older build still carries it.
