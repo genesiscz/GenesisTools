@@ -12,6 +12,8 @@ export interface EditIssue {
     fix?: string;
     /** Source seconds, for sorting and for show({ at }). */
     at?: number;
+    /** The item it is about, when it is one item: its id and list, so a window can select or remove it. */
+    target?: { list: "zooms" | "redactions" | "texts" | "shapes"; id: string };
 }
 
 /** What the check cannot read from the edit itself; the caller looks at the disk. */
@@ -37,32 +39,43 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     const kept = (startUs: number, endUs: number) =>
         project.clips.some((clip) => clip.fromUs < endUs && clip.toUs > startUs);
     // Only what every kind has, so a shape's own `kind` field is not mixed in.
-    const item = (kind: string, remove: string, it: { id: string; startUs: number; endUs: number }) => ({
+    // `said` names it for a person: a text by its words, a part by its label, else its kind and start.
+    const item = (
+        kind: string,
+        remove: string,
+        list: NonNullable<EditIssue["target"]>["list"],
+        it: { id: string; startUs: number; endUs: number },
+        said?: string
+    ) => ({
         kind,
         remove,
+        list,
+        said: said ? `${kind} "${said}"` : `${kind} at ${seconds(it.startUs)} s`,
         id: it.id,
         startUs: it.startUs,
         endUs: it.endUs,
     });
     const items = [
-        ...project.zooms.map((zoom) => item("zoom", "unzoom", zoom)),
+        ...project.zooms.map((zoom) => item("zoom", "unzoom", "zooms", zoom)),
         ...(project.redactions ?? []).map((part) =>
-            item(part.style === "spotlight" ? "spotlight" : "hidden part", "unredact", part)
+            item(part.style === "spotlight" ? "spotlight" : "hidden part", "unredact", "redactions", part, part.label)
         ),
-        ...(project.texts ?? []).map((note) => item("text", "untext", note)),
-        ...(project.shapes ?? []).map((shape) => item(shape.kind, "unshape", shape)),
+        ...(project.texts ?? []).map((note) => item("text", "untext", "texts", note, note.text)),
+        ...(project.shapes ?? []).map((shape) => item(shape.kind, "unshape", "shapes", shape)),
     ];
 
     for (const entry of items) {
         const name = `${entry.kind} ${entry.id}`;
+        const target = { list: entry.list, id: entry.id };
 
         if (!kept(entry.startUs, entry.endUs)) {
             issues.push({
                 severity: "fix",
                 item: name,
-                message: `${name} (${span(entry.startUs, entry.endUs)}) never shows: that time is cut from the movie`,
+                message: `The ${entry.said} (${span(entry.startUs, entry.endUs)}) never shows: that time is cut from the movie`,
                 fix: `movie.${entry.remove}("${entry.id}")`,
                 at: seconds(entry.startUs),
+                target,
             });
             continue;
         }
@@ -73,8 +86,9 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             issues.push({
                 severity: "check",
                 item: name,
-                message: `${name} shows for ${seconds(entry.endUs - entry.startUs)} s, too short to ${entry.kind === "zoom" ? "follow" : "read"}`,
+                message: `The ${entry.said} shows for ${seconds(entry.endUs - entry.startUs)} s, too short to ${entry.kind === "zoom" ? "follow" : "read"}`,
                 at: seconds(entry.startUs),
+                target,
             });
         }
     }

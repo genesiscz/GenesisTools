@@ -1174,6 +1174,72 @@ final class EditorModel {
         }
     }
 
+    /// One finding of `tools recorder check` (the same check as the REPL's movie.check()).
+    struct EditIssue: Decodable, Equatable, Identifiable {
+        let severity: String
+        let item: String
+        let message: String
+        let fix: String?
+        /// Source seconds.
+        let at: Double?
+        let target: Target?
+        var id: String { item + message }
+        var mustFix: Bool { severity == "fix" }
+
+        struct Target: Decodable, Equatable {
+            let list: String
+            let id: String
+        }
+
+        /// The editor's selection for the item it names.
+        var selection: EditorSelection? {
+            guard let target else { return nil }
+            switch target.list {
+            case "zooms": return .zoom(target.id)
+            case "redactions": return .redaction(target.id)
+            case "texts": return .text(target.id)
+            case "shapes": return .shape(target.id)
+            default: return nil
+            }
+        }
+    }
+
+    /// Removes the item an issue names (one undo step), as its fix does in the REPL.
+    func remove(_ issue: EditIssue) {
+        guard let selection = issue.selection else { return }
+        self.selection = selection
+        deleteSelection()
+    }
+
+    private struct CheckAnswer: Decodable {
+        let ok: Bool
+        let issues: [EditIssue]
+    }
+
+    /// What the Export tab lists before an export, for the edit as saved at `checkedRevision`.
+    private(set) var issues: [EditIssue] = []
+    private var checkedRevision: Int?
+    /// The revision the shown issues belong to, once the check answered (a snapshot waits for it).
+    private(set) var issuesRevision: Int?
+
+    /// Runs the check once per saved revision; the Export tab calls it after the edit has rested for a moment.
+    func refreshIssues() {
+        let revision = project.revision
+        guard checkedRevision != revision else { return }
+        checkedRevision = revision
+        ToolsRunner.run(["recorder", "check", store.url.path]) { [weak self] status, stdout, stderr in
+            guard let self, self.project.revision == revision else { return }
+            guard status == 0, let line = stdout.split(separator: "\n").last, let data = line.data(using: .utf8),
+                  let answer = try? JSONDecoder().decode(CheckAnswer.self, from: data) else {
+                HubPerf.log("recorder.check failed: exit \(status) \(stderr.split(separator: "\n").last.map(String.init) ?? "")")
+                self.checkedRevision = nil
+                return
+            }
+            self.issues = answer.issues
+            self.issuesRevision = revision
+        }
+    }
+
     static let revealAfterExportKey = "recorder.export.revealInFinder"
 
     /// Off by default: an export puts its file on the clipboard (to paste into a chat or a mail) only when asked.

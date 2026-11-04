@@ -567,6 +567,13 @@ private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
                     try await Task.sleep(for: .milliseconds(100))
                 }
                 try await Task.sleep(for: .milliseconds(300))
+                // The Export tab lists what `tools recorder check` finds; wait up to 4 s for its answer.
+                if model.tab == .export {
+                    model.refreshIssues()
+                    for _ in 0..<40 where model.issuesRevision != model.project.revision {
+                        try await Task.sleep(for: .milliseconds(100))
+                    }
+                }
                 // After the player item landed, which resets the clock to its own start.
                 model.seek(at)
                 let still = try await stillFrame(project: project, atOutput: at, zoom: model.zoom)

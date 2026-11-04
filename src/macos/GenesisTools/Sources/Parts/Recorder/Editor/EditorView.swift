@@ -1224,6 +1224,40 @@ private func volumeLabel(_ volume: Double) -> String {
     return abs(db) < 0.05 ? "100% (0 dB)" : String(format: "%d%% (%@%.1f dB)", Int((volume * 100).rounded()), db > 0 ? "+" : "−", abs(db))
 }
 
+/// What `tools recorder check` found: things to fix first (red), then things to look at; Show moves the playhead there.
+private struct ExportIssues: View {
+    let model: EditorModel
+
+    var body: some View {
+        let fixes = model.issues.filter(\.mustFix).count
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(text: fixes > 0 ? "Fix before you export" : "Look at before you export",
+                         value: Plural.count(model.issues.count, "thing"))
+            ForEach(model.issues) { issue in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: issue.mustFix ? "exclamationmark.triangle.fill" : "info.circle")
+                        .foregroundStyle(issue.mustFix ? Color.red : RecorderPalette.dim)
+                        .font(.system(size: 11.5))
+                    Text(verbatim: issue.message)
+                        .font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let at = issue.at, let out = TimelineMap.outputTime(ofSource: Int64(at * 1_000_000), in: model.project) {
+                        GhostButton("Show", symbol: "arrow.right.circle", tooltip: "Move the playhead there",
+                                    identifier: "recorder.export.issue.show") { model.seek(out) }
+                    } else if issue.mustFix, issue.selection != nil {
+                        GhostButton("Remove", symbol: "trash", tooltip: "Remove it: it never shows (⌘Z brings it back)",
+                                    identifier: "recorder.export.issue.remove") { model.remove(issue) }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill((fixes > 0 ? Color.red : Color.white).opacity(0.07)))
+    }
+}
+
 private struct ExportInspector: View {
     @Bindable var model: EditorModel
     /// Opinionated, so a setting: an export reveals its file in Finder by default (Finder then comes to the front).
@@ -1235,6 +1269,14 @@ private struct ExportInspector: View {
         let settings = model.project.export
         VStack(alignment: .leading, spacing: 12) {
             Text("Export").font(.system(size: 15, weight: .semibold))
+                // Once the edit rests for 0.4 s after a save: a drag saves many revisions, and each check is a tools run.
+                .task(id: model.project.revision) {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    if !Task.isCancelled { model.refreshIssues() }
+                }
+            if !model.issues.isEmpty {
+                ExportIssues(model: model)
+            }
             SectionLabel(text: "Presets")
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                 let transcript = !model.zoom.captionLines.isEmpty

@@ -411,7 +411,8 @@ describe("edit project (edit.json)", () => {
         const issues = checkProject(project, facts);
         const zoomId = project.zooms[0]?.id;
         expect(issues[0]).toMatchObject({ severity: "fix", fix: `movie.unzoom("${zoomId}")` });
-        expect(issues[0]?.message).toContain("never shows");
+        expect(issues[0]?.message).toContain("The zoom at 1 s (1 to 2 s) never shows");
+        expect(issues[0]?.target).toEqual({ list: "zooms", id: zoomId });
         expect(issues.map((issue) => issue.severity)).toEqual(["fix", "check", "check"]);
         expect(issues[1]?.message).toContain('"Step one" and "Step two"');
         expect(issues[2]?.message).toContain("too short to read");
