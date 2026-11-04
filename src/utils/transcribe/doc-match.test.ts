@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { docIdentifiers, docLines, findReadAloud, findSpokenIdentifiers } from "./doc-match";
+import { docIdentifiers, docLines, findReadAloud, findSpokenIdentifiers, restatesSpokenWords } from "./doc-match";
 
 const doc = [
     "# Proposals",
@@ -97,5 +97,20 @@ describe("findSpokenIdentifiers", () => {
         });
 
         expect(found.map((match) => match.entry)).toEqual([1, 3]);
+    });
+});
+
+describe("restatesSpokenWords", () => {
+    test("a plain code name made of the said words only restates them", () => {
+        expect(restatesSpokenWords("entity data", "EntityData")).toBe(true);
+        expect(restatesSpokenWords("lead template", "leadTemplate")).toBe(true);
+        expect(restatesSpokenWords("tile DTO", "TileDto")).toBe(true);
+    });
+
+    test("a path, a member chain, a constant code or an unsaid word adds something", () => {
+        expect(restatesSpokenWords("lomeno type", "/{type}")).toBe(false);
+        expect(restatesSpokenWords("product data offer section", "ProductData.offerSection")).toBe(false);
+        expect(restatesSpokenWords("no projection", "NO_PROJECTION")).toBe(false);
+        expect(restatesSpokenWords("list DTO", "ProductListDto")).toBe(false);
     });
 });

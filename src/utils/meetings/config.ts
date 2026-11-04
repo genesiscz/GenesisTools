@@ -227,6 +227,8 @@ const storedConfigSchema = z
                         applyAbove: z.number().min(0).max(1).default(0.5),
                         /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
                         questionCap: z.number().int().min(1).max(500).default(12),
+                        /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */
+                        restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
                     })
                     .prefault({}),
             })

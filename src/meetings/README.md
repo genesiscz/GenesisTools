@@ -160,7 +160,12 @@ as an open question is.
   the microphone is ignored for that stretch.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
-- `term`: a misheard term and its proposed spelling.
+- `term`: a misheard term and its proposed spelling, a passage read aloud from a context file (its quote and line),
+  or a spoken path or identifier (its meaning after the words). A context file is read as the meeting saw it: when it
+  changed or was deleted after the meeting, from its last git commit before the meeting's end; `suggest` warns when no
+  copy is left. With `global.suggest.restatedIdentifiers` at `skip` (the default), a plain code name that only writes
+  the said words in code form ("entity data", `EntityData`) gets no meaning; a path, a member chain or a CONSTANT_CODE
+  still does. `mark` adds them all.
 - `label` (`meaningless: true`): the label tracks no one person from `fromSec` to `toSec`. The rules see its lines
   there under a label that names nobody, and the transcript marks each such line no range or join gives a voice as
   `[nejasné: "<label>"]`. Its outcome is the lines it marked, or shadowed when ranges gave every line a voice.

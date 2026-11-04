@@ -59,6 +59,7 @@ export async function runSuggest(options: {
         points: await opened.summaryPoints(),
         wordCheck,
         sourceLabels: languageSettings(config).render,
+        restatedIdentifiers: config.global.suggest.restatedIdentifiers,
         now: new Date().toISOString(),
     };
     let fresh: MeetingItem[] = [];

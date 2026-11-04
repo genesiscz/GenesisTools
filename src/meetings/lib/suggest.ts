@@ -5,7 +5,13 @@ import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from 
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
-import { docIdentifiers, docLines, findReadAloud, findSpokenIdentifiers } from "@genesiscz/utils/transcribe/doc-match";
+import {
+    docIdentifiers,
+    docLines,
+    findReadAloud,
+    findSpokenIdentifiers,
+    restatesSpokenWords,
+} from "@genesiscz/utils/transcribe/doc-match";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
@@ -181,6 +187,8 @@ interface TermSources {
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
+    /** `global.suggest.restatedIdentifiers`: `skip` (the default) adds no meaning a plain code name only restates. */
+    restatedIdentifiers?: "skip" | "mark";
 }
 
 /** The text of each context file and note of a meeting, with a short name for a quote's source. */
@@ -242,7 +250,9 @@ function documentItems(options: TermSources): NewItem[] {
         }),
         ...spoken.flatMap((match): NewItem[] => {
             const at = atSec(match.entry);
-            return at === undefined || inQuote(match.entry, match.start, match.end)
+            const restated =
+                options.restatedIdentifiers !== "mark" && restatesSpokenWords(match.heard, match.identifier);
+            return at === undefined || restated || inQuote(match.entry, match.start, match.end)
                 ? []
                 : [
                       {
@@ -1159,6 +1169,8 @@ export function suggestItems(options: {
     wordCheck?: WordCheck;
     /** How a quote names its source (`languages.<global.language>.render`). */
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
+    /** `global.suggest.restatedIdentifiers` (default `skip`). */
+    restatedIdentifiers?: "skip" | "mark";
     now: string;
 }): MeetingItem[] {
     const { record } = options;
