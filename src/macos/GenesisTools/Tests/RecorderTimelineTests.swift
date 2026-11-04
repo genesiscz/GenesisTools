@@ -64,6 +64,7 @@ final class RecorderTimelineTests: XCTestCase {
     }
 
     private var zoomLaneY: CGFloat { TimelineView.rulerHeight + 10 + TimelineView.zoomLaneHeight / 2 }
+    private var clipLaneY: CGFloat { TimelineView.clipLaneTop + TimelineView.clipLaneHeight / 2 }
 
     /// The scale the timeline draws at for a viewport: fitted unless the model sets one.
     private func scale(_ model: EditorModel, width: CGFloat) -> TimelineScale {
@@ -85,5 +86,46 @@ final class RecorderTimelineTests: XCTestCase {
             let drawnAt = scale.x(zoom.startUs)
             XCTAssertEqual(drawnAt, x, accuracy: 1, "width \(width), \(pointsPerSecond) pt/s: the zoom starts at the pointer, not \(drawnAt - x) pt right of it")
         }
+    }
+
+    func testAClickOnAZoomSelectsItAndDeleteRemovesItWithUndo() {
+        let zoom = EditProject.Zoom(id: "z1", startUs: 6_000_000, endUs: 8_000_000, scale: 1.5)
+        let model = model(zooms: [zoom])
+        model.tab = .clip
+        let width: CGFloat = 1000
+        let window = host(model, width: width)
+        let scale = scale(model, width: width)
+        click(window, x: scale.x(7_000_000), y: zoomLaneY)
+        XCTAssertEqual(model.selection, .zoom("z1"), "a click on the zoom selects it")
+        XCTAssertEqual(model.tab, .zoom, "and opens it in the Zoom panel")
+        XCTAssertEqual(model.project.zooms.count, 1, "a click on a zoom never adds another")
+
+        model.deleteSelection()
+        XCTAssertTrue(model.project.zooms.isEmpty, "Delete removes the selected zoom")
+        model.undo()
+        XCTAssertEqual(model.project.zooms.map(\.id), ["z1"], "undo brings it back")
+    }
+
+    func testAClickBesideAZoomAddsOneThereInsteadOfSelectingIt() {
+        let zoom = EditProject.Zoom(id: "z1", startUs: 6_000_000, endUs: 8_000_000, scale: 1.5)
+        let model = model(zooms: [zoom])
+        let width: CGFloat = 1000
+        let window = host(model, width: width)
+        let scale = scale(model, width: width)
+        // Where the zoom's hit area sat before the fix: at the lane's start, not where the zoom is drawn.
+        click(window, x: scale.x(500_000), y: zoomLaneY)
+        XCTAssertNotEqual(model.selection, .zoom("z1"))
+        XCTAssertEqual(model.project.zooms.count, 2)
+    }
+
+    func testAClickOnTheSecondClipSelectsThatClip() {
+        let model = model(clips: [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 4_000_000, toUs: 10_000_000)])
+        let width: CGFloat = 1000
+        let window = host(model, width: width)
+        let scale = scale(model, width: width)
+        click(window, x: scale.x(1_000_000), y: clipLaneY)
+        XCTAssertEqual(model.selection, .clip("a"))
+        click(window, x: scale.x(8_000_000), y: clipLaneY)
+        XCTAssertEqual(model.selection, .clip("b"))
     }
 }

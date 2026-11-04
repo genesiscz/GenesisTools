@@ -311,7 +311,6 @@ private struct ZoomSegment: View {
             .overlay(alignment: .leading) { edgeHandle(leading: true) }
             .overlay(alignment: .trailing) { edgeHandle(leading: false) }
             .frame(width: width, height: TimelineView.zoomLaneHeight)
-            .offset(x: scale.x(outStart))
             .contentShape(Rectangle())
             .onTapGesture { selectZoom() }
             .gesture(DragGesture(minimumDistance: 3).onChanged { value in
@@ -321,12 +320,22 @@ private struct ZoomSegment: View {
                 let delta = raw + model.snappedMove(start: start + raw, end: end + raw, excluding: zoom.id)
                 model.moveZoom(zoom.id, startUs: start + delta, endUs: end + delta)
             }.onEnded { _ in moveFrom = nil; model.endSnap() })
+            .contextMenu {
+                Button("Edit") { selectZoom() }
+                Button("Duplicate") { model.selection = .zoom(zoom.id); model.duplicateSelection() }
+                Divider()
+                Button("Delete", role: .destructive) { model.selection = .zoom(zoom.id); model.deleteSelection() }
+            }
+            .instantTooltip("Zoom: click to edit, drag to move, drag an edge to trim, right-click for more")
             .accessibilityElement()
             .accessibilityLabel("Zoom \(Int((zoom.scale * 100).rounded())) percent")
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("recorder.zoom.\(zoom.id)")
             // A tap gesture alone gives the element no AXPress, so VoiceOver and agents could not select a zoom.
             .accessibilityAction { selectZoom() }
+            .accessibilityAction(named: "Delete") { model.selection = .zoom(zoom.id); model.deleteSelection() }
+            // Last, so the hit area moves with the drawing: before `.contentShape`, it stayed at the lane's start.
+            .offset(x: scale.x(outStart))
     }
 
     /// Selects the zoom and, when the playhead is outside it, moves to its first fully zoomed frame, so the preview
@@ -418,7 +427,6 @@ private struct ClipView: View {
             }
             .overlay(alignment: .leading) { trimHandle(leading: true, selected: selected) }
             .overlay(alignment: .trailing) { trimHandle(leading: false, selected: selected) }
-            .offset(x: scale.x(placed.outStartUs) + 3)
             .contentShape(Rectangle())
             .onTapGesture {
                 model.selection = .clip(clip.id)
@@ -432,6 +440,8 @@ private struct ClipView: View {
                 model.selection = .clip(clip.id)
                 model.tab = .clip
             }
+            // Last, so the hit area moves with the drawing (every clip's used to sit at the lane's start).
+            .offset(x: scale.x(placed.outStartUs) + 3)
     }
 
     private func trimHandle(leading: Bool, selected: Bool) -> some View {
@@ -866,7 +876,6 @@ private struct HiddenSegment: View {
                 .overlay(alignment: .topLeading) {
                     if moveFrom != nil { DragTimeTag(project: model.project, startUs: redaction.startUs, endUs: redaction.endUs) }
                 }
-                .offset(x: scale.x(first.fromUs))
                 .contentShape(Rectangle())
                 .onTapGesture { select() }
                 .gesture(DragGesture(minimumDistance: 3).onChanged { value in
@@ -886,6 +895,8 @@ private struct HiddenSegment: View {
                 .accessibilityIdentifier("recorder.hidden.\(redaction.id)")
                 .accessibilityAction { select() }
                 .liveRow(selected: selected)
+                // Last, so the hit area moves with the drawing.
+                .offset(x: scale.x(first.fromUs))
         }
     }
 
