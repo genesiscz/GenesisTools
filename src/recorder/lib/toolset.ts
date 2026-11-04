@@ -735,7 +735,7 @@ export class Movie {
             return { ...(await this.info()), fixed: [], warnings: ["check() found nothing that fix() can fix"] };
         }
 
-        log.info({ recording: this.recording, fixes: fixable.length }, "fixing what check found");
+        log.debug({ recording: this.recording, fixes: fixable.length }, "fixing what check found");
         const edited = await this.change(fixable.flatMap((issue) => issue.action?.ops ?? []));
         return { ...edited, fixed: fixable.map((issue) => issue.message) };
     }

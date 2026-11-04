@@ -396,6 +396,31 @@ program
     });
 
 program
+    .command("fix")
+    .description(
+        "Runs every fix `check` offers (removes what never shows, lengthens what is too short to read, moves a text off another) in one save and one undo step"
+    )
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .action(async (value: string) => {
+        try {
+            const answer = await new Movie(value).fix();
+
+            for (const message of answer.fixed) {
+                out.printlnErr(`fixed  ${message}`);
+            }
+
+            for (const warning of answer.warnings ?? []) {
+                out.printlnErr(warning);
+            }
+
+            out.result(answer);
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
     .command("sheet")
     .description("Several frames of the edit as it exports on one PNG, in rows of three, each labelled with its time")
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")

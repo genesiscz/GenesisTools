@@ -1415,6 +1415,25 @@ final class EditorModel {
     }
 
     /// Removes the item an issue names (one undo step), as its fix does in the REPL.
+    /// Runs every fix the check offers in one save and one undo step (`tools recorder fix`, the REPL's movie.fix()).
+    func fixAll() {
+        saveTask?.cancel()
+        saveNow()
+        let count = issues.filter { $0.actionOps != nil }.count
+        ToolsRunner.run(["recorder", "fix", store.url.path]) { [weak self] status, _, stderr in
+            guard let self else { return }
+            guard status == 0 else {
+                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                self.show("Fix All did not work: \(reason)", error: true)
+                return
+            }
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
+                self.adoptExternal(next)
+            }
+            self.show("Fixed \(Plural.count(count, "thing")). ⌘Z undoes them all.", error: false)
+        }
+    }
+
     /// Runs the edit ops the check gave an issue (`tools recorder apply`, the REPL's fix), then takes the saved edit,
     /// so ⌘Z undoes it as one step.
     func runAction(_ issue: EditIssue) {

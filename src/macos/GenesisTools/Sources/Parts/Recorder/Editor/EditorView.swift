@@ -1388,6 +1388,12 @@ private struct ExportIssues: View {
         VStack(alignment: .leading, spacing: 6) {
             SectionLabel(text: fixes > 0 ? "Fix before you export" : "Look at before you export",
                          value: Plural.count(model.issues.count, "thing"))
+            let fixable = model.issues.filter { $0.actionOps != nil }.count
+            if fixable > 1 {
+                GhostButton("Fix All", symbol: "wand.and.stars",
+                            tooltip: "Run the \(fixable) fixes below in one step (⌘Z undoes them all)",
+                            identifier: "recorder.export.issue.fixAll") { model.fixAll() }
+            }
             ForEach(model.issues) { issue in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: issue.mustFix ? "exclamationmark.triangle.fill" : "info.circle")
@@ -1408,7 +1414,7 @@ private struct ExportIssues: View {
                                             identifier: "recorder.export.issue.remove") { model.remove(issue) }
                             }
                             if let action = issue.action, issue.actionOps != nil {
-                                GhostButton(action.label, symbol: "wand.and.stars",
+                                GhostButton(action.label, symbol: action.label == "Remove" ? "trash" : "wand.and.stars",
                                             tooltip: "\(issue.fix.map { "Runs \($0)" } ?? action.label) (⌘Z undoes it)",
                                             identifier: "recorder.export.issue.action") { model.runAction(issue) }
                             }
