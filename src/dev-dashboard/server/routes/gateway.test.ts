@@ -261,6 +261,71 @@ describe("the act scope", () => {
         ).toBe("deny");
     });
 
+    it("sends into a session and presses Esc behind the full login, once per Idempotency-Key", async () => {
+        const calls: string[] = [];
+        const routes = gatewayRoutes({
+            send: {
+                fleet: async () => [],
+                // Never reached: a session that is not live is refused before any transport runs.
+                edges: {
+                    deliverNow: async () => {
+                        throw new Error("no transport may run");
+                    },
+                    codexQueue: async () => {
+                        throw new Error("no transport may run");
+                    },
+                    enqueue: async () => {
+                        throw new Error("no transport may run");
+                    },
+                    pressKey: async () => {
+                        throw new Error("no transport may run");
+                    },
+                },
+            },
+        });
+        const send = route(routes, "POST", "/api/agents/send");
+        const call = (body: unknown) =>
+            json(
+                send.handler(
+                    ctx({ method: "POST", pathname: "/api/agents/send", headers: { "idempotency-key": "m1" }, body })
+                )
+            );
+
+        expect((await call({ key: "claude:s", text: "hi", timing: "soon" })).status).toBe(400);
+        const first = await call({ key: "claude:s", text: "hi", timing: "now" });
+        expect(first).toEqual({
+            status: 200,
+            body: {
+                key: "claude:s",
+                outcome: "refused",
+                timing: "now",
+                route: "none",
+                detail: "the session is no longer live",
+            },
+        });
+        expect(await call({ key: "claude:s", text: "hi", timing: "now" })).toEqual(first);
+
+        const esc = route(routes, "POST", "/api/agents/interrupt");
+        const escaped = await json(
+            esc.handler(
+                ctx({
+                    method: "POST",
+                    pathname: "/api/agents/interrupt",
+                    headers: { "idempotency-key": "e1" },
+                    body: { key: "claude:s" },
+                })
+            )
+        );
+        expect(escaped.body).toMatchObject({ outcome: "refused", detail: "the session is no longer live" });
+        expect(calls).toEqual([]);
+
+        for (const pathname of ["/api/agents/send", "/api/agents/interrupt"]) {
+            expect(
+                decideApiAuth({ method: "POST", pathname, headers: { "x-gt-act-token": TOKEN }, provision }).decision
+            ).toBe("deny");
+        }
+    });
+
     it("raises a waiting gate behind the full login, once per Idempotency-Key, and never answers it", async () => {
         const opened: string[] = [];
         const activated: number[] = [];

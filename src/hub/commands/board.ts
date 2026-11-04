@@ -6,6 +6,7 @@ import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { agentsBoard } from "../lib/board/index";
 import { stopAgentSession } from "../lib/board/stop";
+import { interruptBoardSession, SEND_TIMINGS, type SendTiming, sendToBoardSession } from "../lib/send/index";
 
 function pidArg(value: string): number {
     const pid = Number(value);
@@ -17,9 +18,20 @@ function pidArg(value: string): number {
     return pid;
 }
 
+function timingArg(value: string): SendTiming {
+    const timing = SEND_TIMINGS.find((candidate) => candidate === value);
+
+    if (!timing) {
+        throw new InvalidArgumentError(`one of ${SEND_TIMINGS.join(", ")}`);
+    }
+
+    return timing;
+}
+
 /**
  * `tools hub board`: the live agent sessions as the phone's agents board shows them (`/api/gateway/board`), and
  * `tools hub board stop <key> --pid <pid>`, the same stop as the phone's Stop action (`POST /api/agents/stop`).
+ * `send` and `esc` are the phone's composer and Esc (`POST /api/agents/send`, `/api/agents/interrupt`).
  */
 export function registerBoardCommand(program: Command): void {
     const board = program
@@ -98,5 +110,64 @@ export function registerBoardCommand(program: Command): void {
             }
 
             out.log.error(`Not stopped: ${receipt.reason ?? "unknown"}`);
+        });
+
+    board
+        .command("send <key> <text...>")
+        .description("Send a message into a live session: now, after the running turn (next-turn), or later (queued)")
+        .option("--timing <timing>", `when it should arrive: ${SEND_TIMINGS.join(", ")}`, timingArg, "now")
+        .option("--idempotency-key <key>", "reuse on a retry, so a retried send is one delivery")
+        .option("--json", "machine-readable output")
+        .action(
+            async (
+                key: string,
+                words: string[],
+                opts: { timing: SendTiming; idempotencyKey?: string; json?: boolean }
+            ) => {
+                const receipt = await sendToBoardSession({
+                    key,
+                    text: words.join(" "),
+                    timing: opts.timing,
+                    idempotencyKey: opts.idempotencyKey,
+                });
+                process.exitCode = receipt.outcome === "refused" || receipt.outcome === "unknown" ? 1 : 0;
+
+                if (opts.json) {
+                    out.result(receipt);
+                    return;
+                }
+
+                const line = `${receipt.outcome} via ${receipt.route}: ${receipt.detail}`;
+
+                if (process.exitCode === 0) {
+                    out.log.success(line);
+                    return;
+                }
+
+                out.log.error(line);
+            }
+        );
+
+    board
+        .command("esc <key>")
+        .description("End a live session's running turn with its TUI's Esc key (refused while a dialog is open)")
+        .option("--json", "machine-readable output")
+        .action(async (key: string, opts: { json?: boolean }) => {
+            const receipt = await interruptBoardSession({ key });
+            process.exitCode = receipt.outcome === "sent" ? 0 : 1;
+
+            if (opts.json) {
+                out.result(receipt);
+                return;
+            }
+
+            const line = `${receipt.outcome} via ${receipt.route}: ${receipt.detail}`;
+
+            if (receipt.outcome === "sent") {
+                out.log.success(line);
+                return;
+            }
+
+            out.log.error(line);
         });
 }

@@ -13,6 +13,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { clipOneLine } from "@genesiscz/utils/string";
 import { type AgentNode, type AgentParent, type AgentsTree, DEFAULT_AGENTS_LIMIT, hubAgents } from "../agents/index";
 import { fleetStuckCheck } from "../insights/index";
+import { allSendTimings } from "../send/registry";
 import { phaseRowOf } from "./phases";
 
 export { boardKey, diffPhases, phaseRowOf } from "./phases";
@@ -178,5 +179,5 @@ export async function agentsBoard(deps: BoardDeps = realBoardDeps): Promise<Agen
         .sort((a, b) => rank(a) - rank(b) || (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
 
     log.debug({ sessions: sessions.length, parents: parents.size }, "agents board built");
-    return { generatedAt: new Date(now).toISOString(), sessions };
+    return { generatedAt: new Date(now).toISOString(), sessions, sendTimings: allSendTimings() };
 }

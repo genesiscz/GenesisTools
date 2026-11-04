@@ -411,58 +411,80 @@ export function grokMessageDriver(
     };
 }
 
-/**
- * Paste into the session's cmux surface and submit; cmux refuses over a draft or an open dialog.
- * The paste runs through the shared bounded runner, so a wedged cmux ends in a MessageError, not a hang.
- */
-export async function pasteIntoSurface(input: {
-    alias: TurnProvider;
-    sessionId: string;
-    text: string;
+/** What the surface guards read; tests replace each, so no real cmux tree, tty or tmux pane is read. */
+export interface SurfaceGuardDeps {
     live?: () => Promise<LiveAgentSurface[]>;
     run?: (args: string[]) => Promise<CmuxRunResult>;
-    /** Right before the paste: does a --via-tmux session's surface still show the agent's pane? */
+    /** Right before the input: does a --via-tmux session's surface still show the agent's pane? */
     stillShown?: (target: LiveAgentSurface) => Promise<{ ok: true } | { ok: false; reason: string }>;
     /** The agents running on a tty now. */
     agentsOnTty?: (tty: string) => Set<string>;
-}): Promise<MessageDelivery> {
+}
+
+/**
+ * The one cmux surface that demonstrably runs this session's agent and no other, checked last against the tmux pane it
+ * shows. Every input into a session's pane (a paste, a key) goes through it; `doing` names the input in a refusal.
+ */
+async function guardedSurface(
+    input: {
+        alias: TurnProvider;
+        sessionId: string;
+        /** The input, as the refusals name it: `paste into`, `press escape in`. */
+        doing: string;
+        /** How a refusal opens: `nothing was pasted into`. */
+        nothing: string;
+    } & SurfaceGuardDeps
+): Promise<LiveAgentSurface & { surface: { id: string } }> {
     const surfaces = await (input.live ?? liveAgentSurfacesNow)();
     const target = surfaces.find((entry) => entry.sessionId === input.sessionId && entry.agent === input.alias);
 
     if (!target) {
-        throw new MessageError(`session ${input.sessionId} has no live cmux surface to paste into`);
+        throw new MessageError(`session ${input.sessionId} has no live cmux surface to ${input.doing}`);
     }
 
-    // The paste names the surface UUID the inventory verified against the journal: after a cmux restart the
-    // ref can name another terminal, and the message would be submitted there.
-    if (!target.surface.id) {
-        throw new MessageError(`${target.surface.ref} has no surface UUID, so the paste has no safe target`);
+    // The input names the surface UUID the inventory verified against the journal: after a cmux restart the ref can
+    // name another terminal, and the input would land there.
+    const surfaceId = target.surface.id;
+
+    if (!surfaceId) {
+        throw new MessageError(`${target.surface.ref} has no surface UUID, so the ${input.doing} has no safe target`);
     }
 
     // The tab must run this agent and no other: a worker started inside another agent's tab inherits that tab and
-    // can own its newest journal line, and the paste would then submit to the tab's real agent (Sonnet F13).
+    // can own its newest journal line, and the input would then reach the tab's real agent (Sonnet F13).
     const tty = target.tmux?.paneTty ?? target.surface.tty;
     const running = tty ? (input.agentsOnTty ?? agentsOnTtyNow)(tty) : new Set<string>();
 
     if (!running.has(input.alias) || running.size > 1) {
         const others = [...running].filter((agent) => agent !== input.alias);
         throw new MessageError(
-            `nothing was pasted into ${target.surface.ref}: ${
+            `${input.nothing} ${target.surface.ref}: ${
                 running.has(input.alias)
-                    ? `it also runs ${others.join(", ")}, so the paste could reach that agent`
+                    ? `it also runs ${others.join(", ")}, so the ${input.doing} could reach that agent`
                     : `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${input.alias}`
             }`
         );
     }
 
     // A --via-tmux surface types into whichever tmux pane it shows now; the user may have switched since the
-    // inventory was read. Checked last, right before the paste.
+    // inventory was read. Checked last, right before the input.
     const shown = await (input.stillShown ?? tmuxPaneStillShownNow)(target);
 
     if (!shown.ok) {
-        throw new MessageError(`nothing was pasted into ${target.surface.ref}: ${shown.reason}`);
+        throw new MessageError(`${input.nothing} ${target.surface.ref}: ${shown.reason}`);
     }
 
+    return { ...target, surface: { ...target.surface, id: surfaceId } };
+}
+
+/**
+ * Paste into the session's cmux surface and submit; cmux refuses over a draft or an open dialog.
+ * The paste runs through the shared bounded runner, so a wedged cmux ends in a MessageError, not a hang.
+ */
+export async function pasteIntoSurface(
+    input: { alias: TurnProvider; sessionId: string; text: string } & SurfaceGuardDeps
+): Promise<MessageDelivery> {
+    const target = await guardedSurface({ ...input, doing: "paste into", nothing: "nothing was pasted into" });
     const run = input.run ?? ((args: string[]) => runCmux(args));
     const result = await run(["paste", "--surface", target.surface.id, "--submit", "--", input.text]);
 
@@ -484,6 +506,32 @@ export async function pasteIntoSurface(input: {
         note: `pasted and submitted in ${target.surface.ref} (keystrokes, no structured channel)`,
     };
 }
+
+/**
+ * Press one named key (`cmux send-key`: `escape`, `enter`) in the session's cmux surface, after the same surface, tty
+ * and tmux guards as a paste. Returns the surface ref it pressed in. A timed-out press may have landed, so it throws
+ * `KeyPressUnknownError` rather than a refusal.
+ */
+export async function pressKeyInSurface(
+    input: { alias: TurnProvider; sessionId: string; key: string } & SurfaceGuardDeps
+): Promise<{ ref: string; title: string | null }> {
+    const target = await guardedSurface({ ...input, doing: `press ${input.key} in`, nothing: "no key was pressed in" });
+    const run = input.run ?? ((args: string[]) => runCmux(args));
+    const result = await run(["send-key", "--surface", target.surface.id, input.key]);
+
+    if (result.timedOut) {
+        throw new KeyPressUnknownError(`cmux send-key ${input.key} into ${target.surface.ref} timed out`);
+    }
+
+    if (result.code !== 0) {
+        throw new MessageError(`cmux send-key refused (${result.code}): ${result.stderr.trim() || "no detail"}`);
+    }
+
+    return { ref: target.surface.ref, title: target.surface.title };
+}
+
+/** A key press ran past its deadline: it may have reached the pane. */
+export class KeyPressUnknownError extends MessageError {}
 
 /**
  * The message part of each harness: `drivers/<harness id>.ts` exports it as `messagePart` (`toolParts`). Each driver is

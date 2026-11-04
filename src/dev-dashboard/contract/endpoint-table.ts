@@ -1,4 +1,12 @@
-import type { AgentStopInput, AgentStopReceiptDto, AgentsBoardDto } from "@app/dev-dashboard/contract/agents";
+import type {
+    AgentInterruptInput,
+    AgentInterruptReceiptDto,
+    AgentSendInput,
+    AgentSendReceiptDto,
+    AgentStopInput,
+    AgentStopReceiptDto,
+    AgentsBoardDto,
+} from "@app/dev-dashboard/contract/agents";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 
 /**
@@ -315,6 +323,13 @@ export const ENDPOINTS = {
      * alone answers one decision letter, and ending a process needs more than that (`src/hub/lib/board/stop.ts`).
      */
     agentsStop: row<AgentStopInput, AgentStopReceiptDto>("POST", "/api/agents/stop", "keyed-write"),
+    /**
+     * One message into a live session at a timing (M5, F10). A keyed write behind the full login: the key is the
+     * durable queue's idempotency key, so a replayed send (an offline draft sent twice) is one delivery.
+     */
+    agentsSend: row<AgentSendInput, AgentSendReceiptDto>("POST", "/api/agents/send", "keyed-write", "slow"),
+    /** Ends a live session's running turn with its TUI's Esc key (F19); refused while a dialog is open. */
+    agentsInterrupt: row<AgentInterruptInput, AgentInterruptReceiptDto>("POST", "/api/agents/interrupt", "keyed-write"),
     /** What waits on the Mac's Touch ID (F22): vault and AI account windows, rm requests, and the latest decisions. */
     gatewayGates: row<GatewayInput, GateLedgerDto>("GET", "/api/gateway/gates", "read"),
     /** Brings one waiting gate to the Mac's front, or opens the window of an rm request that has none (F22). */

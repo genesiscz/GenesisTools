@@ -71,6 +71,8 @@ export interface AgentBoardSession extends AgentBoardPhaseRow {
 export interface AgentsBoardDto {
     generatedAt: string;
     sessions: AgentBoardSession[];
+    /** What each send timing does per harness (M5); the composer offers only the supported ones. */
+    sendTimings: AgentSendTimings;
 }
 
 /** One turn of a transcript page, as the gateway's transcript route sends it (tool results are clipped there). */
@@ -107,4 +109,55 @@ export interface AgentStopReceiptDto {
     survivors: number[];
     /** Why nothing was sent, or what went wrong. */
     reason: string | null;
+}
+
+/**
+ * When a message should reach a running session (M5, F10): `now` into the running session, `next-turn` after the
+ * running turn ends, `later` saved in the session's durable queue until its consumer acknowledges it.
+ */
+export type AgentSendTiming = "now" | "next-turn" | "later";
+
+/**
+ * What became of a send: `delivered`, `queued-daemon` (the harness's own daemon holds it for the next turn),
+ * `queued-session` (the durable session queue holds it), `refused` (nothing reached the session or was saved), or
+ * `unknown` (a transport ran without a readable receipt: never resend blindly).
+ */
+export type AgentSendOutcome = "delivered" | "queued-daemon" | "queued-session" | "refused" | "unknown";
+
+/** What one timing does for one harness; a refused one carries the reason the phone shows. */
+export type AgentSendTimingSupport = { supported: true; meaning: string } | { supported: false; reason: string };
+
+/** Each harness's timings, so the composer greys out a timing the session's harness cannot keep. */
+export type AgentSendTimings = Record<AgentBoardProvider, Record<AgentSendTiming, AgentSendTimingSupport>>;
+
+/** `POST /api/agents/send`: one message into a live session, named by its board key. */
+export interface AgentSendInput {
+    key: string;
+    text: string;
+    timing: AgentSendTiming;
+}
+
+export interface AgentSendReceiptDto {
+    key: string;
+    outcome: AgentSendOutcome;
+    timing: AgentSendTiming;
+    /** The route that settled it (`claude-peer`, `cmux`, `codex`, `codex-queue`, `session-queue`, ...). */
+    route: string;
+    /** Where it went, or why it did not. */
+    detail: string;
+    /** The durable queue entry, for `queued-session`. */
+    queueId?: string;
+}
+
+/** `POST /api/agents/interrupt`: end a live session's running turn (its TUI's Esc key). */
+export interface AgentInterruptInput {
+    key: string;
+}
+
+export interface AgentInterruptReceiptDto {
+    key: string;
+    /** `unknown`: the key may have been pressed. */
+    outcome: "sent" | "refused" | "unknown";
+    route: string;
+    detail: string;
 }
