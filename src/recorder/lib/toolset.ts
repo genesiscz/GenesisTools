@@ -89,7 +89,7 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys, texts }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys, transcriptFixes, motion, shapes, texts, warnings? }";
 
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
@@ -164,11 +164,14 @@ const movieMethods = [
     ),
     edit(
         "fixLines",
-        z
-            .array(z.object({ at: timeSchema, text: z.string().max(300) }).strict())
-            .min(1)
-            .max(500),
-        "Corrects many transcript lines at once, saved once and undone with one undo(): [{ at, text }] where at is any source time inside the line (a line's from from transcript()). Use it to polish a whole transcript: read transcript(), then send only the lines whose words change. A time where nobody speaks is refused with the nearest lines, and nothing is saved."
+        z.object({
+            fixes: z
+                .array(z.object({ at: timeSchema, text: z.string().max(300) }).strict())
+                .min(1)
+                .max(500),
+        }),
+        "Corrects many transcript lines at once, saved once and undone with one undo(): [{ at, text }] where at is any source time inside the line (a line's from from transcript()). Use it to polish a whole transcript: read transcript(), then send only the lines whose words change. A time where nobody speaks is refused with the nearest lines, and nothing is saved.",
+        ["fixes"]
     ),
     edit(
         "unfixLine",
