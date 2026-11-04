@@ -32,9 +32,5 @@ export const AGENT_BINARY_TABLE_RATCHET: ReadonlySet<string> = new Set<string>([
 
 export const PARENT_WALK_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/agents/lib/hooks/diff/terminal.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/codex/lib/agents-bridge.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
     "src/doctor/lib/processes.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/mcp-manager/lib/gateway/hosted-child.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/utils/bun/orphan-worker-guard.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/utils/bun/preload-orphan-watchdog.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
 ]);

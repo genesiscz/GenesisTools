@@ -7,7 +7,6 @@ import {
 } from "@genesiscz/utils/agent/identity";
 import { env } from "@genesiscz/utils/env";
 import { runtimeAgentOfCommand } from "@genesiscz/utils/process/classify";
-import { readParentPid } from "@genesiscz/utils/process/cwd";
 import { profiler } from "@genesiscz/utils/profile";
 
 const prof = profiler.scope("agent-context");
@@ -173,6 +172,6 @@ async function readCallerContext(): Promise<CallerContext> {
 
     return callerContextOf(identity, {
         termProgram: processEnv.TERM_PROGRAM ?? null,
-        callerPid: readParentPid(process.pid) ?? 0,
+        callerPid: process.ppid,
     });
 }

@@ -533,6 +533,49 @@ function isInProcessContext(node: SgNode): boolean {
     return false;
 }
 
+const PARENT_WALK_LOOPS = new Set<string>(["for_statement", "for_in_statement", "while_statement", "do_statement"]);
+const SCOPE_KINDS = new Set<string>([
+    "function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+    "generator_function_declaration",
+    "program",
+]);
+
+/**
+ * True when `process.ppid` starts or steps a walk up the process tree: it sits inside a loop, or it seeds a `let`
+ * that its function reassigns (`let pid = process.ppid; while (…) pid = parentOf(pid)`). One read of our own parent
+ * (`{ ppid: process.ppid }`) is no walk.
+ */
+function startsParentWalk(node: SgNode): boolean {
+    let up = node.parent();
+    let seeded: string | undefined;
+
+    while (up && !SCOPE_KINDS.has(String(up.kind()))) {
+        if (PARENT_WALK_LOOPS.has(String(up.kind()))) {
+            return true;
+        }
+
+        if (up.kind() === "variable_declarator" && up.parent()?.text().startsWith("let ")) {
+            seeded = up.field("name")?.text();
+        }
+
+        up = up.parent();
+    }
+
+    if (!up || !seeded) {
+        return false;
+    }
+
+    return up
+        .findAll({ rule: { kind: "assignment_expression" } })
+        .some((assignment) => assignment.field("left")?.text() === seeded);
+}
+
+/** A `ps` column list or flag that asks for the parent pid (`pid=,ppid=`, `-o ppid=`), not prose that says ppid. */
+const PS_PPID_COLUMN = /(?:^|,)ppid(?:=?(?:,|$)|=\s)|-o\s*ppid\b/;
+
 /**
  * True for a table of agent binary names in a process context: a regex that names two or more of them, an array or
  * Set of two or more names, a Map made of `[name, value]` pairs, or an object keyed by two or more names. One name is
@@ -932,13 +975,16 @@ const RULES: Rule[] = [
             },
         },
         message:
-            "Do not walk to a parent process by hand (process.ppid, `ps -o ppid`). Use the process helpers in " +
+            "Do not walk to a parent process by hand (a loop over process.ppid, `ps -o ppid`). Use the process helpers in " +
             "src/utils/process/. scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
         onlyIn: AGENT_CONTEXT_SCOPE,
         allowedIn: /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/process\/)/,
         allowedFiles: PARENT_WALK_RATCHET,
-        // A template's own `${row.ppid}` prints a parsed value; only a literal word `ppid` asks `ps` for it.
-        test: (text, node) => node.kind() === "member_expression" || /\bppid\b/.test(text.replace(/\$\{[^}]*\}/g, "")),
+        // A template's own `${row.ppid}` prints a parsed value; only a `ps` column or flag asks `ps` for it.
+        test: (text, node) =>
+            node.kind() === "member_expression"
+                ? startsParentWalk(node)
+                : PS_PPID_COLUMN.test(text.replace(/\$\{[^}]*\}/g, "").replace(/^["'`]|["'`]$/g, "")),
     },
 ];
 

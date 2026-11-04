@@ -24,6 +24,22 @@ console.log(resolveAncestorCwd() ?? "");`;
     return proc.stdout.toString().trim();
 }
 
+describe("our own parent pid on a platform with no kernel reader", () => {
+    it("is process.ppid, never null (Windows has no per-pid reader here, but node knows our parent)", () => {
+        const platform = Object.getOwnPropertyDescriptor(process, "platform");
+        Object.defineProperty(process, "platform", { value: "win32" });
+
+        try {
+            expect(readParentPid(process.pid)).toBe(process.ppid);
+            expect(readParentPid(process.pid + 100_000)).toBeNull();
+        } finally {
+            if (platform) {
+                Object.defineProperty(process, "platform", platform);
+            }
+        }
+    });
+});
+
 describe.skipIf(!SUPPORTED)("process cwd", () => {
     it("reads our own live cwd", () => {
         expect(canReadProcessCwd()).toBe(true);
