@@ -6,16 +6,13 @@ import { readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { findLoopbackClientPids, type ProcessInfo, readProcessInfo } from "@genesiscz/utils/process/socket-owner";
 import { profiler } from "@genesiscz/utils/profile";
 import { envHosts } from "./env";
-import type { CallerAgent, PeerQuery } from "./types";
+import type { CallerAgent, PeerQuery, ScopedCaller } from "./types";
 
 const { log } = logger.scoped("agent-context");
 const prof = profiler.scope("agent-context");
 
 /** A remote MCP caller as the gateway sees it: the process that holds the client end of the connection. */
-export interface PeerCaller {
-    agent: CallerAgent;
-    sessionId: string | null;
-    cwd: string | null;
+export interface PeerCaller extends ScopedCaller {
     pid: number | null;
     processName: string | null;
 }

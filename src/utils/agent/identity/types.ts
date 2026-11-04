@@ -1,8 +1,7 @@
-import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import type { AgentRuntimeContext, CallerAgent, CallerCore, ScopedCaller } from "@genesiscz/utils/agent/context";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 
-/** Who a caller is: Claude is `claude-code`, the other harnesses keep their id, Copilot is a host but no harness. */
-export type CallerAgent = AgentRuntimeContext["agent"];
+export type { CallerAgent, CallerCore, ScopedCaller };
 
 /**
  * Where one fact came from. A source names the caller (`hook-payload`, `caller-scope`, `mcp-peer`, `env`); a facet
@@ -94,9 +93,7 @@ export interface CallerProcess {
  * transcript, the turn, subagent and tool call, the account, the terminals, the host app and the process. Every fact
  * is optional, and `sources` says where each one that is set came from.
  */
-export interface AgentIdentity {
-    agent: CallerAgent;
-    sessionId: string | null;
+export interface AgentIdentity extends CallerCore {
     sourceMessage?: AgentRuntimeContext["sourceMessage"];
     isInAgent: boolean;
     aiAgent: string | null;
@@ -155,14 +152,6 @@ export interface HookCallerFacts {
     model?: string;
     transcriptPath?: string;
     cwd?: string;
-}
-
-/** A caller the request already resolved (the gateway's `runAsCaller` scope), in the shape the scope holds. */
-export interface ScopedCaller {
-    agent: CallerAgent;
-    sessionId: string | null;
-    cwd: string | null;
-    sourceMessage?: AgentRuntimeContext["sourceMessage"];
 }
 
 /** The loopback connection of a remote MCP caller, which the peer source resolves to its owning process. */

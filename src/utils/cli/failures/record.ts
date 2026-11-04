@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import type { CallerCore } from "@genesiscz/utils/agent/context";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -20,9 +20,7 @@ export const FAILURE_KINDS = ["usage", "error", "crash", "exit", "interrupt"] as
 export type FailureKind = (typeof FAILURE_KINDS)[number];
 
 /** Who ran the tool. Model and effort come from the agent's own transcript and env, never guessed. */
-export interface FailureCaller {
-    agent: AgentRuntimeContext["agent"];
-    sessionId: string | null;
+export interface FailureCaller extends CallerCore {
     sessionTitle: string | null;
     model: string | null;
     effort: string | null;
