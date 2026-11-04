@@ -463,7 +463,7 @@ private struct StyleInspector: View {
                        in: 0...0.2)
                     .accessibilityLabel("Padding")
                     .accessibilityIdentifier("recorder.style.padding")
-                SectionLabel(text: "Corners", value: String(format: "%.1f%%", frame.cornerRadius * 100))
+                SectionLabel(text: "Corners", value: sizeLabel(frame.cornerRadius, model.project))
                 Slider(value: Binding(get: { frame.cornerRadius }, set: { value in model.setLooks { $0.frame?.cornerRadius = (value * 1000).rounded() / 1000 } }),
                        in: 0...0.05)
                     .accessibilityLabel("Corners")
@@ -483,7 +483,7 @@ private struct CursorInspector: View {
         let clicks = model.project.clicks
         Text("Cursor and Clicks").font(.system(size: 15, weight: .semibold))
         VStack(alignment: .leading, spacing: 10) {
-            SwitchRow("Highlight clicks", isOn: Binding(get: { clicks?.highlight == true }, set: { on in
+            SwitchRow("Click rings", isOn: Binding(get: { clicks?.highlight == true }, set: { on in
                 model.setLooks { project in
                     var next = project.clicks ?? EditProject.Clicks()
                     next.highlight = on
@@ -491,6 +491,7 @@ private struct CursorInspector: View {
                 }
             }))
             .accessibilityIdentifier("recorder.style.clicks")
+            .instantTooltip("A ring at each click as it plays. To move or delete single marks, Annotate → Circle Every Click adds editable circles instead.")
             if model.cursor != nil {
                 SwitchRow("Click sound", isOn: Binding(get: { clicks?.sound == true }, set: { on in
                     model.setLooks { project in
@@ -519,7 +520,7 @@ private struct CursorInspector: View {
                         .accessibilityLabel("Click color \(Self.clickColorNames[hex] ?? hex)")
                     }
                 }
-                SectionLabel(text: "Size", value: String(format: "%.1f%%", clicks.radius * 100))
+                SectionLabel(text: "Size", value: sizeLabel(clicks.radius, model.project))
                 Slider(value: Binding(get: { clicks.radius }, set: { value in model.setLooks { $0.clicks?.radius = (value * 1000).rounded() / 1000 } }),
                        in: 0.01...0.1)
                     .accessibilityLabel("Click size")
@@ -589,7 +590,7 @@ private struct CaptionsInspector: View {
                     GenSegmentedTabs("Shortcuts position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
                                      selection: Binding(get: { keys.position }, set: { value in model.setLooks { $0.keys?.position = value } }),
                                      minSegmentWidth: 60, identifier: "recorder.style.keysPosition", fillsWidth: true)
-                    SectionLabel(text: "Shortcut size", value: String(format: "%.1f%%", keys.size * 100))
+                    SectionLabel(text: "Shortcut size", value: sizeLabel(keys.size, model.project))
                     Slider(value: Binding(get: { keys.size }, set: { value in model.setLooks { $0.keys?.size = (value * 1000).rounded() / 1000 } }),
                            in: 0.03...0.1)
                         .accessibilityLabel("Shortcut size")
@@ -620,7 +621,7 @@ private struct CaptionsInspector: View {
                     GenSegmentedTabs("Captions position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
                                      selection: Binding(get: { captions.position }, set: { value in model.setLooks { $0.captions?.position = value } }),
                                      minSegmentWidth: 60, identifier: "recorder.style.captionsPosition", fillsWidth: true)
-                    SectionLabel(text: "Text size", value: String(format: "%.1f%%", captions.size * 100))
+                    SectionLabel(text: "Text size", value: sizeLabel(captions.size, model.project))
                     Slider(value: Binding(get: { captions.size }, set: { value in model.setLooks { $0.captions?.size = (value * 1000).rounded() / 1000 } }),
                            in: 0.025...0.08)
                         .accessibilityLabel("Caption text size")
@@ -641,6 +642,15 @@ private struct CaptionsInspector: View {
         }
     }
 
+}
+
+/// A size kept as a fraction of the picture's short side, in pixels of the export ("6 px · 0.5%"), so a user can
+/// picture it; the stored value stays relative.
+@MainActor
+private func sizeLabel(_ fraction: Double, _ project: EditProject) -> String {
+    let short = Double(min(project.source.width, project.source.height))
+    let exported = project.export.maxHeight > 0 ? min(short, Double(project.export.maxHeight)) : short
+    return "\(Int((fraction * exported).rounded())) px · " + String(format: "%.1f%%", fraction * 100)
 }
 
 private func swiftColor(_ hex: String) -> Color {
@@ -905,7 +915,7 @@ private struct TextInspector: View {
             GenSegmentedTabs("Style", items: [.init(EditProject.TextStyle.plate, "On a plate"), .init(.plain, "Plain")],
                              selection: Binding(get: { note.style }, set: { value in model.updateText(id) { $0.style = value } }),
                              minSegmentWidth: 90, identifier: "recorder.text.style", fillsWidth: true)
-            SectionLabel(text: "Size", value: String(format: "%.1f%%", note.size * 100))
+            SectionLabel(text: "Size", value: sizeLabel(note.size, model.project))
             Slider(value: Binding(get: { note.size }, set: { value in model.updateText(id) { $0.size = (value * 1000).rounded() / 1000 } }), in: 0.02...0.15)
                 .accessibilityLabel("Text size")
                 .accessibilityIdentifier("recorder.text.size")
@@ -1766,7 +1776,7 @@ private struct ShapeRow: View {
                         .accessibilityAddTraits(shape.color == hex ? .isSelected : [])
                     }
                 }
-                SectionLabel(text: "Line", value: String(format: "%.1f%%", shape.width * 100))
+                SectionLabel(text: "Line", value: sizeLabel(shape.width, model.project))
                 Slider(value: Binding(get: { shape.width }, set: { value in model.updateShape(shape.id) { $0.width = (value * 2000).rounded() / 2000 } }), in: 0.002...0.03)
                     .accessibilityLabel("\(name) line width")
                 SectionLabel(text: "Appears", value: nil)

@@ -1163,7 +1163,9 @@ final class EditorModel {
             }
             let added = (self.project.shapes?.count ?? 0) - before
             self.tab = .text
-            self.show(added > 0 ? "Circled \(Plural.count(added, "click")); ⌘Z takes them back." : "Every click has its circle already.",
+            let both = self.project.clicks?.highlight == true
+                ? " Click rings are on too (Cursor and Clicks), so each click shows two rings." : ""
+            self.show(added > 0 ? "Circled \(Plural.count(added, "click")); ⌘Z takes them back.\(both)" : "Every click has its circle already.",
                       error: false)
         }
     }
