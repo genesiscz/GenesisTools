@@ -22,6 +22,9 @@ final class LibraryModel {
     /// What was said or marked that matches the filter, the first hit per recording, from `tools recorder search`
     /// (cached transcripts with their fixes, and marker labels).
     private(set) var spoken: [URL: SpokenHit] = [:]
+    /// The spoken search is running (the empty state waits for it); `searchFailed` is its last error.
+    private(set) var searching = false
+    private(set) var searchFailed: String?
     @ObservationIgnored private var spokenSearch: DispatchWorkItem?
 
     struct SpokenHit: Equatable {
@@ -49,18 +52,25 @@ final class LibraryModel {
         let query = filter.trimmingCharacters(in: .whitespaces)
         guard query.count >= 3 else {
             if !spoken.isEmpty { spoken = [:] }
+            searching = false
+            searchFailed = nil
             return
         }
+        searching = true
         let work = DispatchWorkItem { [weak self] in
             let span = HubPerf.begin("recorder.library.search", query)
             ToolsRunner.run(["recorder", "search", query, "--json"]) { status, stdout, stderr in
                 span.end()
                 guard let self, self.filter.trimmingCharacters(in: .whitespaces) == query else { return }
+                self.searching = false
                 guard status == 0, let data = stdout.data(using: .utf8),
                       let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                    HubPerf.log("recorder.library.search failed: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")")
+                    let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                    HubPerf.log("recorder.library.search failed: \(reason)")
+                    self.searchFailed = reason
                     return
                 }
+                self.searchFailed = nil
                 var hits: [URL: SpokenHit] = [:]
                 for row in rows {
                     guard let kind = row["kind"] as? String, kind != "title", let folder = row["folder"] as? String,
@@ -216,14 +226,29 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 // The window's title already says "Recordings"; the row carries the count and the filter.
-                Text(verbatim: Plural.count(model.items.count, "recording")).font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                Text(verbatim: model.filter.trimmingCharacters(in: .whitespaces).isEmpty
+                     ? Plural.count(model.items.count, "recording")
+                     : "\(model.visible.count) of \(Plural.count(model.items.count, "recording"))")
+                    .font(.system(size: 12.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
                 Spacer()
                 GhostButton("Record", symbol: "record.circle", tooltip: "Record the screen (the recorder's menu has more ways)",
                             identifier: "recorder.library.record") { RecorderMenu.shared.startRecording(audio: false) }
-                TextField("Search titles and what was said", text: $model.filter)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 220)
-                    .accessibilityIdentifier("recorder.library.filter")
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(RecorderPalette.dim).font(.system(size: 12))
+                    TextField("Search titles, speech and markers", text: $model.filter)
+                        .textFieldStyle(.plain)
+                        .onExitCommand { model.filter = "" }
+                        .accessibilityIdentifier("recorder.library.filter")
+                    if model.searching {
+                        ProgressView().controlSize(.small).accessibilityLabel("Searching what was said")
+                    } else if !model.filter.isEmpty {
+                        IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the search (Esc)", size: 12) { model.filter = "" }
+                    }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white.opacity(0.12)))
+                .frame(width: 260)
 
                 IconButton(systemName: "folder", tooltip: "Open the recordings folder in Finder", size: 13) {
                     PathOpener.finder(RecorderMenu.libraryFolder.path)
@@ -233,10 +258,23 @@ struct LibraryView: View {
             .padding(.top, 14)
             .padding(.bottom, 12)
             Divider().overlay(RecorderPalette.hairline)
+            if let failed = model.searchFailed {
+                InfoStrip("The search of what was said failed: \(failed). Titles still match.", tone: .warning)
+                    .padding(.horizontal, 20).padding(.top, 8)
+            }
             if model.loaded && model.visible.isEmpty {
-                EmptyState(symbol: "film.stack", text: model.items.isEmpty ? "No recordings yet" : "No recording matches “\(model.filter)”",
-                           detail: model.items.isEmpty ? "Record the screen from the menu bar item, or run tools recorder start." : nil)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 10) {
+                    EmptyState(symbol: model.searching ? "magnifyingglass" : "film.stack",
+                               text: model.items.isEmpty ? "No recordings yet"
+                                   : (model.searching ? "Searching what was said…" : "No recording matches “\(model.filter)”"),
+                               detail: model.items.isEmpty ? "Record the screen from the menu bar item, or run tools recorder start." : nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !model.items.isEmpty && !model.searching {
+                        GhostButton("Clear Search", symbol: "xmark.circle", tooltip: "Show every recording again",
+                                    identifier: "recorder.library.clearSearch") { model.filter = "" }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 GeometryReader { geometry in
                 // Cards per row, for ↑ and ↓: the grid's adaptive columns at 248 pt with 18 pt gaps inside 20 pt padding.
@@ -251,7 +289,8 @@ struct LibraryView: View {
                                                 frames: hoverScrub ? item.thumbnail.flatMap { model.scrubFrames[$0] } : nil,
                                                 wantFrames: hoverScrub ? { model.loadScrub(item) } : nil,
                                                 selected: model.selected == item.folder) {
-                                        EditorWindows.shared.open(path: item.folder.path)
+                                        // A search hit opens at the moment it found.
+                                        EditorWindows.shared.open(path: item.folder.path, atSourceSeconds: model.spoken[item.folder]?.at)
                                     } rename: {
                                         model.rename(item)
                                     } trash: {
@@ -279,7 +318,7 @@ struct LibraryView: View {
                 .onKeyPress(.downArrow) { model.moveSelection(perRow); return .handled }
                 .onKeyPress(.return) {
                     guard let item = model.selectedItem else { return .ignored }
-                    EditorWindows.shared.open(path: item.folder.path)
+                    EditorWindows.shared.open(path: item.folder.path, atSourceSeconds: model.spoken[item.folder]?.at)
                     return .handled
                 }
                 .onKeyPress(.delete, phases: .down) { press in
@@ -380,6 +419,7 @@ private struct LibraryCard: View {
                     }
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .accessibilityLabel("\(spoken.marker ? "Marker" : "Said") at \(formatClock(Int64(spoken.at * 1_000_000))): \(spoken.text)")
+                    .instantTooltip("Opens at \(formatClock(Int64(spoken.at * 1_000_000)))")
                 }
                 HStack(spacing: 6) {
                     LiveAgo(date: item.started, style: .brief)

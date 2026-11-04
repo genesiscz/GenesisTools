@@ -140,10 +140,15 @@ final class EditorWindows: NSObject, NSWindowDelegate {
 
     /// Opens (or brings back) the editor of `path`; `atSeconds` (output time) and `tab` place it, so an agent can show
     /// a moment (`movie.show({ at, tab })`, `tools recorder edit --at --tab`).
-    func open(path: String, focus wanted: Bool = true, atSeconds: Double? = nil, tab: InspectorTab? = nil) {
+    /// `atSourceSeconds` is a moment of the recording itself (a search hit), placed where it plays in the edit.
+    func open(path: String, focus wanted: Bool = true, atSeconds: Double? = nil, atSourceSeconds: Double? = nil, tab: InspectorTab? = nil) {
         let place = { (model: EditorModel) in
             if let tab { model.tab = tab }
             if let atSeconds { model.seek(Int64((atSeconds * 1_000_000).rounded())) }
+            if let atSourceSeconds {
+                let sourceUs = Int64((atSourceSeconds * 1_000_000).rounded())
+                model.seek(TimelineMap.outputTime(ofSource: sourceUs, in: model.project) ?? 0)
+            }
         }
         if let existing = open.values.first(where: { $0.1.store.url.deletingLastPathComponent().path == URL(fileURLWithPath: path).deletingLastPathComponent().path || $0.1.project.source.video == path }) {
             place(existing.1)
