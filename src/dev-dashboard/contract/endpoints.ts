@@ -27,6 +27,7 @@ import type {
     WeatherSnapshot,
     WorkItemDto,
 } from "@app/dev-dashboard/contract/dto";
+import type { LiveChannel } from "@app/dev-dashboard/contract/live";
 
 export const QA_STREAM_PATH = "/api/qa/stream" as const;
 
@@ -158,7 +159,7 @@ export const paths = {
     ports: () => "/api/ports",
     portsKill: () => "/api/ports/kill",
     // unified live SSE bus
-    live: (channels: string[] = []) =>
+    live: (channels: readonly LiveChannel[] = []) =>
         `/api/live${qs({ channels: channels.length > 0 ? channels.join(",") : undefined })}`,
     liveSubscribe: () => "/api/live/subscribe",
     // qa

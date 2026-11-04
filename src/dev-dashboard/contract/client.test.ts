@@ -136,6 +136,56 @@ describe("createDashboardClient", () => {
         sub.close();
     });
 
+    it("live.subscribe opens one stream, forwards data frames and keeps the latest channel set across a reconnect", async () => {
+        const urls: string[] = [];
+        const source: EventSourceLike = { close: () => {}, onmessage: null, onopen: null, onerror: null };
+        const factory = (url: string): EventSourceLike => {
+            urls.push(url);
+
+            return source;
+        };
+        const posts: string[] = [];
+        const fetchImpl = (async (url: string, init?: RequestInit) => {
+            posts.push(`${url} ${String(init?.body)}`);
+            return new Response("{}", { status: 200 });
+        }) as unknown as typeof fetch;
+        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl, eventSourceFactory: factory });
+
+        const frames: string[] = [];
+        const connects: string[] = [];
+        const sub = client.live.subscribe(["pulse"], {
+            onFrame: (frame) => frames.push(`${frame.channel}:${frame.type}`),
+            onConnect: (id) => connects.push(id),
+        });
+
+        expect(urls).toEqual(["http://h/api/live?channels=pulse"]);
+        source.onmessage?.({
+            data: '{"v":1,"channel":"system","type":"hello","payload":{"connId":"c1","channels":["pulse"]}}',
+        });
+        source.onmessage?.({ data: '{"v":1,"channel":"pulse","type":"snapshot","payload":{}}' });
+        source.onmessage?.({ data: "not json" });
+        expect(frames).toEqual(["pulse:snapshot"]);
+        expect(connects).toEqual(["c1"]);
+        expect(posts).toEqual([]);
+
+        sub.setChannels(["pulse", "qa"]);
+        await Bun.sleep(0);
+        expect(posts).toEqual(['http://h/api/live/subscribe {"connId":"c1","channels":["pulse","qa"]}']);
+
+        // The adapter reconnects with the first URL; the hello names the old set, so the client posts the latest one.
+        source.onerror?.(new Error("dropped"));
+        source.onmessage?.({
+            data: '{"v":1,"channel":"system","type":"hello","payload":{"connId":"c2","channels":["pulse"]}}',
+        });
+        await Bun.sleep(0);
+        expect(connects).toEqual(["c1", "c2"]);
+        expect(posts.at(-1)).toBe('http://h/api/live/subscribe {"connId":"c2","channels":["pulse","qa"]}');
+
+        sub.close();
+        source.onmessage?.({ data: '{"v":1,"channel":"qa","type":"entry","payload":{}}' });
+        expect(frames).toEqual(["pulse:snapshot"]);
+    });
+
     it("buildLog.subscribe builds the tail URL with the logFile and parses classified entries", () => {
         const urls: string[] = [];
         const source: EventSourceLike = { close: () => {}, onmessage: null, onopen: null, onerror: null };

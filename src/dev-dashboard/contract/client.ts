@@ -38,6 +38,7 @@ import type {
     WeatherRes,
 } from "@app/dev-dashboard/contract/endpoints";
 import { paths, QA_STREAM_PATH } from "@app/dev-dashboard/contract/endpoints";
+import type { LiveChannel, LiveDataFrame, LiveFrame, LiveSubscribeBody } from "@app/dev-dashboard/contract/live";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /** Per-call headers of the generic `call`. */
@@ -95,6 +96,28 @@ export interface QaSubscription {
 
 export interface BuildLogSubscription {
     close(): void;
+}
+
+export interface LiveSubscribeHandlers {
+    /** Every data frame of a subscribed channel, in arrival order. */
+    onFrame: (frame: LiveDataFrame) => void;
+    /**
+     * A connection opened: the first one or a reconnect. Frames sent while the client was away are gone, so a notice
+     * channel's consumer refetches what it covers here.
+     */
+    onConnect?: (connId: string) => void;
+    /** The stream dropped, the server sent an error frame, or a channel change was refused. */
+    onError?: (error: unknown) => void;
+}
+
+/** One `/api/live` stream. The channel set can change while it is open; a reconnect keeps the latest set. */
+export interface LiveSubscription {
+    setChannels(channels: readonly LiveChannel[]): void;
+    close(): void;
+}
+
+function sameChannels(a: readonly LiveChannel[], b: readonly LiveChannel[]): boolean {
+    return a.length === b.length && a.every((channel) => b.includes(channel));
 }
 
 export function createDashboardClient(opts: DashboardClientOptions) {
@@ -264,6 +287,94 @@ export function createDashboardClient(opts: DashboardClientOptions) {
                 };
 
                 return { close: () => source.close() };
+            },
+        },
+        live: {
+            /**
+             * Opens one stream for `channels`. A later `setChannels` posts the new set for this connection; a reconnect
+             * opens with the URL's first set, so the hello frame is compared with the latest set and corrected.
+             */
+            subscribe: (channels: readonly LiveChannel[], handlers: LiveSubscribeHandlers): LiveSubscription => {
+                if (!opts.eventSourceFactory) {
+                    throw new Error("eventSourceFactory required to subscribe to the live stream");
+                }
+
+                let wanted = [...new Set(channels)];
+                let connId: string | null = null;
+                let closed = false;
+                // One post at a time, each sending the set wanted when it leaves, so the last change wins.
+                let posting: Promise<void> = Promise.resolve();
+
+                function sync(): void {
+                    posting = posting.then(async () => {
+                        const id = connId;
+                        if (closed || !id) {
+                            return;
+                        }
+
+                        const body: LiveSubscribeBody = { connId: id, channels: wanted };
+                        try {
+                            await post(paths.liveSubscribe(), body);
+                        } catch (err) {
+                            // A 404 means the connection is gone; the reconnect's hello brings the set back.
+                            handlers.onError?.(err);
+                        }
+                    });
+                }
+
+                const source = opts.eventSourceFactory(`${baseUrl}${paths.live(wanted)}`);
+                source.onerror = (err) => {
+                    connId = null;
+                    handlers.onError?.(err);
+                };
+                source.onmessage = (ev) => {
+                    if (closed) {
+                        return;
+                    }
+
+                    let frame: LiveFrame;
+                    try {
+                        frame = SafeJSON.parse(ev.data, { strict: true }) as LiveFrame;
+                    } catch {
+                        // A malformed frame must not kill the stream; skip it.
+                        return;
+                    }
+
+                    if (frame.channel !== "system") {
+                        handlers.onFrame(frame);
+                        return;
+                    }
+
+                    if (frame.type === "hello") {
+                        connId = frame.payload.connId;
+                        if (!sameChannels(frame.payload.channels, wanted)) {
+                            sync();
+                        }
+
+                        handlers.onConnect?.(frame.payload.connId);
+                        return;
+                    }
+
+                    if (frame.type === "error") {
+                        handlers.onError?.(new Error(frame.payload.message));
+                    }
+                };
+
+                return {
+                    setChannels(next) {
+                        const set = [...new Set(next)];
+                        if (sameChannels(set, wanted)) {
+                            return;
+                        }
+
+                        wanted = set;
+                        sync();
+                    },
+                    close() {
+                        closed = true;
+                        source.close();
+                    },
+                };
             },
         },
         buildLog: {
