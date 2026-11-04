@@ -177,7 +177,7 @@ describe("toolset method names", () => {
         const itemsAt = Reflect.get(opened, "itemsAt") as (at: unknown) => Promise<Record<string, unknown>>;
         const now = await itemsAt(2);
         expect(now).toMatchObject({ output: 2, source: 3, zoom: null, caption: null });
-        expect(now.texts).toMatchObject([{ text: "Hello" }]);
+        expect(now.texts).toMatchObject([{ text: "Hello", from: 2.5, to: 4, plays: { from: 1.5, to: 3 } }]);
         expect((await itemsAt(60)).warnings).toEqual(["60 s is past the end; this is the last moment, 9 s"]);
     });
 });

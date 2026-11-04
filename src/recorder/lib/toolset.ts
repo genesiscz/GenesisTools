@@ -17,6 +17,7 @@ import {
     findInTranscript,
     hexColor,
     outputDurationUs,
+    outputTimeOf,
     REDACTION_STYLES,
     replaceWordsInLines,
     SHAPE_APPEARS,
@@ -523,7 +524,7 @@ const movieMethods = [
         positional: ["at"],
         result: z.unknown(),
         resultName: "{ output, source, zoom, redactions, texts, shapes, caption }",
-        doc: "What plays at OUTPUT seconds `at` (as still() and show() take it), in words: the source time there, the zoom (or null), the hidden parts and spotlights, texts and shapes on screen (as info() lists them, with their ids for retime() or untext()), and the caption line (or null). A cheap way to check an edit without a picture.",
+        doc: "What plays at OUTPUT seconds `at` (as still() and show() take it), in words: the source time there, the zoom (or null), the hidden parts and spotlights, texts and shapes on screen (as info() lists them, with their ids for retime() or untext(), plus `plays: { from, to }` in output seconds, null where cut), and the caption line (or null). A cheap way to check an edit without a picture.",
         effect: "read",
     }),
     defineMethod({
@@ -1242,14 +1243,22 @@ export class Movie {
         const sourceUs = sourceTimeOf(project, outUs);
         const live = (item: { id: string; startUs: number; endUs: number }) =>
             item.startUs <= sourceUs && sourceUs < item.endUs;
-        const ids = new Set(
+        const spans = new Map(
             [...project.zooms, ...(project.redactions ?? []), ...(project.texts ?? []), ...(project.shapes ?? [])]
                 .filter(live)
-                .map((item) => item.id)
+                .map((item) => [item.id, item] as const)
         );
         const described = describeProject(project, opened.path);
+        const playsAt = (us: number) => {
+            const out = outputTimeOf(project, us);
+            return out === undefined ? null : Math.round(out / 1000) / 1000;
+        };
+        // Each item as info() lists it (source seconds), plus `plays`: its OUTPUT start and end, null where cut.
         const onScreen = <T extends { id: string }>(list: T[] | undefined) =>
-            (list ?? []).filter((item) => ids.has(item.id));
+            (list ?? []).flatMap((item) => {
+                const span = spans.get(item.id);
+                return span ? [{ ...item, plays: { from: playsAt(span.startUs), to: playsAt(span.endUs) } }] : [];
+            });
         const cache = transcriptCachePath(project.source.video);
         const lines = existsSync(cache)
             ? transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), project)
