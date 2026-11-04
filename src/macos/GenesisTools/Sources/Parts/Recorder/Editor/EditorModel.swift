@@ -101,11 +101,19 @@ final class EditorModel {
     func togglePlay() {
         if player.rate != 0 {
             player.pause()
+            logPlayback()
         } else {
             if clock.outUs >= durationUs - 20_000 { seek(0) }
             player.play()
         }
         isPlaying = player.rate != 0
+    }
+
+    /// The preview's own frame counts for the run that just paused (the player item's access log): how smooth the
+    /// zoomed preview played, read with `rg recorder.editor.playback ~/.genesis-tools/logs/app-perf.log`.
+    private func logPlayback() {
+        guard let event = player.currentItem?.accessLog()?.events.last else { return }
+        HubPerf.log("recorder.editor.playback watched \(String(format: "%.1f", event.durationWatched)) s, dropped \(event.numberOfDroppedVideoFrames) frames, stalls \(event.numberOfStalls), \(project.source.width)×\(project.source.height) source, \(project.zooms.count) zooms")
     }
 
     func seek(_ outUs: Int64) {
