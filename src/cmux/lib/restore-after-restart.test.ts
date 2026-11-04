@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { setCcRunAliases } from "@app/cmux/lib/launchers";
-import * as liveLayout from "@app/cmux/lib/live-layout";
 import * as restore from "@app/cmux/lib/restore";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import * as cmuxCli from "@genesiscz/utils/cmux/lib/cli";
+import * as liveLayout from "@genesiscz/utils/cmux/live-layout";
 import * as processes from "@genesiscz/utils/process/processes";
 import { filterReplayByAgents, isMissingEnumFlag, parseAgentList, parseRestoreSource } from "./restore-after-restart";
 import {
