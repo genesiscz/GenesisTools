@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { appiumHome, appiumReady, xcuitestDriverVersion, xcuitestXcodeProblem } from "@genesiscz/utils/mobile/appium";
 import {
     developerDir,
@@ -49,7 +50,7 @@ export async function mobileDoctor(appiumPort: number): Promise<DoctorReport> {
         name: "appium",
         ok: true,
         detail: ready ? `answers on :${appiumPort}` : `not running on :${appiumPort} (only the Appium driver needs it)`,
-        fix: ready ? undefined : `cd /tmp && APPIUM_HOME=${appiumHome()} appium --port ${appiumPort}`,
+        fix: ready ? undefined : toolCommand("mobile appium start", "--port", String(appiumPort)),
     });
 
     const booted = (await listSimulators())

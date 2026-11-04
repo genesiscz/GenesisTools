@@ -6,6 +6,7 @@ import { out } from "@genesiscz/utils/logger";
 import { IOS_CONFIGURATIONS, type IosConfiguration, projectRoutes } from "@genesiscz/utils/mobile/project";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
+import { registerServices } from "./commands/services";
 import { buildAndInstall } from "./lib/build";
 import { pickSimulator } from "./lib/device";
 import { mobileDoctor } from "./lib/doctor";
@@ -142,5 +143,7 @@ withConfig(
             ui.dim(`log: ${result.logPath}`);
         }
     );
+
+registerServices(program);
 
 await runTool(program, { tool: "mobile" });

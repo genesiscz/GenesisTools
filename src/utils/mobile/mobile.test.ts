@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { findById, flatten, formatTree, parseSource, readLogBox, summarize } from "./a11y";
+import { decideAlert } from "./alerts";
 import { appiumPortFor, compareVersions, xcuitestXcodeProblem } from "./appium";
+import { readMetroLog } from "./metro";
 import { findMobileConfig, iosApp, loadMobileProject, parseMobileConfig, projectRoutes } from "./project";
 import { runtimeVersion, wdaPortsFor } from "./simulator";
 
@@ -105,5 +108,96 @@ describe("mobile project config", () => {
         writeConfig(empty, "android-only.config.ts", `export default { id: "a", platforms: {} };`);
         const project = await loadMobileProject({ cwd: empty, config: "android-only.config.ts" });
         expect(() => iosApp(project)).toThrow("has no platforms.ios");
+    });
+});
+describe("system alert rules", () => {
+    it("opens our app's link, cancels another build's, and leaves unknown alerts alone", () => {
+        expect(decideAlert("Open in “Shop”?", "Shop")).toEqual({
+            rule: "open-in",
+            buttons: ["Open"],
+        });
+        expect(decideAlert("Open in “Other Shop”?", "Shop").buttons).toEqual(["Cancel"]);
+        expect(decideAlert("Open in “Shop”?", "").buttons).toBeNull();
+        expect(decideAlert("“Shop” Would Like to Send You Notifications", "Shop").buttons).toEqual(["Allow"]);
+        expect(decideAlert("“Other” Would Like to Send You Notifications", "Shop").buttons).toBeNull();
+        // The app's own destructive confirmation must never be answered by the watcher.
+        expect(decideAlert("Stop this session?\nEnds shop (pid 41001)", "Shop")).toEqual({
+            rule: null,
+            buttons: null,
+        });
+    });
+});
+
+const SOURCE = `<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>
+<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Shop" label="Shop" enabled="true" visible="true" x="0" y="0" width="402" height="874">
+  <XCUIElementTypeOther type="XCUIElementTypeOther" name="screen-agents" enabled="true" visible="true" x="0" y="0" width="402" height="874">
+    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" x="0" y="0" width="402" height="874">
+      <XCUIElementTypeButton type="XCUIElementTypeButton" name="agent-row-claude:a1" label="Checkout &amp; cart" enabled="true" visible="true" x="16" y="120" width="370" height="90"/>
+      <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="2 running" enabled="true" visible="true" x="16" y="90" width="80" height="20"/>
+      <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="hidden words" enabled="true" visible="false" x="0" y="900" width="10" height="10"/>
+    </XCUIElementTypeOther>
+  </XCUIElementTypeOther>
+</XCUIElementTypeApplication></AppiumAUT>`;
+
+describe("accessibility tree", () => {
+    it("parses the tree, decodes entities and folds anonymous containers", () => {
+        const nodes = parseSource(SOURCE);
+        expect(flatten(nodes)).toHaveLength(6);
+        expect(findById(nodes, "agent-row-claude:a1")?.label).toBe("Checkout & cart");
+        const tree = formatTree(nodes, { visibleOnly: true }).split("\n");
+        expect(tree[1]).toBe("  Other #screen-agents [0,0 402x874]");
+        expect(tree[2]).toBe('    Button "Checkout & cart" #agent-row-claude:a1 [16,120 370x90]');
+        expect(tree.join("\n")).not.toContain("hidden words");
+    });
+
+    it("summarizes testIDs, visible words and tap targets", () => {
+        const summary = summarize(parseSource(SOURCE));
+        expect(summary.testIds).toEqual(["screen-agents", "agent-row-claude:a1"]);
+        expect(summary.texts).toEqual(["2 running"]);
+        expect(summary.buttons).toEqual([{ label: "Checkout & cart", id: "agent-row-claude:a1" }]);
+        expect(summary.alerts).toEqual([]);
+    });
+
+    it("reads a collapsed and an expanded LogBox", () => {
+        const text = (value: string, y: number) =>
+            `<XCUIElementTypeStaticText value="${value}" visible="true" x="10" y="${y}" width="300" height="20"/>`;
+        expect(readLogBox(parseSource(SOURCE)).state).toBe("none");
+        const toast = parseSource(
+            `<XCUIElementTypeOther name="2, Warning: Each child needs a key" visible="true" x="10" y="800" width="380" height="48"/>`
+        );
+        expect(readLogBox(toast)).toMatchObject({ state: "collapsed", message: ["Warning: Each child needs a key"] });
+        const expanded = readLogBox(
+            parseSource(
+                `<XCUIElementTypeOther>${text("Log 2 of 3", 60)}${text("Console Error", 100)}${text("Network request failed", 130)}${text("Source", 160)}${text("Network request failed", 131)}<XCUIElementTypeButton label="Dismiss" visible="true" x="0" y="820" width="200" height="40"/><XCUIElementTypeButton label="Minimize" visible="true" x="200" y="820" width="200" height="40"/>${text("under the overlay", 900)}</XCUIElementTypeOther>`
+            )
+        );
+        expect(expanded).toMatchObject({
+            state: "expanded",
+            index: 2,
+            total: 3,
+            heading: "Console Error",
+            message: ["Network request failed"],
+            headerY: 70,
+        });
+        expect(expanded.minimize?.label).toBe("Minimize");
+    });
+});
+
+describe("metro log", () => {
+    it("reads only the lines after the newest bundle", () => {
+        const report = readMetroLog(
+            [
+                "iOS Bundled 900ms node_modules/expo-router/entry.js",
+                " ERROR  [TypeError: old failure]",
+                "iOS Bundled 120ms node_modules/expo-router/entry.js",
+                " LOG  app booted",
+                " WARN  slow query",
+            ].join("\n")
+        );
+        expect(report.ran).toBe(true);
+        expect(report.fatal).toEqual([]);
+        expect(report.console).toEqual(["WARN  slow query"]);
+        expect(readMetroLog("Bundling failed: Unable to resolve module ./missing").fatal).toHaveLength(1);
+        expect(readMetroLog("Starting Metro Bundler\nWaiting on http://localhost:8091").ran).toBe(false);
     });
 });

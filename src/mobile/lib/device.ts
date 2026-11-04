@@ -1,4 +1,4 @@
-import { listSimulators, type SimDevice } from "@genesiscz/utils/mobile/simulator";
+import { developerDir, listSimulators, type SimDevice, simulatorUiClient } from "@genesiscz/utils/mobile/simulator";
 
 /**
  * The simulator a command works on. An explicit udid wins; otherwise exactly one booted simulator must exist, because
@@ -35,4 +35,9 @@ export async function pickSimulator(udid?: string, options: { booted?: boolean }
 
     const names = booted.map((device) => `${device.name} ${device.udid}`).join(", ");
     throw new Error(`${booted.length} simulators are booted (${names}); pass --udid so another session's is not used`);
+}
+
+/** Whether this Xcode's simulator UI is DeviceHub (Xcode 27 on), which an old XCUITest driver cannot run with. */
+export async function usesDeviceHub(): Promise<boolean> {
+    return simulatorUiClient(await developerDir())?.name === "DeviceHub";
 }

@@ -55,3 +55,25 @@ each session its own `--derived-data`.
 The generic pieces are in `@genesiscz/utils/mobile/`: `project` (the config contract and loader), `simulator` (simctl,
 device types and screens, privacy, user defaults, WDA ports), `appium` (the driver check, the per-simulator port) and
 `webdriver` (a minimal W3C client over `fetch`).
+
+## Ports and owned servers, one set per simulator
+
+Each simulator gets its own ports from an FNV-1a hash of its udid (`udidSlot` in `@genesiscz/utils/mobile/simulator`):
+WebDriverAgent 18100 to 18999 (MJPEG 1000 above), Appium 4900 to 4999. XCUITest kills every WDA on its port that
+belongs to another simulator, so a shared port makes two agents kill each other's sessions.
+
+```bash
+tools mobile appium start|stop|status --udid <udid>
+tools mobile metro status|stop <port>
+```
+
+`appium start` runs this tool's own server on the simulator's port from `/tmp`, with its pidfile and log in
+`~/.genesis-tools/mobile/appium/<port>.{pid,log}`, and refuses an XCUITest driver that predates DeviceHub. `stop` stops
+only a server this tool started (the pidfile records the process start time, so a reused pid is never signalled).
+Metro (`bunx expo start` from the app folder, `CI` removed so it rebuilds) keeps the same record in
+`~/.genesis-tools/mobile/metro/<port>.{pid,log}`.
+
+More shared pieces: `service` (a detached server with a pidfile), `wda` (WebDriverAgent's session-less routes, so a
+second actor can read the screen while a run holds the only Appium session), `alerts` (a rule table that answers known
+system alerts for the app under test through WDA or idb and leaves every other alert alone), `idb` and `a11y` (the
+XCUITest tree parser, the readable tree, the LogBox reader).
