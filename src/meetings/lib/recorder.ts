@@ -29,17 +29,9 @@ import {
     type MeetingStore,
     RECORDING_STOP_REASONS,
     type RecordingBlock,
-    type RecordingSpan,
     type RecordingStopReason,
 } from "@genesiscz/utils/meetings/record";
-import {
-    attemptStaleTakeover,
-    classifyPidRecord,
-    clearPidFile,
-    inspectPidFile,
-    parsePidRecord,
-    writePidFile,
-} from "@genesiscz/utils/process/pidfile";
+import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import {
     type AudioDevices,
     type AudioSource,
@@ -79,11 +71,11 @@ import {
     type DisplayInfo,
     type FrameRecorder,
 } from "@genesiscz/utils/screen-recorder/types";
-import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
 import { collectRecord } from "./collect";
+import { claimRecorderPid, RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
 
@@ -354,16 +346,11 @@ export async function runRecorder(options: {
     let audioFiles = 0;
     const record = store.read(meetingId);
 
-    const previous = readFileIfExistsSync(files.pid);
-    const content = previous ? Buffer.from(previous).toString("utf8") : undefined;
-    const owner = content ? parsePidRecord(content) : null;
-    const status = owner ? classifyPidRecord(owner).status : undefined;
-    const reclaimed =
-        content && (status === "dead" || status === "foreign") ? await attemptStaleTakeover(files.pid, content) : false;
-
-    if (!reclaimed) {
-        writePidFile(files.pid, { exclusive: true });
-    }
+    const claim = await claimRecorderPid(files.pid);
+    const stateFile = new RecorderStateFile<RecorderState>({
+        state: files.state,
+        last: join(folder, "recorder-last.json"),
+    });
 
     try {
         mkdirSync(framesDir, { recursive: true });
@@ -385,7 +372,8 @@ export async function runRecorder(options: {
         const seenDisplays = new Map<number, string>(
             (record?.recording?.displays ?? []).map((display) => [display.id, display.name])
         );
-        const spans: RecordingSpan[] = [...(record?.recording?.spans ?? [])];
+        const recordingRecord = new RecordingRecord(store, meetingId, record?.recording?.spans ?? []);
+        const spans = recordingRecord.spans;
         let paused = false;
         let pausedAt: string | undefined;
         let stopRequested = false;
@@ -415,7 +403,7 @@ export async function runRecorder(options: {
         const running = captures.running;
         const abortAll = () => captures.abortAll();
         const stopping = new AbortController();
-        const saveState = () => atomicWriteFileSync(files.state, SafeJSON.stringify(state, null, 2));
+        const saveState = () => stateFile.save(state);
         const connected = async (displayId: number): Promise<DisplayInfo> => {
             const display = (await deps.recorder.displays()).find((one) => one.id === displayId);
 
@@ -693,41 +681,22 @@ export async function runRecorder(options: {
         process.on("SIGINT", onSignal);
 
         const updateRecording = (change: string, mutate: (recording: RecordingBlock) => void) =>
-            store.update(meetingId, { command: "record", change }, (current) => {
-                const recording: RecordingBlock = { ...current.recording };
-                mutate(recording);
-                current.recording = recording;
-            });
-        const openSpan = () => spans.push({ from: new Date().toISOString() });
-        /** `at`: when it was asked for; the running piece converts its frames after that. */
-        const closeSpan = (stopReason: RecordingStopReason, at = new Date().toISOString()) => {
-            const open = spans.at(-1);
-
-            if (open && !open.to) {
-                open.to = at;
-                open.stopReason = stopReason;
-            }
-        };
+            recordingRecord.update(change, mutate);
+        const closeSpan = (stopReason: RecordingStopReason, at?: string) => recordingRecord.closeSpan(stopReason, at);
 
         const markPaused = () => {
             closeSpan("paused", pausedAt);
             state.paused = true;
             saveState();
             live.update({ state: "paused" });
-            void updateRecording("paused", (recording) => {
-                recording.status = "paused";
-                recording.spans = spans;
-            }).catch((err: unknown) => log.warn({ err }, "pause not written to the record"));
+            recordingRecord.markStatus("paused");
         };
         const markResumed = () => {
-            openSpan();
+            recordingRecord.openSpan();
             state.paused = false;
             saveState();
             live.update({ state: "recording" });
-            void updateRecording("resumed", (recording) => {
-                recording.status = "recording";
-                recording.spans = spans;
-            }).catch((err: unknown) => log.warn({ err }, "resume not written to the record"));
+            recordingRecord.markStatus("recording");
         };
         const targetOf = displayTarget;
         const liveFrames = () => state.frames + [...running.values()].reduce((sum, one) => sum + one.streamed, 0);
@@ -926,25 +895,12 @@ export async function runRecorder(options: {
             rmSync(pieceDir, { recursive: true, force: true });
             mkdirSync(pieceDir, { recursive: true });
             saveState();
-            openSpan();
-            await store.update(
-                meetingId,
-                { command: "record start", change: `display ${policy} (${deps.recorder.id})` },
-                (current) => {
-                    current.recording = {
-                        ...current.recording,
-                        startedAt: state.startedAt,
-                        backend: deps.recorder.id,
-                        displayPolicy: policy,
-                        framesDir: "frames",
-                        ocr: "ocr.jsonl",
-                        status: "recording",
-                        spans,
-                    };
-                    delete current.recording.stoppedAt;
-                    delete current.recording.stopReason;
-                }
-            );
+            recordingRecord.openSpan();
+            await recordingRecord.start({
+                startedAt: state.startedAt,
+                backend: deps.recorder.id,
+                displayPolicy: policy,
+            });
             await session.ready();
 
             while (!stopRequested) {
@@ -1058,9 +1014,7 @@ export async function runRecorder(options: {
             await Bun.sleep(STOP_ANSWER_MS);
             live.close(state.stopReason);
 
-            if (existsSync(files.state)) {
-                renameSync(files.state, join(folder, "recorder-last.json"));
-            }
+            stateFile.retire();
         }
 
         log.info(
@@ -1150,7 +1104,7 @@ export async function runRecorder(options: {
             }
         }
     } finally {
-        clearPidFile(files.pid);
+        claim.release();
     }
 }
 
