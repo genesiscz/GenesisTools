@@ -8,6 +8,7 @@ import type {
 } from "@app/dev-dashboard/contract/agents";
 import { readSessionBackward } from "@genesiscz/utils/agent-sessions/session-backward";
 import { type FleetEntry, type FleetViewOptions, readFleetView } from "@genesiscz/utils/ai/live-sessions/fleet";
+import { ownPromptText } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import { logger } from "@genesiscz/utils/logger";
 import { clipOneLine } from "@genesiscz/utils/string";
 import { type AgentNode, type AgentParent, type AgentsTree, DEFAULT_AGENTS_LIMIT, hubAgents } from "../agents/index";
@@ -34,7 +35,10 @@ export interface BoardDeps {
     now(): number;
 }
 
-/** The newest user prompt of a session, read from the end through its provider's reader (`readBackward`). */
+/**
+ * The newest prompt in the user's own words, read from the end through its provider's reader (`readBackward`). A
+ * harness delivery (a task result, a peer's message) and a compaction summary are skipped.
+ */
 async function newestPrompt(entry: FleetEntry): Promise<string | null> {
     if (!entry.transcript) {
         return null;
@@ -44,7 +48,7 @@ async function newestPrompt(entry: FleetEntry): Promise<string | null> {
         const read = await readSessionBackward({
             kind: entry.transcript.provider,
             transcriptPath: entry.transcript.filePath,
-            until: (row) => row.role === "user" && row.text.trim() !== "",
+            until: (row) => row.role === "user" && ownPromptText(row.text) !== null,
             maxBytes: PROMPT_MAX_BYTES,
         });
 
@@ -56,8 +60,9 @@ async function newestPrompt(entry: FleetEntry): Promise<string | null> {
             return null;
         }
 
-        const prompt = read.entries.find((row) => row.role === "user" && row.text.trim() !== "");
-        return prompt ? clipOneLine(prompt.text, BOARD_TEXT_CHARS) : null;
+        const prompt = read.entries.find((row) => row.role === "user" && ownPromptText(row.text) !== null);
+        const words = prompt ? ownPromptText(prompt.text) : null;
+        return words ? clipOneLine(words, BOARD_TEXT_CHARS) : null;
     } catch (error) {
         log.debug({ error, path: entry.transcript.filePath }, "newest prompt unreadable");
         return null;
