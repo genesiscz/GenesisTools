@@ -487,6 +487,33 @@ final class EditorModel {
         apply(next, rebuildMovie: false)
     }
 
+    /// Each recording marker in the kept movie as a 2.5 s step title, "1. Open the settings", in one undo step, as the
+    /// REPL's titleMarkers() does; a marker that has a text starting within 0.1 s keeps it.
+    func titleMarkers() {
+        let kept = markers.filter { TimelineMap.outputTime(ofSource: $0.us, in: project) != nil }
+        guard !kept.isEmpty else {
+            show("No marker is in the kept movie; mark moments while recording (the menu bar item's Add Marker).", error: false)
+            return
+        }
+        let taken = (project.texts ?? []).map(\.startUs)
+        var next = project
+        var added = 0
+        for (index, marker) in kept.enumerated() where !taken.contains(where: { abs($0 - marker.us) <= 100_000 }) {
+            let id = "t" + UUID().uuidString.prefix(8).lowercased()
+            let end = min(project.source.durationUs, marker.us + 2_500_000)
+            next.texts = (next.texts ?? []) + [EditProject.TextNote(id: id, startUs: marker.us, endUs: end,
+                                                                     text: String("\(index + 1). \(marker.label)".prefix(200)))]
+            added += 1
+        }
+        guard added > 0 else {
+            show("Every marker has its title already.", error: false)
+            return
+        }
+        tab = .text
+        apply(next, rebuildMovie: false)
+        show("Added \(Plural.count(added, "step title")); ⌘Z takes them back.", error: false)
+    }
+
     var selectedShape: String? {
         get { if case let .shape(id) = selection { id } else { nil } }
         set {

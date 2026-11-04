@@ -763,6 +763,11 @@ private struct TextInspector: View {
                     .instantTooltip("A 3 s circle from the playhead; drag its corners on the preview")
                     .accessibilityIdentifier("recorder.shape.circle")
             }
+            if !model.markers.isEmpty {
+                WideButton(title: "Title Every Marker", systemImage: "list.number") { model.titleMarkers() }
+                    .instantTooltip("A 2.5 s step title at each of the \(Plural.count(model.markers.count, "marker")) set while recording (\"1. \(model.markers[0].label)\"); ⌘Z takes them back")
+                    .accessibilityIdentifier("recorder.text.titleMarkers")
+            }
             if let clicks = model.cursor?.clicks.count, clicks > 0 {
                 WideButton(title: model.isMarkingClicks ? "Marking the Clicks…" : "Circle Every Click",
                            systemImage: "cursorarrow.click.2") { model.markClicks() }
