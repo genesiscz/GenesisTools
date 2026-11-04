@@ -1171,7 +1171,9 @@ private struct HiddenPartHandles: View {
             let size = geometry.size
             let map = model.sourceToCanvas(atOutput: clock.outUs)
             let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
+            // A part that follows the cursor is outlined where the picture draws it now.
             let showing = (model.project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+                .map { ZoomState.placed($0, atSourceUs: sourceUs, track: model.cursor) }
             let toView = { (rect: CGRect) in CGRect(x: rect.minX * size.width, y: rect.minY * size.height,
                                                     width: rect.width * size.width, height: rect.height * size.height) }
             ZStack(alignment: .topLeading) {
