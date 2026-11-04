@@ -232,9 +232,10 @@ const movieMethods = [
                     .string()
                     .regex(/^#[0-9a-fA-F]{6}$/)
                     .optional(),
+                appear: z.enum(SHAPE_APPEARS).optional(),
             })
             .strict(),
-        'An arrow pointing at `at` (0...1 of the source picture, e.g. a button you found in a still) from `from` to `to`; its tail is `tail`, or 12 % of the picture away towards the centre. The same as shape with kind "arrow".'
+        'An arrow pointing at `at` (0...1 of the source picture, e.g. a button you found in a still) from `from` to `to`; its tail is `tail`, or 12 % of the picture away towards the centre; appear "draw" (default: it draws itself on), "fade" or "none". The same as shape with kind "arrow".'
     ),
     edit("unshape", z.object({ id: z.string() }).strict(), "Removes the arrow, box or circle with this id.", ["id"]),
     edit(
@@ -272,7 +273,7 @@ const movieMethods = [
                 cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
             })
             .strict(),
-        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 sets how dark the rest gets (0.7), cutout "rounded" (default), "rect" or "circle" its lit shape. The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
+        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 is how much black covers the rest (0.7; 0.5 leaves it at half), cutout "rounded" (default), "rect" or "circle" its lit shape (a circle is the ellipse inside rect, so give a square rect in pixels for a round one). The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
@@ -441,11 +442,11 @@ const movieMethods = [
     }),
     defineMethod({
         name: "still",
-        params: z.object({ at: timeSchema.optional() }),
-        positional: ["at"],
+        params: z.object({ at: timeSchema.optional(), out: z.string().optional() }),
+        positional: ["at", "out"],
         result: z.unknown(),
         resultName: "{ path, width, height }",
-        doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. It renders at preview size (at most 1080 pixels on the short side), so its size can differ from export()'s, which follows the export settings; the picture is the same.",
+        doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. Without `out` the PNG goes to the run's scratch folder and is gone after the run; give `out` (a .png path) to keep it. It renders at preview size (at most 1080 pixels on the short side), so its size can differ from export()'s, which follows the export settings; the picture is the same.",
         effect: "read",
     }),
     defineMethod({
@@ -565,7 +566,7 @@ export const moviesApi = defineApi({
             positional: ["recording"],
             result: z.unknown(),
             resultName: "Movie",
-            doc: 'A library id, "last", a recording folder, a movie or an edit.json. Every method of the Movie it returns is async: await each call (an un-awaited one prints as "[a Promise: …]").',
+            doc: 'A library id, "last", a recording folder, a movie or an edit.json. Every method of the Movie it returns is async: await each call (an un-awaited one prints as "[a Promise: …]"). An edit may already hold zooms, shapes, texts or music: call info() first, whose summary line lists them, so you do not add a second copy.',
             effect: "read",
         }),
         defineMethod({
@@ -863,6 +864,7 @@ export class Movie {
         at: { x: number; y: number };
         tail?: { x: number; y: number };
         color?: string;
+        appear?: (typeof SHAPE_APPEARS)[number];
     }) {
         return this.change([
             {
@@ -873,6 +875,7 @@ export class Movie {
                 start: options.tail ?? arrowTail(options.at),
                 end: options.at,
                 ...(options.color ? { color: options.color } : {}),
+                ...(options.appear ? { appear: options.appear } : {}),
             },
         ]);
     }
@@ -1051,7 +1054,7 @@ export class Movie {
         return { path: answer.path, width: answer.width, height: answer.height, times: answer.times };
     }
 
-    async still(at: z.infer<typeof timeSchema> = 0) {
+    async still(at: z.infer<typeof timeSchema> = 0, keep?: string) {
         const opened = await openProject(this.recording);
 
         if (opened.fresh) {
@@ -1068,7 +1071,7 @@ export class Movie {
         }
 
         await ensureRecorderPart();
-        const out = join(this.ctx?.scratchDir ?? tmpdir(), `still-${Date.now()}.png`);
+        const out = keep ? resolve(keep) : join(this.ctx?.scratchDir ?? tmpdir(), `still-${Date.now()}.png`);
         const answer = await stillOfEdit({ path: opened.path, atSeconds: atUs / 1_000_000, out });
 
         if (!answer.ok || !answer.path) {
