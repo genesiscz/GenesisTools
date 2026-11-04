@@ -128,7 +128,16 @@ enum EditorMenu {
         add(self.edit, to: edit)
         bar.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
 
-        bar.addItem(withTitle: "Timeline", action: nil, keyEquivalent: "").submenu = menu("Timeline", timeline)
+        let timelineMenu = menu("Timeline", timeline)
+        timelineMenu.addItem(.separator())
+        let addLane = NSMenu(title: "Add Lane")
+        for (index, choice) in EditorModel.laneChoices.enumerated() {
+            let item = addLane.addItem(withTitle: choice.title, action: #selector(EditorMenuTarget.addLane(_:)), keyEquivalent: "")
+            item.target = EditorMenuTarget.shared
+            item.tag = index
+        }
+        timelineMenu.addItem(withTitle: "Add Lane", action: nil, keyEquivalent: "").submenu = addLane
+        bar.addItem(withTitle: "Timeline", action: nil, keyEquivalent: "").submenu = timelineMenu
 
         let view = menu("View", tabs)
         view.addItem(.separator())
@@ -161,6 +170,15 @@ enum EditorMenu {
             item.representedObject = seconds
         }
         view.addItem(withTitle: "Edits From Outside the Window", action: nil, keyEquivalent: "").submenu = outside
+        let shown = NSMenu(title: "Effect Lanes Before Scrolling")
+        for count in EditorModel.lanesShownChoices {
+            let item = shown.addItem(withTitle: count == 0 ? "All (Never Scroll)" : Plural.count(count, "Lane"),
+                                     action: #selector(EditorMenuTarget.setLanesShown(_:)), keyEquivalent: "")
+            item.target = EditorMenuTarget.shared
+            item.tag = count
+            item.toolTip = "Past this many effect lanes the lanes area scrolls, with a fade at the cut edge"
+        }
+        view.addItem(withTitle: "Effect Lanes Before Scrolling", action: nil, keyEquivalent: "").submenu = shown
         bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
 
         let window = NSMenu(title: "Window")
@@ -313,6 +331,15 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         UserDefaults.standard.set(seconds, forKey: EditorModel.agentEditSecondsKey)
     }
 
+    @objc func addLane(_ sender: NSMenuItem) {
+        guard EditorModel.laneChoices.indices.contains(sender.tag), let model = EditorWindows.shared.frontModel() else { return }
+        model.addLane(kinds: EditorModel.laneChoices[sender.tag].kinds)
+    }
+
+    @objc func setLanesShown(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: EditorModel.lanesShownKey)
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         LibraryWindow.shared.show(focus: true)
     }
@@ -330,6 +357,11 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
             item.state = seconds == EditorModel.agentEditSeconds ? .on : .off
             return true
         }
+        if item.action == #selector(setLanesShown(_:)) {
+            item.state = item.tag == EditorModel.lanesShown ? .on : .off
+            return true
+        }
+        if item.action == #selector(addLane(_:)) { return EditorWindows.shared.frontModel() != nil }
         if item.action == #selector(toggleSnap(_:)) {
             item.state = (UserDefaults.standard.object(forKey: EditorModel.snapKey) as? Bool ?? true) ? .on : .off
             return true

@@ -7,6 +7,7 @@ struct EditorView: View {
     /// A `--snapshot` run draws a still frame instead of the player layer, which an off-screen window never paints.
     var stillPreview: CGImage?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(EditorModel.lanesShownKey) private var lanesShown = 4
 
     var body: some View {
         GeometryReader { geometry in
@@ -37,10 +38,10 @@ struct EditorView: View {
                 }
                 Divider().overlay(RecorderPalette.hairline)
                 TimelineView(model: model, viewportWidth: geometry.size.width)
-                    .frame(height: TimelineLayout(model: model).totalHeight)
+                    .frame(height: TimelineLayout(model: model, lanesShown: lanesShown).totalHeight)
             }
             // A lane that comes or goes eases the preview to its new size instead of jumping under the pointer.
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: TimelineLayout(model: model).totalHeight)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: TimelineLayout(model: model, lanesShown: lanesShown).totalHeight)
             .frame(width: geometry.size.width, height: geometry.size.height)
             .background(RecorderPalette.window)
         }
@@ -2022,6 +2023,16 @@ private struct TransportBar: View {
             .accessibilityIdentifier("recorder.play")
             IconButton(systemName: "forward.end.fill", tooltip: "To the end (End)", size: 15) { model.seek(model.durationUs) }
             Spacer(minLength: 8)
+            MenuButton(items: {
+                EditorModel.laneChoices.map { choice in .action(choice.title, run: { model.addLane(kinds: choice.kinds) }) }
+            }) {
+                Label("Add Lane", systemImage: "rectangle.stack.badge.plus")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(RecorderPalette.text)
+            }
+            .instantTooltip("Add an effect lane under the others: zooms, hidden parts, texts, speed or any effect")
+            .accessibilityIdentifier("recorder.timeline.addLane")
+            .fixedSize()
             // The scale slider gives way first in a narrow window; −, Fit and + stay.
             ViewThatFits(in: .horizontal) {
                 scaleControls(slider: true)

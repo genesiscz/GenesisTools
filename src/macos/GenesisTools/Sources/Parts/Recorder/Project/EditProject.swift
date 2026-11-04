@@ -34,6 +34,8 @@ struct EditProject: Codable, Equatable {
     var transcript: TranscriptSettings?
     /// How the picture moves through a zoom; nil is `Motion()`.
     var motion: Motion?
+    /// The timeline's effect lanes in order; nil is `EffectLanes.defaults` (src/utils/recording-editor/lanes.ts).
+    var lanes: [EffectLane]?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -80,6 +82,8 @@ struct EditProject: Codable, Equatable {
         /// How long the zoom takes to reach its scale, and to leave it.
         var easeInMs = 450
         var easeOutMs = 450
+        /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
+        var lane: String?
     }
 
     struct AudioSettings: Codable, Equatable {
@@ -181,6 +185,8 @@ struct EditProject: Codable, Equatable {
         /// A spotlight's dim around it (0.2...0.95 black); nil is `Looks.spotlightDim`.
         var dim: Double?
         var cutout: SpotlightCutout?
+        /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
+        var lane: String?
     }
 
     /// The fixed words of a transcript line by its start in source milliseconds; an empty text hides the line.
@@ -214,6 +220,8 @@ struct EditProject: Codable, Equatable {
         var y = 0.12
         var size = 0.055
         var style: TextStyle = .plate
+        /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
+        var lane: String?
     }
 
     enum ShapeKind: String, Codable, CaseIterable {
@@ -240,6 +248,8 @@ struct EditProject: Codable, Equatable {
         var color = "#FF3B30"
         var width = 0.006
         var appear: ShapeAppear?
+        /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
+        var lane: String?
     }
 
     struct Keys: Codable, Equatable {

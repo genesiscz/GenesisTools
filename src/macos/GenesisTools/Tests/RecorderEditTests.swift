@@ -162,6 +162,46 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(squeezed.clips[0].fromUs, 3_000_000 - TimelineMap.minimumClipUs)
     }
 
+    func testEffectLanesPlaceItemsKeepThemThroughLaneChangesAndReadTheCLIShape() throws {
+        var edit = project([EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 4_000_000, toUs: 10_000_000, speed: 2)],
+                           zooms: [EditProject.Zoom(id: "z1", startUs: 0, endUs: 1_000_000)])
+        edit.redactions = [EditProject.Redaction(id: "r1", startUs: 1_000_000, endUs: 2_000_000, x: 0.1, y: 0.1, width: 0.2, height: 0.2)]
+        edit.texts = [EditProject.TextNote(id: "t1", startUs: 2_000_000, endUs: 3_000_000, text: "Hi")]
+        // Never saved: the zoom lane, then an automatic lane per family; the 2× clip has no lane that holds speed.
+        XCTAssertEqual(EffectLanes.resolve(edit).map { "\($0.id):\($0.items.map(\.id))" }, ["zooms:[\"z1\"]", "auto-hide:[\"r1\"]", "auto-text:[\"t1\"]"])
+
+        let (added, lane) = EffectLanes.addLane(edit, kinds: [.zoom, .speed])
+        XCTAssertEqual(lane, "lane4")
+        XCTAssertEqual(EffectLanes.resolve(added).last?.items.map(\.id), ["b"], "a speed lane shows the clip played at 2×")
+        // Moving the new lane to the top keeps the zoom on the lane it was pinned to.
+        let moved = EffectLanes.moveLane(added, id: lane, by: -3)
+        XCTAssertEqual(EffectLanes.resolve(moved).map(\.id), ["lane4", "zooms", "auto-hide", "auto-text"])
+        XCTAssertEqual(EffectLanes.resolve(moved)[1].items.map(\.id), ["z1"])
+        let onNew = try XCTUnwrap(EffectLanes.moveToLane(moved, item: "z1", lane: lane))
+        XCTAssertEqual(EffectLanes.resolve(onNew)[0].items.map(\.id), ["z1", "b"])
+        XCTAssertNil(EffectLanes.moveToLane(onNew, item: "r1", lane: lane), "a lane takes only the kinds it holds")
+        // Removing it hands the zoom back to the zoom lane.
+        let removed = EffectLanes.removeLane(onNew, id: lane)
+        XCTAssertNil(removed.zooms[0].lane)
+        XCTAssertEqual(EffectLanes.resolve(removed)[0].items.map(\.id), ["z1"])
+
+        // The CLI writes kinds and lane ids as lanes.ts does; the window reads them and writes the same keys back.
+        let json = #"{"version":1,"source":{"video":"/tmp/x.mp4","durationUs":10000000,"width":1920,"height":1080},"clips":[{"id":"a","fromUs":0,"toUs":10000000,"speed":1}],"audio":{"include":true,"volume":1,"mutedTracks":[]},"export":{"codec":"h264","maxHeight":0,"output":""},"zooms":[{"id":"z1","startUs":0,"endUs":1000000,"scale":1.5,"mode":"manual","focusX":0.5,"focusY":0.5,"easeInMs":450,"easeOutMs":450,"lane":"top"}],"lanes":[{"id":"top","kinds":["zoom","text"],"name":"Intro"}],"revision":3}"#
+        let decoded = try EditProject.decode(Data(json.utf8))
+        XCTAssertEqual(decoded.lanes, [EffectLane(id: "top", kinds: [.zoom, .text], name: "Intro")])
+        XCTAssertEqual(EffectLanes.resolve(decoded).map(\.lane.title), ["Intro"])
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: decoded.encoded()) as? [String: Any])
+        XCTAssertEqual((written["zooms"] as? [[String: Any]])?.first?["lane"] as? String, "top")
+    }
+
+    func testASpeedRangeSplitsTheClipAtBothEndsAndSpeedsOnlyTheMiddle() throws {
+        let edit = project([EditProject.Clip(id: "a", fromUs: 0, toUs: 10_000_000)])
+        let fast = try XCTUnwrap(TimelineMap.speed(edit, fromOut: 2_000_000, toOut: 4_000_000, speed: 2))
+        XCTAssertEqual(fast.clips.map { [$0.fromUs, $0.toUs] }, [[0, 2_000_000], [2_000_000, 4_000_000], [4_000_000, 10_000_000]])
+        XCTAssertEqual(fast.clips.map(\.speed), [1, 2, 1])
+        XCTAssertEqual(fast.outputDurationUs, 9_000_000)
+    }
+
     func testZoomsNeverOverlap() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 10_000_000)])
         let (first, firstID) = try XCTUnwrap(TimelineMap.addZoom(edit, startUs: 1_000_000, endUs: 3_000_000, scale: 2))

@@ -365,6 +365,58 @@ describe("edit project (edit.json)", () => {
         expect(project.zooms[0]).toMatchObject({ startUs: 3_000_000, endUs: 5_000_000, scale: 2, focusX: 0.3 });
     });
 
+    test("effect lanes: items find their lane, new lanes save in order, and a removed lane hands its items on", () => {
+        const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 };
+        let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2 });
+        project = applyOp(project, { op: "redact", from: 3, to: 4, rect });
+        project = applyOp(project, { op: "text", from: 5, to: 6, text: "Step one" });
+        const lanes = (p: typeof project) => describeProject(p, "/x").lanes.map((lane) => [lane.id, lane.items.length]);
+
+        // Never saved: the zoom lane, then a lane per family that has an item.
+        expect(project.lanes).toBeUndefined();
+        expect(lanes(project)).toEqual([
+            ["zooms", 1],
+            ["auto-hide", 1],
+            ["auto-text", 1],
+        ]);
+
+        project = applyOp(project, { op: "addLane", kinds: ["zoom", "text"], name: "Second" });
+        expect(project.lanes?.map((lane) => lane.id)).toEqual(["zooms", "auto-hide", "auto-text", "lane4"]);
+        project = applyOp(project, { op: "zoom", from: 7, to: 8, lane: "lane4" });
+        expect(project.zooms.find((zoom) => zoom.startUs === 7_000_000)?.lane).toBe("lane4");
+        expect(lanes(project)).toEqual([
+            ["zooms", 1],
+            ["auto-hide", 1],
+            ["auto-text", 1],
+            ["lane4", 1],
+        ]);
+
+        const text = project.texts?.[0].id ?? "";
+        project = applyOp(project, { op: "moveToLane", id: text, lane: "lane4" });
+        project = applyOp(project, { op: "moveLane", id: "lane4", to: 0 });
+        expect(lanes(project)).toEqual([
+            ["lane4", 2],
+            ["zooms", 1],
+            ["auto-hide", 1],
+            ["auto-text", 0],
+        ]);
+        expect(() =>
+            applyOp(project, { op: "moveToLane", id: project.redactions?.[0].id ?? "", lane: "zooms" })
+        ).toThrow("not hide");
+        expect(() => applyOp(project, { op: "zoom", from: 9, to: 9.5, lane: "nope" })).toThrow("no lane nope");
+
+        // The lane's items fall back to the first lane that holds them; none left keeps its lane.
+        project = applyOp(project, { op: "removeLane", id: "lane4" });
+        expect(project.texts?.[0].lane).toBeUndefined();
+        expect(lanes(project)).toEqual([
+            ["zooms", 2],
+            ["auto-hide", 1],
+            ["auto-text", 1],
+        ]);
+        // The saved shape round-trips through the schema (the window writes the same keys).
+        expect(editProjectSchema.parse(SafeJSON.parse(SafeJSON.stringify(project))).lanes).toEqual(project.lanes);
+    });
+
     test("refuses a cut of everything and an overlapping zoom, naming why", () => {
         const project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 3 });
         expect(() => applyOp(project, { op: "cut", from: 0, to: 10 })).toThrow("whole movie");

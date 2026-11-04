@@ -7,6 +7,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
+import { EFFECT_KINDS } from "@genesiscz/utils/recording-editor/lanes";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     BACKGROUND_KINDS,
@@ -84,6 +85,7 @@ const zoomSchema = z
         scale: z.number().min(1).max(4).optional(),
         focus: focusSchema.optional(),
         follow: z.boolean().optional(),
+        lane: z.string().optional(),
     })
     .strict();
 const recordSchema = z
@@ -106,7 +108,7 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys, transcriptFixes, motion, shapes, texts, warnings? }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, captions, keys, transcriptFixes, motion, shapes, texts, lanes, warnings? }";
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
 const editResult = "Edit (the fields info() lists, plus warnings?)";
@@ -184,6 +186,7 @@ const movieMethods = [
                 style: z.enum(REDACTION_STYLES).optional(),
                 label: z.string().max(60).optional(),
                 follow: z.boolean().optional(),
+                lane: z.string().optional(),
             })
             .strict(),
         'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"), follow: true (it moves with the drawn cursor, centred on it; rect gives its size). It moves with a zoom. The result lists redactions with their ids.'
@@ -200,6 +203,7 @@ const movieMethods = [
                 y: z.number().min(0).max(1).optional(),
                 size: z.number().min(0.02).max(0.15).optional(),
                 style: z.enum(TEXT_STYLES).optional(),
+                lane: z.string().optional(),
             })
             .strict(),
         'Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids.'
@@ -314,6 +318,7 @@ const movieMethods = [
                     .optional(),
                 width: z.number().min(0.002).max(0.03).optional(),
                 appear: z.enum(SHAPE_APPEARS).optional(),
+                lane: z.string().optional(),
             })
             .strict(),
         'Draws an "arrow", a "box" or a "circle" over the SOURCE picture from `from` to `to` (source seconds), so it moves with a zoom: an arrow from start { x, y } to its head at end (where it points), a box or circle between the two corners; 0...1 of the picture from its top left. color "#RRGGBB" (red #FF3B30), width 0.002 to 0.03 of the short side (0.006). It draws itself on and fades out; appear "fade" fades it in instead and "none" shows it at once. unshape(id) removes it.'
@@ -372,9 +377,39 @@ const movieMethods = [
                 follow: z.boolean().optional(),
                 dim: z.number().min(0.2).max(0.95).optional(),
                 cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
+                lane: z.string().optional(),
             })
             .strict(),
         'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 is how much black covers the rest (0.7; 0.5 leaves it at half), cutout "rounded" (default), "rect" or "circle" its lit shape (a circle is the ellipse inside rect, so give a square rect in pixels for a round one). The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
+    ),
+    edit(
+        "addLane",
+        z
+            .object({
+                kinds: z.array(z.enum(EFFECT_KINDS)).min(1).optional(),
+                name: z.string().max(40).optional(),
+                id: z.string().min(1).max(40).optional(),
+            })
+            .strict(),
+        `Adds an effect lane under the others on the editor's timeline: kinds is what it holds (${EFFECT_KINDS.join(", ")}; absent holds every kind), name its label. info().lanes lists the lanes top to bottom with the ids of their items; zoom, redact, spotlight, text and shape take lane: <id> to put the new item there. A speed lane shows the clips played at another speed.`
+    ),
+    edit(
+        "removeLane",
+        z.object({ id: z.string() }).strict(),
+        "Removes an effect lane; its items move to the next lane that holds their kind.",
+        ["id"]
+    ),
+    edit(
+        "moveLane",
+        z.object({ id: z.string(), to: z.number().int().min(0) }).strict(),
+        "Moves an effect lane to a place in the list (0 is the top); every item stays on its lane.",
+        ["id", "to"]
+    ),
+    edit(
+        "moveToLane",
+        z.object({ id: z.string(), lane: z.string() }).strict(),
+        "Puts a zoom, hidden part, spotlight, text or shape (by its id) on another effect lane that holds its kind.",
+        ["id", "lane"]
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
@@ -1169,6 +1204,22 @@ export class Movie {
 
     async unshape(id: string) {
         return this.change([{ op: "unshape", id }]);
+    }
+
+    async addLane(options: Omit<Extract<EditOp, { op: "addLane" }>, "op"> = {}) {
+        return this.change([{ op: "addLane", ...options }]);
+    }
+
+    async removeLane(id: string) {
+        return this.change([{ op: "removeLane", id }]);
+    }
+
+    async moveLane(id: string, to: number) {
+        return this.change([{ op: "moveLane", id, to }]);
+    }
+
+    async moveToLane(id: string, lane: string) {
+        return this.change([{ op: "moveToLane", id, lane }]);
     }
 
     async music(options: Omit<Extract<EditOp, { op: "music" }>, "op"> = {}) {

@@ -119,6 +119,21 @@ enum TimelineMap {
         return next
     }
 
+    /// What plays from `fromOut` to `toOut` (output microseconds) at `speed`: the clips are split at both ends and the
+    /// ones inside take the speed, as the `speed` op does (`speedRange` in src/utils/recording-editor/project.ts).
+    /// Nil when nothing plays there.
+    static func speed(_ project: EditProject, fromOut: Int64, toOut: Int64, speed: Double) -> EditProject? {
+        guard toOut > fromOut else { return nil }
+        var next = split(project, atOutput: fromOut) ?? project
+        next = split(next, atOutput: toOut) ?? next
+        // A split point maps through a rounded source time, so the new edges may sit a microsecond off.
+        let slack: Int64 = 1_000
+        let inside = placed(next).filter { $0.outStartUs >= fromOut - slack && $0.outEndUs <= toOut + slack }
+        guard !inside.isEmpty else { return nil }
+        for placed in inside { next.clips[placed.index].speed = min(16, max(0.25, speed)) }
+        return next
+    }
+
     /// The target closest to `us` within `toleranceUs`, or nil when none is that close (the drag goes where the
     /// pointer is).
     static func snap(_ us: Int64, to targets: [Int64], toleranceUs: Int64) -> Int64? {

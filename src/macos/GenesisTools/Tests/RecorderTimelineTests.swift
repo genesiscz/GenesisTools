@@ -63,8 +63,17 @@ final class RecorderTimelineTests: XCTestCase {
         pump(0.15)
     }
 
-    private var zoomLaneY: CGFloat { TimelineView.rulerHeight + 10 + TimelineView.zoomLaneHeight / 2 }
-    private var clipLaneY: CGFloat { TimelineView.clipLaneTop + TimelineView.clipLaneHeight / 2 }
+    /// The middle of the first effect lane (the zoom lane), and of the lane `index` lanes below it.
+    private var zoomLaneY: CGFloat { laneY(0, in: nil) }
+
+    private func laneY(_ index: Int, in model: EditorModel?) -> CGFloat {
+        guard let model else { return TimelineView.effectsTop + EffectLaneMetrics.singleRowHeight / 2 }
+        let above = model.effectLanes.prefix(index)
+        return TimelineView.effectsTop + EffectLaneMetrics.contentHeight(Array(above)) + (index > 0 ? EffectLaneMetrics.laneGap : 0)
+            + EffectLaneMetrics.height(rows: model.effectLanes[index].rowCount) / 2
+    }
+
+    private func clipLaneY(_ model: EditorModel) -> CGFloat { TimelineLayout(model: model).clipTop + TimelineView.clipLaneHeight / 2 }
 
     /// The scale the timeline draws at for a viewport: fitted unless the model sets one.
     private func scale(_ model: EditorModel, width: CGFloat) -> TimelineScale {
@@ -123,9 +132,33 @@ final class RecorderTimelineTests: XCTestCase {
         let width: CGFloat = 1000
         let window = host(model, width: width)
         let scale = scale(model, width: width)
-        click(window, x: scale.x(1_000_000), y: clipLaneY)
+        click(window, x: scale.x(1_000_000), y: clipLaneY(model))
         XCTAssertEqual(model.selection, .clip("a"))
-        click(window, x: scale.x(8_000_000), y: clipLaneY)
+        click(window, x: scale.x(8_000_000), y: clipLaneY(model))
         XCTAssertEqual(model.selection, .clip("b"))
+    }
+
+    func testAClickOnAnAddedLaneAddsItsKindThereAndOnThatLane() {
+        let model = model()
+        model.addLane(kinds: [.hide, .spotlight])
+        let lane = model.effectLanes[1].lane
+        XCTAssertEqual(lane.kinds, [.hide, .spotlight])
+        let width: CGFloat = 1000
+        let window = host(model, width: width)
+        let scale = scale(model, width: width)
+        // Two kinds: a click asks which with a menu, so pick through the model the way the menu does.
+        model.addEffect(.hide, atOutput: scale.us(scale.x(2_000_000)), durationUs: nil, lane: lane.id)
+        XCTAssertEqual(model.project.redactions?.first?.lane, lane.id)
+        XCTAssertEqual(model.effectLanes[1].items.map(\.kind), [.hide])
+        pump(0.2)
+        // A click on the hidden part, where its lane draws it, selects it. Twice, because a segment that changed between live and resting once lost every second click.
+        for _ in 0..<2 {
+            model.selection = .none
+            click(window, x: scale.x(3_000_000), y: laneY(1, in: model))
+            XCTAssertEqual(model.selection, .redaction(model.project.redactions?.first?.id ?? ""))
+        }
+        XCTAssertEqual(model.tab, .hide)
+        model.undo()
+        XCTAssertNil(model.project.redactions, "one undo takes the add back, lane and all")
     }
 }

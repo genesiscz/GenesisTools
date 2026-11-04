@@ -373,6 +373,7 @@ final class EditorModel {
         if a.shapes != b.shapes { parts.append("shapes") }
         if a.transcript != b.transcript { parts.append("transcript") }
         if a.motion != b.motion { parts.append("motion") }
+        if a.lanes != b.lanes { parts.append("lanes") }
         // A count change (an add or a delete) is its own step, never part of a drag.
         if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count)
             != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count) { parts.append("count") }
@@ -409,6 +410,8 @@ final class EditorModel {
     /// change at once are "Changes".
     nonisolated static func changeName(from a: EditProject, to b: EditProject) -> (name: String, tab: InspectorTab?) {
         let parts = changedParts(a, b).filter { $0 != "count" }
+        // A lane change pins items to their lanes too, so it touches several parts at once.
+        if parts.contains("lanes") { return ("Lane Change", nil) }
         guard parts.count == 1, let part = parts.first else { return ("Changes", nil) }
         let counts: (Int, Int)
         let named: (String, InspectorTab)
@@ -550,13 +553,14 @@ final class EditorModel {
     }
 
     /// A zoom from the playhead, two seconds long by default, at the last zoom's scale.
-    func addZoom(atOutput outUs: Int64? = nil, durationUs: Int64 = 2_000_000) {
+    func addZoom(atOutput outUs: Int64? = nil, durationUs: Int64 = 2_000_000, lane: String? = nil) {
         let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
         let scale = project.zooms.last?.scale ?? 1.5
-        guard let (next, id) = TimelineMap.addZoom(project, startUs: start, endUs: start + durationUs, scale: scale) else {
+        guard var (next, id) = TimelineMap.addZoom(project, startUs: start, endUs: start + durationUs, scale: scale) else {
             show("No room for a zoom here; zooms cannot overlap.", error: false)
             return
         }
+        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
         selection = .zoom(id)
         tab = .zoom
         apply(next, rebuildMovie: false)
@@ -651,9 +655,9 @@ final class EditorModel {
     }
 
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
-    func addText(_ text: String = "Title") {
-        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
-        let end = min(project.source.durationUs, start + 3_000_000)
+    func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
+        let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
+        let end = min(project.source.durationUs, start + durationUs)
         guard end - start >= 100_000 else {
             show("The playhead is at the end of the recording; move it back to add a text.", error: false)
             return
@@ -661,6 +665,7 @@ final class EditorModel {
         let id = "t" + UUID().uuidString.prefix(8).lowercased()
         var next = project
         next.texts = (next.texts ?? []) + [EditProject.TextNote(id: id, startUs: start, endUs: end, text: text)]
+        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
         selectedText = id
         tab = .text
         apply(next, rebuildMovie: false)
@@ -705,9 +710,9 @@ final class EditorModel {
     }
 
     /// A 3 s arrow, box or circle from the playhead in the middle of the picture; the preview's handles place it.
-    func addShape(_ kind: EditProject.ShapeKind) {
-        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
-        let end = min(project.source.durationUs, start + 3_000_000)
+    func addShape(_ kind: EditProject.ShapeKind, atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
+        let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
+        let end = min(project.source.durationUs, start + durationUs)
         guard end - start >= 100_000 else {
             show("The playhead is at the end of the recording; move it back to add a shape.", error: false)
             return
@@ -724,6 +729,7 @@ final class EditorModel {
         var next = project
         next.shapes = (next.shapes ?? []) + [EditProject.Shape(id: id, startUs: start, endUs: end, kind: kind,
                                                                 x1: corners.0, y1: corners.1, x2: corners.2, y2: corners.3)]
+        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
         selectedShape = id
         tab = .text
         apply(next, rebuildMovie: false)
@@ -862,14 +868,15 @@ final class EditorModel {
     /// Hides a part of the picture (the middle, or a rectangle drawn on the preview, 0...1 of the source) for 3 s from
     /// the playhead; the Hide tab then moves and sizes it.
     /// A 3 s spotlight from the playhead: on the pointer when the recording has a cursor track, else in the middle.
-    func addSpotlight() {
-        addRedaction(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), style: .spotlight, follow: cursor != nil)
+    func addSpotlight(atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
+        addRedaction(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), style: .spotlight, follow: cursor != nil,
+                     atOutput: outUs, durationUs: durationUs, lane: lane)
     }
 
     func addRedaction(rect: CGRect = CGRect(x: 0.35, y: 0.42, width: 0.3, height: 0.16), style: EditProject.RedactionStyle = .blur,
-                      follow: Bool = false) {
-        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
-        let end = min(project.source.durationUs, start + 3_000_000)
+                      follow: Bool = false, atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
+        let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
+        let end = min(project.source.durationUs, start + durationUs)
         guard end - start >= 100_000 else {
             show("The playhead is at the end of the recording; move it back to hide a part.", error: false)
             return
@@ -881,6 +888,7 @@ final class EditorModel {
         next.redactions = (next.redactions ?? []) + [EditProject.Redaction(id: id, startUs: start, endUs: end, x: clamped.minX, y: clamped.minY,
                                                                            width: clamped.width, height: clamped.height, style: style,
                                                                            follow: follow ? true : nil)]
+        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
         selectedRedaction = id
         tab = .hide
         apply(next, rebuildMovie: false)

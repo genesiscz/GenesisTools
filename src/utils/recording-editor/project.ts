@@ -7,6 +7,18 @@ import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
+import {
+    addedItemIds,
+    addLane,
+    EFFECT_KINDS,
+    effectLaneSchema,
+    moveLane,
+    moveToLane,
+    removeLane,
+    resolveLanes,
+    setLanes,
+    withLane,
+} from "./lanes";
 import { timeSchema, timeToUs } from "./plan";
 import { cutRanges, FILLER_LEVELS, fillerCuts, fillerList, type TranscriptSegment, wordCuts } from "./transcript-cuts";
 
@@ -39,6 +51,8 @@ const zoomSchema = z.object({
     focusY: z.number().min(0).max(1).default(0.5),
     easeInMs: z.number().int().nonnegative().default(450),
     easeOutMs: z.number().int().nonnegative().default(450),
+    /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
+    lane: z.string().optional(),
 });
 
 export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
@@ -132,6 +146,8 @@ export const redactionSchema = z.object({
     /** A spotlight's dim around it, 0.2 to 0.95 black; absent is 0.7. */
     dim: z.number().min(0.2).max(0.95).optional(),
     cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
+    /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
+    lane: z.string().optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
@@ -195,6 +211,8 @@ export const textNoteSchema = z.object({
     size: z.number().min(0.02).max(0.15).default(0.055),
     /** `plate`: white on a dark rounded plate; `plain`: white with a soft shadow. */
     style: z.enum(TEXT_STYLES).default("plate"),
+    /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
+    lane: z.string().optional(),
 });
 export type EditTextNote = z.infer<typeof textNoteSchema>;
 
@@ -223,6 +241,8 @@ export const shapeSchema = z.object({
         .default("#FF3B30"),
     width: z.number().min(0.002).max(0.03).default(0.006),
     appear: z.enum(SHAPE_APPEARS).optional(),
+    /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
+    lane: z.string().optional(),
 });
 export type EditShape = z.infer<typeof shapeSchema>;
 
@@ -326,6 +346,8 @@ export const editProjectSchema = z.object({
     transcript: transcriptSettingsSchema.optional(),
     /** How the picture moves through a zoom; absent is the defaults (motionSchema). */
     motion: motionSchema.optional(),
+    /** The timeline's effect lanes in order (lanes.ts); absent is the default lanes. */
+    lanes: z.array(effectLaneSchema).optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -838,6 +860,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             scale: z.number().min(1).max(4).optional(),
             focus: focusSchema.optional(),
             follow: z.boolean().optional(),
+            /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
+            lane: z.string().optional(),
         })
         .strict(),
     z.object({ op: z.literal("unzoom"), id: z.string() }).strict(),
@@ -856,6 +880,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             /** Style "spotlight" only: the dim around it (0.7) and its lit shape ("rounded"). */
             dim: z.number().min(0.2).max(0.95).optional(),
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
+            /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
+            lane: z.string().optional(),
         })
         .strict(),
     z
@@ -871,6 +897,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             dim: z.number().min(0.2).max(0.95).optional(),
             /** The lit shape: "rounded" (default), "rect" or "circle". */
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
+            /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
+            lane: z.string().optional(),
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
@@ -885,6 +913,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             y: z.number().min(0).max(1).optional(),
             size: z.number().min(0.02).max(0.15).optional(),
             style: z.enum(TEXT_STYLES).optional(),
+            /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
+            lane: z.string().optional(),
         })
         .strict(),
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
@@ -914,6 +944,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
                 .optional(),
             width: z.number().min(0.002).max(0.03).optional(),
             appear: z.enum(SHAPE_APPEARS).optional(),
+            /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
+            lane: z.string().optional(),
         })
         .strict(),
     z.object({ op: z.literal("unshape"), id: z.string() }).strict(),
@@ -1093,6 +1125,22 @@ export const editOpSchema = z.discriminatedUnion("op", [
             targetLufs: z.number().min(-30).max(-8).default(-16),
         })
         .strict(),
+    /** The whole lane list at once, in order; an item whose lane is gone moves to the first lane that holds it. */
+    z.object({ op: z.literal("lanes"), lanes: z.array(effectLaneSchema).min(1) }).strict(),
+    z
+        .object({
+            op: z.literal("addLane"),
+            /** What it holds; absent holds every kind. */
+            kinds: z.array(z.enum(EFFECT_KINDS)).min(1).optional(),
+            name: z.string().max(40).optional(),
+            id: z.string().min(1).max(40).optional(),
+        })
+        .strict(),
+    z.object({ op: z.literal("removeLane"), id: z.string() }).strict(),
+    /** `to`: the lane's new place, 0 is the top. */
+    z.object({ op: z.literal("moveLane"), id: z.string(), to: z.number().int().min(0) }).strict(),
+    /** Puts a zoom, hidden part, spotlight, text or shape (by id) on a lane that holds its kind. */
+    z.object({ op: z.literal("moveToLane"), id: z.string(), lane: z.string() }).strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -1276,7 +1324,33 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
 }
 
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
+    const next = applyOpItself(project, op, facts);
+
+    if ("lane" in op && op.op !== "moveToLane" && op.lane) {
+        const lanes = resolveLanes(next).map((entry) => entry.lane.id);
+
+        if (!lanes.includes(op.lane)) {
+            throw new Error(`no lane ${op.lane}; lanes: ${lanes.join(", ")}`);
+        }
+
+        return withLane(next, addedItemIds(project, next), op.lane);
+    }
+
+    return next;
+}
+
+function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditProject {
     switch (op.op) {
+        case "lanes":
+            return setLanes(project, op.lanes);
+        case "addLane":
+            return addLane(project, { id: op.id, kinds: op.kinds, name: op.name });
+        case "removeLane":
+            return removeLane(project, op.id);
+        case "moveLane":
+            return moveLane(project, op.id, op.to);
+        case "moveToLane":
+            return moveToLane(project, op.id, op.lane);
         case "removeIdle": {
             if (!facts.idleUs) {
                 throw new Error("removeIdle needs the movie's idle stretches; run it through editProject or the CLI");
@@ -1681,6 +1755,14 @@ export function describeProject(project: EditProject, path: string) {
             at: { x: note.x, y: note.y },
             size: note.size,
             style: note.style,
+        })),
+        /** The timeline's effect lanes top to bottom, each with the ids of the items on it. */
+        lanes: resolveLanes(project).map(({ lane, items, automatic }) => ({
+            id: lane.id,
+            kinds: lane.kinds ?? "any",
+            ...(lane.name ? { name: lane.name } : {}),
+            ...(automatic ? { automatic: true } : {}),
+            items: items.map((item) => item.id),
         })),
     };
 }
