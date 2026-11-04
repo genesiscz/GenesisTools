@@ -482,7 +482,14 @@ final class EditorModel {
             return
         }
         let id = "s" + UUID().uuidString.prefix(8).lowercased()
-        let corners = kind == .arrow ? (0.38, 0.62, 0.5, 0.5) : (0.4, 0.4, 0.6, 0.6)
+        // Where the pointer is at the playhead (the cursor track has it): an arrow points at it from towards the
+        // middle, a box or circle goes round it. Without a track, the middle of the picture.
+        let at = cursor?.point(atMs: Double(start) / 1000) ?? (x: 0.5, y: 0.5)
+        let toward = (x: at.x > 0.5 ? -1.0 : 1.0, y: at.y > 0.5 ? -1.0 : 1.0)
+        let clamp = { (value: Double) in min(max(0, value), 1) }
+        let corners = kind == .arrow
+            ? (clamp(at.x + toward.x * 0.09), clamp(at.y + toward.y * 0.09), at.x, at.y)
+            : (clamp(at.x - 0.08), clamp(at.y - 0.06), clamp(at.x + 0.08), clamp(at.y + 0.06))
         var next = project
         next.shapes = (next.shapes ?? []) + [EditProject.Shape(id: id, startUs: start, endUs: end, kind: kind,
                                                                 x1: corners.0, y1: corners.1, x2: corners.2, y2: corners.3)]
@@ -500,6 +507,16 @@ final class EditorModel {
         var next = project
         next.shapes = list
         apply(next, rebuildMovie: false)
+    }
+
+    /// The shape starts at the playhead and keeps its length (cut short at the end of the recording).
+    func moveShapeStart(_ id: String) {
+        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
+        updateShape(id) { shape in
+            let length = shape.endUs - shape.startUs
+            shape.startUs = min(start, project.source.durationUs - 100_000)
+            shape.endUs = min(project.source.durationUs, shape.startUs + length)
+        }
     }
 
     func deleteShape(_ id: String) {

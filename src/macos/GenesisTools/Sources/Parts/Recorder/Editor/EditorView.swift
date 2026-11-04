@@ -1509,10 +1509,16 @@ private struct ShapeRow: View {
                 SectionLabel(text: "Line", value: String(format: "%.1f%%", shape.width * 100))
                 Slider(value: Binding(get: { shape.width }, set: { value in model.updateShape(shape.id) { $0.width = (value * 2000).rounded() / 2000 } }), in: 0.002...0.03)
                     .accessibilityLabel("\(name) line width")
+                HStack {
+                    SectionLabel(text: "Starts", value: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
+                    GhostButton("Start at Playhead", symbol: "arrow.right.to.line", tooltip: "Move the start here and keep the length",
+                                identifier: "recorder.shape.startHere") { model.moveShapeStart(shape.id) }
+                }
+                let longest = max(0.6, min(15, Double(model.project.source.durationUs - shape.startUs) / 1_000_000))
                 SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(shape.endUs - shape.startUs) / 1_000_000))
-                Slider(value: Binding(get: { Double(shape.endUs - shape.startUs) / 1_000_000 }, set: { value in
+                Slider(value: Binding(get: { min(longest, Double(shape.endUs - shape.startUs) / 1_000_000) }, set: { value in
                     model.updateShape(shape.id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
-                }), in: 0.5...15)
+                }), in: 0.5...longest)
                     .accessibilityLabel("\(name) length in seconds")
             }
         }
@@ -1564,8 +1570,10 @@ private struct ShapeHandles: View {
                                 model.selectedShape = shape.id
                                 let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
                                 grabbed = start
-                                let moved = map.sourcePoint(ofCanvas: CGPoint(x: (first ? a : b).x / max(1, size.width) + value.translation.width / max(1, size.width),
-                                                                             y: (first ? a : b).y / max(1, size.height) + value.translation.height / max(1, size.height)))
+                                // From where the drag began, so the point stays under the pointer.
+                                let origin = toView(first ? CGPoint(x: start.x1, y: start.y1) : CGPoint(x: start.x2, y: start.y2))
+                                let moved = map.sourcePoint(ofCanvas: CGPoint(x: (origin.x + value.translation.width) / max(1, size.width),
+                                                                             y: (origin.y + value.translation.height) / max(1, size.height)))
                                 model.updateShape(shape.id) {
                                     if first { $0.x1 = moved.x; $0.y1 = moved.y } else { $0.x2 = moved.x; $0.y2 = moved.y }
                                 }
@@ -1573,6 +1581,31 @@ private struct ShapeHandles: View {
                             .instantTooltip(shape.kind == .arrow ? (first ? "The arrow's tail: drag it" : "Where the arrow points: drag it") : "A corner: drag it")
                             .accessibilityLabel("\(shape.kind.rawValue.capitalized) \(first ? "start" : "end")")
                     }
+                    // The middle: drags the whole shape, both points by the same amount, kept inside the picture.
+                    let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+                    Circle()
+                        .fill(Color.white.opacity(0.9))
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
+                        .overlay(Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.7)))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Circle().inset(by: -6))
+                        .offset(x: middle.x - 10, y: middle.y - 10)
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
+                            grabbed = start
+                            let from = map.sourcePoint(ofCanvas: .zero)
+                            let to = map.sourcePoint(ofCanvas: CGPoint(x: value.translation.width / max(1, size.width), y: value.translation.height / max(1, size.height)))
+                            // The shift, held so neither point leaves the picture.
+                            let dx = min(max(to.x - from.x, -min(start.x1, start.x2)), 1 - max(start.x1, start.x2))
+                            let dy = min(max(to.y - from.y, -min(start.y1, start.y2)), 1 - max(start.y1, start.y2))
+                            model.updateShape(shape.id) {
+                                $0.x1 = start.x1 + dx; $0.y1 = start.y1 + dy
+                                $0.x2 = start.x2 + dx; $0.y2 = start.y2 + dy
+                            }
+                        }.onEnded { _ in grabbed = nil })
+                        .instantTooltip("Drag to move the whole \(shape.kind.rawValue)")
+                        .accessibilityLabel("Move \(shape.kind.rawValue)")
                 }
             }
         }
