@@ -1,3 +1,4 @@
+import { type Block, json2md } from "@genesiscz/utils/json2md";
 import { TranscriptLines } from "./lines";
 import { firstName } from "./speakers";
 import type { TermSuggestion } from "./terms";
@@ -97,54 +98,66 @@ export function localTime(iso: string): string {
 
 /** An Obsidian callout listing each suspect term with its candidates, plus the command that applies them. */
 export function suspectsCallout(suspects: TermSuggestion[], options: { tool: string; fixCommand?: string }): string {
-    const lines = [`> [!warning]- Possibly misheard terms (${options.tool}, confidence per candidate)`];
-
-    for (const s of suspects) {
+    const items = suspects.map((s) => {
         const candidates = s.candidates.map((c) => `${c.term} ${c.confidence} % (${c.source})`).join(" · ");
         const note = s.kind === "stem" ? " _(inflected; name it explicitly to fix)_" : "";
-        lines.push(`> - \`${s.heard}\` ×${s.occurrences}: ${candidates}${note}`);
-    }
+
+        return `\`${s.heard}\` ×${s.occurrences}: ${candidates}${note}`;
+    });
+    const body: Block[] = [{ ul: items }];
 
     if (options.fixCommand) {
-        lines.push(">", `> Apply: \`${options.fixCommand}\``);
+        body.push({ p: `Apply: \`${options.fixCommand}\`` });
     }
 
-    return lines.join("\n");
+    return json2md(
+        {
+            callout: {
+                kind: "warning",
+                labelCase: "lower",
+                fold: "closed",
+                title: `Possibly misheard terms (${options.tool}, confidence per candidate)`,
+                body,
+            },
+        },
+        { trailingNewline: false }
+    );
 }
 
-/** The turns as Markdown: a bold speaker per turn, one block per paragraph. */
-export function transcriptMarkdown(
+/**
+ * The turns as speech blocks: a bold speaker on the first paragraph of each turn, a clock (and a play link) on each
+ * paragraph when `timestamps` is on.
+ */
+export function transcriptBlocks(
     turns: Turn[],
     timestamps: boolean,
     options: {
         /** A link that plays the moment; each timestamp gets it as `<sup>[play](…)</sup>`. */
         playLink?: (startSec: number) => string | null;
     } = {}
+): Block[] {
+    return turns.flatMap((turn) =>
+        turn.paragraphs.map((paragraph, index): Block => {
+            const at = timestamps ? paragraph.startSec : undefined;
+
+            return {
+                speech: {
+                    ...(index === 0 ? { speaker: turn.speaker } : {}),
+                    ...(at === undefined ? {} : { time: formatClock(at), play: options.playLink?.(at) ?? undefined }),
+                    text: paragraph.text,
+                },
+            };
+        })
+    );
+}
+
+/** The turns as Markdown: a bold speaker per turn, one block per paragraph. */
+export function transcriptMarkdown(
+    turns: Turn[],
+    timestamps: boolean,
+    options: { playLink?: (startSec: number) => string | null } = {}
 ): string {
-    const blocks: string[] = [];
-
-    for (const turn of turns) {
-        turn.paragraphs.forEach((paragraph, index) => {
-            const at = paragraph.startSec;
-            const link = timestamps && at !== undefined ? options.playLink?.(at) : null;
-            const stamp =
-                timestamps && at !== undefined
-                    ? ` \`${formatClock(at)}\`${link ? `<sup>[play](${link})</sup>` : ""}`
-                    : "";
-
-            // A quote block a mark put in the text needs its own lines, also at the start of a paragraph.
-            const text = paragraph.text.replace(/\s*\n\n\s*/g, "\n\n").trim();
-            const gap = text.startsWith(">") ? "\n\n" : " ";
-
-            if (index === 0) {
-                blocks.push(`**${turn.speaker}:**${stamp}${gap}${text}`);
-            } else {
-                blocks.push(`${stamp.trim()}${stamp ? gap : ""}${text}`);
-            }
-        });
-    }
-
-    return blocks.join("\n\n");
+    return json2md(transcriptBlocks(turns, timestamps, options), { trailingNewline: false });
 }
 
 /** The turns as plain text lines: `Speaker [time]:`, then each paragraph followed by an empty line. */
