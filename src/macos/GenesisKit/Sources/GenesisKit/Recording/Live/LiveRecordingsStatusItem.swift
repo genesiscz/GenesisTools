@@ -30,13 +30,21 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     /// kernel drops the lock when the host exits, and the host lets it go once no recording is left.
     private let ownerLock: URL
     private var ownerDescriptor: Int32 = -1
+    /// `<live folder>/.status-item.preferred.lock`, held for its whole life by the host that should show the item
+    /// (the recorder part). Another host gives the item up while it is held, so the item and its floating controls
+    /// stay in one process instead of moving between the hub and the recorder with each recording (2026-11-04).
+    private let preferredLock: URL
+    private var preferredDescriptor: Int32 = -1
 
     public init(store: LiveRecordingStore = .live) {
         watcher = LiveRecordingsWatcher(store: store)
         ownerLock = store.folder.appendingPathComponent(".status-item.lock")
+        preferredLock = store.folder.appendingPathComponent(".status-item.preferred.lock")
     }
 
-    public func start() {
+    /// `preferred`: this process should host the item whenever it runs (the recorder part); others defer to it.
+    public func start(preferred: Bool = false) {
+        if preferred { holdPreferredLock() }
         watcher.onRefresh = { [weak self] list in self?.sync(list) }
         watcher.start()
     }
@@ -100,8 +108,12 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
             return
         }
 
-        guard takeOwnership() else {
+        guard !preferredHostElsewhere(), takeOwnership() else {
+            // The host's floating controls go with the item; the new host opens its own.
+            for panel in panels.values { panel.close() }
+            panels = [:]
             removeItem()
+            releaseOwnership()
             return
         }
 
@@ -151,6 +163,30 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
         ownerDescriptor = descriptor
         KitHost.log("live recordings: this process (pid \(getpid())) hosts the status item")
         return true
+    }
+
+    private func holdPreferredLock() {
+        guard preferredDescriptor < 0 else { return }
+        try? FileManager.default.createDirectory(at: preferredLock.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let descriptor = open(preferredLock.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else { return }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return
+        }
+        preferredDescriptor = descriptor
+        KitHost.log("live recordings: this process (pid \(getpid())) is the preferred host")
+    }
+
+    /// True while another living process holds the preferred lock (a probe: lock and let go at once).
+    private func preferredHostElsewhere() -> Bool {
+        guard preferredDescriptor < 0 else { return false }
+        let descriptor = open(preferredLock.path, O_RDWR | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return true }
+        flock(descriptor, LOCK_UN)
+        return false
     }
 
     private func releaseOwnership() {

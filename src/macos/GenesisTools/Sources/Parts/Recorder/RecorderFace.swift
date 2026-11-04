@@ -91,8 +91,8 @@ package func runRecorder(_ args: [String]) -> Never {
             }
         }
         RecorderMenu.shared.install()
-        // The live recordings' item and floating controls; the hub shows them instead when it took their lock first.
-        LiveRecordingsStatusItem.shared.start()
+        // The live recordings' item and floating controls; the hub defers to this face while it runs.
+        LiveRecordingsStatusItem.shared.start(preferred: true)
         if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus) }
         app.run()
     }
