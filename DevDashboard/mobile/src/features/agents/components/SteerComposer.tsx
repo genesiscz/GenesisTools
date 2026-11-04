@@ -8,6 +8,7 @@ import type {
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, Text, TextInput, View } from "react-native";
+import { WalkieTalkie } from "@/features/agents/components/WalkieTalkie";
 import { type SteerResult, useInterruptSession, useSteerComposer } from "@/features/agents/hooks";
 import { getPref, setPref } from "@/lib/storage/kv";
 import { type ThemeColors, useThemeColors } from "@/theme/colors";
@@ -213,6 +214,7 @@ export function SteerComposer({
                 </Pressable>
             </View>
             <View className="flex-row items-end gap-2">
+                <WalkieTalkie onText={(heard) => setText((current) => (current.trim() ? `${current.trim()} ${heard}` : heard))} />
                 <TextInput
                     testID="steer-input"
                     accessibilityLabel="Message to the session"

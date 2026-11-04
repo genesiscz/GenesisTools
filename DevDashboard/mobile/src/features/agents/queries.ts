@@ -6,6 +6,7 @@ import {
     type AgentSendReceiptDto,
     type AgentStopInput,
     type AgentStopReceiptDto,
+    type AgentVoiceReceiptDto,
     type AgentsBoardDto,
     type AgentTranscriptDto,
     type AgentTranscriptTurnDto,
@@ -131,6 +132,18 @@ export function interruptSession(
     input: { key: string; idempotencyKey: string }
 ): Promise<AgentInterruptReceiptDto> {
     return client.call(ENDPOINTS.agentsInterrupt, { key: input.key }, { idempotencyKey: input.idempotencyKey });
+}
+
+/** A walkie-talkie clip, transcribed on the Mac (F12); nothing is sent to a session. */
+export function transcribeClip(
+    client: DashboardClient,
+    input: { clip: Blob; contentType: string; idempotencyKey: string }
+): Promise<AgentVoiceReceiptDto> {
+    return client.call(
+        ENDPOINTS.agentsVoice,
+        {},
+        { idempotencyKey: input.idempotencyKey, rawBody: { data: input.clip, contentType: input.contentType } }
+    );
 }
 
 /** A `phase` frame merged into the board; undefined when the board does not hold that session (refetch it). */

@@ -299,6 +299,18 @@ const ROUTES: FixtureRoute[] = [
         }),
     },
     {
+        method: ENDPOINTS.agentsVoice.method,
+        path: ENDPOINTS.agentsVoice.path,
+        handle: () => ({
+            path: "/mock/voice/clip.m4a",
+            bytes: 0,
+            sha256: "",
+            text: "mock data: run the failing test again and tell me what changed",
+            provider: "mock",
+            model: "mock",
+        }),
+    },
+    {
         method: ENDPOINTS.agentsInterrupt.method,
         path: ENDPOINTS.agentsInterrupt.path,
         handle: ({ body }) => ({ key: text(body.key), outcome: "refused", route: "none", detail: "mock data: no pane" }),
