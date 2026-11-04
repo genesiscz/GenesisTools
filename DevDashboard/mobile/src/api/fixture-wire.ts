@@ -48,6 +48,7 @@ import { MOCK_APPROVALS } from "@/api/fixtures/approvals";
 import { MOCK_BRIEF } from "@/api/fixtures/brief";
 import { MOCK_GATES } from "@/api/fixtures/gates";
 import { MOCK_LAUNCH } from "@/api/fixtures/launch";
+import { MOCK_HEALTH, MOCK_WAKE } from "@/api/fixtures/wake";
 import { MOCK_WATCHING } from "@/api/fixtures/watching";
 import { fixtureAnswerForm, fixtureDraft, fixtureQueue, fixtureSendDrafts } from "@/api/fixtures/queue";
 
@@ -277,6 +278,10 @@ const ROUTES: FixtureRoute[] = [
 
     // The morning brief (F29), as the daemon task stored it.
     { method: ENDPOINTS.gatewayBrief.method, path: ENDPOINTS.gatewayBrief.path, handle: () => MOCK_BRIEF },
+
+    // Wake my Mac (F26): the relay the phone keeps, and the health probe that answers once the Mac is awake.
+    { method: ENDPOINTS.gatewayWake.method, path: ENDPOINTS.gatewayWake.path, handle: () => MOCK_WAKE },
+    { method: ENDPOINTS.health.method, path: ENDPOINTS.health.path, handle: () => MOCK_HEALTH },
 
     // The Watching screen (F30); a mute answers that the fixture has no Monitor to write.
     { method: ENDPOINTS.gatewayWatching.method, path: ENDPOINTS.gatewayWatching.path, handle: () => MOCK_WATCHING },
