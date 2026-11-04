@@ -146,14 +146,22 @@ final class ZoomState: @unchecked Sendable {
         return look
     }
 
-    /// The shapes showing at a source time: each draws itself on over 0.3 s and fades out over 0.2 s.
+    /// The shapes showing at a source time: each draws itself on over 0.3 s (or fades in over 0.2 s, or is there at
+    /// once, by its `appear`) and fades out over 0.2 s.
     static func shapes(atSourceUs us: Int64, project: EditProject) -> [(shape: EditProject.Shape, drawn: Double, opacity: Double)] {
         (project.shapes ?? []).compactMap { shape in
             guard us >= shape.startUs, us < shape.endUs else { return nil }
             let length = Double(shape.endUs - shape.startUs)
-            let drawn = min(1, Double(us - shape.startUs) / min(300_000, length / 2))
-            let opacity = min(1, Double(shape.endUs - us) / min(200_000, length / 3))
-            return (shape, max(0.02, drawn), max(0, opacity))
+            let into = Double(us - shape.startUs)
+            let out = min(1, Double(shape.endUs - us) / min(200_000, length / 3))
+            switch shape.appear ?? .draw {
+            case .draw:
+                return (shape, max(0.02, min(1, into / min(300_000, length / 2))), max(0, out))
+            case .fade:
+                return (shape, 1, max(0, min(out, into / min(200_000, length / 3))))
+            case .none:
+                return (shape, 1, max(0, out))
+            }
         }
     }
 

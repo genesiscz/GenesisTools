@@ -17,6 +17,7 @@ import {
     hexColor,
     outputDurationUs,
     REDACTION_STYLES,
+    SHAPE_APPEARS,
     SHAPE_KINDS,
     shortcutsOf,
     TEXT_STYLES,
@@ -210,9 +211,10 @@ const movieMethods = [
                     .regex(/^#[0-9a-fA-F]{6}$/)
                     .optional(),
                 width: z.number().min(0.002).max(0.03).optional(),
+                appear: z.enum(SHAPE_APPEARS).optional(),
             })
             .strict(),
-        'Draws an "arrow", a "box" or a "circle" over the SOURCE picture from `from` to `to` (source seconds), so it moves with a zoom: an arrow from start { x, y } to its head at end (where it points), a box or circle between the two corners; 0...1 of the picture from its top left. color "#RRGGBB" (red #FF3B30), width 0.002 to 0.03 of the short side (0.006). It draws itself on and fades out. unshape(id) removes it.'
+        'Draws an "arrow", a "box" or a "circle" over the SOURCE picture from `from` to `to` (source seconds), so it moves with a zoom: an arrow from start { x, y } to its head at end (where it points), a box or circle between the two corners; 0...1 of the picture from its top left. color "#RRGGBB" (red #FF3B30), width 0.002 to 0.03 of the short side (0.006). It draws itself on and fades out; appear "fade" fades it in instead and "none" shows it at once. unshape(id) removes it.'
     ),
     edit(
         "arrow",

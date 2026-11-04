@@ -195,6 +195,11 @@ struct EditProject: Codable, Equatable {
         case arrow, box, circle
     }
 
+    /// How a shape comes in: draws itself on (nil means this), fades in, or is there at once.
+    enum ShapeAppear: String, Codable, CaseIterable {
+        case draw, fade, none
+    }
+
     /// An arrow from (x1, y1) to its head at (x2, y2), or a box or circle between those corners, over the SOURCE
     /// picture (0...1 from its top left), so it moves with a zoom. `width` is the line as a fraction of the short side.
     struct Shape: Codable, Equatable, Identifiable {
@@ -209,6 +214,7 @@ struct EditProject: Codable, Equatable {
         /// #RRGGBB.
         var color = "#FF3B30"
         var width = 0.006
+        var appear: ShapeAppear?
     }
 
     struct Keys: Codable, Equatable {

@@ -156,6 +156,8 @@ export const textNoteSchema = z.object({
 export type EditTextNote = z.infer<typeof textNoteSchema>;
 
 export const SHAPE_KINDS = ["arrow", "box", "circle"] as const;
+/** How a shape comes in: "draw" draws itself on over 0.3 s (absent means this), "fade" fades in, "none" is there at once. */
+export const SHAPE_APPEARS = ["draw", "fade", "none"] as const;
 
 /**
  * An arrow, a box or a circle over the SOURCE picture (so it moves with a zoom, like a hidden part) from `startUs` to
@@ -177,6 +179,7 @@ export const shapeSchema = z.object({
         .regex(/^#[0-9a-fA-F]{6}$/)
         .default("#FF3B30"),
     width: z.number().min(0.002).max(0.03).default(0.006),
+    appear: z.enum(SHAPE_APPEARS).optional(),
 });
 export type EditShape = z.infer<typeof shapeSchema>;
 
@@ -744,6 +747,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
                 .regex(/^#[0-9a-fA-F]{6}$/)
                 .optional(),
             width: z.number().min(0.002).max(0.03).optional(),
+            appear: z.enum(SHAPE_APPEARS).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unshape"), id: z.string() }).strict(),
@@ -1066,6 +1070,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                 y2: op.end.y,
                 ...(op.color === undefined ? {} : { color: op.color.toUpperCase() }),
                 ...(op.width === undefined ? {} : { width: op.width }),
+                ...(op.appear === undefined || op.appear === "draw" ? {} : { appear: op.appear }),
             });
             return { ...project, shapes: [...(project.shapes ?? []), shape] };
         }
@@ -1296,6 +1301,7 @@ export function describeProject(project: EditProject, path: string) {
             start: { x: shape.x1, y: shape.y1 },
             end: { x: shape.x2, y: shape.y2 },
             color: shape.color,
+            appear: shape.appear ?? "draw",
         })),
         texts: (project.texts ?? []).map((note) => ({
             id: note.id,

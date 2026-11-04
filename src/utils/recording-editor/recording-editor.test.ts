@@ -537,7 +537,22 @@ describe("edit project (edit.json)", () => {
         });
         const [arrow] = pointed.shapes ?? [];
         expect(arrow).toMatchObject({ kind: "arrow", x1: 0.2, y2: 0.4, color: "#00FF00", width: 0.006 });
-        expect(describeProject(pointed, "/p/edit.json").shapes[0]).toMatchObject({ from: 1, end: { x: 0.6, y: 0.4 } });
+        expect(describeProject(pointed, "/p/edit.json").shapes[0]).toMatchObject({
+            from: 1,
+            end: { x: 0.6, y: 0.4 },
+            appear: "draw",
+        });
+        expect(arrow?.appear).toBeUndefined();
+        const still = applyOp(project, {
+            op: "shape",
+            from: 1,
+            to: 3,
+            kind: "box",
+            start: { x: 0.2, y: 0.2 },
+            end: { x: 0.4, y: 0.4 },
+            appear: "none",
+        });
+        expect(still.shapes?.[0]?.appear).toBe("none");
         expect(() =>
             applyOp(project, {
                 op: "shape",

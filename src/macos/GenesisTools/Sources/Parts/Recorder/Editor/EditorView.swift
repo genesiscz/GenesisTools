@@ -1519,6 +1519,16 @@ private struct ShapeRow: View {
                 SectionLabel(text: "Line", value: String(format: "%.1f%%", shape.width * 100))
                 Slider(value: Binding(get: { shape.width }, set: { value in model.updateShape(shape.id) { $0.width = (value * 2000).rounded() / 2000 } }), in: 0.002...0.03)
                     .accessibilityLabel("\(name) line width")
+                SectionLabel(text: "Appears", value: nil)
+                Picker("Appears", selection: Binding(get: { shape.appear ?? .draw }, set: { value in
+                    model.updateShape(shape.id) { $0.appear = value == .draw ? nil : value }
+                })) {
+                    Text("Draws On").tag(EditProject.ShapeAppear.draw)
+                    Text("Fades In").tag(EditProject.ShapeAppear.fade)
+                    Text("At Once").tag(EditProject.ShapeAppear.none)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                .accessibilityLabel("How the \(name.lowercased()) appears")
                 HStack {
                     SectionLabel(text: "Starts", value: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
                     GhostButton("Start at Playhead", symbol: "arrow.right.to.line", tooltip: "Move the start here and keep the length",
