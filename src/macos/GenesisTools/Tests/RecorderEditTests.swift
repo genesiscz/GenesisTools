@@ -53,6 +53,19 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(corner.y, 0, accuracy: 0.001)
     }
 
+    func testChangedPartsTellADragFromAnAdd() {
+        let edit = project([.init(id: "a", fromUs: 0, toUs: 4_000_000)])
+        var louder = edit
+        louder.audio.volume = 0.8
+        XCTAssertEqual(EditorModel.changedParts(edit, louder), ["audio"])
+        var titled = edit
+        titled.texts = [EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: "A")]
+        XCTAssertEqual(EditorModel.changedParts(edit, titled), ["texts", "count"], "an add is its own undo step")
+        var moved = titled
+        moved.texts?[0].x = 0.3
+        XCTAssertEqual(EditorModel.changedParts(titled, moved), ["texts"], "a move continues a drag")
+    }
+
     func testCutsDipTheSoundButASplitDoesNot() {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 2_000_000), .init(id: "b", fromUs: 2_000_000, toUs: 3_000_000),
                             .init(id: "c", fromUs: 5_000_000, toUs: 6_000_000), .init(id: "d", fromUs: 6_000_000, toUs: 8_000_000, speed: 2)])

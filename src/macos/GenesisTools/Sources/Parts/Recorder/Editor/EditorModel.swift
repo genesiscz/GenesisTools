@@ -68,6 +68,7 @@ final class EditorModel {
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    @ObservationIgnored private var rebuildSoon: DispatchWorkItem?
     @ObservationIgnored private var undoStack: [EditProject] = []
     @ObservationIgnored private var redoStack: [EditProject] = []
     @ObservationIgnored let cursor: CursorTrack?
@@ -215,10 +216,44 @@ final class EditorModel {
     /// audio changed (zooms need no rebuild), and a save a moment later.
     func apply(_ next: EditProject, rebuildMovie: Bool) {
         guard next != project else { return }
-        undoStack.append(project)
-        if undoStack.count > 200 { undoStack.removeFirst() }
+        // A slider or a drag sends a change per step: steps that change the same parts of the edit less than 0.6 s
+        // apart are one undo step, so ⌘Z takes back the whole drag.
+        let parts = Self.changedParts(project, next)
+        let now = Date()
+        let continues = !parts.contains("count") && parts == lastChange.parts
+            && now.timeIntervalSince(lastChange.at) < 0.6 && !undoStack.isEmpty
+        lastChange = (parts, now)
+        if !continues {
+            undoStack.append(project)
+            if undoStack.count > 200 { undoStack.removeFirst() }
+        }
         redoStack.removeAll()
         commit(next, rebuildMovie: rebuildMovie)
+    }
+
+    @ObservationIgnored private var lastChange: (parts: [String], at: Date) = ([], .distantPast)
+
+    /// Which parts of the edit differ, for telling one continuous change from the next.
+    nonisolated static func changedParts(_ a: EditProject, _ b: EditProject) -> [String] {
+        var parts: [String] = []
+        if a.clips != b.clips { parts.append("clips") }
+        if a.zooms != b.zooms { parts.append("zooms") }
+        if a.audio != b.audio { parts.append("audio") }
+        if a.export != b.export { parts.append("export") }
+        if a.clicks != b.clicks { parts.append("clicks") }
+        if a.frame != b.frame { parts.append("frame") }
+        if a.cursor != b.cursor { parts.append("cursor") }
+        if a.captions != b.captions { parts.append("captions") }
+        if a.keys != b.keys { parts.append("keys") }
+        if a.redactions != b.redactions { parts.append("redactions") }
+        if a.texts != b.texts { parts.append("texts") }
+        if a.shapes != b.shapes { parts.append("shapes") }
+        if a.transcript != b.transcript { parts.append("transcript") }
+        if a.motion != b.motion { parts.append("motion") }
+        // A count change (an add or a delete) is its own step, never part of a drag.
+        if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count)
+            != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count) { parts.append("count") }
+        return parts
     }
 
     private func commit(_ next: EditProject, rebuildMovie: Bool) {
@@ -228,7 +263,15 @@ final class EditorModel {
         canRedo = !redoStack.isEmpty
         edited = true
         if rebuildMovie {
-            rebuild()
+            // A sound slider sends a change per step; the movie is built again once it rests for 0.2 s.
+            if lastChange.parts == ["audio"] {
+                rebuildSoon?.cancel()
+                let work = DispatchWorkItem { [weak self] in self?.rebuild() }
+                rebuildSoon = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+            } else {
+                rebuild()
+            }
         } else {
             refreshFrame()
         }
@@ -237,6 +280,7 @@ final class EditorModel {
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
+        lastChange = ([], .distantPast)
         redoStack.append(project)
         commit(previous, rebuildMovie: previous.clips != project.clips || previous.audio != project.audio)
     }
