@@ -186,3 +186,18 @@ export interface PreparedPromptDto {
     /** How `tools hub prompts send` types it into a pane: inline, or a file and a one-line pointer to it. */
     mode: "inline" | "file";
 }
+
+/**
+ * `POST /api/agents/voice` (F12, the walkie-talkie): a recorded clip as the raw body, transcribed on the Mac. The
+ * phone shows `text` for one check and sends it through `POST /api/agents/send`; nothing is sent here.
+ */
+export interface AgentVoiceReceiptDto {
+    /** Where the clip is kept on the Mac. */
+    path: string;
+    bytes: number;
+    sha256: string;
+    text: string;
+    /** The transcription provider and model the Mac's ladder picked. */
+    provider: string;
+    model: string;
+}
