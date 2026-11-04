@@ -149,7 +149,8 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         issues.push({
             severity: "fix",
             item: "music",
-            message: `the music file ${music.file} is gone, so the export plays without music`,
+            // The name first, so a long path does not hide what is missing; the whole path after it.
+            message: `The music file "${music.file.split(/[/\\]/).pop()}" is gone, so the export plays without music (it was ${music.file})`,
             fix: 'movie.music({ file: "<the file>" }) or movie.music({ enabled: false })',
         });
     }

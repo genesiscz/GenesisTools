@@ -432,6 +432,13 @@ describe("edit project (edit.json)", () => {
         const apart = (issues[1]?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
         expect(checkProject(apart, facts).some((issue) => issue.message.includes("same time"))).toBe(false);
         expect(issues[2]?.message).toContain("too short to read");
+        const unscored = {
+            ...project,
+            audio: { ...project.audio, music: { file: "/gone/song.m4a", volume: 0.25, duck: 0.6, fadeMs: 1500 } },
+        };
+        expect(checkProject(unscored, { ...facts, musicFileExists: false })[0]?.message).toBe(
+            'The music file "song.m4a" is gone, so the export plays without music (it was /gone/song.m4a)'
+        );
         const spotId = project.redactions?.[0]?.id;
         expect(issues[2]?.fix).toBe(`movie.retime({ id: "${spotId}", to: 8.5 })`);
         expect(applyOp(project, { op: "retime", id: spotId ?? "", to: 8.5 }).redactions?.[0]?.endUs).toBe(8_500_000);
