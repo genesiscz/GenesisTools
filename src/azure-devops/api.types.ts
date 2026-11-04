@@ -270,3 +270,26 @@ export interface GitCommitsResponse {
     count: number;
     value: GitCommitRefApi[];
 }
+
+export type AdoHttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+
+/** One REST call that an area client outside the `Api` class asks the transport to make. */
+export interface AdoRequest {
+    method: AdoHttpMethod;
+    url: string;
+    body?: unknown;
+    contentType?: string;
+    /** Shown in the debug log next to the URL. */
+    description: string;
+}
+
+/** The parsed JSON body (`null` when the response has none) and the continuation token header. */
+export interface AdoResponse<T> {
+    data: T | null;
+    continuationToken?: string;
+}
+
+/** What an area client needs from `Api`: an authenticated JSON call. Tests pass a fake. */
+export interface AdoTransport {
+    call<T>(request: AdoRequest): Promise<AdoResponse<T>>;
+}
