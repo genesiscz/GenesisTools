@@ -76,6 +76,7 @@ describe("evaluateGuard", () => {
             command: "git status --porcelain",
             model: "claude-opus-5",
             harness: "claude",
+            caller: "claude",
             nativeDiffFiles: [],
             raw: {},
             ...overrides,
@@ -342,6 +343,7 @@ describe("the guard runs custom rules beside the built-in ones", () => {
             command,
             model: "",
             harness: "claude",
+            caller: "claude",
             nativeDiffFiles: [],
             raw: {},
         };

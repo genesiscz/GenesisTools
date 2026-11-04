@@ -78,7 +78,14 @@ import {
 } from "./mods";
 import { nativeDiffState } from "./native-diff";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
-import { detectHarness, HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
+import {
+    detectHarness,
+    detectHookCaller,
+    HARNESS_HOOK_FACTS,
+    harnessHookFacts,
+    hookCallerFacts,
+    parseHookPayload,
+} from "./payload";
 import { rmRequestNotice } from "./rm-requests";
 import { applySetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
 import {
@@ -168,11 +175,15 @@ describe("parseHookPayload", () => {
             },
         ] as const;
 
-        for (const { raw, harness, event, agentId } of cases) {
+        // The turn is a typed field where the harness's dialect names one (Codex `turn_id`, Grok `promptId`).
+        const turns = [undefined, "turn-1", "prompt-1", undefined, undefined];
+        const callers = ["claude", "codex", "grok", "copilot", "copilot"];
+
+        for (const [index, { raw, harness, event, agentId }] of cases.entries()) {
             const payload = parseHookPayload(SafeJSON.stringify(raw));
             expect(detectHarness(raw)).toBe(harness);
-            expect(payload).toMatchObject({ harness, event, agentId, raw });
-            expect(payload).not.toHaveProperty("turnId");
+            expect(payload).toMatchObject({ harness, event, agentId, raw, caller: callers[index] });
+            expect(payload?.turnId).toBe(turns[index]);
             expect(payload).not.toHaveProperty("parentAgentId");
         }
     });
@@ -675,6 +686,7 @@ describe("applySetting", () => {
                     command: "find ~ -name x",
                     model: "",
                     harness: "claude",
+                    caller: "claude",
                     nativeDiffFiles: [],
                     raw: {},
                 },
@@ -1438,6 +1450,39 @@ describe("parseHookPayload tolerates a malformed native payload", () => {
 
 // Characterization tests (2026-11-04): what the hook payload reader answers for each harness today, before the
 // agent-context gatherers are unified. The source file of record is payload.ts (it has no test file of its own).
+describe("hookCallerFacts", () => {
+    it("hands the identity module the caller, the subagent, the turn and the payload's own cwd", () => {
+        const claude = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PostToolUse",
+                session_id: "c1",
+                agent_id: "agent-7",
+                tool_use_id: "t",
+            })
+        );
+        const codex = parseHookPayload(
+            SafeJSON.stringify({ hook_event_name: "Stop", session_id: "x1", model: "m", turn_id: "turn-1", cwd: "/w" })
+        );
+
+        expect(claude && hookCallerFacts(claude)).toEqual({
+            caller: "claude",
+            sessionId: "c1",
+            toolUseId: "t",
+            subagentId: "agent-7",
+            turnId: undefined,
+            model: undefined,
+            transcriptPath: undefined,
+            cwd: undefined,
+        });
+        expect(codex && hookCallerFacts(codex)).toMatchObject({
+            caller: "codex",
+            turnId: "turn-1",
+            model: "m",
+            cwd: "/w",
+        });
+    });
+});
+
 describe("characterization: parseHookPayload per harness", () => {
     it("a Claude payload: snake_case fields, the session, the tool call and the transcript", () => {
         const payload = parseHookPayload(
@@ -1520,7 +1565,7 @@ describe("characterization: parseHookPayload per harness", () => {
         expect(byRollout?.model).toBe("");
     });
 
-    it("a Claude-shaped payload that carries a model field is read as Codex today", () => {
+    it("a Claude SessionStart that carries a model field stays Claude: Claude names its model on that event", () => {
         const payload = parseHookPayload(
             SafeJSON.stringify({
                 hook_event_name: "SessionStart",
@@ -1530,7 +1575,12 @@ describe("characterization: parseHookPayload per harness", () => {
             })
         );
 
-        expect(payload?.harness).toBe("codex");
+        expect(payload?.harness).toBe("claude");
+        expect(payload?.caller).toBe("claude");
+        // Codex sends its model on every event, and may send a null transcript, which no other harness does.
+        const codexStart = { hook_event_name: "SessionStart", session_id: "t", transcript_path: null, model: "m" };
+        expect(detectHarness(codexStart)).toBe("codex");
+        expect(detectHarness({ hook_event_name: "Stop", session_id: "t", model: "m" })).toBe("codex");
     });
 
     it("a Grok payload: camelCase fields, the session, the tool call and the transcript", () => {
@@ -2629,6 +2679,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             homeBindsAccount: false,
             launchAuthFromAncestor: true,
             journalOmitsProvider: true,
+            payload: expect.objectContaining({ spelling: "snake_case", subagentIdField: "agent_id" }),
         });
         expect(HARNESS_HOOK_FACTS.grok).toEqual({
             diffLogFromTranscript: true,
@@ -2646,6 +2697,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
+            payload: expect.objectContaining({ spelling: "camelCase", turnIdField: "promptId" }),
         });
         expect(HARNESS_HOOK_FACTS.codex).toEqual({
             diffLogFromTranscript: false,
@@ -2663,6 +2715,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
+            payload: expect.objectContaining({ spelling: "snake_case", turnIdField: "turn_id", nullTranscript: true }),
         });
         expect(harnessHookFacts("cursor")).toBeUndefined();
         expect(harnessHookFacts("constructor")).toBeUndefined();
@@ -2715,7 +2768,7 @@ describe("rm request notice", () => {
     });
 });
 
-it("classifies Copilot hook spellings and leaves turn and parent agent ids in raw", () => {
+it("classifies Copilot hook spellings as Copilot callers and leaves turn and parent agent ids in raw", () => {
     const cases = [
         {
             raw: {
@@ -2740,8 +2793,10 @@ it("classifies Copilot hook spellings and leaves turn and parent agent ids in ra
     ] as const;
     for (const { raw, harness } of cases) {
         const parsed = parseHookPayload(SafeJSON.stringify(raw));
+        // The dialect stays the harness of its spelling; who sent it is Copilot, by its parent agent id.
         expect(detectHarness(raw)).toBe(harness);
-        expect(parsed).toMatchObject({ harness, sessionId: "s", agentId: "child", raw });
+        expect(detectHookCaller(raw)).toBe("copilot");
+        expect(parsed).toMatchObject({ harness, caller: "copilot", sessionId: "s", agentId: "child", raw });
         expect(parsed).not.toHaveProperty("turnId");
         expect(parsed).not.toHaveProperty("parentAgentId");
     }
