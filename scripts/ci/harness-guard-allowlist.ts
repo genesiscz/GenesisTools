@@ -55,10 +55,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 3,
         why: "keyed by SourceId, ccusage's report-source axis (17 sources, three of them harnesses), whose rows mirror ccusage's CLI per source (parity.test.ts)",
     },
-    "src/genesis-tools-mcp/lib/http-caller.ts": {
-        table: 1,
-        why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load",
-    },
     "src/ai/lib/embed/registry.ts": {
         table: 2,
         why: "EMBED_LAUNCHERS, the embed tool table keyed by HarnessId: each launcher lives in its agent tool (src/<agent>/lib/embed.ts), which the drivers cannot import",
@@ -83,9 +79,9 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the MCP-client axis (Gemini and Cursor too), not the harness set: each client's stored default config home",
     },
-    "src/utils/cli/failures/caller.ts": {
+    "src/utils/agent/identity/peer.ts": {
         table: 1,
-        why: "CALLER_TRANSCRIPTS, keyed by the caller's runtime agent (with copilot and unknown); it joins the caller's own env and cwd, so a failed run skips the locate part's folder walk",
+        why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load (moved from src/genesis-tools-mcp/lib/http-caller.ts)",
     },
     "src/utils/env/envVariables.ts": {
         table: 1,

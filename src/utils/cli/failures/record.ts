@@ -30,6 +30,8 @@ export interface FailureCaller {
     aiAgent: string | null;
     project: string;
     repoRoot: string;
+    /** The session's cwd (the live one an agent moved to); absent in records written before 2026-11-04. */
+    cwd?: string;
     branch: string | null;
     commitSha: string | null;
     worktreePath: string | null;

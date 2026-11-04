@@ -710,11 +710,14 @@ describe("characterization: the caller a failure record names", () => {
     });
 
     describe("failureCaller", () => {
-        it("falls back to AI_AGENT for Codex and omits cwd from the saved caller", () => {
+        it("takes no AI_AGENT for Codex (an outer host's label) and saves the session's cwd", () => {
             const ctx = context({ agent: "codex", aiAgent: null, cwd: "/fixture/repo/sub" });
             const caller = failureCaller({ context: ctx, processEnv: { AI_AGENT: "label" }, home: scratch() });
-            expect(caller.aiAgent).toBe("label");
-            expect(caller).not.toHaveProperty("cwd");
+            expect(caller.aiAgent).toBeNull();
+            expect(caller.cwd).toBe("/fixture/repo/sub");
+            expect(
+                failureCaller({ context: context({ aiAgent: null }), processEnv: { AI_AGENT: " label " } }).aiAgent
+            ).toBe("label");
             const dir = scratch();
             const failure: ToolFailure = {
                 v: 1,
@@ -750,14 +753,14 @@ describe("characterization: the caller a failure record names", () => {
                 sessionTitle: "Fixture session",
                 model: null,
                 effort: null,
-                aiAgent: "label",
+                aiAgent: null,
                 project: "FixtureProject",
                 repoRoot: "/fixture/FixtureProject",
+                cwd: "/fixture/repo/sub",
                 branch: "feat/fixture",
                 commitSha: "abc1234",
                 worktreePath: null,
             });
-            expect(stored.caller).not.toHaveProperty("cwd");
         });
         it("reads the model of a Claude session from the newest assistant row of its transcript", () => {
             const config = scratch();
@@ -831,6 +834,7 @@ describe("characterization: the caller a failure record names", () => {
                 aiAgent: "from-context",
                 project: "FixtureProject",
                 repoRoot: "/fixture/FixtureProject",
+                cwd: "/fixture/FixtureProject/sub",
                 branch: "feat/fixture",
                 commitSha: "abc1234",
                 worktreePath: null,

@@ -73,14 +73,15 @@ describe("characterization: host, runtime, poster and failure caller agree on id
                 ...layout,
             });
             expect(poster).toEqual(runtime);
+            // The failure record keeps the session's cwd, and takes no AI_AGENT for Codex, which sets none of its own.
             expect(failure).toMatchObject({
                 agent: row.agent,
                 sessionId: row.sessionId,
-                aiAgent: "label",
+                aiAgent: row.label,
                 project: "repo",
                 repoRoot: "/fixture/repo",
+                cwd: "/fixture/repo/sub",
             });
-            expect(failure).not.toHaveProperty("cwd");
         });
     }
 });
