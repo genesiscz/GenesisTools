@@ -105,8 +105,9 @@ silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 
 `movie.check()` (and `tools recorder check`) lists what to look at before an export; an issue with a fix carries it
-as a REPL call (`fix`) and as edit ops (`action.ops`). `movie.fix()` runs every such fix in one save and one undo
-step, and the Export tab's Remove, Lengthen and Move After buttons run the same ops through `tools recorder apply`.
+as a REPL call (`fix`) and as edit ops (`action.ops`). `movie.fix()` (and `tools recorder fix`) runs every such fix in one save and
+one undo step; the Export tab's Fix All does the same, and its Remove, Lengthen and Move After buttons run one issue's
+ops through `tools recorder apply`.
 
 In the editor, texts and shapes are segments on the marks lane (a drag moves one in time, an edge trims it), and
 ⌥← / ⌥→ move the selected zoom, hidden part, text or shape by 0.1 s (⇧ for a second).
