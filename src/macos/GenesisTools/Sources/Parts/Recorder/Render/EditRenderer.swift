@@ -666,7 +666,10 @@ final class EditExporter {
         return source.deletingPathExtension().lastPathComponent + "-edited"
     }
 
-    static func export(project: EditProject, to url: URL, onProgress: @escaping (Double) -> Void) async throws -> Result {
+    /// `isCancelled` is read every 0.25 s while the session runs; true stops it, removes the partial file and throws a
+    /// CancellationError.
+    static func export(project: EditProject, to url: URL, isCancelled: @escaping () -> Bool = { false },
+                       onProgress: @escaping (Double) -> Void) async throws -> Result {
         let started = Date()
         guard url.standardizedFileURL.path != URL(fileURLWithPath: project.source.video).standardizedFileURL.path else {
             throw ExportError.overwritesInput(url.path)
@@ -688,16 +691,23 @@ final class EditExporter {
         session.audioMix = rendered.audioMix
         session.shouldOptimizeForNetworkUse = true
         let timer = Timer(timeInterval: 0.25, repeats: true) { _ in
-            MainActor.assumeIsolated { onProgress(Double(session.progress)) }
+            MainActor.assumeIsolated {
+                if isCancelled() { session.cancelExport() }
+                onProgress(Double(session.progress))
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         defer { timer.invalidate() }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             session.exportAsynchronously { continuation.resume() }
         }
+        if session.status == .cancelled || isCancelled() {
+            try? FileManager.default.removeItem(at: partial)
+            throw CancellationError()
+        }
         guard session.status == .completed else {
             try? FileManager.default.removeItem(at: partial)
-            throw ExportError.failed(session.error?.localizedDescription ?? "status \(session.status.rawValue)")
+            throw ExportError.failed(session.error.map(explained) ?? "status \(session.status.rawValue)")
         }
         // The finished file appears under its name in one step, so a reader never sees half a movie.
         if FileManager.default.fileExists(atPath: url.path) {

@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -446,6 +447,48 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(Int(gray(both, 100, 80)), Int(gray(one, 100, 80)), accuracy: 1, "the rest is dimmed once, not twice")
         let fading = Looks.redact([left], on: white, spotlightFade: 0.5)
         XCTAssertGreaterThan(gray(fading, 100, 80), gray(one, 100, 80), "half way into its fade it dims less")
+    }
+
+    /// A 2 s, 320 × 200 movie of grey frames, for an export to chew on.
+    private func makeMovie(at url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,
+                                                                          AVVideoWidthKey: 320, AVVideoHeightKey: 200])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<60 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(nil, 320, 200, kCVPixelFormatType_32BGRA, nil, &buffer)
+            guard let buffer else { continue }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            memset(CVPixelBufferGetBaseAddress(buffer), Int32(60 + frame), CVPixelBufferGetDataSize(buffer))
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+    }
+
+    func testACancelledExportStopsAndLeavesNoFile() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cancel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        let project = EditProject.whole(video: movie.path, durationUs: 2_000_000, width: 320, height: 200, cursor: nil, recording: nil)
+        let out = folder.appendingPathComponent("out.mp4")
+        do {
+            _ = try await EditExporter.export(project: project, to: out, isCancelled: { true }) { _ in }
+            XCTFail("a cancelled export finished")
+        } catch is CancellationError {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: out.path), "a cancelled export writes no file")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("out.partial.mp4").path), "nor a partial one")
+        }
+        let whole = try await EditExporter.export(project: project, to: folder.appendingPathComponent("whole.mp4")) { _ in }
+        XCTAssertGreaterThan(whole.bytes, 0, "the same export, not cancelled, writes the movie")
     }
 
     func testClickTicksPlayAtTheirOutputTimesOneTickApart() {

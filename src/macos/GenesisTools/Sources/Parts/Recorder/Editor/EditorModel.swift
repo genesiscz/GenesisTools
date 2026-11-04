@@ -1202,6 +1202,15 @@ final class EditorModel {
 
     // MARK: - Export
 
+    /// The window's MP4 export while it runs; a GIF or WebM runs in `tools` and cannot be stopped from here.
+    private var exportTask: Task<Void, Never>?
+    private var exportCancelled = false
+    var canCancelExport: Bool { exportTask != nil }
+
+    func cancelExport() {
+        exportCancelled = true
+    }
+
     func export() {
         guard exportProgress == nil else { return }
         saveNow()
@@ -1216,9 +1225,11 @@ final class EditorModel {
         if let part, let trimmed = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) { rendered = trimmed }
         let url = EditExporter.outputURL(for: project)
         exportProgress = 0
-        Task { [weak self] in
+        exportCancelled = false
+        exportTask = Task { [weak self] in
+            defer { self?.exportTask = nil }
             do {
-                let result = try await EditExporter.export(project: rendered, to: url) { progress in
+                let result = try await EditExporter.export(project: rendered, to: url, isCancelled: { self?.exportCancelled ?? true }) { progress in
                     self?.exportProgress = progress
                 }
                 self?.exportProgress = nil
@@ -1226,6 +1237,10 @@ final class EditorModel {
                 self?.show("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).", error: false)
                 self?.finishExport(result.url, part: part)
                 self?.reveal(result.url)
+            } catch is CancellationError {
+                self?.exportProgress = nil
+                HubPerf.log("recorder.export cancelled: \(url.path)")
+                self?.show("Export cancelled; no file was written.", error: false)
             } catch {
                 self?.exportProgress = nil
                 HubPerf.log("recorder.export failed: \(error.localizedDescription)")

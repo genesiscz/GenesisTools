@@ -1421,7 +1421,15 @@ private struct ExportInspector: View {
             ExportFileRow(model: model, url: EditExporter.outputURL(for: model.project, format: settings.format ?? .mp4))
             if let progress = model.exportProgress {
                 ProgressView(value: progress).progressViewStyle(.linear)
-                Text(verbatim: "Exporting… \(Int(progress * 100))%").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                HStack {
+                    Text(verbatim: "Exporting… \(Int(progress * 100))%").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                    Spacer()
+                    if model.canCancelExport {
+                        GhostButton("Cancel", symbol: "xmark.circle", tooltip: "Stop the export; no file is written (Esc)",
+                                    identifier: "recorder.export.cancel") { model.cancelExport() }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                }
             } else {
                 SwitchRow("Copy to clipboard when done", isOn: $copyAfterExport)
                     .instantTooltip("Puts the exported file on the clipboard, ready to paste into a chat or a mail")

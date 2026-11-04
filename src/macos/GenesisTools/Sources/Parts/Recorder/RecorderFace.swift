@@ -232,6 +232,19 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         window.setFrameAutosaveName("GenesisToolsRecorderEditor")
     }
 
+    /// Closing during an export asks first; Keep Exporting is the default, Stop and Close cancels it.
+    func windowShouldClose(_ window: NSWindow) -> Bool {
+        guard let model = open[ObjectIdentifier(window)]?.1, model.canCancelExport else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Stop the export?"
+        alert.informativeText = "The movie is still being exported. If you close the window now, the export stops and no file is written."
+        alert.addButton(withTitle: "Keep Exporting")
+        alert.addButton(withTitle: "Stop and Close")
+        guard alert.runModal() == .alertSecondButtonReturn else { return false }
+        model.cancelExport()
+        return true
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, let entry = open[ObjectIdentifier(window)] else { return }
         entry.1.close()
