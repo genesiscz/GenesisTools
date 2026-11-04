@@ -13,6 +13,7 @@ import {
     EXPORT_FORMATS,
     type ExportFormat,
     type OpFacts,
+    partOf,
     projectPathFor,
     readProject,
     wholeProject,
@@ -168,8 +169,24 @@ function freeOutput(video: string, extension: string): string {
  */
 export async function exportAs(
     value: string,
-    options: { out?: string; format?: ExportFormat } = {}
+    options: { out?: string; format?: ExportFormat; part?: { fromUs: number; toUs: number } } = {}
 ): Promise<ExportAnswer> {
+    if (options.part) {
+        // A part is a trimmed copy of the edit in a scratch folder; the edit on disk stays as it is.
+        const whole = await openProject(value);
+        const scratch = await mkdtemp(join(tmpdir(), "recorder-part-"));
+
+        try {
+            const copy = join(scratch, "part.edit.json");
+            const trimmed = partOf(whole.project, options.part.fromUs, options.part.toUs);
+            writeProject(copy, { ...trimmed, export: { ...trimmed.export, output: "" } });
+            log.debug({ value, part: options.part, clips: trimmed.clips.length }, "exporting a part of the edit");
+            return await exportAs(copy, { out: options.out, format: options.format ?? whole.project.export.format });
+        } finally {
+            await rm(scratch, { recursive: true, force: true });
+        }
+    }
+
     const opened = await openProject(value);
     const asked =
         options.format ??

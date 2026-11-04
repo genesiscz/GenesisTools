@@ -14,8 +14,10 @@ import {
     outputDurationUs,
     outputTimeOf,
     parseEditOps,
+    partOf,
     readProject,
     shortcutsOf,
+    sourceTimeOf,
     transcriptLines,
     wholeProject,
     writeProject,
@@ -461,6 +463,23 @@ describe("edit project (edit.json)", () => {
             "no unmuted audio"
         );
         expect(() => applyOp(project, { op: "normalize", targetLufs: -16 })).toThrow("needs the movie's loudness");
+    });
+
+    test("a part of the edit keeps what plays between two OUTPUT times, cuts and speeds inside it included", () => {
+        let project = wholeProject(source);
+        project = applyOp(project, { op: "cut", from: 2, to: 3 });
+        project = applyOp(project, { op: "speed", from: 6, to: 8, factor: 2 });
+        // Output: 0–2 → source 0–2, 2–5 → source 3–6, 5–6 → source 6–8 (2×), 6–8 → source 8–10.
+        expect(sourceTimeOf(project, 2_500_000)).toBe(3_500_000);
+        expect(sourceTimeOf(project, 5_500_000)).toBe(7_000_000);
+        const part = partOf(project, 1_000_000, 5_500_000);
+        expect(outputDurationUs(part)).toBe(4_500_000);
+        expect(part.clips.map((clip) => [clip.fromUs, clip.toUs, clip.speed])).toEqual([
+            [1_000_000, 2_000_000, 1],
+            [3_000_000, 6_000_000, 1],
+            [6_000_000, 7_000_000, 2],
+        ]);
+        expect(() => partOf(project, 9_000_000, 9_500_000)).toThrow("inside the 8 s edit");
     });
 
     test("a redaction hides a rectangle inside the picture for a time and is removed by its id", () => {

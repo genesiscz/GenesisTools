@@ -50,6 +50,24 @@ enum TimelineMap {
         return nil
     }
 
+    /// The edit cut down to what plays from `fromOut` to `toOut` (output microseconds): each clip's overlap with the
+    /// range, at its speed. For exporting a part; nil when nothing plays there.
+    static func part(_ project: EditProject, fromOut: Int64, toOut: Int64) -> EditProject? {
+        var clips: [EditProject.Clip] = []
+        for placed in placed(project) {
+            let start = max(fromOut, placed.outStartUs), end = min(toOut, placed.outEndUs)
+            guard end - start >= minimumClipUs else { continue }
+            var clip = placed.clip
+            clip.fromUs = placed.clip.fromUs + Int64((Double(start - placed.outStartUs) * placed.clip.speed).rounded())
+            clip.toUs = min(placed.clip.toUs, placed.clip.fromUs + Int64((Double(end - placed.outStartUs) * placed.clip.speed).rounded()))
+            clips.append(clip)
+        }
+        guard !clips.isEmpty else { return nil }
+        var next = project
+        next.clips = clips
+        return next
+    }
+
     /// The shortest clip a split or trim leaves: one frame at 60 fps.
     static let minimumClipUs: Int64 = 16_667
 

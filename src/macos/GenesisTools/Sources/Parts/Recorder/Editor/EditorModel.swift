@@ -238,6 +238,34 @@ final class EditorModel {
     /// The redaction the Hide tab edits.
     var selectedRedaction: String?
 
+    /// The part to export, in output microseconds (I and O at the playhead); not saved, so the edit stays whole.
+    var partInUs: Int64?
+    var partOutUs: Int64?
+
+    /// The marked part, the missing end being the edit's start or end; nil when no mark is set or it is empty.
+    var exportPart: (fromUs: Int64, toUs: Int64)? {
+        guard partInUs != nil || partOutUs != nil else { return nil }
+        let from = min(partInUs ?? 0, durationUs), to = min(partOutUs ?? durationUs, durationUs)
+        return to - from >= TimelineMap.minimumClipUs ? (from, to) : nil
+    }
+
+    func markIn() {
+        partInUs = clock.outUs
+        if let out = partOutUs, out <= clock.outUs { partOutUs = nil }
+        show("The part starts at \(formatClock(clock.outUs, tenths: true)); O sets its end.", error: false)
+    }
+
+    func markOut() {
+        partOutUs = clock.outUs
+        if let start = partInUs, start >= clock.outUs { partInUs = nil }
+        show("The part ends at \(formatClock(clock.outUs, tenths: true)); the export writes only the part.", error: false)
+    }
+
+    func clearPart() {
+        partInUs = nil
+        partOutUs = nil
+    }
+
     /// Hides the middle of the picture for 3 s from the playhead; the Hide tab then moves and sizes it.
     func addRedaction() {
         let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
@@ -522,11 +550,14 @@ final class EditorModel {
             exportThroughTools(format)
             return
         }
+        // A marked part exports a trimmed copy; the edit itself stays whole.
+        var rendered = project
+        if let part = exportPart, let trimmed = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) { rendered = trimmed }
         let url = EditExporter.outputURL(for: project)
         exportProgress = 0
         Task { [weak self] in
             do {
-                let result = try await EditExporter.export(project: project, to: url) { progress in
+                let result = try await EditExporter.export(project: rendered, to: url) { progress in
                     self?.exportProgress = progress
                 }
                 self?.exportProgress = nil
@@ -552,7 +583,11 @@ final class EditorModel {
     private func exportThroughTools(_ format: EditProject.ExportFormat) {
         exportProgress = 0
         show("Exporting a \(format.rawValue.uppercased())…", error: false)
-        ToolsRunner.run(["recorder", "export", store.url.path, "--format", format.rawValue, "--json"]) { [weak self] status, stdout, stderr in
+        var argv = ["recorder", "export", store.url.path, "--format", format.rawValue, "--json"]
+        if let part = exportPart {
+            argv += ["--from", String(format: "%.3f", Double(part.fromUs) / 1_000_000), "--to", String(format: "%.3f", Double(part.toUs) / 1_000_000)]
+        }
+        ToolsRunner.run(argv) { [weak self] status, stdout, stderr in
             guard let self else { return }
             self.exportProgress = nil
             let answer = (stdout.split(separator: "\n").last.flatMap { $0.data(using: .utf8) })

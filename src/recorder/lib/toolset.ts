@@ -227,10 +227,17 @@ const movieMethods = [
     ),
     defineMethod({
         name: "export",
-        params: z.object({ out: z.string().optional(), format: z.enum(EXPORT_FORMATS).optional() }).strict(),
+        params: z
+            .object({
+                out: z.string().optional(),
+                format: z.enum(EXPORT_FORMATS).optional(),
+                from: timeSchema.optional(),
+                to: timeSchema.optional(),
+            })
+            .strict(),
         result: z.unknown(),
         resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds }",
-        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; throws when the file exists (it never overwrites).',
+        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. Throws when the file exists (it never overwrites).',
         effect: "reversible",
     }),
     defineMethod({
@@ -522,15 +529,29 @@ export class Movie {
         return describeProject(saved, opened.path);
     }
 
-    async export(options: { out?: string; format?: ExportFormat } = {}) {
+    async export(
+        options: {
+            out?: string;
+            format?: ExportFormat;
+            from?: z.infer<typeof timeSchema>;
+            to?: z.infer<typeof timeSchema>;
+        } = {}
+    ) {
         const opened = await openProject(this.recording);
 
         if (opened.fresh) {
             writeProject(opened.path, opened.project);
         }
 
+        const part =
+            options.from === undefined && options.to === undefined
+                ? undefined
+                : {
+                      fromUs: options.from === undefined ? 0 : timeToUs(options.from),
+                      toUs: options.to === undefined ? outputDurationUs(opened.project) : timeToUs(options.to),
+                  };
         await ensureRecorderPart();
-        const answer = await exportAs(opened.path, options);
+        const answer = await exportAs(opened.path, { out: options.out, format: options.format, part });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the export failed without a reason");

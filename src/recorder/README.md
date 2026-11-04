@@ -14,7 +14,7 @@ tools recorder list [--live] [--limit N] [--json]
 tools recorder edit <recording> [--no-focus]     # the editor window; --no-focus opens it behind the front window
 tools recorder project <recording>               # the edit as JSON (source seconds)
 tools recorder apply <recording> '<op or [ops]>' # change the edit; - reads the ops from stdin
-tools recorder export <recording> [--format mp4|gif|webm] [--out FILE] [--json]
+tools recorder export <recording> [--format mp4|gif|webm] [--from T] [--to T] [--out FILE] [--json]
 tools recorder proxy <recording>                 # proxy.mp4 for a frames-only recording
 ```
 
@@ -74,7 +74,8 @@ order to the file as it is now and save once; one failing op saves nothing and n
 The window, the CLI and the REPL export with one renderer (AVFoundation and the hardware encoder), at a constant
 60 fps for a screen recording (a film rate stays). H.264 keeps 60 fps up to 2560×1600; above that the size is fitted,
 because the H.264 export preset lowers the rate instead (measured: 2880×1798 came out at 30 fps, 3724×2326 at 15).
-HEVC keeps the full size. A GIF (10 fps, at most 960 wide) or WebM is made by ffmpeg from that movie. An export never
+HEVC keeps the full size. `--from`/`--to` (REPL `export({ from, to })`, the window's I and O) export only the part
+that plays between two OUTPUT times; the edit itself stays whole. A GIF (10 fps, at most 960 wide) or WebM is made by ffmpeg from that movie. An export never
 overwrites a file: the default name moves on to `-edited-2`, `-3`.
 
 ## The window (GenesisTools.app, recorder part)
@@ -83,7 +84,7 @@ overwrites a file: the default name moves on to `-edited-2`, `-3`.
 recent recordings, the drawn cursor and shortcut toggles) and the editor and library windows. Headless: `--export P [--out F] --json`, `--still P --at S
 --out PNG`, `--snapshot PNG` with `--edit P [--tab T] [--at S]` or `--library`. The editor: an icon rail (Zoom, Clip,
 Hide, Style, Audio, Export), the preview, the transport, and a timeline with the zoom lane, a filmstrip, the waveform and the
-playhead's split button. Keys: Space, S (split), Z (zoom), ⌘Z, ⇧⌘Z, ⌘S, ⌘E, Delete, the arrows, Home, End, Esc.
+playhead's split button. Keys: Space, S (split), Z (zoom), I and O (the export part), ⌘Z, ⇧⌘Z, ⌘S, ⌘E, Delete, the arrows, Home, End, Esc.
 
 ## Agents: the `movies` REPL toolset
 

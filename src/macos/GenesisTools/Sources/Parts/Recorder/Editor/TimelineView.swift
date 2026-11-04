@@ -61,6 +61,9 @@ struct TimelineView: View {
                     .offset(y: Self.marksLaneTop)
                 AudioLaneView(model: model, scale: scale)
                     .offset(y: Self.audioLaneTop)
+                if let part = model.exportPart {
+                    PartBand(fromX: scale.x(part.fromUs), toX: scale.x(part.toUs))
+                }
                 PlayheadView(clock: model.clock, scale: scale, model: model)
             }
             .frame(width: contentWidth, height: Self.totalHeight, alignment: .topLeading)
@@ -354,6 +357,24 @@ private struct FilmstripCanvas: View {
 }
 
 // MARK: - Audio lane
+
+/// The part an export writes (I and O): a light band over every lane with an edge at each end.
+private struct PartBand: View {
+    let fromX: CGFloat
+    let toX: CGFloat
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.accentColor.opacity(0.1))
+            .overlay(alignment: .leading) { Rectangle().fill(Color.accentColor).frame(width: 2) }
+            .overlay(alignment: .trailing) { Rectangle().fill(Color.accentColor).frame(width: 2) }
+            .frame(width: max(2, toX - fromX), height: TimelineView.totalHeight - 30)
+            .offset(x: fromX, y: 4)
+            .allowsHitTesting(false)
+            .accessibilityElement()
+            .accessibilityLabel("Export part")
+    }
+}
 
 /// What the looks put on the edit, where it plays: spoken lines (blue), hidden parts (orange) and a tick with its
 /// label for each kept shortcut (white). Everything is mapped through the cuts and speeds; a cut mark is gone.

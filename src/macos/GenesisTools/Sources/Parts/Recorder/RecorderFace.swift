@@ -8,7 +8,7 @@ import SwiftUI
 //   running one and exits.
 // GenesisTools --recorder --export <edit.json | movie> [--out <file>] [--json]
 //   Renders an edit headlessly with the editor's own renderer, prints the result, exits.
-// GenesisTools --recorder --edit <path> --snapshot <png> [--width <pt>] [--height <pt>] [--at <seconds>] [--tab zoom|clip|audio|export] [--select-zoom <n>|--select-clip <n>]
+// GenesisTools --recorder --edit <path> --snapshot <png> [--width <pt>] [--height <pt>] [--at <seconds>] [--tab zoom|clip|hide|style|audio|export] [--select-zoom <n>|--select-clip <n>] [--part <from>-<to>]
 //   Draws the editor off screen into a PNG and exits (verification without a screen).
 
 private let recorderInstance = SingleInstance(
@@ -33,6 +33,8 @@ struct RecorderRequest {
     var tab: InspectorTab?
     var selectZoom: Int?
     var selectClip: Int?
+    /// `--part 1.5-4`: the export part's marks in output seconds, as I and O would set them.
+    var part: (from: Double, to: Double)?
     /// `--library`: the recordings library window (with `--snapshot`, a picture of it).
     var library = false
     /// `--still <edit> --at <s> --out <png>`: one frame of the edit, printed as JSON.
@@ -60,6 +62,9 @@ struct RecorderRequest {
             case "--tab": request.tab = value().flatMap(InspectorTab.init(rawValue:))
             case "--select-zoom": request.selectZoom = value().flatMap(Int.init)
             case "--select-clip": request.selectClip = value().flatMap(Int.init)
+            case "--part":
+                let ends = (value() ?? "").split(separator: "-").compactMap { Double($0) }
+                if ends.count == 2 { request.part = (ends[0], ends[1]) }
             case "--library": request.library = true
             case "--still": request.still = value().map(absolute)
             default: break
@@ -226,6 +231,8 @@ enum EditorKeys {
             case ("z", true): shift ? model.redo() : model.undo()
             case ("s", true): model.saveNow()
             case ("e", true): model.tab = .export; model.export()
+            case ("i", false): model.markIn()
+            case ("o", false): model.markOut()
             default:
                 switch event.keyCode {
                 case 51, 117: model.deleteSelection()
@@ -349,6 +356,10 @@ private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
                 if let tab = request.tab { model.tab = tab }
                 if let n = request.selectZoom, project.zooms.indices.contains(n) { model.selection = .zoom(project.zooms[n].id); model.tab = .zoom }
                 if let n = request.selectClip, project.clips.indices.contains(n) { model.selection = .clip(project.clips[n].id); model.tab = .clip }
+                if let part = request.part {
+                    model.partInUs = Int64(part.from * 1_000_000)
+                    model.partOutUs = Int64(part.to * 1_000_000)
+                }
                 let at = Int64(((request.atSeconds ?? 0) * 1_000_000).rounded())
                 // The filmstrip and the waveform load in the background; give them up to 8 s.
                 for _ in 0..<80 where model.filmstrip.tiles.isEmpty {

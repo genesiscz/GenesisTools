@@ -314,6 +314,40 @@ export function keepRange(project: EditProject, fromUs: number, toUs: number): E
     return next;
 }
 
+/** The source time that plays at an output time; the end of the edit maps to the last clip's end. */
+export function sourceTimeOf(project: EditProject, outUs: number): number {
+    let start = 0;
+
+    for (const clip of project.clips) {
+        const length = Math.round((clip.toUs - clip.fromUs) / clip.speed);
+
+        if (outUs < start + length) {
+            return clip.fromUs + Math.round(Math.max(0, outUs - start) * clip.speed);
+        }
+
+        start += length;
+    }
+
+    return project.clips.at(-1)?.toUs ?? 0;
+}
+
+/**
+ * The edit cut down to what plays from `fromOutUs` to `toOutUs` (OUTPUT microseconds), for exporting a part. Cuts and
+ * speeds inside the part stay; the edit on disk is not changed.
+ */
+export function partOf(project: EditProject, fromOutUs: number, toOutUs: number): EditProject {
+    const length = outputDurationUs(project);
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+
+    if (!(toOutUs > fromOutUs) || fromOutUs < 0 || fromOutUs >= length) {
+        throw new RangeError(
+            `the part ${seconds(fromOutUs)}–${seconds(toOutUs)} s must start before it ends and inside the ${seconds(length)} s edit (OUTPUT seconds)`
+        );
+    }
+
+    return keepRange(project, sourceTimeOf(project, fromOutUs), sourceTimeOf(project, Math.min(length, toOutUs)));
+}
+
 /** Plays a source range at `speed` (0.25 to 16); the clips are split at its edges. */
 export function speedRange(project: EditProject, fromUs: number, toUs: number, speed: number): EditProject {
     checkRange(project, fromUs, toUs);

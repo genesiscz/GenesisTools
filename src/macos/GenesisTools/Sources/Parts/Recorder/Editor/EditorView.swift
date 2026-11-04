@@ -656,8 +656,22 @@ private struct ExportInspector: View {
                                                 h264Fps: settings.codec == .h264 ? 60 : nil).canvas
             let capped = size.height < EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect).canvas.height
             let movie = (settings.format ?? .mp4) == .mp4
-            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(model.durationUs, tenths: true))"
-                                                      : formatClock(model.durationUs, tenths: true))
+            let part = model.exportPart
+            let length = part.map { $0.toUs - $0.fromUs } ?? model.durationUs
+            HStack {
+                SectionLabel(text: "Part", value: part.map { "\(formatClock($0.fromUs, tenths: true)) – \(formatClock($0.toUs, tenths: true))" } ?? "Whole edit")
+                if part != nil {
+                    IconButton(systemName: "xmark.circle.fill", tooltip: "Export the whole edit again", size: 12) { model.clearPart() }
+                        .accessibilityIdentifier("recorder.export.clearPart")
+                }
+            }
+            if part == nil {
+                Text("I and O at the playhead mark a part; the export then writes only that part and the edit stays whole.")
+                    .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(length, tenths: true))"
+                                                      : formatClock(length, tenths: true))
             if capped && movie {
                 Text("H.264 keeps 60 fps up to 2560 × 1600. Pick HEVC for the full size.")
                     .font(.system(size: 11))

@@ -2,6 +2,7 @@ import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } fr
 import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { describeProject, parseEditOps } from "@genesiscz/utils/recording-editor/project";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
@@ -31,6 +32,17 @@ interface StartFlags {
     controls?: boolean;
     open?: boolean;
     json?: boolean;
+}
+
+/** A `--from`/`--to` time: seconds or m:ss, with a plain message instead of a zod dump. */
+function parseTime(raw: string, flag: string): TimeValue {
+    const parsed = timeSchema.safeParse(raw);
+
+    if (!parsed.success) {
+        throw new Error(`${flag} takes seconds, m:ss or h:mm:ss (got "${raw}")`);
+    }
+
+    return parsed.data;
 }
 
 function parseAudio(raw: string | undefined): AudioSource[] | undefined {
@@ -339,31 +351,48 @@ program
         "--format <format>",
         `${EXPORT_FORMATS.join(", ")} (default the --out extension, else mp4; a gif is 10 fps, at most 960 wide)`
     )
+    .option("--from <time>", "export only the part from this OUTPUT time (seconds or m:ss; what plays)")
+    .option("--to <time>", "export only the part up to this OUTPUT time")
     .option("--json", "the result as JSON")
-    .action(async (value: string, flags: { out?: string; format?: string; json?: boolean }) => {
-        try {
-            await ensureRecorderPart((line) => out.printlnErr(line));
-            const answer = await exportAs(value, {
-                out: flags.out,
-                format: flags.format === undefined ? undefined : parseFormat(flags.format),
-            });
+    .action(
+        async (value: string, flags: { out?: string; format?: string; from?: string; to?: string; json?: boolean }) => {
+            try {
+                await ensureRecorderPart((line) => out.printlnErr(line));
+                const part =
+                    flags.from === undefined && flags.to === undefined
+                        ? undefined
+                        : {
+                              fromUs: flags.from === undefined ? 0 : timeToUs(parseTime(flags.from, "--from")),
+                              toUs:
+                                  flags.to === undefined
+                                      ? Number.MAX_SAFE_INTEGER
+                                      : timeToUs(parseTime(flags.to, "--to")),
+                          };
+                const answer = await exportAs(value, {
+                    out: flags.out,
+                    format: flags.format === undefined ? undefined : parseFormat(flags.format),
+                    part,
+                });
 
-            if (flags.json) {
-                out.result(answer);
-            } else {
-                out.println(
-                    answer.ok ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s)` : `error: ${answer.error}`
-                );
-            }
+                if (flags.json) {
+                    out.result(answer);
+                } else {
+                    out.println(
+                        answer.ok
+                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s)`
+                            : `error: ${answer.error}`
+                    );
+                }
 
-            if (!answer.ok) {
+                if (!answer.ok) {
+                    process.exitCode = 1;
+                }
+            } catch (error) {
+                out.printlnErr(error instanceof Error ? error.message : String(error));
                 process.exitCode = 1;
             }
-        } catch (error) {
-            out.printlnErr(error instanceof Error ? error.message : String(error));
-            process.exitCode = 1;
         }
-    });
+    );
 
 program
     .command("proxy")

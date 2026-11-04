@@ -230,6 +230,17 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(decoded.redactions, project.redactions)
     }
 
+    func testAPartKeepsWhatPlaysBetweenTwoOutputTimesAtEachClipsSpeed() throws {
+        // Output 0–2 plays source 0–2, 2–5 plays 3–6, 5–6 plays 6–8 at 2×.
+        let project = EditProject(source: .init(video: "/m.mp4", durationUs: 8_000_000, width: 100, height: 100),
+                                  clips: [.init(id: "a", fromUs: 0, toUs: 2_000_000), .init(id: "b", fromUs: 3_000_000, toUs: 6_000_000),
+                                          .init(id: "c", fromUs: 6_000_000, toUs: 8_000_000, speed: 2)])
+        let part = try XCTUnwrap(TimelineMap.part(project, fromOut: 1_000_000, toOut: 5_500_000))
+        XCTAssertEqual(part.clips.map { [$0.fromUs, $0.toUs] }, [[1_000_000, 2_000_000], [3_000_000, 6_000_000], [6_000_000, 7_000_000]])
+        XCTAssertEqual(part.outputDurationUs, 4_500_000)
+        XCTAssertNil(TimelineMap.part(project, fromOut: 7_000_000, toOut: 9_000_000))
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))
